@@ -43,6 +43,7 @@ import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
 import java.time.Instant
+import java.time.LocalDate
 
 internal fun nowIso(): String = Instant.now().toString().substringBefore('.') + "Z"
 
@@ -119,7 +120,12 @@ fun KinCareSessionsScreen(
     //   Recent:   COMPLETED / CANCELLED since yesterday
     // DRAFT / PENDING bookings are intentionally excluded; a booking surfaces here
     // only once it is approved to SCHEDULED.
-    val today = nowIso().take(10)
+    // AO-18: the operator's "today" must be the LOCAL calendar date, not UTC.
+    // nowIso() is UTC (correct for the stored *At timestamps below), but using
+    // its date here shifted the whole Auntie Time day-window to tomorrow every
+    // evening after ~19:00 CDT (UTC has already rolled over). LocalDate.now()
+    // matches how android's Home/Invoices/Activity screens already compute today.
+    val today = LocalDate.now().toString()
     val yesterday = dateAddDays(today, -1)
     val cutoff = dateAddDays(today, 14)
     val visible = sessions.filter { session ->
