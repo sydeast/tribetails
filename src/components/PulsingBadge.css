@@ -1,0 +1,88 @@
+/**
+ * PulsingBadge, ported from PulsingBadge in AuntieMotion.kt.
+ *
+ * Both children share one grid cell rather than being absolutely positioned, so
+ * the halo stays centred on the dot while the dot is free to grow for a count.
+ * That matters because the halo's animation is then a bare scale() and does not
+ * have to carry a centring translate through every keyframe.
+ */
+
+.pulsing-badge {
+  --badge-size: 10px;
+  --badge-color: var(--color-primary);
+
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  line-height: 1;
+}
+
+.pulsing-badge > * {
+  grid-area: 1 / 1;
+}
+
+.pulsing-badge-halo {
+  width: var(--badge-size);
+  height: var(--badge-size);
+  border-radius: var(--radius-pill);
+  background: var(--badge-color);
+  /* 900ms, alternating, on Compose's FastOutSlowInEasing. Scale 1 -> 1.6 and
+     alpha 0.4 -> 0 are the Compose animateFloat endpoints. */
+  animation: pulsing-badge-halo 900ms cubic-bezier(0.4, 0, 0.2, 1) infinite alternate;
+}
+
+@keyframes pulsing-badge-halo {
+  from {
+    transform: scale(1);
+    opacity: 0.4;
+  }
+  to {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+/* A badge whose whole job is to throb is exactly the thing that hurts if motion
+   hurts. The dot still reads without it. */
+@media (prefers-reduced-motion: reduce) {
+  .pulsing-badge-halo {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+.pulsing-badge-dot {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: var(--badge-size);
+  height: var(--badge-size);
+  border-radius: var(--radius-pill);
+  background: var(--badge-color);
+}
+
+/* DELIBERATE DEVIATION: Compose pins the dot to size x size and centres the count
+   inside it, so at the 10dp default "99+" is laid out into a 10dp box and clips.
+   A number nobody can read is not worth porting, so a counted badge grows into a
+   pill and keeps the dot's diameter as its floor. An uncounted dot is unchanged. */
+.pulsing-badge-counted .pulsing-badge-dot {
+  width: auto;
+  height: auto;
+  min-width: var(--badge-size);
+  min-height: var(--badge-size);
+  padding: 2px 5px;
+}
+
+.pulsing-badge-count {
+  /* labelSmall, which is the mono kicker face. */
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  line-height: 1;
+  /* Reads against the badge fill, which is a brand colour, so it is the page
+     background colour rather than a text token. Ports the Compose
+     `color = AuntieTheme.colors.background`. */
+  color: var(--color-background);
+  user-select: none;
+}

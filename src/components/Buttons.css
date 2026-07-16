@@ -1,0 +1,206 @@
+/**
+ * Den buttons. Every colour, radius, border width, and type ramp resolves to a
+ * token from styles/tokens.css, so these follow the light/dark scheme with no
+ * per-theme rules here.
+ *
+ * Compose fades its colours with animateColorAsState (~160ms). The transitions
+ * below are that, not decoration.
+ *
+ * Interactive rules are all scoped to `button.` so the static <span> variant
+ * cannot pick up a hover, a cursor, or a focus ring by accident. That coupling
+ * is enforced by the element the component chose, not by remembering to add a
+ * modifier class.
+ *
+ * TOKEN GAP, do not paper over: AuntieIconButton.kt uses a 10dp corner and
+ * tokens.css has no 10px radius (--radius-chip is 6, --radius-card 8,
+ * --radius-card-lg 12). The tile uses --radius-card rather than a hardcoded
+ * 10px. Reported rather than invented.
+ */
+
+/* ── Text buttons (PrimaryButton, GhostButton) ───────────────────────────── */
+
+.auntie-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  margin: 0;
+  padding: 0 18px;
+  border: var(--border-hairline) solid transparent;
+  border-radius: var(--radius-card);
+  background: none;
+  font-family: var(--type-label-lg-family);
+  font-size: var(--type-label-lg-size);
+  font-weight: var(--type-label-lg-weight);
+  letter-spacing: var(--type-label-lg-tracking);
+  text-decoration: none;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+button.auntie-btn {
+  cursor: pointer;
+}
+
+button.auntie-btn:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.auntie-btn__leading {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+/* Primary: brand fill, background-coloured text, hairline brand border. */
+.auntie-btn--primary {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-background);
+}
+
+button.auntie-btn--primary:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-primary) 92%, var(--color-background));
+}
+
+button.auntie-btn--primary:active:not(:disabled) {
+  background-color: var(--color-primary-dim);
+}
+
+.auntie-btn--primary.auntie-is-disabled {
+  background-color: color-mix(in srgb, var(--color-primary) 18%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-primary) 18%, var(--color-surface));
+  color: var(--color-text-dim);
+}
+
+/* Ghost: glass fill, border picks up the brand gold on hover. */
+.auntie-btn--ghost {
+  padding: 0 16px;
+  background-color: var(--color-surface-glass);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+button.auntie-btn--ghost:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.auntie-btn--ghost.auntie-is-disabled {
+  color: var(--color-text-faint);
+}
+
+/* ── In-flight spinner ───────────────────────────────────────────────────── */
+
+.auntie-btn__spinner {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, var(--color-background) 35%, transparent);
+  border-top-color: var(--color-background);
+  border-radius: var(--radius-pill);
+  animation: auntie-btn-spin 800ms linear infinite;
+}
+
+@keyframes auntie-btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Icon button ─────────────────────────────────────────────────────────── */
+
+.auntie-icon-btn {
+  /* The accent this tile leans into on hover. The destructive variant re-points
+     it, so every rule below stays variant-agnostic. */
+  --auntie-icon-accent: var(--color-primary);
+  --auntie-icon-rest: var(--color-text-dim);
+
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--auntie-icon-size);
+  height: var(--auntie-icon-size);
+  margin: 0;
+  padding: 0;
+  border: var(--border-hairline) solid transparent;
+  border-radius: var(--radius-card);
+  background-color: transparent;
+  color: var(--auntie-icon-rest);
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    opacity 180ms ease;
+}
+
+.auntie-icon-btn--destructive {
+  --auntie-icon-accent: var(--color-error);
+  --auntie-icon-rest: var(--color-error);
+}
+
+button.auntie-icon-btn {
+  cursor: pointer;
+}
+
+button.auntie-icon-btn:hover:not(:disabled),
+button.auntie-icon-btn:active:not(:disabled) {
+  color: var(--auntie-icon-accent);
+  background-color: color-mix(in srgb, var(--auntie-icon-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--auntie-icon-accent) 50%, transparent);
+}
+
+button.auntie-icon-btn:focus-visible {
+  outline: var(--border-emphasis) solid var(--auntie-icon-accent);
+  outline-offset: 2px;
+}
+
+/* Compose reveals these when the surrounding ROW is hovered. CSS cannot reach
+   up to a parent the component does not own, so self-hover is the default and a
+   host row opts in with `.my-row:hover .auntie-icon-btn--reveal { opacity: 1 }`.
+   :focus-visible is included so the handle is never invisible to the keyboard. */
+.auntie-icon-btn--reveal {
+  opacity: 0.32;
+}
+
+button.auntie-icon-btn--reveal:hover:not(:disabled),
+button.auntie-icon-btn--reveal:focus-visible {
+  opacity: 1;
+}
+
+.auntie-icon-btn.auntie-is-disabled {
+  color: var(--color-text-faint);
+  opacity: 0.4;
+}
+
+.auntie-icon-btn__glyph {
+  display: inline-flex;
+  width: var(--auntie-icon-glyph);
+  height: var(--auntie-icon-glyph);
+}
+
+.auntie-icon-btn__glyph > svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .auntie-btn,
+  .auntie-icon-btn {
+    transition: none;
+  }
+
+  /* Slowed, not removed: the spinner is the only thing saying work is in
+     flight, and a frozen spinner reads as a hang. */
+  .auntie-btn__spinner {
+    animation-duration: 2400ms;
+  }
+}
