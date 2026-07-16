@@ -1,0 +1,9 @@
+Subject: Update: I have modified {{kinName}}'s details
+
+Hello. I have updated the profile for {{kinName}} in my system. I shall ensure my care matches these new specifics.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

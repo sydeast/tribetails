@@ -1,0 +1,9 @@
+Subject: Status: I am unavailable for this request
+
+Hello {{kinfolkName}}. I checked my schedule and I am unable to handle the {{serviceType}} on {{bookingDate}}. I am much obliged for your understanding.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

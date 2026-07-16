@@ -1,0 +1,20 @@
+{
+  "hosting": {
+    "site": "auntieos",
+    "public": "public",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      { "source": "/sotu", "destination": "/index.html" },
+      { "source": "/ui", "destination": "/ui.html" },
+      { "source": "**", "destination": "/index.html" }
+    ],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        ]
+      }
+    ]
+  }
+}

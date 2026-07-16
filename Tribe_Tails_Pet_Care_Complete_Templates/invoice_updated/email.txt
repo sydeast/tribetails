@@ -1,0 +1,9 @@
+Subject: Update: I have modified your invoice for {{kinName}}
+
+Hello. I have updated the details on invoice {{invoiceNumber}}. Please review the changes at your earliest convenience.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

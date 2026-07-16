@@ -1,0 +1,9 @@
+Subject: Confirmation: I have received your payment
+
+Hello. I am much obliged! I have received your payment for invoice {{invoiceNumber}}. Thank you for your support of Tribe Tails Pet Care.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

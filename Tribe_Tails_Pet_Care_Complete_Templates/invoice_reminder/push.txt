@@ -1,0 +1,1 @@
+Reminder: Your invoice for {{kinName}} is ready. Tap to see details.

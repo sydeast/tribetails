@@ -1,0 +1,244 @@
+import java.util.Properties
+
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.google.services)
+    alias(libs.plugins.sentry)
+    // Roborazzi gradle plugin omitted: 1.46.1 needs AGP's removed TestedExtension.
+    // The roborazzi *library* (captureRoboImage) works standalone; record mode is
+    // driven by the roborazzi.test.record system property set on the test task below.
+}
+
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) load(f.inputStream())
+}
+
+kotlin {
+    jvmToolchain(21)
+}
+
+android {
+    namespace = "com.tribetails.auntieos"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "com.tribetails.auntieos"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 2
+        versionName = "0.2.0"
+
+        // GOOGLE_CALENDAR_ID + GOOGLE_SERVICE_ACCOUNT_EMAIL are now SERVER-ONLY
+        // config (slice 8). The Google Calendar busy sync runs in the
+        // syncGoogleCalendarBusyEvents Cloud Function via Application Default
+        // Credentials, so no calendar id or service-account key ships in the APK.
+        buildConfigField("String", "SENTRY_DSN", "\"${localProps.getProperty("SENTRY_DSN") ?: project.findProperty("SENTRY_DSN") ?: ""}\"")
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file(localProps.getProperty("KEYSTORE_PATH") ?: error("KEYSTORE_PATH missing from local.properties"))
+            storePassword = localProps.getProperty("KEYSTORE_PASSWORD") ?: error("KEYSTORE_PASSWORD missing from local.properties")
+            keyAlias = localProps.getProperty("KEY_ALIAS") ?: error("KEY_ALIAS missing from local.properties")
+            keyPassword = localProps.getProperty("KEY_PASSWORD") ?: error("KEY_PASSWORD missing from local.properties")
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
+            isIncludeAndroidResources = true
+            all {
+                // Roborazzi record mode (plugin omitted under AGP 9) for the visual harness.
+                it.systemProperty("roborazzi.test.record", "true")
+            }
+        }
+    }
+
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+        viewBinding = true
+        resValues = true
+    }
+
+    packaging {
+        resources {
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/INDEX.LIST"
+        }
+        jniLibs {
+            useLegacyPackaging = false
+        }
+    }
+}
+
+// Verify gRPC version pins at build time. Run: ./gradlew verifyGrpcVersionPins
+// See GrpcVersionRegressionTest.kt for the full history of why these versions matter.
+tasks.register("verifyGrpcVersionPins") {
+    doLast {
+        val config = configurations.getByName("debugRuntimeClasspath")
+        val resolved = config.resolvedConfiguration.resolvedArtifacts
+        val grpcModules = mapOf(
+            "grpc-api" to "1.62.2",
+            "grpc-core" to "1.62.2",
+            "grpc-context" to "1.62.2"
+        )
+        var failed = false
+        grpcModules.forEach { (module, expected) ->
+            val actual = resolved
+                .firstOrNull { it.moduleVersion.id.module.group == "io.grpc" && it.moduleVersion.id.module.name == module }
+                ?.moduleVersion?.id?.version
+            if (actual != expected) {
+                logger.error("GRPC VERSION VIOLATION: io.grpc:$module expected=$expected actual=${actual ?: "NOT FOUND"}")
+                logger.error("  Fix: restore force(\"io.grpc:$module:$expected\") in configurations.all in app/build.gradle.kts")
+                failed = true
+            }
+        }
+        check(!failed) { "gRPC version pins violated — see errors above" }
+        logger.lifecycle("gRPC version pins OK (grpc-api/core/context all at 1.62.2)")
+    }
+}
+
+sentry {
+    org = "tribetails"
+    projectName = "auntieos-admin"
+    autoUploadProguardMapping = true
+    includeProguardMapping = true
+    uploadNativeSymbols = false
+    autoUploadNativeSymbols = false
+    ignoredBuildTypes = setOf("debug")
+}
+
+configurations.all {
+    resolutionStrategy {
+        force("io.grpc:grpc-api:1.62.2")
+        force("io.grpc:grpc-context:1.62.2")
+        force("io.grpc:grpc-core:1.62.2")
+    }
+}
+
+dependencies {
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.activity.compose)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.ui.graphics)
+    implementation(libs.androidx.ui.tooling.preview)
+    implementation(libs.androidx.material3)
+    implementation(libs.androidx.material.icons.extended)
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.constraintlayout)
+
+    // Network
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.gson)
+    implementation(libs.okhttp.logging)
+    implementation(libs.gson)
+
+    // Firebase
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
+    implementation(libs.firebase.analytics)
+    implementation(libs.firebase.firestore)
+    implementation(libs.firebase.storage)
+    implementation(libs.firebase.auth)
+    implementation(libs.firebase.functions)
+
+    // Coroutines
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.coroutines.play.services)
+
+    // DataStore (token persistence)
+    implementation(libs.datastore.preferences)
+
+    // Chrome Custom Tabs
+    implementation(libs.browser)
+
+    // AppCompat
+    implementation(libs.appcompat)
+
+    // Twilio Voice SDK
+    implementation(libs.twilio.voice)
+
+    // Google Calendar busy sync is server-side (syncGoogleCalendarBusyEvents
+    // Cloud Function via ADC); the client-side Calendar API + service-account
+    // libraries were removed in slice 8 so no calendar key ships in the APK.
+
+    // Coil for Image Loading
+    implementation(libs.coil.compose)
+    implementation(libs.coil.svg)
+
+    // Lottie (Compottie)
+    implementation(libs.compottie)
+    implementation(libs.compottie.dot)
+
+    // Telephoto zoomable image
+    implementation(libs.telephoto.coil)
+
+    // Calendar
+    implementation(libs.calendar.compose)
+
+    // Media3 / ExoPlayer
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
+
+    // Cloudinary for Media Upload
+    implementation(libs.cloudinary.android)
+    implementation(libs.cloudinary.android.download)
+
+    // Camera and Image Handling
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+    implementation(libs.androidx.exifinterface)
+
+    // Mapbox for Location Tracking and Maps
+    implementation(libs.mapbox.maps.android)
+
+    // Location Services
+    implementation(libs.google.play.services.location)
+    implementation(libs.google.play.services.maps)
+
+    // Sentry
+    implementation(libs.sentry.android)
+
+    // Composables (headless primitives — matches web AuntieTheme tokens)
+    implementation(libs.composables.core)
+    implementation(libs.composables.icons.lucide)
+
+    // Testing
+    testImplementation(libs.junit)
+    testImplementation(libs.mockk)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+}

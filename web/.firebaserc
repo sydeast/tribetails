@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "auntieos-ttpc"
+  },
+  "targets": {
+    "auntieos-ttpc": {
+      "hosting": {
+        "auntieapp": [
+          "auntieos-ttpc"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

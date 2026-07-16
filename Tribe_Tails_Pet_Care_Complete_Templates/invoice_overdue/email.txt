@@ -1,0 +1,9 @@
+Subject: Security: Your invoice for {{kinName}}'s care is overdue
+
+Hello {{kinfolkName}}. I noticed the invoice for {{kinName}}'s care on {{bookingDate}} is still outstanding. I shall need that handled right quick. Not on my watch.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

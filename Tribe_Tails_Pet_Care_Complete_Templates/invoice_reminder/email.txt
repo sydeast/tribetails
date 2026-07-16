@@ -1,0 +1,9 @@
+Subject: Reminder: Your invoice for {{kinName}} is ready
+
+Hello {{kinfolkName}}. This is a quick note regarding invoice {{invoiceNumber}} for {{amount}}. I shall handle the care while you handle the logistics.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

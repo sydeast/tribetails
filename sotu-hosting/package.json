@@ -1,0 +1,14 @@
+{
+  "name": "auntieos-sotu-hosting",
+  "version": "1.0.0",
+  "description": "Firebase Hosting + Firestore push for AuntieOS State of the Union",
+  "scripts": {
+    "push": "node push-sotu.js",
+    "deploy": "firebase deploy --only hosting",
+    "push-and-deploy": "node push-sotu.js && firebase deploy --only hosting"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  }
+}
+

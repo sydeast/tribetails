@@ -1,0 +1,1 @@
+New Note: I have received your message regarding {{kinName}}. Tap to see details.

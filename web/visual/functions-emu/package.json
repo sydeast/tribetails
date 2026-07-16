@@ -1,0 +1,8 @@
+{
+  "name": "auntieos-visual-functions-emu",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Harness-only functions source: re-exports the 4 read-only MyTribe callables for the AuntieOS web visual emulator. Never deployed.",
+  "main": "index.js",
+  "engines": { "node": "22" }
+}

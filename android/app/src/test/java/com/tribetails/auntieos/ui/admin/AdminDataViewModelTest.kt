@@ -1,0 +1,624 @@
+package com.tribetails.auntieos.ui.admin
+
+import com.tribetails.auntieos.TestFixtures
+import com.tribetails.auntieos.data.admin.ActivityLogEntry
+import com.tribetails.auntieos.data.admin.NotificationEntry
+import com.tribetails.auntieos.data.model.KinCareReport
+import com.tribetails.auntieos.data.model.TrainingDocument
+import com.tribetails.auntieos.data.repository.AuntieRepository
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class AdminDataViewModelTest {
+
+    private val testDispatcher = UnconfinedTestDispatcher()
+    private lateinit var mockRepo: AuntieRepository
+
+    @Before
+    fun setUp() {
+        Dispatchers.setMain(testDispatcher)
+        mockRepo = mockk()
+    }
+
+    @After
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
+
+    private fun buildViewModel() = AdminDataViewModel(repository = mockRepo)
+
+    // ─── Initial state ────────────────────────────────────────────────────────
+
+    @Test
+    fun `initial isLoading is false`() {
+        val vm = buildViewModel()
+        assertFalse(vm.isLoading.value)
+    }
+
+    @Test
+    fun `initial error is null`() {
+        val vm = buildViewModel()
+        assertNull(vm.error.value)
+    }
+
+    // ─── loadInvoices ─────────────────────────────────────────────────────────
+
+    @Test
+    fun `loadInvoices populates invoices on success`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1, TestFixtures.invoice2))
+
+        val vm = buildViewModel()
+        vm.loadInvoices()
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertNull(vm.error.value)
+        assertEquals(2, vm.invoices.value.size)
+    }
+
+    @Test
+    fun `loadInvoices sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getInvoices() } returns Result.failure(RuntimeException("Network error"))
+
+        val vm = buildViewModel()
+        vm.loadInvoices()
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertNotNull(vm.error.value)
+        assertTrue(vm.error.value!!.contains("Network error"))
+    }
+
+    // ─── loadPayments ─────────────────────────────────────────────────────────
+
+    @Test
+    fun `loadPayments populates payments on success`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getPayments() } returns Result.success(listOf(TestFixtures.payment1))
+
+        val vm = buildViewModel()
+        vm.loadPayments()
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertNull(vm.error.value)
+        assertEquals(1, vm.payments.value.size)
+    }
+
+    @Test
+    fun `loadPayments sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getPayments() } returns Result.failure(RuntimeException("Timeout"))
+
+        val vm = buildViewModel()
+        vm.loadPayments()
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+    }
+
+    // ─── loadVisitLogs ────────────────────────────────────────────────────────
+
+    @Test
+    fun `loadVisitLogs populates visitLogs on success`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getVisitLogs() } returns Result.success(listOf(TestFixtures.visitLog1))
+
+        val vm = buildViewModel()
+        vm.loadVisitLogs()
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertNull(vm.error.value)
+        assertEquals(1, vm.visitLogs.value.size)
+    }
+
+    @Test
+    fun `loadVisitLogs sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getVisitLogs() } returns Result.failure(RuntimeException("403"))
+
+        val vm = buildViewModel()
+        vm.loadVisitLogs()
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+    }
+
+    // ─── loadTrainingDocuments ────────────────────────────────────────────────
+
+    @Test
+    fun `loadTrainingDocuments populates trainingDocuments on success`() = runTest(testDispatcher) {
+        val doc = TrainingDocument(id = "td1", title = "Onboarding", uploadedAt = "2026-05-01")
+        coEvery { mockRepo.getTrainingDocuments() } returns Result.success(listOf(doc))
+
+        val vm = buildViewModel()
+        vm.loadTrainingDocuments()
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertNull(vm.error.value)
+        assertEquals(1, vm.trainingDocuments.value.size)
+    }
+
+    @Test
+    fun `loadTrainingDocuments sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getTrainingDocuments() } returns Result.failure(RuntimeException("Not found"))
+
+        val vm = buildViewModel()
+        vm.loadTrainingDocuments()
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+    }
+
+    // ─── loadKinCareSessions ──────────────────────────────────────────────────
+
+    @Test
+    fun `loadKinCareSessions populates kinCareSessions on success`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getKinCareSessions() } returns Result.success(listOf(TestFixtures.session1))
+
+        val vm = buildViewModel()
+        vm.loadKinCareSessions()
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertNull(vm.error.value)
+        assertEquals(1, vm.kinCareSessions.value.size)
+    }
+
+    @Test
+    fun `loadKinCareSessions sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getKinCareSessions() } returns Result.failure(RuntimeException("Server error"))
+
+        val vm = buildViewModel()
+        vm.loadKinCareSessions()
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+        assertTrue(vm.error.value!!.contains("Server error"))
+    }
+
+    // ─── loadKinCareReports ───────────────────────────────────────────────────
+
+    @Test
+    fun `loadKinCareReports populates kinCareReports on success`() = runTest(testDispatcher) {
+        val report = KinCareReport(id = "r1", kinfolkId = "kf1", sentAt = "2026-05-01")
+        coEvery { mockRepo.getAllKinCareReports() } returns Result.success(listOf(report))
+
+        val vm = buildViewModel()
+        vm.loadKinCareReports()
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertNull(vm.error.value)
+        assertEquals(1, vm.kinCareReports.value.size)
+    }
+
+    @Test
+    fun `loadKinCareReports sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getAllKinCareReports() } returns Result.failure(RuntimeException("KinTale load failed"))
+
+        val vm = buildViewModel()
+        vm.loadKinCareReports()
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+    }
+
+    // ─── loadActivityLog ──────────────────────────────────────────────────────
+
+    @Test
+    fun `loadActivityLog populates activityLog on success`() = runTest(testDispatcher) {
+        val entry = ActivityLogEntry(id = "al1", timestamp = "2026-05-01T09:00:00", actionType = "LOGIN")
+        coEvery { mockRepo.getActivityLog() } returns Result.success(listOf(entry))
+
+        val vm = buildViewModel()
+        vm.loadActivityLog()
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertNull(vm.error.value)
+        assertEquals(1, vm.activityLog.value.size)
+    }
+
+    @Test
+    fun `loadActivityLog sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getActivityLog() } returns Result.failure(RuntimeException("Auth error"))
+
+        val vm = buildViewModel()
+        vm.loadActivityLog()
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+    }
+
+    // ─── loadNotifications ────────────────────────────────────────────────────
+
+    @Test
+    fun `loadNotifications populates notifications sorted by createdAt desc`() = runTest(testDispatcher) {
+        val older = NotificationEntry(id = "n1", key = "invoice.new", createdAt = "2026-05-01T09:00:00", status = "dispatched")
+        val newer = NotificationEntry(id = "n2", key = "kincare.booking.confirm", createdAt = "2026-05-02T09:00:00", status = "pending")
+        coEvery { mockRepo.getNotifications() } returns Result.success(listOf(older, newer))
+
+        val vm = buildViewModel()
+        vm.loadNotifications()
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertNull(vm.error.value)
+        assertEquals(2, vm.notifications.value.size)
+        assertEquals("n2", vm.notifications.value.first().id)
+    }
+
+    @Test
+    fun `loadNotifications sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getNotifications() } returns Result.failure(RuntimeException("Permission denied"))
+
+        val vm = buildViewModel()
+        vm.loadNotifications()
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+        assertTrue(vm.notifications.value.isEmpty())
+    }
+
+    @Test
+    fun `loadNotifications empty list still sets isLoading false`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.loadNotifications()
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertTrue(vm.notifications.value.isEmpty())
+    }
+
+    // ─── patchKinCareSession ──────────────────────────────────────────────────
+
+    @Test
+    fun `patchKinCareSession triggers loadKinCareSessions and invokes onResult null on success`() = runTest(testDispatcher) {
+        coEvery { mockRepo.patchKinCareSession(any(), any()) } returns Result.success(Unit)
+        coEvery { mockRepo.getKinCareSessions() } returns Result.success(listOf(TestFixtures.session1))
+
+        val vm = buildViewModel()
+        var callbackArg: Throwable? = Throwable("sentinel")
+        vm.patchKinCareSession("ses1", mapOf("status" to "completed")) { callbackArg = it }
+        advanceUntilIdle()
+
+        assertNull(callbackArg)
+        assertEquals(1, vm.kinCareSessions.value.size)
+    }
+
+    @Test
+    fun `patchKinCareSession sets error and invokes onResult throwable on failure`() = runTest(testDispatcher) {
+        val err = RuntimeException("Patch denied")
+        coEvery { mockRepo.patchKinCareSession(any(), any()) } returns Result.failure(err)
+
+        val vm = buildViewModel()
+        var callbackArg: Throwable? = null
+        vm.patchKinCareSession("ses1", mapOf("status" to "completed")) { callbackArg = it }
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+        assertEquals(err, callbackArg)
+    }
+
+    // ─── createInvoice ────────────────────────────────────────────────────────
+
+    @Test
+    fun `createInvoice refreshes invoices list on success`() = runTest(testDispatcher) {
+        coEvery { mockRepo.createInvoice(any()) } returns Result.success("inv-new")
+        coEvery { mockRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
+
+        val vm = buildViewModel()
+        vm.createInvoice(TestFixtures.invoice1)
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertEquals(1, vm.invoices.value.size)
+    }
+
+    @Test
+    fun `createInvoice sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.createInvoice(any()) } returns Result.failure(RuntimeException("Write failed"))
+
+        val vm = buildViewModel()
+        vm.createInvoice(TestFixtures.invoice1)
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+        assertFalse(vm.isLoading.value)
+    }
+
+    // ─── createQuote (Step 4 PART B) ──────────────────────────────────────────
+
+    @Test
+    fun `createQuote routes through repository and refreshes on success`() = runTest(testDispatcher) {
+        coEvery { mockRepo.createQuote(any(), any()) } returns Result.success("q-new")
+        coEvery { mockRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
+
+        val vm = buildViewModel()
+        vm.createQuote(TestFixtures.invoice1, sendToKinfolk = true)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockRepo.createQuote(any(), true) }
+        assertFalse(vm.isLoading.value)
+        assertEquals(1, vm.invoices.value.size)
+        assertEquals("Quote created and sent.", vm.invoiceActionMessage.value)
+    }
+
+    @Test
+    fun `createQuote without send confirms quietly`() = runTest(testDispatcher) {
+        coEvery { mockRepo.createQuote(any(), any()) } returns Result.success("q-new")
+        coEvery { mockRepo.getInvoices() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.createQuote(TestFixtures.invoice1, sendToKinfolk = false)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockRepo.createQuote(any(), false) }
+        assertEquals("Quote created.", vm.invoiceActionMessage.value)
+    }
+
+    @Test
+    fun `createQuote sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.createQuote(any(), any()) } returns Result.failure(RuntimeException("quote failed"))
+
+        val vm = buildViewModel()
+        vm.createQuote(TestFixtures.invoice1, sendToKinfolk = false)
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+        assertTrue(vm.error.value!!.contains("quote failed"))
+        assertFalse(vm.isLoading.value)
+    }
+
+    // ─── notification quick actions (Step 4 PART A) ───────────────────────────
+
+    @Test
+    fun `toggleNotificationRead marks read and reloads when currently unread`() = runTest(testDispatcher) {
+        coEvery { mockRepo.markNotificationRead("n1") } returns Result.success(Unit)
+        coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.toggleNotificationRead("n1", currentlyUnread = true)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockRepo.markNotificationRead("n1") }
+        assertEquals("Marked read.", vm.bulkReadMessage.value)
+    }
+
+    @Test
+    fun `toggleNotificationRead marks unread when currently read`() = runTest(testDispatcher) {
+        coEvery { mockRepo.markNotificationUnread("n1") } returns Result.success(Unit)
+        coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.toggleNotificationRead("n1", currentlyUnread = false)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockRepo.markNotificationUnread("n1") }
+        assertEquals("Marked unread.", vm.bulkReadMessage.value)
+    }
+
+    @Test
+    fun `toggleNotificationRead surfaces failure loudly`() = runTest(testDispatcher) {
+        coEvery { mockRepo.markNotificationRead("n1") } returns Result.failure(RuntimeException("nope"))
+
+        val vm = buildViewModel()
+        vm.toggleNotificationRead("n1", currentlyUnread = true)
+        advanceUntilIdle()
+
+        assertTrue(vm.bulkReadMessage.value!!.contains("nope"))
+    }
+
+    @Test
+    fun `archiveNotification dismisses and reloads`() = runTest(testDispatcher) {
+        coEvery { mockRepo.archiveNotification("n1") } returns Result.success(1)
+        coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.archiveNotification("n1")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockRepo.archiveNotification("n1") }
+        assertEquals("Dismissed.", vm.bulkReadMessage.value)
+    }
+
+    @Test
+    fun `archiveNotification reports nothing when stale`() = runTest(testDispatcher) {
+        coEvery { mockRepo.archiveNotification("n1") } returns Result.success(0)
+        coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.archiveNotification("n1")
+        advanceUntilIdle()
+
+        assertTrue(vm.bulkReadMessage.value!!.contains("Nothing to dismiss"))
+    }
+
+    @Test
+    fun `archiveNotifications bulk summarizes server count`() = runTest(testDispatcher) {
+        coEvery { mockRepo.bulkArchiveNotifications(any()) } returns Result.success(2)
+        coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.archiveNotifications(listOf("n1", "n2", "n3"))
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockRepo.bulkArchiveNotifications(listOf("n1", "n2", "n3")) }
+        assertEquals("Dismissed 2 of 3.", vm.bulkReadMessage.value)
+        assertFalse(vm.bulkReadInFlight.value)
+    }
+
+    @Test
+    fun `quickBookingAction approves the linked booking`() = runTest(testDispatcher) {
+        coEvery { mockRepo.batchUpdateBookings(listOf("bk-1"), "APPROVE") } returns
+            Result.success(com.tribetails.auntieos.data.repository.BatchBookingResult("APPROVE", 1, emptyList()))
+        coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.quickBookingAction("bk-1", "APPROVE")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockRepo.batchUpdateBookings(listOf("bk-1"), "APPROVE") }
+        assertEquals("Booking approve.", vm.bulkReadMessage.value)
+    }
+
+    @Test
+    fun `quickBookingAction surfaces a per-id failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.batchUpdateBookings(listOf("bk-1"), "REJECT") } returns
+            Result.success(
+                com.tribetails.auntieos.data.repository.BatchBookingResult(
+                    "REJECT", 0,
+                    listOf(com.tribetails.auntieos.data.repository.BatchBookingFailure("bk-1", "already_cancelled")),
+                ),
+            )
+        coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.quickBookingAction("bk-1", "REJECT")
+        advanceUntilIdle()
+
+        assertTrue(vm.bulkReadMessage.value!!.contains("already_cancelled"))
+    }
+
+    // ─── generateReceipt (slice 2) ────────────────────────────────────────────
+
+    @Test
+    fun `generateReceipt routes through repository and refreshes invoices on success`() = runTest(testDispatcher) {
+        coEvery { mockRepo.generateReceipt("inv-1") } returns Result.success(Unit)
+        coEvery { mockRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
+
+        val vm = buildViewModel()
+        vm.generateReceipt("inv-1")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockRepo.generateReceipt("inv-1") }
+        assertFalse(vm.isLoading.value)
+        assertNull(vm.error.value)
+        assertEquals(1, vm.invoices.value.size)
+    }
+
+    @Test
+    fun `generateReceipt sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.generateReceipt(any()) } returns Result.failure(RuntimeException("not-found"))
+
+        val vm = buildViewModel()
+        vm.generateReceipt("missing")
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+        assertTrue(vm.error.value!!.contains("not-found"))
+        assertFalse(vm.isLoading.value)
+    }
+
+    // ─── createPayment ────────────────────────────────────────────────────────
+
+    @Test
+    fun `createPayment refreshes payments list on success`() = runTest(testDispatcher) {
+        coEvery { mockRepo.createPayment(any()) } returns Result.success("pay-new")
+        coEvery { mockRepo.getPayments() } returns Result.success(listOf(TestFixtures.payment1))
+
+        val vm = buildViewModel()
+        vm.createPayment(TestFixtures.payment1)
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertEquals(1, vm.payments.value.size)
+    }
+
+    @Test
+    fun `createPayment sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.createPayment(any()) } returns Result.failure(RuntimeException("Write failed"))
+
+        val vm = buildViewModel()
+        vm.createPayment(TestFixtures.payment1)
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+    }
+
+    // ─── createVisitLog ───────────────────────────────────────────────────────
+
+    @Test
+    fun `createVisitLog refreshes visitLogs list on success`() = runTest(testDispatcher) {
+        coEvery { mockRepo.createVisitLog(any()) } returns Result.success("vl-new")
+        coEvery { mockRepo.getVisitLogs() } returns Result.success(listOf(TestFixtures.visitLog1))
+
+        val vm = buildViewModel()
+        vm.createVisitLog(TestFixtures.visitLog1)
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertEquals(1, vm.visitLogs.value.size)
+    }
+
+    @Test
+    fun `createVisitLog sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.createVisitLog(any()) } returns Result.failure(RuntimeException("Write failed"))
+
+        val vm = buildViewModel()
+        vm.createVisitLog(TestFixtures.visitLog1)
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+    }
+
+    // ─── createKinCareSession ─────────────────────────────────────────────────
+
+    @Test
+    fun `createKinCareSession refreshes sessions list on success`() = runTest(testDispatcher) {
+        coEvery { mockRepo.createKinCareSession(any()) } returns Result.success("ses-new")
+        coEvery { mockRepo.getKinCareSessions() } returns Result.success(listOf(TestFixtures.session1))
+
+        val vm = buildViewModel()
+        vm.createKinCareSession(TestFixtures.session1)
+        advanceUntilIdle()
+
+        assertFalse(vm.isLoading.value)
+        assertEquals(1, vm.kinCareSessions.value.size)
+    }
+
+    @Test
+    fun `createKinCareSession sets error on failure`() = runTest(testDispatcher) {
+        coEvery { mockRepo.createKinCareSession(any()) } returns Result.failure(RuntimeException("Write failed"))
+
+        val vm = buildViewModel()
+        vm.createKinCareSession(TestFixtures.session1)
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+    }
+
+    // ─── clearError ───────────────────────────────────────────────────────────
+
+    @Test
+    fun `clearError resets error to null`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getInvoices() } returns Result.failure(RuntimeException("oops"))
+
+        val vm = buildViewModel()
+        vm.loadInvoices()
+        advanceUntilIdle()
+        assertNotNull("precondition: error should be set", vm.error.value)
+
+        vm.clearError()
+
+        assertNull(vm.error.value)
+    }
+}

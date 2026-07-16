@@ -1,0 +1,151 @@
+# ---------------------------------------------------------------------------
+# SECRETS. Nothing below this block may ever enter history.
+# ---------------------------------------------------------------------------
+.env
+.env.local
+.env.*
+!.env.example
+web/visual/.env
+.mcp.json
+
+# Service-account private keys. TWO real live keys exist for
+# auntieos-ttpc.iam.gserviceaccount.com, found by CONTENT not filename:
+#   android/serviceAccount.json
+#   android/Scratch Folder/fcmChannelFirebase.json   <- name matches no pattern
+# Filename patterns are not sufficient here. Before any commit that adds .json,
+# re-scan content:
+#   find . -name '*.json' -not -path '*/node_modules/*' -not -path '*/build/*' \
+#     -not -path './.git/*' -exec grep -l '"type": "service_account"' {} +
+android/serviceAccount.json
+android/Scratch Folder/
+android/app/src/main/service-account-key.json
+android/app/src/main/assets/service-account-key.json
+*serviceAccount*.json
+*service-account*.json
+*adminsdk*
+*fcmChannel*.json
+
+# n8n workflow snapshots. These embed the live ANTHROPIC_API_KEY inline (the
+# same key as .env). Ignored rather than scrubbed: n8n is being retired (AO-4,
+# zero traffic in 3 months) and these are archival.
+_workflow_snapshots/
+
+# ---------------------------------------------------------------------------
+# Client PII — REAL client records. Kept on disk, NEVER committed (history is
+# forever and this tree will be hosted). Two rules:
+#   1. Files holding real dossiers / visit notes / contacts / real Auntie comms,
+#      or ops/seed scripts that embed real records, are ignored HERE.
+#   2. Files that only USE client names as sample/fixture data (product source,
+#      tests, emulator seed, specs, docs) were PSEUDONYMIZED instead (real names
+#      swapped for fictional ones) so they can stay tracked. See scrub map.
+# Owner requirement 2026-07-16: keep the historical data, expose no client info.
+# ---------------------------------------------------------------------------
+
+# Real data backup (the migration_data.json pulled out of the APK lives here too)
+.private-client-data/
+
+# Raw client exports / snapshots
+docs/Auntie-Notes_By-Client_Most-Recent_May8.csv
+docs/KinFolk_Data_May8.csv
+voice/_seed_backup_dossiers_411_*.json
+
+# Real per-client dossiers + the real-comms voice corpus
+voice/auntieos-data/
+voice/corpus/
+web/functions/voice/corpus/
+sample_kintales.md
+scritches-RC-composer.md
+precise-JU-composer.md
+docs/auntie_voice_rules_v3.md
+voice/CLAUDE_CODE_KICKOFF_dossier-411-reseed.md
+
+# Ops/seed/migration scripts that embed or ingest real client records
+auntieos_data.py
+seed_dossiers_411.py
+test_seed_dossiers_411.py
+test_generate_live.py
+test_generate.py
+generate.py
+reconcile_prompts.py
+test_reconcile_prompts.py
+normalize_staging.py
+backfill_structural_links.py
+android/migration/scripts/
+sotu-hosting/seed_password_reset_template.js
+
+# Historical docs carrying real names that are read-only (root-owned, can't be
+# pseudonymized in place) or archival snapshots
+HANDOFF_2026-07-07.md
+web/_reference/STATE_OF_THE_UNION_2026-07-07.md
+android/_reference/STATE_OF_THE_UNION_2026-07-07.md
+docs/archive/auntieOSBugsMay8.md
+docs/archive/plans-shipped/2026-05-17-411-dossier-autogen-pipeline.md
+docs/superpowers/specs/2026-05-08-kinfolk-directory-s1-design.md
+
+# ---------------------------------------------------------------------------
+# Build output (~2GB)
+# ---------------------------------------------------------------------------
+build/
+*/build/
+android/app/build/
+web/composeApp/build/
+.gradle/
+.kotlin/
+kotlin-js-store/
+node_modules/
+.firebase/
+dist/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+*.pyc
+__pycache__/
+.pytest_cache/
+.venv/
+.seedvenv/
+venv/
+
+# ---------------------------------------------------------------------------
+# Local tooling / editor / OS
+# ---------------------------------------------------------------------------
+.DS_Store
+.idea/
+/tmp/
+*.log
+web/firestore-debug.log
+.claude/settings.local.json
+.remember/
+
+# Editor swap/backup files
+*.swp
+*.swo
+*~
+
+# Ad-hoc pre-git history. Redundant once this repo exists. Stays on disk,
+# untracked. Delete when you trust git.
+backups/
+
+# ---------------------------------------------------------------------------
+# PII-bearing docs / mockups / specs / voice docs. Real client names appear
+# as examples. Reverted to original content and excluded here (kept on disk,
+# out of the hosted repo). Owner ruling 2026-07-16. Clean docs stay tracked;
+# only these PII-bearing ones are ignored.
+# ---------------------------------------------------------------------------
+ui-ideas/
+page-specs/
+voice/
+web/functions/voice/
+web/_reference/
+android/_reference/
+docs/archive/handoffs/
+docs/archive/plans-shipped/
+docs/superpowers/specs/
+AuntieOS_CLI_Kickoff_Stage0.md
+AuntieOS_Combined_Execution_Plan.md
+docs/2026-06-01-redesign-backlog.md
+docs/2026-06-01-web-audit.md
+docs/2026-06-05-stage-0I-test-admin-sandbox.md
+docs/archive/STATE_OF_THE_UNION_2026-05-01_pre_cleanup.md
+docs/archive/auntieOSBugsMay8.md
+docs/punchlists/PUNCHLIST_2026-06-23-A8-testing.md

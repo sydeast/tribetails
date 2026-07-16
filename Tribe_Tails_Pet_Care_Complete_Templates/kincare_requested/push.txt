@@ -1,0 +1,1 @@
+I received your care request for {{kinName}}. Tap to see details.

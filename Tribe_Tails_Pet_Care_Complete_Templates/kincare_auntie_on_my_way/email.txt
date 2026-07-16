@@ -1,0 +1,9 @@
+Subject: Ooooweeeee: I am on my way to see {{kinName}}
+
+Hello. I am headed over right now for our {{serviceType}}! I shall see {{kinName}} very shortly.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

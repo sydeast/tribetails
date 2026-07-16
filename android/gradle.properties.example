@@ -1,0 +1,10 @@
+# Mapbox Configuration
+# Replace with your actual tokens from https://account.mapbox.com/access-tokens/
+MAPBOX_DOWNLOADS_TOKEN=sk.eyJ1IjoidHJpYmVhZG1pbiIsImEiOiJjbW91d2t1Ym0wMHhvMnNvOWZudHJjZ3BkIn0.bsHXNZt7TyIC_8szX7iOLA
+
+
+# Other existing gradle properties...
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+org.gradle.caching=true
+android.useAndroidX=true
+android.enableJetifier=true

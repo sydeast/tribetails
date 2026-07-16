@@ -1,0 +1,1 @@
+Update: Your visit for {{kinName}} has been cancelled. Tap to see details.

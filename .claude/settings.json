@@ -1,0 +1,20 @@
+{
+  "enabledMcpjsonServers": [
+    "n8n-remote"
+  ],
+  "enabledPlugins": {
+    "engineering-advanced-skills@claude-code-skills": true,
+    "pm-skills@claude-code-skills": true,
+    "product-skills@claude-code-skills": true,
+    "chrome-devtools-mcp@claude-plugins-official": true,
+    "firestore-native@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "cc-safe-setup": {
+      "source": {
+        "source": "github",
+        "repo": "yurukusa/cc-safe-setup"
+      }
+    }
+  }
+}

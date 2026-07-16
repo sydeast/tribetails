@@ -1,0 +1,9 @@
+Subject: Your invoice for {{kinName}}'s care is ready
+
+Hello {{kinfolkName}}. I have prepared your invoice ({{invoiceNumber}}) for {{amount}} due on {{dueDate}}. I shall handle the logistics with care.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

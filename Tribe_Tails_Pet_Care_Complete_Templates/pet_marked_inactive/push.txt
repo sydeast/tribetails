@@ -1,0 +1,1 @@
+Status: Update regarding {{kinName}}'s status. Tap to see details.

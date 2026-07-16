@@ -1,0 +1,635 @@
+package com.tribetails.auntieos.ui.media
+
+import com.composables.icons.lucide.*
+import com.composables.icons.lucide.Lucide
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.request.crossfade
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.tribetails.auntieos.data.model.*
+import com.tribetails.auntieos.ui.components.*
+import com.tribetails.auntieos.ui.theme.*
+import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.LoadingScreen
+import java.text.SimpleDateFormat
+import java.util.*
+
+@Composable
+fun MediaGalleryScreen(
+    entityId: String,
+    entityType: MediaEntityType,
+    entityName: String,
+    viewModel: MediaGalleryViewModel = viewModel(),
+    uploadViewModel: MediaUploadViewModel = viewModel(),
+    onBack: () -> Unit
+) {
+    val state by viewModel.uiState.collectAsState()
+    val filteredMedia = viewModel.filteredMedia
+    var showUploadDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(entityId, entityType) {
+        viewModel.loadMedia(entityId, entityType)
+    }
+
+    AuntieScreenScaffold(
+        title = "$entityName Media",
+        onBack = onBack,
+        actions = {
+            AuntieIconBtn(onClick = { showUploadDialog = true }) {
+                Icon(Lucide.Plus, contentDescription = "Add Media")
+            }
+        },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
+        ) {
+            // Media Type Filter
+            MediaTypeFilter(
+                selectedType = state.selectedMediaType,
+                onTypeSelected = viewModel::filterByMediaType,
+                mediaFiles = state.mediaFiles
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            if (state.isLoading) {
+                LoadingScreen(message = "Loading media...")
+            } else if (state.error != null) {
+                ErrorCard(error = state.error!!)
+            } else if (filteredMedia.isEmpty()) {
+                EmptyMediaState(
+                    message = if (state.selectedMediaType != null) {
+                        "No ${state.selectedMediaType!!.name.lowercase()} files found"
+                    } else {
+                        "No media files found"
+                    }
+                )
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(vertical = 8.dp)
+                ) {
+                    items(filteredMedia) { mediaFile ->
+                        MediaThumbnail(
+                            mediaFile = mediaFile,
+                            onDelete = { viewModel.deleteMediaFile(it) },
+                            onSetProfile = { viewModel.setProfilePhoto(it) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // Upload Dialog
+    if (showUploadDialog) {
+        MediaPickerDialog(
+            entityId = entityId,
+            entityType = entityType,
+            entityName = entityName,
+            onDismiss = { showUploadDialog = false },
+            onMediaUploaded = { mediaFileIds ->
+                // Refresh the media list after successful upload
+                viewModel.loadMedia(entityId, entityType)
+            },
+            viewModel = uploadViewModel
+        )
+    }
+}
+
+@Composable
+private fun MediaTypeFilter(
+    selectedType: MediaType?,
+    onTypeSelected: (MediaType?) -> Unit,
+    mediaFiles: List<MediaFile>
+) {
+    AuntieCard {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Text(
+                "MEDIA TYPE",
+                style = AuntieTheme.typography.labelSmall,
+                color = AuntieTheme.colors.kinfolkOrange
+            )
+            Spacer(Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // All Types
+                AuntieChip(
+                    onClick = { onTypeSelected(null) },
+                    label = "All (${mediaFiles.size})",
+                    selected = selectedType == null,
+                )
+
+                // Individual Types
+                MediaType.values().forEach { type ->
+                    val count = mediaFiles.count { it.fileType == type }
+                    if (count > 0) {
+                        AuntieChip(
+                            onClick = { onTypeSelected(type) },
+                            label = "${type.name.lowercase().replaceFirstChar { it.uppercase() }} ($count)",
+                            selected = selectedType == type,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun MediaThumbnail(
+    mediaFile: MediaFile,
+    onDelete: (String) -> Unit,
+    onSetProfile: (MediaFile) -> Unit = {},
+) {
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var showFullscreen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(8.dp))
+            .background(AuntieTheme.colors.surface2)
+            .border(0.5.dp, AuntieTheme.colors.border, RoundedCornerShape(8.dp))
+    ) {
+        when (mediaFile.fileType) {
+            MediaType.IMAGE -> {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(mediaFile.thumbnailUrl.ifBlank { mediaFile.storageUrl })
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = mediaFile.description.ifBlank { "Image" },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable { showFullscreen = true },
+                    contentScale = ContentScale.Crop
+                )
+            }
+            MediaType.VIDEO -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable { showFullscreen = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(mediaFile.thumbnailUrl.ifBlank { mediaFile.storageUrl })
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = "Video thumbnail",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                    // Play icon overlay
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(AuntieTheme.colors.background.copy(alpha = 0.7f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Lucide.Play,
+                            contentDescription = "Play",
+                            tint = AuntieTheme.colors.kinfolkOrange,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+            MediaType.DOCUMENT -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        Lucide.FileText,
+                        contentDescription = "Document",
+                        tint = AuntieTheme.colors.kinfolkOrange,
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = mediaFile.originalFileName,
+                        style = AuntieTheme.typography.labelSmall,
+                        color = AuntieTheme.colors.textPrimary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            MediaType.AUDIO -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        Lucide.Music,
+                        contentDescription = "Audio",
+                        tint = AuntieTheme.colors.kinfolkOrange,
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = mediaFile.originalFileName,
+                        style = AuntieTheme.typography.labelSmall,
+                        color = AuntieTheme.colors.textPrimary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        // Delete button
+        AuntieIconBtn(
+            onClick = { showDeleteDialog = true },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .size(24.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(AuntieTheme.colors.background.copy(alpha = 0.8f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Lucide.X,
+                    contentDescription = "Delete",
+                    tint = AuntieTheme.colors.error,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+
+        // Profile-photo badge (spec 28 item 2; bound to the real field), or, on a
+        // non-profile image, a "set as profile" action (slice 7) at the same anchor.
+        if (mediaFile.isProfilePhoto) {
+            ProfileBadge(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(6.dp),
+            )
+        } else if (mediaFile.fileType == MediaType.IMAGE) {
+            AuntieIconBtn(
+                onClick = { onSetProfile(mediaFile) },
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(6.dp)
+                    .size(24.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(AuntieTheme.colors.background.copy(alpha = 0.8f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Lucide.Star,
+                        contentDescription = "Set as profile photo",
+                        tint = AuntieTheme.colors.accent,
+                        modifier = Modifier.size(13.dp),
+                    )
+                }
+            }
+        }
+
+        // File info overlay
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .background(
+                    AuntieTheme.colors.background.copy(alpha = 0.8f),
+                    RoundedCornerShape(topEnd = 4.dp)
+                )
+                .padding(4.dp)
+        ) {
+            Text(
+                text = formatFileSize(mediaFile.fileSizeBytes),
+                style = AuntieTheme.typography.labelSmall,
+                color = AuntieTheme.colors.textPrimary
+            )
+        }
+    }
+
+        // Caption: real description + meta (uploadedAt date · uploadedBy), spec 28
+        // item 3. Fabricated/blank parts are omitted, never printed (fail loud over
+        // fake): a blank or placeholder "auntie" author drops out.
+        val caption = mediaFile.description.ifBlank { mediaFile.originalFileName }
+        if (caption.isNotBlank()) {
+            Text(
+                text = caption,
+                style = AuntieTheme.typography.titleSmall,
+                color = AuntieTheme.colors.textPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        val meta = mediaMetaLine(mediaFile.uploadedAt, mediaFile.uploadedBy)
+        if (meta.isNotBlank()) {
+            Text(
+                text = meta,
+                style = AuntieTheme.typography.labelSmall,
+                color = AuntieTheme.colors.textDim,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+
+    if (showDeleteDialog) {
+        AuntieModal(
+            onDismissRequest = { showDeleteDialog = false },
+            title = "Delete Media",
+            confirmButton = {
+                PrimaryButton(
+                    label = "Delete",
+                    onClick = {
+                        onDelete(mediaFile.id)
+                        showDeleteDialog = false
+                    }
+                )
+            },
+            dismissButton = {
+                AuntieTextBtn(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        ) {
+            Text("Are you sure you want to delete this ${mediaFile.fileType.name.lowercase()}?")
+        }
+    }
+
+    if (showFullscreen) {
+        FullscreenMediaViewer(
+            mediaFile = mediaFile,
+            onDismiss = { showFullscreen = false },
+        )
+    }
+}
+
+/**
+ * Fullscreen overlay for IMAGE / VIDEO media files. Uses ContentScale.Fit so
+ * tall portraits and wide landscapes show end-to-end with letterboxing rather
+ * than being cropped. Backdrop is the theme background so the photo isn't
+ * jarring on a dark device theme. Tap anywhere to dismiss, plus an explicit
+ * close button in the top-right for accessibility.
+ *
+ * Video files render the thumbnail at full-bleed with a play overlay - the
+ * actual playback controls are a separate concern (no ExoPlayer dep wired
+ * yet). The thumbnail-only branch makes the gallery still navigable for
+ * videos without crashing on missing-codec edge cases.
+ */
+@Composable
+private fun FullscreenMediaViewer(
+    mediaFile: MediaFile,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties       = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(AuntieTheme.colors.background)
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center,
+        ) {
+            when (mediaFile.fileType) {
+                MediaType.IMAGE, MediaType.VIDEO -> {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(mediaFile.storageUrl.ifBlank { mediaFile.thumbnailUrl })
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = mediaFile.description.ifBlank { mediaFile.originalFileName },
+                        modifier     = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit,
+                    )
+                    if (mediaFile.fileType == MediaType.VIDEO) {
+                        Box(
+                            modifier = Modifier
+                                .size(72.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(AuntieTheme.colors.background.copy(alpha = 0.6f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Lucide.Play,
+                                contentDescription = "Play",
+                                tint     = AuntieTheme.colors.kinfolkOrange,
+                                modifier = Modifier.size(36.dp),
+                            )
+                        }
+                    }
+                }
+                else -> {
+                    // Documents/audio: no inline viewer; surface filename + size.
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            if (mediaFile.fileType == MediaType.AUDIO) Lucide.Music else Lucide.FileText,
+                            contentDescription = null,
+                            tint     = AuntieTheme.colors.kinfolkOrange,
+                            modifier = Modifier.size(96.dp),
+                        )
+                        Text(
+                            text  = mediaFile.originalFileName.ifBlank { "Untitled" },
+                            style = AuntieTheme.typography.titleMedium,
+                            color = AuntieTheme.colors.textPrimary,
+                        )
+                        Text(
+                            text  = formatFileSize(mediaFile.fileSizeBytes),
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.textDim,
+                        )
+                    }
+                }
+            }
+
+            AuntieIconBtn(
+                onClick  = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+                    .size(40.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(AuntieTheme.colors.background.copy(alpha = 0.85f))
+                        .border(0.5.dp, AuntieTheme.colors.border, RoundedCornerShape(50)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Lucide.X,
+                        contentDescription = "Close",
+                        tint     = AuntieTheme.colors.textPrimary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+
+            if (mediaFile.description.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(AuntieTheme.colors.background.copy(alpha = 0.7f))
+                        .padding(16.dp),
+                ) {
+                    Text(
+                        text  = mediaFile.description,
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = AuntieTheme.colors.textPrimary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ErrorCard(error: String) {
+    AuntieCard(containerColor = AuntieTheme.colors.errorContainer) {
+        Text(
+            text = error,
+            modifier = Modifier.padding(16.dp),
+            color = AuntieTheme.colors.error
+        )
+    }
+}
+
+@Composable
+private fun EmptyMediaState(message: String) {
+    AuntieCard(
+        containerColor = AuntieTheme.colors.surface2,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(48.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    Lucide.Images,
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp),
+                    tint = AuntieTheme.colors.textDim
+                )
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = message,
+                    style = AuntieTheme.typography.titleMedium,
+                    color = AuntieTheme.colors.textDim
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Upload photos and videos to see them here",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim
+                )
+            }
+        }
+    }
+}
+
+private fun formatFileSize(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return String.format("%.1f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return String.format("%.1f MB", mb)
+    val gb = mb / 1024.0
+    return String.format("%.1f GB", gb)
+}
+
+/**
+ * Caption meta line for a media cell (spec 28 item 3): "{uploadedAt date} ·
+ * {uploadedBy}", dropping any part that is blank or fabricated. Mirrors the web
+ * `mediaMetaLine`: the ISO/Firestore [uploadedAt] is reduced to its YYYY-MM-DD
+ * prefix (no date fabrication); a blank or placeholder "auntie" [uploadedBy] is
+ * omitted rather than shown as a real author. Returns "" when nothing real
+ * remains. Pure; unit-tested.
+ */
+internal fun mediaMetaLine(uploadedAt: String, uploadedBy: String): String {
+    val date = uploadedAt.trim().take(10)
+        .takeIf { it.length == 10 && it[4] == '-' && it[7] == '-' }
+        .orEmpty()
+    val author = uploadedBy.trim()
+        .takeIf { it.isNotBlank() && !it.equals("auntie", ignoreCase = true) }
+        .orEmpty()
+    return listOf(date, author).filter { it.isNotBlank() }.joinToString(" · ")
+}
+
+/** Small teal "Profile" pill marking the household's profile photo (spec 28 item 2). */
+@Composable
+private fun ProfileBadge(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(AuntieTheme.colors.accent.copy(alpha = 0.92f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = "Profile",
+            style = AuntieTheme.typography.labelSmall,
+            color = AuntieTheme.colors.background,
+        )
+    }
+}

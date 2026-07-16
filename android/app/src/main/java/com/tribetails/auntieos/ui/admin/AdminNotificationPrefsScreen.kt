@@ -1,0 +1,256 @@
+package com.tribetails.auntieos.ui.admin
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.Lock
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.TriangleAlert
+import com.tribetails.auntieos.AuntieOSApp
+import com.tribetails.auntieos.data.model.AdminNotificationPrefs
+import com.tribetails.auntieos.data.model.NOTIF_CHANNELS
+import com.tribetails.auntieos.data.model.NotificationCatalogEntry
+import com.tribetails.auntieos.data.model.NotificationMatrix
+import com.tribetails.auntieos.data.model.STREAM_BUSINESS
+import com.tribetails.auntieos.data.model.STREAM_STAFF
+import com.tribetails.auntieos.data.model.adminReceives
+import com.tribetails.auntieos.data.model.channelForcedForUser
+import com.tribetails.auntieos.data.model.channelForcedReason
+import com.tribetails.auntieos.data.model.channelOfferedToUser
+import com.tribetails.auntieos.data.model.notifChannelLabel
+import com.tribetails.auntieos.data.model.sectionedNotifEntries
+import com.tribetails.auntieos.ui.components.AuntieBanner
+import com.tribetails.auntieos.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
+import com.tribetails.auntieos.ui.components.AuntieStatusPill
+import com.tribetails.auntieos.ui.components.AuntieStatusTone
+import com.tribetails.auntieos.ui.components.AuntieToggle
+import com.tribetails.auntieos.ui.components.DenPanel
+import com.tribetails.auntieos.ui.components.DenScreenHeading
+import com.tribetails.auntieos.ui.components.EmptyHint
+import com.tribetails.auntieos.ui.theme.AuntieTheme
+import kotlinx.coroutines.launch
+
+/**
+ * The operator's OWN notification receive-prefs (Android mirror of the web screen).
+ *
+ * This is the user-side counterpart to the Business Settings matrix (the gate). The gate
+ * decides which channels are AVAILABLE per stream; here the operator chooses, within
+ * those, what actually reaches them. Two stacked sections mirror the operator's two
+ * hats: "As the owner" (business stream: bookings, invoices, payments, security,
+ * ratings) and "As the Auntie" (staff stream: visit notes, KinTale comments, pet
+ * updates, schedule digest). Kinfolk copies never show here; a business+kinfolk key
+ * appears exactly once, in the owner section. Each entry shows only the channels the
+ * stream's gate enabled; a locked or catalog-required channel is forced on and rendered
+ * read-only with its reason (the operator's lockReason when written, else the built-in
+ * fallback). Backed by getMyAdminNotificationPrefs / saveMyAdminNotificationPrefs
+ * (staff/{uid}.notificationPrefs). Fail-loud on load/save errors.
+ */
+
+/** One receive section on the prefs screen: a stream plus its heading copy. */
+private data class ReceiveSection(val stream: String, val title: String, val subtitle: String)
+
+private val RECEIVE_SECTIONS = listOf(
+    ReceiveSection(
+        stream = STREAM_BUSINESS,
+        title = "As the owner",
+        subtitle = "Bookings, invoices, payments, security, and ratings. The business end of things.",
+    ),
+    ReceiveSection(
+        stream = STREAM_STAFF,
+        title = "As the Auntie",
+        subtitle = "Visit notes, KinTale comments, pet updates, and the schedule digest. The hands-on side.",
+    ),
+)
+
+@Composable
+fun AdminNotificationPrefsScreen(onBack: () -> Unit) {
+    val c = AuntieTheme.colors
+    val repo = remember { AuntieOSApp.instance.repository }
+    val scope = rememberCoroutineScope()
+
+    var matrix by remember { mutableStateOf<NotificationMatrix?>(null) }
+    var prefs by remember { mutableStateOf<AdminNotificationPrefs?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var saveError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        loading = true
+        loadError = null
+        // The gate (which channels the business enabled) and the admin's own prefs.
+        repo.getBusinessNotificationOverrides()
+            .onSuccess { matrix = it }
+            .onFailure { loadError = it.message ?: "Couldn't load the notification gate" }
+        repo.getMyAdminNotificationPrefs()
+            .onSuccess { prefs = it }
+            .onFailure {
+                val msg = it.message ?: "Couldn't load your preferences"
+                loadError = if (loadError == null) msg else "$loadError  $msg"
+            }
+        loading = false
+    }
+
+    // Optimistic write of a single channel toggle; reverts to the prior prefs on failure.
+    fun persist(key: String, channel: String, value: Boolean) {
+        val prev = prefs ?: return
+        val next = prev.withByKeyChannel(key, channel, value)
+        prefs = next
+        scope.launch {
+            repo.saveMyAdminNotificationPrefs(next)
+                .onSuccess { saveError = null }
+                .onFailure { saveError = it.message ?: "Save failed"; prefs = prev }
+        }
+    }
+
+    AuntieScreenScaffold(title = "Your notifications", onBack = onBack, imePaddingEnabled = true) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+        ) {
+            DenScreenHeading(
+                kicker = "The Den · Account",
+                title = "What you",
+                accentTail = "receive.",
+                subtitle = "Two hats, two stacks: what reaches you as the owner and what reaches you " +
+                    "as the Auntie, within the channels your business enabled. Locked channels are " +
+                    "required and can't be turned off.",
+            )
+            Spacer(Modifier.height(20.dp))
+
+            loadError?.let {
+                AuntieBanner(tone = AuntieBannerTone.Error, title = "Couldn't load your notifications", icon = Lucide.TriangleAlert) {
+                    Text(it, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+            saveError?.let {
+                AuntieBanner(tone = AuntieBannerTone.Error, title = "Save failed", icon = Lucide.TriangleAlert) {
+                    Text(it, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+
+            val m = matrix
+            val p = prefs
+            when {
+                loading -> EmptyHint("Loading your notifications…")
+                m == null || p == null -> if (loadError == null) EmptyHint("Couldn't load your notifications.", error = true)
+                else -> {
+                    val anyRow = RECEIVE_SECTIONS.any { s -> m.catalog.any { it.adminReceives(m, s.stream) } }
+                    if (!anyRow) {
+                        EmptyHint(
+                            "Your business hasn't enabled any notifications for you yet. Turn channels On in " +
+                                "Admin Settings, under Per-notification settings.",
+                        )
+                    } else {
+                        RECEIVE_SECTIONS.forEach { section ->
+                            val rows = m.catalog.filter { it.adminReceives(m, section.stream) }
+                            if (rows.isNotEmpty()) {
+                                DenPanel(title = section.title, subtitle = section.subtitle) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        // Rows grouped under the shared workflow sections;
+                                        // unmatched categories land in a trailing "Other".
+                                        sectionedNotifEntries(rows, section.stream).forEach { (sectionTitle, sectionRows) ->
+                                            Text(
+                                                sectionTitle,
+                                                style = AuntieTheme.typography.labelMedium,
+                                                color = c.textPrimary,
+                                                modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp),
+                                            )
+                                            sectionRows.forEach { entry ->
+                                                AdminReceiveRow(
+                                                    entry = entry,
+                                                    matrix = m,
+                                                    prefs = p,
+                                                    stream = section.stream,
+                                                    onToggle = { ch, v -> persist(entry.key, ch, v) },
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                Spacer(Modifier.height(16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** One notification's receive controls: a labelled toggle per channel the STREAM's gate
+ *  enabled. Forced channels render read-only (on) with their reason. */
+@Composable
+private fun AdminReceiveRow(
+    entry: NotificationCatalogEntry,
+    matrix: NotificationMatrix,
+    prefs: AdminNotificationPrefs,
+    stream: String,
+    onToggle: (String, Boolean) -> Unit,
+) {
+    val c = AuntieTheme.colors
+    val offered = NOTIF_CHANNELS.filter { matrix.channelOfferedToUser(entry, it, stream) }
+    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                entry.displayTitle(),
+                style = AuntieTheme.typography.bodyMedium,
+                color = c.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            // Always-on for THIS stream (per-stream scope, not the flat catalog flag).
+            if (entry.alwaysEnabledFor(stream)) {
+                AuntieStatusPill(label = "Required", tone = AuntieStatusTone.Neutral, leadingIcon = Lucide.Lock)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        offered.forEach { ch ->
+            val forced = matrix.channelForcedForUser(entry, ch, stream)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(notifChannelLabel(ch), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    if (forced) {
+                        Text(matrix.channelForcedReason(entry, ch, stream), style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+                    }
+                }
+                if (forced) {
+                    AuntieStatusPill(label = "Required", tone = AuntieStatusTone.Neutral, leadingIcon = Lucide.Lock)
+                    Spacer(Modifier.width(8.dp))
+                    // Read-only: forced on by the business, the operator can't turn it off.
+                    AuntieToggle(checked = true, enabled = false, onCheckedChange = {})
+                } else {
+                    AuntieToggle(
+                        checked = prefs.effectiveReceive(entry, ch),
+                        onCheckedChange = { onToggle(ch, it) },
+                    )
+                }
+            }
+        }
+    }
+}

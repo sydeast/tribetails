@@ -1,0 +1,24 @@
+package com.tribetails.auntieos.web.ui.shell
+
+import com.tribetails.auntieos.web.data.NotificationEntry
+
+/**
+ * Shell notification-bell badge derivations.
+ *
+ * The "unread" signal is an honest proxy: [NotificationEntry] has no per-recipient read
+ * flag, so a still-`pending` dispatch is the closest available signal (the same proxy the
+ * Notifications screen uses). Centralized here so the shell bell and the Notifications
+ * screen share one definition rather than duplicating `count { status == "pending" }`.
+ */
+fun unreadNotificationCount(entries: List<NotificationEntry>): Int =
+    entries.count { it.status.equals("pending", ignoreCase = true) }
+
+/** Whether the shell bell shows its unread "ping" dot. */
+fun bellShowsPing(unreadCount: Int): Boolean = unreadCount > 0
+
+/** Compact badge label, capped at "99+"; null when nothing is unread (draw no badge). */
+fun bellBadgeLabel(unreadCount: Int): String? = when {
+    unreadCount <= 0 -> null
+    unreadCount > 99 -> "99+"
+    else -> unreadCount.toString()
+}
