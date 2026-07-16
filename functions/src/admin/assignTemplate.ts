@@ -29,18 +29,24 @@ export async function assignTemplateHandler(
     throw new HttpsError('not-found', `Template not found: ${args.templateId}`);
   }
 
-  await db().doc(`notificationTemplateBindings/${args.catalogKey}`).set(
-    {
-      catalogKey: args.catalogKey,
-      templateId: args.templateId,
-      audience: args.audience ?? null,
-      triggerKey: args.triggerKey ?? args.catalogKey,
-      active: args.active,
-      updatedAt: FieldValue.serverTimestamp(),
-      updatedBy: uid,
-    },
-    { merge: true },
-  );
+  const binding: Record<string, unknown> = {
+    catalogKey: args.catalogKey,
+    templateId: args.templateId,
+    audience: args.audience ?? null,
+    active: args.active,
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: uid,
+  };
+  // AO-30 / WARNING-48: write triggerKey ONLY when the caller supplied one.
+  // The old `triggerKey: args.triggerKey ?? args.catalogKey` on a {merge:true}
+  // write meant any re-assign that omitted triggerKey (e.g. just toggling
+  // `active`, or swapping the templateId) silently reset a previously-set custom
+  // trigger back to the catalogKey. Dispatch (resolveTemplateId) keys off the
+  // doc-id catalogKey and ignores triggerKey, so omitting it here changes nothing
+  // operationally; it only stops the clobber.
+  if (args.triggerKey !== undefined) binding.triggerKey = args.triggerKey;
+
+  await db().doc(`notificationTemplateBindings/${args.catalogKey}`).set(binding, { merge: true });
 
   logEvent({
     severity: 'info',
