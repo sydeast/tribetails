@@ -1,0 +1,315 @@
+/**
+ * DenScreenKit styling. Every colour, radius, and face comes from
+ * styles/tokens.css, which is itself the port of the live Compose theme. There
+ * is not one literal colour in this file on purpose: the wasm app has a single
+ * theme source and this one should too, or the two drift within a sprint.
+ *
+ * Tone works by attribute rather than by an inline style from TS: the component
+ * writes data-tone="teal" and the block below resolves it to a token. That keeps
+ * the "which token is teal" answer in one place, and keeps the TSX from ever
+ * holding a colour value it could get wrong.
+ */
+
+/* ── tone resolution ─────────────────────────────────────────────────────────
+   Mirrors AuntieTones.kt `AuntieStatusTone.color(c)` exactly. */
+[data-tone] {
+  --den-tone: var(--color-primary);
+}
+[data-tone='neutral'] {
+  --den-tone: var(--color-text-dim);
+}
+[data-tone='success'] {
+  --den-tone: var(--color-success);
+}
+[data-tone='warning'] {
+  --den-tone: var(--color-warning);
+}
+[data-tone='error'] {
+  --den-tone: var(--color-error);
+}
+[data-tone='teal'] {
+  --den-tone: var(--color-accent);
+}
+[data-tone='purple'] {
+  --den-tone: var(--color-tertiary);
+}
+[data-tone='orange'] {
+  --den-tone: var(--color-primary);
+}
+[data-tone='muted'] {
+  --den-tone: var(--color-text-faint);
+}
+
+/* ── page heading ─────────────────────────────────────────────────────────── */
+
+.den-heading {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  width: 100%;
+}
+
+.den-heading-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.den-heading-kicker {
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--color-primary);
+  margin: 0;
+}
+
+.den-heading-title {
+  font-family: var(--type-display-md-family);
+  font-size: var(--type-display-md-size);
+  font-weight: var(--type-display-md-weight);
+  letter-spacing: var(--type-display-md-tracking);
+  color: var(--color-text-primary);
+  margin: 6px 0 0;
+}
+
+.den-heading-accent {
+  font-style: italic;
+  color: var(--color-primary);
+}
+
+.den-heading-subtitle {
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  font-weight: var(--type-body-md-weight);
+  line-height: var(--type-body-md-line);
+  color: var(--color-text-dim);
+  margin: 6px 0 0;
+}
+
+.den-heading-trailing {
+  flex: none;
+}
+
+/* ── stat card ───────────────────────────────────────────────────────────── */
+
+.den-stat {
+  display: block;
+  width: 100%;
+  padding: 16px;
+  text-align: left;
+  background: var(--color-surface-glass);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.den-stat--button {
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.den-stat--button:hover {
+  background: var(--color-surface);
+  border-color: var(--den-tone);
+  transform: translateY(-3px);
+}
+
+.den-stat--button:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .den-stat {
+    transition: none;
+  }
+  .den-stat--button:hover {
+    transform: none;
+  }
+}
+
+/* The hero stat: a tone wash from the top-right corner over the glass base,
+   matching the Compose radial drawBehind. */
+.den-stat--feature {
+  border-color: var(--den-tone);
+  background:
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--den-tone) 30%, transparent),
+      transparent 70%
+    ),
+    var(--color-surface-glass);
+}
+
+.den-stat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.den-stat-label {
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-dim);
+}
+
+.den-stat-value {
+  font-family: var(--type-headline-lg-family);
+  font-size: var(--type-headline-lg-size);
+  font-weight: 600;
+  letter-spacing: var(--type-headline-lg-tracking);
+  color: var(--color-text-primary);
+  margin-top: 2px;
+}
+
+.den-stat--feature .den-stat-value {
+  font-family: var(--type-display-lg-family);
+  font-size: var(--type-display-lg-size);
+  letter-spacing: var(--type-display-lg-tracking);
+  color: var(--den-tone);
+}
+
+/* Loading and unknown are dimmed: a number is an assertion and these two are not
+   making one. They must never carry the confidence of a real value. */
+.den-stat-value--pending,
+.den-stat-value--unknown {
+  color: var(--color-text-faint);
+}
+
+.den-stat--feature .den-stat-value--pending,
+.den-stat--feature .den-stat-value--unknown {
+  color: var(--color-text-faint);
+}
+
+.den-stat-trend {
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line);
+  color: var(--color-text-dim);
+}
+
+.den-stat-trend--error {
+  color: var(--color-error);
+}
+
+/* ── section panel ───────────────────────────────────────────────────────── */
+
+.den-panel {
+  background: var(--color-surface-glass);
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-card-lg);
+  padding: 20px;
+  transition: transform 140ms ease;
+}
+
+.den-panel--lift:hover {
+  transform: translateY(-3px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .den-panel {
+    transition: none;
+  }
+  .den-panel--lift:hover {
+    transform: none;
+  }
+}
+
+.den-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.den-panel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-card);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.den-panel-toggle:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.den-panel-heading {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.den-panel-title {
+  font-family: var(--type-headline-sm-family);
+  font-size: var(--type-headline-sm-size);
+  font-weight: var(--type-headline-sm-weight);
+  color: var(--color-text-primary);
+}
+
+.den-panel-subtitle {
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line);
+  color: var(--color-text-dim);
+}
+
+.den-panel-chevron {
+  flex: none;
+  color: var(--color-text-dim);
+}
+
+.den-panel-trailing {
+  flex: none;
+}
+
+.den-panel-content {
+  margin-top: 14px;
+}
+
+/* ── service pill ────────────────────────────────────────────────────────── */
+
+.den-pill {
+  display: inline-block;
+  padding: 4px 9px;
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--den-tone) 14%, transparent);
+  color: var(--den-tone);
+  font-family: var(--type-mono-family);
+  font-size: 10.5px;
+  font-weight: var(--type-mono-weight);
+  text-transform: lowercase;
+}
+
+/* ── hints ───────────────────────────────────────────────────────────────── */
+
+.den-hint {
+  margin: 0;
+  padding: 8px 0;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line);
+  color: var(--color-text-dim);
+}
+
+.den-hint--error {
+  color: var(--color-error);
+}

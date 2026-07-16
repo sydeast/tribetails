@@ -1,0 +1,70 @@
+/**
+ * IconTile, ported from AuntieIconTile.kt.
+ *
+ * Every colour derives from --tile-tone, which IconTile.tsx points at a token per
+ * tone, and every dimension from --tile-size. Compose composited the tone at
+ * several alphas (wash near, wash far, rim); color-mix is the CSS equivalent and
+ * keeps this file free of literal colours, so a token edit reaches all eight
+ * tones at once.
+ *
+ * The wash steps up in dark, matching the isDark branch in the Compose source:
+ * the same alpha reads as invisible on navy.
+ */
+
+.icon-tile {
+  --tile-size: 42px;
+  --tile-tone: var(--color-text-dim);
+  /* washAlpha in the Compose source, and washAlpha * 0.55 for the far stop. */
+  --tile-wash: 14%;
+  --tile-wash-far: 7.7%;
+  --tile-rim: 35%;
+
+  box-sizing: border-box;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: var(--tile-size);
+  height: var(--tile-size);
+  /* Compose: (size * 0.28).coerceAtMost(14.dp). --radius-14 is that exact cap. */
+  border-radius: min(calc(var(--tile-size) * 0.28), var(--radius-14));
+  border: var(--border-hairline) solid color-mix(in srgb, var(--tile-tone) var(--tile-rim), transparent);
+  background-image: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--tile-tone) var(--tile-wash), transparent),
+    color-mix(in srgb, var(--tile-tone) var(--tile-wash-far), transparent)
+  );
+  /* Sits on the glass surface so the wash reads on any background, exactly as the
+     Compose tile assumed a glass parent. */
+  background-color: var(--color-surface-glass);
+  color: var(--tile-tone);
+}
+
+[data-theme='dark'] .icon-tile {
+  --tile-wash: 20%;
+  --tile-wash-far: 11%;
+}
+
+/* Brand-gradient backdrop. The rim goes neutral and the glyph switches to cream,
+   which is what the Compose source resolves to in BOTH themes for this branch
+   (dark returns textPrimary, which IS brand cream; light returns background,
+   which is also brand cream). The contrast that matters is against the brand
+   stops, not against the page, so it does not follow the theme. */
+.icon-tile-gradient {
+  background-image: var(--tile-gradient);
+  border-color: color-mix(in srgb, var(--color-border) 60%, transparent);
+  color: var(--tt-brand-cream);
+}
+
+.icon-tile-glyph {
+  display: grid;
+  place-items: center;
+  /* The Den glyph-in-tile ratio. */
+  width: calc(var(--tile-size) * 0.52);
+  height: calc(var(--tile-size) * 0.52);
+}
+
+.icon-tile-glyph svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

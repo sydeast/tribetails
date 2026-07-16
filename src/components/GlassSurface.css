@@ -1,0 +1,18 @@
+/**
+ * GlassSurface, ported from LiquidGlassSurface in AuntieGlass.kt.
+ *
+ * The rim is --color-border, not the Compose source's white-at-35%. A literal
+ * white rim is a hardcoded color that only happens to work on the light cream
+ * scheme; --color-border is the same intent expressed as a token and it follows
+ * the theme into dark instead of glowing.
+ */
+
+.glass-surface {
+  border-radius: var(--radius-card-lg);
+  border: var(--border-hairline) solid var(--color-border);
+  background: var(--color-surface-glass);
+  /* Translucent fill plus a blur of what shows through: the fill alone reads as
+     flat wash, the blur is what makes it glass. */
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
