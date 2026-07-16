@@ -25,6 +25,7 @@ vi.mock('firebase-admin/firestore', async () => {
 
 import { runInvoiceRemindersScan, runInvoiceOverdueScan } from '../src/scheduled/invoiceRemindersCron';
 import { runKincareReminderScan } from '../src/scheduled/kincareReminderCron';
+import { runScheduleDigestScan } from '../src/scheduled/scheduleDigestCron';
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
@@ -232,5 +233,62 @@ describe('WARNING-25: safety ceiling fails LOUD (CRITICAL cap log)', () => {
     expect(capLog).toBeDefined();
     expect(capLog?.[0]?.severity).toBe('critical');
     expect(capLog?.[0]?.function).toBe('invoiceRemindersCron');
+  });
+});
+
+describe('WARNING-25: schedule digest cron paginates past the cap', () => {
+  it('collects every confirmed/approved booking in the next-24h window across pages, skipping out-of-window and non-matching statuses in memory', async () => {
+    const now = 1_000_000_000_000;
+    const inWindow = now + 6 * 60 * 60 * 1000; // 6h from now, inside 24h
+    const pastStart = now - 2 * 60 * 60 * 1000; // already started, excluded
+    const tooFar = now + 30 * 60 * 60 * 1000; // beyond 24h, excluded
+
+    // 1400 docs through an unfiltered paged collection-group. Only confirmed/
+    // approved AND in-window count. Interspersed pending + out-of-window docs
+    // prove the in-memory filter, and 1400 > one 500-page proves pagination.
+    const rows: Row[] = Array.from({ length: 1400 }, (_, i) => {
+      const status = i % 7 === 0 ? 'pending' : i % 3 === 0 ? 'approved' : 'confirmed';
+      const startMs = i % 5 === 0 ? tooFar : i % 5 === 1 ? pastStart : inWindow;
+      return {
+        id: `dg${String(i).padStart(4, '0')}`,
+        data: { status, startTime: { toMillis: () => startMs } },
+      };
+    });
+    const expected = rows.filter(
+      (r) =>
+        (r.data['status'] === 'confirmed' || r.data['status'] === 'approved') &&
+        (r.data['startTime'] as { toMillis: () => number }).toMillis() === inWindow,
+    );
+
+    const ctx = pagedDbMock(rows);
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const items = await runScheduleDigestScan(now);
+
+    // Every in-window confirmed/approved booking present — none dropped past 1000.
+    expect(items).toHaveLength(expected.length);
+    expect(items.length).toBeGreaterThan(500); // genuinely spans multiple pages
+    // Sorted ascending by startTimeMs.
+    for (let i = 1; i < items.length; i += 1) {
+      expect(items[i].startTimeMs as number).toBeGreaterThanOrEqual(items[i - 1].startTimeMs as number);
+    }
+    // No silent cap.
+    expect(
+      mocks.logEvent.mock.calls.some((c) => c[0]?.event === 'cron.pagination.cap-hit'),
+    ).toBe(false);
+  });
+
+  it('returns an empty digest when nothing falls in the window (no notification enqueued by the wrapper path)', async () => {
+    const now = 1_000_000_000_000;
+    const tooFar = now + 30 * 60 * 60 * 1000;
+    const rows: Row[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `x${i}`,
+      data: { status: 'confirmed', startTime: { toMillis: () => tooFar } },
+    }));
+    const ctx = pagedDbMock(rows);
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const items = await runScheduleDigestScan(now);
+    expect(items).toHaveLength(0);
   });
 });

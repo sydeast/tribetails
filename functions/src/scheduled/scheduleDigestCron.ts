@@ -3,8 +3,10 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { enqueueNotification } from '../notifications/dispatcher';
+import { paginateQuery } from '../lib/paginateCollectionGroup';
 
 const DIGEST_WINDOW_MS = 24 * 60 * 60 * 1000;
+const DIGEST_STATUSES = new Set(['confirmed', 'approved']);
 
 type BookingDoc = {
   status?: string;
@@ -16,25 +18,31 @@ type BookingDoc = {
 };
 
 /**
- * Runs daily 07:00 ET. Builds a digest of next-24h confirmed bookings
- * and enqueues `schedule.upcoming.digest` for businessAdmins.
+ * Builds the next-24h digest of confirmed/approved bookings by draining the
+ * ENTIRE bookings collection-group page by page (WARNING-25). The old single
+ * `.limit(1000)` silently dropped every upcoming booking past the cap from the
+ * digest — the exact leg the WARNING-25 remediation paginated for
+ * invoiceRemindersCron and kincareReminderCron but never applied here.
+ *
+ * The status + 24h-window filter runs IN-MEMORY inside the page callback, not
+ * as a Firestore `.where()`, because a filtered collection-group query combined
+ * with `.orderBy(__name__)` requires a composite index we have not deployed; an
+ * unfiltered `collectionGroup().orderBy(documentId())` uses only the automatic
+ * single-field index (same rationale as kincareReminderCron). Exported for testing.
  */
-export const scheduleDigestCron = onSchedule(
-  { schedule: 'every day 07:00', timeZone: 'America/New_York', secrets: ['SENTRY_DSN'] },
-  wrapScheduled('scheduleDigestCron', async () => {
-    const now = Date.now();
-    const windowEnd = now + DIGEST_WINDOW_MS;
-    const snap = await db()
-      .collectionGroup('bookings')
-      .where('status', 'in', ['confirmed', 'approved'])
-      .limit(1000)
-      .get();
-    const items: Array<Record<string, unknown>> = [];
-    for (const docSnap of snap.docs) {
+export async function runScheduleDigestScan(
+  now: number = Date.now(),
+): Promise<Array<Record<string, unknown>>> {
+  const windowEnd = now + DIGEST_WINDOW_MS;
+  const items: Array<Record<string, unknown>> = [];
+  await paginateQuery(
+    db().collectionGroup('bookings'),
+    (docSnap) => {
       const data = docSnap.data() as BookingDoc;
+      if (!data.status || !DIGEST_STATUSES.has(data.status)) return;
       const startMs = data.startTime?.toMillis?.();
-      if (!startMs) continue;
-      if (startMs < now || startMs > windowEnd) continue;
+      if (!startMs) return;
+      if (startMs < now || startMs > windowEnd) return;
       const familyId = docSnap.ref.parent.parent?.id;
       items.push({
         bookingId: docSnap.id,
@@ -43,9 +51,24 @@ export const scheduleDigestCron = onSchedule(
         auntieDisplayName: data.auntieDisplayName ?? null,
         startTimeMs: startMs,
       });
-    }
+    },
+    { functionName: 'scheduleDigestCron' },
+  );
+  items.sort((a, b) => (a.startTimeMs as number) - (b.startTimeMs as number));
+  return items;
+}
+
+/**
+ * Runs daily 07:00 ET. Builds a digest of next-24h confirmed bookings
+ * and enqueues `schedule.upcoming.digest` for businessAdmins.
+ */
+export const scheduleDigestCron = onSchedule(
+  { schedule: 'every day 07:00', timeZone: 'America/New_York', secrets: ['SENTRY_DSN'] },
+  wrapScheduled('scheduleDigestCron', async () => {
+    const now = Date.now();
+    const windowEnd = now + DIGEST_WINDOW_MS;
+    const items = await runScheduleDigestScan(now);
     if (items.length === 0) return;
-    items.sort((a, b) => (a.startTimeMs as number) - (b.startTimeMs as number));
     try {
       await enqueueNotification({
         key: 'schedule.upcoming.digest',
