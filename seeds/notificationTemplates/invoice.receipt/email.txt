@@ -1,0 +1,11 @@
+Subject: Here's your receipt
+
+Hi {{kinfolkName}}, thank you! This is your receipt for invoice {{invoiceNumber}}, paid in full at {{amount}}.
+
+Keep it for your records. I appreciate you.
+
+View your receipt here: []
+
+With thanks, Auntie
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.

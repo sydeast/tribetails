@@ -1,0 +1,1 @@
+Visit cancelled. The {{serviceType}} for {{kinName}} on {{bookingDate}} is off the books. Tap for details.

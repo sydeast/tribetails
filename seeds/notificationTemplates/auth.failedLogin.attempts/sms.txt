@@ -1,0 +1,1 @@
+Tribe Tails security: {{attemptsInWindow}} failed sign-in attempts on your account ({{email}}). If this wasn't you, change your password now and contact Auntie.

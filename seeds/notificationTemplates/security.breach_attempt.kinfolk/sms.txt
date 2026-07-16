@@ -1,0 +1,1 @@
+Tribe Tails SECURITY: {{kinfolkEmail}} completed an unrequested password reset. IP {{ip}}. Incident securityIncidents/{{incidentId}}. Investigate now.

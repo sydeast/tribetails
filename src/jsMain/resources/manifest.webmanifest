@@ -1,0 +1,27 @@
+{
+  "name": "MyTribe — Kinfolk Portal",
+  "short_name": "MyTribe",
+  "description": "Tribe Tails kinfolk portal — schedule, KinTales, Kin profiles, invoices.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FBFBF9",
+  "theme_color": "#DF8431",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["lifestyle", "utilities"],
+  "lang": "en"
+}

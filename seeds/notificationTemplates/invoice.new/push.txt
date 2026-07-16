@@ -1,0 +1,1 @@
+Your invoice is ready. Invoice {{invoiceNumber}} for {{amount}} is due {{dueDate}}. Tap to view.

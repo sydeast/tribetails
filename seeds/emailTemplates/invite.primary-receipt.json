@@ -1,0 +1,6 @@
+{
+  "key": "invite.primary-receipt",
+  "subject": "Invite sent to {{invitedEmail}}",
+  "body": "Confirming the invite to {{invitedEmail}} as Kin {{secondaryLabel}} on {{tribeName}} has been sent.\n\nIt expires in {{expiresInDays}} days.",
+  "html": null
+}

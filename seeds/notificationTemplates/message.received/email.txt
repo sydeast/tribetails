@@ -1,0 +1,11 @@
+Subject: New message from {{kinfolkName}}
+
+{{kinfolkName}} just sent you a message:
+
+"{{preview}}"
+
+Hop into the inbox to reply.
+
+Open it here: []
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.

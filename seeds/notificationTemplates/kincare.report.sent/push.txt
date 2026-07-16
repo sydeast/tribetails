@@ -1,0 +1,1 @@
+A new KinTale is ready. Your story from today's visit with {{kinName}} is waiting. Tap to read.

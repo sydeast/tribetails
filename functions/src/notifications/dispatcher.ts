@@ -1,0 +1,247 @@
+import { FieldValue } from 'firebase-admin/firestore';
+import { db } from '../lib/firestoreAdmin';
+import { logEvent } from '../lib/logger';
+import { getNotificationDef } from './catalog';
+import { loadBusinessOverride, loadUserPrefs, resolveChannels, streamForRecipient } from './prefs';
+import { resolveRecipients } from './recipientResolver';
+import type {
+  Channel,
+  EnqueueArgs,
+  NotificationDef,
+  NotificationTargetType,
+  ResolvedChannels,
+} from './types';
+
+const ALL_CHANNELS: Channel[] = ['email', 'sms', 'push'];
+
+/**
+ * Resolves the originating entity (targetType + targetId) for a dispatch so the
+ * notification doc carries a deep-link reference for open-linked + quick
+ * approve/deny in the client.
+ *
+ * Precedence:
+ *   1. Explicit args.targetType / args.targetId from a caller that knows the
+ *      entity (booking confirm/request, invoice issued, kintale).
+ *   2. Derived from well-known id keys in `args.data` so existing callers that
+ *      already thread these ids get a target ref for free.
+ *   3. '' for both when nothing is resolvable (always-safe default; never throws).
+ */
+function resolveTargetRef(args: EnqueueArgs): {
+  targetType: NotificationTargetType;
+  targetId: string;
+} {
+  const explicitType = args.targetType;
+  const explicitId = typeof args.targetId === 'string' ? args.targetId : '';
+  if (explicitType && explicitId !== '') {
+    return { targetType: explicitType, targetId: explicitId };
+  }
+
+  const data = args.data ?? {};
+  const str = (v: unknown): string => (typeof v === 'string' && v.length > 0 ? v : '');
+
+  // Ordered most-specific first. Booking/invoice/kintale are actionable entities;
+  // kinfolk is the catch-all household reference.
+  const invoiceId = str(data.invoiceId);
+  if (invoiceId) return { targetType: 'invoice', targetId: invoiceId };
+
+  const taleId = str(data.taleId) || str(data.reportId);
+  if (taleId) return { targetType: 'kintale', targetId: taleId };
+
+  const bookingId = str(data.bookingId) || str(data.visitId) || str(data.batchId);
+  if (bookingId) return { targetType: 'booking', targetId: bookingId };
+
+  const kinfolkId = str(data.kinfolkId) || str(data.familyId);
+  if (kinfolkId) return { targetType: 'kinfolk', targetId: kinfolkId };
+
+  return { targetType: '', targetId: '' };
+}
+
+/**
+ * Single entrypoint for emitting any auto-notification.
+ *
+ * Behavior by deliveryMode:
+ *   trigger   → writes notifications/{auto} → onCreate trigger fans out to channel subdocs
+ *   debounced → writes pendingNotifications/{uid}_{key}; bumps fireAfter on collision
+ *   batched   → appends to notificationBatch/{uid}/{batchKey}/items/{auto}
+ *   scheduled → writes scheduledNotifications/{auto} with fireAt
+ *
+ * Caller responsibilities:
+ *   - Provide recipientUid for specificUid/kinfolkAcct resolvers.
+ *   - Provide args.data.assignedAuntieUid for auntieAssignedToKincare resolver.
+ *   - Provide fireAtMs for 'scheduled' mode (defaults to "now" if omitted, logs warning).
+ *
+ * Returns the list of dispatch document IDs written (one per recipient).
+ * Empty array = all recipients had every channel suppressed by prefs.
+ */
+export async function enqueueNotification(args: EnqueueArgs): Promise<string[]> {
+  const def = getNotificationDef(args.key);
+
+  // External keys are delivered by another system (e.g., Firebase Auth Console
+  // sends password.reset emails). The catalog row exists for documentation /
+  // cross-reference only, short-circuit before resolver/channel fan-out.
+  if (def.external === true) {
+    logEvent({
+      severity: 'info',
+      function: 'enqueueNotification',
+      event: 'notification.external.skipped',
+      extra: {
+        key: def.key,
+        message: `[external] skipping ${def.key}, delivered by external system`,
+      },
+    });
+    return [];
+  }
+
+  const tryResolve = async (resolver?: typeof def.recipientResolver) => {
+    try {
+      return await resolveRecipients(def, args, resolver);
+    } catch (err) {
+      logEvent({
+        severity: 'info',
+        function: 'enqueueNotification',
+        event: 'resolver.skipped',
+        extra: {
+          key: def.key,
+          resolver: resolver ?? def.recipientResolver,
+          err: (err as Error)?.message,
+        },
+      });
+      return [];
+    }
+  };
+  const primary = await tryResolve();
+  const secondary = def.secondaryResolver ? await tryResolve(def.secondaryResolver) : [];
+  if (primary.length === 0 && secondary.length === 0) {
+    throw new Error(
+      `enqueueNotification(${def.key}): no recipients resolved from any resolver`,
+    );
+  }
+  const seen = new Set<string>();
+  const recipients = [...primary, ...secondary].filter((r) => {
+    if (seen.has(r.uid)) return false;
+    seen.add(r.uid);
+    return true;
+  });
+
+  const writtenIds: string[] = [];
+  for (const recipient of recipients) {
+    const [userPrefs, businessOverride] = await Promise.all([
+      loadUserPrefs(recipient.uid, recipient.collection),
+      loadBusinessOverride(def.key),
+    ]);
+    // Audience revamp 2026-07: each copy gates through its own stream view
+    // (clients -> kinfolk; staff -> staff when the key serves staff, else business).
+    const channels = resolveChannels(
+      def,
+      userPrefs,
+      businessOverride,
+      streamForRecipient(def, recipient.collection),
+    );
+
+    if (!hasAnyChannel(channels)) {
+      logEvent({
+        severity: 'info',
+        function: 'enqueueNotification',
+        event: 'notification.suppressed',
+        uid: recipient.uid,
+        extra: { key: def.key, reason: 'no-channels-after-prefs' },
+      });
+      continue;
+    }
+
+    const id = await routeByDeliveryMode(def, args, recipient.uid, channels);
+    if (id) writtenIds.push(id);
+  }
+
+  return writtenIds;
+}
+
+function hasAnyChannel(c: ResolvedChannels): boolean {
+  return c.email || c.sms || c.push;
+}
+
+function activeChannelList(c: ResolvedChannels): Channel[] {
+  return ALL_CHANNELS.filter((ch) => c[ch]);
+}
+
+async function routeByDeliveryMode(
+  def: NotificationDef,
+  args: EnqueueArgs,
+  recipientUid: string,
+  channels: ResolvedChannels,
+): Promise<string | null> {
+  const { targetType, targetId } = resolveTargetRef(args);
+  const baseDoc = {
+    key: def.key,
+    category: def.category,
+    recipientUid,
+    actorUid: args.actorUid ?? null,
+    data: args.data,
+    channels: activeChannelList(channels),
+    // Deep-link reference for open-linked + quick approve/deny. Always present
+    // (additive; '' when no entity is resolvable) so the client can branch on it.
+    targetType,
+    targetId,
+    createdAt: FieldValue.serverTimestamp(),
+  };
+
+  switch (def.deliveryMode) {
+    case 'trigger': {
+      const ref = db().collection('notifications').doc();
+      await ref.set({ ...baseDoc, status: 'pending', mode: 'trigger' });
+      return ref.id;
+    }
+
+    case 'debounced': {
+      const docId = `${recipientUid}_${def.key}`;
+      const fireAfterMs = Date.now() + (def.debounceMs ?? 30 * 60 * 1000);
+      const ref = db().collection('pendingNotifications').doc(docId);
+      await ref.set(
+        {
+          ...baseDoc,
+          status: 'pending',
+          mode: 'debounced',
+          debounceStrategy: def.debounceStrategy ?? 'snapshot',
+          fireAfterMs,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      return ref.id;
+    }
+
+    case 'batched': {
+      if (!def.batchKey) {
+        throw new Error(`catalog(${def.key}): batched mode requires batchKey`);
+      }
+      const ref = db()
+        .collection('notificationBatch')
+        .doc(recipientUid)
+        .collection(def.batchKey)
+        .doc();
+      await ref.set({ ...baseDoc, status: 'pending', mode: 'batched' });
+      return ref.id;
+    }
+
+    case 'scheduled': {
+      const fireAtMs = args.fireAtMs ?? Date.now();
+      if (!args.fireAtMs) {
+        logEvent({
+          severity: 'warn',
+          function: 'enqueueNotification',
+          event: 'notification.scheduled.missing-fireAt',
+          uid: recipientUid,
+          extra: { key: def.key, fallbackFireAtMs: fireAtMs },
+        });
+      }
+      const ref = db().collection('scheduledNotifications').doc();
+      await ref.set({ ...baseDoc, status: 'pending', mode: 'scheduled', fireAtMs });
+      return ref.id;
+    }
+
+    default: {
+      const exhaustive: never = def.deliveryMode;
+      throw new Error(`enqueueNotification(${def.key}): unknown deliveryMode '${String(exhaustive)}'`);
+    }
+  }
+}

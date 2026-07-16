@@ -1,0 +1,1 @@
+Tribe Tails security: I've locked your account ({{email}}) after repeated failed logins, to protect you. Reset your password to get back in, or contact Auntie if this wasn't you.

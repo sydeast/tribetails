@@ -1,0 +1,1 @@
+New note on a booking. A Kinfolk left a note on {{kinName}}'s booking. Tap to read.

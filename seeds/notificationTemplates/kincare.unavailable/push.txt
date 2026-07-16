@@ -1,0 +1,1 @@
+Couldn't get in for the visit. I wasn't able to access the home for the {{serviceType}}. Tap and send me the entry details.

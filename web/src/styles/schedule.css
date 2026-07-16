@@ -1,0 +1,57 @@
+/* ============================================================
+   Schedule screen additions. Extracted verbatim from
+   ui-ideas/mytribe-schedule-2026-05-31.html (same token vocabulary
+   as base.css — this file only adds what that mockup adds on top).
+   ============================================================ */
+.pagehead { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; margin-bottom: 22px; animation: rise .6s var(--ease) both; }
+.pagehead .htext { flex: 1; min-width: 240px; }
+.pagehead .htext .kick { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--orange); margin-bottom: 8px; }
+.pagehead h1 { font-family: var(--serif); font-size: clamp(28px, 4vw, 42px); line-height: 1.06; letter-spacing: -.01em; }
+.pagehead h1 span { color: var(--pink); }
+
+.tabrow { display: inline-flex; gap: 4px; padding: 5px; border-radius: 16px; margin-bottom: 26px;
+  background: var(--glass-dim); border: 1px solid var(--glass-border); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  animation: rise .6s var(--ease) .06s both; }
+.tabrow button { border: none; cursor: pointer; font-family: var(--sans); font-size: 14px; font-weight: 700; color: var(--navy-soft);
+  padding: 10px 20px; border-radius: 12px; background: transparent; transition: .2s var(--ease); display: inline-flex; align-items: center; gap: 8px; }
+.tabrow button:hover { color: var(--navy); }
+.tabrow button.act { background: var(--navy); color: #fff; box-shadow: var(--shadow-card); }
+.tabrow .count { font-family: var(--mono); font-size: 10.5px; padding: 2px 7px; border-radius: 20px; background: rgba(255, 255, 255, .22); }
+.tabrow button:not(.act) .count { background: rgba(17, 19, 31, .08); color: var(--navy-muted); }
+
+.live .laddr { font-family: var(--mono); font-size: 11px; letter-spacing: .04em; margin-top: 12px; opacity: .9; position: relative; display: flex; align-items: center; gap: 7px; }
+.live .statepill { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 20px; background: rgba(255, 255, 255, .18);
+  font-family: var(--mono); font-size: 11px; letter-spacing: .12em; position: relative; margin-top: 2px; }
+.live .routemap-wrap { margin-top: 18px; position: relative; }
+
+.rowdiv { height: 1px; background: var(--hairline); margin: 4px 6px; }
+.svc { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--navy-muted); display: block; margin-bottom: 3px; }
+
+.replay { flex: 0 0 auto; border: none; cursor: pointer; font-family: var(--sans); font-size: 13px; font-weight: 700; color: var(--navy);
+  background: rgba(255, 255, 255, .55); border: 1px solid var(--glass-border); border-radius: 12px; padding: 9px 14px;
+  display: inline-flex; align-items: center; gap: 8px; transition: .2s var(--ease); box-shadow: var(--shadow-card); }
+.replay:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); color: var(--pink); }
+.replay .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--coral); }
+.replay.open { color: var(--pink); }
+
+.visit-replay-panel { padding: 4px 4px 12px; margin: -2px 6px 8px; }
+
+.empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 34px 20px; }
+.empty .ring { width: 58px; height: 58px; border-radius: 18px; display: grid; place-items: center; font-size: 27px;
+  background: var(--glass-dim); border: 1px dashed var(--hairline); }
+.empty b { font-family: var(--serif); font-size: 17px; font-weight: 400; }
+.empty p { font-size: 13px; color: var(--navy-muted); max-width: 34ch; line-height: 1.5; }
+
+.sugtag { font-family: var(--mono); font-size: 9px; letter-spacing: .12em; color: var(--purple); background: rgba(116, 83, 138, .12);
+  padding: 2px 7px; border-radius: 6px; vertical-align: middle; margin-left: 8px; }
+
+/* ── GPS route replay (RouteMap.tsx) ── */
+.routemap { display: flex; flex-direction: column; gap: 12px; }
+.routemap-canvas { width: 100%; height: 180px; border-radius: 8px; background: var(--glass-dim); display: block; }
+.routemap-stats { display: flex; gap: 24px; }
+.routemap-stat { display: flex; flex-direction: column; gap: 2px; }
+.routemap-stat .k { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--navy-muted); }
+.routemap-stat .v { font-size: 14px; color: var(--navy); }
+.live .routemap-canvas { background: rgba(255, 255, 255, .18); }
+.live .routemap-stat .k, .live .routemap-stat .v { color: #fff; }
+.live .routemap-stat .k { opacity: .8; }

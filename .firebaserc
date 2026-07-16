@@ -1,0 +1,13 @@
+{
+  "projects": {
+    "default": "auntieos-ttpc"
+  },
+  "targets": {
+    "auntieos-ttpc": {
+      "hosting": {
+        "kinfolk_portal": ["kinfolk-portal"],
+        "mytribe_beta": ["mytribe-kinfolk-beta"]
+      }
+    }
+  }
+}

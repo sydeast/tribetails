@@ -1,0 +1,1 @@
+It's Auntie. The invoice for {{kinName}}'s care from {{bookingDate}} is past due. Please settle it here, or message me to work it out: []

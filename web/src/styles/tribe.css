@@ -1,0 +1,115 @@
+/* ============================================================
+   SCREEN CSS: Tribe hub + Tribe Profile editor. The editable-form
+   block (.cardhead/.grid2/.field/.inp/.divider/.kvrow/.addfield/
+   .suggest/.savebar/.status) is extracted verbatim from the
+   "SCREEN-SPECIFIC: Tribe Profile" block of
+   ui-ideas/mytribe-tribe-2026-05-31.html. Everything below that is
+   new (no visual mockup covers the read-only hub or the household
+   members editor — see TribeHub.tsx / TribeProfile.tsx comments),
+   built from the same token vocabulary as every other screen.
+   ============================================================ */
+
+.cardhead { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 18px; }
+.cardhead .ic { flex: 0 0 auto; width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; font-size: 22px;
+  border: 1px solid var(--glass-border); box-shadow: var(--shadow-card); }
+.cardhead .ic.orange { background: rgba(223, 132, 49, .16); }
+.cardhead .ic.teal { background: rgba(10, 133, 149, .14); }
+.cardhead .ic.purple { background: rgba(116, 83, 138, .14); }
+.cardhead .ic.coral { background: rgba(213, 83, 90, .14); }
+.cardhead .htxt { flex: 1; min-width: 0; }
+.cardhead .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.field { display: flex; flex-direction: column; gap: 7px; }
+.field.full { grid-column: 1 / -1; }
+.field label { font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--navy-muted); }
+.field .hint { font-family: var(--mono); font-size: 10.5px; color: var(--navy-muted); letter-spacing: .02em; }
+.inp { font-family: var(--sans); font-size: 14.5px; color: var(--navy); background: rgba(255, 255, 255, .72);
+  border: 1px solid var(--hairline); border-radius: 13px; padding: 13px 14px; width: 100%; transition: .2s var(--ease); }
+.inp::placeholder { color: var(--navy-muted); }
+.inp:focus { outline: none; border-color: var(--orange); background: #fff; box-shadow: 0 0 0 4px rgba(223, 132, 49, .14); }
+.inp.mono { font-family: var(--mono); letter-spacing: .06em; }
+textarea.inp { resize: vertical; min-height: 64px; font-family: var(--sans); }
+
+.divider { height: 1px; background: var(--hairline); margin: 20px 0; border: none; }
+
+/* dynamic Label/Value rows for custom fields (schema-less admin-set fields) */
+.kvrow { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 12px; align-items: end; margin-bottom: 12px; }
+.kvrow .rm { flex: 0 0 auto; height: 46px; width: 46px; border-radius: 13px; border: 1px solid var(--hairline); background: transparent;
+  color: var(--coral); font-size: 13px; font-family: var(--mono); cursor: pointer; display: grid; place-items: center; transition: .2s var(--ease); }
+.kvrow .rm:hover { background: rgba(213, 83, 90, .10); border-color: rgba(213, 83, 90, .4); }
+.addfield { display: inline-flex; align-items: center; gap: 8px; margin-top: 4px; font-family: var(--sans); font-size: 13.5px; font-weight: 600;
+  color: var(--teal); background: transparent; border: 1px dashed var(--hairline); border-radius: 13px; padding: 11px 15px; cursor: pointer;
+  transition: .2s var(--ease); }
+.addfield:hover { border-color: var(--teal); background: rgba(10, 133, 149, .08); transform: translateY(-1px); }
+.addfield:disabled { opacity: .5; cursor: default; transform: none; }
+
+/* SUGGESTION tag for anything outside the contract */
+.suggest { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 9.5px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--purple); background: rgba(116, 83, 138, .13); border: 1px dashed rgba(116, 83, 138, .4);
+  padding: 3px 8px; border-radius: 8px; font-weight: 500; }
+
+/* save bar */
+.savebar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
+.status { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11.5px; letter-spacing: .03em;
+  color: var(--teal); background: rgba(10, 133, 149, .12); border: 1px solid rgba(10, 133, 149, .22); border-radius: 99px; padding: 8px 14px; }
+.status.err { color: var(--coral); background: rgba(213, 83, 90, .12); border-color: rgba(213, 83, 90, .22); }
+.status .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+/* ===== read-only "set by your Auntie" custom field list (profile editor) === */
+.customfields-note { font-size: 12.5px; color: var(--navy-muted); margin-bottom: 8px; }
+.customfield-row { padding: 9px 0; border-bottom: 1px solid var(--hairline); }
+.customfield-row:last-child { border-bottom: none; }
+.customfield-row .cflabel { font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--navy-muted); }
+.customfield-row .cfvalue { font-size: 14.5px; color: var(--navy); margin-top: 2px; }
+
+/* address / vet clinic autocomplete suggestion list */
+.suggestlist { display: flex; flex-direction: column; gap: 2px; margin-top: -6px; }
+.suggestrow { padding: 9px 10px; border-radius: 12px; cursor: pointer; transition: .2s var(--ease); }
+.suggestrow:hover { background: rgba(255, 255, 255, .6); }
+.suggestrow b { font-size: 13.5px; font-weight: 600; display: block; }
+.suggestrow small { display: block; color: var(--navy-muted); font-size: 12px; margin-top: 1px; }
+
+/* ===== household members / invite toggle switch ===== */
+.togglerow { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 9px 2px; }
+.togglerow span.tlabel { font-size: 14.5px; color: var(--navy); }
+.toggle { position: relative; display: inline-flex; flex: 0 0 auto; width: 44px; height: 24px; }
+.toggle input { position: absolute; inset: 0; width: 44px; height: 24px; margin: 0; opacity: 0; cursor: pointer; z-index: 1; }
+.toggle .track { width: 44px; height: 24px; border-radius: 99px; background: rgba(17, 19, 31, .16); transition: .2s var(--ease); position: relative; }
+.toggle input:checked + .track { background: var(--teal); }
+.toggle .thumb { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff;
+  transition: .2s var(--ease); box-shadow: 0 1px 3px rgba(17, 19, 31, .3); }
+.toggle input:checked + .track .thumb { transform: translateX(20px); }
+
+/* one member's identity + toggles + per-row save */
+.memberrow { padding: 16px 0; border-bottom: 1px solid var(--hairline); }
+.memberrow:first-child { padding-top: 0; }
+.memberrow:last-child { border-bottom: none; padding-bottom: 0; }
+.memberrow .mname { font-size: 14.5px; font-weight: 600; }
+.memberrow .msub { font-family: var(--mono); font-size: 11px; color: var(--navy-muted); margin-top: 2px; letter-spacing: .03em; }
+.memberrow .mtoggles { margin: 10px 0 12px; }
+
+@media (max-width: 560px) {
+  .grid2 { grid-template-columns: 1fr; }
+  .kvrow { grid-template-columns: 1fr 1fr; }
+  .kvrow .rm { grid-column: 1 / -1; width: 100%; }
+}
+
+/* ============================================================
+   Tribe HUB read-only additions. No mockup covers this screen
+   (mytribe-tribe-2026-05-31.html is entirely the profile editor);
+   built from .glass/.card/.sectlabel/.kinrow/.tale/.footnote in
+   base.css + kindetail.css's .facts pattern, matching Home.tsx's
+   established "Your tribe" / "Recent KinTales" card treatment.
+   ============================================================ */
+/* inert "coming soon" link inside a .sectlabel (KinTales screen not built yet) */
+.sectlabel .inert { margin-left: auto; color: var(--navy-muted); opacity: .6; cursor: default; font-weight: 500; letter-spacing: .04em; }
+
+.gallery-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.gallery-thumb { width: 64px; height: 64px; border-radius: 16px; overflow: hidden; display: grid; place-items: center;
+  font-size: 28px; background: rgba(223, 132, 49, .14); flex: 0 0 auto; }
+.gallery-thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+.homefacts { display: flex; flex-direction: column; gap: 8px; }
+.homefacts li { list-style: none; font-size: 14px; color: var(--navy-soft); padding-left: 18px; position: relative; }
+.homefacts li::before { content: '\2022'; position: absolute; left: 2px; color: var(--orange); }

@@ -1,0 +1,1 @@
+Payment didn't go through. We couldn't process payment for invoice {{invoiceNumber}}. Tap to update your details.
