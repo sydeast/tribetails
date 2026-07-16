@@ -1,0 +1,1 @@
+Visit details updated. The {{serviceType}} on {{bookingDate}} has changed. Tap to see the new details.

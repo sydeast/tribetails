@@ -1,0 +1,9 @@
+Subject: Your KinCare assignment changed
+
+Heads up: the {{serviceType}} for {{kinName}} on {{bookingDate}} on your schedule was changed, reassigned, or canceled.
+
+Check your schedule so nothing catches you off guard.
+
+Open it here: []
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.

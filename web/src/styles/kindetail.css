@@ -1,0 +1,58 @@
+/* ============================================================
+   Kin detail screen additions. Extracted verbatim from
+   ui-ideas/mytribe-kin-detail-2026-05-31.html (same token vocabulary).
+   ============================================================ */
+.crumbrow { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; animation: rise .6s var(--ease) both; }
+.backlink { display: inline-flex; align-items: center; gap: 7px; text-decoration: none; color: var(--navy-soft); font-weight: 600;
+  font-size: 14px; padding: 9px 14px; border-radius: 12px; border: 1px solid var(--hairline); background: var(--glass-dim);
+  transition: .2s var(--ease); }
+.backlink:hover { background: rgba(223, 132, 49, .10); color: var(--navy); transform: translateX(-2px); }
+.crumbrow .seg { margin-left: auto; display: flex; align-items: center; gap: 13px; }
+.crumbrow .page { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--navy-muted); }
+
+/* hero header card */
+.kinhero { padding: 28px 30px; display: flex; align-items: center; gap: 26px; position: relative; overflow: hidden;
+  margin-bottom: 30px; animation: rise .6s var(--ease) .08s both; }
+.kinhero::after { content: ""; position: absolute; inset: 0; background: radial-gradient(120% 100% at 90% -20%, rgba(223, 132, 49, .14), transparent 58%); pointer-events: none; }
+.kinhero .bigpic { flex: 0 0 auto; width: 128px; height: 128px; border-radius: 50%; display: grid; place-items: center; font-size: 64px;
+  overflow: hidden; background: rgba(223, 132, 49, .16); border: 3px solid #fff; box-shadow: var(--shadow-warm); position: relative; z-index: 1; }
+.kinhero .htext { position: relative; z-index: 1; }
+.kinhero h1 { font-family: var(--serif); font-size: clamp(30px, 4vw, 42px); line-height: 1.04; letter-spacing: -.01em; }
+.kinhero .hmeta { display: flex; align-items: center; gap: 9px; margin-top: 13px; flex-wrap: wrap; }
+.speciechip { font-family: var(--mono); font-size: 11px; font-weight: 500; padding: 5px 13px; border-radius: 20px; letter-spacing: .06em;
+  text-transform: uppercase; background: rgba(10, 133, 149, .14); color: var(--teal); }
+.memband { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--purple); background: rgba(116, 83, 138, .13); padding: 5px 13px; border-radius: 20px; }
+
+/* fact rows inside cards */
+.facts { display: flex; flex-direction: column; margin-top: 14px; }
+.fact { display: flex; gap: 14px; padding: 13px 4px; border-bottom: 1px solid var(--hairline); }
+.fact:last-child { border-bottom: none; }
+.fact .k { flex: 0 0 124px; font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--navy-muted); padding-top: 2px; }
+.fact .v { font-size: 15px; color: var(--navy); line-height: 1.5; }
+
+/* note panels */
+.note { font-size: 14.5px; line-height: 1.6; color: var(--navy-soft); margin-top: 12px; }
+.emergency { border: 1px solid rgba(213, 83, 90, .35); box-shadow: 0 14px 34px -18px rgba(213, 83, 90, .45); }
+.emergency .sectlabel { color: var(--coral); }
+.emergency h3.title { color: var(--coral); }
+
+.suggestion { font-family: var(--mono); font-size: 9.5px; font-weight: 500; letter-spacing: .1em; padding: 3px 8px; border-radius: 8px;
+  background: rgba(116, 83, 138, .14); color: var(--purple); text-transform: uppercase; }
+
+/* memorial control card */
+.memcard .row { display: flex; align-items: flex-start; gap: 14px; }
+.memcard .row .ico { flex: 0 0 auto; width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; font-size: 21px;
+  background: rgba(116, 83, 138, .12); }
+.memcard .row b { font-size: 14.5px; font-weight: 700; }
+.memcard .row small { display: block; font-size: 12.5px; color: var(--navy-muted); margin-top: 3px; line-height: 1.45; }
+.btn.purple { background: var(--purple); box-shadow: var(--shadow-card); }
+.btn.coralout { background: transparent; color: var(--coral); border: 1px solid rgba(213, 83, 90, .4); box-shadow: none; }
+.btn.coralout:hover { background: rgba(213, 83, 90, .08); }
+
+@media (max-width: 880px) {
+  .kinhero { flex-direction: column; text-align: center; align-items: center; }
+  .kinhero .hmeta { justify-content: center; }
+  .fact .k { flex-basis: 100px; }
+}

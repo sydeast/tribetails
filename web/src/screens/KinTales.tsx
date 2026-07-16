@@ -1,0 +1,528 @@
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { getMyKinTales } from '../api/portal';
+import type { KinTaleDto } from '../api/types';
+import {
+  addKinTaleComment,
+  commentAuthorLabel,
+  commentAvatarVariant,
+  commentBadge,
+  filterTales,
+  getKinTaleReaction,
+  getMyKinTaleComments,
+  getMyKinTaleMedia,
+  initialOf,
+  loveLine,
+  nextTalesCursor,
+  shortTimestamp,
+  taleMetaLabel,
+  threadComments,
+  toggleKinTaleLove,
+  type KinTaleCommentDto,
+  type KinTalesFilter,
+} from '../api/kinTalesApi';
+import { useAuth, useSignOut } from '../lib/auth';
+import { getActiveKinfolkId } from '../lib/activeTribe';
+import { PortalNav } from '../components/PortalNav';
+import { LaunchError } from './LaunchError';
+import { RouteMap } from '../components/RouteMap';
+
+const PAGE_SIZE = 20;
+const GALLERY_VARIANTS = ['g1', 'g2', 'g3', 'g4'] as const;
+
+const FILTER_TABS: { id: KinTalesFilter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'lore', label: 'Lore' },
+  { id: 'gallery', label: 'Gallery' },
+];
+
+/**
+ * KinTales feed, ported from ui-ideas/mytribe-kintales-2026-05-31.html
+ * (feature banner + gallery grid + comment thread). Data flow mirrors
+ * KinTalesScreen.kt rather than the mockup's exact chrome: every tale
+ * (not just the first) gets a full, eagerly-loaded comment thread + post
+ * box, and photo grids are fetched on demand when a kinfolk opens them
+ * (getMyKinTaleMedia per tale, matching the Kotlin screen's expand-to-load
+ * gallery instead of front-loading every card's photos). The first tale
+ * in the current filter gets the mockup's fancy `.feature` banner
+ * treatment; the rest render as compact `.talecard`s — visual-only split,
+ * same underlying gallery/comment behavior for both.
+ *
+ * Reactions (the mockup's "You and 2 others loved this" heart line) are
+ * live for every tale (not just featured), same eager-load convention as
+ * comments — S4 backend delta, see kinTaleEngagement.ts's toggleKinTaleLove.
+ * Share and "Reply to Auntie" still have no backing callable
+ * (share/messaging land in S4/S5) and render as inert buttons, same
+ * convention as Home's Message/Invoices quick-start buttons.
+ */
+export function KinTales() {
+  const kinfolkId = getActiveKinfolkId();
+
+  const [filter, setFilter] = useState<KinTalesFilter>('all');
+  const [extraPages, setExtraPages] = useState<KinTaleDto[]>([]);
+  const [hasMoreOverride, setHasMoreOverride] = useState<boolean | null>(null);
+
+  const firstPage = useQuery({
+    queryKey: ['myKinTales', 'full', kinfolkId],
+    queryFn: () => getMyKinTales(kinfolkId, { limit: PAGE_SIZE }),
+  });
+
+  const loadMore = useMutation({
+    mutationFn: (before: number) => getMyKinTales(kinfolkId, { limit: PAGE_SIZE, before }),
+    onSuccess: (res) => {
+      setExtraPages((prev) => [...prev, ...res.tales]);
+      setHasMoreOverride(res.hasMore);
+    },
+  });
+
+  const { signOut, signingOut } = useSignOut();
+
+  if (firstPage.isError) {
+    return (
+      <LaunchError
+        onRetry={() => void firstPage.refetch()}
+        retrying={firstPage.isRefetching}
+        onSignOut={signOut} signingOut={signingOut}
+      />
+    );
+  }
+
+  const allTales = [...(firstPage.data?.tales ?? []), ...extraPages];
+  const filtered = filterTales(allTales, filter);
+  const hasMore = hasMoreOverride ?? firstPage.data?.hasMore ?? false;
+  const cursor = nextTalesCursor(allTales);
+  const [featuredTale, ...restTales] = filtered;
+
+  return (
+    <>
+      <PortalNav active="kintales" />
+
+      <div className="wrap">
+        <header className="hero-greet">
+          <div className="kick">From your Aunties</div>
+          <h1>
+            Your <span>KinTales</span>
+          </h1>
+        </header>
+
+        <div className="tabs" role="tablist">
+          {FILTER_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={filter === tab.id}
+              className={filter === tab.id ? 'on' : ''}
+              onClick={() => setFilter(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {firstPage.isLoading ? (
+          <p className="sub">Loading your KinTales…</p>
+        ) : !featuredTale ? (
+          <section className="glass card emptystate">
+            <div className="ehug">{'\u{1F4DD}'}</div>
+            <h3>No KinTales yet</h3>
+            <p>
+              {filter === 'all'
+                ? "Your Auntie's daily updates and photos from visits will appear here."
+                : `Nothing in ${FILTER_TABS.find((t) => t.id === filter)?.label ?? filter} yet.`}
+            </p>
+          </section>
+        ) : (
+          <>
+            <TaleCard tale={featuredTale} kinfolkId={kinfolkId} featured />
+
+            {restTales.length > 0 && (
+              <div className="sectlabel" style={{ marginTop: 30 }}>
+                More from your Aunties
+              </div>
+            )}
+
+            <div className="stack">
+              {restTales.map((t, i) => (
+                <TaleCard key={t.id} tale={t} kinfolkId={kinfolkId} featured={false} index={i} />
+              ))}
+            </div>
+          </>
+        )}
+
+        {hasMore && !firstPage.isLoading && (
+          <div className="loadmore">
+            <button
+              className="btn ghost"
+              disabled={loadMore.isPending || cursor === undefined}
+              onClick={() => cursor !== undefined && loadMore.mutate(cursor)}
+            >
+              {loadMore.isPending ? 'Loading…' : 'Load More'}
+            </button>
+            {loadMore.isError && <p className="sub">Couldn&rsquo;t load more. Try again.</p>}
+          </div>
+        )}
+
+        <p className="footnote">
+          Cared for by <b>Tribe Tails Pet Care</b>
+        </p>
+      </div>
+    </>
+  );
+}
+
+function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; featured: boolean; index?: number }) {
+  const { tale, kinfolkId, featured, index = 0 } = props;
+  const [galleryOpen, setGalleryOpen] = useState(false);
+
+  const media = useQuery({
+    queryKey: ['kinTaleMedia', kinfolkId, tale.id],
+    queryFn: () => getMyKinTaleMedia(tale.id, kinfolkId),
+    enabled: galleryOpen && tale.mediaIds.length > 0,
+  });
+
+  const headline = tale.title || tale.body.slice(0, featured ? 90 : 70);
+  const meta = taleMetaLabel(tale);
+  const paragraphs = tale.body.split(/\n+/).filter((p) => p.length > 0);
+
+  const galleryBlock = tale.mediaIds.length > 0 && (
+    <div className="gallery">
+      <div className="glabel">
+        Captured Moments
+        <button
+          type="button"
+          className="btn ghost"
+          style={{ marginLeft: 'auto', padding: '5px 12px', fontSize: 12 }}
+          onClick={() => setGalleryOpen((v) => !v)}
+        >
+          {galleryOpen ? 'Hide' : `View ${tale.mediaIds.length === 1 ? 'photo' : `${tale.mediaIds.length} photos`}`}
+        </button>
+      </div>
+      {galleryOpen &&
+        (media.isLoading ? (
+          <p className="sub">Loading photos…</p>
+        ) : media.isError ? (
+          <p className="sub">Couldn&rsquo;t load photos.</p>
+        ) : (media.data?.media.length ?? 0) === 0 ? (
+          <p className="sub">Photos no longer available — they may have expired.</p>
+        ) : (
+          <div className="grid">
+            {media.data!.media.map((m, i) => (
+              <div className={`shot ${GALLERY_VARIANTS[i % GALLERY_VARIANTS.length]}`} key={m.id}>
+                {m.contentType === null || m.contentType.startsWith('image/') ? (
+                  <img src={m.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  '\u{1F4F7}'
+                )}
+              </div>
+            ))}
+          </div>
+        ))}
+    </div>
+  );
+
+  const gpsBlock = tale.gpsRoute && tale.gpsRoute.length > 0 && (
+    <div style={{ marginTop: 22 }}>
+      <RouteMap route={tale.gpsRoute} distanceMeters={tale.gpsSummary?.distanceMeters} durationSeconds={tale.gpsSummary?.durationSeconds} />
+    </div>
+  );
+
+  if (featured) {
+    return (
+      <section className="glass feature">
+        <div className="banner">
+          <div className="kick">Featured KinTale</div>
+          <h2>{headline}</h2>
+          <div className="byline">
+            <div className="bav">{'\u{1F43E}'}</div>
+            <div>
+              <b>From Auntie {tale.authorDisplayName}</b>
+              {meta && <small>{meta}</small>}
+            </div>
+          </div>
+        </div>
+
+        <div className="body">
+          <div className="narrative">
+            {paragraphs.length > 0 ? paragraphs.map((p, i) => <p key={i}>{p}</p>) : <p>{tale.body}</p>}
+          </div>
+          {galleryBlock}
+          {gpsBlock}
+        </div>
+
+        <div className="actions">
+          <span className="btn grad navlink-inert" title="Coming soon">
+            {'\u{1F517}'} Share
+          </span>
+          <span className="btn ghost navlink-inert" title="Coming soon">
+            {'\u{1F4AC}'} Reply to Auntie {tale.authorDisplayName}
+          </span>
+          <TaleReaction taleId={tale.id} kinfolkId={kinfolkId} />
+        </div>
+
+        <TaleComments taleId={tale.id} kinfolkId={kinfolkId} />
+      </section>
+    );
+  }
+
+  return (
+    <section className={`glass talecard t${(index % 2) + 1}`}>
+      <div className="tchead">
+        <div className="tcphoto">{'\u{1F43E}'}</div>
+        <div style={{ flex: 1 }}>
+          <h3 className="title">{headline}</h3>
+          <div className="meta">{`FROM AUNTIE ${tale.authorDisplayName.toUpperCase()}${meta ? ` · ${meta}` : ''}`}</div>
+        </div>
+      </div>
+      <div className="tcbody">{tale.body}</div>
+      {galleryBlock}
+      {gpsBlock}
+      <div className="tcfoot">
+        <span className="ct">
+          {tale.mediaIds.length > 0 ? `${tale.mediaIds.length} Captured Moment${tale.mediaIds.length === 1 ? '' : 's'}` : 'No photos this visit'}
+        </span>
+        <TaleReaction taleId={tale.id} kinfolkId={kinfolkId} />
+      </div>
+      <TaleComments taleId={tale.id} kinfolkId={kinfolkId} />
+    </section>
+  );
+}
+
+/**
+ * The mockup's heart + "You and 2 others loved this" line
+ * (ui-ideas/mytribe-kintales-2026-05-31.html:348), made clickable to toggle
+ * the caller's own reaction. Optimistic update on click (flip loved +/-1
+ * count immediately) with a rollback + re-fetch on failure, since a "like"
+ * button feeling laggy is a worse UX bug than an occasional wrong-then-
+ * corrected count.
+ */
+function TaleReaction(props: { taleId: string; kinfolkId: string | undefined }) {
+  const { taleId, kinfolkId } = props;
+  const queryClient = useQueryClient();
+  const queryKey = ['kinTaleReaction', kinfolkId, taleId];
+
+  const reactionQuery = useQuery({
+    queryKey,
+    queryFn: () => getKinTaleReaction(taleId, kinfolkId),
+  });
+
+  const toggle = useMutation({
+    mutationFn: () => toggleKinTaleLove(taleId, kinfolkId),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<{ loved: boolean; loveCount: number }>(queryKey);
+      if (previous) {
+        queryClient.setQueryData(queryKey, {
+          loved: !previous.loved,
+          loveCount: previous.loved ? previous.loveCount - 1 : previous.loveCount + 1,
+        });
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey });
+    },
+  });
+
+  if (reactionQuery.isLoading || !reactionQuery.data) {
+    return null;
+  }
+
+  const { loved } = reactionQuery.data;
+  return (
+    <button
+      type="button"
+      className="react"
+      onClick={() => toggle.mutate()}
+      disabled={toggle.isPending}
+      aria-pressed={loved}
+    >
+      <span className="heart">{loved ? '❤️' : '\u{1F90D}'}</span> {loveLine(reactionQuery.data)}
+    </button>
+  );
+}
+
+function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) {
+  const { taleId, kinfolkId } = props;
+  const authState = useAuth();
+  const currentUid = authState.status === 'signedIn' ? authState.user.uid : null;
+  const myInitial = initialOf(authState.status === 'signedIn' ? authState.user.email ?? 'M' : 'M');
+  const queryClient = useQueryClient();
+
+  const commentsQuery = useQuery({
+    queryKey: ['kinTaleComments', kinfolkId, taleId],
+    queryFn: () => getMyKinTaleComments(taleId, kinfolkId),
+  });
+
+  const [topInput, setTopInput] = useState('');
+  const [topError, setTopError] = useState<string | null>(null);
+  const [replyParentId, setReplyParentId] = useState<string | null>(null);
+  const [replyInput, setReplyInput] = useState('');
+  const [replyError, setReplyError] = useState<string | null>(null);
+
+  const post = useMutation({
+    mutationFn: (args: { body: string; parentCommentId?: string }) =>
+      addKinTaleComment(taleId, args.body, {
+        ...(args.parentCommentId !== undefined ? { parentCommentId: args.parentCommentId } : {}),
+        ...(kinfolkId !== undefined ? { kinfolkId } : {}),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['kinTaleComments', kinfolkId, taleId] });
+    },
+  });
+
+  function submitTop() {
+    const body = topInput.trim();
+    if (!body) {
+      setTopError('Comment cannot be empty.');
+      return;
+    }
+    setTopError(null);
+    post.mutate(
+      { body },
+      {
+        onSuccess: () => setTopInput(''),
+        onError: (err) => setTopError(err instanceof Error ? err.message : 'Could not post your comment. Try again.'),
+      },
+    );
+  }
+
+  function submitReply(parentId: string) {
+    const body = replyInput.trim();
+    if (!body) {
+      setReplyError('Reply cannot be empty.');
+      return;
+    }
+    setReplyError(null);
+    post.mutate(
+      { body, parentCommentId: parentId },
+      {
+        onSuccess: () => {
+          setReplyInput('');
+          setReplyParentId(null);
+        },
+        onError: (err) => setReplyError(err instanceof Error ? err.message : 'Could not post your reply. Try again.'),
+      },
+    );
+  }
+
+  const comments = commentsQuery.data?.comments ?? [];
+  const { topLevel, repliesByParent } = threadComments(comments);
+
+  return (
+    <div className="thread">
+      <div className="thlabel">Comments {'·'} {comments.length}</div>
+
+      {commentsQuery.isLoading ? (
+        <p className="sub">Loading comments…</p>
+      ) : commentsQuery.isError ? (
+        <p className="sub">Couldn&rsquo;t load comments.</p>
+      ) : topLevel.length === 0 ? (
+        <p className="empty-cmt">Be the first to say something nice.</p>
+      ) : (
+        topLevel.map((c, i) => (
+          <div key={c.id}>
+            <CommentRow
+              comment={c}
+              avatarIndex={i}
+              currentUid={currentUid}
+              onReply={() => {
+                setReplyParentId(c.id);
+                setReplyInput('');
+                setReplyError(null);
+              }}
+            />
+            {(repliesByParent[c.id] ?? []).map((r, j) => (
+              <CommentRow key={r.id} comment={r} avatarIndex={i + j + 1} currentUid={currentUid} nested />
+            ))}
+            {replyParentId === c.id && (
+              <div className="postbox" style={{ marginLeft: 55, borderTop: 'none', paddingTop: 0 }}>
+                <div className="cav">{initialOf('Reply')}</div>
+                <div className="field">
+                  <textarea
+                    value={replyInput}
+                    onChange={(e) => setReplyInput(e.target.value)}
+                    placeholder="Write a reply…"
+                    disabled={post.isPending}
+                  />
+                  <div className="frow">
+                    <button className="btn grad" disabled={post.isPending} onClick={() => submitReply(c.id)}>
+                      {post.isPending ? 'Posting…' : 'Reply'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      disabled={post.isPending}
+                      onClick={() => {
+                        setReplyParentId(null);
+                        setReplyInput('');
+                        setReplyError(null);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    {replyError && <span className="hint err">{replyError}</span>}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ))
+      )}
+
+      <div className="postbox">
+        <div className="cav">{myInitial}</div>
+        <div className="field">
+          <textarea
+            value={topInput}
+            onChange={(e) => setTopInput(e.target.value)}
+            placeholder="Say something nice..."
+            disabled={post.isPending}
+          />
+          <div className="frow">
+            <button className="btn grad" disabled={post.isPending} onClick={submitTop}>
+              {post.isPending ? 'Posting…' : 'Post Comment'}
+            </button>
+            {topError ? <span className="hint err">{topError}</span> : <span className="hint ok">Be kind, your Aunties read these.</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CommentRow(props: { comment: KinTaleCommentDto; avatarIndex: number; currentUid: string | null; nested?: boolean; onReply?: () => void }) {
+  const { comment, avatarIndex, currentUid, nested = false, onReply } = props;
+  const label = commentAuthorLabel(comment, currentUid);
+  const badge = commentBadge(comment);
+
+  return (
+    <div className={`cmt${nested ? ' nested' : ''}`}>
+      <div className={`cav ${commentAvatarVariant(avatarIndex)}`}>{initialOf(label)}</div>
+      <div className="cbody">
+        <div className="chead">
+          <b>{label}</b>
+          <span className={`badge ${badge.tone}`}>{badge.label}</span>
+          {comment.createdAtMs !== null && <time>{shortTimestamp(comment.createdAtMs)}</time>}
+        </div>
+        <div className="ctext">{comment.body}</div>
+        {onReply && (
+          <div className="creply">
+            <a
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                onReply();
+              }}
+            >
+              Reply
+            </a>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

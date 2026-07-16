@@ -1,0 +1,1 @@
+Your receipt is ready. Invoice {{invoiceNumber}} is paid in full. Tap to view your receipt.

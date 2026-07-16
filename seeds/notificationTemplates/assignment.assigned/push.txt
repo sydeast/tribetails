@@ -1,0 +1,1 @@
+New visit assigned. {{serviceType}} for {{kinName}} on {{bookingDate}}. Tap for details.

@@ -1,0 +1,1 @@
+Invite expired. The invite to {{invitedEmail}} expired. Tap to resend.

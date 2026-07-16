@@ -1,0 +1,9 @@
+Subject: Your week ahead
+
+Good morning. You've got {{count}} visits on the calendar coming up.
+
+Here's the rundown so you can plan your routes and your day.
+
+Open your schedule here: []
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.

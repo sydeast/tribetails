@@ -1,0 +1,106 @@
+/* ============================================================
+   SCREEN CSS: KinTales (feature banner + gallery grid + comment
+   thread). Extracted verbatim from ui-ideas/mytribe-kintales-2026-05-31.html
+   (the "SCREEN CSS, KinTales" block). Same tokens, same feel.
+   Tab row renders as <button> (client-side filter, not navigation)
+   instead of the mockup's <a href="#">, so `.tabs button` is added
+   alongside `.tabs a` with a plain-button reset — visually identical.
+   ============================================================ */
+
+/* tab row */
+.tabs { display: flex; gap: 6px; margin: 0 2px 26px; padding: 5px; border-radius: 16px; width: fit-content;
+  background: var(--glass-dim); border: 1px solid var(--glass-border); box-shadow: var(--shadow-card);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+.tabs a, .tabs button { padding: 9px 18px; border-radius: 12px; text-decoration: none; color: var(--navy-soft); font-weight: 700;
+  font-size: 14px; transition: .2s var(--ease); border: none; background: transparent; cursor: pointer; font-family: var(--sans); }
+.tabs a:hover, .tabs button:hover { background: rgba(223, 132, 49, .12); color: var(--navy); }
+.tabs a.on, .tabs button.on { background: var(--navy); color: #fff; box-shadow: var(--shadow-card); }
+
+/* featured KinTale */
+.feature { padding: 0; overflow: hidden; animation: rise .6s var(--ease) .08s both; }
+.feature .banner { padding: 22px 26px; color: #fff; background: var(--tribe-grad); position: relative; overflow: hidden; }
+.feature .banner::after { content: ""; position: absolute; inset: 0; background: radial-gradient(120% 90% at 88% 0%, rgba(255, 255, 255, .32), transparent 55%); pointer-events: none; }
+.feature .banner .kick { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; opacity: .92; position: relative; }
+.feature .banner h2 { font-family: var(--serif); font-size: 28px; line-height: 1.08; margin: 9px 0 0; position: relative; }
+.feature .byline { display: flex; align-items: center; gap: 12px; margin-top: 16px; position: relative; }
+.feature .byline .bav { width: 44px; height: 44px; border-radius: 14px; background: rgba(255, 255, 255, .85); display: grid; place-items: center; font-size: 22px; flex: 0 0 auto; box-shadow: 0 6px 14px -6px rgba(0, 0, 0, .4); }
+.feature .byline b { font-size: 14.5px; font-weight: 700; } .feature .byline small { display: block; font-size: 11.5px; opacity: .86; font-family: var(--mono); letter-spacing: .04em; }
+.feature .body { padding: 24px 26px 6px; }
+.feature .narrative { font-size: 15.5px; line-height: 1.62; color: var(--navy-soft); max-width: 64ch; }
+.feature .narrative p + p { margin-top: 13px; }
+
+/* captured moments gallery grid — shared by the featured card + talecards */
+.gallery { margin-top: 22px; }
+.gallery .glabel { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--navy-muted); margin-bottom: 11px; display: flex; align-items: center; gap: 8px; }
+.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.grid .shot { aspect-ratio: 1; border-radius: 16px; display: grid; place-items: center; font-size: 40px; overflow: hidden; cursor: pointer;
+  border: 1px solid var(--glass-border); box-shadow: var(--shadow-card); transition: .2s var(--ease); position: relative; }
+.grid .shot:hover { transform: translateY(-3px) scale(1.02); box-shadow: var(--shadow-lift); }
+.grid .shot.g1 { background: rgba(223, 132, 49, .16); } .grid .shot.g2 { background: rgba(213, 92, 135, .14); }
+.grid .shot.g3 { background: rgba(10, 133, 149, .14); } .grid .shot.g4 { background: rgba(116, 83, 138, .14); }
+.grid .shot .cap { position: absolute; left: 8px; bottom: 8px; font-family: var(--mono); font-size: 9px; letter-spacing: .06em;
+  background: rgba(17, 19, 31, .62); color: #fff; padding: 3px 7px; border-radius: 8px; }
+.grid .shot.wide { grid-column: span 2; aspect-ratio: 2/1; }
+@media (max-width: 560px) { .grid { grid-template-columns: repeat(2, 1fr); } .grid .shot.wide { grid-column: span 2; aspect-ratio: auto; height: 120px; } }
+
+.feature .actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 20px 26px 24px; border-top: 1px solid var(--hairline); margin-top: 22px; }
+
+/* Reset from a <button> — clickable now (toggles the caller's reaction),
+   was a static mockup <span>. Base look is unchanged; just interactive. */
+.react { border: none; background: none; padding: 0; cursor: pointer; display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11.5px; color: var(--navy-muted); letter-spacing: .04em; }
+.react:hover { color: var(--coral); }
+.react:disabled { cursor: default; opacity: .6; }
+.feature .actions .react { margin-left: auto; }
+
+/* ===== comment thread ===== */
+.thread { border-top: 1px solid var(--hairline); padding: 22px 26px 26px; }
+.thread .thlabel { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--navy-muted); margin-bottom: 18px; display: flex; align-items: center; gap: 8px; }
+.cmt { display: flex; gap: 13px; padding: 4px 0 18px; }
+.cmt .cav { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; font-family: var(--serif); font-size: 17px; color: #fff; flex: 0 0 auto; box-shadow: var(--shadow-card); }
+.cmt .cav.c1 { background: var(--orange-pink); } .cmt .cav.c2 { background: var(--teal-purple); } .cmt .cav.c3 { background: linear-gradient(to bottom right, var(--purple), var(--coral)); }
+.cmt .cbody { flex: 1; min-width: 0; }
+.cmt .chead { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.cmt .chead b { font-size: 14px; font-weight: 700; }
+.cmt .chead time { font-family: var(--mono); font-size: 10.5px; color: var(--navy-muted); letter-spacing: .04em; }
+.badge { font-family: var(--mono); font-size: 9.5px; font-weight: 500; padding: 3px 8px; border-radius: 20px; letter-spacing: .06em; text-transform: uppercase; }
+.badge.kin { background: rgba(10, 133, 149, .14); color: var(--teal); }
+.badge.guest { background: rgba(116, 83, 138, .14); color: var(--purple); }
+.cmt .ctext { font-size: 14px; line-height: 1.55; color: var(--navy-soft); margin-top: 5px; }
+.cmt .creply { margin-top: 8px; }
+.cmt .creply a { font-family: var(--mono); font-size: 11px; color: var(--teal); text-decoration: none; letter-spacing: .04em; font-weight: 500; }
+.cmt .creply a:hover { text-decoration: underline; }
+.cmt.nested { margin-left: 55px; padding-bottom: 14px; }
+
+.empty-cmt { font-size: 14px; color: var(--navy-muted); font-style: italic; padding: 6px 0 18px; }
+
+/* post comment / reply box */
+.postbox { display: flex; gap: 13px; margin-top: 6px; padding-top: 18px; border-top: 1px solid var(--hairline); }
+.postbox .cav { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; font-family: var(--serif); font-size: 17px; color: #fff; flex: 0 0 auto; background: var(--tribe-grad); box-shadow: var(--shadow-warm); }
+.postbox .field { flex: 1; min-width: 0; }
+.postbox textarea { width: 100%; min-height: 74px; resize: vertical; border-radius: 14px; border: 1px solid var(--hairline);
+  background: rgba(255, 255, 255, .7); padding: 12px 14px; font-family: var(--sans); font-size: 14px; color: var(--navy); line-height: 1.5;
+  transition: .2s var(--ease); }
+.postbox textarea::placeholder { color: var(--navy-muted); }
+.postbox textarea:focus { outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px rgba(223, 132, 49, .16); background: #fff; }
+.postbox .frow { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.postbox .hint { font-family: var(--mono); font-size: 11px; letter-spacing: .04em; }
+.postbox .hint.err { color: var(--coral); }
+.postbox .hint.ok { color: var(--navy-muted); }
+.postbox button:disabled { opacity: .6; cursor: default; }
+
+/* secondary tale cards (compact, link to thread) */
+.talecard { padding: 0; overflow: hidden; }
+.talecard .tchead { display: flex; gap: 14px; padding: 18px 20px 14px; }
+.talecard .tcphoto { width: 54px; height: 54px; border-radius: 16px; display: grid; place-items: center; font-size: 26px; flex: 0 0 auto; overflow: hidden; }
+.talecard.t1 .tcphoto { background: rgba(10, 133, 149, .14); } .talecard.t2 .tcphoto { background: rgba(213, 92, 135, .14); }
+.talecard .tchead h3 { font-family: var(--serif); font-size: 18px; font-weight: 400; }
+.talecard .tchead .meta { font-family: var(--mono); font-size: 10.5px; color: var(--navy-muted); margin-top: 5px; letter-spacing: .04em; }
+.talecard .tcbody { padding: 0 20px; font-size: 14px; line-height: 1.58; color: var(--navy-soft); }
+.talecard .tcstrip { display: flex; gap: 9px; padding: 14px 20px 6px; }
+.talecard .tcstrip .sm { width: 54px; height: 54px; border-radius: 13px; display: grid; place-items: center; font-size: 26px; flex: 0 0 auto; border: 1px solid var(--glass-border); box-shadow: var(--shadow-card); }
+.talecard .tcstrip .sm.s1 { background: rgba(223, 132, 49, .16); } .talecard .tcstrip .sm.s2 { background: rgba(213, 92, 135, .14); } .talecard .tcstrip .sm.s3 { background: rgba(10, 133, 149, .14); }
+.talecard .tcfoot { display: flex; align-items: center; gap: 10px; padding: 14px 20px 18px; flex-wrap: wrap; }
+.talecard .tcfoot .ct { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--navy-muted); letter-spacing: .04em; }
+.talecard .gallery, .talecard .thread { padding-left: 20px; padding-right: 20px; }
+
+.loadmore { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 30px; }

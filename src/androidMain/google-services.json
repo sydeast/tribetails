@@ -1,0 +1,68 @@
+{
+  "project_info": {
+    "project_number": "153396971788",
+    "project_id": "auntieos-ttpc",
+    "storage_bucket": "auntieos-ttpc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:153396971788:android:4e9868bbb96301277f2129",
+        "android_client_info": {
+          "package_name": "com.kinfolk.portal"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "153396971788-rkag9foj5pf40905gkp27q4trt6qs7sh.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDHpCTTQ0t1dtVScohNvBFdk9_cRyMFUdU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "153396971788-rkag9foj5pf40905gkp27q4trt6qs7sh.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:153396971788:android:6bcb7c5411aeda837f2129",
+        "android_client_info": {
+          "package_name": "com.tribetails.auntieos"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "153396971788-rkag9foj5pf40905gkp27q4trt6qs7sh.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDHpCTTQ0t1dtVScohNvBFdk9_cRyMFUdU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "153396971788-rkag9foj5pf40905gkp27q4trt6qs7sh.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,1 @@
+Security alert: unrequested reset. {{kinfolkEmail}} completed a reset they didn't request. Review securityIncidents/{{incidentId}} now.

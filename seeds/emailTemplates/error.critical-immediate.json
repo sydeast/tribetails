@@ -1,0 +1,6 @@
+{
+  "key": "error.critical-immediate",
+  "subject": "[CRITICAL] {{eventTitle}}",
+  "body": "Severity: critical\nFunction: {{functionName}}\nError: {{errorMessage}}\nFamily: {{familyId}}\n\nSentry: {{sentryUrl}}",
+  "html": null
+}

@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyTribe, Notification Settings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     MyTribe DESIGN SYSTEM  (com.kinfolk.portal, pet parent web)
+     Identity: bright, sunny, glassmorphic. Top-nav airy consumer
+     web (NOT AuntieOS's dark left-rail admin). Signature = frosted
+     glass + the Tribe Gradient. Full-web layout; mobile collapses
+     responsively (single column + bottom tabs).
+     Palette locked to brandColors.md / KinfolkBrand. Fonts AuntieOS
+     does not use: Young Serif + Bricolage Grotesque + DM Mono.
+     ==> This <style> block is the shared system; reuse verbatim.
+     ============================================================ */
+  :root{
+    --cream:#FBFBF9; --navy:#11131F;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595;
+    --purple:#74538A; --coral:#D5535A;
+    --navy-soft:rgba(17,19,31,.78); --navy-muted:rgba(17,19,31,.55);
+    --hairline:rgba(17,19,31,.10);
+    --glass:rgba(255,255,255,.62); --glass-dim:rgba(255,255,255,.40);
+    --glass-border:rgba(255,255,255,.7);
+    --serif:"Young Serif",serif; --sans:"Bricolage Grotesque",sans-serif; --mono:"DM Mono",monospace;
+    --ease:cubic-bezier(.22,.8,.24,1);
+    --shadow-card:0 14px 34px -18px rgba(17,19,31,.30);
+    --shadow-lift:0 22px 46px -20px rgba(17,19,31,.36);
+    --shadow-warm:0 16px 34px -16px rgba(223,132,49,.55);
+    /* canonical brand gradients (brandColors.md) */
+    --tribe-grad:linear-gradient(135deg,#df8431,#d55c87,#0a8595);
+    --orange-pink:linear-gradient(to bottom right,#df8431,#d55c87);
+    --teal-purple:linear-gradient(to bottom right,#0a8595,#74538a);
+    --maxw:1140px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    font-family:var(--sans);color:var(--navy);min-height:100vh;-webkit-font-smoothing:antialiased;
+    background:
+      radial-gradient(120vmax 70vmax at 82% -10%, rgba(223,132,49,.20), transparent 55%),
+      radial-gradient(110vmax 70vmax at 5% 0%, rgba(213,92,135,.16), transparent 52%),
+      radial-gradient(130vmax 80vmax at 50% 118%, rgba(10,133,149,.16), transparent 55%),
+      var(--cream);
+    overflow-x:hidden;
+  }
+  .orb{position:fixed;border-radius:50%;filter:blur(60px);opacity:.42;z-index:0;pointer-events:none;
+    animation:drift 26s var(--ease) infinite alternate;}
+  .orb.a{width:32vmax;height:32vmax;top:-6vmax;right:-4vmax;background:radial-gradient(circle,var(--orange),transparent 64%);}
+  .orb.b{width:30vmax;height:30vmax;bottom:-10vmax;left:-8vmax;background:radial-gradient(circle,var(--teal),transparent 64%);animation-delay:-10s;}
+  @keyframes drift{to{transform:translate(2vmax,2vmax) scale(1.08);}}
+
+  /* ===== top nav ===== */
+  .nav{position:sticky;top:0;z-index:20;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+    background:rgba(251,251,249,.72);border-bottom:1px solid var(--hairline);}
+  .nav .in{max-width:var(--maxw);margin:0 auto;padding:14px 24px;display:flex;align-items:center;gap:20px;}
+  .wordmark{font-family:var(--serif);font-size:23px;letter-spacing:-.01em;line-height:1;white-space:nowrap;}
+  .wordmark .grad{background:var(--tribe-grad);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  .navlinks{display:flex;gap:4px;margin-left:8px;}
+  .navlinks a{padding:9px 14px;border-radius:11px;text-decoration:none;color:var(--navy-soft);font-weight:600;
+    font-size:14.5px;transition:.2s var(--ease);}
+  .navlinks a:hover{background:rgba(223,132,49,.12);color:var(--navy);}
+  .navlinks a.on{background:var(--navy);color:#fff;}
+  .nav .right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+  .iconbtn{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:17px;cursor:pointer;
+    background:var(--glass);border:1px solid var(--glass-border);box-shadow:var(--shadow-card);position:relative;
+    transition:.2s var(--ease);}
+  .iconbtn:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift);}
+  .iconbtn .ping{position:absolute;top:9px;right:10px;width:8px;height:8px;border-radius:50%;background:var(--coral);
+    box-shadow:0 0 0 3px var(--cream);}
+  .avatar{width:42px;height:42px;border-radius:50%;background:var(--tribe-grad);display:grid;place-items:center;
+    color:#fff;font-family:var(--serif);font-size:18px;cursor:pointer;box-shadow:var(--shadow-warm);}
+
+  /* ===== layout shell ===== */
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:34px 24px 80px;position:relative;z-index:1;}
+
+  .hero-greet{margin-bottom:24px;animation:rise .6s var(--ease) both;}
+  .hero-greet .kick{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--orange);margin-bottom:8px;}
+  .hero-greet h1{font-family:var(--serif);font-size:clamp(30px,4.4vw,46px);line-height:1.05;letter-spacing:-.01em;}
+  .hero-greet h1 span{color:var(--pink);}
+
+  /* glass primitives */
+  .glass{background:var(--glass);border:1px solid var(--glass-border);border-radius:22px;
+    box-shadow:var(--shadow-card);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);}
+  .card{padding:22px;}
+  .sectlabel{display:flex;align-items:center;gap:8px;margin:0 2px 12px;font-family:var(--mono);font-size:11px;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--navy-muted);}
+  .sectlabel a{margin-left:auto;color:var(--teal);text-decoration:none;font-weight:500;letter-spacing:.04em;}
+  h3.title{font-family:var(--serif);font-size:20px;font-weight:400;display:flex;align-items:center;gap:8px;}
+  .sub{color:var(--navy-muted);font-size:13px;margin-top:3px;}
+
+  /* buttons */
+  .btn{border:none;cursor:pointer;border-radius:14px;padding:14px 18px;font-family:var(--sans);font-size:14.5px;
+    font-weight:700;color:#fff;background:var(--navy);display:inline-flex;align-items:center;justify-content:center;gap:9px;
+    box-shadow:var(--shadow-card);transition:.2s var(--ease);text-decoration:none;}
+  .btn:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift);}
+  .btn.grad{background:var(--tribe-grad);box-shadow:var(--shadow-warm);}
+  .btn.ghost{background:transparent;color:var(--navy);border:1px solid var(--hairline);box-shadow:none;}
+  .btn.ghost:hover{background:rgba(223,132,49,.10);}
+  .btn.block{width:100%;}
+  .chip{font-family:var(--mono);font-size:10.5px;font-weight:500;padding:4px 10px;border-radius:20px;letter-spacing:.04em;}
+  .chip.go{background:rgba(10,133,149,.14);color:var(--teal);}
+  .chip.warm{background:rgba(223,132,49,.16);color:var(--orange);}
+  .chip.done{background:rgba(116,83,138,.14);color:var(--purple);}
+
+  /* ===== two-column content ===== */
+  .cols{display:grid;grid-template-columns:1.6fr 1fr;gap:24px;align-items:start;}
+  .stack{display:flex;flex-direction:column;gap:24px;}
+
+  .footnote{font-family:var(--mono);font-size:11px;color:var(--navy-muted);text-align:center;margin-top:40px;}
+  .footnote b{background:var(--tribe-grad);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:500;}
+
+  @keyframes rise{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
+  .d1{animation:rise .6s var(--ease) .14s both;}.d2{animation:rise .6s var(--ease) .2s both;}
+  .d3{animation:rise .6s var(--ease) .26s both;}.d4{animation:rise .6s var(--ease) .32s both;}
+
+  /* ============================================================
+     SCREEN CSS, Notification Settings only (same glass/brand style)
+     ============================================================ */
+
+  /* CSS toggle switch, orange when on */
+  .sw{position:relative;display:inline-block;width:46px;height:27px;flex:0 0 auto;}
+  .sw input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:2;}
+  .sw .slot{position:absolute;inset:0;border-radius:99px;background:rgba(17,19,31,.16);
+    border:1px solid var(--hairline);transition:.24s var(--ease);box-shadow:inset 0 1px 3px rgba(17,19,31,.12);}
+  .sw .knob{position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;
+    box-shadow:0 3px 7px -2px rgba(17,19,31,.45);transition:.24s var(--ease);}
+  .sw input:checked ~ .slot{background:var(--orange);border-color:transparent;box-shadow:inset 0 1px 3px rgba(0,0,0,.18),0 4px 12px -5px rgba(223,132,49,.8);}
+  .sw input:checked ~ .knob{transform:translateX(19px);}
+  .sw input:focus-visible ~ .slot{outline:2px solid var(--teal);outline-offset:2px;}
+  .sw input:disabled{cursor:not-allowed;}
+  .sw.dis .slot{opacity:.45;} .sw.dis .knob{opacity:.55;box-shadow:none;}
+
+  /* category card head */
+  .cathead{display:flex;align-items:flex-start;gap:14px;}
+  .cathead .ico{width:46px;height:46px;border-radius:14px;display:grid;place-items:center;font-size:23px;flex:0 0 auto;}
+  .cat-vu .ico{background:rgba(223,132,49,.16);} .cat-kt .ico{background:rgba(213,92,135,.14);}
+  .cat-bi .ico{background:rgba(10,133,149,.14);} .cat-mk .ico{background:rgba(116,83,138,.14);}
+  .cathead .ht{flex:1;min-width:0;}
+  .cathead .ht h3.title{font-size:19px;}
+
+  /* master + expand controls row */
+  .catbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:16px;padding-top:15px;border-top:1px solid var(--hairline);}
+  .master{display:flex;align-items:center;gap:11px;}
+  .master .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--navy-soft);}
+  .exg{margin-left:auto;display:inline-flex;gap:4px;background:var(--glass-dim);border:1px solid var(--glass-border);
+    border-radius:12px;padding:3px;}
+  .exg button{border:none;background:transparent;cursor:pointer;font-family:var(--mono);font-size:11px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--navy-muted);padding:7px 12px;border-radius:9px;transition:.18s var(--ease);}
+  .exg button:hover{color:var(--navy);}
+  .exg button[aria-pressed="true"]{background:#fff;color:var(--navy);box-shadow:var(--shadow-card);}
+
+  /* per-channel rows, collapsible */
+  .chans{display:grid;grid-template-rows:1fr;transition:.3s var(--ease);overflow:hidden;}
+  .chans.collapsed{grid-template-rows:0fr;}
+  .chans .inner{min-height:0;}
+  .crow{display:flex;align-items:center;gap:14px;padding:13px 4px;border-bottom:1px solid var(--hairline);}
+  .crow:last-child{border-bottom:none;}
+  .crow .cico{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;font-size:16px;flex:0 0 auto;
+    background:var(--glass-dim);border:1px solid var(--glass-border);}
+  .crow .cinfo{flex:1;min-width:0;} .crow .cinfo b{font-size:14.5px;font-weight:600;}
+  .crow .cinfo small{display:block;color:var(--navy-muted);font-size:12.5px;margin-top:2px;}
+  .crow.off .cinfo b,.crow.off .cinfo small{opacity:.5;}
+
+  /* marketing helper + disabled note */
+  .helper{font-size:13px;color:var(--navy-soft);line-height:1.5;margin-top:14px;}
+  .helper + .helper{margin-top:6px;}
+  .disnote{display:flex;gap:10px;align-items:flex-start;margin-top:15px;padding:13px 15px;border-radius:14px;
+    background:rgba(116,83,138,.09);border:1px solid rgba(116,83,138,.18);}
+  .disnote .di{font-size:16px;flex:0 0 auto;line-height:1.3;}
+  .disnote p{font-size:12.5px;color:var(--navy-soft);line-height:1.5;}
+
+  .sugtag{font-family:var(--mono);font-size:9px;font-weight:500;letter-spacing:.1em;padding:3px 7px;border-radius:6px;
+    background:rgba(10,133,149,.12);color:var(--teal);text-transform:uppercase;vertical-align:middle;margin-left:8px;}
+
+  /* save bar */
+  .savebar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:28px;}
+  .savedchip{display:none;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;letter-spacing:.04em;
+    color:var(--teal);background:rgba(10,133,149,.12);padding:9px 15px;border-radius:99px;}
+  .savedchip.show{display:inline-flex;animation:rise .4s var(--ease) both;}
+  .savehint{font-size:12.5px;color:var(--navy-muted);margin-left:auto;}
+
+  /* ===== responsive: tablet + phone ===== */
+  @media (max-width:880px){
+    .cols{grid-template-columns:1fr;}
+    .navlinks{display:none;}
+    .wrap{padding:24px 16px 96px;}
+    .savehint{margin-left:0;width:100%;}
+  }
+  .tabbar{display:none;}
+  @media (max-width:880px){
+    .tabbar{display:flex;position:fixed;left:12px;right:12px;bottom:12px;z-index:30;justify-content:space-around;
+      padding:10px 6px;border-radius:22px;background:rgba(255,255,255,.8);border:1px solid var(--glass-border);
+      box-shadow:0 -8px 30px -16px rgba(17,19,31,.4);backdrop-filter:blur(20px);}
+    .tabbar a{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:20px;color:var(--navy-muted);text-decoration:none;}
+    .tabbar a small{font-size:10px;font-family:var(--mono);} .tabbar a.on{color:var(--orange);}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;}}
+</style>
+</head>
+<body>
+  <span class="orb a"></span><span class="orb b"></span>
+
+  <!-- top nav (links unstyled, none active) -->
+  <nav class="nav">
+    <div class="in">
+      <div class="wordmark">My<span class="grad">Tribe</span></div>
+      <div class="navlinks">
+        <a href="#">Home</a>
+        <a href="#">Tribe</a>
+        <a href="#">Schedule</a>
+        <a href="#">KinTales</a>
+        <a href="#">Invoices</a>
+      </div>
+      <div class="right">
+        <div class="iconbtn" aria-label="Notifications">&#128276;<span class="ping"></span></div>
+        <div class="avatar">J</div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <!-- header -->
+    <header class="hero-greet">
+      <div class="kick">Account</div>
+      <h1>Notification <span>Settings</span></h1>
+    </header>
+
+    <div class="cols">
+      <!-- main column: category cards -->
+      <div class="stack">
+
+        <!-- VISIT UPDATES -->
+        <section class="glass card d1">
+          <div class="cathead cat-vu">
+            <div class="ico">&#128062;</div>
+            <div class="ht">
+              <h3 class="title">Visit Updates</h3>
+              <div class="sub">Check ins, on my way alerts, and visit completed notices for your tribe.</div>
+            </div>
+          </div>
+          <div class="catbar">
+            <div class="master">
+              <span class="lbl">All in category:</span>
+              <label class="sw"><input type="checkbox" class="catmaster" data-cat="vu" checked><span class="slot"></span><span class="knob"></span></label>
+            </div>
+            <div class="exg" role="group" aria-label="Expand or collapse channels">
+              <button type="button" class="ex-expand" aria-pressed="true">Expand</button>
+              <button type="button" class="ex-collapse" aria-pressed="false">Collapse</button>
+            </div>
+          </div>
+          <div class="chans">
+            <div class="inner">
+              <div class="crow">
+                <div class="cico">&#128241;</div>
+                <div class="cinfo"><b>Push</b><small>Live alerts on your phone the moment a visit starts or ends.</small></div>
+                <label class="sw"><input type="checkbox" data-cat="vu" checked><span class="slot"></span><span class="knob"></span></label>
+              </div>
+              <div class="crow">
+                <div class="cico">&#9993;</div>
+                <div class="cinfo"><b>Email</b><small>A recap in your inbox after every completed visit.</small></div>
+                <label class="sw"><input type="checkbox" data-cat="vu" checked><span class="slot"></span><span class="knob"></span></label>
+              </div>
+              <div class="crow off">
+                <div class="cico">&#128172;</div>
+                <div class="cinfo"><b>SMS</b><small>Text messages for time sensitive visit updates.</small></div>
+                <label class="sw"><input type="checkbox" data-cat="vu"><span class="slot"></span><span class="knob"></span></label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- KINTALES -->
+        <section class="glass card d2">
+          <div class="cathead cat-kt">
+            <div class="ico">&#128221;</div>
+            <div class="ht">
+              <h3 class="title">KinTales</h3>
+              <div class="sub">Photo stories and notes your Auntie sends after each visit.</div>
+            </div>
+          </div>
+          <div class="catbar">
+            <div class="master">
+              <span class="lbl">All in category:</span>
+              <label class="sw"><input type="checkbox" class="catmaster" data-cat="kt" checked><span class="slot"></span><span class="knob"></span></label>
+            </div>
+            <div class="exg" role="group" aria-label="Expand or collapse channels">
+              <button type="button" class="ex-expand" aria-pressed="true">Expand</button>
+              <button type="button" class="ex-collapse" aria-pressed="false">Collapse</button>
+            </div>
+          </div>
+          <div class="chans">
+            <div class="inner">
+              <div class="crow">
+                <div class="cico">&#128241;</div>
+                <div class="cinfo"><b>Push</b><small>A nudge when a new KinTale is ready to read.</small></div>
+                <label class="sw"><input type="checkbox" data-cat="kt" checked><span class="slot"></span><span class="knob"></span></label>
+              </div>
+              <div class="crow">
+                <div class="cico">&#9993;</div>
+                <div class="cinfo"><b>Email</b><small>The full KinTale with photos delivered to your inbox.</small></div>
+                <label class="sw"><input type="checkbox" data-cat="kt" checked><span class="slot"></span><span class="knob"></span></label>
+              </div>
+              <div class="crow off">
+                <div class="cico">&#128172;</div>
+                <div class="cinfo"><b>SMS</b><small>A short text linking you to the new tale.</small></div>
+                <label class="sw"><input type="checkbox" data-cat="kt"><span class="slot"></span><span class="knob"></span></label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- BILLING -->
+        <section class="glass card d3">
+          <div class="cathead cat-bi">
+            <div class="ico">&#128179;</div>
+            <div class="ht">
+              <h3 class="title">Billing</h3>
+              <div class="sub">Invoices, receipts, payment reminders, and card on file alerts.</div>
+            </div>
+          </div>
+          <div class="catbar">
+            <div class="master">
+              <span class="lbl">All in category:</span>
+              <label class="sw"><input type="checkbox" class="catmaster" data-cat="bi" checked><span class="slot"></span><span class="knob"></span></label>
+            </div>
+            <div class="exg" role="group" aria-label="Expand or collapse channels">
+              <button type="button" class="ex-expand" aria-pressed="true">Expand</button>
+              <button type="button" class="ex-collapse" aria-pressed="false">Collapse</button>
+            </div>
+          </div>
+          <div class="chans">
+            <div class="inner">
+              <div class="crow">
+                <div class="cico">&#128241;</div>
+                <div class="cinfo"><b>Push</b><small>A heads up when a new invoice posts or a payment is due.</small></div>
+                <label class="sw"><input type="checkbox" data-cat="bi"><span class="slot"></span><span class="knob"></span></label>
+              </div>
+              <div class="crow">
+                <div class="cico">&#9993;</div>
+                <div class="cinfo"><b>Email</b><small>Invoices and receipts sent to your inbox.</small></div>
+                <label class="sw"><input type="checkbox" data-cat="bi" checked><span class="slot"></span><span class="knob"></span></label>
+              </div>
+              <div class="crow">
+                <div class="cico">&#128172;</div>
+                <div class="cinfo"><b>SMS</b><small>A text reminder before a payment is due.</small></div>
+                <label class="sw"><input type="checkbox" data-cat="bi" checked><span class="slot"></span><span class="knob"></span></label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- aside column -->
+      <div class="stack">
+
+        <!-- MARKETING OPT-INS -->
+        <section class="glass card d4">
+          <div class="cathead cat-mk">
+            <div class="ico">&#128226;</div>
+            <div class="ht">
+              <h3 class="title">Marketing Opt-Ins</h3>
+              <div class="sub">News, seasonal offers, and tips from your pet care team.</div>
+            </div>
+          </div>
+          <div class="catbar">
+            <div class="master">
+              <span class="lbl">All in category:</span>
+              <label class="sw"><input type="checkbox" class="catmaster" data-cat="mk"><span class="slot"></span><span class="knob"></span></label>
+            </div>
+            <div class="exg" role="group" aria-label="Expand or collapse channels">
+              <button type="button" class="ex-expand" aria-pressed="true">Expand</button>
+              <button type="button" class="ex-collapse" aria-pressed="false">Collapse</button>
+            </div>
+          </div>
+          <div class="chans">
+            <div class="inner">
+              <div class="crow off">
+                <div class="cico">&#128231;</div>
+                <div class="cinfo"><b>Marketing email</b><small>Enable the parent marketing opt-in above to receive this.</small></div>
+                <label class="sw dis"><input type="checkbox" data-cat="mk" disabled><span class="slot"></span><span class="knob"></span></label>
+              </div>
+              <div class="crow off">
+                <div class="cico">&#128172;</div>
+                <div class="cinfo"><b>Marketing SMS</b><small>Enable the parent marketing opt-in above to receive this.</small></div>
+                <label class="sw dis"><input type="checkbox" data-cat="mk" disabled><span class="slot"></span><span class="knob"></span></label>
+              </div>
+            </div>
+          </div>
+          <p class="helper">Enable the parent marketing opt-in above to receive this.</p>
+          <p class="helper">Every marketing email includes an unsubscribe link.</p>
+          <div class="disnote">
+            <span class="di">&#128274;</span>
+            <p>These channels stay off until the category master switch is on. Turning it off again opts you out everywhere.</p>
+          </div>
+        </section>
+
+        <!-- SCHEDULE REMINDERS (SUGGESTION) -->
+        <section class="glass card d4">
+          <div class="cathead cat-vu">
+            <div class="ico">&#9200;</div>
+            <div class="ht">
+              <h3 class="title">Schedule Reminders <span class="sugtag">Suggestion</span></h3>
+              <div class="sub">Reminders before upcoming and pending visits on your calendar.</div>
+            </div>
+          </div>
+          <div class="catbar">
+            <div class="master">
+              <span class="lbl">All in category:</span>
+              <label class="sw"><input type="checkbox" class="catmaster" data-cat="sr" checked><span class="slot"></span><span class="knob"></span></label>
+            </div>
+            <div class="exg" role="group" aria-label="Expand or collapse channels">
+              <button type="button" class="ex-expand" aria-pressed="true">Expand</button>
+              <button type="button" class="ex-collapse" aria-pressed="false">Collapse</button>
+            </div>
+          </div>
+          <div class="chans">
+            <div class="inner">
+              <div class="crow">
+                <div class="cico">&#128241;</div>
+                <div class="cinfo"><b>Push</b><small>A reminder the day before a booked visit.</small></div>
+                <label class="sw"><input type="checkbox" data-cat="sr" checked><span class="slot"></span><span class="knob"></span></label>
+              </div>
+              <div class="crow off">
+                <div class="cico">&#9993;</div>
+                <div class="cinfo"><b>Email</b><small>A weekly look ahead at your scheduled visits.</small></div>
+                <label class="sw"><input type="checkbox" data-cat="sr"><span class="slot"></span><span class="knob"></span></label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- save bar -->
+    <div class="savebar">
+      <button type="button" class="btn grad" id="saveBtn">&#128190; Save Notification Preferences</button>
+      <span class="savedchip" id="savedChip">&#10003; Preferences saved.</span>
+      <span class="savehint">Changes apply across MyTribe push, email, and SMS.</span>
+    </div>
+
+    <p class="footnote">Cared for by <b>Tribe Tails Pet Care</b></p>
+  </div>
+
+  <!-- mobile bottom tabs (shown under 880px) -->
+  <nav class="tabbar">
+    <a href="#">&#127968;<small>Home</small></a>
+    <a href="#">&#128062;<small>Tribe</small></a>
+    <a href="#">&#128197;<small>Schedule</small></a>
+    <a href="#">&#128221;<small>Tales</small></a>
+    <a href="#">&#128100;<small>Account</small></a>
+  </nav>
+
+  <script>
+    // Category master toggle drives every channel switch in the same category.
+    document.querySelectorAll('.catmaster').forEach(function(master){
+      master.addEventListener('change', function(){
+        var cat = master.getAttribute('data-cat');
+        document.querySelectorAll('input[data-cat="'+cat+'"]').forEach(function(box){
+          if(box === master || box.disabled) return;
+          box.checked = master.checked;
+          var row = box.closest('.crow');
+          if(row) row.classList.toggle('off', !box.checked);
+        });
+      });
+    });
+
+    // Per-channel switch keeps its row label dimmed when off.
+    document.querySelectorAll('.crow .sw input').forEach(function(box){
+      box.addEventListener('change', function(){
+        var row = box.closest('.crow');
+        if(row) row.classList.toggle('off', !box.checked);
+      });
+    });
+
+    // Expand / Collapse per category card.
+    document.querySelectorAll('.exg').forEach(function(group){
+      var card = group.closest('.glass');
+      var chans = card.querySelector('.chans');
+      var expandBtn = group.querySelector('.ex-expand');
+      var collapseBtn = group.querySelector('.ex-collapse');
+      function set(collapsed){
+        chans.classList.toggle('collapsed', collapsed);
+        expandBtn.setAttribute('aria-pressed', String(!collapsed));
+        collapseBtn.setAttribute('aria-pressed', String(collapsed));
+      }
+      expandBtn.addEventListener('click', function(){ set(false); });
+      collapseBtn.addEventListener('click', function(){ set(true); });
+    });
+
+    // Save action shows the success chip.
+    var saveBtn = document.getElementById('saveBtn');
+    var savedChip = document.getElementById('savedChip');
+    saveBtn.addEventListener('click', function(){
+      savedChip.classList.add('show');
+      setTimeout(function(){ savedChip.classList.remove('show'); }, 4000);
+    });
+  </script>
+</body>
+</html>

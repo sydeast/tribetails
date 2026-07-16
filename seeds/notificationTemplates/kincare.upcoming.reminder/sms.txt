@@ -1,0 +1,1 @@
+It's Auntie. Reminder: your {{serviceType}} for {{kinName}} is {{bookingDate}} at {{bookingTime}}. See you then! []

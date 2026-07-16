@@ -1,0 +1,54 @@
+/* ============================================================
+   SCREEN CSS: The Kin (pet roster grid). Extracted verbatim from
+   ui-ideas/mytribe-kin-2026-05-31.html. Same tokens, same feel.
+   ============================================================ */
+.titlerow { display: flex; align-items: center; gap: 16px; margin: 0 2px 26px; flex-wrap: wrap; }
+.titlerow h2 { font-family: var(--serif); font-size: clamp(26px, 3.4vw, 36px); font-weight: 400; line-height: 1; letter-spacing: -.01em; }
+.titlerow .sub { margin-top: 7px; max-width: 48ch; }
+.titlerow .btn { margin-left: auto; flex: 0 0 auto; }
+
+.kingrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; align-items: stretch; }
+@media (max-width: 880px) { .kingrid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .kingrid { grid-template-columns: 1fr; } }
+
+.petcard { font-family: var(--sans); padding: 18px; cursor: pointer; display: flex; flex-direction: column; text-align: left;
+  transition: .2s var(--ease); width: 100%; animation: rise .6s var(--ease) both; border: none;
+  text-decoration: none; color: inherit; }
+.petcard:hover { transform: translateY(-4px); box-shadow: var(--shadow-lift); }
+.petcard .pphoto { width: 100%; aspect-ratio: 4 / 3; border-radius: 16px; display: grid; place-items: center;
+  font-size: 62px; overflow: hidden; margin-bottom: 14px; }
+.petcard.p1 .pphoto { background: rgba(223, 132, 49, .16); }
+.petcard.p2 .pphoto { background: rgba(10, 133, 149, .14); }
+.petcard.p3 .pphoto { background: rgba(213, 92, 135, .14); }
+.petcard.p4 .pphoto { background: rgba(116, 83, 138, .14); }
+.petcard .pname { font-family: var(--serif); font-size: 22px; font-weight: 400; line-height: 1.1; }
+.petcard .pbreed { font-size: 13.5px; color: var(--navy-soft); margin-top: 5px; }
+.petcard .page { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--navy-muted); margin-top: 9px; }
+
+/* memorial variant: In our hearts (Family Purple) */
+.petcard.memorial { background: rgba(116, 83, 138, .08); border-color: rgba(116, 83, 138, .30); }
+.petcard.memorial .pphoto { background: rgba(116, 83, 138, .16); filter: grayscale(.2); }
+.petcard.memorial .pname { color: var(--purple); }
+.petcard.memorial .mlabel { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--purple); background: rgba(116, 83, 138, .15); padding: 4px 11px; border-radius: 20px; margin-bottom: 12px; }
+.petcard.memorial .page { color: var(--purple); opacity: .85; }
+
+/* add-new card (dashed) */
+.petcard.addcard { border: 2px dashed var(--hairline); background: var(--glass-dim); box-shadow: none;
+  align-items: center; justify-content: center; text-align: center; min-height: 236px; }
+.petcard.addcard:hover { border-color: var(--orange); background: rgba(223, 132, 49, .06); transform: translateY(-4px); }
+.petcard.addcard .plus { width: 58px; height: 58px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 30px; color: #fff; background: var(--tribe-grad); box-shadow: var(--shadow-warm); margin-bottom: 12px; }
+.petcard.addcard b { font-family: var(--serif); font-size: 18px; font-weight: 400; }
+.petcard.addcard small { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; color: var(--navy-muted); margin-top: 5px; }
+
+/* empty state */
+.emptystate { padding: 48px 26px; text-align: center; align-items: center; margin-top: 24px; }
+.emptystate .ehug { font-size: 46px; margin-bottom: 14px; }
+.emptystate h3 { font-family: var(--serif); font-size: 24px; font-weight: 400; }
+.emptystate p { font-size: 14px; color: var(--navy-soft); line-height: 1.55; max-width: 46ch; margin: 10px auto 0; }
+
+.d-a { animation-delay: .14s; } .d-b { animation-delay: .18s; } .d-c { animation-delay: .22s; }
+.d-d { animation-delay: .26s; } .d-e { animation-delay: .30s; } .d-f { animation-delay: .34s; }

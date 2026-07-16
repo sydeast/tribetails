@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { background-color: #fbfbf9; color: #11131f; font-family: 'Segoe UI', Tahoma, sans-serif; line-height: 1.6; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-top: 8px solid #df8431; border-bottom: 4px solid #11131f; }
+        .header { padding: 30px 40px 10px 40px; }
+        .header h2 { color: #11131f; margin: 0; }
+        .content { padding: 10px 40px 30px 40px; font-size: 16px; }
+        .footer { padding: 20px 40px; background-color: #11131f; color: #fbfbf9; font-size: 12px; text-align: center; }
+        .button { display: inline-block; padding: 14px 28px; background: #df8431; color: #ffffff; text-decoration: none; border-radius: 4px; font-weight: bold; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><h2>New message from {{kinfolkName}}</h2></div>
+        <div class="content">
+            <p>{{kinfolkName}} just sent you a message:</p>
+            <p>"{{preview}}"</p>
+            <p>Hop into the inbox to reply.</p>
+            <p><a class="button" href="">Open the inbox</a></p>
+        </div>
+        <div class="footer">Tribe Tails Pet Care. Your Kin's Favorite Auntie.</div>
+    </div>
+</body>
+</html>

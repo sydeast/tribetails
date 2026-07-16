@@ -1,0 +1,1 @@
+Tribe Tails: your invite to {{invitedEmail}} expired before it was accepted. Resend it here: []

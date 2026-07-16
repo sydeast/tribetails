@@ -1,0 +1,9 @@
+Subject: On my way over for your {{serviceType}}
+
+Heading your way right now for our {{serviceType}}. See you in a few.
+
+Track the visit here: []
+
+See you soon, Auntie
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.

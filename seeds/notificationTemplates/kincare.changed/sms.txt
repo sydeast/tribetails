@@ -1,0 +1,1 @@
+It's Auntie. The {{serviceType}} for {{kinName}} on {{bookingDate}} was updated. Check the new details here: []

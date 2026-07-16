@@ -1,0 +1,1 @@
+Visit coming up. Your {{serviceType}} for {{kinName}} is {{bookingDate}} at {{bookingTime}}. Tap for details.

@@ -1,0 +1,1 @@
+A nudge on your invoice. Invoice {{invoiceNumber}} for {{amount}} is still open. Tap to pay.

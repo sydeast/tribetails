@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyTribe, Booking Details</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     MyTribe DESIGN SYSTEM  (com.kinfolk.portal, pet parent web)
+     Identity: bright, sunny, glassmorphic. Top-nav airy consumer
+     web (NOT AuntieOS's dark left-rail admin). Signature = frosted
+     glass + the Tribe Gradient. Full-web layout; mobile collapses
+     responsively (single column + bottom tabs).
+     Palette locked to brandColors.md / KinfolkBrand. Fonts AuntieOS
+     does not use: Young Serif + Bricolage Grotesque + DM Mono.
+     ==> This <style> block is the shared system; reuse verbatim.
+     ============================================================ */
+  :root{
+    --cream:#FBFBF9; --navy:#11131F;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595;
+    --purple:#74538A; --coral:#D5535A;
+    --navy-soft:rgba(17,19,31,.78); --navy-muted:rgba(17,19,31,.55);
+    --hairline:rgba(17,19,31,.10);
+    --glass:rgba(255,255,255,.62); --glass-dim:rgba(255,255,255,.40);
+    --glass-border:rgba(255,255,255,.7);
+    --serif:"Young Serif",serif; --sans:"Bricolage Grotesque",sans-serif; --mono:"DM Mono",monospace;
+    --ease:cubic-bezier(.22,.8,.24,1);
+    --shadow-card:0 14px 34px -18px rgba(17,19,31,.30);
+    --shadow-lift:0 22px 46px -20px rgba(17,19,31,.36);
+    --shadow-warm:0 16px 34px -16px rgba(223,132,49,.55);
+    /* canonical brand gradients (brandColors.md) */
+    --tribe-grad:linear-gradient(135deg,#df8431,#d55c87,#0a8595);
+    --orange-pink:linear-gradient(to bottom right,#df8431,#d55c87);
+    --teal-purple:linear-gradient(to bottom right,#0a8595,#74538a);
+    --maxw:1140px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    font-family:var(--sans);color:var(--navy);min-height:100vh;-webkit-font-smoothing:antialiased;
+    background:
+      radial-gradient(120vmax 70vmax at 82% -10%, rgba(223,132,49,.20), transparent 55%),
+      radial-gradient(110vmax 70vmax at 5% 0%, rgba(213,92,135,.16), transparent 52%),
+      radial-gradient(130vmax 80vmax at 50% 118%, rgba(10,133,149,.16), transparent 55%),
+      var(--cream);
+    overflow-x:hidden;
+  }
+  .orb{position:fixed;border-radius:50%;filter:blur(60px);opacity:.42;z-index:0;pointer-events:none;
+    animation:drift 26s var(--ease) infinite alternate;}
+  .orb.a{width:32vmax;height:32vmax;top:-6vmax;right:-4vmax;background:radial-gradient(circle,var(--orange),transparent 64%);}
+  .orb.b{width:30vmax;height:30vmax;bottom:-10vmax;left:-8vmax;background:radial-gradient(circle,var(--teal),transparent 64%);animation-delay:-10s;}
+  @keyframes drift{to{transform:translate(2vmax,2vmax) scale(1.08);}}
+
+  /* ===== top nav ===== */
+  .nav{position:sticky;top:0;z-index:20;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+    background:rgba(251,251,249,.72);border-bottom:1px solid var(--hairline);}
+  .nav .in{max-width:var(--maxw);margin:0 auto;padding:14px 24px;display:flex;align-items:center;gap:20px;}
+  .wordmark{font-family:var(--serif);font-size:23px;letter-spacing:-.01em;line-height:1;white-space:nowrap;}
+  .wordmark .grad{background:var(--tribe-grad);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  .navlinks{display:flex;gap:4px;margin-left:8px;}
+  .navlinks a{padding:9px 14px;border-radius:11px;text-decoration:none;color:var(--navy-soft);font-weight:600;
+    font-size:14.5px;transition:.2s var(--ease);}
+  .navlinks a:hover{background:rgba(223,132,49,.12);color:var(--navy);}
+  .navlinks a.on{background:var(--navy);color:#fff;}
+  .nav .right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+  .iconbtn{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:17px;cursor:pointer;
+    background:var(--glass);border:1px solid var(--glass-border);box-shadow:var(--shadow-card);position:relative;
+    transition:.2s var(--ease);}
+  .iconbtn:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift);}
+  .iconbtn .ping{position:absolute;top:9px;right:10px;width:8px;height:8px;border-radius:50%;background:var(--coral);
+    box-shadow:0 0 0 3px var(--cream);}
+  .avatar{width:42px;height:42px;border-radius:50%;background:var(--tribe-grad);display:grid;place-items:center;
+    color:#fff;font-family:var(--serif);font-size:18px;cursor:pointer;box-shadow:var(--shadow-warm);}
+
+  /* ===== layout shell ===== */
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:34px 24px 80px;position:relative;z-index:1;}
+
+  .hero-greet{margin-bottom:24px;animation:rise .6s var(--ease) both;}
+  .hero-greet .kick{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--orange);margin-bottom:8px;}
+  .hero-greet h1{font-family:var(--serif);font-size:clamp(30px,4.4vw,46px);line-height:1.05;letter-spacing:-.01em;}
+  .hero-greet h1 span{color:var(--pink);}
+
+  /* glass primitives */
+  .glass{background:var(--glass);border:1px solid var(--glass-border);border-radius:22px;
+    box-shadow:var(--shadow-card);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);}
+  .card{padding:22px;}
+  .sectlabel{display:flex;align-items:center;gap:8px;margin:0 2px 12px;font-family:var(--mono);font-size:11px;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--navy-muted);}
+  .sectlabel a{margin-left:auto;color:var(--teal);text-decoration:none;font-weight:500;letter-spacing:.04em;}
+  h3.title{font-family:var(--serif);font-size:20px;font-weight:400;display:flex;align-items:center;gap:8px;}
+  .sub{color:var(--navy-muted);font-size:13px;margin-top:3px;}
+
+  /* buttons */
+  .btn{border:none;cursor:pointer;border-radius:14px;padding:14px 18px;font-family:var(--sans);font-size:14.5px;
+    font-weight:700;color:#fff;background:var(--navy);display:inline-flex;align-items:center;justify-content:center;gap:9px;
+    box-shadow:var(--shadow-card);transition:.2s var(--ease);text-decoration:none;}
+  .btn:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift);}
+  .btn.grad{background:var(--tribe-grad);box-shadow:var(--shadow-warm);}
+  .btn.ghost{background:transparent;color:var(--navy);border:1px solid var(--hairline);box-shadow:none;}
+  .btn.ghost:hover{background:rgba(223,132,49,.10);}
+  .btn.block{width:100%;}
+  .chip{font-family:var(--mono);font-size:10.5px;font-weight:500;padding:4px 10px;border-radius:20px;letter-spacing:.04em;}
+  .chip.go{background:rgba(10,133,149,.14);color:var(--teal);}
+  .chip.warm{background:rgba(223,132,49,.16);color:var(--orange);}
+  .chip.done{background:rgba(116,83,138,.14);color:var(--purple);}
+
+  /* ===== Live Visit hero (Tribe Gradient) ===== */
+  .live{padding:24px 26px;color:#fff;border-radius:24px;position:relative;overflow:hidden;background:var(--tribe-grad);
+    box-shadow:var(--shadow-warm);margin-bottom:30px;animation:rise .6s var(--ease) .08s both;}
+  .live::after{content:"";position:absolute;inset:0;background:radial-gradient(120% 90% at 88% 0%,rgba(255,255,255,.32),transparent 55%);pointer-events:none;}
+  .live .lrow{display:flex;align-items:center;gap:7px;position:relative;}
+  .live .tag{font-family:var(--mono);font-size:11px;letter-spacing:.16em;}
+  .pulse{width:9px;height:9px;border-radius:50%;background:#fff;animation:pulse 1.6s var(--ease) infinite;}
+  @keyframes pulse{70%{box-shadow:0 0 0 9px rgba(255,255,255,0);}100%{box-shadow:0 0 0 0 rgba(255,255,255,0);}}
+  .live h2{font-family:var(--serif);font-size:26px;margin:12px 0 4px;position:relative;}
+  .live p{font-size:14px;opacity:.93;position:relative;max-width:60ch;line-height:1.5;}
+  .live .lwho{display:flex;align-items:center;gap:13px;margin-top:18px;position:relative;}
+  .live .lav{width:48px;height:48px;border-radius:15px;background:rgba(255,255,255,.85);display:grid;place-items:center;font-size:25px;box-shadow:0 6px 14px -6px rgba(0,0,0,.4);overflow:hidden;}
+  .live .lwho b{font-size:15px;font-weight:700;} .live .lwho small{display:block;font-size:12px;opacity:.86;font-family:var(--mono);}
+  .live .track{flex:1;min-width:120px;height:7px;border-radius:99px;background:rgba(255,255,255,.3);position:relative;overflow:hidden;}
+  .live .track i{position:absolute;inset:0 38% 0 0;background:#fff;border-radius:99px;}
+
+  /* ===== two-column content ===== */
+  .cols{display:grid;grid-template-columns:1.6fr 1fr;gap:24px;align-items:start;}
+  .stack{display:flex;flex-direction:column;gap:24px;}
+
+  /* booking rows */
+  .visit{display:flex;align-items:center;gap:14px;padding:14px;border-radius:16px;cursor:pointer;border:1px solid transparent;transition:.2s var(--ease);}
+  .visit:hover{background:rgba(255,255,255,.5);border-color:var(--glass-border);transform:translateX(3px);}
+  .visit .cal{flex:0 0 auto;width:52px;text-align:center;border-radius:13px;overflow:hidden;border:1px solid var(--hairline);font-family:var(--mono);background:#fff;}
+  .visit .cal .m{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#fff;padding:3px 0;}
+  .visit.v1 .cal .m{background:var(--orange);} .visit.v2 .cal .m{background:var(--purple);} .visit.v3 .cal .m{background:var(--teal);}
+  .visit .cal .d{font-family:var(--serif);font-size:22px;padding:4px 0 5px;}
+  .visit .info{flex:1;} .visit .info b{font-size:15px;font-weight:600;} .visit .info small{display:block;color:var(--navy-muted);font-size:12.5px;margin-top:2px;}
+  .visit .pet{width:42px;height:42px;border-radius:13px;overflow:hidden;display:grid;place-items:center;font-size:23px;background:rgba(223,132,49,.12);}
+
+  /* KinTale cards */
+  .tale{display:flex;gap:14px;padding:15px;border-radius:16px;cursor:pointer;transition:.2s var(--ease);border:1px solid transparent;}
+  .tale:hover{background:rgba(255,255,255,.5);border-color:var(--glass-border);transform:translateX(3px);}
+  .tale .photo{flex:0 0 auto;width:56px;height:56px;border-radius:16px;display:grid;place-items:center;font-size:27px;overflow:hidden;}
+  .tale.a1 .photo{background:rgba(223,132,49,.16);} .tale.a2 .photo{background:rgba(10,133,149,.14);} .tale.a3 .photo{background:rgba(213,92,135,.14);}
+  .tale .tb b{font-size:14.5px;font-weight:600;} .tale .tb p{font-size:13px;color:var(--navy-soft);line-height:1.46;margin-top:3px;}
+  .tale .tb .meta{font-family:var(--mono);font-size:10.5px;color:var(--navy-muted);margin-top:8px;letter-spacing:.04em;}
+  .heart{color:var(--coral);}
+
+  /* Kin roster (Your Tribe) */
+  .kinrow{display:flex;align-items:center;gap:13px;padding:11px;border-radius:14px;cursor:pointer;transition:.2s var(--ease);}
+  .kinrow:hover{background:rgba(255,255,255,.55);transform:translateX(2px);}
+  .kinrow .pic{width:50px;height:50px;border-radius:50%;display:grid;place-items:center;font-size:25px;border:2px solid;overflow:hidden;flex:0 0 auto;}
+  .kinrow.k1 .pic{border-color:var(--orange);} .kinrow.k2 .pic{border-color:var(--teal);} .kinrow.k3 .pic{border-color:var(--pink);} .kinrow.k4 .pic{border-color:var(--purple);}
+  .kinrow b{font-size:14.5px;font-weight:600;} .kinrow small{display:block;font-size:11.5px;color:var(--navy-muted);font-family:var(--mono);}
+  .kinrow.add .pic{border:2px dashed var(--hairline);color:var(--navy-muted);background:var(--glass-dim);font-size:22px;}
+
+  .footnote{font-family:var(--mono);font-size:11px;color:var(--navy-muted);text-align:center;margin-top:40px;}
+  .footnote b{background:var(--tribe-grad);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:500;}
+
+  @keyframes rise{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
+  .d1{animation:rise .6s var(--ease) .14s both;}.d2{animation:rise .6s var(--ease) .2s both;}
+  .d3{animation:rise .6s var(--ease) .26s both;}.d4{animation:rise .6s var(--ease) .32s both;}
+
+  /* ===== responsive: tablet + phone ===== */
+  @media (max-width:880px){
+    .cols{grid-template-columns:1fr;}
+    .navlinks{display:none;}
+    .wrap{padding:24px 16px 96px;}
+  }
+  .tabbar{display:none;}
+  @media (max-width:880px){
+    .tabbar{display:flex;position:fixed;left:12px;right:12px;bottom:12px;z-index:30;justify-content:space-around;
+      padding:10px 6px;border-radius:22px;background:rgba(255,255,255,.8);border:1px solid var(--glass-border);
+      box-shadow:0 -8px 30px -16px rgba(17,19,31,.4);backdrop-filter:blur(20px);}
+    .tabbar a{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:20px;color:var(--navy-muted);text-decoration:none;}
+    .tabbar a small{font-size:10px;font-family:var(--mono);} .tabbar a.on{color:var(--orange);}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;}}
+
+  /* ============================================================
+     SCREEN ADD-ONS, Booking Details (same tokens, same style)
+     ============================================================ */
+  .backlink{display:inline-flex;align-items:center;gap:7px;text-decoration:none;color:var(--navy-soft);
+    font-weight:600;font-size:14px;padding:7px 12px 7px 10px;border-radius:11px;transition:.2s var(--ease);margin-bottom:14px;}
+  .backlink:hover{background:rgba(223,132,49,.12);color:var(--navy);transform:translateX(-2px);}
+  .backlink .arr{font-size:17px;line-height:1;}
+
+  .bk-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:6px;}
+  .bk-head h1{font-family:var(--serif);font-size:clamp(28px,3.6vw,38px);line-height:1.06;letter-spacing:-.01em;}
+
+  /* large status chip, supports every booking state */
+  .chip.lg{font-size:11.5px;padding:6px 13px;display:inline-flex;align-items:center;gap:7px;}
+  .chip.requested{background:rgba(116,83,138,.12);color:var(--purple);}
+  .chip.pending{background:rgba(10,133,149,.14);color:var(--teal);}
+  .chip.confirmed{background:rgba(223,132,49,.16);color:var(--orange);}
+  .chip.inprogress{background:var(--tribe-grad);color:#fff;}
+  .chip.completed{background:rgba(116,83,138,.14);color:var(--purple);}
+  .chip.cancelled{background:rgba(213,83,90,.14);color:var(--coral);}
+  .chip .dot{width:7px;height:7px;border-radius:50%;background:currentColor;}
+  .chip.inprogress .dot{background:#fff;animation:pulse 1.6s var(--ease) infinite;}
+
+  /* friendly live line under the title */
+  .liveline{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12px;letter-spacing:.04em;
+    color:var(--teal);margin-top:4px;}
+  .liveline .pulse{width:8px;height:8px;background:var(--teal);}
+
+  /* ===== status timeline ===== */
+  .timeline{padding:26px 24px 22px;margin-bottom:24px;}
+  .tl-track{display:grid;grid-template-columns:repeat(5,1fr);position:relative;}
+  .tl-line{position:absolute;left:8%;right:8%;top:15px;height:3px;border-radius:99px;background:var(--hairline);z-index:0;}
+  .tl-line i{position:absolute;inset:0 50% 0 0;border-radius:99px;background:var(--tribe-grad);}
+  .tl-step{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;}
+  .tl-dot{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-size:13px;
+    background:#fff;border:2px solid var(--hairline);color:var(--navy-muted);box-shadow:var(--shadow-card);}
+  .tl-step.done .tl-dot{background:var(--tribe-grad);border-color:transparent;color:#fff;}
+  .tl-step.now .tl-dot{background:var(--orange);border-color:#fff;color:#fff;box-shadow:0 0 0 4px rgba(223,132,49,.22);
+    animation:pulse 1.8s var(--ease) infinite;}
+  .tl-step .lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--navy-muted);}
+  .tl-step.now .lbl,.tl-step.done .lbl{color:var(--navy);font-weight:500;}
+
+  /* ===== fields grid ===== */
+  .fields{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;}
+  .field{display:flex;align-items:center;gap:14px;padding:16px;border-radius:16px;background:rgba(255,255,255,.5);
+    border:1px solid var(--glass-border);}
+  .field .ic{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;font-size:24px;flex:0 0 auto;overflow:hidden;}
+  .field.f1 .ic{background:rgba(223,132,49,.16);} .field.f2 .ic{background:rgba(10,133,149,.14);}
+  .field.f3 .ic{background:rgba(213,92,135,.14);} .field.f4 .ic{background:rgba(116,83,138,.14);}
+  .field .lab{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--navy-muted);}
+  .field .val{font-size:15.5px;font-weight:600;margin-top:3px;}
+  .field .val small{display:block;font-weight:400;font-size:12.5px;color:var(--navy-muted);margin-top:2px;font-family:var(--mono);}
+
+  /* legend */
+  .legend{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:18px;padding-top:16px;border-top:1px solid var(--hairline);}
+  .legend .li{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;color:var(--navy-muted);letter-spacing:.04em;}
+  .legend .sw{width:10px;height:10px;border-radius:50%;}
+
+  /* on file / additional info */
+  .info-line{font-size:14.5px;line-height:1.6;color:var(--navy-soft);}
+  .info-line + .info-line{margin-top:10px;}
+  .info-line b{font-weight:600;color:var(--navy);}
+
+  /* note box */
+  .note-ta{width:100%;min-height:120px;resize:vertical;border-radius:16px;border:1px solid var(--glass-border);
+    background:rgba(255,255,255,.55);padding:14px 16px;font-family:var(--sans);font-size:14.5px;color:var(--navy);
+    line-height:1.5;transition:.2s var(--ease);}
+  .note-ta::placeholder{color:var(--navy-muted);}
+  .note-ta:focus{outline:none;border-color:var(--orange);box-shadow:0 0 0 4px rgba(223,132,49,.14);background:#fff;}
+  .note-ta.err{border-color:var(--coral);box-shadow:0 0 0 4px rgba(213,83,90,.14);}
+  .note-err{display:none;align-items:center;gap:7px;font-family:var(--mono);font-size:11.5px;color:var(--coral);margin-top:9px;letter-spacing:.03em;}
+  .note-err.show{display:flex;}
+  .note-foot{display:flex;align-items:center;gap:12px;margin-top:14px;}
+
+  @media (max-width:880px){
+    .fields{grid-template-columns:1fr;}
+    .tl-step .lbl{font-size:9.5px;}
+  }
+</style>
+</head>
+<body>
+  <span class="orb a"></span><span class="orb b"></span>
+
+  <!-- top nav -->
+  <nav class="nav">
+    <div class="in">
+      <div class="wordmark">My<span class="grad">Tribe</span></div>
+      <div class="navlinks">
+        <a href="#">Home</a>
+        <a href="#">Tribe</a>
+        <a class="on" href="#">Schedule</a>
+        <a href="#">KinTales</a>
+        <a href="#">Invoices</a>
+      </div>
+      <div class="right">
+        <div class="iconbtn" aria-label="Notifications">&#128276;<span class="ping"></span></div>
+        <div class="avatar">J</div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <!-- back + title -->
+    <a class="backlink" href="#"><span class="arr">&#8592;</span> Back</a>
+    <header class="hero-greet" style="margin-bottom:22px;">
+      <div class="kick">Schedule</div>
+      <div class="bk-head">
+        <h1>Booking Details</h1>
+        <span class="chip lg confirmed"><span class="dot"></span>CONFIRMED</span>
+      </div>
+      <div class="liveline"><span class="pulse"></span>Auntie en route</div>
+    </header>
+
+    <!-- status timeline -->
+    <section class="glass timeline d1">
+      <div class="sectlabel">Status timeline</div>
+      <div class="tl-track">
+        <span class="tl-line"><i></i></span>
+        <div class="tl-step done"><div class="tl-dot">&#10003;</div><div class="lbl">Requested</div></div>
+        <div class="tl-step done"><div class="tl-dot">&#10003;</div><div class="lbl">Pending</div></div>
+        <div class="tl-step now"><div class="tl-dot">&#9679;</div><div class="lbl">Confirmed</div></div>
+        <div class="tl-step"><div class="tl-dot">4</div><div class="lbl">In progress</div></div>
+        <div class="tl-step"><div class="tl-dot">5</div><div class="lbl">Completed</div></div>
+      </div>
+      <div class="legend">
+        <div class="li"><span class="sw" style="background:var(--purple)"></span>Requested</div>
+        <div class="li"><span class="sw" style="background:var(--teal)"></span>Pending</div>
+        <div class="li"><span class="sw" style="background:var(--orange)"></span>Confirmed</div>
+        <div class="li"><span class="sw" style="background:var(--pink)"></span>In progress</div>
+        <div class="li"><span class="sw" style="background:var(--purple)"></span>Completed</div>
+        <div class="li"><span class="sw" style="background:var(--coral)"></span>Cancelled</div>
+      </div>
+    </section>
+
+    <!-- two columns -->
+    <div class="cols">
+      <!-- main -->
+      <div class="stack">
+        <!-- fields grid -->
+        <section class="glass card d2">
+          <div class="sectlabel">This booking</div>
+          <div class="fields">
+            <div class="field f1">
+              <div class="ic">&#128205;</div>
+              <div>
+                <div class="lab">Service</div>
+                <div class="val">Drop-in Visit<small>JUN 02, 8:00 AM</small></div>
+              </div>
+            </div>
+            <div class="field f2">
+              <div class="ic">&#128049;</div>
+              <div>
+                <div class="lab">Kin</div>
+                <div class="val">Miso<small>TABBY, 7 YRS</small></div>
+              </div>
+            </div>
+            <div class="field f3">
+              <div class="ic">&#128105;</div>
+              <div>
+                <div class="lab">Auntie</div>
+                <div class="val">Maya<small>YOUR REGULAR SITTER</small></div>
+              </div>
+            </div>
+            <div class="field f4">
+              <div class="ic">&#9989;</div>
+              <div>
+                <div class="lab">Status</div>
+                <div class="val">Confirmed<small>AUNTIE EN ROUTE</small></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- additional information -->
+        <section class="glass card d3">
+          <div class="sectlabel">Additional Information</div>
+          <p class="info-line">
+            Miso eats half a cup of the salmon kibble in the blue tin, then likes the windowsill blinds
+            opened so he can watch the birds. He hides under the bed if the doorbell rings, so let yourself
+            in quietly and give him a minute to come say hi.
+          </p>
+          <p class="info-line">
+            <b>On File:</b> Gate code 0408. Litter scoop and fresh water on the way out, please. Treats
+            are in the pantry, two max.
+          </p>
+        </section>
+
+        <!-- add a note -->
+        <section class="glass card d4">
+          <div class="sectlabel">Add a note</div>
+          <h3 class="title">Leave a note for Auntie Maya</h3>
+          <p class="sub" style="margin-bottom:14px;">Anything you want her to know before this visit.</p>
+          <textarea id="note" class="note-ta" placeholder="For example, Miso has a vet check this week, please keep an eye on his appetite."></textarea>
+          <div class="note-err" id="noteErr">&#9888; Note cannot be empty.</div>
+          <div class="note-foot">
+            <button class="btn grad" id="saveNote" type="button">&#128221; Save Note</button>
+            <span class="sub" style="margin:0;">Saved notes go straight to Maya.</span>
+          </div>
+        </section>
+      </div>
+
+      <!-- aside -->
+      <div class="stack">
+        <section class="glass card d2">
+          <div class="sectlabel">When and where</div>
+          <div class="visit v1" style="cursor:default;">
+            <div class="cal"><div class="m">Jun</div><div class="d">02</div></div>
+            <div class="info"><b>Drop-in Visit</b><small>Mon, 8:00 AM with Auntie Maya</small></div>
+            <div class="pet">&#128049;</div>
+          </div>
+          <p class="sub" style="margin:6px 4px 0;">Roughly 30 minutes. You will get a KinTale the moment Maya wraps up.</p>
+        </section>
+
+        <section class="glass card d3">
+          <div class="sectlabel">Live status</div>
+          <h3 class="title"><span class="pulse" style="background:var(--orange);"></span>Auntie en route</h3>
+          <p class="sub" style="margin-bottom:14px;">Maya confirmed this morning and is on her way to Miso.</p>
+          <div style="display:flex;flex-direction:column;gap:8px;font-family:var(--mono);font-size:11.5px;color:var(--navy-muted);letter-spacing:.03em;">
+            <div>REQUESTED &middot; MAY 30, 4:12 PM</div>
+            <div>CONFIRMED &middot; JUN 02, 7:05 AM</div>
+          </div>
+        </section>
+
+        <section class="glass card d4">
+          <div class="sectlabel">Need a change</div>
+          <div style="display:flex;flex-direction:column;gap:11px;">
+            <a class="btn ghost block" href="#">&#128172; Message Auntie Maya</a>
+            <a class="btn ghost block" href="#">&#128197; Reschedule visit</a>
+            <a class="btn ghost block" href="#" style="color:var(--coral);border-color:rgba(213,83,90,.3);">&#10005; Cancel booking</a>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <p class="footnote">Cared for by <b>Tribe Tails Pet Care</b></p>
+  </div>
+
+  <!-- mobile bottom tabs (shown under 880px) -->
+  <nav class="tabbar">
+    <a href="#">&#127968;<small>Home</small></a>
+    <a href="#">&#128062;<small>Tribe</small></a>
+    <a class="on" href="#">&#128197;<small>Schedule</small></a>
+    <a href="#">&#128221;<small>Tales</small></a>
+    <a href="#">&#128100;<small>Account</small></a>
+  </nav>
+
+  <script>
+    (function(){
+      var ta=document.getElementById('note'),
+          err=document.getElementById('noteErr'),
+          btn=document.getElementById('saveNote');
+      btn.addEventListener('click',function(){
+        if(ta.value.trim()===''){
+          ta.classList.add('err');
+          err.classList.add('show');
+          ta.focus();
+          return;
+        }
+        ta.classList.remove('err');
+        err.classList.remove('show');
+        btn.innerHTML='&#10003; Note saved';
+        setTimeout(function(){ btn.innerHTML='&#128221; Save Note'; },2200);
+      });
+      ta.addEventListener('input',function(){
+        if(ta.value.trim()!==''){ ta.classList.remove('err'); err.classList.remove('show'); }
+      });
+    })();
+  </script>
+</body>
+</html>

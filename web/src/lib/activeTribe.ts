@@ -1,0 +1,200 @@
+import { useSyncExternalStore } from 'react';
+import { getMyAccess, setActiveTribe } from '../api/portal';
+import { getAuthState, useAuth } from './auth';
+import { auth } from './firebase';
+
+/**
+ * Multi-tribe launch destination, ported from the Kotlin
+ * `resolveLaunchDestination` (src/commonMain/kotlin/com/kinfolk/portal/launch/LaunchRouter.kt)
+ * so web and Android branch on the exact same rule set:
+ *   - no auth yet            -> 'loading'
+ *   - signed out              -> 'signIn'
+ *   - access fetch failed     -> 'error'
+ *   - access not fetched yet  -> 'loading'
+ *   - 0 kinfolkIds             -> 'noTribes'
+ *   - operator                -> 'pick' (always, even with 1 id — they see the directory)
+ *   - exactly 1, non-operator -> 'home'
+ *   - 2+, non-operator         -> 'pick'
+ */
+export type LaunchDestination = 'loading' | 'signIn' | 'noTribes' | 'pick' | 'home' | 'error';
+
+export interface AccessState {
+  kinfolkIds: string[];
+  isOperator: boolean;
+  /** Currently selected tribe. Null until resolved (single-tribe autopick or user pick). */
+  activeKinfolkId: string | null;
+  error: string | null;
+}
+
+export function resolveLaunchDestination(
+  authStatus: 'loading' | 'signedOut' | 'signedIn',
+  access: AccessState | null,
+): LaunchDestination {
+  if (authStatus === 'loading') return 'loading';
+  if (authStatus === 'signedOut') return 'signIn';
+  if (access === null) return 'loading';
+  if (access.error !== null) return 'error';
+  if (access.kinfolkIds.length === 0) return 'noTribes';
+  if (access.isOperator) return 'pick';
+  if (access.kinfolkIds.length === 1) return 'home';
+  return access.activeKinfolkId !== null ? 'home' : 'pick';
+}
+
+let state: AccessState | null = null;
+let inFlight: Promise<AccessState> | null = null;
+let resolvedForUid: string | null = null;
+const listeners = new Set<() => void>();
+
+function notify() {
+  for (const l of listeners) l();
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function getSnapshot(): AccessState | null {
+  return state;
+}
+
+function sessionKeyFor(uid: string): string {
+  return `mytribe.activeKinfolkId.${uid}`;
+}
+
+/**
+ * O-37: make the ID token agree with the tribe we just resolved.
+ *
+ * Firestore + Storage rules gate every kinfolk read on
+ * `token.role == 'kinfolk' && token.kinfolkId`, but a single-tribe kinfolk is
+ * auto-picked below and never touches setActiveKinfolkId's re-mint path — so
+ * nothing ever refreshed the token they were issued at account-creation, back
+ * before acceptInvite stamped the claim. Result: realtime Messages and live GPS
+ * breadcrumbs were denied until the token happened to age out (up to an hour).
+ *
+ * Cheapest thing that is correct, in order:
+ *   1. read the CACHED claims (no network) — a warm boot stops here;
+ *   2. claim missing/stale -> force one refresh; acceptInvite has already
+ *      stamped it server-side, so this is enough for the fresh-accept case;
+ *   3. still disagrees (e.g. another device switched tribes) -> only then
+ *      spend a setActiveTribe re-mint and refresh again.
+ *
+ * Never throws: a kinfolk who cannot reconcile their token still gets their
+ * callable-backed screens, and the console.warn keeps the degradation visible
+ * rather than silent.
+ */
+async function reconcileClaim(activeKinfolkId: string): Promise<void> {
+  try {
+    const cached = await auth.currentUser?.getIdTokenResult();
+    if (cached?.claims['kinfolkId'] === activeKinfolkId) return;
+
+    const refreshed = await auth.currentUser?.getIdTokenResult(true);
+    if (refreshed?.claims['kinfolkId'] === activeKinfolkId) return;
+
+    await setActiveTribe(activeKinfolkId);
+    await auth.currentUser?.getIdToken(true);
+  } catch (err: unknown) {
+    console.warn('[activeTribe] could not reconcile kinfolk claim; live reads may be denied:', err);
+  }
+}
+
+/**
+ * Resolves getMyAccess for the current uid (cached; call is idempotent per
+ * sign-in). Restores a previously-picked tribe from sessionStorage if it's
+ * still in the allowed set, and auto-picks the sole tribe for non-operators.
+ */
+export async function ensureAccess(): Promise<AccessState> {
+  const auth = getAuthState();
+  if (auth.status !== 'signedIn') {
+    throw new Error('ensureAccess called while signed out');
+  }
+  const uid = auth.user.uid;
+  if (state !== null && resolvedForUid === uid) return state;
+  if (inFlight !== null && resolvedForUid === uid) return inFlight;
+
+  resolvedForUid = uid;
+  inFlight = getMyAccess()
+    .then(async (result) => {
+      const saved = sessionStorage.getItem(sessionKeyFor(uid));
+      const restored = saved !== null && result.kinfolkIds.includes(saved) ? saved : null;
+      const autoPicked = !result.isOperator && result.kinfolkIds.length === 1 ? result.kinfolkIds[0]! : null;
+      const activeKinfolkId = restored ?? autoPicked;
+      // Awaited, not fire-and-forget: screens subscribe their claim-gated
+      // onSnapshot listeners as soon as this resolves, and a listener that
+      // starts on a stale token is simply denied — it does not retry.
+      if (activeKinfolkId !== null) await reconcileClaim(activeKinfolkId);
+      const next: AccessState = {
+        kinfolkIds: result.kinfolkIds,
+        isOperator: result.isOperator,
+        activeKinfolkId,
+        error: null,
+      };
+      state = next;
+      notify();
+      return next;
+    })
+    .catch((err: unknown) => {
+      const next: AccessState = {
+        kinfolkIds: [],
+        isOperator: false,
+        activeKinfolkId: null,
+        error: err instanceof Error ? err.message : 'Could not load your tribes.',
+      };
+      state = next;
+      notify();
+      return next;
+    });
+  return inFlight;
+}
+
+/**
+ * Sets the active tribe (TribePicker selection) and persists it for the
+ * session. Updates local state synchronously (instant UI — callable reads
+ * pass kinfolkId explicitly so they're correct immediately regardless), and
+ * fires the O-5 `setActiveTribe` claim re-mint + a forced ID token refresh
+ * in the background: that's what makes DIRECT Firestore reads (live GPS
+ * breadcrumbs, gated by `request.auth.token.kinfolkId`) honor the pick too.
+ * A failure here is logged, not surfaced — the picker flow shouldn't block
+ * or error out over it; the kinfolk still lands on the right tribe's data
+ * via callables, and the next tribe switch (or natural token refresh cycle)
+ * will retry the claim sync anyway (onClientsWrite doesn't fire again on
+ * its own, but this fires on every switch so it's self-healing per-switch).
+ */
+export function setActiveKinfolkId(kinfolkId: string): void {
+  const authState = getAuthState();
+  if (authState.status !== 'signedIn' || state === null) return;
+  sessionStorage.setItem(sessionKeyFor(authState.user.uid), kinfolkId);
+  state = { ...state, activeKinfolkId: kinfolkId };
+  notify();
+
+  void setActiveTribe(kinfolkId)
+    .then(() => auth.currentUser?.getIdToken(true))
+    .catch((err: unknown) => {
+      console.warn('[activeTribe] setActiveTribe claim re-mint failed:', err);
+    });
+}
+
+/** Clears the resolved access (call on sign-out) so the next sign-in re-resolves. */
+export function clearAccess(): void {
+  state = null;
+  inFlight = null;
+  resolvedForUid = null;
+  notify();
+}
+
+/** Reactive access state for components. Null until ensureAccess() resolves. */
+export function useAccessState(): AccessState | null {
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+
+/** Non-reactive read of the active tribe id, for use in queryFn closures. */
+export function getActiveKinfolkId(): string | undefined {
+  return state?.activeKinfolkId ?? undefined;
+}
+
+/** Reactive launch destination, combining auth + access state. */
+export function useLaunchDestination(): LaunchDestination {
+  const auth = useAuth();
+  const access = useAccessState();
+  return resolveLaunchDestination(auth.status, access);
+}

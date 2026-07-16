@@ -1,0 +1,81 @@
+# ===========================================================================
+# MyTribe .gitignore  (repo initialized 2026-07-16)
+# Kinfolk portal (Compose Multiplatform: js/wasm + jvm) + Cloud Functions.
+# Shares Firebase project auntieos-ttpc with AuntieOS. Local-only repo, no
+# remote yet. Mirror of the two-bucket PII rule used in the AuntieOS tree.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# SECRETS — nothing below may ever enter history.
+# ---------------------------------------------------------------------------
+# functions .env carries no secret VALUES (they live in Firebase Secret
+# Manager, see its header) but env files are ignored by convention.
+.env
+.env.local
+.env.*.local
+functions/.env
+web/.env
+web/.env.local
+!.env.example
+!web/.env.example
+
+# Service-account private keys. Found by CONTENT not filename in the AuntieOS
+# tree. Re-scan before any commit adding .json:
+#   find . -name '*.json' -not -path '*/node_modules/*' -not -path '*/build/*' \
+#     -not -path '*/lib/*' -not -path './.git/*' -exec grep -l '"type": "service_account"' {} +
+*serviceAccount*.json
+*service-account*.json
+*adminsdk*
+*fcmChannel*.json
+
+# Machine-local
+local.properties
+
+# NOTE: Firebase Web API key (AIzaSy...) in src/jsMain/Main.kt,
+# src/jvmMain/FirebaseRestConfig.kt and google-services.json is PUBLIC by
+# design (ships in every web bundle; protected by Firestore rules + App Check,
+# not by secrecy). Intentionally TRACKED. It is not a rotation secret.
+
+# ---------------------------------------------------------------------------
+# Client PII — REAL records. Kept on disk, NEVER committed. Product-source
+# fixtures that only USE client names were PSEUDONYMIZED instead and stay
+# tracked (real names swapped for fictional ones; see the session scrub map).
+# ---------------------------------------------------------------------------
+# Prod `411` dossier-collection export ("bad writes" backup).
+backups/
+
+# ---------------------------------------------------------------------------
+# Build output
+# ---------------------------------------------------------------------------
+.gradle/
+.kotlin/
+build/
+*/build/
+kotlin-js-store/
+node_modules/
+functions/lib/
+functions/coverage/
+web/dist/
+web/coverage/
+dist/
+.firebase/
+
+# ---------------------------------------------------------------------------
+# Logs / editor / OS
+# ---------------------------------------------------------------------------
+firestore-debug.log
+functions/firestore-debug.log
+*-debug.log
+*.log
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# Session-local tooling (machine buffers, not source)
+# ---------------------------------------------------------------------------
+.remember/
+.claude/settings.local.json

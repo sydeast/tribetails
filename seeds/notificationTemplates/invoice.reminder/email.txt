@@ -1,0 +1,11 @@
+Subject: A friendly nudge on your invoice
+
+Hi there, just a gentle reminder that invoice {{invoiceNumber}} for {{kinName}}'s care ({{amount}}) is still open.
+
+Whenever you get a chance to take care of it, I'd appreciate it. Thank you so much.
+
+Pay your invoice here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.

@@ -1,0 +1,1 @@
+Kin marked inactive. {{kinName}} was set to inactive. Tap to review.

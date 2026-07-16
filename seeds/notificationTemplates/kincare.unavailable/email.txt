@@ -1,0 +1,11 @@
+Subject: I couldn't reach the Kin this time
+
+Hi {{kinfolkName}}, I came out for the {{serviceType}} on {{bookingDate}}, but I wasn't able to get into the home this time.
+
+Can you double-check the entry details (lockbox code, door, garage) and message me? I want to make sure everyone gets their care. Reach out as soon as you can.
+
+Check the booking here: []
+
+Talk soon, Auntie
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.

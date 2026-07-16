@@ -1,0 +1,1 @@
+Kin profile updated. {{kinName}}'s details were updated. Tap to review.
