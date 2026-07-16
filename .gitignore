@@ -149,3 +149,6 @@ docs/2026-06-05-stage-0I-test-admin-sandbox.md
 docs/archive/STATE_OF_THE_UNION_2026-05-01_pre_cleanup.md
 docs/archive/auntieOSBugsMay8.md
 docs/punchlists/PUNCHLIST_2026-06-23-A8-testing.md
+
+# Android one-time migration: real client data dumps + ingest scripts
+android/migration/

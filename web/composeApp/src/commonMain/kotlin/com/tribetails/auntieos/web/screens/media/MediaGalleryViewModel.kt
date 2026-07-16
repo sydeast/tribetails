@@ -1,4 +1,6 @@
 package com.tribetails.auntieos.web.screens.media
+
+import com.tribetails.auntieos.web.observability.reportingExceptionHandler
 import androidx.compose.runtime.Stable
 import com.tribetails.auntieos.web.data.AuntieDataSource
 import com.tribetails.auntieos.web.data.FirestoreResult
@@ -24,7 +26,7 @@ class MediaGalleryViewModel(
     private val entityType: String,
     private val dataSource: AuntieDataSource,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined + reportingExceptionHandler("vm:MediaGallery"))
     private val _uiState = MutableStateFlow(MediaGalleryUiState())
     val uiState: StateFlow<MediaGalleryUiState> = _uiState.asStateFlow()
     init {

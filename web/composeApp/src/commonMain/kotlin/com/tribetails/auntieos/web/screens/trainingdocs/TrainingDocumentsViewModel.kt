@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.screens.trainingdocs
 
+import com.tribetails.auntieos.web.observability.reportingExceptionHandler
+
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.Kinfolk
@@ -79,7 +81,7 @@ data class TrainingDocumentsUiState(
 
 class TrainingDocumentsViewModel(private val dataSource: TrainingDocsDataSource) {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined + reportingExceptionHandler("vm:TrainingDocs"))
 
     private val _uiState = MutableStateFlow(TrainingDocumentsUiState())
     val uiState: StateFlow<TrainingDocumentsUiState> = _uiState.asStateFlow()

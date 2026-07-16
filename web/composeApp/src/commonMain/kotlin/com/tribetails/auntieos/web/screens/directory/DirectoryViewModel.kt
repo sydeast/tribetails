@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.screens.directory
 
+import com.tribetails.auntieos.web.observability.reportingExceptionHandler
+
 import com.tribetails.auntieos.web.data.AuntieDataSource
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Kinfolk
@@ -76,7 +78,7 @@ private fun Kinfolk.matches(needle: String): Boolean {
 
 class DirectoryViewModel(
     private val dataSource: AuntieDataSource,
-    scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + reportingExceptionHandler("vm:Directory")),
 ) {
     private val _state = MutableStateFlow(DirectoryUiState())
     val state: StateFlow<DirectoryUiState> = _state.asStateFlow()

@@ -3,6 +3,7 @@ const admin = require('firebase-admin');
 const crypto = require('crypto');
 const Anthropic = require('@anthropic-ai/sdk');
 const { runGenerate } = require('./generate');
+const { enforceGenerateRateLimit } = require('./generateRateLimit');
 
 admin.initializeApp();
 
@@ -650,6 +651,21 @@ exports.generate = onRequest({ secrets: [ANTHROPIC_API_KEY], cors: false }, asyn
   const apiKey = ANTHROPIC_API_KEY.value();
   if (!apiKey) {
     res.status(500).json({ generated_copy: '', communication_type: commType, error: 'anthropic_api_key_not_configured' });
+    return;
+  }
+
+  // NOTE-48: bound paid-LLM spend per admin per UTC day (defense-in-depth on an
+  // already admin-gated endpoint — a runaway client loop or a leaked admin token
+  // could otherwise drive unbounded Anthropic cost). Over the cap → explicit 429.
+  try {
+    await enforceGenerateRateLimit(admin.firestore(), decodedToken.uid, Date.now());
+  } catch (rlErr) {
+    if (rlErr && rlErr.status === 429) {
+      res.status(429).json({ generated_copy: '', communication_type: commType, error: 'generate_rate_limit_exceeded' });
+      return;
+    }
+    console.error('generate rate-limit check failed', rlErr);
+    res.status(500).json({ generated_copy: '', communication_type: commType, error: 'rate_limit_check_failed' });
     return;
   }
 

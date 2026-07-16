@@ -290,9 +290,24 @@ internal object JvmFirestoreRest {
         return docToPlain(codec.parseToJsonElement(resp.bodyAsText()).jsonObject)
     }
 
-    /** Read + decode a single document by id into model T, or null when absent/undecodable. */
+    /**
+     * Read + decode a single document by id into model T, or null when absent.
+     * WARNING-42: a present-but-undecodable doc now fails LOUD (System.err +
+     * Sentry) instead of collapsing to a silent null, matching the list paths
+     * above. It still returns null (there is no T to hand back on a decode
+     * failure), but the failure is visible rather than swallowed.
+     */
     suspend inline fun <reified T> getDoc(collection: String, id: String): T? =
-        getDocPlain(collection, id)?.let { runCatching { codec.decodeFromJsonElement<T>(it) }.getOrNull() }
+        getDocPlain(collection, id)?.let { doc ->
+            runCatching { codec.decodeFromJsonElement<T>(doc) }
+                .onFailure { e ->
+                    val docId = doc["_id"]?.jsonPrimitive?.contentOrNull ?: id
+                    val msg = "getDoc($collection/$id): undecodable doc $docId — ${e.message}"
+                    System.err.println("[AuntieOS][firestore] $msg")
+                    reportMessage(msg, fatal = false)
+                }
+                .getOrNull()
+        }
 
     // ── stream wrappers ──────────────────────────────────────────────────────
 

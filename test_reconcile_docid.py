@@ -11,7 +11,13 @@ Run:
 """
 from __future__ import annotations
 
-import reconcile_comms as rc
+import sys
+from pathlib import Path
+
+# W34: the divergent root reconcile_comms.py twin was deleted (WARNING-34). Import
+# the ONE canonical module Firebase deploys (functions-python/reconcile).
+sys.path.insert(0, str(Path(__file__).resolve().parent / "web" / "functions-python"))
+import reconcile_comms as rc  # noqa: E402
 
 
 # ---------- in-memory fake Firestore ----------

@@ -1,3 +1,5 @@
+> **SUPERSEDED 2026-07-16 -> docs/BACKLOG_2026-07-16.md.** Open items were reconciled and re-verified there under one AO-### namespace. Retained for history only; do not track work here.
+
 # AuntieOS — Remaining Work (canonical) — Stages -> Phases
 
 ONE vocabulary: **Stages** = build-order buckets; **Phases** = numbered feature

@@ -1,3 +1,5 @@
+> **SUPERSEDED 2026-07-16 -> docs/BACKLOG_2026-07-16.md.** Open items were reconciled and re-verified there under one AO-### namespace. Retained for history only; do not track work here.
+
 > STATUS (2026-06-09): MOSTLY SHIPPED. The `[ ]` checkboxes below are NOT
 > maintained and do not reflect current state. Almost all Phase 0 to Phase 16
 > items are DONE and DEPLOYED. For what is actually done vs remaining, use

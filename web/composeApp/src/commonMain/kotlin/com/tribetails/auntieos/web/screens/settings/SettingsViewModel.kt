@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.screens.settings
 
+import com.tribetails.auntieos.web.observability.reportingExceptionHandler
+
 import androidx.compose.runtime.Stable
 import com.tribetails.auntieos.web.data.AuntieDataSource
 import com.tribetails.auntieos.web.data.BusinessSettings
@@ -25,7 +27,7 @@ data class SettingsUiState(
 
 class SettingsViewModel(private val dataSource: AuntieDataSource) {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined + reportingExceptionHandler("vm:Settings"))
 
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()

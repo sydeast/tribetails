@@ -126,6 +126,12 @@ maintenance mode (owner-personal, exempt), engagement/reporting features.
 - Never re-ask settled owner decisions (no app store, desktop permanent).
 
 ## Open items registry (AuntieOS-side, day one)
+
+> **The live, reconciled open-item registry moved to
+> [docs/BACKLOG_2026-07-16.md](BACKLOG_2026-07-16.md)** (one AO-### namespace, all
+> six old docs mapped, every item re-verified against source). This plan stays as
+> the session ladder + rulings; track open work in the backlog. The AO-1..AO-8
+> list below is kept for the A0/A1 narrative only.
 - AO-1 — service-account JSON in tree: delete + ROTATE key (A0, urgent).
 - AO-2 — root .env secrets: relocate + rotate Baserow/shared-secret values
   still live (A0).

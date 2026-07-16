@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.screens.kintales
 
+import com.tribetails.auntieos.web.observability.reportingExceptionHandler
+
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -32,7 +34,7 @@ import kotlinx.coroutines.launch
 class KinTaleReportViewModel(
     private val sessionId: String,
     private val dataSource: AuntieDataSource,
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined + reportingExceptionHandler("vm:KinTaleReport")),
 ) {
     /**
      * In-progress edit of the narrative body. `null` means "no local edit yet, use

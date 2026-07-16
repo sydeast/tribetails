@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -215,7 +216,7 @@ private fun SignedInApp(
         )
     }
     val firestoreClient = remember { FirestoreClient() }
-    val signOutScope = rememberCoroutineScope()
+    val signOutScope = rememberReportingScope("app")
 
     // Feature flags: fetch once after auth; on failure keep the compile-time
     // defaults (the shipped baseline, not fabricated data) per the fail-loud
@@ -543,7 +544,7 @@ private fun ResolvingSplash() {
 @Composable
 private fun NonAdminScreen(auth: AuthClient) {
     val c = AuntieTheme.colors
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope("app")
     Box(
         modifier = Modifier.fillMaxSize().background(c.background),
         contentAlignment = Alignment.Center,

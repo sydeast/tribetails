@@ -2,10 +2,16 @@ package com.tribetails.auntieos.web
 
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.window.ComposeViewport
+import com.tribetails.auntieos.web.observability.initCrashReporting
 import kotlinx.browser.document
 
 @OptIn(ExperimentalComposeUiApi::class)
 fun main() {
+    // AO-9: arm the Sentry bridge before the first composition, so a crash during
+    // startup is captured. Was previously only called on desktop (jvmMain/main.kt),
+    // so wasm reported blind. The wasm actual is a no-op if window.__sentry is absent.
+    initCrashReporting()
+
     // Optional: hide the host page's "Loading…" splash once Compose paints.
     document.getElementById("loading")?.remove()
 
