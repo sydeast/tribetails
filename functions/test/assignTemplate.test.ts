@@ -44,7 +44,7 @@ describe('assignTemplate', () => {
     expect(write?.data.templateId).toBe('welcome.kinfolk.v2');
     expect(write?.data.audience).toBe('kinfolk');
     expect(write?.data.active).toBe(true);
-    expect(write?.data.triggerKey).toBe('kincare.booking.confirm');
+    expect(write?.data.triggerKey).toBeUndefined(); // AO-30
   });
 
   it('HAPPY: triggerKey can be overridden', async () => {
@@ -57,6 +57,15 @@ describe('assignTemplate', () => {
     );
     const write = ctx.writes.find((w) => w.path === 'notificationTemplateBindings/cat.k');
     expect(write?.data.triggerKey).toBe('custom.trigger');
+  });
+
+  it('AO-30: an omitted triggerKey is NOT written, so a re-assign never clobbers a custom trigger', async () => {
+    const ctx = buildDbMock({ docs: { 'emailTemplates/t1': { subject: 's', body: 'b' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await assignTemplateHandler(req({ catalogKey: 'cat.k', templateId: 't1', active: false }));
+    const write = ctx.writes.find((w) => w.path === 'notificationTemplateBindings/cat.k');
+    expect(write).toBeDefined();
+    expect('triggerKey' in write!.data).toBe(false);
   });
 
   it('SAD: template not found throws not-found', async () => {
