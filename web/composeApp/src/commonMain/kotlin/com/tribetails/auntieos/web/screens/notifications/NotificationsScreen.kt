@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -100,7 +101,7 @@ fun NotificationsScreen(
     onCreateQuote: (kinfolkId: String) -> Unit = {},
 ) {
     val client = remember { FirestoreClient() }
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
 
     // P0-FLICKER: hoist the Flow via remember so it survives recomposition.
     val state by remember { client.notificationsStream() }.collectAsState(initial = FirestoreResult.Loading)

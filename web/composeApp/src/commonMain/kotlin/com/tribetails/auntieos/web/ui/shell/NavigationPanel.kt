@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,7 +53,7 @@ import kotlinx.coroutines.sync.withLock
 fun NavigationPanel(authUser: AuthUser) {
     val c = AuntieTheme.colors
     val client = remember { FirestoreClient() }
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     val saveMutex = remember { Mutex() }
     val defaultKeys = remember { navEditableDestinations.map { it.name } }
 

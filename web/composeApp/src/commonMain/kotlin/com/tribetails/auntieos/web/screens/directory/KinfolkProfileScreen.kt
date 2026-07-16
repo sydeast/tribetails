@@ -64,6 +64,7 @@ import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
@@ -136,7 +137,7 @@ fun KinfolkProfileScreen(
 
     // #14: invite this kinfolk to the kinfolk portal (mints a PRIMARY claim email
     // via the inviteKinfolkToPortal callable). Fail-loud toast on every outcome.
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     var inviteBusy by remember { mutableStateOf(false) }
     var inviteToast by remember { mutableStateOf<Pair<String, ToastKind>?>(null) }
     fun sendPortalInvite() {

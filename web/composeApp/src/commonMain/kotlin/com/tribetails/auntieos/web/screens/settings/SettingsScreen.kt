@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.sync.Mutex
@@ -167,7 +168,7 @@ fun SettingsScreen(
     onPersonalizationChange: (ThemePersonalization) -> Unit,
 ) {
     val dims = AuntieTheme.dims
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     var signingOut by remember { mutableStateOf(false) }
 
     val client = remember { FirestoreClient() }
@@ -1217,7 +1218,7 @@ private val HOURS_RANGE_REGEX = Regex("""^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$""")
 @Composable
 private fun NotificationMatrixPanel() {
     val c = AuntieTheme.colors
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     val repo = remember { CloudNotificationOverridesRepository() }
     var matrix by remember { mutableStateOf<NotificationMatrix?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -2457,7 +2458,7 @@ private fun BookingBehaviorPanel(
     settingsLoaded: Boolean,
     vm: SettingsViewModel,
 ) {
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     DenPanel(
         title = "Booking behavior",
         subtitle = "How new bookings are confirmed and adjusted.",

@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,7 +56,7 @@ internal val FLAGS: List<FlagMeta> = listOf(
 fun FeatureFlagsScreen() {
     val c = AuntieTheme.colors
     val client = remember { FirestoreClient() }
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
 
     var overrides by remember { mutableStateOf<Map<String, Boolean>?>(null) } // null = loading
     var error by remember { mutableStateOf<String?>(null) }

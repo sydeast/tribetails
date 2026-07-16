@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -119,7 +120,7 @@ fun KinTaleLogsScreen(onOpenReport: (sessionId: String) -> Unit = {}) {
     val state by remember { client.reportsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val kinfolkState by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
 
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     var dialog by remember { mutableStateOf<TriageDialogState?>(null) }
     var toastMessage by remember { mutableStateOf<String?>(null) }
     var toastKind by remember { mutableStateOf(ToastKind.Success) }

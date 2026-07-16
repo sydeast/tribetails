@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -118,7 +119,7 @@ private fun BookingListScreen(
     onNewBooking: () -> Unit,
 ) {
     val c     = AuntieTheme.colors
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
 
     // History + Scheduled lifecycle come from the whole kin_care_sessions store
     // (this stays mapped through the VM so the VM test contract is unchanged).
@@ -721,7 +722,7 @@ private fun BookingCreateScreen(
     onBack: () -> Unit,
 ) {
     val c     = AuntieTheme.colors
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     val client = remember { FirestoreClient() }
     val kinfolkResult by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
     // KinCare types are sourced from Business Settings serviceRates (NOT hardcoded), per the

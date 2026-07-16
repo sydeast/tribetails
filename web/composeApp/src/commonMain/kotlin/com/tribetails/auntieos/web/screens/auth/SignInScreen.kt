@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,7 +65,7 @@ fun SignInScreen(
     onSignedIn: (AuthUser) -> Unit,
 ) {
     val c = AuntieTheme.colors
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     // Den background: brand-tinted blobs drifting behind the glass card,
     // matching the animated mesh in the sign-in mockup.
     val pointer = rememberMeshPointer()

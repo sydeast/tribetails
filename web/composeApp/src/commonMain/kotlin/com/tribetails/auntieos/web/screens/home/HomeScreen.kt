@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.flow.flowOf
@@ -205,7 +206,7 @@ fun HomeScreen(
     val allKinState by remember(showsPets) {
         if (showsPets) client.allKinStream() else flowOf<FirestoreResult<List<Kin>>>(FirestoreResult.Loading)
     }.collectAsState(initial = FirestoreResult.Loading)
-    val dashScope = rememberCoroutineScope()
+    val dashScope = rememberReportingScope()
     val dashSaveMutex = remember { Mutex() }
     val applyLayout: (List<DashWidget>) -> Unit = { next ->
         layout = next

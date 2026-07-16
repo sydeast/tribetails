@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -112,7 +113,7 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
     var toast by remember { mutableStateOf("") }
     var toastVisible by remember { mutableStateOf(false) }
     var toastKind by remember { mutableStateOf(ToastKind.Info) }
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
 
     fun showToast(msg: String, kind: ToastKind = ToastKind.Info) {
         toast = msg; toastKind = kind; toastVisible = true

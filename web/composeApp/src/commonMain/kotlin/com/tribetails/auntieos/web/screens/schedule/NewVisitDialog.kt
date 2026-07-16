@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,7 +63,7 @@ fun NewVisitDialog(
     onCreated: () -> Unit,
 ) {
     val c = AuntieTheme.colors
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
 
     val kinfolkState by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
     val settingsState by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)

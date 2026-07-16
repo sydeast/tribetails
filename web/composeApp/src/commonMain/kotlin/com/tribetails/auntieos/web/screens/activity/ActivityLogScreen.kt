@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -129,7 +130,7 @@ fun ActivityLogScreen() {
     // Live hash-chain integrity: call the verifyActivityLogChain admin callable on
     // load (and on Re-verify). The server walks the SHA-256 chain and returns the
     // real verdict; we never fabricate a pass.
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     var chain by remember { mutableStateOf<ChainState>(ChainState.Verifying) }
     fun verify() {
         chain = ChainState.Verifying

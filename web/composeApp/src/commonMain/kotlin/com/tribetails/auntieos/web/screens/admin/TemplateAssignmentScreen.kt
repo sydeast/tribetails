@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,7 +99,7 @@ fun TemplateAssignmentBody(
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     var bindings by remember { mutableStateOf<List<TemplateService.TemplateBinding>>(emptyList()) }
     var templates by remember { mutableStateOf<List<TemplateService.EmailTemplate>>(emptyList()) }
     var catalogKeys by remember { mutableStateOf<List<String>>(emptyList()) }

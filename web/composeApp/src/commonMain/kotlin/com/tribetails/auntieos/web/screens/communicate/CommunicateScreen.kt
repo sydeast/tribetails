@@ -29,6 +29,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -155,7 +156,7 @@ private enum class ComposeMode(val label: String) {
 fun CommunicateScreen() {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     val n8n = remember { N8nClient() }
     val firestore = remember { FirestoreClient() }
     val auth = remember { AuthClient() }
@@ -643,7 +644,7 @@ private fun BroadcastForm(
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
 
     var segments by remember { mutableStateOf<List<AudienceSegment>>(emptyList()) }
     var loadingSegments by remember { mutableStateOf(true) }
@@ -1415,7 +1416,7 @@ private fun ExternalSendPanel(
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
 
     var channel by remember { mutableStateOf(ExternalChannel.Email) }
     var recipient by remember { mutableStateOf("") }

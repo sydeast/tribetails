@@ -27,6 +27,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -151,7 +152,7 @@ private fun AuntieTimeListScreen(
         toast = msg; toastKind = kind; toastVisible = true
     }
 
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
 
     // ---- Per-session GPS trackers (one watchPosition per ARRIVED session) ----
     val trackers = remember { mutableStateMapOf<String, GpsTracker>() }

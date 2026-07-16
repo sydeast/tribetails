@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.mutableStateListOf
@@ -92,7 +93,7 @@ fun GalleryScreen() {
     // #3 (2026-06-08): upload media from the gallery. Pick a household, then the
     // platform picker opens; the upload writes a media_files doc stamped with that
     // household's kinfolkId so kin-tagging scopes correctly.
-    val uploadScope = rememberCoroutineScope()
+    val uploadScope = rememberReportingScope()
     var uploadPickerOpen by remember { mutableStateOf(false) }
     var uploadBusy by remember { mutableStateOf(false) }
     var uploadToast by remember { mutableStateOf<Pair<String, ToastKind>?>(null) }
@@ -309,7 +310,7 @@ private fun TagKinOverlay(
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     val picked: SnapshotStateList<String> = remember(media._id) { mutableStateListOf<String>().apply { addAll(media.taggedKinIds) } }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }

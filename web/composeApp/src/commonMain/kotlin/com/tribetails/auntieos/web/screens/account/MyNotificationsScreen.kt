@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
@@ -74,7 +75,7 @@ fun MyNotificationsScreen(
     onBack: () -> Unit,
 ) {
     val c = AuntieTheme.colors
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     val client = remember { FirestoreClient() }
     // Reuse the EXACT data source the Settings gate matrix uses for catalog + overrides.
     val gateRepo = remember { CloudNotificationOverridesRepository() }

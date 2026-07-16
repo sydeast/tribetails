@@ -23,6 +23,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,7 +86,7 @@ fun KinEditScreen(
     onArchived: () -> Unit,
 ) {
     val client = remember { FirestoreClient() }
-    val scope  = rememberCoroutineScope()
+    val scope  = rememberReportingScope()
     val isNew  = kinId.isNullOrBlank()
 
     val state by remember(kinfolkId) { client.kinStream(kinfolkId) }.collectAsState(initial = FirestoreResult.Loading)

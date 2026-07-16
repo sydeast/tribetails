@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -201,7 +202,7 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
     var toastVisible by remember { mutableStateOf(false) }
     var toastIsError by remember { mutableStateOf(false) }
 
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
 
     fun showToast(msg: String, isError: Boolean) {
         toastMsg = msg; toastIsError = isError; toastVisible = true

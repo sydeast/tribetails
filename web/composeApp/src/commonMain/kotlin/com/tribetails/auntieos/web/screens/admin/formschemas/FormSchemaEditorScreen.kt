@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
@@ -89,7 +90,7 @@ fun FormSchemaEditorScreen(
     viewModel: FormSchemaEditorViewModel = remember(repository) { FormSchemaEditorViewModel(repository) },
 ) {
     val c = AuntieTheme.colors
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     val state by viewModel.state.collectAsState()
     var confirmDelete by remember { mutableStateOf(false) }
     val creating = isCreateMode(schemaId)

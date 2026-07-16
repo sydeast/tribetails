@@ -28,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -107,7 +108,7 @@ private data class InboxEntry(
 @Composable
 fun InboxScreen() {
     val client = remember { FirestoreClient() }
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     val voicemails by remember { client.voicemailsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val calls       by remember { client.callsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val sms         by remember { client.smsStream() }.collectAsState(initial = FirestoreResult.Loading)
@@ -359,7 +360,7 @@ fun InboxScreen() {
 @Composable
 private fun MessagesPanel(client: FirestoreClient) {
     val c = AuntieTheme.colors
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
 
     var conversations by remember { mutableStateOf<List<ConversationSummary>?>(null) }
     var listError by remember { mutableStateOf<String?>(null) }

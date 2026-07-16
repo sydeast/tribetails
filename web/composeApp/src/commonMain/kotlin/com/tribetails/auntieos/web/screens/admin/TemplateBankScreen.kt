@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -137,7 +138,7 @@ fun TemplateBankBody(
     templateService: TemplateService = remember { TemplateService() },
 ) {
     val c = AuntieTheme.colors
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     var templates by remember { mutableStateOf<List<TemplateService.EmailTemplate>>(emptyList()) }
     // Server-deduped category list (hybrid managed-collection ∪ distinct-on-templates).
     // Replaces the old hardcoded FILTER_OPTIONS + powers the editor's category picker.

@@ -57,6 +57,7 @@ import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.data.WriteResult
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
@@ -211,7 +212,7 @@ private fun DirectoryListScreen(
     // #14: bulk "Invite all to portal". Loops every kinfolk with an email through
     // the inviteKinfolkToPortal callable (which itself skips already-claimed
     // households and missing emails), then reports a summary. Operator-initiated.
-    val inviteScope = rememberCoroutineScope()
+    val inviteScope = rememberReportingScope()
     var bulkInviting by remember { mutableStateOf(false) }
     var bulkToast by remember { mutableStateOf<Pair<String, ToastKind>?>(null) }
     fun inviteAllKinfolk() {

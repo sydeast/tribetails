@@ -28,6 +28,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -140,7 +141,7 @@ fun ScheduleScreen() {
 
     // Drag-to-reschedule (schedule.dragReschedule): optimistic per-session start/end
     // overrides applied to the grid immediately, reverted if rescheduleBooking fails.
-    val scope = rememberCoroutineScope()
+    val scope = rememberReportingScope()
     val optimistic = remember { mutableStateMapOf<String, Pair<String, String>>() }
     var rescheduleError by remember { mutableStateOf<String?>(null) }
 
