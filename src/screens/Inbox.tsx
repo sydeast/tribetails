@@ -15,6 +15,7 @@ import {
   type ThreadReadState,
 } from '../lib/inboxFormat';
 import { type Async } from '../lib/async';
+import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton } from '../components/Buttons';
@@ -73,6 +74,15 @@ interface InboxProps {
 export function Inbox({ onSelectThread }: InboxProps) {
   const [threads, setThreads] = useState<Async<ConversationSummary[]>>({ status: 'loading' });
   const [filter, setFilter] = useState<FilterKey>('all');
+
+  // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
+  // Home/End, roving tabIndex); called unconditionally at the top level per
+  // the Rules of Hooks, since the tabs themselves render inside AsyncRegion's
+  // conditionally-invoked render prop.
+  const { getTabProps } = useRovingTabs({
+    count: FILTERS.length,
+    activeIndex: FILTERS.findIndex((f) => f.key === filter),
+  });
 
   // Computed once per render pass, not per keystroke/tick, same rationale as
   // Sessions.tsx's / Invoices.tsx's todayIso.
@@ -138,7 +148,7 @@ export function Inbox({ onSelectThread }: InboxProps) {
             return (
               <>
                 <div className="inbox__tabs" role="tablist" aria-label="Filter message threads">
-                  {FILTERS.map((f) => (
+                  {FILTERS.map((f, index) => (
                     <button
                       key={f.key}
                       type="button"
@@ -146,6 +156,7 @@ export function Inbox({ onSelectThread }: InboxProps) {
                       aria-selected={filter === f.key}
                       className={filter === f.key ? 'inbox__tab inbox__tab--active' : 'inbox__tab'}
                       onClick={() => setFilter(f.key)}
+                      {...getTabProps(index)}
                     >
                       {f.label}
                     </button>

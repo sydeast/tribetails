@@ -16,6 +16,7 @@ import {
   type SortOption,
 } from '../api/directory';
 import { useCollection } from '../lib/firestore';
+import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
@@ -240,6 +241,10 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortOption>(SORT_OPTION_DEFAULT);
 
+  // Roving-tabindex keyboard nav for the Kinfolk/Kin tablist below
+  // (Left/Right, Home/End, roving tabIndex).
+  const { getTabProps } = useRovingTabs({ count: 2, activeIndex: tab === 'kinfolk' ? 0 : 1 });
+
   // The two DEFERRED create flows (this screen was read-only until now).
   // Both dialogs close themselves on success; neither manually refetches,
   // KINFOLK_QUERY / KIN_QUERY are live onSnapshot streams (useCollection), so
@@ -313,6 +318,7 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
             aria-selected={tab === 'kinfolk'}
             className="directory__tab"
             onClick={() => selectTab('kinfolk')}
+            {...getTabProps(0)}
           >
             Kinfolk{kinfolkCount !== null ? ` · ${kinfolkCount}` : ''}
           </button>
@@ -322,6 +328,7 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
             aria-selected={tab === 'kin'}
             className="directory__tab"
             onClick={() => selectTab('kin')}
+            {...getTabProps(1)}
           >
             Kin{kinCount !== null ? ` · ${kinCount}` : ''}
           </button>

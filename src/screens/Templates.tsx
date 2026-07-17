@@ -11,6 +11,7 @@ import {
   templateSubjectPreview,
 } from '../lib/templateFormat';
 import { type Async, asyncScalar } from '../lib/async';
+import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
@@ -188,6 +189,16 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
 
   const categoryList = categories.status === 'ready' ? categories.data : [];
 
+  // Roving-tabindex keyboard nav for the category tablist below (Left/Right,
+  // Home/End, roving tabIndex); called unconditionally at the top level per
+  // the Rules of Hooks. Tab 0 is the static "All" chip, tabs 1..N mirror
+  // categoryList (both computed off `categories`, already resolved here, not
+  // inside AsyncRegion's `templates` render prop).
+  const { getTabProps } = useRovingTabs({
+    count: 1 + categoryList.length,
+    activeIndex: filter === ALL_FILTER ? 0 : 1 + categoryList.indexOf(filter),
+  });
+
   return (
     <div className="screen">
       <DenScreenHeading
@@ -237,10 +248,11 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
                       filter === ALL_FILTER ? 'templates__tab templates__tab--active' : 'templates__tab'
                     }
                     onClick={() => setFilter(ALL_FILTER)}
+                    {...getTabProps(0)}
                   >
                     All <span className="templates__tab-count">{rows.length}</span>
                   </button>
-                  {categoryList.map((cat) => (
+                  {categoryList.map((cat, index) => (
                     <button
                       key={cat}
                       type="button"
@@ -248,6 +260,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
                       aria-selected={filter === cat}
                       className={filter === cat ? 'templates__tab templates__tab--active' : 'templates__tab'}
                       onClick={() => setFilter(cat)}
+                      {...getTabProps(index + 1)}
                     >
                       {cat} <span className="templates__tab-count">{categoryCount(rows, cat)}</span>
                     </button>
