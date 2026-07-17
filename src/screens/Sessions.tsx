@@ -14,6 +14,7 @@ import {
 } from '../lib/sessionFormat';
 import { useCollection } from '../lib/firestore';
 import { asyncScalar } from '../lib/async';
+import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import './Sessions.css';
@@ -69,6 +70,15 @@ interface SessionsProps {
 export function Sessions({ onSelect }: SessionsProps) {
   const rows = useCollection<SessionEntry>(SESSIONS_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
+
+  // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
+  // Home/End, roving tabIndex); called unconditionally at the top level per
+  // the Rules of Hooks, since the tabs themselves render inside AsyncRegion's
+  // conditionally-invoked render prop.
+  const { getTabProps } = useRovingTabs({
+    count: FILTERS.length,
+    activeIndex: FILTERS.findIndex((f) => f.key === filter),
+  });
 
   // Computed once per render pass, not per keystroke/tick, same rationale as
   // Invoices.tsx's todayIso: "today" doesn't change mid-session.
@@ -128,7 +138,7 @@ export function Sessions({ onSelect }: SessionsProps) {
             return (
               <>
                 <div className="sessions__tabs" role="tablist" aria-label="Filter Kin Care sessions">
-                  {FILTERS.map((f) => (
+                  {FILTERS.map((f, index) => (
                     <button
                       key={f.key}
                       type="button"
@@ -136,6 +146,7 @@ export function Sessions({ onSelect }: SessionsProps) {
                       aria-selected={filter === f.key}
                       className={filter === f.key ? 'sessions__tab sessions__tab--active' : 'sessions__tab'}
                       onClick={() => setFilter(f.key)}
+                      {...getTabProps(index)}
                     >
                       {f.label}
                     </button>

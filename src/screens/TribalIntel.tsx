@@ -14,6 +14,7 @@ import {
 } from '../lib/tribalIntelFormat';
 import { useCollection } from '../lib/firestore';
 import { asyncScalar } from '../lib/async';
+import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import './TribalIntel.css';
@@ -60,6 +61,17 @@ export function TribalIntel({ onSelect }: TribalIntelProps) {
   const totalCount = asyncScalar(rows, (data) => data.length);
   const commTypeCount = asyncScalar(rows, (data) => distinctCommTypes(data).length);
   const withContentCount = asyncScalar(rows, (data) => data.filter((d) => d.content.trim() !== '').length);
+
+  // Same derivation as commTypeCount above, kept as the actual array (not
+  // just its length) so the roving-tabindex hook below has a real tab count
+  // to call unconditionally at the top level, per the Rules of Hooks: the
+  // tabs themselves render inside AsyncRegion's conditionally-invoked render
+  // prop, where `rows.data` isn't in scope.
+  const commTypesForTabs = rows.status === 'ready' ? distinctCommTypes(rows.data) : [];
+  const { getTabProps } = useRovingTabs({
+    count: commTypesForTabs.length > 0 ? commTypesForTabs.length + 1 : 0,
+    activeIndex: commTypeFilter === null ? 0 : 1 + commTypesForTabs.indexOf(commTypeFilter),
+  });
 
   return (
     <div className="screen">
@@ -119,10 +131,11 @@ export function TribalIntel({ onSelect }: TribalIntelProps) {
                           : 'tribal-intel__tab'
                       }
                       onClick={() => setCommTypeFilter(null)}
+                      {...getTabProps(0)}
                     >
                       All
                     </button>
-                    {commTypes.map((ct) => (
+                    {commTypes.map((ct, index) => (
                       <button
                         key={ct}
                         type="button"
@@ -134,6 +147,7 @@ export function TribalIntel({ onSelect }: TribalIntelProps) {
                             : 'tribal-intel__tab'
                         }
                         onClick={() => setCommTypeFilter((cur) => (cur === ct ? null : ct))}
+                        {...getTabProps(index + 1)}
                       >
                         {ct}
                       </button>

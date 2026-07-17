@@ -23,6 +23,7 @@ import {
 } from '../lib/sessionFormat';
 import { useCollection } from '../lib/firestore';
 import { asyncScalar } from '../lib/async';
+import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import './Schedule.css';
@@ -229,6 +230,13 @@ interface ScheduleControlsProps {
 }
 
 function ScheduleControls({ rangeLabel: label, view, onViewChange, onPrev, onNext }: ScheduleControlsProps) {
+  // Roving-tabindex keyboard nav for the Day/Week/Month tablist below
+  // (Left/Right, Home/End, roving tabIndex).
+  const { getTabProps } = useRovingTabs({
+    count: VIEW_MODES.length,
+    activeIndex: VIEW_MODES.findIndex((v) => v.key === view),
+  });
+
   return (
     <div className="schedule__controls">
       <div className="schedule__nav">
@@ -242,7 +250,7 @@ function ScheduleControls({ rangeLabel: label, view, onViewChange, onPrev, onNex
       </div>
 
       <div className="schedule__tabs" role="tablist" aria-label="Schedule view">
-        {VIEW_MODES.map((v) => (
+        {VIEW_MODES.map((v, index) => (
           <button
             key={v.key}
             type="button"
@@ -250,6 +258,7 @@ function ScheduleControls({ rangeLabel: label, view, onViewChange, onPrev, onNex
             aria-selected={view === v.key}
             className={view === v.key ? 'schedule__tab schedule__tab--active' : 'schedule__tab'}
             onClick={() => onViewChange(v.key)}
+            {...getTabProps(index)}
           >
             {v.label}
           </button>

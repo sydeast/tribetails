@@ -11,6 +11,7 @@ import {
 } from '../lib/invoiceFormat';
 import { useCollection } from '../lib/firestore';
 import { asyncScalar } from '../lib/async';
+import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton } from '../components/Buttons';
@@ -85,6 +86,15 @@ export function Invoices() {
   const [filter, setFilter] = useState<FilterKey>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState<InvoiceCreateMode | null>(null);
+
+  // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
+  // Home/End, roving tabIndex); called unconditionally at the top level per
+  // the Rules of Hooks, since the tabs themselves render inside AsyncRegion's
+  // conditionally-invoked render prop.
+  const { getTabProps } = useRovingTabs({
+    count: FILTERS.length,
+    activeIndex: FILTERS.findIndex((f) => f.key === filter),
+  });
 
   const selected =
     selectedId && rows.status === 'ready' ? rows.data.find((r) => r._id === selectedId) : undefined;
@@ -161,7 +171,7 @@ export function Invoices() {
             return (
               <>
                 <div className="invoices__tabs" role="tablist" aria-label="Filter invoices">
-                  {FILTERS.map((f) => (
+                  {FILTERS.map((f, index) => (
                     <button
                       key={f.key}
                       type="button"
@@ -169,6 +179,7 @@ export function Invoices() {
                       aria-selected={filter === f.key}
                       className={filter === f.key ? 'invoices__tab invoices__tab--active' : 'invoices__tab'}
                       onClick={() => setFilter(f.key)}
+                      {...getTabProps(index)}
                     >
                       {f.label}
                     </button>

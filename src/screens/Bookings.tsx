@@ -9,6 +9,7 @@ import {
 } from '../lib/bookingFormat';
 import { useCollection } from '../lib/firestore';
 import { asyncScalar } from '../lib/async';
+import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
@@ -91,6 +92,15 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const handleSelectBooking = onSelectBooking ?? setDetailId;
 
+  // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
+  // Home/End, roving tabIndex); called unconditionally at the top level per
+  // the Rules of Hooks, since the tabs themselves render inside AsyncRegion's
+  // conditionally-invoked render prop.
+  const { getTabProps } = useRovingTabs({
+    count: FILTERS.length,
+    activeIndex: FILTERS.findIndex((f) => f.key === filter),
+  });
+
   // "Pending" mirrors BookingScreen.kt's "Pending approval" stat: DRAFT and
   // PENDING are both pre-visit states (BookingCreateScreen's Save-draft /
   // Submit-request outcomes) that have not yet become a real scheduled visit.
@@ -165,7 +175,7 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
             return (
               <>
                 <div className="bookings__tabs" role="tablist" aria-label="Filter bookings">
-                  {FILTERS.map((f) => (
+                  {FILTERS.map((f, index) => (
                     <button
                       key={f.key}
                       type="button"
@@ -173,6 +183,7 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
                       aria-selected={filter === f.key}
                       className={filter === f.key ? 'bookings__tab bookings__tab--active' : 'bookings__tab'}
                       onClick={() => setFilter(f.key)}
+                      {...getTabProps(index)}
                     >
                       {f.label}
                     </button>

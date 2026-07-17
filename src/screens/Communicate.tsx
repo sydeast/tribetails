@@ -17,6 +17,7 @@ import {
   type SendChannel,
 } from '../lib/communicateFormat';
 import { type Async } from '../lib/async';
+import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
@@ -92,6 +93,15 @@ export function Communicate() {
   // this same screen (Directory.tsx's tab convention), not a new URL. Kept
   // out of router.tsx/nav.ts on purpose, this is a same-screen mode switch.
   const [view, setView] = useState<'recent' | 'compose'>('recent');
+
+  // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
+  // Home/End, roving tabIndex); called unconditionally at the top level per
+  // the Rules of Hooks, since the tabs themselves render inside AsyncRegion's
+  // conditionally-invoked render prop.
+  const { getTabProps } = useRovingTabs({
+    count: FILTERS.length,
+    activeIndex: FILTERS.findIndex((f) => f.key === filter),
+  });
 
   // Computed once per render pass, not per keystroke/tick, same rationale as
   // Inbox.tsx's / Sessions.tsx's todayIso.
@@ -171,7 +181,7 @@ export function Communicate() {
             return (
               <>
                 <div className="communicate__tabs" role="tablist" aria-label="Filter recent sends by channel">
-                  {FILTERS.map((f) => (
+                  {FILTERS.map((f, index) => (
                     <button
                       key={f.key}
                       type="button"
@@ -179,6 +189,7 @@ export function Communicate() {
                       aria-selected={filter === f.key}
                       className={filter === f.key ? 'communicate__tab communicate__tab--active' : 'communicate__tab'}
                       onClick={() => setFilter(f.key)}
+                      {...getTabProps(index)}
                     >
                       {f.label}
                     </button>

@@ -11,6 +11,7 @@ import {
 } from '../lib/kinTaleFormat';
 import { useCollection } from '../lib/firestore';
 import { asyncScalar } from '../lib/async';
+import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton } from '../components/Buttons';
@@ -89,6 +90,15 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
   const rows = useCollection<KinTaleEntry>(KINTALES_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
 
+  // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
+  // Home/End, roving tabIndex); called unconditionally at the top level per
+  // the Rules of Hooks, since the tabs themselves render inside AsyncRegion's
+  // conditionally-invoked render prop.
+  const { getTabProps } = useRovingTabs({
+    count: FILTERS.length,
+    activeIndex: FILTERS.findIndex((f) => f.key === filter),
+  });
+
   const sentCount = asyncScalar(rows, (data) =>
     data.filter((e) => kinTaleState(e.status) === 'sent').length,
   );
@@ -141,7 +151,7 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
             return (
               <>
                 <div className="kintales__tabs" role="tablist" aria-label="Filter KinTales">
-                  {FILTERS.map((f) => (
+                  {FILTERS.map((f, index) => (
                     <button
                       key={f.key}
                       type="button"
@@ -149,6 +159,7 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
                       aria-selected={filter === f.key}
                       className={filter === f.key ? 'kintales__tab kintales__tab--active' : 'kintales__tab'}
                       onClick={() => setFilter(f.key)}
+                      {...getTabProps(index)}
                     >
                       {f.label}
                     </button>
