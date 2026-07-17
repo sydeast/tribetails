@@ -2,7 +2,7 @@
  * Invoices screen styling. Scoped to this screen and imported directly by
  * Invoices.tsx (the DenScreenKit.css / Banner.css / FormSchemas.css convention),
  * so nothing here needs to land in the shared styles/screens.css. Every value
- * comes from styles/tokens.css — no literal colours, radii, durations, or px
+ * comes from styles/tokens.css, no literal colours, radii, durations, or px
  * spacing outside the chip palette below (which mirrors DenScreenKit.css's own
  * data-tone block, since invoice states need more distinct hues than the
  * shared DenTone palette carries).
@@ -100,7 +100,7 @@
 .invoices__row-main:focus-visible {
   background: var(--color-surface-2);
 }
-/* Unwired (no detail route yet): a plain, non-interactive row — no hand cursor,
+/* Unwired (no detail route yet): a plain, non-interactive row, no hand cursor,
    no hover affordance, so it never reads as a clickable control that no-ops. */
 .invoices__row-main--static {
   cursor: default;

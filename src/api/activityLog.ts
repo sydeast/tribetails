@@ -18,10 +18,10 @@ export interface ActivityLogEntry {
 
 /**
  * The bounded, server-ordered activity-log listener. Ordered by `seq` (the
- * hash-chain sequence — the canonical audit order the backend itself walks in
+ * hash-chain sequence, the canonical audit order the backend itself walks in
  * verifyActivityLogChain) descending, capped at 200. Legacy rows without `seq`
  * are excluded server-side by the orderBy (Firestore drops docs missing the sort
- * field), which is correct: they predate the integrity chain — and it means this
+ * field), which is correct: they predate the integrity chain, and it means this
  * query never returns the mixed-timestamp-type rows (AO-37 is designed out here).
  * This is the AO-29 fix expressed as a spec, not a client-side cap.
  */
@@ -33,7 +33,7 @@ export const ACTIVITY_LOG_QUERY: CollectionSpec = {
 
 /**
  * The first offending entry when the chain fails verification. Mirrors the
- * backend union verbatim (verifyActivityLogChain.ts) — note `head_mismatch`
+ * backend union verbatim (verifyActivityLogChain.ts), note `head_mismatch`
  * carries no entryId/seq, so the screen must branch on `code`.
  */
 export type VerifyAnomaly =

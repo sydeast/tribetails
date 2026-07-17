@@ -56,7 +56,7 @@ beforeEach(() => {
   );
 });
 
-describe('Directory screen — Kinfolk tab', () => {
+describe('Directory screen, Kinfolk tab', () => {
   it('renders a household card with its active pets as chips', () => {
     kinfolkAsync = { status: 'ready', data: [kinfolkRow({})] };
     kinAsync = {
@@ -176,7 +176,7 @@ describe('Directory screen — Kinfolk tab', () => {
   });
 });
 
-describe('Directory screen — Kin tab', () => {
+describe('Directory screen, Kin tab', () => {
   async function openKinTab() {
     await userEvent.click(screen.getByRole('tab', { name: /^kin(\s|·|$)/i }));
   }
@@ -221,7 +221,7 @@ describe('Directory screen — Kin tab', () => {
     expect(screen.queryByText(/no kin on file/i)).toBeNull();
   });
 
-  it('does not offer "Recently Created" as a sort — no backing field on the Kin collection', async () => {
+  it('does not offer "Recently Created" as a sort, no backing field on the Kin collection', async () => {
     render(<Directory />);
     await openKinTab();
     expect(screen.queryByRole('option', { name: 'Recently Created' })).toBeNull();

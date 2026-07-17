@@ -19,7 +19,7 @@ export interface FormSchemaSummary {
 /**
  * listFormSchemas (admin) -> { schemas }. Lightweight summaries of every
  * formSchemas/{id} doc; full bodies are fetched per-schema by the editor (not
- * this screen — see FormSchemas.tsx for the onSelect placeholder).
+ * this screen, see FormSchemas.tsx for the onSelect placeholder).
  *
  * The backend already returns a stable name-then-id sort, so this module does
  * not re-sort; the wasm reference (FormSchemaListScreen.kt) re-sorts client-side
@@ -36,7 +36,7 @@ export async function listFormSchemas(): Promise<FormSchemaSummary[]> {
 
 /**
  * deleteFormSchema (admin): permanently deletes formSchemas/{id}. Matches the
- * backend's Zod contract exactly — `{ id }`, not `{ schemaId }` (getFormSchema
+ * backend's Zod contract exactly, `{ id }`, not `{ schemaId }` (getFormSchema
  * uses schemaId; delete does not, per MyTribe/functions/src/admin/deleteFormSchema.ts).
  * Throws (via lib/fns.call) on `not-found` / `invalid-argument` / auth errors;
  * the screen surfaces the message fail-loud rather than swallowing it.

@@ -48,7 +48,7 @@ function statusTone(status: string): string {
 function StatusPill({ status }: { status: string }) {
   return (
     <span className="directory__status-pill" data-tone={statusTone(status)}>
-      {status.trim() === '' ? '—' : status.toLowerCase()}
+      {status.trim() === '' ? '-' : status.toLowerCase()}
     </span>
   );
 }
@@ -56,7 +56,7 @@ function StatusPill({ status }: { status: string }) {
 interface KinfolkCardProps {
   kf: Kinfolk;
   kin: Kin[];
-  /** True while the shared Kin stream is still loading — disclose it, don't claim "No kin on file". */
+  /** True while the shared Kin stream is still loading, disclose it, don't claim "No kin on file". */
   kinPending: boolean;
   /** Absent until a profile route is wired: the card then renders STATIC, never a no-op button. */
   onClick?: () => void;
@@ -64,7 +64,7 @@ interface KinfolkCardProps {
 
 /**
  * Household card. AO-11 fix: the wasm card was a FIXED-height Box, which
- * clipped the "+N more" overflow chip for a household with 4+ pets — pets
+ * clipped the "+N more" overflow chip for a household with 4+ pets, pets
  * silently disappeared with no visible affordance. This card has no fixed
  * height and no `overflow: hidden` anywhere in its stylesheet (Directory.css),
  * so the pet-chip row (`flex-wrap: wrap`) always grows the card rather than
@@ -214,7 +214,7 @@ interface DirectoryProps {
  * Two independent bounded, server-ordered streams back both tabs (see
  * KINFOLK_QUERY / KIN_QUERY in api/directory.ts): the Kin stream is read here
  * even while on the Kinfolk tab, because a household card's pet chips come
- * from it (one screen-level subscription, no N+1 per-card listener — same
+ * from it (one screen-level subscription, no N+1 per-card listener, same
  * reasoning as allKinStream() in DirectoryListScreen.kt). Only the LIST ships
  * here; onSelectKinfolk / onSelectKin are placeholder props for the
  * not-yet-built profile/edit screens (KinfolkProfileScreen, KinViewScreen,
@@ -232,7 +232,7 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
     setTab(next);
     setQuery(''); // ports `onTabChange { vm.clearSearch() }`
     // "Recently Created" has no backing field on Kin (KIN_SORT_OPTIONS omits
-    // it) — don't silently carry a selection over into a no-op sort.
+    // it), don't silently carry a selection over into a no-op sort.
     if (next === 'kin' && sort === 'recently_created') setSort(SORT_OPTION_DEFAULT);
   }
 
@@ -324,7 +324,7 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
       {/*
         A broken Kin stream must not silently read as "every household has no
         pets" (the false-empty-on-error class this port refuses to ship). The
-        Kinfolk list itself still renders — the failure is disclosed, not
+        Kinfolk list itself still renders, the failure is disclosed, not
         blocking.
       */}
       {tab === 'kinfolk' && kinState.status === 'error' && (

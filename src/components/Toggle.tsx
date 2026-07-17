@@ -13,7 +13,7 @@ export interface ToggleProps {
  * The Den switch. Ports the Compose AuntieToggle: a track + sliding thumb, the
  * brand accent when on. A real <button role="switch"> so it is keyboard- and
  * screen-reader-operable by default (one of the things the wasm canvas admin
- * could not offer — AO-15).
+ * could not offer, AO-15).
  */
 export function Toggle({ checked, onChange, disabled = false, label, className }: ToggleProps) {
   return (

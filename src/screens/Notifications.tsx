@@ -34,17 +34,17 @@ function byDay(rows: NotificationEntry[]): [string, NotificationEntry[]][] {
 /**
  * Admin Notifications inbox ("The Den · Notifications"). Streams the
  * `notifications` collection through the bounded, server-ordered listener
- * (createdAt desc, capped 200 — see NOTIFICATIONS_QUERY for why no
+ * (createdAt desc, capped 200, see NOTIFICATIONS_QUERY for why no
  * recipientUid filter is applied), and wires the two mark-read callables:
  * markNotificationRead/markNotificationUnread per row, bulkMarkNotificationsRead
  * for a multi-selected batch.
  *
  * Deliberately NOT locally-optimistic about a row's read/unread state: the
  * wasm original (NotificationsScreen.kt onToggleRead) doesn't patch
- * NotificationEntry client-side either — it fires the callable and lets the
+ * NotificationEntry client-side either, it fires the callable and lets the
  * live Firestore listener re-render the truth once the write lands, which is
  * effectively instant on a `useCollection` subscription. What IS optimistic
- * here is button state — disabled the instant a call is in flight — and the
+ * here is button state, disabled the instant a call is in flight, and the
  * bulk selection, which clears immediately on a successful batch write.
  */
 export function Notifications() {
@@ -96,7 +96,7 @@ export function Notifications() {
       setSelectedIds(new Set());
       if (marked < ids.length) {
         setActionError(
-          `Marked ${marked} of ${ids.length} — the rest were already read or not yours to mark.`,
+          `Marked ${marked} of ${ids.length}, the rest were already read or not yours to mark.`,
         );
       }
     } catch (err) {
@@ -115,7 +115,7 @@ export function Notifications() {
     });
   }
 
-  // Only claimed once the stream has actually resolved — never a fabricated
+  // Only claimed once the stream has actually resolved, never a fabricated
   // 0 while loading/erroring (the StatCard / AsyncRegion policy this app
   // follows throughout; see lib/async.ts).
   const unreadCount = rows.status === 'ready' ? rows.data.filter((r) => !isRead(r)).length : 0;

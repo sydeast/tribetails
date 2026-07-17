@@ -18,7 +18,7 @@ export type Filter = [string, WhereFilterOp, unknown];
 /**
  * A realtime collection query. `order` + `max` are REQUIRED on purpose: every
  * live listener the admin opens is bounded and server-ordered by construction
- * (closes AO-29 — the wasm bridge listened to whole append-only collections with
+ * (closes AO-29, the wasm bridge listened to whole append-only collections with
  * no orderBy/limit and capped client-side).
  *
  * NOTES for screens copying this:
@@ -31,7 +31,7 @@ export type Filter = [string, WhereFilterOp, unknown];
  */
 export interface CollectionSpec {
   path: string;
-  /** [field, direction] — the server-side sort. */
+  /** [field, direction], the server-side sort. */
   order: [string, 'asc' | 'desc'];
   /** Hard cap on rows the listener returns. */
   max: number;
@@ -41,7 +41,7 @@ export interface CollectionSpec {
 
 /**
  * Subscribe to a bounded, ordered Firestore query as `Async<T[]>`. Loading until
- * the first snapshot, then `ready` (possibly empty) or `error` — never a silent
+ * the first snapshot, then `ready` (possibly empty) or `error`, never a silent
  * empty on a permission failure (the #1 wasm defect class). A malformed spec and
  * a detached-listener error both land in `error` WITH a `retry` (Firestore
  * detaches a listener permanently after its error callback, so recovery must
@@ -58,7 +58,7 @@ export function useCollection<T>(spec: CollectionSpec): Async<T[]> {
     setState({ status: 'loading' });
 
     // Query construction can throw synchronously (bad path segment count, invalid
-    // limit) — catch it so a copy-paste slip during fan-out fails loud in-region
+    // limit), catch it so a copy-paste slip during fan-out fails loud in-region
     // instead of blanking the screen with a render-phase exception.
     let q;
     try {

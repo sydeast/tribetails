@@ -18,7 +18,7 @@ import './KinTales.css';
 /**
  * The Den filter tabs. Every predicate is a POSITIVE membership test against
  * the enumerated `KinTaleState` (the Sessions/Invoices `FILTERS` / AO-12
- * convention) — never a negation of another bucket. A row whose status
+ * convention), never a negation of another bucket. A row whose status
  * matches none of the three known codes (`'unknown'`) still shows under
  * "All"; it simply has no dedicated tab of its own, same as Sessions' own
  * `'unknown'` state.
@@ -55,9 +55,9 @@ interface KinTalesProps {
 /**
  * Admin KinTales list ("The Den · KinTales", nav slug `kintales` per
  * `lib/nav.ts`). Streams the flat `kin_care_reports` collection through the
- * bounded, server-ordered listener (KINTALES_QUERY — createdAt desc, capped
+ * bounded, server-ordered listener (KINTALES_QUERY, createdAt desc, capped
  * 200), then classifies every row through the enumerated `kinTaleState`
- * (never by negation — see lib/kinTaleFormat.ts for the AO-12-style
+ * (never by negation, see lib/kinTaleFormat.ts for the AO-12-style
  * rationale) for both the summary stat strip and the filter tabs.
  *
  * List/feed only: composing or editing a KinTale (KinTaleComposeScreen), the

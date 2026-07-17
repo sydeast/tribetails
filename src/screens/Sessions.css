@@ -2,7 +2,7 @@
  * Sessions ("Auntie Time") screen styling. Scoped to this screen and imported
  * directly by Sessions.tsx (the Invoices.css / DenScreenKit.css convention), so
  * nothing here needs to land in shared styles/screens.css. Every value comes
- * from styles/tokens.css — no literal colours, radii, durations, or px spacing
+ * from styles/tokens.css, no literal colours, radii, durations, or px spacing
  * outside the chip palette below (mirrors Invoices.css's own chip block, since
  * session states need more distinct hues than the shared DenTone palette
  * carries).
@@ -127,7 +127,7 @@
 .sessions__row-main:focus-visible {
   background: var(--color-surface-2);
 }
-/* Unwired (no detail route yet): a plain, non-interactive row — no hand cursor,
+/* Unwired (no detail route yet): a plain, non-interactive row, no hand cursor,
    no hover, so it never reads as a clickable control that no-ops. */
 .sessions__row-main--static {
   cursor: default;

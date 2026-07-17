@@ -24,11 +24,11 @@ function statusClass(status: string): string {
 function anomalyDetail(a: VerifyAnomaly): string {
   switch (a.code) {
     case 'seq_gap':
-      return `Sequence gap at #${a.seq} (expected ${a.expectedSeq}) — entry ${a.entryId}.`;
+      return `Sequence gap at #${a.seq} (expected ${a.expectedSeq}), entry ${a.entryId}.`;
     case 'prev_hash_mismatch':
-      return `Previous-hash mismatch at #${a.seq} — entry ${a.entryId}.`;
+      return `Previous-hash mismatch at #${a.seq}, entry ${a.entryId}.`;
     case 'entry_hash_mismatch':
-      return `Entry-hash mismatch at #${a.seq} — entry ${a.entryId}.`;
+      return `Entry-hash mismatch at #${a.seq}, entry ${a.entryId}.`;
     case 'head_mismatch':
       return `Chain-head mismatch: sealed head at seq ${a.headSeq}, observed seq ${a.observedSeq}.`;
   }
@@ -45,7 +45,7 @@ function byDay(rows: ActivityLogEntry[]): [string, ActivityLogEntry[]][] {
 
 /**
  * Admin Activity Log. Streams the `activity_log` collection through the bounded,
- * server-ordered listener (seq desc, capped 200 — AO-29 fixed by construction),
+ * server-ordered listener (seq desc, capped 200, AO-29 fixed by construction),
  * and verifies the SHA-256 hash chain (auto on mount, re-runnable on demand),
  * matching the wasm screen's verify-on-load behavior.
  */
@@ -143,7 +143,7 @@ export function ActivityLog() {
                             </span>
                           ) : null}
                         </div>
-                        <span className={statusClass(e.status)}>{e.status || '—'}</span>
+                        <span className={statusClass(e.status)}>{e.status || '-'}</span>
                         <time className="log__time">
                           {/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(e.timestamp)
                             ? e.timestamp.slice(11, 16)

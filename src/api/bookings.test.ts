@@ -6,7 +6,7 @@ describe('BOOKINGS_QUERY (AO-29 regression guard: bounded + server-ordered, neve
     expect(BOOKINGS_QUERY.path).toBe('kin_care_sessions');
   });
 
-  it('orders by createdAt descending — the one field on this doc that is a real serverTimestamp', () => {
+  it('orders by createdAt descending, the one field on this doc that is a real serverTimestamp', () => {
     expect(BOOKINGS_QUERY.order).toEqual(['createdAt', 'desc']);
   });
 

@@ -65,7 +65,7 @@ describe('kinTaleWhen (visitDate > arrivedAt > sentAt > createdAt precedence)', 
     expect(kinTaleWhen(whenInput({ createdAt: '2026-07-16T17:00:00.000Z' }))).toBe('07-16 12:00');
   });
 
-  it("'Date TBD' when every field is blank or unparseable — never a fabricated time", () => {
+  it("'Date TBD' when every field is blank or unparseable, never a fabricated time", () => {
     expect(kinTaleWhen(whenInput({}))).toBe('Date TBD');
     expect(kinTaleWhen(whenInput({ visitDate: 'garbage' }))).toBe('Date TBD');
   });

@@ -9,22 +9,22 @@ import { dayKey, formatWhen, type FsTime } from './time';
  *
  * SOURCE CONFIRMED against three independent places, not assumed from the
  * Kotlin model alone:
- *  - `firestore.rules:181` — `match /kin_care_reports/{reportId}` — a flat
+ *  - `firestore.rules:181`, `match /kin_care_reports/{reportId}`, a flat
  *    top-level collection, same shape as SESSIONS_QUERY/INVOICES_QUERY.
- *  - `FirestoreClient.kt:1998` (`data class KinCareReport`) — the wasm's own
+ *  - `FirestoreClient.kt:1998` (`data class KinCareReport`), the wasm's own
  *    field shapes.
  *  - `FirestoreInterop.wasmJs.kt#platformCreateKinTaleReport` /
- *    `#platformUpdateKinTaleReport` — the REAL writers. Both stamp
+ *    `#platformUpdateKinTaleReport`, the REAL writers. Both stamp
  *    `createdAt`/`updatedAt` via a client-computed `nowIsoUtc()` STRING, never
  *    `FieldValue.serverTimestamp()`. `visitDate`/`arrivedAt`/`sentAt` are the
  *    same free-text ISO shape (mirrors `kin_care_sessions.startTime` in
- *    `sessionFormat.ts`) — every date field on this collection is opaque text,
+ *    `sessionFormat.ts`), every date field on this collection is opaque text,
  *    not a Firestore Timestamp.
  *
  * ── THE AO-18 FIX, non-negotiable per the port brief ───────────────────────
  * The wasm's `KinTaleLogsScreen.kt#shortDateTime` formats a report's timestamp
  * by SLICING the raw ISO string directly (`iso.substring(5, 7)` for the month,
- * `iso.substring(11, 16)` for the clock) — the exact AO-18 bug already fixed in
+ * `iso.substring(11, 16)` for the clock), the exact AO-18 bug already fixed in
  * `sessionFormat.ts`: those substrings are UTC, so an evening visit reads as
  * the wrong calendar day and a wall-clock hour that never happened locally.
  * `kinTaleTimeOf` below is the same fix sessionFormat.ts applies: wrap the ISO
@@ -38,7 +38,7 @@ import { dayKey, formatWhen, type FsTime } from './time';
 /**
  * Wraps a `kin_care_reports` free-text ISO timestamp field as a fake Firestore
  * `Timestamp` so it can flow through `lib/time.ts`'s LOCAL `dayKey`/`formatWhen`
- * unchanged. `null` for blank/unparseable input — same "degrade honestly,
+ * unchanged. `null` for blank/unparseable input, same "degrade honestly,
  * never fabricate a date" contract `sessionFormat.ts#sessionTimeOf` uses.
  */
 export function kinTaleTimeOf(iso: string): FsTime {
@@ -64,10 +64,10 @@ export interface KinTaleWhenInput {
 
 /**
  * "Jul 16 14:32", LOCAL, ported from the wasm's `visitTimestamp` precedence
- * (visitDate, then arrivedAt, then sentAt, then createdAt — the first
+ * (visitDate, then arrivedAt, then sentAt, then createdAt, the first
  * non-blank field wins) but re-derived through `lib/time.ts`'s LOCAL
  * `formatWhen` instead of `shortDateTime`'s raw UTC-string slicing (AO-18).
- * `'Date TBD'` only when every field is blank or unparseable — matches the
+ * `'Date TBD'` only when every field is blank or unparseable, matches the
  * wasm's own fallback text.
  */
 export function kinTaleWhen(entry: KinTaleWhenInput): string {
@@ -81,7 +81,7 @@ export function kinTaleWhen(entry: KinTaleWhenInput): string {
 
 // ── household display ────────────────────────────────────────────────────
 
-/** "Unnamed Kinfolk" fallback, matching `sessionFormat.ts#sessionHousehold` / `directory.ts#kinfolkDisplayName`'s convention — a report can be blank here (the orphan-migration rows `KinTaleLogsScreen.kt`'s `OrphanRow` triages are the extreme case, but any ad-hoc write can leave it blank). */
+/** "Unnamed Kinfolk" fallback, matching `sessionFormat.ts#sessionHousehold` / `directory.ts#kinfolkDisplayName`'s convention, a report can be blank here (the orphan-migration rows `KinTaleLogsScreen.kt`'s `OrphanRow` triages are the extreme case, but any ad-hoc write can leave it blank). */
 export function kinTaleHousehold(kinfolkName: string): string {
   const name = kinfolkName.trim();
   return name === '' ? 'Unnamed Kinfolk' : name;
@@ -106,7 +106,7 @@ export function bodyPreview(body: string): string {
  * set, else a preview of the body. Neither field is rendered by the wasm's
  * own `ReportRow` (it shows only the Kinfolk name + submeta), but the port
  * brief calls for showing what a KinTale actually carries, so this surfaces
- * it — always from real doc text, never a fabricated summary.
+ * it, always from real doc text, never a fabricated summary.
  */
 export function kinTaleHeadline(title: string, body: string): string {
   const trimmedTitle = title.trim();
@@ -139,12 +139,12 @@ export function sentViaLabel(sentVia: string): string {
  * `JvmFirestoreRest.kt#markReportSentAtomic`). `"FAILED"` is a status the
  * wasm's own `KinTaleLogsScreen.kt` already renders an icon/bucket for
  * (`bucketFor`/`statusTone`), even though no writer in this codebase sets it
- * today — the same "no writer produces this code, but give it an honest
+ * today, the same "no writer produces this code, but give it an honest
  * bucket rather than silently folding it into Drafts" reasoning
  * `sessionFormat.ts#SessionState`'s `'unknown'` documents. `'unknown'` here
  * plays that exact role: any status text that is none of the three known
  * codes gets its own bucket instead of a fabricated Draft/Sent/Failed guess
- * (the AO-12 lesson — every branch below is a positive match against the
+ * (the AO-12 lesson, every branch below is a positive match against the
  * literal text, never "not one of the others, so must be Y").
  */
 export type KinTaleState = 'draft' | 'sent' | 'failed' | 'unknown';

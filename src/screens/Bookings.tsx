@@ -19,7 +19,7 @@ import './Bookings.css';
  * the enumerated `BookingState` (never a negation of another bucket, per the
  * AO-12-style discipline in lib/bookingFormat.ts). There is deliberately no
  * "Unknown" tab: an unrecognized/blank status row still renders (visible
- * under "All", with its own honestly-labeled UNKNOWN chip) — it is simply not
+ * under "All", with its own honestly-labeled UNKNOWN chip), it is simply not
  * promoted to a dedicated tab, the same treatment invoiceFormat.ts's "zero"
  * state gets in Invoices.tsx's FILTERS.
  */
@@ -43,10 +43,10 @@ const FILTERS: readonly FilterDef[] = [
 interface BookingsProps {
   /**
    * Placeholder: BookingDetail is a separate, not-yet-built screen, and this
-   * port is LIST ONLY (no create/edit flow, no row actions — see the
+   * port is LIST ONLY (no create/edit flow, no row actions, see the
    * OUT-OF-SCOPE note in api/bookings.ts for what a detail screen would still
    * need to add). The router mounts this screen propless, so in production
-   * `onSelectBooking` is always undefined — see `BookingRow` below: when
+   * `onSelectBooking` is always undefined, see `BookingRow` below: when
    * unwired the row is a STATIC <div>, not a <button>. A handler-less <button>
    * is still a focusable, tabbable dead control (the anti-pattern), so the row
    * only becomes a real <button> once a detail route wires the handler.
@@ -67,17 +67,17 @@ function rowViewsFor(rows: BookingEntry[]): RowView[] {
 /**
  * Admin Bookings list ("The Den · Bookings"). Streams the flat
  * `kin_care_sessions` collection through the bounded, server-ordered listener
- * (BOOKINGS_QUERY — createdAt desc, capped 200), then classifies every row
- * through the enumerated `bookingState` (never by negation — see
+ * (BOOKINGS_QUERY, createdAt desc, capped 200), then classifies every row
+ * through the enumerated `bookingState` (never by negation, see
  * lib/bookingFormat.ts) for both the summary stat strip and the filter tabs.
  *
  * List only: creating/editing a booking (BookingCreateScreen's Kinfolk
  * picker + KinCare-type + date/time form) and the per-booking detail view
- * (BookingDetail, and any row actions — Approve/Reject/Cancel/Mark Completed)
+ * (BookingDetail, and any row actions, Approve/Reject/Cancel/Mark Completed)
  * are separate, not-yet-built surfaces. `onSelectBooking` is this screen's
  * only hook into that later work. The wasm's SEPARATE "Incoming requests"
  * panel (MyTribe booking-envelope collection-group query + approve/cancel a
- * whole series) is also not ported — see the OUT-OF-SCOPE note in
+ * whole series) is also not ported, see the OUT-OF-SCOPE note in
  * api/bookings.ts for exactly why.
  */
 export function Bookings({ onSelectBooking }: BookingsProps) {
@@ -98,8 +98,8 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
   // "History" mirrors the wasm's own
   // `history = sessions.filter { status !in {SCHEDULED, DRAFT, PENDING} }`:
   // everything that has left the pending/scheduled lifecycle. Composed here
-  // from three POSITIVELY enumerated states (never a negation), and — unlike
-  // the wasm's own gap — this deliberately still counts an `unknown` status
+  // from three POSITIVELY enumerated states (never a negation), and, unlike
+  // the wasm's own gap, this deliberately still counts an `unknown` status
   // row rather than letting it vanish from every stat uncounted.
   const historyCount = asyncScalar(
     rows,
@@ -142,7 +142,7 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
             const views = rowViewsFor(data);
             // Non-null: FILTERS lists all six FilterKey members above, and `filter`
             // only ever holds a key set via setFilter(f.key) from that same array,
-            // so this always finds one — TS just can't see that invariant through
+            // so this always finds one, TS just can't see that invariant through
             // .find().
             const activeFilter = FILTERS.find((f) => f.key === filter)!;
             const visible = views.filter((v) => activeFilter.test(v.state));
@@ -223,7 +223,7 @@ function BookingRow({ view, onSelectBooking }: BookingRowProps) {
 
   // Static, non-interactive row unless a detail handler is wired: a handler-less
   // <button> is still a focusable, tabbable dead control, so when unwired the
-  // row is a plain <div> — no button role, no cursor, no hover.
+  // row is a plain <div>, no button role, no cursor, no hover.
   return (
     <li className="bookings__row">
       {onSelectBooking ? (

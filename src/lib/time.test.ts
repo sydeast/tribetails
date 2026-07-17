@@ -17,7 +17,7 @@ describe('lib/time (local, AO-18)', () => {
 
   it('dayKey uses LOCAL date parts, not UTC', () => {
     // A local evening time. Whatever the runner's zone, the local calendar day
-    // is what getFullYear/Month/Date report — and that is the day we must group by.
+    // is what getFullYear/Month/Date report, and that is the day we must group by.
     const d = new Date(2026, 6, 16, 20, 5); // 2026-07-16 20:05 local
     expect(dayKey(ts(d))).toBe('2026-07-16');
   });

@@ -51,7 +51,7 @@ describe('invoiceState (AO-12 regression guard: enumerated, never paid-by-negati
     expect(invoiceState(row({ status: '', amountDue: 0, total: 0 }))).toBe('zero');
   });
 
-  it('amountDue settled (<=0) with a real positive total is paid — a positive read of the retired balance', () => {
+  it('amountDue settled (<=0) with a real positive total is paid, a positive read of the retired balance', () => {
     expect(invoiceState(row({ status: '', amountDue: 0, total: 40 }))).toBe('paid');
   });
 
@@ -135,11 +135,11 @@ describe('isInvoiceOverdue', () => {
     expect(isInvoiceOverdue('open', '2026-08-01', '2026-07-16')).toBe(false);
   });
 
-  it('false for an unparseable dueDate — never fabricates an overdue verdict', () => {
+  it('false for an unparseable dueDate, never fabricates an overdue verdict', () => {
     expect(isInvoiceOverdue('open', 'Net 14', '2026-07-16')).toBe(false);
   });
 
-  it('false for any non-open state, even a stale-looking dueDate — a draft/quote/credit/paid invoice is never "overdue"', () => {
+  it('false for any non-open state, even a stale-looking dueDate, a draft/quote/credit/paid invoice is never "overdue"', () => {
     expect(isInvoiceOverdue('draft', '2020-01-01', '2026-07-16')).toBe(false);
     expect(isInvoiceOverdue('quote', '2020-01-01', '2026-07-16')).toBe(false);
     expect(isInvoiceOverdue('paid', '2020-01-01', '2026-07-16')).toBe(false);

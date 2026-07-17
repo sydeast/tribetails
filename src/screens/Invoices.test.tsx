@@ -41,7 +41,7 @@ describe('Invoices screen', () => {
   it('renders a streamed row with its invoice number, household, amount, and status chip', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Invoices />);
-    // Scope by the row container, not the button — the row is only a <button>
+    // Scope by the row container, not the button, the row is only a <button>
     // once a detail route wires onSelect; here (unwired) it renders static.
     const row = screen.getByText('#1042').closest('.invoices__row') as HTMLElement;
     expect(within(row).getByText('#1042')).toBeInTheDocument();
@@ -163,7 +163,7 @@ describe('Invoices screen', () => {
   it('omitting onSelect renders each row STATIC (not a live no-op button)', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Invoices />);
-    // The row content renders, but it is NOT an interactive button when unwired —
+    // The row content renders, but it is NOT an interactive button when unwired, 
     // a live button that no-ops on click is the dead-control anti-pattern.
     expect(screen.getByText('#1042')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /1042/i })).toBeNull();

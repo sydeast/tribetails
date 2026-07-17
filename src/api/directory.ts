@@ -7,7 +7,7 @@ import type { Timestamp } from 'firebase/firestore';
  * live Firestore collections back this screen:
  *
  *   kinfolk   top-level, one doc per household (rules: web/firestore.rules:153,
- *             `allow read: if isAuntie() || ...` — an admin gets an unfiltered
+ *             `allow read: if isAuntie() || ...`, an admin gets an unfiltered
  *             collection read, same shape as NOTIFICATIONS_QUERY).
  *   kin       top-level FLAT MIRROR of `families/{kinfolkId}/kin/{kinId}`,
  *             written by the `onFamilyKinWrite` trigger (MyTribe
@@ -31,11 +31,11 @@ export interface Kinfolk {
   status: string; // active | inactive | archived
   /**
    * Admin-entered ISO date, "Admin & Relationship" section. The ONLY recency
-   * signal the `kinfolk` collection carries — no `createdAt`/`updatedAt` field
+   * signal the `kinfolk` collection carries, no `createdAt`/`updatedAt` field
    * exists anywhere in the wasm Kinfolk model, and no MyTribe function was
    * found writing either onto the top-level `kinfolk/{kinfolkId}` doc (checked
    * every writer under functions/src for `.collection('kinfolk')`/`doc(kinfolk/`
-   * — none stamp a create/update timestamp on it; `onKinfolkCreate.ts` only
+   *, none stamp a create/update timestamp on it; `onKinfolkCreate.ts` only
    * timestamps the SEPARATE `families/{id}` portal envelope). `joinDate` is
    * what `DirectoryUiState.filteredSorted` already sorts both recency axes by
    * (see the wasm comment: "Kinfolk has no createdAt/updatedAt yet; joinDate is
@@ -98,21 +98,21 @@ export function matchesKinfolk(kf: Kinfolk, needle: string): boolean {
 }
 
 /**
- * Bounded, server-ordered kinfolk listener. Ordered by `lastName` ascending —
+ * Bounded, server-ordered kinfolk listener. Ordered by `lastName` ascending, 
  * a directory-conventional alphabetical order and, per the note on `joinDate`
  * above, the only string field guaranteed to exist on every doc (there is no
  * timestamp to order by). Capped at 500: generous for a single business's
  * household roster; a business large enough to need pagination is out of
  * scope for this port. No `where` filter is combined with this `orderBy`, so
  * this query needs NO composite Firestore index (single-field orderBy is
- * always covered by Firestore's automatic single-field index) — same
+ * always covered by Firestore's automatic single-field index), same
  * reasoning NOTIFICATIONS_QUERY documents.
  *
  * KNOWN TRADEOFF: Firestore `orderBy` excludes any doc MISSING the sort field,
  * so a kinfolk with no `lastName` (or, for KIN_QUERY, a `kin` predating the
  * `updatedAt` mirror stamp) silently drops from the list, chips, and count.
  * Acceptable only if those fields are always present in prod; flagged for
- * operator prod-verification. If a legacy doc lacks the field, BACKFILL it —
+ * operator prod-verification. If a legacy doc lacks the field, BACKFILL it, 
  * do not weaken the sort to a nullable field, which would just move the drop.
  */
 export const KINFOLK_QUERY: CollectionSpec = {
@@ -135,7 +135,7 @@ export interface Kin {
   profilePictureUrl: string;
   /**
    * Firestore Timestamp, stamped `FieldValue.serverTimestamp()` on EVERY write
-   * to the flat mirror doc (create, update, and the archive-transition write —
+   * to the flat mirror doc (create, update, and the archive-transition write, 
    * verified against MyTribe functions/src/triggers/onFamilyKinWrite.ts:88,
    * 132, 157). Real and always-present once the doc has been written at least
    * once; `null` covers the brief local-pending window before a
@@ -143,12 +143,12 @@ export interface Kin {
    *
    * There is deliberately NO `createdAt` field here. The wasm comment on this
    * screen (AO-26) claims "the BACKEND already writes kin createdAt/updatedAt"
-   * — true only for the NESTED `families/{kinfolkId}/kin/{kinId}` doc
+   *, true only for the NESTED `families/{kinfolkId}/kin/{kinId}` doc
    * (functions/src/portal/kinWrites.ts:71-72 addKin). The FLAT `kin/{docId}`
    * collection this admin reads is a mirror built by onFamilyKinWrite.ts,
    * which stamps `updatedAt` on every branch (create/archive/update, lines 88,
    * 108, 132) but NEVER writes `createdAt` on any branch. So "recently
-   * created" has no real backing field on the data this screen can see — see
+   * created" has no real backing field on the data this screen can see, see
    * KIN_SORT_OPTIONS below, which omits it rather than shipping a no-op.
    */
   updatedAt?: Timestamp | null;
@@ -173,7 +173,7 @@ export function matchesKin(kin: Kin, needle: string): boolean {
 
 /**
  * Bounded, server-ordered kin listener (the flat mirror collection). Ordered
- * by `updatedAt` descending — the one real timestamp field on this collection
+ * by `updatedAt` descending, the one real timestamp field on this collection
  * (see the Kin.updatedAt doc above). Capped at 500. No `where` filter is
  * combined with this `orderBy` (archived kin are excluded CLIENT-side via
  * `activeKinByKinfolk` / the Kin-tab filter below, mirroring the wasm's own
@@ -251,7 +251,7 @@ interface SortOptionMeta {
   label: string;
 }
 
-/** All four, for the Kinfolk tab — `joinDate` gives both recency axes a real (if shared) backing field. */
+/** All four, for the Kinfolk tab, `joinDate` gives both recency axes a real (if shared) backing field. */
 export const KINFOLK_SORT_OPTIONS: readonly SortOptionMeta[] = [
   { value: 'alpha_asc', label: 'A → Z' },
   { value: 'alpha_desc', label: 'Z → A' },
@@ -264,7 +264,7 @@ export const KINFOLK_SORT_OPTIONS: readonly SortOptionMeta[] = [
  * the Kin.updatedAt doc above, the flat `kin` collection has no `createdAt`
  * field anywhere, on any branch, so a "Recently Created" option here would be
  * a decorative no-op (every key equal, order simply left as the underlying
- * server order) rather than a real sort — the "no fake sort" rule this port
+ * server order) rather than a real sort, the "no fake sort" rule this port
  * follows. "Recently Updated" IS wired for real, backed by the collection's
  * one genuine timestamp field.
  */

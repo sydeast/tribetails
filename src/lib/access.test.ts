@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { accessFromClaims } from './access';
 
-describe('accessFromClaims — the admin gate', () => {
+describe('accessFromClaims, the admin gate', () => {
   it('admits a real admin', () => {
     expect(accessFromClaims({ admin: true })).toEqual({ status: 'admin' });
   });

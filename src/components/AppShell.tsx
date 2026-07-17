@@ -35,12 +35,12 @@ function liveLink(slug: string) {
 /**
  * The admin layout: the persistent Den nav rail + topbar, with the active screen
  * rendered into <Outlet/>. Wraps every admin route (the route tree guards the whole
- * layout with requireAdmin), so a screen component is just its content — and it
+ * layout with requireAdmin), so a screen component is just its content, and it
  * renders the single <main> landmark; screens render <div>, never a nested <main>.
  */
 export function AppShell() {
   // Read the access the layout guard already resolved (S3), rather than minting a
-  // second getIdTokenResult — which also removes the null window where a test admin
+  // second getIdTokenResult, which also removes the null window where a test admin
   // briefly rendered as "Operator" with no sandbox banner.
   const { access } = useRouteContext({ from: '/admin' });
 

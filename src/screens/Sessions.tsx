@@ -20,7 +20,7 @@ import './Sessions.css';
 
 /**
  * The Den filter tabs. Every predicate is a POSITIVE membership test against
- * the enumerated `SessionState` (the Invoices `FILTERS` / AO-12 convention) —
+ * the enumerated `SessionState` (the Invoices `FILTERS` / AO-12 convention), 
  * never a negation of another bucket.
  */
 type FilterKey = 'all' | 'active' | 'scheduled' | 'completed' | 'cancelled';
@@ -41,10 +41,10 @@ const FILTERS: readonly FilterDef[] = [
 
 interface SessionsProps {
   /**
-   * Placeholder: the detail/edit screen (clock-in/out, GPS, KinTale compose —
+   * Placeholder: the detail/edit screen (clock-in/out, GPS, KinTale compose, 
    * `KinCareDetailScreen`/`KinTaleComposeScreen` in the wasm) is a separate,
    * not-yet-built screen; this port is LIST ONLY. The router mounts this screen
-   * propless, so `onSelect` is undefined in production — see `SessionRow`: when
+   * propless, so `onSelect` is undefined in production, see `SessionRow`: when
    * unwired the row is a STATIC <div>, not a <button>. A handler-less <button>
    * is still a focusable dead control, so the row only becomes a real <button>
    * once a detail route wires the handler.
@@ -53,10 +53,10 @@ interface SessionsProps {
 }
 
 /**
- * Admin Sessions list ("The Den · Auntie Time", nav slug `sessions` —
+ * Admin Sessions list ("The Den · Auntie Time", nav slug `sessions`, 
  * `lib/nav.ts` is explicit that the rail label and the slug are not the same
  * word). Streams the flat `kin_care_sessions` collection through the bounded,
- * server-ordered listener (SESSIONS_QUERY — startTime desc, capped 300), then
+ * server-ordered listener (SESSIONS_QUERY, startTime desc, capped 300), then
  * classifies every row through the enumerated `sessionState` (never by
  * negation) and groups the FILTERED rows by LOCAL calendar day
  * (`groupSessionsByDay`, the AO-18 fix) for display.
@@ -70,7 +70,7 @@ export function Sessions({ onSelect }: SessionsProps) {
   const rows = useCollection<SessionEntry>(SESSIONS_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
 
-  // Computed once per render pass, not per keystroke/tick — same rationale as
+  // Computed once per render pass, not per keystroke/tick, same rationale as
   // Invoices.tsx's todayIso: "today" doesn't change mid-session.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
 
