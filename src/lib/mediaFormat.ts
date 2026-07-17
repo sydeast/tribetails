@@ -1,4 +1,5 @@
-import { isoDatePrefixOrNull } from './invoiceFormat';
+import type { Timestamp } from 'firebase/firestore';
+import { dayKey, type FsTime } from './time';
 import type { MediaFile } from '../api/gallery';
 
 /**
@@ -75,8 +76,35 @@ export function mediaCaption(media: Pick<MediaFile, 'description' | 'originalFil
  * omitted rather than shown as a real author. Returns `''` when nothing real
  * remains: the caller must not print an empty meta line.
  */
+/**
+ * Wraps the free-text ISO `uploadedAt` instant as a Timestamp so it flows through
+ * lib/time's LOCAL day/month keys: the AO-18 fix. `uploadedAt` is a full UTC
+ * instant (see api/gallery.ts), so a raw `.slice(0, 10)` / `.slice(0, 7)` would
+ * bucket a 7pm-CDT upload under TOMORROW's date and next month. Mirrors
+ * sessionFormat.sessionTimeOf / kinTaleFormat.kinTaleTimeOf.
+ */
+function mediaTimeOf(uploadedAt: string): FsTime {
+  const trimmed = uploadedAt.trim();
+  if (trimmed === '') return null;
+  const d = new Date(trimmed);
+  if (Number.isNaN(d.getTime())) return null;
+  return { toDate: () => d } as unknown as Timestamp;
+}
+
+/** LOCAL `YYYY-MM-DD` for an upload instant, or '' when blank/unparseable (AO-18). */
+export function mediaLocalDay(uploadedAt: string): string {
+  const key = dayKey(mediaTimeOf(uploadedAt));
+  return key === 'Undated' ? '' : key;
+}
+
+/** LOCAL `YYYY-MM` for an upload instant, or null when blank/unparseable (AO-18). */
+export function mediaLocalMonth(uploadedAt: string): string | null {
+  const day = mediaLocalDay(uploadedAt);
+  return day === '' ? null : day.slice(0, 7);
+}
+
 export function mediaMetaLine(uploadedAt: string, uploadedBy: string): string {
-  const date = isoDatePrefixOrNull(uploadedAt) ?? '';
+  const date = mediaLocalDay(uploadedAt);
   const author = uploadedBy.trim();
   const realAuthor = author !== '' && author.toLowerCase() !== 'auntie' ? author : '';
   return [date, realAuthor].filter((s) => s !== '').join(' · ');
@@ -130,9 +158,10 @@ export type GalleryRow = Pick<MediaFile, 'kinfolkId' | 'fileType' | 'uploadedAt'
 export function filterGalleryMedia<T extends GalleryRow>(all: T[], filter: GalleryFilter): T[] {
   return all.filter(
     (m) =>
-      (filter.kinfolkId === null || m.kinfolkId === filter.kinfolkId) &&
-      (filter.fileType === null || m.fileType.toUpperCase() === filter.fileType.toUpperCase()) &&
-      (filter.monthPrefix === null || m.uploadedAt.startsWith(filter.monthPrefix)),
+      (filter.kinfolkId === null || m.kinfolkId.trim() === filter.kinfolkId.trim()) &&
+      (filter.fileType === null ||
+        m.fileType.trim().toUpperCase() === filter.fileType.trim().toUpperCase()) &&
+      (filter.monthPrefix === null || mediaLocalMonth(m.uploadedAt) === filter.monthPrefix),
   );
 }
 
@@ -145,8 +174,8 @@ function cmp(a: string, b: string): number {
 export function galleryMonths(all: GalleryRow[]): string[] {
   const set = new Set<string>();
   for (const m of all) {
-    const prefix = m.uploadedAt.slice(0, 7);
-    if (prefix.length === 7 && prefix[4] === '-') set.add(prefix);
+    const prefix = mediaLocalMonth(m.uploadedAt);
+    if (prefix) set.add(prefix);
   }
   return [...set].sort((a, b) => cmp(b, a));
 }

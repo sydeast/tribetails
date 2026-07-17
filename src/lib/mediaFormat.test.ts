@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
   mediaKindOf,
   mediaKindHasPreview,
@@ -13,7 +13,22 @@ import {
   GALLERY_FILTER_DEFAULT,
   type GalleryFilter,
   type GalleryRow,
+  mediaLocalDay,
+  mediaLocalMonth,
 } from './mediaFormat';
+
+// File-scope TZ pin: the date-keyed suites assert LOCAL day/month keys derived
+// from UTC instants; without a fixed zone they pass on a UTC runner and silently
+// stop testing AO-18. Pin to a US zone so the local-vs-UTC divergence is real.
+let fileOriginalTz: string | undefined;
+beforeAll(() => {
+  fileOriginalTz = process.env.TZ;
+  process.env.TZ = 'America/Chicago';
+});
+afterAll(() => {
+  if (fileOriginalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = fileOriginalTz;
+});
 
 describe('mediaKindOf (positive enumeration, never by negation)', () => {
   it('matches every real fileType code any writer sets, case-insensitively', () => {
@@ -103,6 +118,22 @@ describe('mediaMetaLine', () => {
   });
 });
 
+describe('AO-18: local day/month keys, never a raw UTC slice', () => {
+  // TZ pinned to America/Chicago at file scope. 01:00 UTC is the PREVIOUS
+  // calendar day at 7pm local; a raw .slice(0,10)/.slice(0,7) would bucket it
+  // under the UTC (next) day/month, the exact bug the wasm shipped.
+  it('keys an evening-local upload under the LOCAL day/month, not the UTC-next', () => {
+    expect(mediaLocalDay('2026-07-17T01:00:00.000Z')).toBe('2026-07-16');
+    expect(mediaLocalMonth('2026-07-01T01:00:00.000Z')).toBe('2026-06');
+  });
+
+  it('degrades honestly on blank/unparseable input, never fabricating a date', () => {
+    expect(mediaLocalDay('')).toBe('');
+    expect(mediaLocalDay('nope')).toBe('');
+    expect(mediaLocalMonth('')).toBeNull();
+  });
+});
+
 describe('mediaDurationLabel', () => {
   it('formats under an hour as m:ss', () => {
     expect(mediaDurationLabel(75)).toBe('1:15');
@@ -122,7 +153,7 @@ describe('mediaDurationLabel', () => {
 });
 
 function row(over: Partial<GalleryRow>): GalleryRow {
-  return { kinfolkId: '', fileType: 'IMAGE', uploadedAt: '2026-07-01T00:00:00.000Z', ...over };
+  return { kinfolkId: '', fileType: 'IMAGE', uploadedAt: '2026-07-01T12:00:00.000Z', ...over };
 }
 
 describe('filterGalleryMedia', () => {
@@ -145,11 +176,11 @@ describe('filterGalleryMedia', () => {
 
   it('filters by monthPrefix', () => {
     const rows = [
-      row({ uploadedAt: '2026-06-15T00:00:00.000Z' }),
-      row({ uploadedAt: '2026-07-01T00:00:00.000Z' }),
+      row({ uploadedAt: '2026-06-15T12:00:00.000Z' }),
+      row({ uploadedAt: '2026-07-01T12:00:00.000Z' }),
     ];
     const filter: GalleryFilter = { kinfolkId: null, fileType: null, monthPrefix: '2026-07' };
-    expect(filterGalleryMedia(rows, filter)).toEqual([row({ uploadedAt: '2026-07-01T00:00:00.000Z' })]);
+    expect(filterGalleryMedia(rows, filter)).toEqual([row({ uploadedAt: '2026-07-01T12:00:00.000Z' })]);
   });
 
   it('does not re-sort: the caller\'s stream order is preserved', () => {
@@ -162,9 +193,9 @@ describe('filterGalleryMedia', () => {
 describe('galleryMonths', () => {
   it('returns distinct YYYY-MM buckets, newest first', () => {
     const rows = [
-      row({ uploadedAt: '2026-05-01T00:00:00.000Z' }),
-      row({ uploadedAt: '2026-07-01T00:00:00.000Z' }),
-      row({ uploadedAt: '2026-07-15T00:00:00.000Z' }),
+      row({ uploadedAt: '2026-05-01T12:00:00.000Z' }),
+      row({ uploadedAt: '2026-07-01T12:00:00.000Z' }),
+      row({ uploadedAt: '2026-07-15T12:00:00.000Z' }),
     ];
     expect(galleryMonths(rows)).toEqual(['2026-07', '2026-05']);
   });

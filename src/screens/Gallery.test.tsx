@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { render, screen, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
@@ -10,6 +10,18 @@ const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
 import { Gallery } from './Gallery';
+
+// TZ pinned so month-chip keys (derived LOCAL from UTC uploadedAt, AO-18) are
+// deterministic across runners, not the machine's zone.
+let fileOriginalTz: string | undefined;
+beforeAll(() => {
+  fileOriginalTz = process.env.TZ;
+  process.env.TZ = 'America/Chicago';
+});
+afterAll(() => {
+  if (fileOriginalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = fileOriginalTz;
+});
 
 function media(over: Partial<MediaFile>): MediaFile {
   return {
@@ -85,11 +97,14 @@ describe('Gallery screen — media stream', () => {
     expect(screen.getByText('No household on file')).toBeInTheDocument();
   });
 
-  it('shows "No household on file" when the kinfolkId does not resolve to a known household', () => {
+  it('shows "Household unavailable" (not "No household on file") when a present kinfolkId does not resolve', () => {
     mediaAsync = { status: 'ready', data: [media({ kinfolkId: 'ghost' })] };
     kinfolkAsync = { status: 'ready', data: [] };
     render(<Gallery />);
-    expect(screen.getByText('No household on file')).toBeInTheDocument();
+    // unresolved is not absent: the doc HAS a household, the roster just could
+    // not name it. Never collapse that into the "no household" claim.
+    expect(screen.getByText('Household unavailable')).toBeInTheDocument();
+    expect(screen.queryByText('No household on file')).toBeNull();
   });
 
   it('shows a duration badge only for a video with a real duration', () => {
@@ -162,7 +177,7 @@ describe('Gallery screen — async states', () => {
     render(<Gallery />);
     // The tile still renders...
     expect(screen.getByText('Rufus')).toBeInTheDocument();
-    expect(screen.getByText('No household on file')).toBeInTheDocument();
+    expect(screen.getByText('Household unavailable')).toBeInTheDocument();
     // ...but the failure is disclosed, not hidden.
     expect(screen.getByText(/couldn.t load households/i)).toBeInTheDocument();
     expect(screen.getByText(/deadline-exceeded/i)).toBeInTheDocument();
@@ -213,8 +228,8 @@ describe('Gallery screen — filters', () => {
     mediaAsync = {
       status: 'ready',
       data: [
-        media({ _id: 'a', description: 'June shot', uploadedAt: '2026-06-01T00:00:00.000Z' }),
-        media({ _id: 'b', description: 'July shot', uploadedAt: '2026-07-01T00:00:00.000Z' }),
+        media({ _id: 'a', description: 'June shot', uploadedAt: '2026-06-01T12:00:00.000Z' }),
+        media({ _id: 'b', description: 'July shot', uploadedAt: '2026-07-01T12:00:00.000Z' }),
       ],
     };
     render(<Gallery />);
