@@ -43,6 +43,15 @@ import { type CollectionSpec } from '../lib/firestore';
  */
 export interface KinTaleEntry {
   _id: string;
+  /**
+   * FK to the `kin_care_sessions` doc this recap belongs to (`KinCareReport.sessionId`,
+   * `FirestoreClient.kt:2001`). The list itself never reads it; it exists here for the
+   * not-yet-built compose/edit surface (`KinTaleCompose.tsx`), which needs it to route the
+   * send transition's atomic session-side batch update (`markKinTaleReportSent` touches
+   * BOTH `kin_care_reports/{id}` and `kin_care_sessions/{sessionId}`, see
+   * `api/kinTalesWrite.ts`).
+   */
+  sessionId: string;
   kinfolkId: string;
   kinfolkName: string;
   authorDisplayName: string;

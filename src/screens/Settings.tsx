@@ -5,6 +5,7 @@ import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton } from '../components/Buttons';
+import { SettingsEdit } from './SettingsEdit';
 import {
   businessHoursRows,
   serviceRateRows,
@@ -22,27 +23,42 @@ import {
 import './Settings.css';
 
 interface SettingsProps {
-  /** Placeholder: the editor surface doesn't exist yet (edit/save is out of scope for this port). */
+  /**
+   * Optional external hook, called (in addition to opening the editor below)
+   * whenever the operator clicks "Edit settings". `router.tsx` mounts this
+   * screen as a bare route component (`component: Settings`, no props), so
+   * nothing wires this today; it exists purely for a future caller (analytics,
+   * a route-level breadcrumb) that wants to observe the click. The editor
+   * itself does NOT depend on it: see the `editing` state below.
+   */
   onEdit?: () => void;
 }
 
 /**
- * Admin Settings, READ-ONLY OVERVIEW. Displays the current `business_settings`
- * document, grouped by the same sections the wasm `SettingsScreen.kt` editor
- * uses, but with every field/save action removed. Editing (and the per-section
- * Save bars, the vet-clinic CRUD, the live notification-gate matrix, and the
- * per-operator Appearance/Security panels, none of which live on this single
- * doc) is the deferred, not-yet-built surface, exactly as `onEdit` here is a
- * placeholder prop for routing to it later (matches the `onSelect`/`onNew`
- * convention in FormSchemas.tsx).
+ * Admin Settings. Defaults to the READ-ONLY overview: the current
+ * `business_settings` document, grouped by the same sections the wasm
+ * `SettingsScreen.kt` editor uses. Clicking "Edit settings" switches this
+ * screen to `SettingsEdit` (the write surface, `./SettingsEdit.tsx`), in place,
+ * with no router change: `router.tsx` mounts `Settings` as a bare route
+ * component with no props, so the only way "Edit settings" can open a real
+ * editor without touching `router.tsx` is for this screen to own that toggle
+ * itself, rather than wait for a parent to hand it one. That is what `editing`
+ * below does. Returning from the editor (`onDone`) flips back to the overview
+ * and reloads it, so a just-saved change is reflected immediately rather than
+ * showing the pre-edit snapshot.
+ *
+ * Several sections (Business hours, Time off, KinCare types, Google Calendar
+ * sync, MyTribe portal Home layout) have no editor yet; see `SettingsEdit.tsx`'s
+ * header for exactly which and why. They stay exactly this read-only here.
  *
  * Loads once via the one-shot `getBusinessSettings` (a direct Firestore
  * `getDoc`, not a callable, see `api/settings.ts`'s header for why), not a
  * live listener: an overview does not need to react to a concurrent editor's
- * writes, since there is no concurrent editor yet.
+ * writes, since there is no concurrent editor session (sole admin).
  */
 export function Settings({ onEdit }: SettingsProps) {
   const [settings, setSettings] = useState<Async<BusinessSettings>>({ status: 'loading' });
+  const [editing, setEditing] = useState(false);
 
   // Hoisted so a failed load can hand AsyncRegion a real retry (the
   // FeatureFlags.tsx / FormSchemas.tsx convention).
@@ -67,6 +83,17 @@ export function Settings({ onEdit }: SettingsProps) {
 
   useEffect(() => load(), [load]);
 
+  if (editing) {
+    return (
+      <SettingsEdit
+        onDone={() => {
+          setEditing(false);
+          load();
+        }}
+      />
+    );
+  }
+
   return (
     <div className="screen">
       <DenScreenHeading
@@ -75,13 +102,19 @@ export function Settings({ onEdit }: SettingsProps) {
         accentTail="overview."
         subtitle="What's currently saved on your business settings, grouped by section."
         trailing={
-          <PrimaryButton label="Edit settings" {...(onEdit ? { onClick: () => onEdit() } : {})} />
+          <PrimaryButton
+            label="Edit settings"
+            onClick={() => {
+              onEdit?.();
+              setEditing(true);
+            }}
+          />
         }
       />
 
       <Banner tone="info" dashed pillLabel="Read-only">
-        This is an overview, not the editor. Values below are exactly what&rsquo;s saved; changing
-        them here is not available yet.
+        This is an overview, not the editor. Values below are exactly what&rsquo;s saved; click
+        &ldquo;Edit settings&rdquo; above to change them.
       </Banner>
 
       <AsyncRegion

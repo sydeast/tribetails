@@ -13,6 +13,7 @@ import { KinTales } from './KinTales';
 function entry(over: Partial<KinTaleEntry>): KinTaleEntry {
   return {
     _id: 'tale1',
+    sessionId: 'sess1',
     kinfolkId: 'kf1',
     kinfolkName: 'The Whitfields',
     authorDisplayName: 'Auntie Jo',
@@ -202,6 +203,21 @@ describe('KinTales screen', () => {
     await user.click(screen.getByRole('tab', { name: 'Failed' }));
     expect(screen.getByText(/nothing matches this filter/i)).toBeInTheDocument();
     expect(screen.queryByText(/no kintales sent yet/i)).toBeNull();
+  });
+
+  it('calls onNew when New KinTale is clicked', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [] });
+    const onNew = vi.fn();
+    render(<KinTales onNew={onNew} />);
+    await user.click(screen.getByRole('button', { name: /new kintale/i }));
+    expect(onNew).toHaveBeenCalledOnce();
+  });
+
+  it('renders New KinTale STATIC (not a live no-op button) when unwired', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [] });
+    render(<KinTales />);
+    expect(screen.getByText('New KinTale')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /new kintale/i })).toBeNull();
   });
 
   it('clicking a row calls onSelect with the KinTale id', async () => {

@@ -19,7 +19,8 @@ import {
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { GhostButton } from '../components/Buttons';
+import { GhostButton, PrimaryButton } from '../components/Buttons';
+import { CommunicateCompose } from './CommunicateCompose';
 import './Communicate.css';
 
 /**
@@ -77,12 +78,20 @@ const FILTERS: readonly FilterDef[] = [
  * applied to this callable's epoch-ms `sentAtMs`), newest day and newest send
  * first, the activity-feed order Inbox.tsx/Notifications.tsx also use.
  *
- * Read-only: composing or resending a message is a separate, not-yet-built
- * surface. No compose box, no resend action, no broadcast form ships here.
+ * Read-only itself, but no longer the screen's only surface: the "New
+ * broadcast" trailing button below opens `CommunicateCompose`, the send
+ * surface this file used to defer (see `api/communicateWrite.ts` for the
+ * confirmed `broadcastMessage` payload and why it ships audience+channel+
+ * subject/body compose without a live pre-send recipient count). Resending a
+ * past send and the 1:1 "Personalize" AI-draft flow remain not-yet-built.
  */
 export function Communicate() {
   const [sends, setSends] = useState<Async<RecentSend[]>>({ status: 'loading' });
   const [filter, setFilter] = useState<FilterKey>('all');
+  // Local view toggle, not a route: the compose surface is a sibling view of
+  // this same screen (Directory.tsx's tab convention), not a new URL. Kept
+  // out of router.tsx/nav.ts on purpose, this is a same-screen mode switch.
+  const [view, setView] = useState<'recent' | 'compose'>('recent');
 
   // Computed once per render pass, not per keystroke/tick, same rationale as
   // Inbox.tsx's / Sessions.tsx's todayIso.
@@ -119,13 +128,24 @@ export function Communicate() {
       ? sends.data.filter((s) => sendStateOf(sendCountsOf(s.counts), s.channel) === 'failed').length
       : 0;
 
+  // Compose is a sibling view of this same screen, not a route: swap the
+  // whole tree rather than growing an if/else through the JSX below.
+  if (view === 'compose') {
+    return <CommunicateCompose onClose={() => setView('recent')} />;
+  }
+
   return (
     <div className="screen">
       <DenScreenHeading
         kicker="The Den · Communicate"
         title="Recent"
         subtitle="Sent messages to kinfolk, with delivery and open counts as providers report them."
-        trailing={failedCount > 0 ? <span className="communicate__badge">{failedCount} failed</span> : undefined}
+        trailing={
+          <>
+            {failedCount > 0 ? <span className="communicate__badge">{failedCount} failed</span> : null}
+            <PrimaryButton label="New broadcast" onClick={() => setView('compose')} />
+          </>
+        }
       />
 
       <DenPanel title="Sent messages" subtitle="Every external send on the books, newest first.">

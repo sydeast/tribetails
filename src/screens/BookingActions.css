@@ -1,0 +1,98 @@
+/**
+ * BookingActions styling. Scoped to this screen and imported directly by
+ * BookingActions.tsx (the Bookings.css / FormSchemas.css convention). Every
+ * value comes from styles/tokens.css; the chip tones mirror Bookings.css's own
+ * `.bookings__chip--*` palette exactly, so a booking reads the same status
+ * colour in the list and in this detail dialog.
+ */
+
+.booking-actions__hint {
+  margin: 0;
+  color: var(--color-text-dim);
+}
+
+.booking-actions__error {
+  margin: var(--space-3) 0 0;
+  color: var(--color-error);
+  font-size: var(--type-body-sm-size);
+}
+
+.booking-actions__chip {
+  display: inline-block;
+  margin: 0 0 var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-pill);
+}
+.booking-actions__chip--draft {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  color: var(--color-primary);
+}
+.booking-actions__chip--pending {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+.booking-actions__chip--scheduled {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+}
+.booking-actions__chip--completed {
+  background: color-mix(in srgb, var(--color-tertiary) 18%, transparent);
+  color: var(--color-tertiary);
+}
+.booking-actions__chip--cancelled {
+  background: var(--color-surface-2);
+  color: var(--color-text-faint);
+  text-decoration: line-through;
+}
+.booking-actions__chip--unknown {
+  background: var(--color-surface-2);
+  color: var(--color-text-faint);
+}
+
+.booking-actions__meta {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.booking-actions__meta div {
+  display: flex;
+  gap: var(--space-2);
+}
+.booking-actions__meta dt {
+  flex: 0 0 5rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--color-text-faint);
+  text-transform: uppercase;
+}
+.booking-actions__meta dd {
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+.booking-actions__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--type-label-md-size);
+  color: var(--color-text-dim);
+  margin-bottom: var(--space-3);
+}
+.booking-actions__field input {
+  font: inherit;
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+}
+.booking-actions__field input:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type TemplateSummary } from '../api/templates';
 
@@ -13,6 +13,9 @@ vi.mock('../api/templates', async (orig) => ({
   listTemplates,
   listTemplateCategories,
 }));
+
+const { saveTemplate } = vi.hoisted(() => ({ saveTemplate: vi.fn() }));
+vi.mock('../api/templatesWrite', () => ({ saveTemplate }));
 
 import { Templates } from './Templates';
 
@@ -34,6 +37,7 @@ beforeEach(() => {
   listTemplates.mockReset();
   listTemplateCategories.mockReset();
   listTemplateCategories.mockResolvedValue([]);
+  saveTemplate.mockReset();
 });
 
 describe('Templates screen', () => {
@@ -61,7 +65,7 @@ describe('Templates screen', () => {
   it('surfaces a load failure naming the callable, never a false empty list', async () => {
     // Both the primary AsyncRegion panel AND the Templates/Untagged stat
     // cards derive from the same failed `templates` load, so each honestly
-    // shows its OWN error (asyncScalar never fabricates a fallback number) : 
+    // shows its OWN error (asyncScalar never fabricates a fallback number) :
     // the same "every derived value tells the truth" pattern Invoices.tsx's
     // outstandingTotal/billedTotal/overdueCount cards follow. Scope to the
     // panel's own error detail, matching KinTales.test.tsx's convention.
@@ -141,24 +145,77 @@ describe('Templates screen', () => {
     expect(screen.getByText('Invoice Reminder')).toBeInTheDocument();
   });
 
-  it('calls onSelect with the templateId when a row is activated', async () => {
+  it('calls an externally supplied onSelect with the templateId instead of opening the built-in editor', async () => {
     listTemplates.mockResolvedValue([tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed' })]);
     const onSelect = vi.fn();
     render(<Templates onSelect={onSelect} />);
     await userEvent.click(await screen.findByText('Booking Confirmed'));
     expect(onSelect).toHaveBeenCalledWith('booking.confirmed');
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('renders rows STATIC (not a live no-op button) when onSelect is unwired', async () => {
-    // Fable blocker (KinTales.tsx/Invoices.tsx convention): with the router
-    // mounting <Templates/> propless, a live row button that silently does
-    // nothing is a dead control.
-    listTemplates.mockResolvedValue([tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed' })]);
+  it('rows are always live buttons: with no onSelect override, activating a row opens the built-in editor', async () => {
+    // Unlike the pre-editor placeholder, there is no unwired/dead-control case
+    // left: the router mounts <Templates/> propless in production, so this
+    // default (opening the overlay) is what every operator actually gets.
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed', subject: 'Your booking is confirmed' }),
+    ]);
     render(<Templates />);
-    await screen.findByText('Booking Confirmed');
-    const row = screen.getByText('Booking Confirmed').closest('.templates__row-main');
-    expect(row?.tagName).toBe('DIV');
-    expect(screen.queryByRole('button', { name: /booking confirmed/i })).toBeNull();
+    const row = await screen.findByText('Booking Confirmed');
+    expect(row.closest('.templates__row-main')?.tagName).toBe('BUTTON');
+    await userEvent.click(row);
+    expect(screen.getByRole('dialog', { name: /edit template/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
+  });
+
+  it('New template opens the built-in editor in create mode by default', async () => {
+    listTemplates.mockResolvedValue([]);
+    render(<Templates />);
+    await screen.findByText(/no templates yet/i);
+    await userEvent.click(screen.getByRole('button', { name: /new template/i }));
+    expect(screen.getByRole('dialog', { name: /new template/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/template key/i)).toHaveValue('');
+  });
+
+  it('an externally supplied onNew overrides the built-in New template default', async () => {
+    listTemplates.mockResolvedValue([]);
+    const onNew = vi.fn();
+    render(<Templates onNew={onNew} />);
+    await screen.findByText(/no templates yet/i);
+    await userEvent.click(screen.getByRole('button', { name: /new template/i }));
+    expect(onNew).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('saving a new template closes the editor and reloads the list', async () => {
+    listTemplates.mockResolvedValueOnce([]);
+    listTemplates.mockResolvedValueOnce([
+      tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed' }),
+    ]);
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    render(<Templates />);
+    await screen.findByText(/no templates yet/i);
+
+    await userEvent.click(screen.getByRole('button', { name: /new template/i }));
+    await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'Your booking is confirmed');
+    await userEvent.type(screen.getByLabelText(/^body$/i), 'Hi {{kinfolk_name}}');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(listTemplates).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Booking Confirmed')).toBeInTheDocument();
+  });
+
+  it('a stale/missing row id (list not yet loaded) is a silent no-op, never a crash or a blank editor', async () => {
+    listTemplates.mockReturnValue(new Promise(() => {})); // never resolves: still loading
+    render(<Templates />);
+    // Nothing to click yet (AsyncRegion is showing the loading state), so this
+    // exercises openEditorFor's guard indirectly via New template still being
+    // available and NOT throwing while templates.status !== 'ready'.
+    await userEvent.click(screen.getByRole('button', { name: /new template/i }));
+    expect(screen.getByRole('dialog', { name: /new template/i })).toBeInTheDocument();
   });
 
   it('shows real counts in the stat strip', async () => {

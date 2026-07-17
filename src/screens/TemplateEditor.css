@@ -1,0 +1,102 @@
+/**
+ * Template Editor styling. Scoped to this screen and imported directly by
+ * TemplateEditor.tsx (the DenScreenKit.css / Banner.css / Buttons.css
+ * convention), so nothing here needs to land in the shared styles/screens.css.
+ * Every value comes from styles/tokens.css, no literal colours, radii, or
+ * durations, matching FormSchemas.css / Templates.css.
+ */
+
+.template-editor__error {
+  margin-bottom: var(--space-4);
+}
+
+.template-editor__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+/* Fieldset legends are visually hidden but keep the group named for screen
+   readers, matching the label-per-field pattern the rest of this form uses. */
+.template-editor__sr-legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.template-editor__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.template-editor__label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-dim);
+}
+
+.template-editor__input,
+.template-editor__textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.template-editor__input:focus-visible,
+.template-editor__textarea:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.template-editor__input::placeholder,
+.template-editor__textarea::placeholder {
+  color: var(--color-text-faint);
+}
+.template-editor__input:disabled,
+.template-editor__textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.template-editor__textarea {
+  resize: vertical;
+  min-height: 4.5rem;
+  line-height: 1.4;
+}
+
+.template-editor__textarea--mono {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.template-editor__id-static {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--color-text-dim);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+}
+
+.template-editor__hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-faint);
+}

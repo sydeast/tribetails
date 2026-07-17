@@ -9,6 +9,26 @@ import { type InvoiceEntry } from '../api/invoices';
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
+// InvoiceDetail / InvoiceCreate (now wired in, see the header comment on
+// Invoices.tsx) both reach these callables. Mocked here so nothing under this
+// suite ever attempts a real httpsCallable round-trip, matching the
+// InvoiceCreate.test.tsx / InvoiceDetail.test.tsx convention.
+const { createInvoice, createQuote, sendInvoiceReminder, markInvoicePaid, generateReceipt } = vi.hoisted(() => ({
+  createInvoice: vi.fn(),
+  createQuote: vi.fn(),
+  sendInvoiceReminder: vi.fn(),
+  markInvoicePaid: vi.fn(),
+  generateReceipt: vi.fn(),
+}));
+vi.mock('../api/invoicesWrite', async (orig) => ({
+  ...(await orig<typeof import('../api/invoicesWrite')>()),
+  createInvoice,
+  createQuote,
+  sendInvoiceReminder,
+  markInvoicePaid,
+  generateReceipt,
+}));
+
 import { Invoices } from './Invoices';
 
 function fakeTs(iso: string): Timestamp {
@@ -35,14 +55,19 @@ function entry(over: Partial<InvoiceEntry>): InvoiceEntry {
 
 beforeEach(() => {
   useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] } satisfies Async<InvoiceEntry[]>);
+  createInvoice.mockReset();
+  createQuote.mockReset();
+  sendInvoiceReminder.mockReset();
+  markInvoicePaid.mockReset();
+  generateReceipt.mockReset();
 });
 
 describe('Invoices screen', () => {
   it('renders a streamed row with its invoice number, household, amount, and status chip', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Invoices />);
-    // Scope by the row container, not the button, the row is only a <button>
-    // once a detail route wires onSelect; here (unwired) it renders static.
+    // Scope by the row container, not the button: it's a more stable anchor
+    // than the button role now that every row is one (see below).
     const row = screen.getByText('#1042').closest('.invoices__row') as HTMLElement;
     expect(within(row).getByText('#1042')).toBeInTheDocument();
     expect(within(row).getByText('The Whitfields')).toBeInTheDocument();
@@ -152,21 +177,40 @@ describe('Invoices screen', () => {
     expect(screen.queryByText(/no invoices on the books yet/i)).toBeNull();
   });
 
-  it('clicking a row calls onSelect with the invoice id', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'inv-42' })] });
-    const onSelect = vi.fn();
-    render(<Invoices onSelect={onSelect} />);
-    await userEvent.click(screen.getByRole('button', { name: /1042/i }));
-    expect(onSelect).toHaveBeenCalledWith('inv-42');
-  });
-
-  it('omitting onSelect renders each row STATIC (not a live no-op button)', () => {
+  it('every row is a real interactive button (InvoiceDetail is wired in now, no more static placeholder)', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Invoices />);
-    // The row content renders, but it is NOT an interactive button when unwired, 
-    // a live button that no-ops on click is the dead-control anti-pattern.
-    expect(screen.getByText('#1042')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /1042/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /1042/i })).toBeInTheDocument();
+  });
+
+  it('clicking a row opens InvoiceDetail for that invoice', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'inv-42' })] });
+    render(<Invoices />);
+    await userEvent.click(screen.getByRole('button', { name: /1042/i }));
+    expect(await screen.findByRole('heading', { name: /invoice #1042/i })).toBeInTheDocument();
+    // Scoped: "The Whitfields" also appears in the row underneath the dialog.
+    expect(within(screen.getByRole('dialog')).getByText('The Whitfields')).toBeInTheDocument();
+  });
+
+  it('closing InvoiceDetail returns to the list', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'inv-42' })] });
+    render(<Invoices />);
+    await userEvent.click(screen.getByRole('button', { name: /1042/i }));
+    await screen.findByRole('dialog');
+    await userEvent.click(screen.getByRole('button', { name: /close/i }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('New invoice opens InvoiceCreate in invoice mode', async () => {
+    render(<Invoices />);
+    await userEvent.click(screen.getByRole('button', { name: /^new invoice$/i }));
+    expect(await screen.findByRole('heading', { name: 'New invoice' })).toBeInTheDocument();
+  });
+
+  it('New quote opens InvoiceCreate in quote mode', async () => {
+    render(<Invoices />);
+    await userEvent.click(screen.getByRole('button', { name: /^new quote$/i }));
+    expect(await screen.findByRole('heading', { name: 'New quote' })).toBeInTheDocument();
   });
 
   it('the summary strip totals outstanding amountDue only across open invoices', () => {
