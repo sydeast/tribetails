@@ -77,6 +77,18 @@ describe('AddKinDialog', () => {
     expect(createKin).not.toHaveBeenCalled();
   });
 
+  it('surfaces a required-field error on blur alone, before any save attempt (AO-44)', async () => {
+    render(<AddKinDialog kinfolkOptions={OPTIONS} onClose={vi.fn()} onCreated={vi.fn()} />);
+    // Focus the name field, then leave it blank. Its error appears without a save
+    // click, and the still-untouched household/gender fields stay silent.
+    await userEvent.click(screen.getByLabelText('Name'));
+    await userEvent.tab();
+    expect(await screen.findByText(/name can't be blank/i)).toBeInTheDocument();
+    expect(screen.queryByText(/pick a household/i)).toBeNull();
+    expect(screen.queryByText(/pick a gender/i)).toBeNull();
+    expect(createKin).not.toHaveBeenCalled();
+  });
+
   it('disables Cancel and Add while a create is in flight', async () => {
     let resolveCreate!: (id: string) => void;
     createKin.mockReturnValue(new Promise<string>((resolve) => (resolveCreate = resolve)));

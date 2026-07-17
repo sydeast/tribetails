@@ -1,0 +1,117 @@
+.tassign__templates-error {
+  margin: 0 0 var(--space-3);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-error);
+}
+
+.tassign__form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.tassign__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 12rem;
+  flex: 1 1 12rem;
+}
+
+.tassign__label {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.tassign__input {
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-chip);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+.tassign__input:disabled {
+  opacity: 0.6;
+}
+
+.tassign__form-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.tassign__hint {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.tassign__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tassign__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
+}
+
+.tassign__row-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 14rem;
+}
+
+.tassign__row-key {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-primary);
+}
+
+.tassign__row-template {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+}
+
+.tassign__row-meta {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+}
+
+.tassign__badge {
+  font-size: var(--type-label-sm-size);
+}
+
+.tassign__badge--on {
+  color: var(--color-success);
+}
+
+.tassign__badge--off {
+  color: var(--color-text-faint);
+}
+
+.tassign__row-actions,
+.tassign__confirm {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.tassign__confirm-copy {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}

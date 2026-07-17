@@ -66,6 +66,17 @@ describe('AddKinfolkDialog', () => {
     expect(createKinfolk).not.toHaveBeenCalled();
   });
 
+  it('surfaces a required-field error on blur alone, before any save attempt (AO-44)', async () => {
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    // Focus first name, then leave it blank. The error appears without a save click,
+    // and the still-untouched last-name field stays silent.
+    await userEvent.click(screen.getByLabelText('First name'));
+    await userEvent.tab();
+    expect(await screen.findByText(/first name can't be blank/i)).toBeInTheDocument();
+    expect(screen.queryByText(/last name can't be blank/i)).toBeNull();
+    expect(createKinfolk).not.toHaveBeenCalled();
+  });
+
   it('disables Cancel and Add while a create is in flight', async () => {
     let resolveCreate!: (id: string) => void;
     createKinfolk.mockReturnValue(new Promise<string>((resolve) => (resolveCreate = resolve)));

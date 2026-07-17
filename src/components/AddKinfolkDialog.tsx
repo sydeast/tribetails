@@ -38,11 +38,22 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
   const [serviceAddress, setServiceAddress] = useState('');
 
   const [saving, setSaving] = useState(false);
-  const [touched, setTouched] = useState(false);
+  // AO-44: per-field touched, so a required field's error surfaces the moment
+  // the operator LEAVES it blank (onBlur), not only after a save attempt. Save
+  // still marks every field touched, so clicking Add on an empty form reveals
+  // all errors at once (the wasm form gated everything on save alone).
+  const [touched, setTouched] = useState<{ firstName: boolean; lastName: boolean }>({
+    firstName: false,
+    lastName: false,
+  });
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const firstNameError = touched && firstName.trim() === '' ? "First name can't be blank." : null;
-  const lastNameError = touched && lastName.trim() === '' ? "Last name can't be blank." : null;
+  const firstNameError = touched.firstName && firstName.trim() === '' ? "First name can't be blank." : null;
+  const lastNameError = touched.lastName && lastName.trim() === '' ? "Last name can't be blank." : null;
+
+  function markTouched(field: 'firstName' | 'lastName') {
+    setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
+  }
 
   // See EditProfileDialog's identical note: Dialog's focus-management effect
   // depends on this identity, an inline function here would be a new
@@ -52,7 +63,7 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
   }, [saving, onClose]);
 
   async function handleSave() {
-    setTouched(true);
+    setTouched({ firstName: true, lastName: true });
     if (firstName.trim() === '' || lastName.trim() === '' || saving) return;
     setSaving(true);
     setSaveError(null);
@@ -96,6 +107,7 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
               className="add-kinfolk__input"
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
+              onBlur={() => markTouched('firstName')}
               aria-invalid={firstNameError !== null}
               aria-describedby={firstNameError !== null ? 'add-kinfolk-first-name-error' : undefined}
             />
@@ -115,6 +127,7 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
               className="add-kinfolk__input"
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
+              onBlur={() => markTouched('lastName')}
               aria-invalid={lastNameError !== null}
               aria-describedby={lastNameError !== null ? 'add-kinfolk-last-name-error' : undefined}
             />
