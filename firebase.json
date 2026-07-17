@@ -13,6 +13,14 @@
         "function": "signCloudinaryUpload"
       },
       {
+        "source": "/api/generate",
+        "function": "generate"
+      },
+      {
+        "source": "/api/send-message",
+        "function": "sendMessage"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
