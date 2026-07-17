@@ -26,6 +26,9 @@ import { Inbox } from './screens/Inbox';
 import { Settings } from './screens/Settings';
 import { Communicate } from './screens/Communicate';
 import { Account } from './screens/Account';
+import { MyNotifications } from './screens/MyNotifications';
+import { Media } from './screens/Media';
+import { type MediaTargetType } from './lib/mediaScopeFormat';
 import { AppShell } from './components/AppShell';
 
 /** Shared chrome: the two drifting orbs behind every screen (Den background). */
@@ -185,10 +188,29 @@ const accountRoute = createRoute({
   component: Account,
 });
 
+const myNotificationsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'my-notifications',
+  component: MyNotifications,
+});
+
+/** Adapts the `media/$type/$id` route params to Media's typed props. */
+function MediaRouteView() {
+  const { type, id } = mediaRoute.useParams();
+  const targetType: MediaTargetType = type === 'household' ? 'household' : 'kin';
+  return <Media targetType={targetType} targetId={id} />;
+}
+
+const mediaRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'media/$type/$id',
+  component: MediaRouteView,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, tribalIntelRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, tribalIntelRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, mediaRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
