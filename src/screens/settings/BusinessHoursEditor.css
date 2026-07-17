@@ -1,0 +1,70 @@
+/**
+ * Business Hours sub-editor styling. Scoped to this component (the
+ * SettingsEdit.css / Settings.css convention: import directly, nothing lands
+ * in the shared styles/screens.css). Every value comes from styles/tokens.css.
+ */
+
+.businessHours__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.businessHours__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.businessHours__day {
+  width: 6rem;
+  flex: 0 0 auto;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+
+.businessHours__times {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex: 1;
+}
+
+.businessHours__timeField {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.businessHours__timeLabel {
+  font-size: 0.72rem;
+  color: var(--color-text-dim);
+}
+
+.businessHours__fallback {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+}
+
+.businessHours__fallback .settingsEdit__input {
+  flex: 1;
+}
+
+.businessHours__warning {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  color: var(--color-warning);
+  white-space: nowrap;
+}
+
+.businessHours__closed {
+  flex: 1;
+  color: var(--color-text-faint);
+  font-size: var(--type-body-md-size);
+}

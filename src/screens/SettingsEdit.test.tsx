@@ -99,14 +99,25 @@ describe('SettingsEdit', () => {
     expect(await screen.findByText('Business profile')).toBeInTheDocument();
   });
 
-  it('names every deferred section in the on-screen banner', async () => {
+  it('names only the two still-deferred sections in the on-screen banner', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<SettingsEdit onDone={vi.fn()} />);
     await screen.findByText('Business profile');
-    expect(screen.getByText(/business hours/i)).toBeInTheDocument();
-    expect(screen.getByText(/kincare type rates/i)).toBeInTheDocument();
-    expect(screen.getByText(/google calendar sync/i)).toBeInTheDocument();
-    expect(screen.getByText(/mytribe home layout/i)).toBeInTheDocument();
+    const banner = screen.getByText(/aren.t editable here yet/i);
+    expect(banner).toHaveTextContent(/google calendar sync/i);
+    expect(banner).toHaveTextContent(/mytribe home layout/i);
+    // Business hours, Time off, and KinCare types are real editors now, not banner text.
+    expect(banner).not.toHaveTextContent(/business hours/i);
+    expect(banner).not.toHaveTextContent(/kincare/i);
+  });
+
+  it('renders the Business Hours, Time off, and KinCare types editors as real panels', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<SettingsEdit onDone={vi.fn()} />);
+    await screen.findByText('Business profile');
+    expect(screen.getByText('Business hours')).toBeInTheDocument();
+    expect(screen.getByText('Time off')).toBeInTheDocument();
+    expect(screen.getByText('KinCare types')).toBeInTheDocument();
   });
 
   it('calls onDone when "Back to overview" is clicked', async () => {
@@ -183,6 +194,50 @@ describe('SettingsEdit', () => {
 
       // Business profile's unsaved edit must survive.
       expect(within(profilePanel).getByLabelText('Business name')).toHaveValue('Half-typed');
+    });
+  });
+
+  describe('Business hours', () => {
+    it('saves a per-day toggle through the shared persist patch, not clobbering a sibling section', async () => {
+      getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+      saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+      render(<SettingsEdit onDone={vi.fn()} />);
+      const panel = (await screen.findByText('Business hours')).closest('section') as HTMLElement;
+      await userEvent.click(within(panel).getByRole('switch', { name: 'Toggle Monday open' }));
+      await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+      expect(saveBusinessSettings).toHaveBeenCalledWith({ businessHours: { Monday: '09:00-17:00' } });
+      expect(await within(panel).findByText('Saved')).toBeInTheDocument();
+    });
+  });
+
+  describe('Time off', () => {
+    it('saves a toggled US holiday through the shared persist patch', async () => {
+      getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+      saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+      render(<SettingsEdit onDone={vi.fn()} />);
+      const panel = (await screen.findByText('Time off')).closest('section') as HTMLElement;
+      await userEvent.click(within(panel).getByRole('switch', { name: 'Toggle Juneteenth observed' }));
+      await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+      expect(saveBusinessSettings).toHaveBeenCalledWith({
+        observedUsHolidays: ['juneteenth'],
+        companyHolidays: [],
+        specialHours: [],
+      });
+      expect(await within(panel).findByText('Saved')).toBeInTheDocument();
+    });
+  });
+
+  describe('KinCare types', () => {
+    it('adds a rate row and saves the folded serviceRates map', async () => {
+      getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+      saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+      render(<SettingsEdit onDone={vi.fn()} />);
+      const panel = (await screen.findByText('KinCare types')).closest('section') as HTMLElement;
+      await userEvent.type(within(panel).getByPlaceholderText('e.g. Drop-in visit'), 'Walk');
+      await userEvent.click(within(panel).getByRole('button', { name: /^add$/i }));
+      await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+      expect(saveBusinessSettings).toHaveBeenCalledWith({ serviceRates: { Walk: '' } });
+      expect(await within(panel).findByText('Saved')).toBeInTheDocument();
     });
   });
 
