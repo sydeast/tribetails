@@ -169,12 +169,19 @@ interface TribalIntelRowProps {
 }
 
 function TribalIntelRow({ doc, onSelect }: TribalIntelRowProps) {
-  const title = tribalIntelTitle(doc.title);
-  const blankTitle = isTribalIntelTitleFallback(doc.title);
-  const when = tribalIntelWhen(doc.uploadedAt);
-  const related = relatedToLabel(doc.kinfolkRef);
-  const attachmentLabel = attachmentCountLabel(doc.attachments.length);
-  const state = reconcileState(doc.reconcileStatus);
+  // Defensive reads: useCollection casts raw doc.data() with no normalization,
+  // so a legacy training_documents doc missing a field must not throw and blank
+  // the screen. Default every field this row touches.
+  const content = doc.content ?? '';
+  const notes = doc.notes ?? '';
+  const commType = doc.communicationType ?? '';
+  const attachments = doc.attachments ?? [];
+  const title = tribalIntelTitle(doc.title ?? '');
+  const blankTitle = isTribalIntelTitleFallback(doc.title ?? '');
+  const when = tribalIntelWhen(doc.uploadedAt ?? '');
+  const related = relatedToLabel(doc.kinfolkRef ?? '');
+  const attachmentLabel = attachmentCountLabel(attachments.length);
+  const state = reconcileState(doc.reconcileStatus ?? '');
   const info = reconcileStateInfo(state);
   // Matches the wasm's own `if (doc.reconcileStatus.isNotBlank())`: a
   // never-queued ("none") doc shows no chip at all, rather than a "NONE"
@@ -191,15 +198,15 @@ function TribalIntelRow({ doc, onSelect }: TribalIntelRowProps) {
         >
           {title}
         </span>
-        {doc.communicationType.trim() !== '' && (
-          <span className="tribal-intel__chip tribal-intel__chip--comm">{doc.communicationType}</span>
+        {commType.trim() !== '' && (
+          <span className="tribal-intel__chip tribal-intel__chip--comm">{commType}</span>
         )}
         <span className="tribal-intel__row-when">{when}</span>
       </span>
 
-      {doc.content.trim() !== '' && <p className="tribal-intel__row-content">{doc.content}</p>}
+      {content.trim() !== '' && <p className="tribal-intel__row-content">{content}</p>}
 
-      {doc.notes.trim() !== '' && <p className="tribal-intel__row-notes">Notes: {doc.notes}</p>}
+      {notes.trim() !== '' && <p className="tribal-intel__row-notes">Notes: {notes}</p>}
 
       <span className="tribal-intel__row-meta">
         {related !== null && <span className="tribal-intel__row-related">Related to: {related}</span>}
