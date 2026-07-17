@@ -89,7 +89,7 @@ interface RequestBookingResult {
 }
 
 /** Normalized per-visit input the envelope writer consumes. */
-interface NormalizedVisit {
+export interface NormalizedVisit {
   startTimeMs: number;
   endTimeMs: number | null;
   serviceId: string | null;
@@ -110,7 +110,7 @@ interface NormalizedVisit {
  * client-asserted amount. The client `serviceName` is used only as a display
  * fallback label when the catalog has no entry.
  */
-async function resolveService(
+export async function resolveService(
   serviceId: string | null,
   clientServiceName: string | null,
 ): Promise<{ serviceName: string | null; priceCents: number | null }> {
@@ -143,7 +143,7 @@ async function resolveService(
  * `kinCares/{visitId}` per visit inside a single transaction. Envelope-level
  * fields are rolled up from the visit list.
  */
-async function writeEnvelope(opts: {
+export async function writeEnvelope(opts: {
   kinfolkId: string;
   uid: string;
   batchId: string;
