@@ -13,7 +13,11 @@ import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
+import { Banner } from '../components/Banner';
+import { PrimaryButton } from '../components/Buttons';
 import { BookingActions } from './BookingActions';
+import { NewBookingDialog } from '../components/NewBookingDialog';
+import type { CreateMultiDateBookingResult } from '../api/bookingsWrite';
 import './Bookings.css';
 
 /**
@@ -92,6 +96,22 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const handleSelectBooking = onSelectBooking ?? setDetailId;
 
+  // The "New booking request" create surface (AO-25). It writes the envelope
+  // model ('requested'), a DIFFERENT collection from the kin_care_sessions this
+  // list streams, so the created request lands in the Incoming-requests queue
+  // for approval and does NOT appear below until approved: the success banner
+  // says so rather than leaving the operator to wonder.
+  const [showCreate, setShowCreate] = useState(false);
+  const [createNotice, setCreateNotice] = useState<string | null>(null);
+
+  function handleCreated(result: CreateMultiDateBookingResult) {
+    setShowCreate(false);
+    setCreateNotice(
+      `Booking request created: ${result.visitCount} visit${result.visitCount === 1 ? '' : 's'} submitted for approval. ` +
+        `It enters the Incoming-requests queue and appears in this list once approved.`,
+    );
+  }
+
   // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
   // Home/End, roving tabIndex); called unconditionally at the top level per
   // the Rules of Hooks, since the tabs themselves render inside AsyncRegion's
@@ -141,7 +161,14 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
         title="Every"
         accentTail="visit."
         subtitle="Pending requests and scheduled visits, newest first."
+        trailing={<PrimaryButton label="New booking" onClick={() => setShowCreate(true)} />}
       />
+
+      {createNotice !== null && (
+        <Banner tone="success" title="Request created" onDismiss={() => setCreateNotice(null)}>
+          {createNotice}
+        </Banner>
+      )}
 
       <div className="bookings__summary">
         <StatCard
@@ -210,6 +237,10 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
           UI instead. */}
       {!onSelectBooking && detailId !== null && (
         <BookingActions entry={detailEntry} onClose={() => setDetailId(null)} />
+      )}
+
+      {showCreate && (
+        <NewBookingDialog onClose={() => setShowCreate(false)} onCreated={handleCreated} />
       )}
     </div>
   );
