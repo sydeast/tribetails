@@ -1,0 +1,228 @@
+import { randomUUID } from 'crypto';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { getAdmin } from './firestoreAdmin';
+
+/**
+ * Stage 3 / 16.2 - server-side invoice PDF.
+ *
+ * Renders an invoice doc to a real PDF with pdf-lib (pure JS, no Chromium) and
+ * stores it in the project's default Cloud Storage bucket, returning a
+ * download-token URL (the same shape the Firebase client SDK's getDownloadURL
+ * produces). The download token avoids the getSignedUrl IAM signing step, so
+ * no extra service-account role / operator grant is required; the token is an
+ * unguessable per-file secret, so the invoice is not publicly enumerable.
+ *
+ * The PDF is rendered ONLY from fields already on the invoice doc (no
+ * fabricated line items - the flat `invoices` doc has no itemized array, so we
+ * render the authoritative scalar summary + the recorded payments history).
+ */
+
+export interface InvoiceForPdf {
+  id: string;
+  invoiceNumber: string;
+  kinfolkName: string;
+  client: string;
+  address: string;
+  date: string;
+  dueDate: string;
+  terms: string;
+  discount: string;
+  status: string;
+  total: number;
+  amountDue: number;
+  paymentsHistory: string;
+  // Payments: operator-entered handles (Venmo/PayPal/Cash App), pre-formatted for the
+  // "How to pay" footer. Sourced from business_settings, not the invoice doc.
+  paymentMethods: string;
+}
+
+/** Reads the PDF-relevant fields off a raw invoice doc, defaulting missing scalars. */
+export function invoiceForPdf(id: string, data: Record<string, unknown>): InvoiceForPdf {
+  const str = (k: string): string => (typeof data[k] === 'string' ? (data[k] as string) : '');
+  const num = (k: string): number => {
+    const v = data[k];
+    if (typeof v === 'number') return v;
+    if (typeof v === 'string') {
+      const p = parseFloat(v);
+      return Number.isFinite(p) ? p : 0;
+    }
+    return 0;
+  };
+  return {
+    id,
+    invoiceNumber: str('invoiceNumber') || id,
+    kinfolkName: str('kinfolkName'),
+    client: str('client'),
+    address: str('address'),
+    date: str('date'),
+    dueDate: str('dueDate'),
+    terms: str('terms'),
+    discount: str('discount'),
+    status: str('status') || str('invoiceStatus'),
+    total: num('total'),
+    amountDue: num('amountDue'),
+    paymentsHistory: str('paymentsHistory'),
+    paymentMethods: '', // set from business_settings in generateAndStoreInvoicePdf
+  };
+}
+
+function usd(n: number): string {
+  const sign = n < 0 ? '-' : '';
+  const abs = Math.abs(n);
+  return `${sign}$${abs.toFixed(2)}`;
+}
+
+// pdf-lib's StandardFonts (Helvetica) can only encode WinAnsi (cp1252). Drawing
+// a code point outside it (CJK, Cyrillic, Greek, emoji, ...) THROWS, which would
+// hard-fail the whole render for an international kinfolk name/address. Map every
+// non-cp1252 code point to '?' so the PDF always renders. cp1252 = Latin-1
+// (<=0xFF) plus this high-range set of typographic/symbol chars.
+const CP1252_HIGH = new Set<number>([
+  0x20ac, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160,
+  0x2039, 0x0152, 0x017d, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014,
+  0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x017e, 0x0178,
+]);
+
+/** Replaces any character the WinAnsi standard font cannot encode with '?'. Pure. */
+export function winAnsiSafe(s: string): string {
+  let out = '';
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0x3f;
+    out += cp <= 0xff || CP1252_HIGH.has(cp) ? ch : '?';
+  }
+  return out;
+}
+
+/**
+ * Renders the invoice to PDF bytes. Pure (no IO): deterministic given the input,
+ * so it is unit-testable on its own. Single Letter-size page, Helvetica.
+ */
+export async function renderInvoicePdf(inv: InvoiceForPdf): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([612, 792]); // US Letter
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+
+  const navy = rgb(0.13, 0.18, 0.29);
+  const dim = rgb(0.45, 0.45, 0.5);
+  const left = 56;
+  let y = 740;
+
+  const line = (text: string, opts: { size?: number; f?: typeof font; color?: typeof navy; x?: number } = {}) => {
+    // winAnsiSafe so a non-Latin field never throws mid-render.
+    page.drawText(winAnsiSafe(text), { x: opts.x ?? left, y, size: opts.size ?? 11, font: opts.f ?? font, color: opts.color ?? navy });
+  };
+  const gap = (n = 18) => { y -= n; };
+
+  line('Tribe Tails', { size: 22, f: bold });
+  gap(16);
+  line('INVOICE', { size: 14, f: bold, color: dim });
+  gap(28);
+
+  line(`Invoice #: ${inv.invoiceNumber}`, { f: bold });
+  gap();
+  if (inv.status) { line(`Status: ${inv.status}`); gap(); }
+  if (inv.date) { line(`Date: ${inv.date}`); gap(); }
+  if (inv.dueDate) { line(`Due: ${inv.dueDate}`); gap(); }
+  gap(10);
+
+  line('Bill to', { f: bold, color: dim });
+  gap();
+  if (inv.client) { line(inv.client); gap(); }
+  else if (inv.kinfolkName) { line(inv.kinfolkName); gap(); }
+  if (inv.address) { line(inv.address); gap(); }
+  gap(10);
+
+  line('Amounts', { f: bold, color: dim });
+  gap();
+  line(`Total: ${usd(inv.total)}`);
+  gap();
+  if (inv.discount && inv.discount !== '0' && inv.discount !== '0.00') { line(`Discount: ${inv.discount}`); gap(); }
+  line(`Amount due: ${usd(inv.amountDue)}`, { f: bold });
+  gap(16);
+
+  if (inv.terms) { line('Terms', { f: bold, color: dim }); gap(); line(inv.terms); gap(16); }
+
+  if (inv.paymentsHistory) {
+    line('Payments', { f: bold, color: dim });
+    gap();
+    // paymentsHistory is a stored free-text/JSON string; render it line-wrapped.
+    for (const seg of wrap(inv.paymentsHistory, 80)) { line(seg, { size: 10, color: dim }); gap(13); }
+    gap(16);
+  }
+
+  // Payments: operator-entered handles so the kinfolk can pay directly.
+  if (inv.paymentMethods) {
+    line('How to pay', { f: bold, color: dim });
+    gap();
+    for (const seg of wrap(inv.paymentMethods, 80)) { line(seg, { size: 10 }); gap(13); }
+  }
+
+  page.drawText('Generated by Tribe Tails', { x: left, y: 48, size: 9, font, color: dim });
+
+  return doc.save();
+}
+
+/** Naive word-wrap so long payment strings don't overflow the page width. */
+function wrap(text: string, width: number): string[] {
+  const out: string[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    let cur = '';
+    for (const word of raw.split(/\s+/)) {
+      if ((cur + ' ' + word).trim().length > width) { if (cur) out.push(cur); cur = word; }
+      else cur = (cur + ' ' + word).trim();
+    }
+    out.push(cur);
+  }
+  return out.slice(0, 30); // hard cap so a pathological string can't blow up the page
+}
+
+/**
+ * Stores the PDF bytes in the default bucket at the STABLE path
+ * invoice_pdfs/{invoiceId}.pdf and returns a Firebase download-token URL.
+ *
+ * Writing to a stable path (not a per-render filename) bounds storage to one
+ * object per invoice, and minting a FRESH single token each render OVERWRITES the
+ * previous token in metadata - so an earlier download URL is automatically
+ * revoked (a leaked old URL stops working after the next render) and orphaned
+ * tokenized copies never accumulate. The token is a 122-bit UUID, so the live
+ * URL is unguessable; the URL is never logged or stored in the audit payload.
+ */
+export async function storeInvoicePdf(invoiceId: string, bytes: Uint8Array): Promise<string> {
+  const bucket = getAdmin().storage().bucket();
+  const token = randomUUID();
+  const path = `invoice_pdfs/${encodeURIComponent(invoiceId)}.pdf`;
+  await bucket.file(path).save(Buffer.from(bytes), {
+    contentType: 'application/pdf',
+    metadata: { metadata: { firebaseStorageDownloadTokens: token } },
+  });
+  return `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
+}
+
+/** Convenience: render + store in one step. Returns the download URL. */
+/** Operator-entered payment handles → one printable "How to pay" line. */
+function formatPaymentMethods(s: Record<string, unknown>): string {
+  const get = (k: string): string => (typeof s[k] === 'string' ? (s[k] as string).trim() : '');
+  const parts: string[] = [];
+  const venmo = get('venmoHandle');
+  if (venmo) parts.push(`Venmo: ${venmo}`);
+  const paypal = get('paypalHandle');
+  if (paypal) parts.push(`PayPal: ${paypal}`);
+  const cashapp = get('cashappHandle');
+  if (cashapp) parts.push(`Cash App: ${cashapp}`);
+  return parts.join('    •    ');
+}
+
+export async function generateAndStoreInvoicePdf(id: string, data: Record<string, unknown>): Promise<string> {
+  const inv = invoiceForPdf(id, data);
+  // Payments: pull the operator's handles off business_settings and print them.
+  // Fail-soft: a settings read error just omits the section (never blocks the PDF).
+  try {
+    const snap = await getAdmin().firestore().collection('business_settings').doc('business_settings').get();
+    inv.paymentMethods = formatPaymentMethods(snap.data() ?? {});
+  } catch {
+    inv.paymentMethods = '';
+  }
+  const bytes = await renderInvoicePdf(inv);
+  return storeInvoicePdf(id, bytes);
+}
