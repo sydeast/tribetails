@@ -74,3 +74,144 @@
 .log__time { font-size: 0.78rem; color: var(--color-text-faint, #9a988f); font-variant-numeric: tabular-nums; }
 .log__hint { color: var(--color-secondary, #5a5c6a); margin: 0; }
 .log__ctx { font-size: 0.76rem; color: var(--color-text-faint, #9a988f); }
+/* ─────────────────────────────────────────────────────────────────────────
+   Notifications — APPEND to src/styles/screens.css (not a standalone file).
+   Follows the existing .flags__* / .log__* section conventions in that file:
+   BEM-ish `.notif-*` names, token vars with the same literal fallbacks already
+   used there, radii from the --radius-* scale (no raw px), motion from
+   --dur-base/--ease-standard (no raw ms).
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* ── Notifications ───────────────────────────────────────────────────────── */
+
+.notif-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--color-coral, #d5535a);
+  color: var(--color-background, #fbfbf9);
+  font-family: var(--font-hanken, ui-sans-serif, sans-serif);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.notif-hint {
+  color: var(--color-secondary, #5a5c6a);
+  margin: 0;
+}
+
+.notif-bulkbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-card-lg);
+  background: var(--color-surface-2, #eae6dc);
+  border: var(--border-hairline) solid var(--color-border, #d8d1c2);
+}
+.notif-bulkbar__count {
+  flex: 1 1 auto;
+  font-weight: 600;
+  color: var(--color-text-primary, #11131f);
+}
+
+.notif-feed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.notif-day__label {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-secondary, #5a5c6a);
+  margin: 0 0 var(--space-1);
+}
+.notif-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.notif-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-panel);
+  border: var(--border-hairline) solid var(--color-border-soft, #e7e2d5);
+  background: var(--color-surface, #f4f2ec);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.notif-row--unread {
+  border-color: color-mix(in srgb, var(--color-accent, #0a8595) 40%, transparent);
+}
+
+.notif-row__select {
+  margin-top: var(--space-1);
+}
+
+.notif-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.notif-row__key {
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--color-text-primary, #11131f);
+}
+.notif-row__meta {
+  font-size: 0.82rem;
+  color: var(--color-secondary, #5a5c6a);
+}
+.notif-row__channels {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--color-text-faint, #9a988f);
+}
+.notif-row__status {
+  align-self: flex-start;
+  margin-top: var(--space-1);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.1rem var(--space-2);
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  text-transform: capitalize;
+}
+.notif-row__status--dispatched {
+  background: color-mix(in srgb, var(--color-success, #2e7d52) 18%, transparent);
+  color: var(--color-success, #2e7d52);
+}
+.notif-row__status--pending {
+  background: color-mix(in srgb, var(--color-warning, #c77d1a) 18%, transparent);
+  color: var(--color-warning, #c77d1a);
+}
+.notif-row__status--unknown {
+  background: var(--color-surface-2, #eae6dc);
+  color: var(--color-secondary, #5a5c6a);
+}
+
+.notif-row__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+.notif-row__time {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.72rem;
+  color: var(--color-text-faint, #9a988f);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

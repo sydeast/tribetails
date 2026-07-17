@@ -16,6 +16,8 @@ const LIVE_LINKS = {
   home: linkOptions({ to: '/home' }),
   'feature-flags': linkOptions({ to: '/feature-flags' }),
   activity: linkOptions({ to: '/activity' }),
+  notifications: linkOptions({ to: '/notifications' }),
+  'form-schemas': linkOptions({ to: '/form-schemas' }),
 } as const;
 
 /** Typed lookup: preserves each entry's literal `to` (a lossy Record cast would

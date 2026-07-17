@@ -11,6 +11,8 @@ import { SignIn } from './screens/SignIn';
 import { Home } from './screens/Home';
 import { FeatureFlags } from './screens/FeatureFlags';
 import { ActivityLog } from './screens/ActivityLog';
+import { Notifications } from './screens/Notifications';
+import { FormSchemas } from './screens/FormSchemas';
 import { AppShell } from './components/AppShell';
 
 /** Shared chrome: the two drifting orbs behind every screen (Den background). */
@@ -80,10 +82,22 @@ const activityRoute = createRoute({
   component: ActivityLog,
 });
 
+const notificationsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'notifications',
+  component: Notifications,
+});
+
+const formSchemasRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'form-schemas',
+  component: FormSchemas,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
