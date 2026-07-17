@@ -17,7 +17,7 @@ import './Invoices.css';
 
 /**
  * The Den filter tabs. Every predicate below is a POSITIVE membership test
- * against the enumerated `InvoiceState` (or the derived overdue flag) — never
+ * against the enumerated `InvoiceState` (or the derived overdue flag), never
  * a negation of another bucket, per the AO-12 fix in lib/invoiceFormat.ts.
  * "Open" and "Overdue" overlap on purpose (an overdue invoice is still open):
  * that mirrors the wasm's own Unpaid/Overdue tabs, which never excluded each
@@ -44,12 +44,12 @@ const FILTERS: readonly FilterDef[] = [
 interface InvoicesProps {
   /**
    * Placeholder: InvoiceDetail is a separate, not-yet-built screen. The router
-   * mounts this screen PROPLESS, so onSelect is undefined in production — and a
+   * mounts this screen PROPLESS, so onSelect is undefined in production, and a
    * live <button> wired to onSelect?.(id) would then be a focusable, hand-cursor
    * control that silently no-ops (the dead-control anti-pattern). Per the
    * ControlShell convention (components/Buttons.tsx), the row renders a STATIC,
    * non-interactive element when onSelect is absent, and a real <button> only
-   * once a detail route wires it — touching only the router later, not this file.
+   * once a detail route wires it, touching only the router later, not this file.
    */
   onSelect?: (invoiceId: string) => void;
 }
@@ -75,9 +75,9 @@ function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
 
 /**
  * Admin Invoices list ("The Den · Invoices"). Streams the flat `invoices`
- * collection through the bounded, server-ordered listener (INVOICES_QUERY —
+ * collection through the bounded, server-ordered listener (INVOICES_QUERY, 
  * createdAt desc, capped 200), then classifies every row through the
- * enumerated `invoiceState` (never by negation — see lib/invoiceFormat.ts for
+ * enumerated `invoiceState` (never by negation, see lib/invoiceFormat.ts for
  * the AO-12 rationale) for both the summary stat strip and the filter tabs.
  *
  * List only: creating an invoice/quote (NewInvoiceDialog) and the per-invoice
@@ -91,11 +91,11 @@ export function Invoices({ onSelect }: InvoicesProps) {
 
   // Computed once per render, not per keystroke/tick: today doesn't change
   // mid-session, and recomputing on every render would be a stable value
-  // recreated every time regardless — this just names that stability.
+  // recreated every time regardless, this just names that stability.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
 
   // Classify every row exactly once (memoized), then project the stat strip AND
-  // the list off the SAME views — rather than re-walking all 200 rows per stat.
+  // the list off the SAME views, rather than re-walking all 200 rows per stat.
   // asyncScalar's projector runs only in the `ready` branch, where `views` holds
   // the ready data; AsyncRegion likewise renders its children only when ready.
   const views = useMemo(
@@ -148,7 +148,7 @@ export function Invoices({ onSelect }: InvoicesProps) {
           {() => {
             // Non-null: FILTERS lists all seven FilterKey members above, and `filter`
             // only ever holds a key set via setFilter(f.key) from that same array, so
-            // this always finds one — TS just can't see that invariant through .find().
+            // this always finds one, TS just can't see that invariant through .find().
             const activeFilter = FILTERS.find((f) => f.key === filter)!;
             const visible = views.filter((v) => activeFilter.test(v.state, v.overdue));
 
@@ -195,7 +195,7 @@ interface InvoiceRowProps {
 
 function InvoiceRow({ view, todayIso, onSelect }: InvoiceRowProps) {
   const { entry, state, overdue } = view;
-  // Overdue is a display-level refinement of "open" (see FILTERS' comment) —
+  // Overdue is a display-level refinement of "open" (see FILTERS' comment), 
   // it never becomes its own InvoiceState, it just outranks the plain "Open"
   // chip visually, the same relationship the wasm's InvoiceRow renders.
   const info = overdue ? { label: 'Overdue', chipLabel: 'OVERDUE', cssClass: 'overdue' } : invoiceStateInfo(state);

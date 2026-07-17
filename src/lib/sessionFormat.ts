@@ -9,10 +9,10 @@ import { localDateIso } from './invoiceFormat';
  *
  * ── THE AO-18 FIX, non-negotiable per the port brief ──────────────────────
  * `kin_care_sessions.startTime`/`endTime`/`completedAt` are free-text ISO-8601
- * STRINGS on the source doc, not Firestore Timestamps — confirmed against
+ * STRINGS on the source doc, not Firestore Timestamps, confirmed against
  * `createKinCareSession.ts`'s zod schema (`startTime: z.string().min(1).max(40)`)
  * and `approveBookingSeriesCore.ts`'s `toIso()` helper, which stamps them via
- * `FieldValue.serverTimestamp().toDate().toISOString()` — i.e. a UTC-suffixed
+ * `FieldValue.serverTimestamp().toDate().toISOString()`, i.e. a UTC-suffixed
  * ("...Z") instant string. The wasm's `KinCareSessionsScreen.kt` groups and
  * displays these by slicing the raw string directly:
  *   `session.startTime.take(10)` for the day, `shortDateTime`/`shortTime`
@@ -23,9 +23,9 @@ import { localDateIso } from './invoiceFormat';
  * from what actually happened. That is AO-18.
  *
  * `sessionTimeOf` below is the fix: it parses the ISO string into a real `Date`
- * and hands it to `lib/time.ts`'s `dayKey`/`formatWhen` — the same LOCAL
+ * and hands it to `lib/time.ts`'s `dayKey`/`formatWhen`, the same LOCAL
  * (`getFullYear`/`getMonth`/`getDate`/`getHours`/`getMinutes`) helpers every
- * other Timestamp-backed screen in this port already uses — via a minimal
+ * other Timestamp-backed screen in this port already uses, via a minimal
  * fake-`Timestamp` wrapper (`{ toDate: () => Date }`), rather than duplicating
  * local-time arithmetic here. `lib/time.ts` itself is left untouched: it
  * already has no notion of a raw ISO string, and giving it one here (via the
@@ -38,7 +38,7 @@ import { localDateIso } from './invoiceFormat';
 /**
  * Wraps a `kin_care_sessions` free-text ISO timestamp field as a fake Firestore
  * `Timestamp` so it can flow through `lib/time.ts`'s LOCAL `dayKey`/`formatWhen`
- * unchanged. `null` for blank/unparseable input — same "degrade honestly, never
+ * unchanged. `null` for blank/unparseable input, same "degrade honestly, never
  * fabricate a date" contract `lib/time.ts` already uses for a genuinely absent
  * Timestamp.
  */
@@ -58,7 +58,7 @@ export function sessionDayKey(iso: string): string {
 /**
  * LOCAL `HH:mm` clock time for one session ISO field. Reuses `formatWhen`'s
  * `MM-DD HH:mm` in full and takes only the time half (`.slice(6)`), rather than
- * re-deriving hour/minute padding here — the day is already carried by the row's
+ * re-deriving hour/minute padding here, the day is already carried by the row's
  * day-group header, so repeating it per-row would be noise, not a second AO-18
  * check. The `'(no time)'` fallback is returned verbatim (it is shorter than 6
  * characters would slice cleanly to anyway, so it is special-cased rather than
@@ -71,7 +71,7 @@ export function sessionClock(iso: string): string {
 
 /**
  * "09:00 to 17:00", ported from the wasm's `sessionWindow`. "Time TBD" only when
- * BOTH ends are unparseable — a session with a start but no end still shows the
+ * BOTH ends are unparseable, a session with a start but no end still shows the
  * start rather than collapsing to a blanket "TBD" (matches the wasm exactly).
  */
 export function sessionWindow(startIso: string, endIso: string): string {
@@ -100,7 +100,7 @@ function daysBetween(aIso: string, bIso: string): number {
 /**
  * Friendly day-group header: "Today" / "Tomorrow" / "Yesterday" relative to
  * [todayIso] (a LOCAL `YYYY-MM-DD`, e.g. from `localDateIso(new Date())`), else
- * "Thu, Jul 16". `'Undated'` passes through verbatim — a session with no
+ * "Thu, Jul 16". `'Undated'` passes through verbatim, a session with no
  * parseable start time gets its own honest group, never folded into "Today".
  */
 export function sessionDayLabel(dayKeyValue: string, todayIso: string): string {
@@ -123,7 +123,7 @@ export function sessionDayLabel(dayKeyValue: string, todayIso: string): string {
 
 // ── household display ────────────────────────────────────────────────────
 
-/** "Unnamed Kinfolk" fallback, matching `directory.ts#kinfolkDisplayName`'s convention — `kinfolkName` is blank on a session created via the ad-hoc `createKinCareSession` callable, which does not stamp it. */
+/** "Unnamed Kinfolk" fallback, matching `directory.ts#kinfolkDisplayName`'s convention, `kinfolkName` is blank on a session created via the ad-hoc `createKinCareSession` callable, which does not stamp it. */
 export function sessionHousehold(kinfolkName: string): string {
   const name = kinfolkName.trim();
   return name === '' ? 'Unnamed Kinfolk' : name;
@@ -137,7 +137,7 @@ export function sessionHousehold(kinfolkName: string): string {
  * (`createKinCareSession.ts`, `approveBookingSeriesCore.ts`, and the wasm
  * `patchKinCare` calls in `KinCareSessionsScreen.kt`'s `ActionRow`/`KebabMenu`):
  * SCHEDULED, ON_MY_WAY, ARRIVED, DEPARTED, COMPLETED, CANCELLED. `'unknown'` is
- * the one state no writer produces today — it exists only so a status string
+ * the one state no writer produces today, it exists only so a status string
  * that matches none of the six recognized codes gets an HONEST label instead of
  * being silently folded into whichever bucket the code happened to check first
  * (the AO-12 lesson: every branch here is a positive match against the literal
@@ -219,7 +219,7 @@ function epochOf(iso: string): number {
 /**
  * Groups rows by LOCAL day (via `sessionDayKey`, the AO-18 fix), sorts each
  * day's rows chronologically ascending by `startTime`, and orders the day
- * groups themselves chronologically with `'Undated'` always last — never
+ * groups themselves chronologically with `'Undated'` always last, never
  * interleaved by whatever order the bounded stream happened to deliver rows
  * in (see `SESSIONS_QUERY` in `api/sessions.ts` for why the stream's own order
  * is `startTime desc`, a different concern from this display order).

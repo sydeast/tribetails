@@ -4,9 +4,9 @@
  * convention).
  *
  * THE AO-12 FIX, non-negotiable per the port brief: the wasm admin's
- * InvoiceFilters.kt decides "paid" by NEGATION —
+ * InvoiceFilters.kt decides "paid" by NEGATION, 
  *   invoiceIsPaid = !invoiceIsDraft(invoice) && !invoiceIsOutstanding(invoice)
- * — which is "not proven anything else, so call it paid". That is how an
+ *, which is "not proven anything else, so call it paid". That is how an
  * unredeemed CREDIT (a refund owed TO the kinfolk, not a bill they paid)
  * rendered as a confident PAID chip in production. It is not ported here.
  *
@@ -16,11 +16,11 @@
  * credit split into credit-vs-redeemed by `creditRedeemedAtMs`) and
  * getMyInvoices.ts's `resolveStatus` (the backend's own authoritative
  * precedence: explicit free-text status first, then real money fields as
- * positive signals — never "whatever is left over"). Two states neither of
+ * positive signals, never "whatever is left over"). Two states neither of
  * those two references models are added because the ADMIN's raw `invoices`
  * doc needs them: `quote` (the admin-only free-text status createQuote writes,
  * per InvoiceFilters.kt's `invoiceIsQuote`) and `zero` (a genuinely $0
- * invoice — nothing was billed, so it is NOT a claim that someone paid).
+ * invoice, nothing was billed, so it is NOT a claim that someone paid).
  */
 
 /** Every state this module will ever return. One branch below produces each. */
@@ -29,7 +29,7 @@ export type InvoiceState = 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeeme
 /**
  * What `invoiceState` needs to decide. `status` is free-text on the source doc
  * (createInvoice.ts / postInvoiceEvent.ts write whatever the caller passed,
- * default `''`) — never a validated enum — so it is read case-insensitively
+ * default `''`), never a validated enum, so it is read case-insensitively
  * and trimmed, same as the wasm's `invoiceIsQuote` / `invoiceIsDraft`.
  */
 export interface InvoiceStateInput {
@@ -49,7 +49,7 @@ function financeNumber(v: number): number {
 
 /**
  * Classifies one invoice. Every return is a POSITIVE read of either the
- * explicit `status` text or a real money field — nothing here is "not X, so
+ * explicit `status` text or a real money field, nothing here is "not X, so
  * must be Y". Order is precedence, matching getMyInvoices.ts's resolveStatus:
  * an explicit status string wins; a negative balance is credit even without
  * the label; only then do we read amountDue/total to place an unlabeled row.
@@ -71,7 +71,7 @@ export function invoiceState(row: InvoiceStateInput): InvoiceState {
   // Nothing explicit matched (status is 'open', '', or an unrecognized word).
   // From here every branch reads a real number, positively:
   if (amountDue > 0) return 'open'; // a balance is genuinely owed
-  if (total === 0) return 'zero'; // nothing was ever billed — not a paid claim
+  if (total === 0) return 'zero'; // nothing was ever billed, not a paid claim
   return 'paid'; // amountDue <= 0 and total > 0: the billed balance is retired
 }
 
@@ -117,7 +117,7 @@ export function formatUsd(dollars: number): string {
  * Normalizes a stored date string to a comparable YYYY-MM-DD prefix, or null
  * when unparseable/blank. `date`/`dueDate` are opaque free-text on the source
  * doc (createInvoice.ts's zod schema is `z.string().default('')`, not a
- * parsed Date) — ported from the wasm's `isoDatePrefixOrNull` so a value like
+ * parsed Date), ported from the wasm's `isoDatePrefixOrNull` so a value like
  * "Net 14" never fabricates an ordering or an overdue verdict.
  */
 export function isoDatePrefixOrNull(raw: string): string | null {
@@ -157,7 +157,7 @@ export function humanizeDate(raw: string, refIso?: string): string {
  * True only when the invoice is `open` (a real, unpaid, non-draft/quote/credit
  * balance) AND its dueDate parses to an ISO date strictly before [todayIso]. A
  * future-dated or unparseable dueDate is never counted overdue, and neither is
- * any other state — a draft, quote, or credit is never "overdue" by definition,
+ * any other state, a draft, quote, or credit is never "overdue" by definition,
  * so this reads `state`, not amountDue, as its first gate.
  */
 export function isInvoiceOverdue(state: InvoiceState, dueDate: string, todayIso: string): boolean {
@@ -173,7 +173,7 @@ export function isInvoiceOverdue(state: InvoiceState, dueDate: string, todayIso:
  *
  * DIVERGENCE FROM THE WASM, deliberate (same call as denFormat.ts's
  * `denCurrentHour`): the wasm's `nowIso()` is `new Date().toISOString()`, i.e.
- * UTC, which is AO-18 — an operator west of Greenwich sees invoices flip
+ * UTC, which is AO-18, an operator west of Greenwich sees invoices flip
  * "overdue" hours before their local midnight. This reads the LOCAL calendar
  * date instead, so it does not reproduce that bug.
  */

@@ -10,7 +10,7 @@ import type { Timestamp } from 'firebase/firestore';
  *
  * `createdAt` / `readAt` / `archivedAt` are written server-side as
  * `FieldValue.serverTimestamp()` (confirmed against dispatcher.ts,
- * markNotificationRead.ts, archiveNotification.ts) — NOT ISO strings. The
+ * markNotificationRead.ts, archiveNotification.ts), NOT ISO strings. The
  * Kotlin client normalizes them to ISO via a custom serializer at decode time;
  * the plain Firebase JS SDK used here hands back a real Firestore `Timestamp`
  * (or `null` while a serverTimestamp() write is still pending locally), so
@@ -58,12 +58,12 @@ export function isRead(entry: NotificationEntry): boolean {
  *   }
  *
  * The admin console runs as `isAuntie()`, which already grants an unfiltered
- * collection read — exactly what `platformNotificationsStream()` does in
+ * collection read, exactly what `platformNotificationsStream()` does in
  * FirestoreInterop.*.kt (a plain `collectionStream("notifications")`, no
  * recipientUid where-clause). Adding `['recipientUid', '==', uid]` here would
  * under-scope the admin's own inbox relative to the wasm original. Because
  * there is no `where` combined with the `orderBy`, this query needs NO
- * composite index — a single-field orderBy is always covered by Firestore's
+ * composite index, a single-field orderBy is always covered by Firestore's
  * automatic single-field indexes.
  */
 export const NOTIFICATIONS_QUERY: CollectionSpec = {
@@ -87,7 +87,7 @@ export async function markNotificationUnread(notificationId: string): Promise<vo
 }
 
 /**
- * bulkMarkNotificationsRead. Returns the number ACTUALLY marked — ids that are
+ * bulkMarkNotificationsRead. Returns the number ACTUALLY marked, ids that are
  * missing, not owned (for a non-admin caller), or lack a `recipientUid` are
  * silently skipped server-side rather than erroring the whole batch, so this
  * count can be smaller than `ids.length` even on success.
@@ -99,6 +99,6 @@ export async function bulkMarkNotificationsRead(ids: string[]): Promise<number> 
   return res.marked;
 }
 
-// Timestamp formatting is centralized + LOCAL (AO-18) in lib/time — re-exported
+// Timestamp formatting is centralized + LOCAL (AO-18) in lib/time, re-exported
 // so `import { formatWhen, dayKey } from '../api/notifications'` keeps working.
 export { formatWhen, dayKey, machineWhen } from '../lib/time';

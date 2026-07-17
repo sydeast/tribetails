@@ -15,7 +15,7 @@ import {
 
 // File-scope TZ pin: several suites below (groupSessionsByDay, sessionDayLabel)
 // assert LOCAL day keys derived from UTC strings. Without a fixed zone those
-// pass on a US runner and fail east of UTC — pin the whole file to a known zone
+// pass on a US runner and fail east of UTC, pin the whole file to a known zone
 // so the AO-18 local-day guarantee is tested meaningfully everywhere, not just
 // inside the one describe that pinned it locally.
 let fileOriginalTz: string | undefined;
@@ -49,12 +49,12 @@ describe('sessionDayKey / sessionClock (AO-18)', () => {
   });
 
   // This is the actual historical bug, reproduced exactly: the wasm's
-  // KinCareSessionsScreen.kt groups by `session.startTime.take(10)` — the
+  // KinCareSessionsScreen.kt groups by `session.startTime.take(10)`, the
   // first 10 characters of the raw UTC ISO string on the doc. An 8pm-CDT
   // session round-trips through `approveBookingSeriesCore.ts`'s
   // `toDate().toISOString()` as "...T01:00:00.000Z", i.e. the NEXT calendar
   // day in UTC. Naively slicing that string's first 10 characters therefore
-  // reads "2026-07-17" — wrong by one day. `sessionDayKey` must read
+  // reads "2026-07-17", wrong by one day. `sessionDayKey` must read
   // "2026-07-16" instead, because it parses the full instant and asks the
   // LOCAL clock what day it fell on.
   //
@@ -99,7 +99,7 @@ describe('sessionWindow', () => {
   });
 
   it('"start to end" when both parse', () => {
-    // 2026-07-16 09:00 to 10:30 UTC (no TZ pinned here — assert shape, not zone).
+    // 2026-07-16 09:00 to 10:30 UTC (no TZ pinned here, assert shape, not zone).
     const w = sessionWindow('2026-07-16T09:00:00.000Z', '2026-07-16T10:30:00.000Z');
     expect(w).toMatch(/^\d{2}:\d{2} to \d{2}:\d{2}$/);
   });

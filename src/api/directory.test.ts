@@ -212,7 +212,7 @@ describe('filterSortKin', () => {
     expect(filterSortKin(rows, '', 'recently_updated').map((r) => r._id)).toEqual(['b', 'a']);
   });
   it('a kin with no updatedAt sorts last under recently_updated, never fabricated as newest', () => {
-    // Omit the key entirely (never present) rather than set it to `undefined` —
+    // Omit the key entirely (never present) rather than set it to `undefined`, 
     // exactOptionalPropertyTypes distinguishes the two, and "absent" is what a
     // real doc that predates the field looks like.
     const { updatedAt: _drop, ...withoutUpdatedAt } = kin({ _id: 'd', name: 'Mystery' });

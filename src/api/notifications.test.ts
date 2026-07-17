@@ -12,7 +12,7 @@ import {
   type NotificationEntry,
 } from './notifications';
 
-/** A fake Firestore Timestamp — only `.toDate()` is ever called on it here. */
+/** A fake Firestore Timestamp, only `.toDate()` is ever called on it here. */
 function fakeTs(iso: string): Timestamp {
   return { toDate: () => new Date(iso) } as unknown as Timestamp;
 }

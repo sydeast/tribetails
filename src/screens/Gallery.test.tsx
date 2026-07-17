@@ -71,7 +71,7 @@ function tileFor(text: string): HTMLElement {
   return el;
 }
 
-describe('Gallery screen — media stream', () => {
+describe('Gallery screen, media stream', () => {
   it('renders a streamed tile with its caption, household, and meta line', () => {
     mediaAsync = {
       status: 'ready',
@@ -143,13 +143,13 @@ describe('Gallery screen — media stream', () => {
     const img = within(tile).getByRole('img', { hidden: true }) as HTMLImageElement;
     fireEvent.error(img);
     // Avatar's own fallback takes over: the img is replaced by an accessible
-    // role="img" fallback carrying the same caption as its name — never an
+    // role="img" fallback carrying the same caption as its name, never an
     // empty hole where the broken thumbnail used to be.
     expect(within(tile).getByRole('img', { name: 'Broken photo' })).toBeInTheDocument();
   });
 });
 
-describe('Gallery screen — async states', () => {
+describe('Gallery screen, async states', () => {
   it('shows the loading state, never a false empty, while the stream is in flight', () => {
     mediaAsync = { status: 'loading' };
     render(<Gallery />);
@@ -184,7 +184,7 @@ describe('Gallery screen — async states', () => {
   });
 });
 
-describe('Gallery screen — filters', () => {
+describe('Gallery screen, filters', () => {
   it('filters the grid by household when a household chip is clicked', async () => {
     mediaAsync = {
       status: 'ready',

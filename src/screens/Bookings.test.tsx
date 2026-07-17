@@ -40,7 +40,7 @@ describe('Bookings screen', () => {
   it('renders a streamed row with its household, service, when, and status chip', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Bookings />);
-    // Scope by the row container, not the button — the row is only a <button>
+    // Scope by the row container, not the button, the row is only a <button>
     // once a detail route wires onSelectBooking; here (unwired) it renders static.
     const row = screen.getByText('The Whitfields').closest('.bookings__row') as HTMLElement;
     expect(within(row).getByText('The Whitfields')).toBeInTheDocument();
@@ -138,8 +138,8 @@ describe('Bookings screen', () => {
       ],
     });
     render(<Bookings />);
-    // "Pending" is ambiguous by plain text — the same word also labels the
-    // filter tab — so this scopes to the stat card's own label span.
+    // "Pending" is ambiguous by plain text, the same word also labels the
+    // filter tab, so this scopes to the stat card's own label span.
     const pending = screen
       .getByText('Pending', { selector: '.den-stat-label' })
       .closest('.den-stat, button.den-stat--button');
@@ -155,7 +155,7 @@ describe('Bookings screen', () => {
     expect(onSelectBooking).toHaveBeenCalledWith('ses-42');
   });
 
-  it('renders rows STATIC (not a live no-op button) when onSelectBooking is unwired — the router mounts this screen propless', () => {
+  it('renders rows STATIC (not a live no-op button) when onSelectBooking is unwired, the router mounts this screen propless', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Bookings />);
     // The content renders, but the row is NOT an interactive button when unwired:

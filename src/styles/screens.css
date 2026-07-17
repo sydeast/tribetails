@@ -75,7 +75,7 @@
 .log__hint { color: var(--color-secondary, #5a5c6a); margin: 0; }
 .log__ctx { font-size: 0.76rem; color: var(--color-text-faint, #9a988f); }
 /* ─────────────────────────────────────────────────────────────────────────
-   Notifications — APPEND to src/styles/screens.css (not a standalone file).
+   Notifications, APPEND to src/styles/screens.css (not a standalone file).
    Follows the existing .flags__* / .log__* section conventions in that file:
    BEM-ish `.notif-*` names, token vars with the same literal fallbacks already
    used there, radii from the --radius-* scale (no raw px), motion from

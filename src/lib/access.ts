@@ -10,7 +10,7 @@ import { useAuth } from './auth';
  *   - real admin: `admin === true`.
  *   - Stage 0I test admin: no `admin` claim, but a non-blank `testTribeId`.
  * Anyone else who authenticates (e.g. a kinfolk signing in with their portal
- * credentials) is DENIED — the admin app is not theirs.
+ * credentials) is DENIED, the admin app is not theirs.
  */
 export type AdminAccess =
   | { status: 'admin' }

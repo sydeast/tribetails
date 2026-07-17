@@ -27,7 +27,7 @@ import type { Timestamp } from 'firebase/firestore';
  * Every branch is a POSITIVE read of the (trimmed, uppercased) status text.
  * Nothing here falls through to a state by elimination: an unrecognized or
  * blank status lands in its own named `unknown` bucket rather than being
- * silently absorbed into whichever state happens to be checked last — the
+ * silently absorbed into whichever state happens to be checked last, the
  * AO-12 class of bug invoiceFormat.ts's `invoiceState` was written to retire,
  * applied here before this screen ever ships a first version.
  */
@@ -94,7 +94,7 @@ export function initialsFor(name: string): string {
 const pad = (n: number): string => String(n).padStart(2, '0');
 
 /**
- * Parses a stored booking timestamp STRING (not a Firestore Timestamp — see
+ * Parses a stored booking timestamp STRING (not a Firestore Timestamp, see
  * `BookingWhenInput`'s doc). `kin_care_sessions.startTime` /`.completedAt` /
  * `.departedAt` are opaque strings, usually either a real UTC instant from
  * `Date.toISOString()` (approveBookingSeriesCore.ts's `toIso()`) or a
@@ -113,7 +113,7 @@ export function parseFlexibleDate(raw: string): Date | null {
 
 /**
  * "Jul 16, 9:00 AM" in the LOCAL zone. Uses `Date`'s local getters
- * (getMonth/getDate/getHours/getMinutes), never `toISOString()` — the same
+ * (getMonth/getDate/getHours/getMinutes), never `toISOString()`, the same
  * AO-18 discipline lib/time.ts applies to real Firestore Timestamps, applied
  * here to this collection's free-text timestamp-shaped strings.
  */
@@ -131,7 +131,7 @@ export function formatLocalDateTime(d: Date): string {
 /**
  * What `bookingWhen` needs. `createdAt` IS a real Firestore Timestamp
  * (`FieldValue.serverTimestamp()`, stamped by both createKinCareSession.ts and
- * approveBookingSeriesCore.ts) — the one genuinely reliable moment on this
+ * approveBookingSeriesCore.ts), the one genuinely reliable moment on this
  * doc, and the field BOOKINGS_QUERY sorts by (see api/bookings.ts).
  */
 export interface BookingWhenInput {
@@ -143,7 +143,7 @@ export interface BookingWhenInput {
 
 /**
  * The row's "when" line. Prefers the visit's own `startTime`, falling back
- * through `completedAt` / `departedAt` — mirrors `bookingDateLabel` in
+ * through `completedAt` / `departedAt`, mirrors `bookingDateLabel` in
  * BookingScreen.kt, written for the same reason: a legacy/imported session can
  * have a blank `startTime` while still carrying a real completion or
  * departure stamp. Only once all three are blank does this fall back to

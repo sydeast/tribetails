@@ -2,7 +2,7 @@
  * KinTales screen styling. Scoped to this screen and imported directly by
  * KinTales.tsx (the Sessions.css / Invoices.css convention), so nothing here
  * needs to land in the shared styles/screens.css. Every value comes from
- * styles/tokens.css — no literal colours, radii, durations, or px spacing
+ * styles/tokens.css, no literal colours, radii, durations, or px spacing
  * outside the chip palette below (mirrors Sessions.css's/Invoices.css's own
  * chip block, since KinTale states need their own distinct hues).
  */
@@ -99,7 +99,7 @@
 .kintales__row-main:focus-visible {
   background: var(--color-surface-2);
 }
-/* Unwired (no detail route yet): a plain, non-interactive row — no hand
+/* Unwired (no detail route yet): a plain, non-interactive row, no hand
    cursor, no hover, so it never reads as a clickable control that no-ops. */
 .kintales__row-main--static {
   cursor: default;

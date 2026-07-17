@@ -1,7 +1,7 @@
 import { type CollectionSpec } from '../lib/firestore';
 
 /**
- * One `kin_care_sessions` row (the "Auntie Time" collection — the rail label
+ * One `kin_care_sessions` row (the "Auntie Time" collection, the rail label
  * is "Auntie Time"; the slug/dest is `sessions`, see `lib/nav.ts`). Mirrors the
  * wasm `KinCareSession` data class
  * (composeApp/src/commonMain/kotlin/com/tribetails/auntieos/web/data/FirestoreClient.kt:1928),
@@ -11,17 +11,17 @@ import { type CollectionSpec } from '../lib/firestore';
  *
  * COLLECTION + FIELD SHAPES CONFIRMED, not assumed, against three independent
  * sources so this isn't a guess from the Kotlin model alone:
- *  - `firestore.rules:203` — `match /kin_care_sessions/{sessionId}`, `allow
- *    read: if isAuntie() || ...` — an admin gets an unfiltered collection read,
+ *  - `firestore.rules:203`, `match /kin_care_sessions/{sessionId}`, `allow
+ *    read: if isAuntie() || ...`, an admin gets an unfiltered collection read,
  *    same shape as INVOICES_QUERY/KINFOLK_QUERY.
- *  - `MyTribe/functions/src/admin/createKinCareSession.ts` — the ad-hoc
+ *  - `MyTribe/functions/src/admin/createKinCareSession.ts`, the ad-hoc
  *    "schedule a visit" callable's zod schema: `startTime`/`endTime` are
  *    `z.string()`, NOT Firestore Timestamps. This callable does NOT set
  *    `kinfolkName` on the doc it creates.
- *  - `MyTribe/functions/src/admin/approveBookingSeriesCore.ts` — the REAL
+ *  - `MyTribe/functions/src/admin/approveBookingSeriesCore.ts`, the REAL
  *    production writer (booking-approval flow). Its `toIso()` helper stamps
  *    `startTime`/`endTime` via `FieldValue.serverTimestamp().toDate().toISOString()`
- *    — a UTC-suffixed ("...Z") instant string, confirming these two fields are
+ *, a UTC-suffixed ("...Z") instant string, confirming these two fields are
  *    genuinely opaque ISO text, not Timestamps, on every doc. It DOES set
  *    `kinfolkName` (with an id fallback), which is why `sessionHousehold` in
  *    `lib/sessionFormat.ts` still needs its own "Unnamed Kinfolk" fallback for
@@ -29,13 +29,13 @@ import { type CollectionSpec } from '../lib/firestore';
  *
  * `status`/`startTime`/`endTime`/`completedAt` are all free-text strings on the
  * source doc (same "not a validated enum, not a parsed Date" caveat
- * `invoiceFormat.ts` documents for invoice `status`/`date`/`dueDate`) — never
+ * `invoiceFormat.ts` documents for invoice `status`/`date`/`dueDate`), never
  * read directly in a screen; go through `lib/sessionFormat.ts`'s
  * `sessionState`/`sessionTimeOf` family, which is where the AO-18 (local day)
  * and AO-12-style (positive enumeration, no negation) fixes live.
  *
  * Only the fields this LIST screen renders are modeled here (the Directory.ts
- * "subset type, not a blind mirror" convention) — `kinIds`/`gpsSummary`/
+ * "subset type, not a blind mirror" convention), `kinIds`/`gpsSummary`/
  * `formValues`/etc. belong to the not-yet-built detail/edit screen, not this
  * list.
  */
@@ -44,11 +44,11 @@ export interface SessionEntry {
   kinfolkId: string;
   kinfolkName: string;
   serviceType: string;
-  /** Free-text ISO instant string, not a Timestamp — see `lib/sessionFormat.ts#sessionTimeOf`. */
+  /** Free-text ISO instant string, not a Timestamp, see `lib/sessionFormat.ts#sessionTimeOf`. */
   startTime: string;
   /** Same caveat as `startTime`. */
   endTime: string;
-  /** Free-text; SCHEDULED/ON_MY_WAY/ARRIVED/DEPARTED/COMPLETED/CANCELLED are the only codes any writer sets — see `lib/sessionFormat.ts#sessionState`. */
+  /** Free-text; SCHEDULED/ON_MY_WAY/ARRIVED/DEPARTED/COMPLETED/CANCELLED are the only codes any writer sets, see `lib/sessionFormat.ts#sessionState`. */
   status: string;
   /** '' until COMPLETED; stamped by the admin's `patchKinCare` write. Same free-text caveat as `startTime`. */
   completedAt: string;
@@ -61,13 +61,13 @@ export interface SessionEntry {
  *
  * DELIBERATE IMPROVEMENT over the wasm reference, not a faithfully-ported
  * behavior: the wasm's `client.sessionsStream()` (via `platformSessionsStream()`)
- * is a plain unbounded whole-collection listen — the exact AO-29 pattern
+ * is a plain unbounded whole-collection listen, the exact AO-29 pattern
  * `useCollection` exists to close off by construction. This spec is what makes
  * that fix apply here too.
  *
  * Sorted by `startTime` rather than a real Firestore Timestamp field (unlike
  * `INVOICES_QUERY`'s `createdAt`): `kin_care_sessions` genuinely has no
- * Timestamp-typed sort key on every doc the way `invoices.createdAt` does — but
+ * Timestamp-typed sort key on every doc the way `invoices.createdAt` does, but
  * `startTime` IS the one MyTribe's own `getMyVisits.ts` already orders the same
  * collection by (`.orderBy('startTime', 'desc')`), which confirms the real
  * writers populate it and Firestore can sort it as a plain string field.
@@ -79,24 +79,24 @@ export interface SessionEntry {
  *    zone offset right at the 300-row boundary. Acceptable for a bounded admin
  *    list; a detail/report view should parse to instants before ordering.
  *  - `orderBy('startTime')` DROPS any doc missing `startTime` (direct client-SDK
- *    writes are allowed by rules) — it never reaches the 'Undated' group. Flagged
+ *    writes are allowed by rules), it never reaches the 'Undated' group. Flagged
  *    for operator prod-verification; backfill rather than weaken the sort.
  *  - `desc` keeps the most-FUTURE 300: a large approved recurring series could
  *    push today off the page and undercount the Today/Wrapped stats. If that
  *    surfaces, add an upper-bound horizon filter or raise the cap.
  *
- * The STREAM's own `desc` order is only what bounds the 300-row page — it is
+ * The STREAM's own `desc` order is only what bounds the 300-row page, it is
  * NOT the order the screen displays. `lib/sessionFormat.ts#groupSessionsByDay`
  * re-derives the screen's actual chronological, day-grouped display order from
  * whatever page comes back, the same way `Invoices.tsx` re-derives its own
  * filter-tab views from `INVOICES_QUERY`'s bounded page rather than trusting
  * the raw stream order to already be what the screen wants to show.
  *
- * NO `filters` — a single-field orderBy needs no composite index (same note as
+ * NO `filters`, a single-field orderBy needs no composite index (same note as
  * `INVOICES_QUERY`/`NOTIFICATIONS_QUERY`). Any "today only" / "active only"
  * narrowing happens client-side over the already-streamed page (the filter tabs
  * in `Sessions.tsx`), same as the wasm's own client-side `visible`/`grouped`
- * filtering — just bounded now instead of run over an unbounded stream.
+ * filtering, just bounded now instead of run over an unbounded stream.
  */
 export const SESSIONS_QUERY: CollectionSpec = {
   path: 'kin_care_sessions',

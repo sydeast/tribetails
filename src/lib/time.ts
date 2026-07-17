@@ -16,7 +16,7 @@ export function tsToDate(ts: FsTime): Date | null {
 const pad = (n: number): string => String(n).padStart(2, '0');
 
 /**
- * LOCAL `YYYY-MM-DD` for day grouping. Local, NOT UTC — this is the AO-18 fix
+ * LOCAL `YYYY-MM-DD` for day grouping. Local, NOT UTC, this is the AO-18 fix
  * for the React rebuild. The operator's "today" is their wall clock; a UTC slice
  * (`toISOString()`) groups an 8pm-CDT event under TOMORROW and shows a time 5h
  * off. The wasm admin has that bug live; the React port must not inherit it. Uses

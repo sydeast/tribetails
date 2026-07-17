@@ -12,7 +12,7 @@ interface DialogProps {
 /**
  * The shared modal. Ports AuntieDialog: a real `role="dialog" aria-modal="true"`
  * with a labelled title, Escape-to-close, backdrop-click-to-close, a close-X,
- * AND the three things a hand-rolled modal always drops — initial focus, a Tab
+ * AND the three things a hand-rolled modal always drops, initial focus, a Tab
  * focus-trap, and focus restore to the trigger on close. Built once here so the
  * ~28 screens that need a confirm/edit modal do not each re-implement (and each
  * omit) these.

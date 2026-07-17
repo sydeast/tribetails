@@ -15,7 +15,7 @@ interface FlagMeta {
 
 /**
  * The genuinely-gated `auntieos.*` flags only. Built features that ship ON have
- * no row (they are not experimental) — mirrors the wasm FeatureFlagsScreen's
+ * no row (they are not experimental), mirrors the wasm FeatureFlagsScreen's
  * curated FLAGS list. Keep in sync with the config's non-ALWAYS_ON keys; the
  * wasm side pins this with FeatureFlagsScreenCoverageTest, which should be
  * ported once a flag-config module lands in this repo (N1).

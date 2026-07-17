@@ -47,7 +47,7 @@ beforeEach(() => {
 
 /**
  * Only the two tests that actually assert against "today" fake the system
- * clock — fake timers and userEvent's own internal setTimeout-based delays
+ * clock, fake timers and userEvent's own internal setTimeout-based delays
  * don't mix reliably, so every OTHER test (including all click-driven ones)
  * runs on the real clock, same as Invoices.test.tsx/Directory.test.tsx.
  */
@@ -67,7 +67,7 @@ describe('Sessions screen', () => {
   it('renders a streamed row with its household, service, time window, and status chip', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Sessions />);
-    // Scope by the row container, not the button — the row is only a <button>
+    // Scope by the row container, not the button, the row is only a <button>
     // once a detail route wires onSelect; here (unwired) it renders static.
     const row = screen.getByText('The Whitfields').closest('.sessions__row') as HTMLElement;
     expect(within(row).getByText('The Whitfields')).toBeInTheDocument();
@@ -84,7 +84,7 @@ describe('Sessions screen', () => {
         data: [entry({ startTime: '2026-07-17T01:00:00.000Z', endTime: '2026-07-17T02:30:00.000Z' })],
       });
       render(<Sessions />);
-      // "Today" per the fixed system clock (2026-07-16 local) — not "Tomorrow",
+      // "Today" per the fixed system clock (2026-07-16 local), not "Tomorrow",
       // which is what grouping by a raw slice of the UTC string ("2026-07-17")
       // would have wrongly produced. Scoped to the day-header specifically:
       // the "Today" StatCard label is also on the page and would otherwise
@@ -179,7 +179,7 @@ describe('Sessions screen', () => {
   it('omitting onSelect renders each row STATIC (not a live no-op button)', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Sessions />);
-    // The row content renders, but it is NOT an interactive button when unwired —
+    // The row content renders, but it is NOT an interactive button when unwired, 
     // a live button that no-ops on click is the dead-control anti-pattern.
     expect(screen.getByText('The Whitfields')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /The Whitfields/i })).toBeNull();

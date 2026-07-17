@@ -1,7 +1,7 @@
 /**
  * Directory screen styling. Scoped to this screen and imported directly by
  * Directory.tsx (the DenScreenKit.css / Banner.css / FormSchemas.css
- * convention) — nothing here touches the shared styles/screens.css or
+ * convention), nothing here touches the shared styles/screens.css or
  * styles/tokens.css. Every value comes from tokens.css: no literal colours,
  * radii, or durations.
  *
@@ -120,7 +120,7 @@
   min-width: 0;
 }
 
-/* No `height`, no `overflow: hidden` — see the AO-11 note in the file header. */
+/* No `height`, no `overflow: hidden`, see the AO-11 note in the file header. */
 .directory__card {
   width: 100%;
   box-sizing: border-box;
@@ -144,7 +144,7 @@
   background: var(--color-surface-2);
   border-color: var(--color-primary);
 }
-/* Unwired (no profile route yet): a plain, non-interactive card — no hand
+/* Unwired (no profile route yet): a plain, non-interactive card, no hand
    cursor, no hover, so it never reads as a clickable control that no-ops. */
 .directory__card--static {
   cursor: default;

@@ -12,12 +12,12 @@ import { Dialog } from '../components/Dialog';
 import './FormSchemas.css';
 
 /**
- * Descending by updatedAt, blanks/nulls last — mirrors FormSchemaListScreen.kt's
+ * Descending by updatedAt, blanks/nulls last, mirrors FormSchemaListScreen.kt's
  * default sort (`compareBy<isBlank>.thenByDescending`), which is the only sort
  * order the wasm screen actually ships: its column-header sort UI (HeaderCell)
  * was retired when the sortable table became a card list (see the #10/#17
- * comment in the Kotlin source) but the sortCol/sortAsc state — defaulted to
- * UpdatedAt/desc — was never removed, so this fixed order IS the shipped
+ * comment in the Kotlin source) but the sortCol/sortAsc state, defaulted to
+ * UpdatedAt/desc, was never removed, so this fixed order IS the shipped
  * behavior, not a simplification of it.
  */
 export function sortByUpdatedAtDesc(rows: FormSchemaSummary[]): FormSchemaSummary[] {
@@ -71,7 +71,7 @@ interface FormSchemasProps {
 
 /**
  * Admin Form Schemas list. Loads once via the one-shot listFormSchemas callable
- * (not a stream — formSchemas has no live-authoring collaborator to watch for),
+ * (not a stream, formSchemas has no live-authoring collaborator to watch for),
  * matching the wasm FormSchemaListScreen, which the review named the GOLD
  * STANDARD for fail-loud error handling in the admin: it names the failing
  * callable, offers Retry, and refuses to render a false empty list while the
@@ -81,7 +81,7 @@ interface FormSchemasProps {
  * wording, since AsyncRegion itself does not know which callable is loading.
  *
  * Only the list ships here. `onSelect` / `onNew` are placeholder props for the
- * not-yet-built editor screen — see the props doc below.
+ * not-yet-built editor screen, see the props doc below.
  */
 export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
   const [schemas, setSchemas] = useState<Async<FormSchemaSummary[]>>({ status: 'loading' });
@@ -112,7 +112,7 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
 
   useEffect(() => load(), [load]);
 
-  // Escape cancels the delete confirm, same as clicking Cancel — but never while
+  // Escape cancels the delete confirm, same as clicking Cancel, but never while
   // a delete is actually in flight (mirrors the reference's onDismiss guard).
   useEffect(() => {
     if (!pendingDelete) return;
@@ -125,7 +125,7 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
 
   // Deletes via deleteFormSchema, then reloads (matches confirmDelete() in the
   // reference: it reloads on success rather than optimistically splicing the
-  // row, so a schema that reappears server-side — a stale delete, a race —
+  // row, so a schema that reappears server-side, a stale delete, a race, 
   // does not silently vanish from the operator's view). A failure surfaces
   // through the SAME error state the initial load uses, which is why
   // AsyncRegion's "unavailable while the load is failing" message applies here

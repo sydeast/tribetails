@@ -55,7 +55,7 @@ describe('KinTales screen', () => {
   it('renders a streamed row with its household, headline, service, timestamp, and status chip', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<KinTales />);
-    // Scope by the row container, not the button — the row is only a
+    // Scope by the row container, not the button, the row is only a
     // <button> once a detail route wires onSelect; here (unwired) it renders
     // static.
     const row = screen.getByText('The Whitfields').closest('.kintales__row') as HTMLElement;
@@ -216,7 +216,7 @@ describe('KinTales screen', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<KinTales />);
     // The row content renders, but it is NOT an interactive button when
-    // unwired — a live button that no-ops on click is the dead-control
+    // unwired, a live button that no-ops on click is the dead-control
     // anti-pattern.
     expect(screen.getByText('The Whitfields')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /The Whitfields/i })).toBeNull();

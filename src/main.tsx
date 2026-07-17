@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { RouterProvider } from '@tanstack/react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Self-hosted brand fonts (Den redesign) — no font CDN at runtime.
+// Self-hosted brand fonts (Den redesign), no font CDN at runtime.
 import '@fontsource-variable/fraunces'; // variable: all heading weights
 import '@fontsource/hanken-grotesk/400.css';
 import '@fontsource/hanken-grotesk/500.css';
