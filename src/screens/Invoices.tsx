@@ -43,11 +43,13 @@ const FILTERS: readonly FilterDef[] = [
 
 interface InvoicesProps {
   /**
-   * Placeholder: InvoiceDetail is a separate, not-yet-built screen. Omitting
-   * this renders every row as a real, focusable button that simply does
-   * nothing when clicked yet — never a dead-looking static row (same
-   * onSelect-is-optional convention as FormSchemas.tsx) — so wiring the real
-   * detail route later touches only the router, not this screen.
+   * Placeholder: InvoiceDetail is a separate, not-yet-built screen. The router
+   * mounts this screen PROPLESS, so onSelect is undefined in production — and a
+   * live <button> wired to onSelect?.(id) would then be a focusable, hand-cursor
+   * control that silently no-ops (the dead-control anti-pattern). Per the
+   * ControlShell convention (components/Buttons.tsx), the row renders a STATIC,
+   * non-interactive element when onSelect is absent, and a real <button> only
+   * once a detail route wires it — touching only the router later, not this file.
    */
   onSelect?: (invoiceId: string) => void;
 }
@@ -92,16 +94,20 @@ export function Invoices({ onSelect }: InvoicesProps) {
   // recreated every time regardless — this just names that stability.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
 
-  const outstandingTotal = asyncScalar(rows, (data) =>
-    rowViewsFor(data, todayIso)
-      .filter((r) => r.state === 'open')
-      .reduce((sum, r) => sum + r.entry.amountDue, 0),
+  // Classify every row exactly once (memoized), then project the stat strip AND
+  // the list off the SAME views — rather than re-walking all 200 rows per stat.
+  // asyncScalar's projector runs only in the `ready` branch, where `views` holds
+  // the ready data; AsyncRegion likewise renders its children only when ready.
+  const views = useMemo(
+    () => (rows.status === 'ready' ? rowViewsFor(rows.data, todayIso) : []),
+    [rows, todayIso],
+  );
+
+  const outstandingTotal = asyncScalar(rows, () =>
+    views.filter((r) => r.state === 'open').reduce((sum, r) => sum + r.entry.amountDue, 0),
   );
   const billedTotal = asyncScalar(rows, (data) => data.reduce((sum, e) => sum + e.total, 0));
-  const overdueCount = asyncScalar(
-    rows,
-    (data) => rowViewsFor(data, todayIso).filter((r) => r.overdue).length,
-  );
+  const overdueCount = asyncScalar(rows, () => views.filter((r) => r.overdue).length);
 
   return (
     <div className="screen">
@@ -139,8 +145,7 @@ export function Invoices({ onSelect }: InvoicesProps) {
           loading={<p className="invoices__hint">Loading invoices…</p>}
           empty={<EmptyHint>No invoices on the books yet.</EmptyHint>}
         >
-          {(data) => {
-            const views = rowViewsFor(data, todayIso);
+          {() => {
             // Non-null: FILTERS lists all seven FilterKey members above, and `filter`
             // only ever holds a key set via setFilter(f.key) from that same array, so
             // this always finds one — TS just can't see that invariant through .find().
@@ -169,7 +174,7 @@ export function Invoices({ onSelect }: InvoicesProps) {
                 ) : (
                   <ul className="invoices__list">
                     {visible.map((v) => (
-                      <InvoiceRow key={v.entry._id} view={v} onSelect={onSelect} />
+                      <InvoiceRow key={v.entry._id} view={v} todayIso={todayIso} onSelect={onSelect} />
                     ))}
                   </ul>
                 )}
@@ -184,10 +189,11 @@ export function Invoices({ onSelect }: InvoicesProps) {
 
 interface InvoiceRowProps {
   view: RowView;
+  todayIso: string;
   onSelect?: ((invoiceId: string) => void) | undefined;
 }
 
-function InvoiceRow({ view, onSelect }: InvoiceRowProps) {
+function InvoiceRow({ view, todayIso, onSelect }: InvoiceRowProps) {
   const { entry, state, overdue } = view;
   // Overdue is a display-level refinement of "open" (see FILTERS' comment) —
   // it never becomes its own InvoiceState, it just outranks the plain "Open"
@@ -197,36 +203,48 @@ function InvoiceRow({ view, onSelect }: InvoiceRowProps) {
   const secondary = entry.client && entry.client !== entry.kinfolkName ? entry.client : null;
   const dateLine =
     state === 'open' && entry.dueDate
-      ? `due ${humanizeDate(entry.dueDate)}`
+      ? `due ${humanizeDate(entry.dueDate, todayIso)}`
       : entry.date
-        ? `${state === 'paid' ? 'paid' : 'dated'} ${humanizeDate(entry.date)}`
+        ? `${state === 'paid' ? 'paid' : 'dated'} ${humanizeDate(entry.date, todayIso)}`
         : entry.dueDate
-          ? `due ${humanizeDate(entry.dueDate)}`
+          ? `due ${humanizeDate(entry.dueDate, todayIso)}`
           : 'no date';
 
+  const body = (
+    <>
+      <span className="invoices__row-number">#{entry.invoiceNumber || '(none)'}</span>
+
+      <span className="invoices__row-who">
+        <span className="invoices__row-name">{household}</span>
+        {secondary ? <span className="invoices__row-secondary">{secondary}</span> : null}
+      </span>
+
+      <span className={overdue ? 'invoices__row-meta invoices__row-meta--overdue' : 'invoices__row-meta'}>
+        {dateLine}
+        {entry.sessionIds.length > 0 ? (
+          <span className="invoices__row-visits">
+            linked to {entry.sessionIds.length} visit{entry.sessionIds.length === 1 ? '' : 's'}
+          </span>
+        ) : null}
+      </span>
+
+      <span className="invoices__row-amount">{formatUsd(entry.total)}</span>
+
+      <span className={`invoices__chip invoices__chip--${info.cssClass}`}>{info.chipLabel}</span>
+    </>
+  );
+
+  // Static, non-interactive row unless a detail handler is wired (see
+  // InvoicesProps): a live no-op button is the dead-control anti-pattern.
   return (
     <li className="invoices__row">
-      <button type="button" className="invoices__row-main" onClick={() => onSelect?.(entry._id)}>
-        <span className="invoices__row-number">#{entry.invoiceNumber || '(none)'}</span>
-
-        <span className="invoices__row-who">
-          <span className="invoices__row-name">{household}</span>
-          {secondary ? <span className="invoices__row-secondary">{secondary}</span> : null}
-        </span>
-
-        <span className={overdue ? 'invoices__row-meta invoices__row-meta--overdue' : 'invoices__row-meta'}>
-          {dateLine}
-          {entry.sessionIds.length > 0 ? (
-            <span className="invoices__row-visits">
-              linked to {entry.sessionIds.length} visit{entry.sessionIds.length === 1 ? '' : 's'}
-            </span>
-          ) : null}
-        </span>
-
-        <span className="invoices__row-amount">{formatUsd(entry.total)}</span>
-
-        <span className={`invoices__chip invoices__chip--${info.cssClass}`}>{info.chipLabel}</span>
-      </button>
+      {onSelect ? (
+        <button type="button" className="invoices__row-main" onClick={() => onSelect(entry._id)}>
+          {body}
+        </button>
+      ) : (
+        <div className="invoices__row-main invoices__row-main--static">{body}</div>
+      )}
     </li>
   );
 }
