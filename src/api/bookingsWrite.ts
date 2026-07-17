@@ -103,6 +103,55 @@ export async function markBookingCompleted(bookingId: string, completedAtIso: st
   await setBookingStatus(bookingId, 'COMPLETED', { completedAt: completedAtIso });
 }
 
+/** One visit in a multi-date/recurring booking request. `startTimeMs` is epoch
+ *  ms; the caller derives it from a LOCAL date+time (AO-18), so no UTC skew. */
+export interface NewBookingVisit {
+  startTimeMs: number;
+  endTimeMs?: number | null;
+  /** Optional catalog id; when set the server resolves the canonical name+price. */
+  serviceId?: string | null;
+  serviceName: string;
+}
+
+export interface CreateMultiDateBookingArgs {
+  kinfolkId: string;
+  kinIds?: string[];
+  notes?: string;
+  pattern?: 'individual' | 'weekly';
+  weeklyDays?: number[];
+  visits: NewBookingVisit[];
+}
+
+export interface CreateMultiDateBookingResult {
+  batchId: string;
+  visitIds: string[];
+  visitCount: number;
+}
+
+/**
+ * createMultiDateBookingRequest (admin callable, AO-25): create a booking
+ * request of one or more visits (non-consecutive dates, or a weekly recurrence
+ * the caller expands into concrete visits) for a chosen household.
+ *
+ * IMPORTANT (disclosed, not silent): this writes the ENVELOPE model
+ * (`families/{kinfolkId}/bookings/{batchId}`), the wasm "Incoming requests"
+ * queue, as `envelopeStatus:'requested'`. It is a DIFFERENT collection from the
+ * flat `kin_care_sessions` the Bookings LIST streams, so a created request does
+ * NOT appear in that list until it is approved (approveBookingSeriesCore turns
+ * an approved envelope into scheduled sessions). The create UI's success copy
+ * says so. Throws (via lib/fns.call) on `not-found` (bad household) /
+ * `invalid-argument` (past time, bad window) / auth errors; the caller surfaces
+ * the message fail-loud.
+ */
+export async function createMultiDateBookingRequest(
+  args: CreateMultiDateBookingArgs,
+): Promise<CreateMultiDateBookingResult> {
+  return call<CreateMultiDateBookingArgs, CreateMultiDateBookingResult>(
+    'createMultiDateBookingRequest',
+    args,
+  );
+}
+
 export interface RescheduleBookingResult {
   ok: true;
   sessionId: string;
