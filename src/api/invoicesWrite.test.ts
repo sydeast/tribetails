@@ -98,33 +98,44 @@ describe('generateReceipt', () => {
 });
 
 describe('markInvoicePaid', () => {
-  it('routes through postInvoiceEvent with { status: "paid", amountDue: 0 }, not a dedicated markPaid callable', async () => {
+  it('calls the dedicated markInvoicePaid callable with just { invoiceId } when no payment details are given', async () => {
     call.mockReset();
-    call.mockResolvedValue({ ok: true });
-    await markInvoicePaid('inv-5', 'kf1');
-    expect(call).toHaveBeenCalledWith('postInvoiceEvent', {
-      familyId: 'kf1',
+    call.mockResolvedValue({ ok: true, invoiceId: 'inv-5', paymentId: 'pay-1' });
+    await markInvoicePaid('inv-5');
+    expect(call).toHaveBeenCalledWith('markInvoicePaid', { invoiceId: 'inv-5' });
+  });
+
+  it('passes method/reference/amount/paidAt through to the callable', async () => {
+    call.mockReset();
+    call.mockResolvedValue({ ok: true, invoiceId: 'inv-5', paymentId: 'pay-2' });
+    await markInvoicePaid('inv-5', { amount: 40, method: 'check', reference: 'CK-100', paidAt: '2026-07-01T00:00:00Z' });
+    expect(call).toHaveBeenCalledWith('markInvoicePaid', {
       invoiceId: 'inv-5',
-      payload: { status: 'paid', amountDue: 0 },
+      amount: 40,
+      method: 'check',
+      reference: 'CK-100',
+      paidAt: '2026-07-01T00:00:00Z',
     });
   });
 
   it('fails loud on rejection', async () => {
     call.mockReset();
     call.mockRejectedValue(new Error('permission-denied'));
-    await expect(markInvoicePaid('inv-5', 'kf1')).rejects.toThrow('permission-denied');
+    await expect(markInvoicePaid('inv-5')).rejects.toThrow('permission-denied');
   });
 });
 
 describe('reviewAndSendDraftInvoice', () => {
-  it('routes through postInvoiceEvent clearing status, not a dedicated reviewAndSendDraftInvoice callable', async () => {
+  it('calls the dedicated reviewAndSendDraftInvoice callable with just { invoiceId }', async () => {
     call.mockReset();
-    call.mockResolvedValue({ ok: true });
-    await reviewAndSendDraftInvoice('inv-6', 'kf1');
-    expect(call).toHaveBeenCalledWith('postInvoiceEvent', {
-      familyId: 'kf1',
-      invoiceId: 'inv-6',
-      payload: { status: '' },
-    });
+    call.mockResolvedValue({ ok: true, invoiceId: 'inv-6' });
+    await reviewAndSendDraftInvoice('inv-6');
+    expect(call).toHaveBeenCalledWith('reviewAndSendDraftInvoice', { invoiceId: 'inv-6' });
+  });
+
+  it('fails loud on rejection', async () => {
+    call.mockReset();
+    call.mockRejectedValue(new Error('failed-precondition'));
+    await expect(reviewAndSendDraftInvoice('inv-6')).rejects.toThrow('failed-precondition');
   });
 });

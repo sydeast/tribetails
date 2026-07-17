@@ -50,9 +50,12 @@ import './Templates.css';
  *  - Template *assignment* to notification catalog keys: a wholly separate
  *    screen (`TemplateAssignmentScreen.kt` / `assignTemplate`,
  *    `listTemplateBindings`, `listCatalogKeys`), not this bank list at all.
- *  - Deleting a template: confirmed against the backend, `emailTemplates` has
- *    no delete callable (see `api/templatesWrite.ts`'s doc comment). This
- *    screen and its editor are create + edit only.
+ *
+ * Deleting a template lives in the editor itself (TemplateEditor.tsx's
+ * "Delete" action, edit mode only), via `deleteTemplate`. This screen's part
+ * of that flow is `handleDeleted` below: reload-after-write, the same
+ * convention `handleSaved` already uses, so a deleted row disappears because
+ * the server no longer has it, not because of an optimistic local splice.
  */
 export interface TemplatesProps {
   /**
@@ -171,6 +174,14 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
     load();
   }
 
+  // Mirrors handleSaved above: reload after a successful delete rather than
+  // optimistically splicing the row out, the same convention
+  // FormSchemas.tsx's confirmDelete() uses for its own write.
+  function handleDeleted() {
+    setEditor(null);
+    load();
+  }
+
   const templateCount = asyncScalar(templates, (data) => data.length);
   const categoryCountStat = asyncScalar(categories, (data) => data.length);
   const untaggedCount = asyncScalar(templates, (data) => data.filter(isUntagged).length);
@@ -279,6 +290,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
           categories={categoryList}
           onClose={() => setEditor(null)}
           onSaved={handleSaved}
+          onDeleted={handleDeleted}
         />
       ) : null}
     </div>
