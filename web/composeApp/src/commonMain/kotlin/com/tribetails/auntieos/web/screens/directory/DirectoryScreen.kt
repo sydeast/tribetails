@@ -411,9 +411,14 @@ private fun DirectoryListScreen(
                         .sortedByOption(
                             option    = uiState.sort,
                             name      = { k -> k.name },
-                            // Kin has no timestamp fields yet. Alphabetic fallback
-                            // for both recency options until the schema grows
-                            // createdAt/updatedAt. Birthday is a poor proxy; not used.
+                            // AO-26: the BACKEND already writes kin createdAt/updatedAt
+                            // (addKin/updateKin/archiveKin, FieldValue.serverTimestamp),
+                            // so the data exists — the old "Kin has no timestamp fields
+                            // yet" comment was stale. What is missing is client plumbing:
+                            // the Kin model + getMyKin contract don't decode those
+                            // Timestamps into an ISO string here. This wasm surface is
+                            // deleted at the React cutover (A8), so it stays an alphabetic
+                            // fallback; the React directory MUST sort on the real fields.
                             createdAt = { _ -> "" },
                             updatedAt = { _ -> "" },
                         )
