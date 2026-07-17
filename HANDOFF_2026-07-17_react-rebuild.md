@@ -103,3 +103,23 @@ Sonnet agents built each screen/surface in an isolated repo copy → opus integr
 (cp + wire router/screen + tsc/test/build gate) → Fable reviewed each batch →
 opus applied fixes → plumbing-committed. Conventions hardened batch-over-batch; the
 later batches landed with zero review blockers.
+---
+- **Tablist arrow-key a11y — DONE + LIVE.** New `useRovingTabs` hook (WAI-ARIA
+  tablist keyboard pattern) applied to all 10 filter tablists. Committed, deployed.
+- **Communicate 1:1 Personalize (the "n8n" item) — DONE + LIVE.** Built on the
+  already-deployed onRequest endpoints in `web/functions` (`generate` = Auntie-voice
+  AI draft, `sendMessage` = 1:1 send). Recipient picker, generate/regenerate,
+  editable draft, confirm-gated send. `firebase.json` gained same-origin rewrites
+  `/api/generate → generate` and `/api/send-message → sendMessage` (verified live:
+  400 / 401 from the functions, not the SPA). Committed, deployed.
+- **"Stale rewrites" — FALSE ALARM, corrected.** The earlier flag (searchMapbox/
+  retrieveMapbox/sendMessage look wrong vs MyTribe exports) was wrong: those, plus
+  `generate`, are all onRequest functions in **`web/functions/index.js`** (the wasm
+  app's own functions codebase, separate from MyTribe). The `web/firebase.json`
+  rewrites resolve correctly. No fix needed.
+- **`18ded25` "probe" message** — accepted residual (8 commits deep; a rebase under
+  the git write-spell isn't worth it; the commit's content is correct).
+- **Un-tokenized font-sizes** — accepted (match the sibling-CSS convention).
+Final state: auntieos-admin 1507 tests green; admin app + 4 MyTribe callables +
+media index all deployed; the site (auntieos-admin.web.app) serves the full rebuild
+including every editor, media upload, and the personalize flow.
