@@ -20,7 +20,6 @@ function entry(over: Partial<BookingEntry>): BookingEntry {
     _id: 'ses1',
     kinfolkId: 'kf1',
     kinfolkName: 'The Whitfields',
-    kinIds: [],
     serviceType: 'Dog Walking',
     status: 'SCHEDULED',
     startTime: '2026-07-16T09:00:00',
@@ -41,7 +40,9 @@ describe('Bookings screen', () => {
   it('renders a streamed row with its household, service, when, and status chip', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Bookings />);
-    const row = screen.getByRole('button', { name: /The Whitfields/i });
+    // Scope by the row container, not the button — the row is only a <button>
+    // once a detail route wires onSelectBooking; here (unwired) it renders static.
+    const row = screen.getByText('The Whitfields').closest('.bookings__row') as HTMLElement;
     expect(within(row).getByText('The Whitfields')).toBeInTheDocument();
     expect(within(row).getByText(/Dog Walking/)).toBeInTheDocument();
     expect(within(row).getByText(/Jul 16, 9:00 AM/)).toBeInTheDocument();
@@ -157,9 +158,10 @@ describe('Bookings screen', () => {
   it('renders rows STATIC (not a live no-op button) when onSelectBooking is unwired — the router mounts this screen propless', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Bookings />);
-    const row = screen.getByText('The Whitfields').closest('.bookings__row-main');
-    expect(row).not.toBeNull();
-    expect(row).not.toHaveAttribute('role', 'button');
-    expect(row).not.toHaveAttribute('tabIndex');
+    // The content renders, but the row is NOT an interactive button when unwired:
+    // a handler-less <button> still carries the implicit ARIA button role, so we
+    // assert against the role, not just the explicit attributes.
+    expect(screen.getByText('The Whitfields')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /The Whitfields/i })).toBeNull();
   });
 });

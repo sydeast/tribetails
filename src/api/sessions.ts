@@ -69,10 +69,21 @@ export interface SessionEntry {
  * `INVOICES_QUERY`'s `createdAt`): `kin_care_sessions` genuinely has no
  * Timestamp-typed sort key on every doc the way `invoices.createdAt` does — but
  * `startTime` IS the one MyTribe's own `getMyVisits.ts` already orders the same
- * collection by (`.orderBy('startTime', 'desc')`), which confirms every real
- * writer populates it and Firestore can sort it as a plain string field (ISO-8601
- * text sorts identically to chronological order lexically, the same property
- * `humanizeDate`'s callers rely on in `invoiceFormat.ts`).
+ * collection by (`.orderBy('startTime', 'desc')`), which confirms the real
+ * writers populate it and Firestore can sort it as a plain string field.
+ *
+ * KNOWN TRADEOFFS (accepted, documented rather than silently swallowed):
+ *  - Lexical string sort is only chronological when the offsets match. This
+ *    collection has BOTH `...Z` UTC writes (approveBookingSeriesCore) and local
+ *    no-offset writes (bookingFormat.ts:99); a mixed batch can drift by up to the
+ *    zone offset right at the 300-row boundary. Acceptable for a bounded admin
+ *    list; a detail/report view should parse to instants before ordering.
+ *  - `orderBy('startTime')` DROPS any doc missing `startTime` (direct client-SDK
+ *    writes are allowed by rules) — it never reaches the 'Undated' group. Flagged
+ *    for operator prod-verification; backfill rather than weaken the sort.
+ *  - `desc` keeps the most-FUTURE 300: a large approved recurring series could
+ *    push today off the page and undercount the Today/Wrapped stats. If that
+ *    surfaces, add an upper-bound horizon filter or raise the cap.
  *
  * The STREAM's own `desc` order is only what bounds the 300-row page — it is
  * NOT the order the screen displays. `lib/sessionFormat.ts#groupSessionsByDay`

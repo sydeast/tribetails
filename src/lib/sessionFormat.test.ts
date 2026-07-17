@@ -13,6 +13,21 @@ import {
   localDateIso,
 } from './sessionFormat';
 
+// File-scope TZ pin: several suites below (groupSessionsByDay, sessionDayLabel)
+// assert LOCAL day keys derived from UTC strings. Without a fixed zone those
+// pass on a US runner and fail east of UTC — pin the whole file to a known zone
+// so the AO-18 local-day guarantee is tested meaningfully everywhere, not just
+// inside the one describe that pinned it locally.
+let fileOriginalTz: string | undefined;
+beforeAll(() => {
+  fileOriginalTz = process.env.TZ;
+  process.env.TZ = 'America/Chicago';
+});
+afterAll(() => {
+  if (fileOriginalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = fileOriginalTz;
+});
+
 describe('sessionTimeOf', () => {
   it('degrades honestly on blank/unparseable input, never fabricating a date', () => {
     expect(sessionTimeOf('')).toBeNull();

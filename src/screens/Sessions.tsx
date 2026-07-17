@@ -43,11 +43,11 @@ interface SessionsProps {
   /**
    * Placeholder: the detail/edit screen (clock-in/out, GPS, KinTale compose —
    * `KinCareDetailScreen`/`KinTaleComposeScreen` in the wasm) is a separate,
-   * not-yet-built screen; this port is LIST ONLY. Omitting this renders every
-   * row as a real, focusable button that simply does nothing when clicked yet
-   * — never a dead-looking static row (the FormSchemas.tsx/Invoices.tsx
-   * onSelect-is-optional convention) — so wiring the real detail route later
-   * touches only the router, not this screen.
+   * not-yet-built screen; this port is LIST ONLY. The router mounts this screen
+   * propless, so `onSelect` is undefined in production — see `SessionRow`: when
+   * unwired the row is a STATIC <div>, not a <button>. A handler-less <button>
+   * is still a focusable dead control, so the row only becomes a real <button>
+   * once a detail route wires the handler.
    */
   onSelect?: (sessionId: string) => void;
 }
@@ -105,11 +105,11 @@ export function Sessions({ onSelect }: SessionsProps) {
           tone="teal"
           feature={activeCount.kind === 'value' && activeCount.value > 0}
         />
-        <StatCard label="Today" value={todayCount} trend="scheduled for today" tone="orange" />
+        <StatCard label="Today" value={todayCount} trend="on today's calendar" tone="orange" />
         <StatCard label="Wrapped today" value={wrappedTodayCount} trend="completed Kin Cares" tone="success" />
       </div>
 
-      <DenPanel title="Kin Care sessions" subtitle="Grouped by day, newest scheduling window first, capped at 300.">
+      <DenPanel title="Kin Care sessions" subtitle="Grouped by day, earliest first (today, then coming up), from the latest 300 on the books.">
         <AsyncRegion
           state={rows}
           what="Kin Care sessions"

@@ -46,11 +46,10 @@ interface BookingsProps {
    * port is LIST ONLY (no create/edit flow, no row actions — see the
    * OUT-OF-SCOPE note in api/bookings.ts for what a detail screen would still
    * need to add). The router mounts this screen propless, so in production
-   * `onSelectBooking` is always undefined — see `BookingRow` below for how
-   * that is handled: NOT a live button that calls `onSelectBooking?.()` and
-   * silently no-ops (the FormSchemas.tsx "static-when-unwired" convention),
-   * but a row that simply has no `onClick` attached at all when there is
-   * nothing for it to do.
+   * `onSelectBooking` is always undefined — see `BookingRow` below: when
+   * unwired the row is a STATIC <div>, not a <button>. A handler-less <button>
+   * is still a focusable, tabbable dead control (the anti-pattern), so the row
+   * only becomes a real <button> once a detail route wires the handler.
    */
   onSelectBooking?: (bookingId: string) => void;
 }
@@ -128,7 +127,7 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
           feature={pendingCount.kind === 'value' && pendingCount.value > 0}
         />
         <StatCard label="Scheduled" value={scheduledCount} trend="on the books" tone="teal" />
-        <StatCard label="History" value={historyCount} trend="completed and cancelled" tone="purple" />
+        <StatCard label="History" value={historyCount} trend="completed, cancelled, or other" tone="purple" />
       </div>
 
       <DenPanel title="Bookings" subtitle="Newest first, capped at 200.">
@@ -198,42 +197,42 @@ function BookingRow({ view, onSelectBooking }: BookingRowProps) {
   const notePreview = entry.kinfolkNotes.trim() !== '' ? entry.kinfolkNotes : entry.notes;
   const serviceLabel = entry.serviceType.trim() !== '' ? entry.serviceType : 'Visit';
 
+  const body = (
+    <>
+      <Avatar
+        label={displayName}
+        initials={initialsFor(displayName)}
+        gradientSeed={entry.kinfolkId !== '' ? entry.kinfolkId : displayName}
+        size={40}
+        shape="rounded"
+      />
+
+      <span className="bookings__row-who">
+        <span className="bookings__row-name">{displayName}</span>
+        <span className="bookings__row-meta">
+          {serviceLabel} · {when}
+        </span>
+        {notePreview.trim() !== '' && (
+          <span className="bookings__row-note">Note: {notePreview.slice(0, 120)}</span>
+        )}
+      </span>
+
+      <span className={`bookings__chip bookings__chip--${info.cssClass}`}>{info.chipLabel}</span>
+    </>
+  );
+
+  // Static, non-interactive row unless a detail handler is wired: a handler-less
+  // <button> is still a focusable, tabbable dead control, so when unwired the
+  // row is a plain <div> — no button role, no cursor, no hover.
   return (
     <li className="bookings__row">
-      {/*
-        STATIC-WHEN-UNWIRED (FormSchemas.tsx convention): onClick/role/tabIndex
-        are only spread onto the button when a real handler exists. This is a
-        real <button> element either way, but it never calls
-        `onSelectBooking?.(id)` and silently no-ops when the router mounts this
-        screen propless — the prod default.
-      */}
-      <button
-        type="button"
-        className="bookings__row-main"
-        {...(onSelectBooking
-          ? { onClick: () => onSelectBooking(entry._id), role: 'button', tabIndex: 0 }
-          : {})}
-      >
-        <Avatar
-          label={displayName}
-          initials={initialsFor(displayName)}
-          gradientSeed={entry.kinfolkId !== '' ? entry.kinfolkId : displayName}
-          size={40}
-          shape="rounded"
-        />
-
-        <span className="bookings__row-who">
-          <span className="bookings__row-name">{displayName}</span>
-          <span className="bookings__row-meta">
-            {serviceLabel} · {when}
-          </span>
-          {notePreview.trim() !== '' && (
-            <span className="bookings__row-note">Note: {notePreview.slice(0, 120)}</span>
-          )}
-        </span>
-
-        <span className={`bookings__chip bookings__chip--${info.cssClass}`}>{info.chipLabel}</span>
-      </button>
+      {onSelectBooking ? (
+        <button type="button" className="bookings__row-main" onClick={() => onSelectBooking(entry._id)}>
+          {body}
+        </button>
+      ) : (
+        <div className="bookings__row-main bookings__row-main--static">{body}</div>
+      )}
     </li>
   );
 }
