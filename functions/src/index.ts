@@ -86,6 +86,7 @@ export { markInvoicePaid } from './admin/markInvoicePaid';
 export { reviewAndSendDraftInvoice } from './admin/reviewAndSendDraftInvoice';
 export { setKinfolkClaim } from './admin/setKinfolkClaim';
 export { revokeKinfolkClaim } from './admin/revokeKinfolkClaim';
+export { signCloudinaryUpload } from './admin/signCloudinaryUpload';
 export { dispatchVisitNotification } from './admin/dispatchVisitNotification';
 export { scheduleMarketingBlast } from './admin/scheduleMarketingBlast';
 export { addInternalBookingNote } from './admin/addInternalBookingNote';
