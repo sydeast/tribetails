@@ -213,7 +213,7 @@ export { sessionDayKey, sessionDayLabel, localDateIso };
 export type BusySlotKind = 'blocked' | 'unknown';
 
 export function busySlotKind(slotType: string): BusySlotKind {
-  return slotType.trim().toUpperCase() === 'BLOCKED' ? 'blocked' : 'unknown';
+  return (slotType ?? '').trim().toUpperCase() === 'BLOCKED' ? 'blocked' : 'unknown';
 }
 
 /** Minimal shape this module needs from a `booking_time_slots` doc. */
