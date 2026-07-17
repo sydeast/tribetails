@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { getFeatureFlags, setFeatureFlags, type FeatureFlags as Flags } from '../api/featureFlags';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
@@ -16,7 +16,9 @@ interface FlagMeta {
 /**
  * The genuinely-gated `auntieos.*` flags only. Built features that ship ON have
  * no row (they are not experimental) — mirrors the wasm FeatureFlagsScreen's
- * curated FLAGS list. Keep in sync with the config's non-ALWAYS_ON keys.
+ * curated FLAGS list. Keep in sync with the config's non-ALWAYS_ON keys; the
+ * wasm side pins this with FeatureFlagsScreenCoverageTest, which should be
+ * ported once a flag-config module lands in this repo (N1).
  */
 const FLAGS: readonly FlagMeta[] = [
   {
@@ -43,17 +45,28 @@ export function FeatureFlags() {
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
 
-  useEffect(() => {
+  // Hoisted so the error state can hand AsyncRegion a real retry (S1): a failed
+  // load offers "Retry", not a dead end that forces a full page reload.
+  const load = useCallback(() => {
     let live = true;
+    setFlags({ status: 'loading' });
     getFeatureFlags()
       .then((data) => live && setFlags({ status: 'ready', data }))
-      .catch((err: unknown) =>
-        live && setFlags({ status: 'error', message: err instanceof Error ? err.message : 'Load failed' }),
+      .catch(
+        (err: unknown) =>
+          live &&
+          setFlags({
+            status: 'error',
+            message: err instanceof Error ? err.message : 'Load failed',
+            retry: load,
+          }),
       );
     return () => {
       live = false;
     };
   }, []);
+
+  useEffect(() => load(), [load]);
 
   async function toggle(key: string, next: boolean) {
     if (flags.status !== 'ready' || savingKey) return;
@@ -72,7 +85,7 @@ export function FeatureFlags() {
   }
 
   return (
-    <main className="screen">
+    <div className="screen">
       <DenScreenHeading
         kicker="The Den · Admin"
         title="Feature"
@@ -118,6 +131,6 @@ export function FeatureFlags() {
           )}
         </AsyncRegion>
       </DenPanel>
-    </main>
+    </div>
   );
 }
