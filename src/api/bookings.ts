@@ -42,7 +42,6 @@ export interface BookingEntry {
   _id: string;
   kinfolkId: string;
   kinfolkName: string;
-  kinIds: string[];
   serviceType: string;
   status: string;
   startTime: string;

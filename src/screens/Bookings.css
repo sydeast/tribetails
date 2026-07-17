@@ -95,6 +95,12 @@
   border-radius: var(--radius-card);
   transition: background var(--dur-base) var(--ease-standard);
 }
+.bookings__row-main--static {
+  cursor: default;
+}
+.bookings__row-main--static:hover {
+  background: none;
+}
 .bookings__row-main:hover,
 .bookings__row-main:focus-visible {
   background: var(--color-surface-2);
