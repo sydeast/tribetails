@@ -8,6 +8,7 @@ import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
+import { Dialog } from '../components/Dialog';
 import './FormSchemas.css';
 
 /**
@@ -150,7 +151,8 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
     }
   }
 
-  const countLabel = schemas.status === 'ready' ? `${filterSchemas(schemas.data, query).length} schemas` : null;
+  const shownCount = schemas.status === 'ready' ? filterSchemas(schemas.data, query).length : 0;
+  const countLabel = shownCount > 0 ? `${shownCount} schemas` : null; // hide the chip on empty (wasm parity)
 
   return (
     <div className="screen">
@@ -160,7 +162,7 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
         accentTail="Schemas"
         subtitle="Author the dynamic forms kinfolk fill out."
         trailing={
-          <PrimaryButton label="New schema" onClick={() => onNew?.()} leading={<PlusGlyph />} />
+          <PrimaryButton label="New schema" {...(onNew ? { onClick: () => onNew() } : {})} leading={<PlusGlyph />} />
         }
       />
 
@@ -200,7 +202,7 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
                         <button
                           type="button"
                           className="schemas__row-main"
-                          onClick={() => onSelect?.(row.id)}
+                          {...(onSelect ? { onClick: () => onSelect(row.id), role: 'button', tabIndex: 0 } : {})}
                         >
                           <span className="schemas__row-name">{row.name || row.id}</span>
                           <code className="schemas__row-id">{row.id}</code>
@@ -227,33 +229,14 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
       </DenPanel>
 
       {pendingDelete && (
-        <div
-          className="schemas__dialog-backdrop"
-          onClick={() => {
+        <Dialog
+          title="Delete this form schema?"
+          onClose={() => {
             if (!deleting) setPendingDelete(null);
           }}
-        >
-          <div
-            className="schemas__dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="schemas-delete-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 id="schemas-delete-title" className="schemas__dialog-title">
-              Delete this form schema?
-            </h3>
-            <p className="schemas__dialog-hint">
-              {pendingDelete.name || pendingDelete.id} (v{pendingDelete.version}). This cannot be
-              undone.
-            </p>
-            <code className="schemas__dialog-id">Schema id: {pendingDelete.id}</code>
-            <div className="schemas__dialog-actions">
-              <GhostButton
-                label="Cancel"
-                onClick={() => setPendingDelete(null)}
-                disabled={deleting}
-              />
+          footer={
+            <>
+              <GhostButton label="Cancel" onClick={() => setPendingDelete(null)} disabled={deleting} />
               <PrimaryButton
                 label={deleting ? 'Deleting…' : 'Delete schema'}
                 onClick={() => void confirmDelete()}
@@ -261,9 +244,14 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
                 busy={deleting}
                 leading={<TrashGlyph />}
               />
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        >
+          <p className="schemas__dialog-hint">
+            {pendingDelete.name || pendingDelete.id} (v{pendingDelete.version}). This cannot be undone.
+          </p>
+          <code className="schemas__dialog-id">Schema id: {pendingDelete.id}</code>
+        </Dialog>
       )}
     </div>
   );
