@@ -1,0 +1,56 @@
+.account__hint {
+  color: var(--color-text-dim);
+  padding: var(--space-4) 0;
+}
+
+.account__identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.account__identity-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.account__identity-name {
+  font-family: var(--font-fraunces, serif);
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.account__identity-title {
+  color: var(--color-text-dim);
+}
+
+.account__fields {
+  display: grid;
+  grid-template-columns: minmax(9rem, max-content) 1fr;
+  gap: var(--space-3) var(--space-4);
+  margin: 0;
+}
+
+.account__field {
+  display: contents;
+}
+
+.account__field-label {
+  color: var(--color-text-dim);
+  font-weight: 500;
+}
+
+.account__field-value {
+  margin: 0;
+  color: var(--color-primary);
+  overflow-wrap: anywhere;
+}
+
+.account__field-value--mono {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9em;
+}
