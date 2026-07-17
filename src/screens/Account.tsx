@@ -88,7 +88,9 @@ export function Account({ onOpenNotifications }: AccountProps) {
           {(p) => {
             const name = profileDisplayName(p, user.displayName, user.email);
             const full = profileFullName(p);
-            const provider = user.providerData[0]?.providerId ?? 'password';
+            // Non-assuming default: an empty providerData reads as "Unknown"
+            // (via providerLabel('')), never a fabricated specific method.
+            const provider = user.providerData[0]?.providerId ?? '';
             return (
               <>
                 <div className="account__identity">

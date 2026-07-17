@@ -1,0 +1,89 @@
+/**
+ * My Notifications screen styling (read-only port of the wasm
+ * MyNotificationsScreen.kt operator prefs view). Scoped to this screen and
+ * imported directly by MyNotifications.tsx, the Account.css / Settings.css
+ * convention (a dedicated per-screen stylesheet), not folded into the shared
+ * styles/screens.css. Every value comes from styles/tokens.css, no literal
+ * colors, radii, or durations.
+ */
+
+.mynotif__hint {
+  color: var(--color-text-dim);
+  margin: 0;
+}
+
+.mynotif__sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.mynotif__section-heading {
+  font-family: var(--type-label-md-family);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  color: var(--color-text-faint);
+  margin: 0 0 var(--space-2);
+}
+
+.mynotif__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.mynotif__block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.mynotif__block-title {
+  color: var(--color-text-primary);
+  font-size: var(--type-body-md-size);
+}
+
+.mynotif__channels {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mynotif__channel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+.mynotif__channel-row:last-child {
+  border-bottom: none;
+}
+
+.mynotif__channel-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.mynotif__channel-label {
+  color: var(--color-text-primary);
+  font-size: var(--type-body-md-size);
+}
+
+.mynotif__channel-reason {
+  color: var(--color-text-dim);
+  font-size: var(--type-label-sm-size);
+}
+
+.mynotif__channel-trailing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
