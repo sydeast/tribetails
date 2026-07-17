@@ -1,0 +1,94 @@
+/**
+ * MediaUploadDialog styling. Scoped to this component and imported directly
+ * (the EditProfileDialog.css / Dialog.css convention), so nothing here needs
+ * to land in the shared styles/screens.css. Every value comes from
+ * styles/tokens.css: no literal colours, radii, or durations.
+ */
+
+.media-upload__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.media-upload__fields:disabled {
+  opacity: 0.6;
+}
+
+.media-upload__legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.media-upload__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.media-upload__label {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  font-weight: 500;
+}
+
+.media-upload__input,
+.media-upload__select {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.media-upload__input:focus-visible,
+.media-upload__select:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.media-upload__input[aria-invalid='true'],
+.media-upload__select[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+.media-upload__input:disabled,
+.media-upload__select:disabled {
+  color: var(--color-text-faint);
+}
+
+.media-upload__hint {
+  margin: 0;
+  color: var(--color-text-faint);
+  font-size: var(--type-body-sm-size);
+}
+
+.media-upload__error {
+  color: var(--color-error);
+  font-size: var(--type-body-sm-size);
+}
+
+.media-upload__stage {
+  margin: var(--space-4) 0 0;
+  color: var(--color-text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+}
+
+.media-upload__banner {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3);
+  color: var(--color-error);
+  background: var(--color-error-container);
+  border-radius: var(--radius-card);
+  font-size: var(--type-body-md-size);
+}

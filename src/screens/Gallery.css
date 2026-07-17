@@ -7,6 +7,12 @@
  * from the source, not a token: see Gallery.tsx's `TILE_SIZE` comment.
  */
 
+.gallery__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-4);
+}
+
 .gallery__hint {
   color: var(--color-text-dim);
   margin: 0;
