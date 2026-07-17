@@ -387,6 +387,48 @@ fun HomeScreen(
                                     }
                                 }
                             }
+                            // AO-24: A8 insight widgets (android parity). Hidden by default;
+                            // the operator adds them from Customize. Data lives on the VM state.
+                            DashKey.WEEKLY_CAPACITY -> DenPanel(
+                                title = "Weekly capacity",
+                                subtitle = "This week's visits vs your busiest recent week.",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                if (state.isLoading) EmptyHint("Loading visits…")
+                                else WeeklyCapacityWidget(state.allSessions, java.time.LocalDate.now().toString())
+                            }
+                            DashKey.OVERDUE_TRACKER -> DenPanel(
+                                title = "Overdue visits",
+                                subtitle = "Past their end time and not marked complete.",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                if (state.isLoading) EmptyHint("Loading visits…")
+                                else OverdueVisitsWidget(state.allSessions, java.time.LocalDate.now().toString())
+                            }
+                            DashKey.PET_BREAKDOWN -> DenPanel(
+                                title = "Pets by type",
+                                subtitle = "Who's in the pack, by species.",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                if (state.isLoading) EmptyHint("Loading the pack…")
+                                else PetBreakdownWidget(state.kin)
+                            }
+                            DashKey.FREQUENT_FLYERS -> DenPanel(
+                                title = "Frequent flyers",
+                                subtitle = "Your most-visited households over the last 90 days.",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                if (state.isLoading) EmptyHint("Loading visits…")
+                                else FrequentFlyersWidget(state.allSessions, java.time.LocalDate.now().toString())
+                            }
+                            DashKey.HOLIDAY_RUNWAY -> DenPanel(
+                                title = "Holiday runway",
+                                subtitle = "The next big pet-care holidays and what's already booked.",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                if (state.isLoading) EmptyHint("Loading visits…")
+                                else HolidayRunwayWidget(state.allSessions, java.time.LocalDate.now().toString())
+                            }
                         }
                         }
                     }
@@ -429,6 +471,11 @@ private fun dashLabel(key: DashKey): String = when (key) {
     DashKey.GATEKEEPER -> "Gatekeeper"
     DashKey.WEATHER_WATCHDOG -> "Weather Watchdog"
     DashKey.HEAT_INDEX -> "Heat Stroke Index"
+    DashKey.WEEKLY_CAPACITY -> "Weekly capacity"
+    DashKey.OVERDUE_TRACKER -> "Overdue visits"
+    DashKey.PET_BREAKDOWN -> "Pets by type"
+    DashKey.FREQUENT_FLYERS -> "Frequent flyers"
+    DashKey.HOLIDAY_RUNWAY -> "Holiday runway"
 }
 
 /** Den tone for a [WeatherRisk] level. */

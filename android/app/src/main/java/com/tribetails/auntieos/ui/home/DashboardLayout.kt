@@ -16,7 +16,15 @@ enum class DashKey(val token: String) {
     CASH_FLOW("cashFlow"),
     GATEKEEPER("gatekeeper"),
     WEATHER_WATCHDOG("weatherWatchdog"),
-    HEAT_INDEX("heatIndex");
+    HEAT_INDEX("heatIndex"),
+    // AO-24: android parity for the A8 insight widgets. Tokens match the web
+    // DashKey exactly so a layout customized on either app round-trips through
+    // UserProfile.dashboardWidgets.
+    WEEKLY_CAPACITY("weeklyCapacity"),
+    OVERDUE_TRACKER("overdueTracker"),
+    PET_BREAKDOWN("petBreakdown"),
+    FREQUENT_FLYERS("frequentFlyers"),
+    HOLIDAY_RUNWAY("holidayRunway");
 
     companion object {
         fun parse(s: String?): DashKey? = entries.firstOrNull { it.token == s?.trim() }

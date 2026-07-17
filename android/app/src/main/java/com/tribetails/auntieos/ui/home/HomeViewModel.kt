@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.Draft
+import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.UserProfile
@@ -52,6 +53,10 @@ data class HomeUiState(
     // Gatekeeper widget: top households by days since their last completed visit.
     val visitGaps: List<com.tribetails.auntieos.domain.HouseholdGap> = emptyList(),
     val gapsLoaded: Boolean = false,
+    // AO-24: full session + kin lists feeding the A8 insight widgets (Weekly
+    // capacity / Overdue / Pets by type / Frequent flyers / Holiday runway).
+    val allSessions: List<KinCareSession> = emptyList(),
+    val kin: List<Kin> = emptyList(),
     // 17.3 Dashboard: this admin's saved widget layout tokens ("key:size"); empty =
     // the shipped default. Resolved for render by DashboardLayout.resolvedDashboard.
     val dashboardWidgets: List<String> = emptyList(),
@@ -108,6 +113,8 @@ class HomeViewModel(
                 // Gatekeeper: all sessions (not just today's) to find each household's
                 // last completed visit. Same degrade-not-blank policy as invoices.
                 val allSessionsDef = async { repo.getKinCareSessions() }
+                // AO-24: the pack, for the Pets-by-type insight widget. Degrade-not-blank.
+                val allKinDef      = async { repo.getAllKin() }
 
                 // WARNING-9: use getOrElse so read failures are logged and surfaced via
                 // the isOffline banner, not silently defaulted to 0 / empty list.
@@ -163,6 +170,10 @@ class HomeViewModel(
                     todayIso = LocalDate.now().toString(),
                     limit = 5,
                 )
+                val allKin = allKinDef.await().getOrElse { e ->
+                    AuntieLog.e("Home: failed to load kin for insight widgets", e)
+                    emptyList()
+                }
 
                 // 17.3 Dashboard: load this admin's saved widget layout (snapshot).
                 // Non-critical + isolated from the dashboard's core data: a failure
@@ -223,6 +234,8 @@ class HomeViewModel(
                     invoicesLoaded    = invoicesLoaded,
                     visitGaps         = visitGaps,
                     gapsLoaded        = gapsLoaded,
+                    allSessions       = allSessions,
+                    kin               = allKin,
                     dashboardWidgets  = profile?.dashboardWidgets ?: emptyList(),
                     actionError       = null
                 )
