@@ -25,6 +25,7 @@ import { Schedule } from './screens/Schedule';
 import { Inbox } from './screens/Inbox';
 import { Settings } from './screens/Settings';
 import { Communicate } from './screens/Communicate';
+import { Account } from './screens/Account';
 import { AppShell } from './components/AppShell';
 
 /** Shared chrome: the two drifting orbs behind every screen (Den background). */
@@ -178,10 +179,16 @@ const communicateRoute = createRoute({
   component: Communicate,
 });
 
+const accountRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'account',
+  component: Account,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, tribalIntelRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, tribalIntelRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
