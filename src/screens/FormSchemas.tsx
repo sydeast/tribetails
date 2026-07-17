@@ -197,17 +197,26 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
                   <p className="schemas__hint">No schemas match &ldquo;{query}&rdquo;.</p>
                 ) : (
                   <ul className="schemas__list">
-                    {visible.map((row) => (
-                      <li key={row.id} className="schemas__row">
-                        <button
-                          type="button"
-                          className="schemas__row-main"
-                          {...(onSelect ? { onClick: () => onSelect(row.id), role: 'button', tabIndex: 0 } : {})}
-                        >
+                    {visible.map((row) => {
+                      const rowBody = (
+                        <>
                           <span className="schemas__row-name">{row.name || row.id}</span>
                           <code className="schemas__row-id">{row.id}</code>
                           <span className="schemas__row-meta">{metaLine(row)}</span>
-                        </button>
+                        </>
+                      );
+                      // Static <div> when unwired: a handler-less <button> still
+                      // carries the implicit button role and is a focusable dead
+                      // control. Real <button> only once onSelect wires it.
+                      return (
+                      <li key={row.id} className="schemas__row">
+                        {onSelect ? (
+                          <button type="button" className="schemas__row-main" onClick={() => onSelect(row.id)}>
+                            {rowBody}
+                          </button>
+                        ) : (
+                          <div className="schemas__row-main schemas__row-main--static">{rowBody}</div>
+                        )}
                         <IconButton
                           icon={<TrashGlyph />}
                           label={`Delete ${row.name || row.id}`}
@@ -217,7 +226,8 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
                           size={32}
                         />
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 )}
 

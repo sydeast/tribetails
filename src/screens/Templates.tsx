@@ -116,6 +116,14 @@ export function Templates({ onSelect }: TemplatesProps) {
   useEffect(() => load(), [load]);
   useEffect(() => loadCategories(), [loadCategories]);
 
+  // If the active category chip disappears after a reload (deleted server-side),
+  // fall back to All so the list never strands on an empty, tab-less filter.
+  useEffect(() => {
+    if (filter !== ALL_FILTER && categories.status === 'ready' && !categories.data.includes(filter)) {
+      setFilter(ALL_FILTER);
+    }
+  }, [filter, categories]);
+
   const templateCount = asyncScalar(templates, (data) => data.length);
   const categoryCountStat = asyncScalar(categories, (data) => data.length);
   const untaggedCount = asyncScalar(templates, (data) => data.filter(isUntagged).length);

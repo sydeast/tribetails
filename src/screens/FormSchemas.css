@@ -91,6 +91,10 @@
   outline-offset: -2px;
   border-radius: var(--radius-card);
 }
+/* Unwired (no editor route yet): a plain, non-interactive row. */
+.schemas__row-main--static {
+  cursor: default;
+}
 
 .schemas__row-name {
   font-family: var(--font-fraunces);

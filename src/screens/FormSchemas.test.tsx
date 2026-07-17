@@ -142,8 +142,11 @@ describe('FormSchemas screen', () => {
     await screen.findByText('Tribe Profile');
     expect(screen.getByText('New schema')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /new schema/i })).toBeNull();
-    const row = screen.getByText('Tribe Profile').closest('.schemas__row-main');
-    expect(row).not.toHaveAttribute('role', 'button');
+    // Row is a plain <div> when unwired, not a focusable button (a handler-less
+    // <button> would still carry the implicit button role). The Delete icon
+    // button stays interactive, so assert the ROW element's tag directly rather
+    // than a name query that the "Delete Tribe Profile" button would also match.
+    expect(screen.getByText('Tribe Profile').closest('.schemas__row-main')?.tagName).toBe('DIV');
   });
 
   it('confirms delete, calls deleteFormSchema, and reloads the list', async () => {

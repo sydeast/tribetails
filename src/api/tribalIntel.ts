@@ -77,7 +77,7 @@ export interface TribalIntelEntry {
   reconcileNotes: string;
   /** Free-text ISO instant, client-stamped at creation only: see `lib/tribalIntelFormat.ts#tribalIntelWhen`. */
   uploadedAt: string;
-  /** Real Firestore Timestamp (`FieldValue.serverTimestamp()`), stamped on every create AND update: the query's sort key. */
+  /** Real Firestore Timestamp (`FieldValue.serverTimestamp()`), stamped ONCE at creation (an edit re-stamps updatedAt only, never this): the query's sort key, so ordering is stable creation order. */
   createdAt: Timestamp | null;
 }
 
@@ -85,9 +85,13 @@ export interface TribalIntelEntry {
  * The bounded, server-ordered `training_documents` listener. Ordered by
  * `createdAt` descending, capped at 200 (the KinTales/Invoices convention:
  * this is a similarly-scaled flat collection, and `createdAt` is a real
- * `FieldValue.serverTimestamp()` stamped by both real writers (create AND
- * update), so ordering by it can't silently misplace an edited-but-not-
- * recreated row).
+ * `FieldValue.serverTimestamp()` stamped ONCE at create (an edit re-stamps
+ * updatedAt only, never createdAt), so ordering by it is stable creation order:
+ * an edited row keeps its place rather than jumping to the top.
+ *
+ * KNOWN TRADEOFF: Firestore `orderBy('createdAt')` DROPS any doc missing the
+ * field, so a pre-createdAt legacy doc would silently vanish from this list.
+ * Flagged for operator prod-verification; backfill rather than weaken the sort.
  *
  * DELIBERATE IMPROVEMENT over the wasm reference, not a faithfully-ported
  * behavior: `FirestoreInterop.*.kt`'s `platformTrainingDocsStream()` is a
