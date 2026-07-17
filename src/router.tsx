@@ -9,6 +9,8 @@ import { waitForAuthReady } from './lib/auth';
 import { resolveAccess } from './lib/access';
 import { SignIn } from './screens/SignIn';
 import { Home } from './screens/Home';
+import { FeatureFlags } from './screens/FeatureFlags';
+import { AppShell } from './components/AppShell';
 
 /** Shared chrome: the two drifting orbs behind every screen (Den background). */
 function RootLayout() {
@@ -39,9 +41,9 @@ const signInRoute = createRoute({
 });
 
 /**
- * Guard for every admin-only screen: signed in AND access is not `denied`.
- * A signed-in non-admin (e.g. a kinfolk who used their portal password) is
- * bounced to /signin, where the component signs the stale session out.
+ * Guard for the whole admin layout: signed in AND access is not `denied`. A
+ * signed-in non-admin is bounced to /signin, where the component signs the stale
+ * session out. Runs once at the layout level, so every child screen is protected.
  */
 async function requireAdmin() {
   const state = await waitForAuthReady();
@@ -51,14 +53,31 @@ async function requireAdmin() {
   return { access };
 }
 
-const homeRoute = createRoute({
+/** Path-less layout route: renders AppShell (nav rail + <Outlet/>) around its children. */
+const adminRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/home',
+  id: 'admin',
   beforeLoad: requireAdmin,
+  component: AppShell,
+});
+
+const homeRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'home',
   component: Home,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, signInRoute, homeRoute]);
+const featureFlagsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'feature-flags',
+  component: FeatureFlags,
+});
+
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  signInRoute,
+  adminRoute.addChildren([homeRoute, featureFlagsRoute]),
+]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
 
