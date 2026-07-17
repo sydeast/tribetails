@@ -145,6 +145,9 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     object KinTaleMoodEditor : Screen("kintale_template_moods?templateId={templateId}", "Moods", Lucide.Pencil) {
         fun createRoute(templateId: String?): String = "kintale_template_moods?templateId=${templateId.orEmpty()}"
     }
+    object KinTaleReviewBoosterEditor : Screen("kintale_template_review_booster?templateId={templateId}", "Review Booster", Lucide.Pencil) {
+        fun createRoute(templateId: String?): String = "kintale_template_review_booster?templateId=${templateId.orEmpty()}"
+    }
 
     // Profile sub-screens
     object HouseholdData : Screen("household_data/{kinfolkId}/{kinfolkName}", "Household Data", Lucide.Users) {
@@ -919,7 +922,9 @@ private fun AuthenticatedNavHost(
                     onConfigureMoods = {
                         navController.navigate(Screen.KinTaleMoodEditor.createRoute(tplId))
                     },
-                    onConfigureReviewBooster = { /* Phase 2E: editor TBD */ }
+                    onConfigureReviewBooster = {
+                        navController.navigate(Screen.KinTaleReviewBoosterEditor.createRoute(tplId))
+                    }
                 )
             }
             composable(
@@ -942,6 +947,18 @@ private fun AuthenticatedNavHost(
             ) { backStackEntry ->
                 val tplId = backStackEntry.arguments?.getString("templateId")
                 com.tribetails.auntieos.ui.kintales.MoodOptionsEditorScreen(
+                    templateId = tplId,
+                    onBack = { navController.popBackStack() }
+                )
+            }
+            composable(
+                route = Screen.KinTaleReviewBoosterEditor.route,
+                arguments = listOf(
+                    navArgument("templateId") { type = NavType.StringType; nullable = true; defaultValue = null }
+                )
+            ) { backStackEntry ->
+                val tplId = backStackEntry.arguments?.getString("templateId")
+                com.tribetails.auntieos.ui.kintales.ReviewBoosterEditorScreen(
                     templateId = tplId,
                     onBack = { navController.popBackStack() }
                 )
