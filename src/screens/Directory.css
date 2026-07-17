@@ -1,0 +1,258 @@
+/**
+ * Directory screen styling. Scoped to this screen and imported directly by
+ * Directory.tsx (the DenScreenKit.css / Banner.css / FormSchemas.css
+ * convention) — nothing here touches the shared styles/screens.css or
+ * styles/tokens.css. Every value comes from tokens.css: no literal colours,
+ * radii, or durations.
+ *
+ * AO-11: nothing in this file sets a fixed `height` or `overflow: hidden` on
+ * `.directory__card` or `.directory__pets`. The wasm card was a fixed-height
+ * Box that clipped the "+N more" overflow chip for a 4th+ pet; this card
+ * grows with its content instead, so the overflow chip can never be hidden.
+ */
+
+.directory__hint {
+  color: var(--color-text-dim);
+  margin: 0;
+}
+
+/* ── controls row: tabs · search · sort ─────────────────────────────────── */
+
+.directory__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.directory__tabs {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: 0.2rem;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-pill);
+  border: var(--border-hairline) solid var(--color-border);
+}
+
+.directory__tab {
+  font: inherit;
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  color: var(--color-text-dim);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: 0.45rem 1rem;
+  cursor: pointer;
+  transition:
+    background var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
+}
+.directory__tab[aria-selected='true'] {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+.directory__tab:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.directory__search-input {
+  flex: 1 1 16rem;
+  min-width: 12rem;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.directory__search-input:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.directory__search-input::placeholder {
+  color: var(--color-text-faint);
+}
+
+.directory__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.directory__sort-label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+}
+.directory__sort-select {
+  font: inherit;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 0.4rem 0.6rem;
+}
+.directory__sort-select:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+/* ── card grid ───────────────────────────────────────────────────────────── */
+
+.directory__grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.directory__cell {
+  min-width: 0;
+}
+
+/* No `height`, no `overflow: hidden` — see the AO-11 note in the file header. */
+.directory__card {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--color-surface-glass);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  padding: var(--space-4);
+  cursor: pointer;
+  transition:
+    background var(--dur-base) var(--ease-standard),
+    border-color var(--dur-base) var(--ease-standard);
+}
+.directory__card:hover,
+.directory__card:focus-visible {
+  background: var(--color-surface-2);
+  border-color: var(--color-primary);
+}
+.directory__card:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.directory__card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.directory__card-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.directory__card-name {
+  font-family: var(--font-fraunces);
+  font-size: var(--type-title-md-size);
+  font-weight: var(--type-title-md-weight);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directory__card-sub {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Wraps freely; the card grows to fit every chip, including the overflow one. */
+.directory__pets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.directory__pets-empty {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-faint);
+}
+
+.directory__pet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-pill);
+  padding: 0.2rem 0.65rem 0.2rem 0.2rem;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+
+.directory__pet-chip--overflow {
+  font-family: var(--font-mono);
+  color: var(--color-text-faint);
+  padding: 0.2rem 0.65rem;
+}
+
+.directory__card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: var(--border-hairline) solid var(--color-border-soft);
+}
+
+.directory__card-contact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.directory__card-contact-item {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directory__status-pill {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-2);
+  color: var(--color-text-dim);
+}
+.directory__status-pill[data-tone='success'] {
+  color: var(--color-success);
+}
+.directory__status-pill[data-tone='warning'] {
+  color: var(--color-warning);
+}
+.directory__status-pill[data-tone='muted'] {
+  color: var(--color-text-faint);
+}

@@ -18,6 +18,8 @@ const LIVE_LINKS = {
   activity: linkOptions({ to: '/activity' }),
   notifications: linkOptions({ to: '/notifications' }),
   'form-schemas': linkOptions({ to: '/form-schemas' }),
+  invoices: linkOptions({ to: '/invoices' }),
+  directory: linkOptions({ to: '/directory' }),
 } as const;
 
 /** Typed lookup: preserves each entry's literal `to` (a lossy Record cast would
