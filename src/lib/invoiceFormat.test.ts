@@ -114,6 +114,15 @@ describe('humanizeDate', () => {
   it('echoes the raw text when unparseable, rather than hiding it', () => {
     expect(humanizeDate('Net 14')).toBe('Net 14');
   });
+
+  it('appends the year only when it differs from the reference (no silent wrong-year)', () => {
+    // Same year as the reference: bare month/day.
+    expect(humanizeDate('2026-05-21', '2026-07-16')).toBe('May 21');
+    // Prior year: the year is shown so it never reads as this year.
+    expect(humanizeDate('2025-05-21', '2026-07-16')).toBe('May 21, 2025');
+    // No reference: back-compat, bare month/day.
+    expect(humanizeDate('2025-05-21')).toBe('May 21');
+  });
 });
 
 describe('isInvoiceOverdue', () => {

@@ -56,7 +56,10 @@ function StatusPill({ status }: { status: string }) {
 interface KinfolkCardProps {
   kf: Kinfolk;
   kin: Kin[];
-  onClick: () => void;
+  /** True while the shared Kin stream is still loading — disclose it, don't claim "No kin on file". */
+  kinPending: boolean;
+  /** Absent until a profile route is wired: the card then renders STATIC, never a no-op button. */
+  onClick?: () => void;
 }
 
 /**
@@ -67,15 +70,14 @@ interface KinfolkCardProps {
  * so the pet-chip row (`flex-wrap: wrap`) always grows the card rather than
  * clipping it, and the overflow chip is never hidden.
  */
-function KinfolkCard({ kf, kin, onClick }: KinfolkCardProps) {
+function KinfolkCard({ kf, kin, kinPending, onClick }: KinfolkCardProps) {
   const displayName = kinfolkDisplayName(kf);
   const subtitle = householdSubtitle(kf, kin);
   const shown = kin.slice(0, 3);
   const overflow = kin.length - shown.length;
 
-  return (
-    <li className="directory__cell">
-      <button type="button" className="directory__card" onClick={onClick}>
+  const body = (
+    <>
         <span className="directory__card-head">
           <Avatar
             label={displayName}
@@ -93,7 +95,9 @@ function KinfolkCard({ kf, kin, onClick }: KinfolkCardProps) {
 
         <span className="directory__pets">
           {kin.length === 0 ? (
-            <span className="directory__pets-empty">No kin on file</span>
+            <span className="directory__pets-empty">
+              {kinPending ? 'Loading kin…' : 'No kin on file'}
+            </span>
           ) : (
             <>
               {shown.map((k) => (
@@ -126,14 +130,28 @@ function KinfolkCard({ kf, kin, onClick }: KinfolkCardProps) {
           </span>
           <StatusPill status={kf.status} />
         </span>
-      </button>
+    </>
+  );
+
+  // Static, non-interactive card unless a profile handler is wired: a live
+  // no-op button is the dead-control anti-pattern (see ControlShell).
+  return (
+    <li className="directory__cell">
+      {onClick ? (
+        <button type="button" className="directory__card" onClick={onClick}>
+          {body}
+        </button>
+      ) : (
+        <div className="directory__card directory__card--static">{body}</div>
+      )}
     </li>
   );
 }
 
 interface KinCardProps {
   kin: Kin;
-  onClick: () => void;
+  /** Absent until a kin route is wired: the card then renders STATIC, never a no-op button. */
+  onClick?: () => void;
 }
 
 /** Kin (pet) card for the Kin tab. Mirrors KinfolkCard's frame, no pet-chip row. */
@@ -142,9 +160,8 @@ function KinCard({ kin, onClick }: KinCardProps) {
     .filter((s) => s !== '')
     .join(' · ');
 
-  return (
-    <li className="directory__cell">
-      <button type="button" className="directory__card" onClick={onClick}>
+  const body = (
+    <>
         <span className="directory__card-head">
           <Avatar
             label={kin.name}
@@ -166,7 +183,18 @@ function KinCard({ kin, onClick }: KinCardProps) {
           </span>
           <StatusPill status={kin.status} />
         </span>
-      </button>
+    </>
+  );
+
+  return (
+    <li className="directory__cell">
+      {onClick ? (
+        <button type="button" className="directory__card" onClick={onClick}>
+          {body}
+        </button>
+      ) : (
+        <div className="directory__card directory__card--static">{body}</div>
+      )}
     </li>
   );
 }
@@ -214,6 +242,11 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
     if (kinState.status !== 'ready') return new Map<string, Kin[]>();
     return activeKinByKinfolk(kinState.data);
   }, [kinState]);
+
+  // Disclosed to household cards: while the shared Kin stream is still loading,
+  // kinByKinfolk is empty for every card, so an empty pet row must read
+  // "Loading kin…", never a false "No kin on file".
+  const kinPending = kinState.status === 'loading';
 
   // Tab-pill counts: shown ONLY once the respective stream is genuinely ready,
   // never fabricated as 0 while loading/erroring (StatCard's ResolvedScalar policy).
@@ -320,7 +353,8 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
                     key={kf._id}
                     kf={kf}
                     kin={kinByKinfolk.get(kf._id) ?? []}
-                    onClick={() => onSelectKinfolk?.(kf._id)}
+                    kinPending={kinPending}
+                    {...(onSelectKinfolk ? { onClick: () => onSelectKinfolk(kf._id) } : {})}
                   />
                 ))}
               </ul>
@@ -343,7 +377,11 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
             return (
               <ul className="directory__grid">
                 {visible.map((k) => (
-                  <KinCard key={k._id} kin={k} onClick={() => onSelectKin?.(k._id)} />
+                  <KinCard
+                    key={k._id}
+                    kin={k}
+                    {...(onSelectKin ? { onClick: () => onSelectKin(k._id) } : {})}
+                  />
                 ))}
               </ul>
             );

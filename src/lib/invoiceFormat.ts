@@ -133,8 +133,14 @@ export function isoDatePrefixOrNull(raw: string): string | null {
   return candidate;
 }
 
-/** "May 21" for a parseable date, or the raw string verbatim when it isn't (fail-loud: show what's stored). */
-export function humanizeDate(raw: string): string {
+/**
+ * "May 21" for a parseable date, or the raw string verbatim when it isn't
+ * (fail-loud: show what's stored). Pass `refIso` (a local YYYY-MM-DD, e.g.
+ * today) to disambiguate cross-year dates: a date whose year differs from the
+ * reference gets the year appended ("May 21, 2025"), so a prior-year invoice
+ * never silently reads as this year. Omit `refIso` for the bare month/day.
+ */
+export function humanizeDate(raw: string, refIso?: string): string {
   const iso = isoDatePrefixOrNull(raw);
   if (!iso) return raw.trim();
   const month = Number(iso.slice(5, 7));
@@ -142,7 +148,9 @@ export function humanizeDate(raw: string): string {
   const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const name = names[month - 1];
   if (!name) return raw.trim();
-  return `${name} ${day}`;
+  const year = iso.slice(0, 4);
+  const showYear = refIso !== undefined && year !== refIso.slice(0, 4);
+  return showYear ? `${name} ${day}, ${year}` : `${name} ${day}`;
 }
 
 /**

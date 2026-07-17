@@ -100,6 +100,14 @@
 .invoices__row-main:focus-visible {
   background: var(--color-surface-2);
 }
+/* Unwired (no detail route yet): a plain, non-interactive row — no hand cursor,
+   no hover affordance, so it never reads as a clickable control that no-ops. */
+.invoices__row-main--static {
+  cursor: default;
+}
+.invoices__row-main--static:hover {
+  background: none;
+}
 .invoices__row-main:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;

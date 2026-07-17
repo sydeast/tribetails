@@ -152,11 +152,12 @@ describe('Directory screen — Kinfolk tab', () => {
     expect(onSelectKinfolk).toHaveBeenCalledWith('kf1');
   });
 
-  it('does not throw when onSelectKinfolk is omitted (no-op default)', async () => {
+  it('renders the card STATIC (not an interactive button) when onSelectKinfolk is omitted', () => {
     kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
     render(<Directory />);
-    await userEvent.click(screen.getByText('Jamie Halbrook'));
-    // no assertion needed beyond "did not throw"
+    // Card content renders, but it is NOT a clickable button when unwired.
+    expect(screen.getByText('Jamie Halbrook')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Jamie Halbrook/i })).toBeNull();
   });
 
   it('the sort select reverses alphabetical order between A→Z and Z→A', async () => {

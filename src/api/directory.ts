@@ -107,6 +107,13 @@ export function matchesKinfolk(kf: Kinfolk, needle: string): boolean {
  * this query needs NO composite Firestore index (single-field orderBy is
  * always covered by Firestore's automatic single-field index) — same
  * reasoning NOTIFICATIONS_QUERY documents.
+ *
+ * KNOWN TRADEOFF: Firestore `orderBy` excludes any doc MISSING the sort field,
+ * so a kinfolk with no `lastName` (or, for KIN_QUERY, a `kin` predating the
+ * `updatedAt` mirror stamp) silently drops from the list, chips, and count.
+ * Acceptable only if those fields are always present in prod; flagged for
+ * operator prod-verification. If a legacy doc lacks the field, BACKFILL it —
+ * do not weaken the sort to a nullable field, which would just move the drop.
  */
 export const KINFOLK_QUERY: CollectionSpec = {
   path: 'kinfolk',

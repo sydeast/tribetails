@@ -144,6 +144,15 @@
   background: var(--color-surface-2);
   border-color: var(--color-primary);
 }
+/* Unwired (no profile route yet): a plain, non-interactive card — no hand
+   cursor, no hover, so it never reads as a clickable control that no-ops. */
+.directory__card--static {
+  cursor: default;
+}
+.directory__card--static:hover {
+  background: var(--color-surface-glass);
+  border-color: var(--color-border);
+}
 .directory__card:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
