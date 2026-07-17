@@ -19,6 +19,8 @@ import { Bookings } from './screens/Bookings';
 import { Sessions } from './screens/Sessions';
 import { KinTales } from './screens/KinTales';
 import { Gallery } from './screens/Gallery';
+import { Templates } from './screens/Templates';
+import { TribalIntel } from './screens/TribalIntel';
 import { AppShell } from './components/AppShell';
 
 /** Shared chrome: the two drifting orbs behind every screen (Den background). */
@@ -136,10 +138,22 @@ const galleryRoute = createRoute({
   component: Gallery,
 });
 
+const templatesRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'templates',
+  component: Templates,
+});
+
+const tribalIntelRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'tribal-intel',
+  component: TribalIntel,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, tribalIntelRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

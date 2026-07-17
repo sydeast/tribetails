@@ -24,6 +24,8 @@ const LIVE_LINKS = {
   sessions: linkOptions({ to: '/sessions' }),
   kintales: linkOptions({ to: '/kintales' }),
   gallery: linkOptions({ to: '/gallery' }),
+  templates: linkOptions({ to: '/templates' }),
+  'tribal-intel': linkOptions({ to: '/tribal-intel' }),
 } as const;
 
 /** Typed lookup: preserves each entry's literal `to` (a lossy Record cast would
