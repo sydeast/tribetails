@@ -22,6 +22,8 @@ const LIVE_LINKS = {
   directory: linkOptions({ to: '/directory' }),
   bookings: linkOptions({ to: '/bookings' }),
   sessions: linkOptions({ to: '/sessions' }),
+  kintales: linkOptions({ to: '/kintales' }),
+  gallery: linkOptions({ to: '/gallery' }),
 } as const;
 
 /** Typed lookup: preserves each entry's literal `to` (a lossy Record cast would
