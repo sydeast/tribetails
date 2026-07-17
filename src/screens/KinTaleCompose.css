@@ -1,0 +1,149 @@
+/**
+ * KinTaleCompose screen styling. Scoped to this screen and imported directly by
+ * KinTaleCompose.tsx (the KinTales.css / FormSchemas.css convention), so
+ * nothing here needs to land in the shared styles/screens.css. Every value
+ * comes from styles/tokens.css, no literal colours, radii, durations, or px
+ * spacing.
+ */
+
+.kintale-compose__hint {
+  color: var(--color-text-dim);
+  margin: 0;
+}
+
+/* ── read-only "goes to" meta ────────────────────────────────────────────── */
+
+.kintale-compose__meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+.kintale-compose__meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.kintale-compose__meta-row dt {
+  flex: 0 0 6rem;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+  text-transform: uppercase;
+  letter-spacing: var(--type-label-sm-tracking);
+}
+.kintale-compose__meta-row dd {
+  margin: 0;
+  color: var(--color-text-primary);
+}
+.kintale-compose__meta-row code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--color-text-dim);
+}
+
+/* ── fields ──────────────────────────────────────────────────────────────── */
+
+.kintale-compose__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.kintale-compose__field:last-child {
+  margin-bottom: 0;
+}
+
+.kintale-compose__label {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+}
+
+.kintale-compose__input,
+.kintale-compose__textarea {
+  font: inherit;
+  font-family: var(--font-hanken);
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-3);
+  resize: vertical;
+}
+.kintale-compose__input:focus-visible,
+.kintale-compose__textarea:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+.kintale-compose__textarea {
+  min-height: 8rem;
+  line-height: var(--type-body-md-line);
+}
+
+/* ── actions ─────────────────────────────────────────────────────────────── */
+
+.kintale-compose__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.kintale-compose__dialog-hint {
+  color: var(--color-text-dim);
+  margin: 0;
+}
+
+/* ── session picker (NEW with no session chosen yet) ────────────────────── */
+
+.kintale-compose__picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.kintale-compose__picker-row {
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+.kintale-compose__picker-row:last-child {
+  border-bottom: none;
+}
+
+.kintale-compose__picker-button {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  padding: var(--space-3) var(--space-2);
+  border-radius: var(--radius-card);
+  transition: background var(--dur-base) var(--ease-standard);
+}
+.kintale-compose__picker-button:hover,
+.kintale-compose__picker-button:focus-visible {
+  background: var(--color-surface-2);
+}
+.kintale-compose__picker-button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.kintale-compose__picker-name {
+  font-family: var(--font-hanken);
+  font-size: var(--type-title-md-size);
+  font-weight: var(--type-title-md-weight);
+  color: var(--color-text-primary);
+}

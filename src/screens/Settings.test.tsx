@@ -6,6 +6,24 @@ import userEvent from '@testing-library/user-event';
 const getBusinessSettings = vi.fn();
 vi.mock('../api/settings', () => ({ getBusinessSettings: () => getBusinessSettings() }));
 
+// SettingsEdit is exercised by its own SettingsEdit.test.tsx; here it is a
+// stand-in so this file only asserts Settings.tsx's OWN wiring (does clicking
+// "Edit settings" swap the overview for the editor, and does returning from it
+// reload the overview) without re-testing the editor's field-level behavior.
+const settingsEditOnDone = vi.fn();
+vi.mock('./SettingsEdit', () => ({
+  SettingsEdit: ({ onDone }: { onDone: () => void }) => {
+    settingsEditOnDone.mockImplementation(onDone);
+    return (
+      <div data-testid="settings-edit-stub">
+        <button type="button" onClick={onDone}>
+          stub: back to overview
+        </button>
+      </div>
+    );
+  },
+}));
+
 import { Settings } from './Settings';
 import type { BusinessSettings } from '../api/settings';
 
@@ -79,6 +97,7 @@ function withOverrides(overrides: Partial<BusinessSettings>): BusinessSettings {
 
 beforeEach(() => {
   getBusinessSettings.mockReset();
+  settingsEditOnDone.mockReset();
 });
 
 describe('Settings screen (read-only overview)', () => {
@@ -103,7 +122,7 @@ describe('Settings screen (read-only overview)', () => {
     expect(await screen.findByText('Business profile')).toBeInTheDocument();
   });
 
-  it('always shows the read-only banner, never an edit form', async () => {
+  it('always shows the read-only banner, never an edit form, in the default (non-editing) view', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);
     await screen.findByText('Business profile');
@@ -208,20 +227,40 @@ describe('Settings screen (read-only overview)', () => {
     expect(await screen.findByText('Never saved yet')).toBeInTheDocument();
   });
 
-  it('renders "Edit settings" as a static, non-interactive element when onEdit is not wired (dead-control)', async () => {
+  it('renders "Edit settings" as a real, always-interactive button (the editor is now built)', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);
     await screen.findByText('Business profile');
-    expect(screen.queryByRole('button', { name: /edit settings/i })).not.toBeInTheDocument();
-    expect(screen.getByText('Edit settings')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /edit settings/i })).toBeInTheDocument();
   });
 
-  it('renders "Edit settings" as a real button and calls onEdit when wired', async () => {
+  it('clicking "Edit settings" swaps the overview for the editor', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByText('Business profile');
+    await userEvent.click(screen.getByRole('button', { name: /edit settings/i }));
+    expect(screen.getByTestId('settings-edit-stub')).toBeInTheDocument();
+    expect(screen.queryByText('Business profile')).not.toBeInTheDocument();
+  });
+
+  it('also calls an externally-supplied onEdit, if given, when "Edit settings" is clicked', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     const onEdit = vi.fn();
     render(<Settings onEdit={onEdit} />);
     await screen.findByText('Business profile');
     await userEvent.click(screen.getByRole('button', { name: /edit settings/i }));
     expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('settings-edit-stub')).toBeInTheDocument();
+  });
+
+  it('returning from the editor (onDone) reloads the overview', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByText('Business profile');
+    await userEvent.click(screen.getByRole('button', { name: /edit settings/i }));
+    getBusinessSettings.mockClear();
+    await userEvent.click(screen.getByText('stub: back to overview'));
+    expect(await screen.findByText('Business profile')).toBeInTheDocument();
+    expect(getBusinessSettings).toHaveBeenCalledTimes(1);
   });
 });

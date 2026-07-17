@@ -1,0 +1,178 @@
+/**
+ * Communicate COMPOSE / BROADCAST screen styling. Scoped to this screen and
+ * imported directly by CommunicateCompose.tsx (the Communicate.css / FormSchemas.css
+ * convention), so nothing here needs to land in the shared styles/screens.css.
+ * Every value comes from styles/tokens.css: no literal colours, radii, durations,
+ * or px spacing.
+ */
+
+.compose__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.compose__fieldset {
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.compose__legend {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  padding: 0 var(--space-2);
+}
+
+.compose__radio-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.compose__radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+
+.compose__toggle-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.compose__toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.compose__toggle-caption {
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+
+.compose__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.compose__field-label {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.compose__text-input,
+.compose__textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.compose__text-input:focus-visible,
+.compose__textarea:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.compose__text-input::placeholder,
+.compose__textarea::placeholder {
+  color: var(--color-text-faint);
+}
+.compose__text-input:disabled,
+.compose__textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.compose__textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.compose__char-count {
+  align-self: flex-end;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--color-text-faint);
+}
+
+.compose__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+/* ── confirm Dialog body ─────────────────────────────────────────────────── */
+
+.compose__confirm-line {
+  margin: 0 0 var(--space-2) 0;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.compose__confirm-note {
+  margin: var(--space-3) 0 0 0;
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+}
+
+/* ── post-send result panel ─────────────────────────────────────────────── */
+
+.compose__result-list {
+  list-style: none;
+  margin: 0 0 var(--space-4) 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.compose__result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+  padding: var(--space-2) 0;
+}
+.compose__result-row:last-child {
+  border-bottom: none;
+}
+
+.compose__result-channel {
+  font-family: var(--font-hanken);
+  font-weight: var(--type-title-md-weight);
+  color: var(--color-text-primary);
+}
+
+.compose__result-counts {
+  font-family: var(--font-mono);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}

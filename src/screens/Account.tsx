@@ -8,6 +8,7 @@ import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { Banner } from '../components/Banner';
 import { Avatar } from '../components/Avatar';
 import { PrimaryButton } from '../components/Buttons';
+import { EditProfileDialog } from '../components/EditProfileDialog';
 import {
   profileDisplayName,
   profileFullName,
@@ -43,6 +44,7 @@ export function Account({ onOpenNotifications }: AccountProps) {
   const uid = user?.uid ?? '';
 
   const [profile, setProfile] = useState<Async<UserProfile>>({ status: 'loading' });
+  const [editing, setEditing] = useState(false);
   const load = useCallback(() => {
     if (uid === '') return;
     let live = true;
@@ -108,7 +110,11 @@ export function Account({ onOpenNotifications }: AccountProps) {
                   </div>
                 </div>
 
-                <DenPanel title="Profile" subtitle="Read-only. Editing lives in the profile editor.">
+                <DenPanel
+                  title="Profile"
+                  subtitle="Your personal profile."
+                  trailing={<PrimaryButton label="Edit profile" onClick={() => setEditing(true)} />}
+                >
                   <dl className="account__fields">
                     <Field label="Display name" value={p.displayName || '(not set)'} />
                     <Field label="Full name" value={full || '(not set)'} />
@@ -152,6 +158,18 @@ export function Account({ onOpenNotifications }: AccountProps) {
                     {...(onOpenNotifications ? { onClick: onOpenNotifications } : {})}
                   />
                 </DenPanel>
+
+                {editing && (
+                  <EditProfileDialog
+                    uid={uid}
+                    profile={p}
+                    onClose={() => setEditing(false)}
+                    onSaved={() => {
+                      setEditing(false);
+                      load();
+                    }}
+                  />
+                )}
               </>
             );
           }}

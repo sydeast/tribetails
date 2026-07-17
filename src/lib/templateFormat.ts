@@ -12,6 +12,13 @@ import type { TemplateSummary } from '../api/templates';
  * file, so there is no existing Kotlin helper module to port 1:1; this file
  * is the equivalent the React port introduces, same role `kinTaleFormat.ts`
  * plays for KinTales.
+ *
+ * EXTENDED for the Template Editor (create/edit): the second half of this
+ * file, below the "editor form" marker, has no wasm counterpart to port from
+ * (`TemplateEditorOverlay` keeps its own validation inline in Kotlin, same as
+ * the list logic above did before this file existed). These are new, but kept
+ * in this module rather than a separate one so every template-shaped pure
+ * function lives in one place, matching the existing convention here.
  */
 
 // ── row title / subject / tags ──────────────────────────────────────────────
@@ -120,4 +127,181 @@ export function categoryMatchesFilter(category: string | null, filterCategory: s
  */
 export function categoryCount(templates: TemplateSummary[], name: string): number {
   return templates.filter((t) => categoryMatchesFilter(t.category, name)).length;
+}
+
+// ── editor form (create/edit) ───────────────────────────────────────────────
+//
+// Everything below backs TemplateEditor.tsx. All of it is validation/payload
+// shaping ONLY: no callable, no React, so it is unit-testable in isolation
+// exactly like the list helpers above.
+
+/**
+ * Matches the backend's own `templateId` regex EXACTLY
+ * (`MyTribe/functions/src/admin/saveTemplate.ts`'s `Args.templateId`:
+ * `z.string().min(1).max(120).regex(/^[a-zA-Z0-9_.-]+$/)`). Validating the
+ * same pattern client-side turns a guaranteed `invalid-argument` round trip
+ * into an inline message the operator sees before they ever click Save.
+ */
+export const TEMPLATE_ID_PATTERN = /^[a-zA-Z0-9_.-]+$/;
+
+/** Mirrors the backend's own `.max(120)` on `templateId`, so the inline error can name the same limit the server enforces. */
+export const TEMPLATE_ID_MAX_LENGTH = 120;
+
+/**
+ * The raw field values TemplateEditor.tsx holds in state, one `useState` slot
+ * of untouched operator input each. `tagsInput` and `html` are plain strings
+ * (a comma-separated line, and a possibly-empty textarea) rather than the
+ * `string[]` / `string | null` shapes the save payload needs: that shaping
+ * happens in `buildSaveTemplatePayload` below, kept separate from what the
+ * form fields themselves look like.
+ */
+export interface TemplateFormFields {
+  templateId: string;
+  title: string;
+  subject: string;
+  body: string;
+  html: string;
+  description: string;
+  category: string;
+  tagsInput: string;
+}
+
+/** An editor pre-filled from an existing row (edit mode). templateId is carried through but the editor renders it read-only. */
+export function templateToFormFields(tpl: TemplateSummary): TemplateFormFields {
+  return {
+    templateId: tpl.templateId,
+    title: tpl.title,
+    subject: tpl.subject,
+    body: tpl.body,
+    html: tpl.html ?? '',
+    description: tpl.description ?? '',
+    category: tpl.category ?? '',
+    tagsInput: formatTagsInput(tpl.tags),
+  };
+}
+
+/** A blank form for create mode. Every field starts empty; nothing is pre-filled from a prior edit. */
+export function blankFormFields(): TemplateFormFields {
+  return {
+    templateId: '',
+    title: '',
+    subject: '',
+    body: '',
+    html: '',
+    description: '',
+    category: '',
+    tagsInput: '',
+  };
+}
+
+/**
+ * Splits the editor's single comma-separated tags line into the trimmed,
+ * non-blank tag list the backend expects, dropping any run of blank entries a
+ * trailing/doubled comma would otherwise produce (`"a, , b,"` -> `["a", "b"]`).
+ */
+export function parseTagsInput(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((t) => t.trim())
+    .filter((t) => t !== '');
+}
+
+/** The inverse of `parseTagsInput`, for pre-filling the editor from an existing row's `tags: string[]`. */
+export function formatTagsInput(tags: string[]): string {
+  return tags.join(', ');
+}
+
+/**
+ * templateId field error, or `null` when it is valid. Only checked in CREATE
+ * mode: the id is the Firestore doc path segment, so an edit never changes it
+ * (see TemplateEditor.tsx), and re-validating an already-saved id on every
+ * edit would risk rejecting a legacy id the backend already accepted under a
+ * looser or since-changed rule.
+ */
+export function templateIdError(id: string): string | null {
+  const trimmed = id.trim();
+  if (trimmed === '') return 'Template key is required.';
+  if (trimmed.length > TEMPLATE_ID_MAX_LENGTH) {
+    return `Template key must be ${TEMPLATE_ID_MAX_LENGTH} characters or fewer.`;
+  }
+  if (!TEMPLATE_ID_PATTERN.test(trimmed)) {
+    return 'Template key may only use letters, numbers, underscore, period, and hyphen.';
+  }
+  return null;
+}
+
+/**
+ * The single blocking error for the whole form, or `null` when it is ready to
+ * submit. Checked in this order because a missing/malformed key is the most
+ * likely mistake on a brand-new template and the operator should see that
+ * before anything else. Only `templateId` (create-only), `subject`, and
+ * `body` are required: `title`/`description`/`category`/`tags`/`html` are all
+ * optional on the backend (`Args` schema), and the editor does not invent a
+ * stricter rule than the server enforces.
+ */
+export function templateFormError(
+  fields: Pick<TemplateFormFields, 'templateId' | 'subject' | 'body'>,
+  opts: { isCreate: boolean },
+): string | null {
+  if (opts.isCreate) {
+    const idError = templateIdError(fields.templateId);
+    if (idError) return idError;
+  }
+  if (fields.subject.trim() === '') return 'Subject is required.';
+  if (fields.body.trim() === '') return 'Body is required.';
+  return null;
+}
+
+/**
+ * The exact `saveTemplate` callable payload for these form fields. Mirrors
+ * `saveTemplateHandler`'s `Args` shape field-for-field
+ * (`MyTribe/functions/src/admin/saveTemplate.ts`):
+ *
+ *  - `title` / `description` / `category` are OPTIONAL strings on the
+ *    backend, not nullable (`z.string().optional()`, no `.nullable()`). A
+ *    blank field is omitted from the payload entirely (`undefined`), never
+ *    sent as `null`: an explicit `null` for any of these three would fail the
+ *    server's zod parse with `invalid-argument`. Omitting `title` also lets
+ *    the backend's own `title: args.title ?? args.templateId` fallback apply,
+ *    matching `templateRowTitle`'s read-side fallback above.
+ *  - `html` is the one field the backend DOES accept `null` for
+ *    (`z.string().max(50000).nullable().optional()`), matching
+ *    `TemplateSummary.html: string | null`. A blank html field is sent as
+ *    `null`, not omitted, so a save that clears existing HTML actually clears
+ *    it rather than leaving the old value (`{ merge: true }` on the backend
+ *    would otherwise keep a field that is left out of the payload).
+ *  - `tags` is always sent, including an empty array for "no tags": the
+ *    backend does `args.tags ?? []` either way, and sending `[]` explicitly is
+ *    what lets a save actually CLEAR a template's existing tags.
+ *
+ * Caller is expected to have already checked `templateFormError` returns
+ * `null` before calling this: it does not re-validate.
+ */
+export interface SaveTemplatePayload {
+  templateId: string;
+  subject: string;
+  body: string;
+  html: string | null;
+  title?: string;
+  description?: string;
+  tags: string[];
+  category?: string;
+}
+
+export function buildSaveTemplatePayload(fields: TemplateFormFields): SaveTemplatePayload {
+  const title = fields.title.trim();
+  const description = fields.description.trim();
+  const category = fields.category.trim();
+  const html = fields.html.trim();
+
+  return {
+    templateId: fields.templateId.trim(),
+    subject: fields.subject.trim(),
+    body: fields.body.trim(),
+    html: html === '' ? null : html,
+    ...(title !== '' ? { title } : {}),
+    ...(description !== '' ? { description } : {}),
+    ...(category !== '' ? { category } : {}),
+    tags: parseTagsInput(fields.tagsInput),
+  };
 }

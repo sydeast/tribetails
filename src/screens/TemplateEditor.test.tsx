@@ -1,0 +1,234 @@
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import type { TemplateSummary } from '../api/templates';
+
+const { saveTemplate } = vi.hoisted(() => ({ saveTemplate: vi.fn() }));
+vi.mock('../api/templatesWrite', () => ({ saveTemplate }));
+
+import { TemplateEditor } from './TemplateEditor';
+
+function tpl(over: Partial<TemplateSummary> = {}): TemplateSummary {
+  return {
+    templateId: 'booking.confirmed',
+    subject: 'Your booking is confirmed',
+    body: 'Hi {{kinfolk_name}}',
+    html: null,
+    title: 'Booking Confirmed',
+    description: null,
+    tags: [],
+    category: null,
+    ...over,
+  };
+}
+
+beforeEach(() => {
+  saveTemplate.mockReset();
+});
+
+describe('TemplateEditor: create mode', () => {
+  it('renders an empty form with an editable template key field', () => {
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByRole('dialog', { name: /new template/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/template key/i)).toHaveValue('');
+    expect(screen.getByLabelText(/^subject$/i)).toHaveValue('');
+    expect(screen.getByLabelText(/^body$/i)).toHaveValue('');
+  });
+
+  it('blocks save and shows an inline error when the template key is blank', async () => {
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
+    await userEvent.type(screen.getByLabelText(/^body$/i), 'Body');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(await screen.findByText(/template key is required/i)).toBeInTheDocument();
+    expect(saveTemplate).not.toHaveBeenCalled();
+  });
+
+  it('blocks save on an invalid template key (matching the backend regex)', async () => {
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/template key/i), 'booking confirmed');
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
+    await userEvent.type(screen.getByLabelText(/^body$/i), 'Body');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    // "may only use" is unique to the inline error; the static field hint
+    // below the input shares the same character-set wording, so a bare
+    // substring match on that wording alone would hit both.
+    expect(await screen.findByText(/may only use letters, numbers, underscore, period, and hyphen/i)).toBeInTheDocument();
+    expect(saveTemplate).not.toHaveBeenCalled();
+  });
+
+  it('blocks save when subject is blank', async () => {
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
+    await userEvent.type(screen.getByLabelText(/^body$/i), 'Body');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(await screen.findByText(/subject is required/i)).toBeInTheDocument();
+    expect(saveTemplate).not.toHaveBeenCalled();
+  });
+
+  it('blocks save when body is blank', async () => {
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(await screen.findByText(/body is required/i)).toBeInTheDocument();
+    expect(saveTemplate).not.toHaveBeenCalled();
+  });
+
+  it('calls saveTemplate with the exact payload and onSaved on success', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    const onSaved = vi.fn();
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={onSaved} />);
+
+    await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'Your booking is confirmed');
+    // fireEvent.change, not userEvent.type: user-event's `{`/`}` are special
+    // key-sequence syntax, so a literal "{{kinfolk_name}}" typed keystroke by
+    // keystroke gets mangled ("{{" is its own escape for a literal "{").
+    // Setting the value directly sidesteps that; this test is about the
+    // saved payload, not keystroke-level input behavior.
+    fireEvent.change(screen.getByLabelText(/^body$/i), { target: { value: 'Hi {{kinfolk_name}}' } });
+    await userEvent.type(screen.getByLabelText(/tags/i), 'booking, confirmation');
+    await userEvent.type(screen.getByLabelText(/category/i), 'Booking');
+
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+
+    await waitFor(() =>
+      expect(saveTemplate).toHaveBeenCalledWith({
+        templateId: 'booking.confirmed',
+        subject: 'Your booking is confirmed',
+        body: 'Hi {{kinfolk_name}}',
+        html: null,
+        category: 'Booking',
+        tags: ['booking', 'confirmation'],
+      }),
+    );
+    expect(onSaved).toHaveBeenCalledWith('booking.confirmed');
+  });
+
+  it('offers a datalist of known categories without forcing one', () => {
+    render(<TemplateEditor template={null} categories={['Booking', 'Reminder']} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const input = screen.getByLabelText(/category/i);
+    const listId = input.getAttribute('list');
+    expect(listId).toBeTruthy();
+    const options = document.querySelectorAll(`#${listId} option`);
+    expect(Array.from(options).map((o) => o.getAttribute('value'))).toEqual(['Booking', 'Reminder']);
+  });
+});
+
+describe('TemplateEditor: edit mode', () => {
+  it('pre-fills every field from the given template, and renders the key read-only', () => {
+    render(
+      <TemplateEditor
+        template={tpl({
+          templateId: 'booking.confirmed',
+          title: 'Booking Confirmed',
+          subject: 'Your booking is confirmed',
+          body: 'Hi {{kinfolk_name}}',
+          html: '<p>Hi</p>',
+          description: 'A note',
+          category: 'Booking',
+          tags: ['a', 'b'],
+        })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('dialog', { name: /edit template/i })).toBeInTheDocument();
+    expect(screen.getByText('booking.confirmed')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/template key/i)).toBeNull(); // no editable input in edit mode
+    expect(screen.getByLabelText(/title/i)).toHaveValue('Booking Confirmed');
+    expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
+    expect(screen.getByLabelText(/^body$/i)).toHaveValue('Hi {{kinfolk_name}}');
+    expect(screen.getByLabelText(/html/i)).toHaveValue('<p>Hi</p>');
+    expect(screen.getByLabelText(/description/i)).toHaveValue('A note');
+    expect(screen.getByLabelText(/category/i)).toHaveValue('Booking');
+    expect(screen.getByLabelText(/tags/i)).toHaveValue('a, b');
+  });
+
+  it('saves an edit using the existing templateId, unaffected by any read-only rendering quirk', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    const onSaved = vi.fn();
+    render(
+      <TemplateEditor
+        template={tpl({ templateId: 'booking.confirmed', subject: 'Old subject' })}
+        onClose={vi.fn()}
+        onSaved={onSaved}
+      />,
+    );
+    const subjectInput = screen.getByLabelText(/^subject$/i);
+    await userEvent.clear(subjectInput);
+    await userEvent.type(subjectInput, 'New subject');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+
+    await waitFor(() =>
+      expect(saveTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ templateId: 'booking.confirmed', subject: 'New subject' }),
+      ),
+    );
+    expect(onSaved).toHaveBeenCalledWith('booking.confirmed');
+  });
+
+  it('does not require a template key in edit mode (it is not user input there)', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    render(<TemplateEditor template={tpl({ subject: 'Hi', body: 'Body' })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(screen.queryByText(/template key is required/i)).toBeNull();
+    await waitFor(() => expect(saveTemplate).toHaveBeenCalled());
+  });
+});
+
+describe('TemplateEditor: save failure (fail loud)', () => {
+  it('surfaces a rejected saveTemplate call, naming the callable, and keeps the dialog open with entered data intact', async () => {
+    saveTemplate.mockRejectedValue(new Error('templateId already exists'));
+    const onSaved = vi.fn();
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={onSaved} />);
+
+    await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
+    await userEvent.type(screen.getByLabelText(/^body$/i), 'Body');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+
+    expect(await screen.findByText(/saveTemplate failed: templateId already exists/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByLabelText(/template key/i)).toHaveValue('booking.confirmed');
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+});
+
+describe('TemplateEditor: busy + close guards', () => {
+  it('disables Cancel and Save, and marks Save busy, while a save is in flight', async () => {
+    let resolveSave: (value: { templateId: string }) => void = () => {};
+    saveTemplate.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSave = resolve;
+      }),
+    );
+    render(<TemplateEditor template={tpl({ subject: 'Hi', body: 'Body' })} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+
+    const saveButton = screen.getByRole('button', { name: /saving/i });
+    expect(saveButton).toBeDisabled();
+    expect(saveButton).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('button', { name: /^cancel$/i })).toBeDisabled();
+
+    resolveSave({ templateId: 'booking.confirmed' });
+    await waitFor(() => expect(screen.queryByRole('button', { name: /saving/i })).toBeNull());
+  });
+
+  it('calls onClose when Cancel is clicked and no save is in flight', async () => {
+    const onClose = vi.fn();
+    render(<TemplateEditor template={tpl({})} onClose={onClose} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('calls onClose on Escape when no save is in flight', async () => {
+    const onClose = vi.fn();
+    render(<TemplateEditor template={tpl({})} onClose={onClose} onSaved={vi.fn()} />);
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+});

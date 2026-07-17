@@ -1,0 +1,62 @@
+/**
+ * InvoiceCreate form styling. Scoped to this component's Dialog body and
+ * imported directly by InvoiceCreate.tsx (the FormSchemas.css / Buttons.css
+ * convention), so nothing here needs to land in a shared stylesheet. Every
+ * value comes from styles/tokens.css, no literal colours, radii, durations,
+ * or px spacing.
+ */
+
+.invoice-create__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.invoice-create__row {
+  display: flex;
+  gap: var(--space-3);
+}
+.invoice-create__row > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.invoice-create__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.invoice-create__label {
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  color: var(--color-text-dim);
+}
+
+.invoice-create__input {
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.invoice-create__input:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.invoice-create__input:disabled {
+  opacity: 0.6;
+}
+
+.invoice-create__toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}

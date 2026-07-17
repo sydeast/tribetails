@@ -13,7 +13,16 @@ import { useCollection } from '../lib/firestore';
 import { asyncScalar } from '../lib/async';
 import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { PrimaryButton } from '../components/Buttons';
 import './KinTales.css';
+
+function PlusGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
 
 /**
  * The Den filter tabs. Every predicate is a POSITIVE membership test against
@@ -50,6 +59,16 @@ interface KinTalesProps {
    * the handler.
    */
   onSelect?: (kinTaleId: string) => void;
+  /**
+   * Placeholder: the compose/create surface (`KinTaleCompose.tsx`) is a
+   * separate, not-yet-ROUTED screen (it exists, it is just not yet mounted by
+   * a real route the way `onSelect`'s detail view isn't either). Called with
+   * no arguments to start a brand-new KinTale; the compose screen then asks
+   * which Kin Care session it belongs to. Same "omit -> static, never a
+   * live no-op" rule as `onSelect` and `FormSchemas.tsx`'s own `onNew`: see
+   * the trailing button below.
+   */
+  onNew?: () => void;
 }
 
 /**
@@ -66,7 +85,7 @@ interface KinTalesProps {
  * editing, and search/sort are separate, not-yet-built surfaces. `onSelect`
  * is this screen's only hook into that later work.
  */
-export function KinTales({ onSelect }: KinTalesProps) {
+export function KinTales({ onSelect, onNew }: KinTalesProps) {
   const rows = useCollection<KinTaleEntry>(KINTALES_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
 
@@ -87,6 +106,9 @@ export function KinTales({ onSelect }: KinTalesProps) {
         title="Every recap that goes"
         accentTail="home."
         subtitle="Every KinTale a Kinfolk receives after care, newest first."
+        trailing={
+          <PrimaryButton label="New KinTale" {...(onNew ? { onClick: () => onNew() } : {})} leading={<PlusGlyph />} />
+        }
       />
 
       <div className="kintales__summary">

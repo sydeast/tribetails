@@ -13,6 +13,9 @@ import { useCollection } from '../lib/firestore';
 import { asyncScalar } from '../lib/async';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { PrimaryButton } from '../components/Buttons';
+import { InvoiceDetail } from '../components/InvoiceDetail';
+import { InvoiceCreate, type InvoiceCreateMode } from './InvoiceCreate';
 import './Invoices.css';
 
 /**
@@ -41,19 +44,6 @@ const FILTERS: readonly FilterDef[] = [
   { key: 'credit', label: 'Credit', test: (s) => s === 'credit' || s === 'redeemed' },
 ];
 
-interface InvoicesProps {
-  /**
-   * Placeholder: InvoiceDetail is a separate, not-yet-built screen. The router
-   * mounts this screen PROPLESS, so onSelect is undefined in production, and a
-   * live <button> wired to onSelect?.(id) would then be a focusable, hand-cursor
-   * control that silently no-ops (the dead-control anti-pattern). Per the
-   * ControlShell convention (components/Buttons.tsx), the row renders a STATIC,
-   * non-interactive element when onSelect is absent, and a real <button> only
-   * once a detail route wires it, touching only the router later, not this file.
-   */
-  onSelect?: (invoiceId: string) => void;
-}
-
 /** One row's derived display facts, computed once per render pass. */
 interface RowView {
   entry: InvoiceEntry;
@@ -75,19 +65,29 @@ function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
 
 /**
  * Admin Invoices list ("The Den · Invoices"). Streams the flat `invoices`
- * collection through the bounded, server-ordered listener (INVOICES_QUERY, 
+ * collection through the bounded, server-ordered listener (INVOICES_QUERY,
  * createdAt desc, capped 200), then classifies every row through the
  * enumerated `invoiceState` (never by negation, see lib/invoiceFormat.ts for
  * the AO-12 rationale) for both the summary stat strip and the filter tabs.
  *
- * List only: creating an invoice/quote (NewInvoiceDialog) and the per-invoice
- * detail view (InvoiceDetail, and its reminder/receipt/review-and-send row
- * actions) are separate, not-yet-built screens. `onSelect` is this screen's
- * only hook into that later work.
+ * InvoiceDetail (row actions: reminder/mark-paid/receipt) and InvoiceCreate
+ * (new invoice/new quote) are now BUILT. Unlike the FormSchemas editor (a
+ * separate ROUTE the router must wire in later), both are in-screen modals,
+ * so this screen owns their open/close state itself rather than exposing an
+ * `onSelect` placeholder prop for a router to fill in. That is the one
+ * substantive change from the read-only version of this screen: the prop is
+ * gone, every row is now a real, always-interactive button, and the
+ * `onSelect`-absent "static row" branch (the dead-control guard that made
+ * sense while there was nothing to select INTO) is retired along with it.
  */
-export function Invoices({ onSelect }: InvoicesProps) {
+export function Invoices() {
   const rows = useCollection<InvoiceEntry>(INVOICES_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState<InvoiceCreateMode | null>(null);
+
+  const selected =
+    selectedId && rows.status === 'ready' ? rows.data.find((r) => r._id === selectedId) : undefined;
 
   // Computed once per render, not per keystroke/tick: today doesn't change
   // mid-session, and recomputing on every render would be a stable value
@@ -116,6 +116,12 @@ export function Invoices({ onSelect }: InvoicesProps) {
         title="Getting"
         accentTail="paid."
         subtitle="Every invoice on the books, newest first."
+        trailing={
+          <div className="invoices__new-actions">
+            <PrimaryButton label="New quote" onClick={() => setCreating('quote')} />
+            <PrimaryButton label="New invoice" onClick={() => setCreating('invoice')} />
+          </div>
+        }
       />
 
       <div className="invoices__summary">
@@ -174,7 +180,7 @@ export function Invoices({ onSelect }: InvoicesProps) {
                 ) : (
                   <ul className="invoices__list">
                     {visible.map((v) => (
-                      <InvoiceRow key={v.entry._id} view={v} todayIso={todayIso} onSelect={onSelect} />
+                      <InvoiceRow key={v.entry._id} view={v} todayIso={todayIso} onSelect={setSelectedId} />
                     ))}
                   </ul>
                 )}
@@ -183,6 +189,10 @@ export function Invoices({ onSelect }: InvoicesProps) {
           }}
         </AsyncRegion>
       </DenPanel>
+
+      {selected && <InvoiceDetail invoice={selected} onClose={() => setSelectedId(null)} />}
+
+      {creating && <InvoiceCreate mode={creating} onClose={() => setCreating(null)} />}
     </div>
   );
 }
@@ -190,12 +200,12 @@ export function Invoices({ onSelect }: InvoicesProps) {
 interface InvoiceRowProps {
   view: RowView;
   todayIso: string;
-  onSelect?: ((invoiceId: string) => void) | undefined;
+  onSelect: (invoiceId: string) => void;
 }
 
 function InvoiceRow({ view, todayIso, onSelect }: InvoiceRowProps) {
   const { entry, state, overdue } = view;
-  // Overdue is a display-level refinement of "open" (see FILTERS' comment), 
+  // Overdue is a display-level refinement of "open" (see FILTERS' comment),
   // it never becomes its own InvoiceState, it just outranks the plain "Open"
   // chip visually, the same relationship the wasm's InvoiceRow renders.
   const info = overdue ? { label: 'Overdue', chipLabel: 'OVERDUE', cssClass: 'overdue' } : invoiceStateInfo(state);
@@ -234,17 +244,11 @@ function InvoiceRow({ view, todayIso, onSelect }: InvoiceRowProps) {
     </>
   );
 
-  // Static, non-interactive row unless a detail handler is wired (see
-  // InvoicesProps): a live no-op button is the dead-control anti-pattern.
   return (
     <li className="invoices__row">
-      {onSelect ? (
-        <button type="button" className="invoices__row-main" onClick={() => onSelect(entry._id)}>
-          {body}
-        </button>
-      ) : (
-        <div className="invoices__row-main invoices__row-main--static">{body}</div>
-      )}
+      <button type="button" className="invoices__row-main" onClick={() => onSelect(entry._id)}>
+        {body}
+      </button>
     </li>
   );
 }

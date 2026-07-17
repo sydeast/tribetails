@@ -12,6 +12,7 @@ import { asyncScalar } from '../lib/async';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
+import { BookingActions } from './BookingActions';
 import './Bookings.css';
 
 /**
@@ -42,14 +43,15 @@ const FILTERS: readonly FilterDef[] = [
 
 interface BookingsProps {
   /**
-   * Placeholder: BookingDetail is a separate, not-yet-built screen, and this
-   * port is LIST ONLY (no create/edit flow, no row actions, see the
-   * OUT-OF-SCOPE note in api/bookings.ts for what a detail screen would still
-   * need to add). The router mounts this screen propless, so in production
-   * `onSelectBooking` is always undefined, see `BookingRow` below: when
-   * unwired the row is a STATIC <div>, not a <button>. A handler-less <button>
-   * is still a focusable, tabbable dead control (the anti-pattern), so the row
-   * only becomes a real <button> once a detail route wires the handler.
+   * Row-select hook. The router mounts this screen propless (no detail ROUTE
+   * exists), so by default this screen wires its OWN handler: selecting a row
+   * opens BookingActions (Approve / Reject / Cancel / Mark Completed /
+   * Reschedule) as an in-screen overlay, fed from the SAME live BOOKINGS_QUERY
+   * stream this list already reads (no second fetch, see the `detailEntry`
+   * lookup below). Passing `onSelectBooking` explicitly overrides that
+   * default, letting a future detail ROUTE (or a test) own selection instead;
+   * when overridden, this screen's own overlay never renders (see the
+   * `!onSelectBooking` guard it renders under).
    */
   onSelectBooking?: (bookingId: string) => void;
 }
@@ -71,18 +73,23 @@ function rowViewsFor(rows: BookingEntry[]): RowView[] {
  * through the enumerated `bookingState` (never by negation, see
  * lib/bookingFormat.ts) for both the summary stat strip and the filter tabs.
  *
- * List only: creating/editing a booking (BookingCreateScreen's Kinfolk
- * picker + KinCare-type + date/time form) and the per-booking detail view
- * (BookingDetail, and any row actions, Approve/Reject/Cancel/Mark Completed)
- * are separate, not-yet-built surfaces. `onSelectBooking` is this screen's
- * only hook into that later work. The wasm's SEPARATE "Incoming requests"
- * panel (MyTribe booking-envelope collection-group query + approve/cancel a
- * whole series) is also not ported, see the OUT-OF-SCOPE note in
- * api/bookings.ts for exactly why.
+ * Selecting a row opens BookingActions (Approve / Reject / Cancel / Mark
+ * Completed / Reschedule); see BookingsProps.onSelectBooking's doc for the
+ * exact wiring. Still NOT built here: creating/editing a booking
+ * (BookingCreateScreen's Kinfolk picker + KinCare-type + date/time form), and
+ * the wasm's SEPARATE "Incoming requests" panel (MyTribe booking-envelope
+ * collection-group query + `manageBookingSeries`/`batchUpdateBookings`, which
+ * act on a different, NESTED collection than the rows here), see the
+ * OUT-OF-SCOPE notes in api/bookings.ts and api/bookingsWrite.ts for exactly
+ * why those two callables don't apply to this list's rows.
  */
 export function Bookings({ onSelectBooking }: BookingsProps) {
   const rows = useCollection<BookingEntry>(BOOKINGS_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
+  // The overlay's own selection state, used only when no external
+  // onSelectBooking is supplied (see BookingsProps's doc above).
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const handleSelectBooking = onSelectBooking ?? setDetailId;
 
   // "Pending" mirrors BookingScreen.kt's "Pending approval" stat: DRAFT and
   // PENDING are both pre-visit states (BookingCreateScreen's Save-draft /
@@ -108,6 +115,14 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
         (r) => r.state === 'completed' || r.state === 'cancelled' || r.state === 'unknown',
       ).length,
   );
+
+  // The row BookingActions shows, resolved from the SAME live stream `rows`
+  // already holds (never a second fetch): once a write round-trips through
+  // Firestore, this listener's next snapshot updates `detailEntry` too. `null`
+  // (stream not ready, or the id no longer resolves to a row) gets its own
+  // honest "unavailable" dialog inside BookingActions rather than a blank one.
+  const detailEntry =
+    detailId !== null && rows.status === 'ready' ? (rows.data.find((r) => r._id === detailId) ?? null) : null;
 
   return (
     <div className="screen">
@@ -169,7 +184,7 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
                 ) : (
                   <ul className="bookings__list">
                     {visible.map((v) => (
-                      <BookingRow key={v.entry._id} view={v} onSelectBooking={onSelectBooking} />
+                      <BookingRow key={v.entry._id} view={v} onSelectBooking={handleSelectBooking} />
                     ))}
                   </ul>
                 )}
@@ -178,6 +193,13 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
           }}
         </AsyncRegion>
       </DenPanel>
+
+      {/* Only this screen's OWN selection renders its own overlay; an external
+          onSelectBooking (see the prop's doc) means the caller owns the detail
+          UI instead. */}
+      {!onSelectBooking && detailId !== null && (
+        <BookingActions entry={detailEntry} onClose={() => setDetailId(null)} />
+      )}
     </div>
   );
 }

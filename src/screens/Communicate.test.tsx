@@ -24,6 +24,20 @@ vi.mock('../api/communicate', async (orig) => ({
   listRecentSends,
 }));
 
+// Stubbed rather than exercised for real: CommunicateCompose has its own full
+// test file (CommunicateCompose.test.tsx). This file only proves the WIRING,
+// that "New broadcast" mounts it and its onClose returns to Recent, not its
+// internals.
+vi.mock('./CommunicateCompose', () => ({
+  CommunicateCompose: ({ onClose }: { onClose: () => void }) => (
+    <div data-testid="compose-stub">
+      <button type="button" onClick={onClose}>
+        stub-close
+      </button>
+    </div>
+  ),
+}));
+
 import { Communicate } from './Communicate';
 
 function send(over: Partial<RecentSend>): RecentSend {
@@ -216,5 +230,36 @@ describe('Communicate screen', () => {
     expect(deliveredRow).not.toBeNull();
     expect(within(failedRow as HTMLElement).getByText('Failed')).toBeInTheDocument();
     expect(within(deliveredRow as HTMLElement).getByText('Delivered')).toBeInTheDocument();
+  });
+
+  describe('New broadcast wiring', () => {
+    it('shows a "New broadcast" action on the Recent list', async () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      await screen.findByText(/no external sends yet/i);
+      expect(screen.getByRole('button', { name: /new broadcast/i })).toBeInTheDocument();
+    });
+
+    it('opens CommunicateCompose in place of the Recent list on click', async () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      await screen.findByText(/no external sends yet/i);
+      await userEvent.click(screen.getByRole('button', { name: /new broadcast/i }));
+      expect(screen.getByTestId('compose-stub')).toBeInTheDocument();
+      expect(screen.queryByText(/no external sends yet/i)).toBeNull();
+    });
+
+    it('returns to the Recent list when compose calls onClose', async () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      await screen.findByText(/no external sends yet/i);
+      await userEvent.click(screen.getByRole('button', { name: /new broadcast/i }));
+      await userEvent.click(screen.getByText('stub-close'));
+      expect(await screen.findByText(/no external sends yet/i)).toBeInTheDocument();
+      expect(screen.queryByTestId('compose-stub')).toBeNull();
+      // listRecentSends only reloads on the initial mount / explicit Reload,
+      // not merely from switching views back and forth.
+      expect(listRecentSends).toHaveBeenCalledTimes(1);
+    });
   });
 });

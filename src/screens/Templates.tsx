@@ -13,12 +13,14 @@ import {
 import { type Async, asyncScalar } from '../lib/async';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { GhostButton } from '../components/Buttons';
+import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { TemplateEditor } from './TemplateEditor';
 import './Templates.css';
 
 /**
- * Admin Template Bank list ("The Den · Admin", ported from
- * `TemplateBankScreen.kt#TemplateBankBody`). LIST ONLY, per the port brief:
+ * Admin Template Bank, ported from `TemplateBankScreen.kt#TemplateBankBody`
+ * (list) plus `TemplateEditorOverlay` (create/edit), now that the editor
+ * exists: see TemplateEditor.tsx.
  *
  *  - Reads via TWO one-shot admin callables, `listTemplates` (the
  *    `emailTemplates` collection) and `listCategories` (the hybrid managed ∪
@@ -34,41 +36,59 @@ import './Templates.css';
  *    `TemplateBankBody`'s three `StatCard`s exactly, including the
  *    "Untagged" card counting blank TAGS, not a blank category (see
  *    `lib/templateFormat.ts#isUntagged`'s doc comment).
+ *  - The editor is an OVERLAY, not a route: this screen owns opening it
+ *    (a row click, or the header's "New template" action), the same way the
+ *    wasm's `TemplateEditorOverlay` sits on top of `TemplateBankScreen`
+ *    rather than being a separate destination. `listTemplates` already
+ *    returns every field the editor needs (see `api/templates.ts`'s
+ *    `TemplateSummary`), so opening the editor for an existing row is a
+ *    local lookup in the already-loaded list, never a second fetch.
  *
- * NOT ported here, all separate not-yet-built surfaces:
- *  - The template editor (create/edit subject, body, HTML, description,
- *    category): `TemplateEditorOverlay` in the wasm.
+ * NOT ported here, separate not-yet-built surfaces:
  *  - The read-only single-template viewer: `TemplateViewOverlay`.
- *  - "New template" (create): the wasm's header `PrimaryButton`.
  *  - Drag-and-drop category (re)assignment: `TemplateCategoryDrag.kt`.
  *  - Template *assignment* to notification catalog keys: a wholly separate
  *    screen (`TemplateAssignmentScreen.kt` / `assignTemplate`,
  *    `listTemplateBindings`, `listCatalogKeys`), not this bank list at all.
- *
- * `onSelect` is this screen's only hook into that later work: see the
- * DEAD-CONTROL doc comment on `TemplatesProps` below.
+ *  - Deleting a template: confirmed against the backend, `emailTemplates` has
+ *    no delete callable (see `api/templatesWrite.ts`'s doc comment). This
+ *    screen and its editor are create + edit only.
  */
 export interface TemplatesProps {
   /**
-   * Placeholder: the single-template viewer/editor is not built yet. The
-   * router mounts this screen PROPLESS, so `onSelect` is undefined in
-   * production: a live `<button>` wired to `onSelect?.(id)` would then be a
-   * focusable, hand-cursor control that silently no-ops (the dead-control
-   * anti-pattern). Per the `KinTales.tsx`/`Invoices.tsx` convention, a row
-   * renders a STATIC, non-interactive element when `onSelect` is absent, and
-   * a real `<button>` only once a detail/editor route wires it: touching
-   * only the router later, not this file.
+   * Row-activation override. Defaults to opening the built-in Template
+   * Editor overlay, pre-filled from that row, when omitted: the router
+   * mounts this screen PROPLESS in production (see `router.tsx`), so this
+   * default is what actually runs for every operator. A caller (a test, or a
+   * future route that wants different behavior) can still override it.
    */
   onSelect?: (templateId: string) => void;
+  /**
+   * "New template" override. Defaults to opening the editor overlay in
+   * create mode (a blank template) when omitted, for the same PROPLESS
+   * reason as `onSelect` above.
+   */
+  onNew?: () => void;
 }
 
 const ALL_FILTER = null;
 
-export function Templates({ onSelect }: TemplatesProps) {
+type EditorState = { mode: 'create' } | { mode: 'edit'; template: TemplateSummary };
+
+function PlusGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+export function Templates({ onSelect, onNew }: TemplatesProps) {
   const [templates, setTemplates] = useState<Async<TemplateSummary[]>>({ status: 'loading' });
   const [categories, setCategories] = useState<Async<string[]>>({ status: 'loading' });
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<string | null>(ALL_FILTER);
+  const [editor, setEditor] = useState<EditorState | null>(null);
 
   // Hoisted so a failed load can hand AsyncRegion a real retry, same shape as
   // FormSchemas.tsx's load(). Only the TEMPLATES load drives AsyncRegion;
@@ -124,6 +144,33 @@ export function Templates({ onSelect }: TemplatesProps) {
     }
   }, [filter, categories]);
 
+  // Opens the editor pre-filled from an already-loaded row. A stale/missing id
+  // (the list hasn't loaded yet, or the row vanished in a reload race) is a
+  // silent no-op rather than a crash or a blank editor: there is nothing
+  // honest to pre-fill, and this is a row-activation handler, not a route, so
+  // there is no error state to hand it either.
+  const openEditorFor = useCallback(
+    (templateId: string) => {
+      if (templates.status !== 'ready') return;
+      const row = templates.data.find((t) => t.templateId === templateId);
+      if (!row) return;
+      setEditor({ mode: 'edit', template: row });
+    },
+    [templates],
+  );
+
+  const handleSelect = onSelect ?? openEditorFor;
+  const handleNew = onNew ?? (() => setEditor({ mode: 'create' }));
+
+  // Reload after a save so the row reflects exactly what the server has,
+  // rather than optimistically patching local state: the same
+  // reload-over-optimistic-splice convention FormSchemas.tsx's confirmDelete()
+  // uses for its own write.
+  function handleSaved() {
+    setEditor(null);
+    load();
+  }
+
   const templateCount = asyncScalar(templates, (data) => data.length);
   const categoryCountStat = asyncScalar(categories, (data) => data.length);
   const untaggedCount = asyncScalar(templates, (data) => data.filter(isUntagged).length);
@@ -137,6 +184,7 @@ export function Templates({ onSelect }: TemplatesProps) {
         title="Template"
         accentTail="Bank."
         subtitle="Browse the email templates SendGrid delivers."
+        trailing={<PrimaryButton label="New template" onClick={handleNew} leading={<PlusGlyph />} />}
       />
 
       <div className="templates__summary">
@@ -213,7 +261,7 @@ export function Templates({ onSelect }: TemplatesProps) {
                 ) : (
                   <ul className="templates__list">
                     {visible.map((tpl) => (
-                      <TemplateRow key={tpl.templateId} tpl={tpl} onSelect={onSelect} />
+                      <TemplateRow key={tpl.templateId} tpl={tpl} onSelect={handleSelect} />
                     ))}
                   </ul>
                 )}
@@ -224,13 +272,28 @@ export function Templates({ onSelect }: TemplatesProps) {
           }}
         </AsyncRegion>
       </DenPanel>
+
+      {editor ? (
+        <TemplateEditor
+          template={editor.mode === 'edit' ? editor.template : null}
+          categories={categoryList}
+          onClose={() => setEditor(null)}
+          onSaved={handleSaved}
+        />
+      ) : null}
     </div>
   );
 }
 
 interface TemplateRowProps {
   tpl: TemplateSummary;
-  onSelect?: ((templateId: string) => void) | undefined;
+  /**
+   * Always a real handler now that the editor exists (Templates.tsx supplies
+   * its internal `openEditorFor` default whenever a caller does not override
+   * `onSelect`): unlike the pre-editor placeholder, there is no unwired case
+   * left to render statically. See TemplatesProps.onSelect.
+   */
+  onSelect: (templateId: string) => void;
 }
 
 function TemplateRow({ tpl, onSelect }: TemplateRowProps) {
@@ -263,18 +326,11 @@ function TemplateRow({ tpl, onSelect }: TemplateRowProps) {
     </>
   );
 
-  // Static, non-interactive row unless a detail handler is wired (see
-  // TemplatesProps.onSelect): a live no-op button is the dead-control
-  // anti-pattern.
   return (
     <li className="templates__row">
-      {onSelect ? (
-        <button type="button" className="templates__row-main" onClick={() => onSelect(tpl.templateId)}>
-          {body}
-        </button>
-      ) : (
-        <div className="templates__row-main templates__row-main--static">{body}</div>
-      )}
+      <button type="button" className="templates__row-main" onClick={() => onSelect(tpl.templateId)}>
+        {body}
+      </button>
     </li>
   );
 }

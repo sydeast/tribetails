@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Outlet,
   createRootRoute,
@@ -26,9 +27,11 @@ import { Inbox } from './screens/Inbox';
 import { Settings } from './screens/Settings';
 import { Communicate } from './screens/Communicate';
 import { Account } from './screens/Account';
-import { MyNotifications } from './screens/MyNotifications';
+import { MyNotificationsEdit } from './screens/MyNotificationsEdit';
 import { Media } from './screens/Media';
 import { type MediaTargetType } from './lib/mediaScopeFormat';
+import { FormSchemaEditor } from './screens/FormSchemaEditor';
+import { KinTaleCompose } from './screens/KinTaleCompose';
 import { AppShell } from './components/AppShell';
 
 /** Shared chrome: the two drifting orbs behind every screen (Den background). */
@@ -104,10 +107,24 @@ const notificationsRoute = createRoute({
   component: Notifications,
 });
 
+function FormSchemasView() {
+  const [editor, setEditor] = useState<{ id?: string } | null>(null);
+  if (editor) {
+    return (
+      <FormSchemaEditor
+        {...(editor.id ? { schemaId: editor.id } : {})}
+        onSaved={() => setEditor(null)}
+        onCancel={() => setEditor(null)}
+      />
+    );
+  }
+  return <FormSchemas onNew={() => setEditor({})} onSelect={(id) => setEditor({ id })} />;
+}
+
 const formSchemasRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'form-schemas',
-  component: FormSchemas,
+  component: FormSchemasView,
 });
 
 const invoicesRoute = createRoute({
@@ -134,10 +151,18 @@ const sessionsRoute = createRoute({
   component: Sessions,
 });
 
+function KinTalesView() {
+  const [compose, setCompose] = useState<{ kinTaleId?: string } | null>(null);
+  if (compose) {
+    return <KinTaleCompose {...(compose.kinTaleId ? { kinTaleId: compose.kinTaleId } : {})} onClose={() => setCompose(null)} />;
+  }
+  return <KinTales onNew={() => setCompose({})} onSelect={(id) => setCompose({ kinTaleId: id })} />;
+}
+
 const kinTalesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'kintales',
-  component: KinTales,
+  component: KinTalesView,
 });
 
 const galleryRoute = createRoute({
@@ -191,7 +216,7 @@ const accountRoute = createRoute({
 const myNotificationsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'my-notifications',
-  component: MyNotifications,
+  component: MyNotificationsEdit,
 });
 
 /** Adapts the `media/$type/$id` route params to Media's typed props. */

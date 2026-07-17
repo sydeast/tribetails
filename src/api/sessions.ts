@@ -43,9 +43,22 @@ export interface SessionEntry {
   _id: string;
   kinfolkId: string;
   kinfolkName: string;
+  /**
+   * Pets/kin this visit covers (`KinCareSession.kinIds`, `FirestoreClient.kt:1932`).
+   * The list itself never reads it; it exists here for the not-yet-built compose
+   * screen (`KinTaleCompose.tsx`), which needs it to scaffold a new KinTale draft's
+   * own `kinIds`, mirroring the wasm's `scaffoldReport(session, template)`.
+   */
+  kinIds: string[];
   serviceType: string;
   /** Free-text ISO instant string, not a Timestamp, see `lib/sessionFormat.ts#sessionTimeOf`. */
   startTime: string;
+  /**
+   * Free-text ISO instant, same caveat as `startTime`. Needed by the not-yet-built
+   * compose screen (`KinTaleCompose.tsx`) to seed a new KinTale draft's `arrivedAt`,
+   * mirroring the wasm's `scaffoldReport`. Blank until the visit is ARRIVED.
+   */
+  arrivedAt: string;
   /** Same caveat as `startTime`. */
   endTime: string;
   /** Free-text; SCHEDULED/ON_MY_WAY/ARRIVED/DEPARTED/COMPLETED/CANCELLED are the only codes any writer sets, see `lib/sessionFormat.ts#sessionState`. */

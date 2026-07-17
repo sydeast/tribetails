@@ -9,6 +9,32 @@ import { type BookingEntry } from '../api/bookings';
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
+// BookingActions is rendered by this screen's own overlay once a row is
+// selected; its write calls go through api/bookingsWrite, which this screen
+// test has no reason to exercise (BookingActions.test.tsx owns that), so it
+// is mocked here the same way every other screen test mocks its api/ module,
+// to keep this file from ever touching the real Firebase client.
+const {
+  approveBooking,
+  rejectBooking,
+  cancelBooking,
+  markBookingCompleted,
+  rescheduleBooking,
+} = vi.hoisted(() => ({
+  approveBooking: vi.fn(),
+  rejectBooking: vi.fn(),
+  cancelBooking: vi.fn(),
+  markBookingCompleted: vi.fn(),
+  rescheduleBooking: vi.fn(),
+}));
+vi.mock('../api/bookingsWrite', () => ({
+  approveBooking,
+  rejectBooking,
+  cancelBooking,
+  markBookingCompleted,
+  rescheduleBooking,
+}));
+
 import { Bookings } from './Bookings';
 
 function fakeTs(iso: string): Timestamp {
@@ -40,8 +66,9 @@ describe('Bookings screen', () => {
   it('renders a streamed row with its household, service, when, and status chip', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Bookings />);
-    // Scope by the row container, not the button, the row is only a <button>
-    // once a detail route wires onSelectBooking; here (unwired) it renders static.
+    // Scope by the row container: the row is a real <button> now that Bookings
+    // wires its own onSelectBooking default (opening BookingActions), see the
+    // "opens BookingActions" tests below for the interactive assertions.
     const row = screen.getByText('The Whitfields').closest('.bookings__row') as HTMLElement;
     expect(within(row).getByText('The Whitfields')).toBeInTheDocument();
     expect(within(row).getByText(/Dog Walking/)).toBeInTheDocument();
@@ -147,21 +174,37 @@ describe('Bookings screen', () => {
     expect(within(pending as HTMLElement).getByText('2')).toBeInTheDocument();
   });
 
-  it('clicking a row calls onSelectBooking with the booking id', async () => {
+  it('clicking a row calls an externally-supplied onSelectBooking with the booking id, instead of opening the built-in overlay', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'ses-42' })] });
     const onSelectBooking = vi.fn();
     render(<Bookings onSelectBooking={onSelectBooking} />);
     await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
     expect(onSelectBooking).toHaveBeenCalledWith('ses-42');
+    // The screen's own BookingActions overlay must NOT also render: the
+    // external caller owns detail UI once it supplies its own handler.
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('renders rows STATIC (not a live no-op button) when onSelectBooking is unwired, the router mounts this screen propless', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
+  it('clicking a row with no external onSelectBooking opens this screen\'s own BookingActions overlay', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 'ses-42', kinfolkName: 'The Whitfields' })],
+    });
     render(<Bookings />);
-    // The content renders, but the row is NOT an interactive button when unwired:
-    // a handler-less <button> still carries the implicit ARIA button role, so we
-    // assert against the role, not just the explicit attributes.
-    expect(screen.getByText('The Whitfields')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /The Whitfields/i })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/the whitfields · booking/i)).toBeInTheDocument();
+  });
+
+  it('closing the built-in overlay returns to the plain list, with no lingering dialog', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 'ses-42', kinfolkName: 'The Whitfields' })],
+    });
+    render(<Bookings />);
+    await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^done$/i }));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
