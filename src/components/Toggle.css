@@ -8,10 +8,10 @@
   height: var(--toggle-h);
   padding: 0;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--color-border, #d8d6cf);
   cursor: pointer;
-  transition: background 160ms ease;
+  transition: background var(--dur-base) var(--ease-standard);
 }
 
 .toggle--on {
@@ -37,7 +37,7 @@
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
-  transition: transform 160ms ease;
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 
 .toggle--on .toggle__thumb {
