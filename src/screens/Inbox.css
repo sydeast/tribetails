@@ -1,0 +1,203 @@
+/**
+ * Inbox (message thread list) screen styling. Scoped to this screen and
+ * imported directly by Inbox.tsx (the Sessions.css / Invoices.css /
+ * FormSchemas.css convention), so nothing here needs to land in the shared
+ * styles/screens.css. Every value comes from styles/tokens.css: no literal
+ * colours, radii, durations, or px spacing.
+ */
+
+.inbox__hint {
+  color: var(--color-text-dim);
+  margin: 0;
+}
+
+.inbox__badge {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--color-background);
+  background: var(--color-primary);
+  border-radius: var(--radius-pill);
+  padding: 0.2rem 0.65rem;
+  white-space: nowrap;
+}
+
+/* ── filter tabs (Sessions.css / Invoices.css convention) ───────────────── */
+
+.inbox__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.inbox__tab {
+  font: inherit;
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  color: var(--color-text-dim);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  transition:
+    background var(--dur-base) var(--ease-standard),
+    border-color var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
+}
+.inbox__tab:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+.inbox__tab:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.inbox__tab--active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-background);
+}
+
+/* ── day groups ──────────────────────────────────────────────────────────── */
+
+.inbox__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.inbox__day-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.inbox__day-header {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.inbox__day-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── row list ────────────────────────────────────────────────────────────── */
+
+.inbox__row {
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+.inbox__row:last-child {
+  border-bottom: none;
+}
+
+.inbox__row-main {
+  width: 100%;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: auto 1.8fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  padding: var(--space-3) var(--space-2);
+  border-radius: var(--radius-card);
+  transition: background var(--dur-base) var(--ease-standard);
+}
+.inbox__row-main:hover,
+.inbox__row-main:focus-visible {
+  background: var(--color-surface-2);
+}
+/* Unwired (no thread/detail route yet): a plain, non-interactive row, no hand
+   cursor, no hover, so it never reads as a clickable control that no-ops. */
+.inbox__row-main--static {
+  cursor: default;
+}
+.inbox__row-main--static:hover {
+  background: none;
+}
+.inbox__row-main:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+/* Rows with no dot get the same grid; the dot column just renders empty, so
+   nothing here compensates for its absence (grid-template-columns is fixed). */
+.inbox__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+  justify-self: center;
+}
+
+.inbox__row-who {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.inbox__row-name {
+  font-family: var(--font-hanken);
+  font-size: var(--type-title-md-size);
+  font-weight: var(--type-title-md-weight);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox__row-preview {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Subtle tint (not a bolder weight: title-md-weight is already the boldest
+   title token in the scale) so an unread thread reads distinctly without
+   inventing an off-scale font-weight. */
+.inbox__row--unread {
+  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
+  border-radius: var(--radius-card);
+}
+
+.inbox__row-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+.inbox__row-time {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+  white-space: nowrap;
+}
+.inbox__row-count {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+}
+
+.inbox__reload {
+  margin-top: var(--space-4);
+}

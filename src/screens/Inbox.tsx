@@ -1,0 +1,227 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { listConversations, type ConversationSummary } from '../api/inbox';
+import {
+  threadReadState,
+  threadSender,
+  threadHouseholdName,
+  threadPreviewText,
+  threadMessageCount,
+  threadClock,
+  threadMachineTime,
+  threadDayLabel,
+  groupThreadsByDay,
+  unreadThreadCount,
+  localDateIso,
+  type ThreadReadState,
+} from '../lib/inboxFormat';
+import { type Async } from '../lib/async';
+import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
+import { AsyncRegion } from '../components/AsyncRegion';
+import { GhostButton } from '../components/Buttons';
+import './Inbox.css';
+
+/**
+ * The Den filter tabs. Every predicate is a POSITIVE membership test against
+ * the enumerated `ThreadReadState` (the Sessions.tsx / Invoices.tsx / AO-12
+ * convention), never a negation of the other bucket.
+ */
+type FilterKey = 'all' | 'unread';
+
+interface FilterDef {
+  key: FilterKey;
+  label: string;
+  test: (state: ThreadReadState) => boolean;
+}
+
+const FILTERS: readonly FilterDef[] = [
+  { key: 'all', label: 'All', test: () => true },
+  { key: 'unread', label: 'Unread', test: (s) => s === 'unread' },
+];
+
+interface InboxProps {
+  /**
+   * Placeholder: the thread/detail view (reading a thread's messages, and
+   * replying via `getConversationThread`/`replyToConversation`) is a separate,
+   * not-yet-built screen; this port is LIST ONLY, per the port brief. The
+   * router mounts this screen PROPLESS, so `onSelectThread` is undefined in
+   * production. See `ThreadRow`: unwired, the row renders a STATIC <div> (no
+   * button role, no cursor, no hover), not a <button> with its handler
+   * withheld, a handler-less <button> is still a focusable dead control (the
+   * Sessions.tsx/Invoices.tsx/FormSchemas.tsx convention). A real <button>
+   * only appears once a detail route wires `onSelectThread`, touching only the
+   * router later, not this file.
+   */
+  onSelectThread?: (kinfolkId: string) => void;
+}
+
+/**
+ * Admin Inbox: the kinfolk<->auntie message thread list ("The Den · Inbox").
+ * Loads once via the one-shot `listConversations` callable (see
+ * `api/inbox.ts` for why this is a callable, not a `useCollection` stream),
+ * classifies every row's read state (`threadReadState`) and last sender
+ * (`threadSender`) through positive enumerations, never negation (the
+ * `sessionFormat.ts` / AO-12 convention), and groups the FILTERED rows by
+ * LOCAL calendar day (`groupThreadsByDay`, the AO-18 fix applied to this
+ * callable's epoch-ms `lastMessageAtMs`, see `lib/inboxFormat.ts`), newest day
+ * and newest thread first, the activity-feed order Notifications.tsx also
+ * uses (the inverse of Sessions.tsx's chronological schedule order).
+ *
+ * List only: opening a thread to read and reply is a separate, not-yet-built
+ * screen (see `InboxProps.onSelectThread`). No compose, no reply box, no
+ * thread view ships here.
+ */
+export function Inbox({ onSelectThread }: InboxProps) {
+  const [threads, setThreads] = useState<Async<ConversationSummary[]>>({ status: 'loading' });
+  const [filter, setFilter] = useState<FilterKey>('all');
+
+  // Computed once per render pass, not per keystroke/tick, same rationale as
+  // Sessions.tsx's / Invoices.tsx's todayIso.
+  const todayIso = useMemo(() => localDateIso(new Date()), []);
+
+  // Hoisted so a failed load can hand AsyncRegion a real retry, same shape as
+  // FormSchemas.tsx's / FeatureFlags.tsx's load().
+  const load = useCallback(() => {
+    let live = true;
+    setThreads({ status: 'loading' });
+    listConversations()
+      .then((data) => live && setThreads({ status: 'ready', data }))
+      .catch(
+        (err: unknown) =>
+          live &&
+          setThreads({
+            status: 'error',
+            message: `listConversations failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            retry: load,
+          }),
+      );
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  useEffect(() => load(), [load]);
+
+  // Only claimed once the load has actually resolved, never a fabricated 0
+  // while loading/erroring (the StatCard / AsyncRegion policy this app
+  // follows throughout; see lib/async.ts).
+  const unreadCount = threads.status === 'ready' ? unreadThreadCount(threads.data) : 0;
+
+  return (
+    <div className="screen">
+      <DenScreenHeading
+        kicker="The Den · Inbox"
+        title="Inbox"
+        subtitle="Two-way message threads with kinfolk, newest first."
+        trailing={unreadCount > 0 ? <span className="inbox__badge">{unreadCount} unread</span> : undefined}
+      />
+
+      <DenPanel title="Messages" subtitle="Every household thread on the books.">
+        <AsyncRegion
+          state={threads}
+          what="messages"
+          isEmpty={(data) => data.length === 0}
+          loading={<p className="inbox__hint">Loading messages…</p>}
+          empty={
+            <EmptyHint>
+              No messages yet. When a kinfolk messages you from MyTribe, the thread shows up here.
+            </EmptyHint>
+          }
+        >
+          {(data) => {
+            // Non-null: FILTERS lists both FilterKey members above, and
+            // `filter` only ever holds a key set via setFilter(f.key) from
+            // that same array (the Sessions.tsx/Invoices.tsx .find()! comment).
+            const activeFilter = FILTERS.find((f) => f.key === filter)!;
+            const visible = data.filter((row) => activeFilter.test(threadReadState(row.unreadForAdmin)));
+            const groups = groupThreadsByDay(visible);
+
+            return (
+              <>
+                <div className="inbox__tabs" role="tablist" aria-label="Filter message threads">
+                  {FILTERS.map((f) => (
+                    <button
+                      key={f.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={filter === f.key}
+                      className={filter === f.key ? 'inbox__tab inbox__tab--active' : 'inbox__tab'}
+                      onClick={() => setFilter(f.key)}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+
+                {groups.length === 0 ? (
+                  <EmptyHint>Nothing matches this filter.</EmptyHint>
+                ) : (
+                  <ul className="inbox__list">
+                    {groups.map((g) => (
+                      <li key={g.dayKeyValue} className="inbox__day-group">
+                        <h3 className="inbox__day-header">{threadDayLabel(g.dayKeyValue, todayIso)}</h3>
+                        <ul className="inbox__day-rows">
+                          {g.rows.map((row) => (
+                            <ThreadRow key={row.kinfolkId} row={row} onSelectThread={onSelectThread} />
+                          ))}
+                        </ul>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                <GhostButton label="Reload" onClick={load} className="inbox__reload" />
+              </>
+            );
+          }}
+        </AsyncRegion>
+      </DenPanel>
+    </div>
+  );
+}
+
+interface ThreadRowProps {
+  row: ConversationSummary;
+  onSelectThread?: ((kinfolkId: string) => void) | undefined;
+}
+
+function ThreadRow({ row, onSelectThread }: ThreadRowProps) {
+  const readState = threadReadState(row.unreadForAdmin);
+  const sender = threadSender(row.lastSenderRole);
+  const household = threadHouseholdName(row.kinfolkName, row.kinfolkId);
+  const preview = threadPreviewText(row.lastMessagePreview);
+  const count = threadMessageCount(row.messageCount);
+
+  const body = (
+    <>
+      {readState === 'unread' ? <span className="inbox__dot" aria-hidden="true" /> : <span aria-hidden="true" />}
+      <span className="inbox__row-who">
+        <span className="inbox__row-name">{household}</span>
+        <span className="inbox__row-preview">
+          {sender === 'auntie' ? 'You: ' : ''}
+          {preview || '(no message yet)'}
+        </span>
+      </span>
+      <span className="inbox__row-side">
+        <time className="inbox__row-time" dateTime={threadMachineTime(row.lastMessageAtMs)}>
+          {threadClock(row.lastMessageAtMs)}
+        </time>
+        <span className="inbox__row-count">{count}</span>
+      </span>
+    </>
+  );
+
+  // Static, non-interactive row unless a thread/detail handler is wired: a
+  // live no-op button is the dead-control anti-pattern (see ControlShell in
+  // components/Buttons.tsx and the InboxProps doc above).
+  return (
+    <li className={readState === 'unread' ? 'inbox__row inbox__row--unread' : 'inbox__row'}>
+      {onSelectThread ? (
+        <button type="button" className="inbox__row-main" onClick={() => onSelectThread(row.kinfolkId)}>
+          {body}
+        </button>
+      ) : (
+        <div className="inbox__row-main inbox__row-main--static">{body}</div>
+      )}
+    </li>
+  );
+}
