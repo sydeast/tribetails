@@ -70,7 +70,13 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
 
   // Catalog order, not insertion order, so the saved list is stable across
   // reloads (a `Set` has no guaranteed iteration order tied to the catalog).
-  const observedList = US_HOLIDAYS.filter(([id]) => observed.has(id)).map(([id]) => id);
+  // Plus any stored id NOT in the fixed catalog, carried forward verbatim: a
+  // legacy or hand-edited observed-holiday id must never be silently dropped on
+  // save (this also keeps the panel from mounting spuriously dirty).
+  const observedList = [
+    ...US_HOLIDAYS.filter(([id]) => observed.has(id)).map(([id]) => id),
+    ...data.observedUsHolidays.filter((id) => !US_HOLIDAYS.some(([h]) => h === id)),
+  ];
 
   const dirty =
     !sameIdSet(observedList, data.observedUsHolidays) ||
