@@ -8,6 +8,9 @@ import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
 import { lastSavedLabel } from '../lib/settingsFormat';
+import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
+import { TimeOffEditor } from './settings/TimeOffEditor';
+import { KinCareRatesEditor } from './settings/KinCareRatesEditor';
 import './SettingsEdit.css';
 
 /**
@@ -23,20 +26,16 @@ import './SettingsEdit.css';
  * Cloud Function), so every section saves through `saveBusinessSettings`
  * (`api/settingsWrite.ts`), a `setDoc(..., {merge: true})` on the single doc.
  *
- * SCOPE, deliberately partial: ships real, saving field editors for the simple
- * sections (Business profile, Weather area, Booking behavior, Payment options,
- * Branding, MyTribe portal chrome). It does NOT build the complex sub-editors the
- * wasm screen has for:
- *   - Business hours (the day-by-day open/close grid)
- *   - Time off (US-holiday checklist + company-holiday and special-hours date lists)
- *   - KinCare types (add/rename/remove service-rate rows)
+ * SCOPE: ships real, saving field editors for every section EXCEPT two, which stay
+ * exactly as read-only as the overview already renders them:
  *   - Google Calendar sync (the connect/sync action, not just the id field)
  *   - MyTribe portal Home layout (the section drag-reorder editor) and its logo
  *     upload (Cloudinary picker; out of scope without that pipeline in this repo)
- * Those stay exactly as read-only as the overview already renders them (this
- * screen does not re-render them at all; the operator returns to the overview to
- * see them). This is flagged here, in the on-screen banner below, and in the
- * fan-out report, not silently dropped.
+ * Business hours, Time off, and KinCare-type rates -- previously deferred here --
+ * are now real editors (`screens/settings/BusinessHoursEditor.tsx`,
+ * `TimeOffEditor.tsx`, `KinCareRatesEditor.tsx`), each saving its own doc fields
+ * through the same `persist` patch below. This is flagged here, in the on-screen
+ * banner below, and in the fan-out report, not silently dropped.
  */
 interface SettingsEditProps {
   /** Called when the operator leaves the editor (the "Back to overview" action). */
@@ -145,9 +144,8 @@ export function SettingsEdit({ onDone }: SettingsEditProps) {
       />
 
       <Banner tone="info" dashed pillLabel="Some sections deferred">
-        Business hours, time off (holidays and special hours), KinCare type rates, Google Calendar
-        sync, and the MyTribe Home layout aren&rsquo;t editable here yet. Everything below saves for
-        real; those stay view-only on the overview for now.
+        Google Calendar sync and the MyTribe Home layout aren&rsquo;t editable here yet. Everything
+        below saves for real; those stay view-only on the overview for now.
       </Banner>
 
       <AsyncRegion
@@ -169,6 +167,8 @@ export function SettingsEdit({ onDone }: SettingsEditProps) {
               onSave={persist}
             />
 
+            <BusinessHoursEditor data={data} onSave={persist} />
+
             <TextFieldsSection
               title="Weather area"
               subtitle="Coverage area for the Home weather widgets. A city, metro, or ZIP (e.g. &ldquo;Austin, TX&rdquo;), not a street address."
@@ -177,7 +177,11 @@ export function SettingsEdit({ onDone }: SettingsEditProps) {
               onSave={persist}
             />
 
+            <TimeOffEditor data={data} onSave={persist} />
+
             <BookingBehaviorSection data={data} onSave={persist} />
+
+            <KinCareRatesEditor data={data} onSave={persist} />
 
             <TextFieldsSection
               title="Payment options"

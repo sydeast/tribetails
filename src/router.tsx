@@ -32,6 +32,7 @@ import { Media } from './screens/Media';
 import { type MediaTargetType } from './lib/mediaScopeFormat';
 import { FormSchemaEditor } from './screens/FormSchemaEditor';
 import { KinTaleCompose } from './screens/KinTaleCompose';
+import { KinTaleDetail } from './screens/KinTaleDetail';
 import { AppShell } from './components/AppShell';
 
 /** Shared chrome: the two drifting orbs behind every screen (Den background). */
@@ -151,12 +152,54 @@ const sessionsRoute = createRoute({
   component: Sessions,
 });
 
+/**
+ * Three-state router wrapper, replacing the old two-state (list/compose)
+ * `compose` local state now that the detail/view surface (`KinTaleDetail.tsx`)
+ * exists alongside compose/edit (`KinTaleCompose.tsx`):
+ *
+ *   list      KinTales.tsx, the row feed.
+ *   detail    KinTaleDetail.tsx, VIEWING one report: the recap, comment
+ *             thread, and reaction. Reached by clicking a row (`onSelect`).
+ *   compose   KinTaleCompose.tsx, EDITING (an existing `kinTaleId`) or
+ *             starting a brand-new draft (`onNew`, no id).
+ *
+ * `onSelect` opens DETAIL, not compose: clicking a row in a list is a "view
+ * this" gesture (the Inbox.tsx/Sessions.tsx convention for a row click),
+ * never an implicit "start editing". Editing is its own explicit affordance,
+ * `KinTaleDetail`'s own Edit button, which routes to `compose` carrying the
+ * same `kinTaleId`. Both `detail` and `compose` return to `list` on close.
+ */
+type KinTalesMode =
+  | { kind: 'list' }
+  | { kind: 'detail'; kinTaleId: string }
+  | { kind: 'compose'; kinTaleId?: string };
+
 function KinTalesView() {
-  const [compose, setCompose] = useState<{ kinTaleId?: string } | null>(null);
-  if (compose) {
-    return <KinTaleCompose {...(compose.kinTaleId ? { kinTaleId: compose.kinTaleId } : {})} onClose={() => setCompose(null)} />;
+  const [mode, setMode] = useState<KinTalesMode>({ kind: 'list' });
+
+  if (mode.kind === 'compose') {
+    return (
+      <KinTaleCompose
+        {...(mode.kinTaleId ? { kinTaleId: mode.kinTaleId } : {})}
+        onClose={() => setMode({ kind: 'list' })}
+      />
+    );
   }
-  return <KinTales onNew={() => setCompose({})} onSelect={(id) => setCompose({ kinTaleId: id })} />;
+  if (mode.kind === 'detail') {
+    return (
+      <KinTaleDetail
+        kinTaleId={mode.kinTaleId}
+        onEdit={(id) => setMode({ kind: 'compose', kinTaleId: id })}
+        onClose={() => setMode({ kind: 'list' })}
+      />
+    );
+  }
+  return (
+    <KinTales
+      onNew={() => setMode({ kind: 'compose' })}
+      onSelect={(id) => setMode({ kind: 'detail', kinTaleId: id })}
+    />
+  );
 }
 
 const kinTalesRoute = createRoute({

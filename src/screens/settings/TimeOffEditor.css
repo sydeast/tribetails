@@ -1,0 +1,86 @@
+/**
+ * Time Off sub-editor styling. Scoped to this component, imported directly
+ * (the SettingsEdit.css convention). Every value comes from styles/tokens.css.
+ */
+
+.timeOff__subsection--first {
+  border-top: none;
+  padding-top: 0;
+}
+
+.timeOff__groupLabel {
+  display: block;
+  font-size: var(--type-label-md-size);
+  color: var(--color-text-dim);
+  margin-bottom: var(--space-2);
+}
+
+.timeOff__hint {
+  margin-top: -0.2rem;
+  margin-bottom: var(--space-2);
+}
+
+.timeOff__holidayList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.timeOff__holidayRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.timeOff__holidayName {
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+
+.timeOff__datedList {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.timeOff__datedRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.timeOff__datedText {
+  display: flex;
+  flex-direction: column;
+}
+
+.timeOff__datedName {
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+
+.timeOff__datedDate {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--color-text-dim);
+}
+
+.timeOff__addRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.timeOff__addRow .settingsEdit__field {
+  flex: 1;
+  min-width: 10rem;
+}

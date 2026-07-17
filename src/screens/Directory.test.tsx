@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Timestamp } from 'firebase/firestore';
 import { type Async } from '../lib/async';
@@ -226,5 +226,53 @@ describe('Directory screen, Kin tab', () => {
     await openKinTab();
     expect(screen.queryByRole('option', { name: 'Recently Created' })).toBeNull();
     expect(screen.getByRole('option', { name: 'Recently Updated' })).toBeInTheDocument();
+  });
+});
+
+describe('Directory screen, Add kinfolk / Add kin (the deferred create flows)', () => {
+  it('the "Add kinfolk" header button opens the Add kinfolk dialog', async () => {
+    render(<Directory />);
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    expect(screen.getByRole('dialog', { name: /^add kinfolk$/i })).toBeInTheDocument();
+  });
+
+  it('Cancel closes the Add kinfolk dialog without creating anything', async () => {
+    render(<Directory />);
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(screen.queryByRole('dialog', { name: /^add kinfolk$/i })).toBeNull();
+  });
+
+  it('the "Add kin" header button opens the Add kin dialog, offering every loaded household in its picker', async () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({ _id: 'kf1', firstName: 'Jamie', lastName: 'Halbrook' }),
+        kinfolkRow({ _id: 'kf2', firstName: 'Amy', lastName: 'Adams' }),
+      ],
+    };
+    render(<Directory />);
+    await userEvent.click(screen.getByRole('button', { name: /^add kin$/i }));
+    expect(screen.getByRole('dialog', { name: /^add kin$/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Jamie Halbrook' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Amy Adams' })).toBeInTheDocument();
+  });
+
+  it('the Add kin household picker is empty while the Kinfolk stream is still loading, never fabricated', async () => {
+    kinfolkAsync = { status: 'loading' };
+    render(<Directory />);
+    await userEvent.click(screen.getByRole('button', { name: /^add kin$/i }));
+    const householdSelect = screen.getByLabelText('Household');
+    expect(householdSelect).toHaveValue('');
+    // Only the "Choose a household…" placeholder, scoped to this select (the
+    // page behind the dialog has its own <option>s, e.g. the sort dropdown).
+    expect(within(householdSelect).getAllByRole('option')).toHaveLength(1);
+  });
+
+  it('Cancel closes the Add kin dialog without creating anything', async () => {
+    render(<Directory />);
+    await userEvent.click(screen.getByRole('button', { name: /^add kin$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(screen.queryByRole('dialog', { name: /^add kin$/i })).toBeNull();
   });
 });

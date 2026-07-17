@@ -20,6 +20,9 @@ import { DenScreenHeading } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { Avatar } from '../components/Avatar';
+import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { AddKinfolkDialog } from '../components/AddKinfolkDialog';
+import { AddKinDialog, type KinfolkOption } from '../components/AddKinDialog';
 import './Directory.css';
 
 type DirectoryTab = 'kinfolk' | 'kin';
@@ -32,6 +35,15 @@ function PawGlyph() {
       <circle cx="12.4" cy="5.4" r="2.1" />
       <circle cx="17.5" cy="7.4" r="2.1" />
       <path d="M12.3 10.4c-3.3 0-6.2 2.6-6.2 5.5 0 1.8 1.5 3 3.4 3 1.1 0 1.8-.5 2.7-.5.9 0 1.7.5 2.7.5 2 0 3.4-1.2 3.4-3 0-2.9-2.9-5.5-6-5.5Z" />
+    </svg>
+  );
+}
+
+/** Ports FormSchemas.tsx's PlusGlyph verbatim: no icon package installed here either. */
+function PlusGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
     </svg>
   );
 }
@@ -228,6 +240,24 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortOption>(SORT_OPTION_DEFAULT);
 
+  // The two DEFERRED create flows (this screen was read-only until now).
+  // Both dialogs close themselves on success; neither manually refetches,
+  // KINFOLK_QUERY / KIN_QUERY are live onSnapshot streams (useCollection), so
+  // the new row appears in the grid the instant the write lands.
+  const [showAddKinfolk, setShowAddKinfolk] = useState(false);
+  const [showAddKin, setShowAddKin] = useState(false);
+
+  // "Add kin" needs a household picker; Directory already subscribes to the
+  // full Kinfolk stream for its own tab, so the picker's options are derived
+  // from that, not a second listener on the same collection.
+  const kinfolkOptions: KinfolkOption[] = useMemo(() => {
+    if (kinfolkState.status !== 'ready') return [];
+    return filterSortKinfolk(kinfolkState.data, '', SORT_OPTION_DEFAULT).map((kf) => ({
+      id: kf._id,
+      label: kinfolkDisplayName(kf),
+    }));
+  }, [kinfolkState]);
+
   function selectTab(next: DirectoryTab) {
     setTab(next);
     setQuery(''); // ports `onTabChange { vm.clearSearch() }`
@@ -263,6 +293,16 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
         title="Your"
         accentTail="kinfolk"
         subtitle="Every household and kin on file, streamed live from Firestore."
+        trailing={
+          <div className="directory__header-actions">
+            <PrimaryButton
+              label="Add kinfolk"
+              onClick={() => setShowAddKinfolk(true)}
+              leading={<PlusGlyph />}
+            />
+            <GhostButton label="Add kin" onClick={() => setShowAddKin(true)} leading={<PlusGlyph />} />
+          </div>
+        }
       />
 
       <div className="directory__controls">
@@ -387,6 +427,21 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
             );
           }}
         </AsyncRegion>
+      )}
+
+      {showAddKinfolk && (
+        <AddKinfolkDialog
+          onClose={() => setShowAddKinfolk(false)}
+          onCreated={() => setShowAddKinfolk(false)}
+        />
+      )}
+
+      {showAddKin && (
+        <AddKinDialog
+          kinfolkOptions={kinfolkOptions}
+          onClose={() => setShowAddKin(false)}
+          onCreated={() => setShowAddKin(false)}
+        />
       )}
     </div>
   );
