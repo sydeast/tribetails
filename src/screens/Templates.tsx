@@ -16,6 +16,7 @@ import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/D
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { TemplateEditor } from './TemplateEditor';
+import { TemplateAssignments } from './TemplateAssignments';
 import './Templates.css';
 
 /**
@@ -93,6 +94,11 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<string | null>(ALL_FILTER);
   const [editor, setEditor] = useState<EditorState | null>(null);
+  // The assignment manager is a sibling VIEW of this screen, not a route (the
+  // Communicate.tsx compose/personalize pattern): swap the whole tree rather
+  // than grow an if/else through the JSX. Ports TemplateAssignmentScreen.kt,
+  // the "wholly separate screen" this file's doc comment named as not-yet-built.
+  const [view, setView] = useState<'bank' | 'assignments'>('bank');
 
   // Hoisted so a failed load can hand AsyncRegion a real retry, same shape as
   // FormSchemas.tsx's load(). Only the TEMPLATES load drives AsyncRegion;
@@ -199,6 +205,10 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
     activeIndex: filter === ALL_FILTER ? 0 : 1 + categoryList.indexOf(filter),
   });
 
+  if (view === 'assignments') {
+    return <TemplateAssignments onClose={() => setView('bank')} />;
+  }
+
   return (
     <div className="screen">
       <DenScreenHeading
@@ -206,7 +216,12 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
         title="Template"
         accentTail="Bank."
         subtitle="Browse the email templates SendGrid delivers."
-        trailing={<PrimaryButton label="New template" onClick={handleNew} leading={<PlusGlyph />} />}
+        trailing={
+          <>
+            <GhostButton label="Manage assignments" onClick={() => setView('assignments')} />
+            <PrimaryButton label="New template" onClick={handleNew} leading={<PlusGlyph />} />
+          </>
+        }
       />
 
       <div className="templates__summary">

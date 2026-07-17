@@ -172,6 +172,27 @@ export function moveDown<T>(arr: readonly T[], idx: number): T[] {
   return moveUp(arr, idx + 1);
 }
 
+/**
+ * AO-49: derive a field key from a label so the operator doesn't hand-type it.
+ * camelCase to match this app's own field-key convention (the examples are
+ * `firstName`, `tribeProfile`, not snake_case), and satisfying KEY_RE: a
+ * leading letter, then letters/digits/underscore. Returns '' when the label
+ * has no usable letters/digits (the caller then leaves the key untouched).
+ *
+ * "First name" -> "firstName", "Pet's Age (yrs)" -> "petsAgeYrs",
+ * "2nd contact" -> "ndContact" (leading digits dropped so KEY_RE passes).
+ */
+export function deriveFieldKey(label: string): string {
+  // Drop apostrophes first so "Pet's" stays one word ("pets"), not "pet" + "s".
+  const words = label.replace(/['’]/g, '').split(/[^a-zA-Z0-9]+/).filter((w) => w.length > 0);
+  if (words.length === 0) return '';
+  const camel = words
+    .map((w, i) => (i === 0 ? w.toLowerCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()))
+    .join('');
+  // KEY_RE requires a leading letter; strip any leading digits rather than emit an invalid key.
+  return camel.replace(/^[0-9]+/, '');
+}
+
 function csvToOptions(csv: string): string[] {
   return csv
     .split(',')
@@ -418,6 +439,15 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
                               className="fse__input"
                               value={field.label}
                               onChange={(e) => updateField(idx, (f) => ({ ...f, label: e.target.value }))}
+                              onBlur={() =>
+                                // AO-49: auto-fill the key from the label ONLY when the
+                                // operator hasn't typed one, never clobbering a hand-set key.
+                                updateField(idx, (f) =>
+                                  f.key.trim() === '' && deriveFieldKey(f.label) !== ''
+                                    ? { ...f, key: deriveFieldKey(f.label) }
+                                    : f,
+                                )
+                              }
                               placeholder="e.g. First name"
                               aria-invalid={v.labelError ? true : undefined}
                             />

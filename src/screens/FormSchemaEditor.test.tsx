@@ -24,6 +24,7 @@ import {
   moveUp,
   moveDown,
   emptyField,
+  deriveFieldKey,
 } from './FormSchemaEditor';
 
 function field(over: Partial<FormField> = {}): FormField {
@@ -178,6 +179,25 @@ describe('moveUp / moveDown (pure)', () => {
   });
 });
 
+describe('deriveFieldKey (pure)', () => {
+  it('camelCases a multi-word label', () => {
+    expect(deriveFieldKey('First name')).toBe('firstName');
+    expect(deriveFieldKey('Service address line 1')).toBe('serviceAddressLine1');
+  });
+  it('strips punctuation and collapses separators', () => {
+    expect(deriveFieldKey("Pet's Age (yrs)")).toBe('petsAgeYrs');
+    expect(deriveFieldKey('  Emergency   contact  ')).toBe('emergencyContact');
+  });
+  it('drops leading digits so the key satisfies KEY_RE', () => {
+    expect(deriveFieldKey('2nd contact')).toBe('ndContact');
+    expect(validateField(field({ key: deriveFieldKey('2nd contact'), label: '2nd contact' }), new Set()).keyError).toBeNull();
+  });
+  it('returns empty for a label with no letters or digits', () => {
+    expect(deriveFieldKey('   ')).toBe('');
+    expect(deriveFieldKey('!!!')).toBe('');
+  });
+});
+
 describe('emptyField (pure)', () => {
   it('seeds a blank text field, not required', () => {
     expect(emptyField()).toEqual({
@@ -215,6 +235,26 @@ describe('FormSchemaEditor: create mode', () => {
     await userEvent.type(screen.getByLabelText(/^key$/i), 'firstName');
     await userEvent.type(screen.getByLabelText(/^label$/i), 'First name');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeEnabled();
+  });
+
+  it('auto-derives a blank field key from the label on blur (AO-49), never overwriting a typed key', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /add field/i }));
+
+    // Type a label, blur, the empty key is filled from it.
+    const label = screen.getByLabelText(/^label$/i);
+    await userEvent.type(label, 'First name');
+    await userEvent.tab();
+    expect(screen.getByLabelText(/^key$/i)).toHaveValue('firstName');
+
+    // A hand-set key is preserved: a later label edit + blur leaves it alone.
+    const key = screen.getByLabelText(/^key$/i);
+    await userEvent.clear(key);
+    await userEvent.type(key, 'customKey');
+    await userEvent.clear(label);
+    await userEvent.type(label, 'Last name');
+    await userEvent.tab();
+    expect(screen.getByLabelText(/^key$/i)).toHaveValue('customKey');
   });
 
   it('saves via saveFormSchema wrapping the field list in one section, and reports the new id', async () => {

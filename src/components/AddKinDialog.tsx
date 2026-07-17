@@ -50,19 +50,31 @@ export function AddKinDialog({ kinfolkOptions, initialKinfolkId, onClose, onCrea
   const [sex, setSex] = useState('');
 
   const [saving, setSaving] = useState(false);
-  const [touched, setTouched] = useState(false);
+  // AO-44: per-field touched, so a required field's error surfaces the moment
+  // the operator LEAVES it (onBlur), not only after a save attempt. Save still
+  // marks every field touched, so clicking Add on an empty form reveals all
+  // errors at once (the wasm form gated everything on save alone).
+  const [touched, setTouched] = useState<{ kinfolk: boolean; name: boolean; sex: boolean }>({
+    kinfolk: false,
+    name: false,
+    sex: false,
+  });
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const kinfolkError = touched && kinfolkId === '' ? 'Pick a household.' : null;
-  const nameError = touched && name.trim() === '' ? "Name can't be blank." : null;
-  const sexError = touched && sex === '' ? 'Pick a gender.' : null;
+  const kinfolkError = touched.kinfolk && kinfolkId === '' ? 'Pick a household.' : null;
+  const nameError = touched.name && name.trim() === '' ? "Name can't be blank." : null;
+  const sexError = touched.sex && sex === '' ? 'Pick a gender.' : null;
+
+  function markTouched(field: 'kinfolk' | 'name' | 'sex') {
+    setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
+  }
 
   const closeUnlessSaving = useCallback(() => {
     if (!saving) onClose();
   }, [saving, onClose]);
 
   async function handleSave() {
-    setTouched(true);
+    setTouched({ kinfolk: true, name: true, sex: true });
     if (kinfolkId === '' || name.trim() === '' || sex === '' || saving) return;
     setSaving(true);
     setSaveError(null);
@@ -104,6 +116,7 @@ export function AddKinDialog({ kinfolkOptions, initialKinfolkId, onClose, onCrea
             className="add-kin__select"
             value={kinfolkId}
             onChange={(e) => setKinfolkId(e.target.value)}
+            onBlur={() => markTouched('kinfolk')}
             aria-invalid={kinfolkError !== null}
             aria-describedby={kinfolkError !== null ? 'add-kin-kinfolk-error' : undefined}
           >
@@ -131,6 +144,7 @@ export function AddKinDialog({ kinfolkOptions, initialKinfolkId, onClose, onCrea
             className="add-kin__input"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            onBlur={() => markTouched('name')}
             aria-invalid={nameError !== null}
             aria-describedby={nameError !== null ? 'add-kin-name-error' : undefined}
           />
@@ -195,6 +209,7 @@ export function AddKinDialog({ kinfolkOptions, initialKinfolkId, onClose, onCrea
               className="add-kin__select"
               value={sex}
               onChange={(e) => setSex(e.target.value)}
+              onBlur={() => markTouched('sex')}
               aria-invalid={sexError !== null}
               aria-describedby={sexError !== null ? 'add-kin-sex-error' : undefined}
             >
