@@ -25,18 +25,21 @@ function entry(over: Partial<ActivityLogEntry>): ActivityLogEntry {
   };
 }
 
+const OK: VerifyResult = { ok: true, scanned: 40, firstSeq: 1, lastSeq: 40, unchainedCount: 3 };
+
 beforeEach(() => {
-  useCollection.mockReset();
-  verifyActivityLogChain.mockReset();
+  useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] } satisfies Async<ActivityLogEntry[]>);
+  verifyActivityLogChain.mockReset().mockResolvedValue(OK);
 });
 
 describe('ActivityLog', () => {
-  it('renders streamed rows with seq · hash and groups by day', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] } satisfies Async<ActivityLogEntry[]>);
+  it('renders streamed rows with seq · hash, actor context, grouped by day', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<ActivityLog />);
     expect(screen.getByText('2026-07-16')).toBeInTheDocument();
     expect(screen.getByText('#12 · deadbeef')).toBeInTheDocument();
     expect(screen.getByText('LOGIN')).toBeInTheDocument();
+    expect(screen.getByText(/by u1/)).toBeInTheDocument();
   });
 
   it('surfaces a listener error, never a false empty', () => {
@@ -45,33 +48,42 @@ describe('ActivityLog', () => {
     expect(screen.getByText(/insufficient permissions/i)).toBeInTheDocument();
   });
 
-  it('shows a VERIFIED verdict with the seq range on a good chain', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [] });
-    verifyActivityLogChain.mockResolvedValue({
-      ok: true, scanned: 40, firstSeq: 1, lastSeq: 40, unchainedCount: 3,
-    } satisfies VerifyResult);
+  it('auto-verifies on mount and shows a VERIFIED verdict with the seq range', async () => {
     render(<ActivityLog />);
-    await userEvent.click(screen.getByRole('button', { name: /verify chain/i }));
     expect(await screen.findByText(/chain verified/i)).toBeInTheDocument();
     expect(screen.getByText(/seq 1\.\.40/)).toBeInTheDocument();
+    expect(verifyActivityLogChain).toHaveBeenCalledOnce();
   });
 
-  it('shows the first break on a broken chain', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [] });
+  it('renders a seq_gap anomaly with the expected/entry detail', async () => {
     verifyActivityLogChain.mockResolvedValue({
       ok: false, scanned: 10, anomaly: { code: 'seq_gap', entryId: 'bad1', seq: 7, expectedSeq: 6 },
     } satisfies VerifyResult);
     render(<ActivityLog />);
-    await userEvent.click(screen.getByRole('button', { name: /verify chain/i }));
     expect(await screen.findByText(/chain broken/i)).toBeInTheDocument();
-    expect(screen.getByText(/seq_gap/)).toBeInTheDocument();
+    expect(screen.getByText(/gap at #7 \(expected 6\).*bad1/)).toBeInTheDocument();
+  });
+
+  it('renders a head_mismatch anomaly (no entryId/seq) without printing undefined', async () => {
+    verifyActivityLogChain.mockResolvedValue({
+      ok: false, scanned: 88,
+      anomaly: { code: 'head_mismatch', headLastHash: 'aaa', observedLastHash: 'bbb', headSeq: 88, observedSeq: 87 },
+    } satisfies VerifyResult);
+    render(<ActivityLog />);
+    expect(await screen.findByText(/head mismatch/i)).toBeInTheDocument();
+    expect(screen.queryByText(/undefined/)).toBeNull();
   });
 
   it('fails loud if the verify call rejects', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [] });
     verifyActivityLogChain.mockRejectedValue(new Error('deadline-exceeded'));
     render(<ActivityLog />);
-    await userEvent.click(screen.getByRole('button', { name: /verify chain/i }));
     await waitFor(() => expect(screen.getByText(/deadline-exceeded/i)).toBeInTheDocument());
+  });
+
+  it('re-verifies on demand', async () => {
+    render(<ActivityLog />);
+    await screen.findByText(/chain verified/i);
+    await userEvent.click(screen.getByRole('button', { name: /re-verify/i }));
+    await waitFor(() => expect(verifyActivityLogChain).toHaveBeenCalledTimes(2));
   });
 });

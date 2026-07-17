@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ACTIVITY_LOG_QUERY,
   verifyActivityLogChain,
   type ActivityLogEntry,
+  type VerifyAnomaly,
   type VerifyResult,
 } from '../api/activityLog';
 import { useCollection } from '../lib/firestore';
@@ -15,11 +16,24 @@ import { PrimaryButton } from '../components/Buttons';
 function statusClass(status: string): string {
   const s = status.toUpperCase();
   if (s === 'SUCCESS') return 'log__status log__status--ok';
-  if (s === 'FAILURE') return 'log__status log__status--fail';
+  if (s === 'FAILURE' || s === 'ERROR') return 'log__status log__status--fail';
   return 'log__status log__status--pending';
 }
 
-/** Group rows by calendar day (the leading YYYY-MM-DD of the ISO timestamp). */
+/** Human line for each anomaly shape (head_mismatch carries no entryId/seq). */
+function anomalyDetail(a: VerifyAnomaly): string {
+  switch (a.code) {
+    case 'seq_gap':
+      return `Sequence gap at #${a.seq} (expected ${a.expectedSeq}) — entry ${a.entryId}.`;
+    case 'prev_hash_mismatch':
+      return `Previous-hash mismatch at #${a.seq} — entry ${a.entryId}.`;
+    case 'entry_hash_mismatch':
+      return `Entry-hash mismatch at #${a.seq} — entry ${a.entryId}.`;
+    case 'head_mismatch':
+      return `Chain-head mismatch: sealed head at seq ${a.headSeq}, observed seq ${a.observedSeq}.`;
+  }
+}
+
 function byDay(rows: ActivityLogEntry[]): [string, ActivityLogEntry[]][] {
   const groups = new Map<string, ActivityLogEntry[]>();
   for (const r of rows) {
@@ -32,11 +46,12 @@ function byDay(rows: ActivityLogEntry[]): [string, ActivityLogEntry[]][] {
 /**
  * Admin Activity Log. Streams the `activity_log` collection through the bounded,
  * server-ordered listener (seq desc, capped 200 — AO-29 fixed by construction),
- * and verifies the SHA-256 hash chain on demand via verifyActivityLogChain.
+ * and verifies the SHA-256 hash chain (auto on mount, re-runnable on demand),
+ * matching the wasm screen's verify-on-load behavior.
  */
 export function ActivityLog() {
   const entries = useCollection<ActivityLogEntry>(ACTIVITY_LOG_QUERY);
-  const [chain, setChain] = useState<Async<VerifyResult> | null>(null); // null = not run yet
+  const [chain, setChain] = useState<Async<VerifyResult>>({ status: 'loading' });
 
   async function verify() {
     setChain({ status: 'loading' });
@@ -46,6 +61,10 @@ export function ActivityLog() {
       setChain({ status: 'error', message: err instanceof Error ? err.message : 'Verification failed.' });
     }
   }
+
+  useEffect(() => {
+    void verify();
+  }, []);
 
   return (
     <div className="screen">
@@ -61,16 +80,16 @@ export function ActivityLog() {
         subtitle="Walks the SHA-256 chain server-side and reports the verdict."
         trailing={
           <PrimaryButton
-            label="Verify chain"
-            busy={chain?.status === 'loading'}
+            label="Re-verify"
+            busy={chain.status === 'loading'}
             onClick={() => void verify()}
           />
         }
       >
-        {chain === null ? (
-          <p className="log__hint">Not verified this session. Run a check to confirm the chain is intact.</p>
-        ) : chain.status === 'loading' ? (
-          <p className="log__hint">Verifying…</p>
+        {chain.status === 'loading' ? (
+          <p className="log__hint" role="status">
+            Verifying…
+          </p>
         ) : chain.status === 'error' ? (
           <Banner tone="error" title="Verification call failed">
             {chain.message}
@@ -85,11 +104,7 @@ export function ActivityLog() {
           </Banner>
         ) : (
           <Banner tone="error" title="Chain broken">
-            First break: {chain.data.anomaly.code} at seq {chain.data.anomaly.seq}
-            {chain.data.anomaly.expectedSeq !== undefined
-              ? ` (expected ${chain.data.anomaly.expectedSeq})`
-              : ''}{' '}
-            — entry <code>{chain.data.anomaly.entryId}</code>. Scanned {chain.data.scanned}.
+            {anomalyDetail(chain.data.anomaly)} Scanned {chain.data.scanned}.
           </Banner>
         )}
       </DenPanel>
@@ -119,6 +134,14 @@ export function ActivityLog() {
                         <div className="log__body">
                           <span className="log__action">{e.actionType || 'event'}</span>
                           {e.description ? <span className="log__desc">{e.description}</span> : null}
+                          {e.actorId || e.targetId ? (
+                            <span className="log__ctx">
+                              {e.actorId ? `by ${e.actorId}` : ''}
+                              {e.targetId
+                                ? `${e.actorId ? ' · ' : ''}${e.targetCollection || 'target'}/${e.targetId}`
+                                : ''}
+                            </span>
+                          ) : null}
                         </div>
                         <span className={statusClass(e.status)}>{e.status || '—'}</span>
                         <time className="log__time">
