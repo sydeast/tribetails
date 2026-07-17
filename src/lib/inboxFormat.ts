@@ -115,7 +115,7 @@ export function unreadThreadCount(rows: readonly { unreadForAdmin: boolean }[]):
 export type ThreadSender = 'kinfolk' | 'auntie' | 'unknown';
 
 export function threadSender(lastSenderRole: string): ThreadSender {
-  switch (lastSenderRole.trim().toLowerCase()) {
+  switch ((lastSenderRole ?? '').trim().toLowerCase()) {
     case 'kinfolk':
       return 'kinfolk';
     case 'auntie':

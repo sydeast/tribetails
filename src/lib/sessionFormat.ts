@@ -43,7 +43,7 @@ import { localDateIso } from './invoiceFormat';
  * Timestamp.
  */
 export function sessionTimeOf(iso: string): FsTime {
-  const trimmed = iso.trim();
+  const trimmed = (iso ?? '').trim();
   if (trimmed === '') return null;
   const d = new Date(trimmed);
   if (Number.isNaN(d.getTime())) return null;
@@ -125,7 +125,7 @@ export function sessionDayLabel(dayKeyValue: string, todayIso: string): string {
 
 /** "Unnamed Kinfolk" fallback, matching `directory.ts#kinfolkDisplayName`'s convention, `kinfolkName` is blank on a session created via the ad-hoc `createKinCareSession` callable, which does not stamp it. */
 export function sessionHousehold(kinfolkName: string): string {
-  const name = kinfolkName.trim();
+  const name = (kinfolkName ?? '').trim();
   return name === '' ? 'Unnamed Kinfolk' : name;
 }
 
@@ -154,7 +154,7 @@ export type SessionState =
 
 /** Classifies one session's free-text `status`, case-insensitively (mirrors the wasm's own `.uppercase()` compare). */
 export function sessionState(status: string): SessionState {
-  switch (status.trim().toUpperCase()) {
+  switch ((status ?? '').trim().toUpperCase()) {
     case 'SCHEDULED':
       return 'scheduled';
     case 'ON_MY_WAY':
