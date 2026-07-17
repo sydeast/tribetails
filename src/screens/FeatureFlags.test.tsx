@@ -51,4 +51,33 @@ describe('FeatureFlags screen', () => {
     render(<FeatureFlags />);
     expect(await screen.findByText(/offline/i)).toBeInTheDocument();
   });
+
+  it('disables every toggle while a save is in flight (single-flight)', async () => {
+    getFeatureFlags.mockResolvedValue({});
+    let release!: () => void;
+    setFeatureFlags.mockReturnValue(
+      new Promise<void>((r) => {
+        release = () => r();
+      }),
+    );
+    render(<FeatureFlags />);
+    const recap = await screen.findByRole('switch', { name: /comms recap/i });
+    const integration = screen.getByRole('switch', { name: /integration manage/i });
+    await userEvent.click(recap);
+    expect(recap).toBeDisabled();
+    expect(integration).toBeDisabled();
+    release();
+    await waitFor(() => expect(recap).not.toBeDisabled());
+  });
+
+  it('clears the write-error banner on the next toggle attempt', async () => {
+    getFeatureFlags.mockResolvedValue({});
+    setFeatureFlags.mockRejectedValueOnce(new Error('boom')).mockResolvedValue({});
+    render(<FeatureFlags />);
+    const recap = await screen.findByRole('switch', { name: /comms recap/i });
+    await userEvent.click(recap);
+    expect(await screen.findByText(/boom/i)).toBeInTheDocument();
+    await userEvent.click(recap);
+    await waitFor(() => expect(screen.queryByText(/boom/i)).toBeNull());
+  });
 });

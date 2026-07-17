@@ -52,3 +52,7 @@
   color: var(--color-secondary, #5a5c6a);
   margin: 0;
 }
+.shell__pending-note {
+  font-size: 0.68rem;
+  opacity: 0.7;
+}

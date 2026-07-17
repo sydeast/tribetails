@@ -10,7 +10,15 @@ export type FeatureFlags = Record<string, boolean>;
  * contract; every later screen follows this shape.
  */
 
-/** getFeatureFlags -> { flags }. The merged global + per-user flag map. */
+/**
+ * getFeatureFlags -> { flags }. The merged global + per-user flag map.
+ *
+ * Backend asymmetry, inherited from the wasm admin (not a port bug): the READ
+ * merges global `business_settings/feature_flags` with the caller's own
+ * `clients/{uid}.featureFlags`, but setFeatureFlags below writes GLOBAL only. So
+ * an operator who happens to carry a per-user override can see a toggle appear to
+ * revert on the next load. Left faithful; flagged here to save a future debug.
+ */
 export async function getFeatureFlags(): Promise<FeatureFlags> {
   const res = await call<Record<string, never>, { flags: FeatureFlags }>('getFeatureFlags', {});
   return res.flags ?? {};
