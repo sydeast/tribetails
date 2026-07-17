@@ -13,6 +13,7 @@ import './styles/tokens.css';
 import './styles/base.css';
 import './styles/signin.css';
 import './styles/shell.css';
+import './styles/screens.css';
 
 import './lib/firebase'; // initialize Firebase before anything touches auth
 import { router } from './router';

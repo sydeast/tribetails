@@ -1,0 +1,54 @@
+/* Shared screen-content styling (rendered into the AppShell <Outlet/>). */
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* ── Feature Flags ───────────────────────────────────────────────────────── */
+
+.flags {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.flags__row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--color-border-soft, #e6e4dd);
+}
+.flags__row:last-child {
+  border-bottom: none;
+}
+
+.flags__meta {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.flags__label {
+  font-weight: 600;
+  color: var(--color-primary, #1a1c28);
+}
+.flags__key {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.78rem;
+  color: var(--color-text-faint, #9a988f);
+  word-break: break-all;
+}
+.flags__detail {
+  font-size: 0.85rem;
+  color: var(--color-secondary, #5a5c6a);
+}
+
+.flags__hint {
+  color: var(--color-secondary, #5a5c6a);
+  margin: 0;
+}
