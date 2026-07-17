@@ -1,0 +1,168 @@
+/**
+ * Form Schemas screen styling. Scoped to this screen and imported directly by
+ * FormSchemas.tsx (the DenScreenKit.css / Banner.css / Buttons.css convention),
+ * so nothing here needs to land in the shared styles/screens.css. Every value
+ * comes from styles/tokens.css — no literal colours, radii, or durations.
+ */
+
+.schemas__count {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--color-text-dim);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-pill);
+  padding: 0.2rem 0.65rem;
+  white-space: nowrap;
+}
+
+.schemas__hint {
+  color: var(--color-text-dim);
+  margin: 0;
+}
+
+.schemas__search {
+  margin-bottom: var(--space-3);
+}
+
+.schemas__search-input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.schemas__search-input:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.schemas__search-input::placeholder {
+  color: var(--color-text-faint);
+}
+
+.schemas__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.schemas__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  background: var(--color-surface-glass);
+  transition:
+    background var(--dur-base) var(--ease-standard),
+    border-color var(--dur-base) var(--ease-standard);
+}
+.schemas__row:hover,
+.schemas__row:focus-within {
+  background: var(--color-surface-2);
+  border-color: var(--color-primary);
+}
+
+.schemas__row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  font: inherit;
+  color: inherit;
+}
+.schemas__row-main:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  border-radius: var(--radius-card);
+}
+
+.schemas__row-name {
+  font-family: var(--font-fraunces);
+  font-size: var(--type-title-md-size);
+  font-weight: var(--type-title-md-weight);
+  color: var(--color-text-primary);
+}
+
+.schemas__row-id {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--color-text-faint);
+  word-break: break-all;
+}
+
+.schemas__row-meta {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.schemas__reload {
+  margin-top: var(--space-4);
+}
+
+/* ── delete confirm (screen-local; no shared Dialog primitive exists yet) ── */
+
+.schemas__dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  z-index: 100;
+}
+
+.schemas__dialog {
+  width: 100%;
+  max-width: 30rem;
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-panel);
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.schemas__dialog-title {
+  margin: 0;
+  font-family: var(--font-fraunces);
+  font-size: var(--type-headline-sm-size);
+  font-weight: var(--type-headline-sm-weight);
+  color: var(--color-text-primary);
+}
+
+.schemas__dialog-hint {
+  margin: 0;
+  color: var(--color-text-dim);
+}
+
+.schemas__dialog-id {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--color-text-faint);
+  word-break: break-all;
+}
+
+.schemas__dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
