@@ -70,10 +70,43 @@
   color: var(--color-text-primary);
 }
 
-.invoice-detail__confirm-note {
-  margin: 0;
-  font-size: var(--type-body-sm-size);
+.invoice-detail__confirm-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.invoice-detail__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1 1 12rem;
+}
+
+.invoice-detail__field-label {
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
   color: var(--color-text-dim);
+}
+
+.invoice-detail__field-input {
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+}
+
+.invoice-detail__field-input:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.invoice-detail__field-input:disabled {
+  opacity: 0.6;
 }
 
 .invoice-detail__confirm-actions {

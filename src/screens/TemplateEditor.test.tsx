@@ -4,8 +4,11 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { TemplateSummary } from '../api/templates';
 
-const { saveTemplate } = vi.hoisted(() => ({ saveTemplate: vi.fn() }));
-vi.mock('../api/templatesWrite', () => ({ saveTemplate }));
+const { saveTemplate, deleteTemplate } = vi.hoisted(() => ({
+  saveTemplate: vi.fn(),
+  deleteTemplate: vi.fn(),
+}));
+vi.mock('../api/templatesWrite', () => ({ saveTemplate, deleteTemplate }));
 
 import { TemplateEditor } from './TemplateEditor';
 
@@ -25,6 +28,7 @@ function tpl(over: Partial<TemplateSummary> = {}): TemplateSummary {
 
 beforeEach(() => {
   saveTemplate.mockReset();
+  deleteTemplate.mockReset();
 });
 
 describe('TemplateEditor: create mode', () => {
@@ -230,5 +234,99 @@ describe('TemplateEditor: busy + close guards', () => {
     render(<TemplateEditor template={tpl({})} onClose={onClose} onSaved={vi.fn()} />);
     await userEvent.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+describe('TemplateEditor: delete (edit mode only)', () => {
+  it('create mode never offers a Delete action, even with onDeleted supplied', () => {
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} onDeleted={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /^delete$/i })).toBeNull();
+  });
+
+  it('edit mode omits the Delete action when onDeleted is not supplied (no handler, no interactive control)', () => {
+    render(<TemplateEditor template={tpl({})} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /^delete$/i })).toBeNull();
+  });
+
+  it('edit mode with onDeleted supplied offers a Delete action that opens a confirm dialog', async () => {
+    render(<TemplateEditor template={tpl({ templateId: 'booking.confirmed' })} onClose={vi.fn()} onSaved={vi.fn()} onDeleted={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    expect(screen.getByRole('dialog', { name: /delete this template\?/i })).toBeInTheDocument();
+    expect(screen.getByText('booking.confirmed')).toBeInTheDocument();
+    expect(deleteTemplate).not.toHaveBeenCalled();
+  });
+
+  it('Back returns to the edit dialog without deleting', async () => {
+    render(<TemplateEditor template={tpl({})} onClose={vi.fn()} onSaved={vi.fn()} onDeleted={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^back$/i }));
+    expect(screen.getByRole('dialog', { name: /edit template/i })).toBeInTheDocument();
+    expect(deleteTemplate).not.toHaveBeenCalled();
+  });
+
+  it('confirming delete calls deleteTemplate with the templateId and onDeleted on success', async () => {
+    deleteTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    const onDeleted = vi.fn();
+    render(
+      <TemplateEditor
+        template={tpl({ templateId: 'booking.confirmed' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        onDeleted={onDeleted}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
+    await waitFor(() => expect(deleteTemplate).toHaveBeenCalledWith('booking.confirmed'));
+    expect(onDeleted).toHaveBeenCalledWith('booking.confirmed');
+  });
+
+  it('surfaces a rejected deleteTemplate call fail-loud, naming the callable, and keeps the confirm dialog open', async () => {
+    deleteTemplate.mockRejectedValue(
+      new Error('failed-precondition: Template "booking.confirmed" is still assigned to notification catalog key(s): kin.booking.confirmed.'),
+    );
+    const onDeleted = vi.fn();
+    render(
+      <TemplateEditor
+        template={tpl({ templateId: 'booking.confirmed' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        onDeleted={onDeleted}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
+    expect(await screen.findByText(/deleteTemplate failed: failed-precondition/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: /delete this template\?/i })).toBeInTheDocument();
+    expect(onDeleted).not.toHaveBeenCalled();
+  });
+
+  it('disables Back and Delete, and marks Delete busy, while a delete is in flight', async () => {
+    let resolveDelete: (value: { templateId: string }) => void = () => {};
+    deleteTemplate.mockReturnValue(
+      new Promise((resolve) => {
+        resolveDelete = resolve;
+      }),
+    );
+    render(<TemplateEditor template={tpl({})} onClose={vi.fn()} onSaved={vi.fn()} onDeleted={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
+
+    const deleteButton = screen.getByRole('button', { name: /deleting/i });
+    expect(deleteButton).toBeDisabled();
+    expect(deleteButton).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('button', { name: /^back$/i })).toBeDisabled();
+
+    resolveDelete({ templateId: 'booking.confirmed' });
+    await waitFor(() => expect(screen.queryByRole('button', { name: /deleting/i })).toBeNull());
+  });
+
+  it('calls onClose (fully exits) on Escape from the confirm dialog, not just Back', async () => {
+    const onClose = vi.fn();
+    render(<TemplateEditor template={tpl({})} onClose={onClose} onSaved={vi.fn()} onDeleted={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(deleteTemplate).not.toHaveBeenCalled();
   });
 });

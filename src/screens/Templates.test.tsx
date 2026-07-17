@@ -14,8 +14,11 @@ vi.mock('../api/templates', async (orig) => ({
   listTemplateCategories,
 }));
 
-const { saveTemplate } = vi.hoisted(() => ({ saveTemplate: vi.fn() }));
-vi.mock('../api/templatesWrite', () => ({ saveTemplate }));
+const { saveTemplate, deleteTemplate } = vi.hoisted(() => ({
+  saveTemplate: vi.fn(),
+  deleteTemplate: vi.fn(),
+}));
+vi.mock('../api/templatesWrite', () => ({ saveTemplate, deleteTemplate }));
 
 import { Templates } from './Templates';
 
@@ -206,6 +209,28 @@ describe('Templates screen', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await waitFor(() => expect(listTemplates).toHaveBeenCalledTimes(2));
     expect(await screen.findByText('Booking Confirmed')).toBeInTheDocument();
+  });
+
+  it('deleting a template through the editor closes it and reloads the list', async () => {
+    listTemplates.mockResolvedValueOnce([
+      tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed', subject: 'Your booking is confirmed' }),
+    ]);
+    listTemplates.mockResolvedValueOnce([]);
+    deleteTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    render(<Templates />);
+
+    const row = await screen.findByText('Booking Confirmed');
+    await userEvent.click(row);
+    expect(screen.getByRole('dialog', { name: /edit template/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    expect(screen.getByRole('dialog', { name: /delete this template\?/i })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
+
+    expect(deleteTemplate).toHaveBeenCalledWith('booking.confirmed');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(listTemplates).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/no templates yet/i)).toBeInTheDocument();
   });
 
   it('a stale/missing row id (list not yet loaded) is a silent no-op, never a crash or a blank editor', async () => {

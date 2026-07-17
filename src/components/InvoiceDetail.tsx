@@ -34,12 +34,11 @@ const ACTIONS: readonly ActionMeta[] = [
   {
     key: 'markPaid',
     label: 'Mark paid',
-    confirmCopy:
-      'This sets the invoice to paid and notifies the household. It does not record a payment method or reference number, see the note below. Continue?',
+    confirmCopy: 'This sets the invoice to paid and notifies the household. Method and reference are optional. Continue?',
     confirmLabel: 'Mark paid',
     busyLabel: 'Marking paid…',
     successMessage: 'Invoice marked paid.',
-    callableName: 'postInvoiceEvent',
+    callableName: 'markInvoicePaid',
   },
   {
     key: 'receipt',
@@ -79,6 +78,8 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [paidMethod, setPaidMethod] = useState('');
+  const [paidReference, setPaidReference] = useState('');
 
   const todayIso = localDateIso(new Date());
   const state = invoiceState({
@@ -96,6 +97,8 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
   function startAction(key: PendingAction) {
     setActionError(null);
     setNotice(null);
+    setPaidMethod('');
+    setPaidReference('');
     setPending(key);
   }
 
@@ -110,8 +113,14 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
     setActionError(null);
     try {
       if (meta.key === 'reminder') await sendInvoiceReminder(invoice._id);
-      else if (meta.key === 'markPaid') await markInvoicePaid(invoice._id, invoice.kinfolkId);
-      else await generateReceipt(invoice._id);
+      else if (meta.key === 'markPaid') {
+        const method = paidMethod.trim();
+        const reference = paidReference.trim();
+        await markInvoicePaid(invoice._id, {
+          ...(method !== '' && { method }),
+          ...(reference !== '' && { reference }),
+        });
+      } else await generateReceipt(invoice._id);
       setBusy(false);
       setNotice(meta.successMessage);
       setPending(null);
@@ -166,10 +175,30 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
           <div className="invoice-detail__confirm">
             <p className="invoice-detail__confirm-copy">{meta.confirmCopy}</p>
             {meta.key === 'markPaid' && (
-              <p className="invoice-detail__confirm-note">
-                Note: this does not create a payment record, it only marks the invoice paid. Use Record
-                Payment (elsewhere) when you need a payment method or reference number on file.
-              </p>
+              <div className="invoice-detail__confirm-fields">
+                <label className="invoice-detail__field">
+                  <span className="invoice-detail__field-label">Method, optional</span>
+                  <input
+                    className="invoice-detail__field-input"
+                    value={paidMethod}
+                    onChange={(e) => setPaidMethod(e.target.value)}
+                    placeholder="check, cash, venmo…"
+                    disabled={busy}
+                    aria-label="Payment method"
+                  />
+                </label>
+                <label className="invoice-detail__field">
+                  <span className="invoice-detail__field-label">Reference, optional</span>
+                  <input
+                    className="invoice-detail__field-input"
+                    value={paidReference}
+                    onChange={(e) => setPaidReference(e.target.value)}
+                    placeholder="confirmation / check number"
+                    disabled={busy}
+                    aria-label="Payment reference"
+                  />
+                </label>
+              </div>
             )}
             <div className="invoice-detail__confirm-actions">
               <GhostButton label="Cancel" onClick={cancelPending} disabled={busy} />

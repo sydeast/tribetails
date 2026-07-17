@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { call } = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('../lib/fns', () => ({ call }));
 
-import { saveTemplate } from './templatesWrite';
+import { saveTemplate, deleteTemplate } from './templatesWrite';
 import type { SaveTemplatePayload } from '../lib/templateFormat';
 
 beforeEach(() => call.mockReset());
@@ -46,5 +46,30 @@ describe('templatesWrite api', () => {
       Promise.reject(new Error('invalid-argument: subject must not use unescaped Handlebars')),
     );
     await expect(saveTemplate(payload())).rejects.toThrow(/unescaped Handlebars/);
+  });
+
+  it('deleteTemplate calls the callable by name with { templateId }, unwrapping { templateId }', async () => {
+    call.mockResolvedValue({ templateId: 'booking.confirmed' });
+    const result = await deleteTemplate('booking.confirmed');
+    expect(call).toHaveBeenCalledWith('deleteTemplate', { templateId: 'booking.confirmed' });
+    expect(result).toEqual({ templateId: 'booking.confirmed' });
+  });
+
+  it('deleteTemplate propagates a not-found rejection fail-loud (never swallowed here)', async () => {
+    // mockImplementationOnce, not mockRejectedValue: see the saveTemplate
+    // rejection test above for why (Vitest 2.1.9 unhandled-rejection race).
+    call.mockImplementationOnce(() => Promise.reject(new Error('not-found: Template not found: ghost.template')));
+    await expect(deleteTemplate('ghost.template')).rejects.toThrow(/not-found/);
+  });
+
+  it('deleteTemplate propagates a failed-precondition rejection (template still bound to a catalog key)', async () => {
+    call.mockImplementationOnce(() =>
+      Promise.reject(
+        new Error(
+          'failed-precondition: Template "booking.confirmed" is still assigned to notification catalog key(s): kin.booking.confirmed.',
+        ),
+      ),
+    );
+    await expect(deleteTemplate('booking.confirmed')).rejects.toThrow(/failed-precondition/);
   });
 });

@@ -4,28 +4,30 @@ import { call } from '../lib/fns';
  * The write side of the Invoices screen. Every callable below was confirmed
  * live against MyTribe/functions/src/admin/*.ts (read, not guessed):
  *
- *   createInvoice.ts          zod Args matched field-for-field
- *   createQuote.ts            same Args + `sendToKinfolk`; server ignores the
- *                             caller's `status` and always mints QUOTE
- *   sendInvoiceReminder.ts    `{ invoiceId }`, throws failed-precondition if
- *                             the invoice is already paid
- *   generateReceipt.ts        `{ invoiceId }`
+ *   createInvoice.ts              zod Args matched field-for-field
+ *   createQuote.ts                same Args + `sendToKinfolk`; server ignores
+ *                                 the caller's `status` and always mints QUOTE
+ *   sendInvoiceReminder.ts        `{ invoiceId }`, throws failed-precondition
+ *                                 if the invoice is already paid
+ *   generateReceipt.ts            `{ invoiceId }`
+ *   markInvoicePaid.ts            `{ invoiceId, amount?, method?, reference?,
+ *                                 paidAt? }`; writes a `payments` subcollection
+ *                                 entry (amount/method/reference/paidAt/
+ *                                 recordedBy) in the same batch as the status
+ *                                 flip, throws failed-precondition if already
+ *                                 paid or still a draft/quote
+ *   reviewAndSendDraftInvoice.ts  `{ invoiceId }`; throws failed-precondition
+ *                                 if the invoice isn't a draft, or if it's
+ *                                 missing a total, household, or invoice
+ *                                 number
  *
- * Two actions this screen needs, "mark paid" and "send a draft", have NO
- * dedicated callable. Confirmed by reading every file under
- * MyTribe/functions/src/admin/: no markPaid.ts, markInvoicePaid.ts, or
- * reviewAndSendDraftInvoice.ts exists, and neither name (nor a "mark paid"
- * button) appears anywhere in the wasm reference
- * (web/composeApp/.../invoices/InvoiceDetailScreen.kt), which only wires
- * Receipt, Reminder, and Record Payment (recordPayment, a DIRECT Firestore
- * write via FirestoreClient, not a callable, and out of scope here). Both
- * route through `postInvoiceEvent` instead: the one real, exported, generic
- * admin invoice-mutation callable (merges an arbitrary payload onto
- * invoices/{invoiceId}, stamps kinfolkId + updatedAt, writes an audit entry,
- * dispatches a notification). It is a real backend call, not a stub, but it is
- * the generic primitive, not a purpose-built endpoint, see the doc comments on
- * markInvoicePaid / reviewAndSendDraftInvoice below for exactly what that does
- * and does not mean.
+ * `markInvoicePaid` and `reviewAndSendDraftInvoice` used to route through
+ * `postInvoiceEvent`, the generic admin invoice-mutation callable, as a
+ * workaround: a real backend call, but the generic primitive rather than a
+ * purpose-built endpoint, with no payment audit trail and no draft-send
+ * validation. Both now call their own dedicated callables above, neither of
+ * which needs `familyId` from the caller: each loads the invoice server-side
+ * and reads `kinfolkId` off the doc itself.
  */
 
 /**
@@ -89,39 +91,45 @@ export async function generateReceipt(invoiceId: string): Promise<void> {
   await call<{ invoiceId: string }, { ok: true }>('generateReceipt', { invoiceId });
 }
 
-interface PostInvoiceEventInput {
-  familyId: string;
+export interface MarkInvoicePaidInput {
+  /** Dollar amount actually collected. Omit to pay the invoice's current amountDue in full (server default). */
+  amount?: number;
+  /** Free-text payment method, e.g. "check", "cash", "venmo". */
+  method?: string;
+  /** Free-text reference/confirmation number for the payment. */
+  reference?: string;
+  /** ISO-8601 timestamp for when the payment was actually received. Omit to use now (server default). */
+  paidAt?: string;
+}
+
+interface MarkInvoicePaidRequest extends MarkInvoicePaidInput {
   invoiceId: string;
-  payload: Record<string, unknown>;
 }
 
 /**
- * Marks an invoice paid by writing `{ status: 'paid', amountDue: 0 }` through
- * `postInvoiceEvent`. NOT a dedicated markPaid endpoint, see this module's
- * header: no such callable exists. This bypasses the `payments` audit trail
- * the wasm's Record-Payment flow builds (no `payments` doc is created), it
- * only updates the invoice doc itself, real and immediate, but a coarser tool
- * than a purpose-built one would be.
+ * markInvoicePaid (admin): flips the invoice to paid + zeroes amountDue, and
+ * writes a `payments` subcollection entry (amount/method/reference/paidAt/
+ * recordedBy) in the SAME batch, so a manual payment is never recorded
+ * without its audit trail. Throws `failed-precondition` if the invoice is
+ * already paid or is still a draft/quote, `not-found` if the id is wrong.
+ * The `invoice.payment.applied` notification is dispatched by the backend's
+ * `onInvoicesWrite` trigger off the resulting Firestore write, not by this
+ * callable directly.
  */
-export async function markInvoicePaid(invoiceId: string, familyId: string): Promise<void> {
-  await call<PostInvoiceEventInput, { ok: true }>('postInvoiceEvent', {
-    familyId,
+export async function markInvoicePaid(invoiceId: string, input: MarkInvoicePaidInput = {}): Promise<void> {
+  await call<MarkInvoicePaidRequest, { ok: true; invoiceId: string; paymentId: string }>('markInvoicePaid', {
     invoiceId,
-    payload: { status: 'paid', amountDue: 0 },
+    ...input,
   });
 }
 
 /**
- * Clears a DRAFT invoice's status via `postInvoiceEvent`, the same generic
- * primitive as markInvoicePaid above (see this module's header for why: no
- * reviewAndSendDraftInvoice callable exists). "Sending" a draft has no
- * dedicated validation step server-side beyond what postInvoiceEvent already
- * does (an `invoice.updated` dispatch), which this documents rather than invents.
+ * reviewAndSendDraftInvoice (admin): flips a DRAFT invoice to open and
+ * dispatches the `invoice.new` notification to the household. Throws
+ * `failed-precondition` if the invoice isn't currently a draft, or if it's
+ * missing a total, household, or invoice number (fail loud on an incomplete
+ * draft rather than sending it anyway), `not-found` if the id is wrong.
  */
-export async function reviewAndSendDraftInvoice(invoiceId: string, familyId: string): Promise<void> {
-  await call<PostInvoiceEventInput, { ok: true }>('postInvoiceEvent', {
-    familyId,
-    invoiceId,
-    payload: { status: '' },
-  });
+export async function reviewAndSendDraftInvoice(invoiceId: string): Promise<void> {
+  await call<{ invoiceId: string }, { ok: true; invoiceId: string }>('reviewAndSendDraftInvoice', { invoiceId });
 }

@@ -1,5 +1,5 @@
 import { useCallback, useId, useState } from 'react';
-import { saveTemplate } from '../api/templatesWrite';
+import { saveTemplate, deleteTemplate } from '../api/templatesWrite';
 import type { TemplateSummary } from '../api/templates';
 import {
   blankFormFields,
@@ -38,6 +38,26 @@ export interface TemplateEditorProps {
    * caller's call, not the modal's).
    */
   onSaved: (templateId: string) => void;
+  /**
+   * Called once `deleteTemplate` resolves, with the deleted templateId.
+   * Optional and edit-mode-only: omitting it (or being in create mode) simply
+   * renders no Delete action, the same "no handler, no interactive control"
+   * convention `components/Buttons.tsx` documents for every button in this
+   * repo, rather than wiring a destructive action to a no-op. Mirrors
+   * `onSaved` above: this component does not close itself on success, the
+   * caller owns closing the editor and reloading the list.
+   */
+  onDeleted?: (templateId: string) => void;
+}
+
+type View = 'edit' | 'confirm-delete';
+
+function TrashGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-9 0 1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" />
+    </svg>
+  );
 }
 
 /**
@@ -61,17 +81,30 @@ export interface TemplateEditorProps {
  * `<code>`, the same non-interactive convention Templates.tsx's row `<code>`
  * uses for the same field.
  *
- * No delete affordance: confirmed against the backend, `emailTemplates` has
- * no delete callable (see templatesWrite.ts). This editor is create + update
- * only, and does not fabricate a delete action the server cannot honor.
+ * Delete (edit mode only, gated on `onDeleted` being supplied): a "Delete"
+ * action in the footer opens a SECOND, separate Dialog asking for
+ * confirmation, then calls `deleteTemplate`. This swaps which single Dialog
+ * is rendered based on a `view` state rather than stacking two `<Dialog>`s at
+ * once, the same one-dialog-at-a-time convention `BookingActions.tsx` uses
+ * for its own confirm/reschedule modes (two mounted focus-traps would fight
+ * over Escape and Tab). Backdrop-click/Escape from the confirm dialog fully
+ * closes the editor (same as the edit dialog), matching `BookingActions.tsx`;
+ * only the confirm dialog's own "Back" button returns to the edit view. The
+ * backend (`deleteTemplate.ts`) refuses the delete with `failed-precondition`
+ * if a notification catalog key is still bound to this template, so a
+ * rejection here can be a real, expected outcome, not just a network error;
+ * either way it surfaces fail-loud in the confirm dialog rather than closing
+ * silently.
  */
-export function TemplateEditor({ template, categories, onClose, onSaved }: TemplateEditorProps) {
+export function TemplateEditor({ template, categories, onClose, onSaved, onDeleted }: TemplateEditorProps) {
   const isCreate = template === null;
   const [fields, setFields] = useState<TemplateFormFields>(() =>
     template ? templateToFormFields(template) : blankFormFields(),
   );
+  const [view, setView] = useState<View>('edit');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const categoryListId = useId();
 
   function setField<K extends keyof TemplateFormFields>(key: K, value: TemplateFormFields[K]) {
@@ -85,10 +118,10 @@ export function TemplateEditor({ template, categories, onClose, onSaved }: Templ
   // character typed, one letter at a time. Stable across renders except when
   // `saving` or the outer `onClose` prop actually changes.
   const requestClose = useCallback(() => {
-    // Never close out from under an in-flight save: the same guard
+    // Never close out from under an in-flight save OR delete: the same guard
     // FormSchemas.tsx's pendingDelete dialog uses for its Escape/backdrop path.
-    if (!saving) onClose();
-  }, [saving, onClose]);
+    if (!saving && !deleting) onClose();
+  }, [saving, deleting, onClose]);
 
   async function handleSave() {
     if (saving) return;
@@ -110,6 +143,68 @@ export function TemplateEditor({ template, categories, onClose, onSaved }: Templ
     }
   }
 
+  function openConfirmDelete() {
+    if (isCreate || saving) return;
+    setError(null);
+    setView('confirm-delete');
+  }
+
+  // "Back", not requestClose: returning to the edit view is a narrower action
+  // than dismissing the whole editor, the same distinction BookingActions.tsx
+  // draws between its confirm mode's "Back" button and Escape/backdrop (which
+  // fully exits). Guarded on `deleting` the same way requestClose is.
+  function backToEdit() {
+    if (deleting) return;
+    setError(null);
+    setView('edit');
+  }
+
+  async function handleDelete() {
+    if (isCreate || deleting) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      const { templateId } = await deleteTemplate(fields.templateId);
+      setDeleting(false);
+      onDeleted?.(templateId);
+    } catch (err) {
+      setDeleting(false);
+      setError(`deleteTemplate failed: ${err instanceof Error ? err.message : 'Delete failed'}`);
+    }
+  }
+
+  if (view === 'confirm-delete' && !isCreate) {
+    return (
+      <Dialog
+        title="Delete this template?"
+        onClose={requestClose}
+        footer={
+          <>
+            <GhostButton label="Back" onClick={backToEdit} disabled={deleting} />
+            <PrimaryButton
+              label={deleting ? 'Deleting…' : 'Delete template'}
+              onClick={() => void handleDelete()}
+              disabled={deleting}
+              busy={deleting}
+              leading={<TrashGlyph />}
+            />
+          </>
+        }
+      >
+        {error ? (
+          <Banner tone="error" title="Couldn&rsquo;t delete" className="template-editor__error">
+            {error}
+          </Banner>
+        ) : null}
+        <p className="template-editor__hint">
+          {fields.title || fields.templateId}. This cannot be undone. If a notification catalog
+          key is still assigned to this template, the delete is refused until it is unassigned.
+        </p>
+        <code className="template-editor__id-static">{fields.templateId}</code>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog
       title={isCreate ? 'New template' : 'Edit template'}
@@ -117,6 +212,9 @@ export function TemplateEditor({ template, categories, onClose, onSaved }: Templ
       footer={
         <>
           <GhostButton label="Cancel" onClick={requestClose} disabled={saving} />
+          {!isCreate && onDeleted ? (
+            <GhostButton label="Delete" onClick={openConfirmDelete} disabled={saving} leading={<TrashGlyph />} />
+          ) : null}
           <PrimaryButton
             label={saving ? 'Saving…' : 'Save template'}
             onClick={() => void handleSave()}

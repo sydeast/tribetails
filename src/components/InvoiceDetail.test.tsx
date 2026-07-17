@@ -86,13 +86,33 @@ describe('InvoiceDetail', () => {
     expect(screen.getByRole('button', { name: /^send reminder$/i })).toBeInTheDocument();
   });
 
-  it('marks paid through markInvoicePaid with the invoice and household ids', async () => {
+  it('marks paid through markInvoicePaid with no payment details when the fields are left blank', async () => {
     markInvoicePaid.mockResolvedValue(undefined);
     render(<InvoiceDetail invoice={entry({ _id: 'inv7', kinfolkId: 'kf7' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^mark paid$/i }));
     await userEvent.click(screen.getByRole('button', { name: /^mark paid$/i }));
-    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith('inv7', 'kf7'));
+    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith('inv7', {}));
     expect(await screen.findByText(/marked paid/i)).toBeInTheDocument();
+  });
+
+  it('marks paid through markInvoicePaid, passing the entered method and reference', async () => {
+    markInvoicePaid.mockResolvedValue(undefined);
+    render(<InvoiceDetail invoice={entry({ _id: 'inv8', kinfolkId: 'kf8' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^mark paid$/i }));
+    await userEvent.type(screen.getByRole('textbox', { name: /payment method/i }), 'check');
+    await userEvent.type(screen.getByRole('textbox', { name: /payment reference/i }), 'CK-100');
+    await userEvent.click(screen.getByRole('button', { name: /^mark paid$/i }));
+    await waitFor(() =>
+      expect(markInvoicePaid).toHaveBeenCalledWith('inv8', { method: 'check', reference: 'CK-100' }),
+    );
+    expect(await screen.findByText(/marked paid/i)).toBeInTheDocument();
+  });
+
+  it('no longer claims mark paid records nothing, the confirm copy names the optional fields instead', async () => {
+    render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^mark paid$/i }));
+    expect(screen.queryByText(/does not record a payment method/i)).toBeNull();
+    expect(screen.getByText(/method and reference are optional/i)).toBeInTheDocument();
   });
 
   it('issues a receipt through generateReceipt', async () => {
