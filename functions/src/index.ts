@@ -94,6 +94,7 @@ export { saveTemplate } from './admin/saveTemplate';
 export { deleteTemplate } from './admin/deleteTemplate';
 export { assignTemplate } from './admin/assignTemplate';
 export { unassignTemplate } from './admin/unassignTemplate';
+export { createMultiDateBookingRequest } from './admin/createMultiDateBookingRequest';
 export { listTemplates, listTemplateBindings } from './admin/listTemplates';
 export { listCategories } from './admin/listCategories';
 export { listCatalogKeys } from './admin/listCatalogKeys';
