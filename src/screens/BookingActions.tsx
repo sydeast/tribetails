@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { type BookingEntry } from '../api/bookings';
 import {
   approveBooking,
@@ -151,9 +151,9 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
   const actions = actionsFor(state);
   const canReschedule = state === 'scheduled';
 
-  function closeIfIdle() {
+  const closeIfIdle = useCallback(() => {
     if (!busy) onClose();
-  }
+  }, [busy, onClose]);
 
   function backToDetail() {
     if (busy) return;
