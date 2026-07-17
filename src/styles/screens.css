@@ -73,3 +73,4 @@
 .log__status--pending { background: var(--color-surface2, #eee); color: var(--color-secondary, #666); }
 .log__time { font-size: 0.78rem; color: var(--color-text-faint, #9a988f); font-variant-numeric: tabular-nums; }
 .log__hint { color: var(--color-secondary, #5a5c6a); margin: 0; }
+.log__ctx { font-size: 0.76rem; color: var(--color-text-faint, #9a988f); }
