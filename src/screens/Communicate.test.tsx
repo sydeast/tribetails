@@ -38,6 +38,20 @@ vi.mock('./CommunicateCompose', () => ({
   ),
 }));
 
+// Same stubbing rationale as CommunicateCompose above: CommunicatePersonalize
+// has its own full test file (CommunicatePersonalize.test.tsx). This file
+// only proves that "Personalize a message" mounts it and its onClose returns
+// to Recent.
+vi.mock('./CommunicatePersonalize', () => ({
+  CommunicatePersonalize: ({ onClose }: { onClose: () => void }) => (
+    <div data-testid="personalize-stub">
+      <button type="button" onClick={onClose}>
+        stub-close-personalize
+      </button>
+    </div>
+  ),
+}));
+
 import { Communicate } from './Communicate';
 
 function send(over: Partial<RecentSend>): RecentSend {
@@ -259,6 +273,35 @@ describe('Communicate screen', () => {
       expect(screen.queryByTestId('compose-stub')).toBeNull();
       // listRecentSends only reloads on the initial mount / explicit Reload,
       // not merely from switching views back and forth.
+      expect(listRecentSends).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Personalize a message wiring', () => {
+    it('shows a "Personalize a message" action on the Recent list', async () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      await screen.findByText(/no external sends yet/i);
+      expect(screen.getByRole('button', { name: /personalize a message/i })).toBeInTheDocument();
+    });
+
+    it('opens CommunicatePersonalize in place of the Recent list on click', async () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      await screen.findByText(/no external sends yet/i);
+      await userEvent.click(screen.getByRole('button', { name: /personalize a message/i }));
+      expect(screen.getByTestId('personalize-stub')).toBeInTheDocument();
+      expect(screen.queryByText(/no external sends yet/i)).toBeNull();
+    });
+
+    it('returns to the Recent list when personalize calls onClose', async () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      await screen.findByText(/no external sends yet/i);
+      await userEvent.click(screen.getByRole('button', { name: /personalize a message/i }));
+      await userEvent.click(screen.getByText('stub-close-personalize'));
+      expect(await screen.findByText(/no external sends yet/i)).toBeInTheDocument();
+      expect(screen.queryByTestId('personalize-stub')).toBeNull();
       expect(listRecentSends).toHaveBeenCalledTimes(1);
     });
   });

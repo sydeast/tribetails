@@ -1,0 +1,140 @@
+/**
+ * Communicate PERSONALIZE screen styling. Scoped to this screen and imported
+ * directly by CommunicatePersonalize.tsx (the Communicate.css / CommunicateCompose.css
+ * convention), so nothing here needs to land in the shared styles/screens.css.
+ * Every value comes from styles/tokens.css: no literal colours, radii, durations,
+ * or px spacing. Class shapes deliberately mirror CommunicateCompose.css's
+ * compose__* rules (same form/fieldset/textarea/confirm/result patterns), just
+ * scoped under personalize__ so the two screens' styling never collides.
+ */
+
+.personalize__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.personalize__fieldset {
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.personalize__legend {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  padding: 0 var(--space-2);
+}
+
+.personalize__radio-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.personalize__radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+
+.personalize__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.personalize__field-label {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.personalize__select,
+.personalize__text-input,
+.personalize__textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.personalize__select:focus-visible,
+.personalize__text-input:focus-visible,
+.personalize__textarea:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.personalize__text-input::placeholder,
+.personalize__textarea::placeholder {
+  color: var(--color-text-faint);
+}
+.personalize__select:disabled,
+.personalize__text-input:disabled,
+.personalize__textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.personalize__textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.personalize__textarea--draft {
+  font-family: var(--font-hanken);
+}
+
+.personalize__char-count {
+  align-self: flex-end;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--color-text-faint);
+}
+
+.personalize__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+/* ── confirm Dialog body ─────────────────────────────────────────────────── */
+
+.personalize__confirm-line {
+  margin: 0 0 var(--space-2) 0;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.personalize__confirm-note {
+  margin: var(--space-3) 0 0 0;
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+}
+
+/* ── post-send result panel ─────────────────────────────────────────────── */
+
+.personalize__result-line {
+  margin: 0 0 var(--space-4) 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}

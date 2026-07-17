@@ -22,6 +22,7 @@ import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKi
 import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { CommunicateCompose } from './CommunicateCompose';
+import { CommunicatePersonalize } from './CommunicatePersonalize';
 import './Communicate.css';
 
 /**
@@ -83,16 +84,20 @@ const FILTERS: readonly FilterDef[] = [
  * broadcast" trailing button below opens `CommunicateCompose`, the send
  * surface this file used to defer (see `api/communicateWrite.ts` for the
  * confirmed `broadcastMessage` payload and why it ships audience+channel+
- * subject/body compose without a live pre-send recipient count). Resending a
- * past send and the 1:1 "Personalize" AI-draft flow remain not-yet-built.
+ * subject/body compose without a live pre-send recipient count). The
+ * "Personalize a message" trailing button opens `CommunicatePersonalize`,
+ * the 1:1 AI-drafted note flow (see `api/communicateGenerate.ts` for the
+ * confirmed `generate`/`sendMessage` `onRequest` backend contract). Resending
+ * a past send remains not-yet-built.
  */
 export function Communicate() {
   const [sends, setSends] = useState<Async<RecentSend[]>>({ status: 'loading' });
   const [filter, setFilter] = useState<FilterKey>('all');
-  // Local view toggle, not a route: the compose surface is a sibling view of
-  // this same screen (Directory.tsx's tab convention), not a new URL. Kept
-  // out of router.tsx/nav.ts on purpose, this is a same-screen mode switch.
-  const [view, setView] = useState<'recent' | 'compose'>('recent');
+  // Local view toggle, not a route: the compose/personalize surfaces are
+  // sibling views of this same screen (Directory.tsx's tab convention), not a
+  // new URL. Kept out of router.tsx/nav.ts on purpose, this is a same-screen
+  // mode switch.
+  const [view, setView] = useState<'recent' | 'compose' | 'personalize'>('recent');
 
   // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
   // Home/End, roving tabIndex); called unconditionally at the top level per
@@ -138,10 +143,13 @@ export function Communicate() {
       ? sends.data.filter((s) => sendStateOf(sendCountsOf(s.counts), s.channel) === 'failed').length
       : 0;
 
-  // Compose is a sibling view of this same screen, not a route: swap the
-  // whole tree rather than growing an if/else through the JSX below.
+  // Compose/personalize are sibling views of this same screen, not a route:
+  // swap the whole tree rather than growing an if/else through the JSX below.
   if (view === 'compose') {
     return <CommunicateCompose onClose={() => setView('recent')} />;
+  }
+  if (view === 'personalize') {
+    return <CommunicatePersonalize onClose={() => setView('recent')} />;
   }
 
   return (
@@ -153,6 +161,7 @@ export function Communicate() {
         trailing={
           <>
             {failedCount > 0 ? <span className="communicate__badge">{failedCount} failed</span> : null}
+            <GhostButton label="Personalize a message" onClick={() => setView('personalize')} />
             <PrimaryButton label="New broadcast" onClick={() => setView('compose')} />
           </>
         }
