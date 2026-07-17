@@ -22,6 +22,14 @@ export function Dialog({ title, onClose, children, footer }: DialogProps) {
   const restoreRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
 
+  // onClose is read through a ref so this effect runs ONCE (mount), not on every
+  // onClose identity change. A caller passing an inline arrow recreates onClose
+  // each render; keying the effect on it re-ran it, and its panelRef.focus()
+  // then stole focus back from any input on every keystroke. The ref keeps
+  // Escape calling the current onClose while focus/listener setup stays mount-only.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     restoreRef.current = document.activeElement as HTMLElement | null;
     panelRef.current?.focus();
@@ -29,7 +37,7 @@ export function Dialog({ title, onClose, children, footer }: DialogProps) {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key === 'Tab') trapFocus(e, panelRef.current);
@@ -39,7 +47,7 @@ export function Dialog({ title, onClose, children, footer }: DialogProps) {
       document.removeEventListener('keydown', onKey, true);
       restoreRef.current?.focus?.();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div
