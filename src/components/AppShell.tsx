@@ -15,6 +15,7 @@ const GROUP_ORDER: NavGroup[] = ['den', 'careOps', 'more'];
 const LIVE_LINKS = {
   home: linkOptions({ to: '/home' }),
   'feature-flags': linkOptions({ to: '/feature-flags' }),
+  activity: linkOptions({ to: '/activity' }),
 } as const;
 
 /** Typed lookup: preserves each entry's literal `to` (a lossy Record cast would

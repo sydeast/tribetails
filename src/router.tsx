@@ -10,6 +10,7 @@ import { resolveAccess } from './lib/access';
 import { SignIn } from './screens/SignIn';
 import { Home } from './screens/Home';
 import { FeatureFlags } from './screens/FeatureFlags';
+import { ActivityLog } from './screens/ActivityLog';
 import { AppShell } from './components/AppShell';
 
 /** Shared chrome: the two drifting orbs behind every screen (Den background). */
@@ -73,10 +74,16 @@ const featureFlagsRoute = createRoute({
   component: FeatureFlags,
 });
 
+const activityRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'activity',
+  component: ActivityLog,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
