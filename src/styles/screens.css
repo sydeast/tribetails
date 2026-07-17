@@ -67,7 +67,7 @@
 .log__body { display: flex; flex-direction: column; min-width: 0; }
 .log__action { font-weight: 600; font-size: 0.9rem; }
 .log__desc { font-size: 0.82rem; color: var(--color-secondary, #5a5c6a); }
-.log__status { font-size: 0.72rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; white-space: nowrap; text-align: center; }
+.log__status { font-size: 0.72rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: var(--radius-pill); white-space: nowrap; text-align: center; }
 .log__status--ok { background: color-mix(in srgb, var(--color-success, #3a9a7a) 18%, transparent); color: var(--color-success, #3a9a7a); }
 .log__status--fail { background: color-mix(in srgb, var(--color-error, #c44) 18%, transparent); color: var(--color-error, #c44); }
 .log__status--pending { background: var(--color-surface2, #eee); color: var(--color-secondary, #666); }

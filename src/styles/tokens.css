@@ -261,22 +261,28 @@
    numeric names are deliberate: they describe what IS. Naming them semantically
    would imply an intent the source does not express. */
 :root {
-  /* Named scale (AuntieShapes.kt). 117 of ~219 measured usages. */
-  --radius-pill: 999px; /* 47 uses */
-  --radius-card-lg: 12px; /* 17 uses */
-  --radius-card: 8px; /* 34 uses */
-  --radius-chip: 6px; /* 15 uses */
-  --radius-tight: 4px; /* 4 uses */
+  /* ONE radius scale (AO-17 consolidation, 2026-07-16). The wasm port measured 17
+     distinct raw radii; that drift is collapsed here to a 7-step scale + pill.
+     New code uses the SEMANTIC names. Do NOT introduce raw px radii.
+       tight 4 · chip 6 · card 8 · card-lg 12 · panel 16 · lg 20 · pill 999 */
+  --radius-tight: 4px;
+  --radius-chip: 6px;
+  --radius-card: 8px;
+  --radius-card-lg: 12px;
+  --radius-panel: 16px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
 
-  /* Raw radii the components actually declare, ordered by frequency. Not a
-     design, an observation. */
-  --radius-10: 10px; /* 27 uses, incl. AuntieIconButton */
-  --radius-20: 20px; /* 17 uses */
-  --radius-11: 11px; /* 15 uses */
-  --radius-16: 16px; /* 11 uses, incl. StatCard */
-  --radius-18: 18px; /* 10 uses, incl. DenPanel */
-  --radius-14: 14px; /* 8 uses */
-  --radius-13: 13px; /* 6 uses */
+  /* DEPRECATED numeric aliases: kept only so in-flight ported components resolve
+     to the consolidated value (each rounds to the nearest scale step). Migrate
+     off these; do not add more. */
+  --radius-10: var(--radius-card);
+  --radius-11: var(--radius-card-lg);
+  --radius-13: var(--radius-card-lg);
+  --radius-14: var(--radius-card-lg);
+  --radius-16: var(--radius-panel);
+  --radius-18: var(--radius-panel);
+  --radius-20: var(--radius-lg);
 }
 
 /* ── Spacing (AuntieDimensions.kt) ──────────────────────────────────────────
@@ -305,4 +311,14 @@
   --side-rail-width: 240px; /* web only; the Android dimensions omit it */
   --bottom-dock-height: 72px;
   --max-content-width: 1280px;
+}
+/* ── Motion (AO-17: no motion tokens existed) ───────────────────────────────
+   Grounded in the source's tween(160)/tween(180). One standard easing + a small
+   duration scale. prefers-reduced-motion is honored globally (base.css). */
+:root {
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 300ms;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
 }
