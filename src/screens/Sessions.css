@@ -1,0 +1,206 @@
+/**
+ * Sessions ("Auntie Time") screen styling. Scoped to this screen and imported
+ * directly by Sessions.tsx (the Invoices.css / DenScreenKit.css convention), so
+ * nothing here needs to land in shared styles/screens.css. Every value comes
+ * from styles/tokens.css — no literal colours, radii, durations, or px spacing
+ * outside the chip palette below (mirrors Invoices.css's own chip block, since
+ * session states need more distinct hues than the shared DenTone palette
+ * carries).
+ */
+
+.sessions__summary {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-5);
+}
+.sessions__summary > * {
+  flex: 1 1 12rem;
+}
+
+.sessions__hint {
+  color: var(--color-text-dim);
+  margin: 0;
+}
+
+/* ── filter tabs ─────────────────────────────────────────────────────────── */
+
+.sessions__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.sessions__tab {
+  font: inherit;
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  color: var(--color-text-dim);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  transition:
+    background var(--dur-base) var(--ease-standard),
+    border-color var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
+}
+.sessions__tab:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+.sessions__tab:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.sessions__tab--active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-background);
+}
+
+/* ── day groups ──────────────────────────────────────────────────────────── */
+
+.sessions__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.sessions__day-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sessions__day-header {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.sessions__day-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── row list ────────────────────────────────────────────────────────────── */
+
+.sessions__row {
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+.sessions__row:last-child {
+  border-bottom: none;
+}
+
+.sessions__row-main {
+  width: 100%;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 1.8fr 1fr auto;
+  align-items: center;
+  gap: var(--space-4);
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  padding: var(--space-3) var(--space-2);
+  border-radius: var(--radius-card);
+  transition: background var(--dur-base) var(--ease-standard);
+}
+.sessions__row-main:hover,
+.sessions__row-main:focus-visible {
+  background: var(--color-surface-2);
+}
+/* Unwired (no detail route yet): a plain, non-interactive row — no hand cursor,
+   no hover, so it never reads as a clickable control that no-ops. */
+.sessions__row-main--static {
+  cursor: default;
+}
+.sessions__row-main--static:hover {
+  background: none;
+}
+.sessions__row-main:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.sessions__row-who {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.sessions__row-name {
+  font-family: var(--font-hanken);
+  font-size: var(--type-title-md-size);
+  font-weight: var(--type-title-md-weight);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sessions__row-when {
+  font-family: var(--font-mono);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+
+/* ── status chip ─────────────────────────────────────────────────────────── */
+
+.sessions__chip {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  text-align: center;
+}
+.sessions__chip--scheduled {
+  background: var(--color-surface-2);
+  color: var(--color-text-dim);
+}
+.sessions__chip--onmyway {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  color: var(--color-primary);
+}
+.sessions__chip--arrived {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+}
+.sessions__chip--departed {
+  background: color-mix(in srgb, var(--color-tertiary) 18%, transparent);
+  color: var(--color-tertiary);
+}
+.sessions__chip--completed {
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
+  color: var(--color-success);
+}
+.sessions__chip--cancelled {
+  background: var(--color-surface-2);
+  color: var(--color-text-faint);
+  text-decoration: line-through;
+}
+.sessions__chip--unknown {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
