@@ -9,3 +9,6 @@ dist/
 *-firebase-adminsdk-*.json
 .vite/
 coverage/
+
+# firebase deploy cache
+.firebase/

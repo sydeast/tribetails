@@ -21,21 +21,27 @@ import { DenScreenHeading } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { Avatar } from '../components/Avatar';
+import { PrimaryButton } from '../components/Buttons';
+import { MediaUploadDialog, type KinfolkOption } from '../components/MediaUploadDialog';
 import './Gallery.css';
 
 /**
  * Admin Gallery ("The Den · Gallery"), ported from the wasm `GalleryScreen.kt` /
- * `GalleryFilters.kt` (#13 global Gallery). LIST/GRID ONLY, per the port brief:
+ * `GalleryFilters.kt` (#13 global Gallery). Originally LIST/GRID ONLY; Upload
+ * has since been added (`api/mediaUpload.ts` + `MediaUploadDialog`), per the
+ * port brief:
  *
  *   IN SCOPE   the bounded `media_files` stream, household/type/month filters
- *              (GalleryFilters.kt ported verbatim to lib/mediaFormat.ts), and a
+ *              (GalleryFilters.kt ported verbatim to lib/mediaFormat.ts), a
  *              read-only grid tile: thumbnail (with graceful broken-image
  *              fallback), caption, household, uploaded-date/uploader, and the
- *              profile-photo / video-duration badges the wasm cell already shows.
+ *              profile-photo / video-duration badges the wasm cell already
+ *              shows; AND an "Upload media" action (GalleryScreen.kt's
+ *              upload button + household picker dialog + pickAndUploadMedia,
+ *              now ported: sign -> Cloudinary -> `media_files` write, see
+ *              `MediaUploadDialog`/`api/mediaUpload.ts`).
  *
  *   OUT OF SCOPE, flagged rather than silently dropped:
- *     - Upload (GalleryScreen.kt's "Upload media" button + household picker
- *       dialog + pickAndUploadMedia). No upload affordance renders here at all.
  *     - The tag-kin lightbox overlay (TagKinOverlay, opened by tapping a tile):
  *       there is no `onSelect`/detail prop on this screen because no detail
  *       surface is planned in this port yet, unlike Directory/Invoices'
@@ -49,16 +55,27 @@ import './Gallery.css';
  * the same household roster Directory.tsx already streams) purely to resolve a
  * tile's `kinfolkId` to a display name. A broken kinfolk read degrades to
  * "Household unavailable" rather than blocking the grid, disclosed via the banner below (the
- * same non-blocking-secondary-stream pattern as Directory's Kin banner).
+ * same non-blocking-secondary-stream pattern as Directory's Kin banner). The
+ * SAME roster also backs the Upload dialog's household picker (`kinfolkOptions`
+ * below): one stream, two consumers, no second fetch.
  */
 export function Gallery() {
   const mediaState = useCollection<MediaFile>(GALLERY_QUERY);
   const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
   const [filter, setFilter] = useState<GalleryFilter>(GALLERY_FILTER_DEFAULT);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const kinfolkLabel = useMemo(() => {
     if (kinfolkState.status !== 'ready') return new Map<string, string>();
     return new Map(kinfolkState.data.map((kf) => [kf._id, kinfolkDisplayName(kf)]));
+  }, [kinfolkState]);
+
+  // The Upload dialog's household picker reuses this same already-streamed
+  // roster (no second fetch): an {id, label} pair per household, in stream
+  // order, empty (never fabricated) while kinfolkState hasn't resolved yet.
+  const kinfolkOptions = useMemo<KinfolkOption[]>(() => {
+    if (kinfolkState.status !== 'ready') return [];
+    return kinfolkState.data.map((kf) => ({ id: kf._id, label: kinfolkDisplayName(kf) }));
   }, [kinfolkState]);
 
   return (
@@ -69,6 +86,10 @@ export function Gallery() {
         accentTail="moment."
         subtitle="All media from every KinTale, tagged to its household."
       />
+
+      <div className="gallery__actions">
+        <PrimaryButton label="Upload media" onClick={() => setUploadOpen(true)} />
+      </div>
 
       {/*
         A broken kinfolk read must not silently read as "no household on file"
@@ -100,6 +121,14 @@ export function Gallery() {
           />
         )}
       </AsyncRegion>
+
+      {uploadOpen && (
+        <MediaUploadDialog
+          kinfolkOptions={kinfolkOptions}
+          onClose={() => setUploadOpen(false)}
+          onUploaded={() => setUploadOpen(false)}
+        />
+      )}
     </div>
   );
 }
