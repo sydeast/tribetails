@@ -15,6 +15,8 @@ import { Notifications } from './screens/Notifications';
 import { FormSchemas } from './screens/FormSchemas';
 import { Invoices } from './screens/Invoices';
 import { Directory } from './screens/Directory';
+import { Bookings } from './screens/Bookings';
+import { Sessions } from './screens/Sessions';
 import { AppShell } from './components/AppShell';
 
 /** Shared chrome: the two drifting orbs behind every screen (Den background). */
@@ -108,10 +110,22 @@ const directoryRoute = createRoute({
   component: Directory,
 });
 
+const bookingsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'bookings',
+  component: Bookings,
+});
+
+const sessionsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'sessions',
+  component: Sessions,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, bookingsRoute, sessionsRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
