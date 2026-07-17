@@ -99,26 +99,6 @@ export async function bulkMarkNotificationsRead(ids: string[]): Promise<number> 
   return res.marked;
 }
 
-/**
- * Render a Firestore Timestamp the way the wasm screen's `relativeTime` does:
- * the real date/time, never a fabricated "2m ago" delta the client cannot
- * compute honestly without its own clock being trusted. `null` covers a
- * serverTimestamp() write whose value has not round-tripped from the server
- * yet (the SDK reports the field as `null` in that brief local-pending window).
- */
-export function formatWhen(ts: Timestamp | null | undefined): string {
-  if (!ts) return '(no time)';
-  const iso = ts.toDate().toISOString(); // e.g. 2026-07-16T14:02:11.000Z
-  const t = iso.indexOf('T');
-  if (t <= 0) return iso.slice(0, 16);
-  const datePart = iso.slice(0, t);
-  const timePart = iso.slice(t + 1, t + 6);
-  const shortDate = datePart.length >= 10 ? datePart.slice(5) : datePart;
-  return `${shortDate} ${timePart}`;
-}
-
-/** YYYY-MM-DD day key for grouping, or 'Undated' when createdAt hasn't landed yet. */
-export function dayKey(ts: Timestamp | null | undefined): string {
-  if (!ts) return 'Undated';
-  return ts.toDate().toISOString().slice(0, 10);
-}
+// Timestamp formatting is centralized + LOCAL (AO-18) in lib/time — re-exported
+// so `import { formatWhen, dayKey } from '../api/notifications'` keeps working.
+export { formatWhen, dayKey, machineWhen } from '../lib/time';

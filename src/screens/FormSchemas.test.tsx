@@ -133,12 +133,17 @@ describe('FormSchemas screen', () => {
     expect(onNew).toHaveBeenCalledOnce();
   });
 
-  it('does not throw when onSelect/onNew are omitted (placeholder props)', async () => {
+  it('renders New schema + rows STATIC (not a live no-op button) when unwired', async () => {
+    // Fable blocker: with the route mounting <FormSchemas/> propless, a live "New
+    // schema" button that silently does nothing is a dead control. When onNew/
+    // onSelect are omitted the label must render, but NOT as an interactive button.
     listFormSchemas.mockResolvedValue([schema({})]);
     render(<FormSchemas />);
-    await userEvent.click(await screen.findByRole('button', { name: /new schema/i }));
-    await userEvent.click(screen.getByText('Tribe Profile'));
-    // No assertion beyond "did not throw" — this pins the optional-callback contract.
+    await screen.findByText('Tribe Profile');
+    expect(screen.getByText('New schema')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /new schema/i })).toBeNull();
+    const row = screen.getByText('Tribe Profile').closest('.schemas__row-main');
+    expect(row).not.toHaveAttribute('role', 'button');
   });
 
   it('confirms delete, calls deleteFormSchema, and reloads the list', async () => {

@@ -7,6 +7,7 @@ import {
   isRead,
   formatWhen,
   dayKey,
+  machineWhen,
   type NotificationEntry,
 } from '../api/notifications';
 import { useCollection } from '../lib/firestore';
@@ -16,6 +17,11 @@ import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 
 /** Groups rows by `dayKey`, preserving the stream's own (server) order within each day. */
+/** Archived notifications never reappear in the feed (wasm activeNotifications). */
+function activeNotifications(rows: NotificationEntry[]): NotificationEntry[] {
+  return rows.filter((r) => r.archivedAt === undefined);
+}
+
 function byDay(rows: NotificationEntry[]): [string, NotificationEntry[]][] {
   const groups = new Map<string, NotificationEntry[]>();
   for (const r of rows) {
@@ -86,8 +92,13 @@ export function Notifications() {
     setBulkBusy(true);
     setActionError(null);
     try {
-      await bulkMarkNotificationsRead(ids);
+      const marked = await bulkMarkNotificationsRead(ids);
       setSelectedIds(new Set());
+      if (marked < ids.length) {
+        setActionError(
+          `Marked ${marked} of ${ids.length} — the rest were already read or not yours to mark.`,
+        );
+      }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Marking notifications read failed.');
     } finally {
@@ -150,7 +161,7 @@ export function Notifications() {
         >
           {(data) => (
             <div className="notif-feed">
-              {byDay(data).map(([day, group]) => (
+              {byDay(activeNotifications(data)).map(([day, group]) => (
                 <section key={day} className="notif-day">
                   <h3 className="notif-day__label">{day}</h3>
                   <ul className="notif-rows">
@@ -186,7 +197,9 @@ export function Notifications() {
                             </span>
                           </div>
                           <div className="notif-row__side">
-                            <time className="notif-row__time">{formatWhen(entry.createdAt)}</time>
+                            <time className="notif-row__time" dateTime={machineWhen(entry.createdAt)}>
+                              {formatWhen(entry.createdAt)}
+                            </time>
                             <GhostButton
                               label={read ? 'Mark unread' : 'Mark read'}
                               onClick={() => void toggleOne(entry)}
