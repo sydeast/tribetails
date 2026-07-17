@@ -47,8 +47,8 @@ import './Gallery.css';
  * Two streams back the grid: `media_files` (GALLERY_QUERY, this screen's own
  * data) and `kinfolk` (KINFOLK_QUERY, reused verbatim from api/directory.ts,
  * the same household roster Directory.tsx already streams) purely to resolve a
- * tile's `kinfolkId` to a display name. A broken kinfolk read degrades to the
- * raw id rather than blocking the grid, disclosed via the banner below (the
+ * tile's `kinfolkId` to a display name. A broken kinfolk read degrades to
+ * "Household unavailable" rather than blocking the grid, disclosed via the banner below (the
  * same non-blocking-secondary-stream pattern as Directory's Kin banner).
  */
 export function Gallery() {
@@ -78,7 +78,7 @@ export function Gallery() {
       */}
       {kinfolkState.status === 'error' && (
         <Banner tone="error" title="Couldn&rsquo;t load households">
-          Tiles below may show a raw household id instead of a name: {kinfolkState.message}
+          Tiles below may show "Household unavailable" instead of a name: {kinfolkState.message}
         </Banner>
       )}
 
@@ -131,7 +131,7 @@ function GalleryGrid({ rows, filter, onFilterChange, kinfolkLabel }: GalleryGrid
             {kinfolkIds.map((id) => (
               <Chip
                 key={id}
-                label={kinfolkLabel.get(id) ?? 'Household'}
+                label={kinfolkLabel.get(id) ?? 'Unknown household'}
                 active={filter.kinfolkId === id}
                 onClick={() => onFilterChange((f) => ({ ...f, kinfolkId: toggleValue(f.kinfolkId, id) }))}
               />
@@ -177,7 +177,7 @@ function GalleryGrid({ rows, filter, onFilterChange, kinfolkLabel }: GalleryGrid
       ) : (
         <ul className="gallery__grid">
           {visible.map((m) => (
-            <GalleryTile key={m._id} media={m} householdLabel={m.kinfolkId !== '' ? kinfolkLabel.get(m.kinfolkId) ?? '' : ''} />
+            <GalleryTile key={m._id} media={m} householdName={m.kinfolkId !== '' ? kinfolkLabel.get(m.kinfolkId) ?? '' : ''} />
           ))}
         </ul>
       )}
@@ -212,8 +212,8 @@ function Chip({ label, active, onClick }: { label: string; active: boolean; onCl
 
 interface GalleryTileProps {
   media: MediaFile;
-  /** '' when the media has no household on file, or its household id resolved to nothing (a broken/unresolved kinfolk read). */
-  householdLabel: string;
+  /** Resolved household name, or '' when unresolved OR absent. The tile tells the two apart via `media.kinfolkId` (see householdText). */
+  householdName: string;
 }
 
 /**
@@ -237,7 +237,17 @@ const TILE_SIZE = 132;
  * wasm's `GlyphBody`) or a failed image/video thumbnail both resolve to an
  * on-brand tile with a real accessible name, never an empty box.
  */
-function GalleryTile({ media, householdLabel }: GalleryTileProps) {
+/**
+ * A media doc with NO kinfolkId genuinely has no household. One WITH a kinfolkId
+ * that the roster did not resolve is "Household unavailable" (unresolved is not
+ * absent: never collapse the two into a single "no household" claim).
+ */
+function householdText(kinfolkId: string, householdName: string): string {
+  if (kinfolkId.trim() === '') return 'No household on file';
+  return householdName !== '' ? householdName : 'Household unavailable';
+}
+
+function GalleryTile({ media, householdName }: GalleryTileProps) {
   const kind = mediaKindOf(media.fileType);
   const previewUrl = mediaPreviewUrl(media);
   const caption = mediaCaption(media);
@@ -274,7 +284,7 @@ function GalleryTile({ media, householdLabel }: GalleryTileProps) {
         <div className="gallery__tile-body">
           {caption !== '' && <span className="gallery__tile-caption">{caption}</span>}
           <span className="gallery__tile-household">
-            {householdLabel !== '' ? householdLabel : 'No household on file'}
+            {householdText(media.kinfolkId, householdName)}
           </span>
           {meta !== '' && <span className="gallery__tile-meta">{meta}</span>}
         </div>

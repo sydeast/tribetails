@@ -52,10 +52,14 @@ export interface MediaFile {
 
 /**
  * The bounded, server-ordered media listener. Ordered by `uploadedAt` descending
- * (newest first, matching the wasm's own `sortedByDescending { it.uploadedAt }`)
- *: Firestore `orderBy` on a string field sorts lexically, which is correct here
- * because every writer stamps a same-format ISO-8601 UTC instant, so lexical order
- * IS chronological order. Capped at 500, the same generous single-business cap
+ * (newest first, matching the wasm's own `sortedByDescending { it.uploadedAt }`).
+ * Firestore `orderBy` on this string field sorts lexically; every writer stamps a
+ * same-format ISO-8601 UTC instant, so lexical order matches chronological order
+ * for BOUNDING the page. That ordering is UTC on the raw string; the screen's
+ * DISPLAY day/month come from `mediaFormat.mediaLocalDay`/`mediaLocalMonth`, which
+ * re-key each instant to the operator's LOCAL zone (AO-18), never a raw UTC slice.
+ * And `orderBy('uploadedAt')` silently DROPS any doc missing the field (client-SDK
+ * writes are allowed by rules): flagged for operator prod-verification. Capped at 500, the same generous single-business cap
  * KINFOLK_QUERY/KIN_QUERY use: closes AO-29 (the wasm's `platformAllMediaStream()`
  * is an UNBOUNDED whole-collection listen with no orderBy/limit at all).
  *

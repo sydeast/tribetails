@@ -40,13 +40,14 @@ const FILTERS: readonly FilterDef[] = [
 
 interface KinTalesProps {
   /**
-   * Placeholder: the single-report detail/editor (`KinTaleReportScreen.kt` —
+   * Placeholder: the single-report detail/editor (`KinTaleReportScreen.kt`:
    * compose, comment thread, share link, "view as kinfolk") is a separate,
-   * not-yet-built screen; this port is LIST/FEED ONLY. Omitting this renders
-   * every row as a real, focusable button that simply does nothing when
-   * clicked yet — never a dead-looking static row (the Sessions.tsx/
-   * Invoices.tsx onSelect-is-optional convention) — so wiring the real detail
-   * route later touches only the router, not this screen.
+   * not-yet-built screen; this port is LIST/FEED ONLY. The router mounts this
+   * screen propless, so `onSelect` is undefined in production. See `KinTaleRow`:
+   * when unwired the row renders a STATIC <div>, not a <button>. A handler-less
+   * <button> still carries the implicit ARIA button role and is a focusable dead
+   * control, so the row only becomes a real <button> once a detail route wires
+   * the handler.
    */
   onSelect?: (kinTaleId: string) => void;
 }
