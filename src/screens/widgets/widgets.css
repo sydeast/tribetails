@@ -132,3 +132,373 @@
   font-size: var(--type-body-md-size, 0.95rem);
   color: var(--color-accent);
 }
+
+/* AO-37 Care Flags */
+.care-flag {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.1rem 0.6rem;
+  align-items: start;
+  padding: 0.5rem 0;
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+
+.care-flag:last-child {
+  border-bottom: none;
+}
+
+.care-flag__chip {
+  align-self: center;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size, 0.7rem);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: var(--color-surface-raised, rgba(255, 255, 255, 0.06));
+  color: var(--color-text-dim);
+}
+
+.care-flag[data-kind='reactive'] .care-flag__chip {
+  background: var(--color-error-soft, rgba(220, 80, 80, 0.16));
+  color: var(--color-error, #d95555);
+}
+
+.care-flag__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.care-flag__who {
+  font-size: var(--type-label-md-size, 0.85rem);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.care-flag__household {
+  font-weight: 400;
+  color: var(--color-text-dim);
+}
+
+.care-flag__text {
+  font-size: var(--type-body-sm-size, 0.8rem);
+  color: var(--color-text-dim);
+}
+
+/* AO-39 Expiration Countdown */
+.exp-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.1rem 0.6rem;
+  padding: 0.5rem 0;
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+
+.exp-row:last-child {
+  border-bottom: none;
+}
+
+.exp-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.exp-row__label {
+  font-size: var(--type-label-md-size, 0.85rem);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exp-row__kind {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size, 0.7rem);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-faint);
+}
+
+.exp-row__when {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
+}
+
+.exp-row__countdown {
+  font-size: var(--type-label-md-size, 0.85rem);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.exp-row[data-soon='true'] .exp-row__countdown {
+  color: var(--color-error, #d95555);
+}
+
+.exp-row__date {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size, 0.7rem);
+  color: var(--color-text-faint);
+  white-space: nowrap;
+}
+
+/* AO-40 Expense Quick-Log */
+.expense-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.expense-form__row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.expense-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.expense-form__label {
+  font-size: var(--type-label-sm-size, 0.7rem);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-faint);
+}
+
+.expense-form__input {
+  font-family: var(--font-hanken);
+  font-size: var(--type-body-sm-size, 0.85rem);
+  color: var(--color-text-primary);
+  background: var(--color-surface-sunken, rgba(0, 0, 0, 0.18));
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  width: 100%;
+}
+
+.expense-form__input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.expense-totals {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.expense-total {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.expense-total__label {
+  font-size: var(--type-label-sm-size, 0.7rem);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-faint);
+}
+
+.expense-total__value {
+  font-family: var(--font-fraunces, var(--font-hanken));
+  font-size: var(--type-title-md-size, 1.1rem);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.expense-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.4rem 0;
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+
+.expense-row:last-child {
+  border-bottom: none;
+}
+
+.expense-row__kind {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size, 0.7rem);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-faint);
+}
+
+.expense-row__note {
+  font-size: var(--type-body-sm-size, 0.8rem);
+  color: var(--color-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expense-row__amount {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size, 0.85rem);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.expense-row__day {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size, 0.7rem);
+  color: var(--color-text-faint);
+  white-space: nowrap;
+}
+
+/* AO-41 Supplies Tracker */
+.supply-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.1rem 0.6rem;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+
+.supply-row:last-child {
+  border-bottom: none;
+}
+
+.supply-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.supply-row__name {
+  font-size: var(--type-label-md-size, 0.85rem);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.supply-row__count {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size, 0.72rem);
+  color: var(--color-text-dim);
+}
+
+/* AO-35 Route Optimizer */
+.route-stops {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.route-stop {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.1rem 0.6rem;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+
+.route-stop:last-child {
+  border-bottom: none;
+}
+
+.route-stop__order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 999px;
+  background: var(--color-surface-raised, rgba(255, 255, 255, 0.06));
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size, 0.72rem);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.route-stop__main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.route-stop__household {
+  font-size: var(--type-label-md-size, 0.85rem);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-stop__address {
+  font-size: var(--type-body-sm-size, 0.8rem);
+  color: var(--color-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-stop__eta {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size, 0.85rem);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.route-unroutable {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 0.5rem;
+  background: var(--color-error-soft, rgba(220, 80, 80, 0.12));
+  border: var(--border-hairline) solid var(--color-error, #d95555);
+}
+
+.route-unroutable__title {
+  margin: 0 0 0.35rem;
+  font-size: var(--type-label-md-size, 0.85rem);
+  font-weight: 600;
+  color: var(--color-error, #d95555);
+}
+
+.route-unroutable__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.route-unroutable__row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.route-unroutable__who {
+  font-size: var(--type-label-md-size, 0.85rem);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.route-unroutable__reason {
+  font-size: var(--type-body-sm-size, 0.8rem);
+  color: var(--color-text-dim);
+}
