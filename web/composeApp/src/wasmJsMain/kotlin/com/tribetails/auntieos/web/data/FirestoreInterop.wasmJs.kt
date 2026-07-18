@@ -303,6 +303,13 @@ internal actual fun platformSessionsForKinfolkStream(
 internal actual fun platformGeneratedDraftsStream(): Flow<FirestoreResult<List<GeneratedDraft>>> =
     collectionStream("generated_drafts")
 
+internal actual fun platformGeneratedDraftsForKinfolkStream(
+    kinfolkId: String,
+): Flow<FirestoreResult<List<GeneratedDraft>>> =
+    // Snake_case field on purpose: generate.js writes `kinfolk_id`, and the rule's
+    // test-admin read branch gates on resource.data.kinfolk_id.
+    whereEqStream("generated_drafts", "kinfolk_id", kinfolkId)
+
 internal actual suspend fun platformApproveGeneratedDraft(
     draftId: String,
     editedCopy: String,

@@ -76,7 +76,16 @@ class FirestoreClient {
         platformSessionsBySourceBookingIdStream(sourceBookingId)
     fun sessionsForKinfolkStream(kinfolkId: String): Flow<FirestoreResult<List<KinCareSession>>> =
         platformSessionsForKinfolkStream(kinfolkId)
-    fun generatedDraftsStream(): Flow<FirestoreResult<List<GeneratedDraft>>> = platformGeneratedDraftsStream()
+    fun generatedDraftsStream(): Flow<FirestoreResult<List<GeneratedDraft>>> {
+        val scope = kinfolkScopeFilter(testMode)
+        // Test admin: rules DENY an unfiltered list of generated_drafts, so constrain
+        // the listen to this tribe's own drafts (the doc's snake_case `kinfolk_id`
+        // field == testScope; see generate.js). No post-`scopeKinfolk` filter here —
+        // the model's camelCase `kinfolkId` does not decode that field, so the
+        // server-side `where` is the sole authority. Normal admin path unchanged.
+        return if (scope != null) platformGeneratedDraftsForKinfolkStream(scope)
+        else platformGeneratedDraftsStream()
+    }
     /**
      * Marks a generated draft as approved with the (potentially edited) copy
      * the admin is sending downstream. Writes `status="approved"`, the
@@ -1088,7 +1097,23 @@ class FirestoreClient {
     suspend fun saveBusinessSettings(settings: BusinessSettings): WriteResult<Unit> = platformSaveBusinessSettings(settings)
 
     // ---- Booking writes ----
-    fun bookingRequestsStream(): Flow<FirestoreResult<List<KinCareSession>>> = platformBookingRequestsStream()
+    fun bookingRequestsStream(): Flow<FirestoreResult<List<KinCareSession>>> {
+        val scope = kinfolkScopeFilter(testMode)
+        // Booking requests are flat kin_care_sessions where status == DRAFT. For a test
+        // admin an unscoped status-only query is DENIED (rules require the kinfolkId
+        // scope), which surfaced as a false "Couldn't load bookings" on Home and
+        // "Couldn't load booking requests" on Bookings. Read this tribe's own sessions
+        // (a permitted scoped query) and keep the DRAFTs client-side. Normal admin path
+        // unchanged (server-side status filter over the whole collection).
+        return if (scope != null)
+            platformSessionsForKinfolkStream(scope).map { res ->
+                when (res) {
+                    is FirestoreResult.Data -> FirestoreResult.Data(res.value.filter { it.status == "DRAFT" })
+                    else -> res
+                }
+            }
+        else platformBookingRequestsStream()
+    }
     suspend fun approveBooking(bookingId: String): WriteResult<Unit> = platformApproveBooking(bookingId)
     suspend fun rejectBooking(bookingId: String): WriteResult<Unit> = platformRejectBooking(bookingId)
     suspend fun createBookingRequest(booking: KinCareSession): WriteResult<String> =
@@ -1675,6 +1700,8 @@ internal expect fun platformSessionsStream():   Flow<FirestoreResult<List<KinCar
 internal expect fun platformSessionsBySourceBookingIdStream(sourceBookingId: String): Flow<FirestoreResult<List<KinCareSession>>>
 internal expect fun platformSessionsForKinfolkStream(kinfolkId: String): Flow<FirestoreResult<List<KinCareSession>>>
 internal expect fun platformGeneratedDraftsStream(): Flow<FirestoreResult<List<GeneratedDraft>>>
+/** Stage 0I: generated_drafts where the snake_case `kinfolk_id` field == [kinfolkId] (test-admin scope). */
+internal expect fun platformGeneratedDraftsForKinfolkStream(kinfolkId: String): Flow<FirestoreResult<List<GeneratedDraft>>>
 internal expect suspend fun platformApproveGeneratedDraft(draftId: String, editedCopy: String): WriteResult<Unit>
 internal expect fun platformReportsStream():    Flow<FirestoreResult<List<KinCareReport>>>
 internal expect fun platformVoicemailsStream(): Flow<FirestoreResult<List<VoicemailLog>>>

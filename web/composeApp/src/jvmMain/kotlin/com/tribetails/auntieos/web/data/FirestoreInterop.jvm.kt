@@ -155,6 +155,17 @@ internal actual fun platformGeneratedDraftsStream(): Flow<FirestoreResult<List<G
     JvmFirestoreFixtures.generatedDrafts?.let { fixtureFlow(it) }
         ?: JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<GeneratedDraft>("generated_drafts") }
 
+internal actual fun platformGeneratedDraftsForKinfolkStream(
+    kinfolkId: String,
+): Flow<FirestoreResult<List<GeneratedDraft>>> =
+    // Defensive: desktop (jvm) is always a real admin, so the scoped branch never
+    // runs here in practice; still push the EQ filter to the server (snake_case
+    // `kinfolk_id`, matching generate.js + the rule) so it is correct if it ever does.
+    JvmFirestoreFixtures.generatedDrafts?.let { fixtureFlow(it) }
+        ?: JvmFirestoreRest.pollingStream {
+            JvmFirestoreRest.listWhereEq<GeneratedDraft>("generated_drafts", "kinfolk_id", kinfolkId)
+        }
+
 internal actual fun platformReportsStream(): Flow<FirestoreResult<List<KinCareReport>>> =
     JvmFirestoreFixtures.reports?.let { fixtureFlow(it) }
         ?: JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<KinCareReport>("kin_care_reports") }

@@ -576,12 +576,28 @@ service cloud.firestore {
     match /business_hours/{id}                  { allow read: if signedIn(); allow write: if isAuntie(); }
     match /promo_codes/{id}                     { allow read: if isAuntie(); allow write: if isAuntie(); }
     match /calls_log/{id}                       { allow read, write: if isAuntie(); }
-    match /dossiers/{kinfolkId}                 { allow read, write: if isAuntie(); }
+    // Stage-0I sandbox: a test admin may READ its own kinfolk's dossier (the wildcard
+    // doc id IS the kinfolkId, and dossiers are keyed one-per-kinfolk == testScope), so
+    // the Kinfolk-profile dossier card renders instead of a false permission banner.
+    // Single-doc read => this rule alone fully fixes it. Writes stay admin-only.
+    match /dossiers/{kinfolkId} {
+      allow read: if isAuntie() || (isTestAdmin() && kinfolkId == testScope());
+      allow write: if isAuntie();
+    }
     match /dynamic_field_values/{id}            { allow read, write: if isAuntie(); }
     match /dynamic_fields/{id}                  { allow read, write: if isAuntie(); }
     match /emails/{id}                          { allow read, write: if isAuntie(); }
     match /field_definitions/{id}               { allow read, write: if isAuntie(); }
-    match /generated_drafts/{id}                { allow read, write: if isAuntie(); }
+    // Stage-0I sandbox: a test admin may READ its own tribe's generated drafts. The
+    // doc's own-tribe key is the snake_case `kinfolk_id` field (written by
+    // web/functions/generate.js), NOT camelCase kinfolkId, so testOwnsExisting() does
+    // NOT apply — this is a bespoke branch. RULE ALONE IS NOT ENOUGH: the client's
+    // list listen MUST also constrain the query to where(kinfolk_id == testScope) or
+    // an unfiltered list is still denied (see generatedDraftsStream). Writes admin-only.
+    match /generated_drafts/{id} {
+      allow read: if isAuntie() || (isTestAdmin() && resource.data.kinfolk_id == testScope());
+      allow write: if isAuntie();
+    }
     match /household_data/{id}                  { allow read, write: if isAuntie(); }
  // Global KinTale template catalog: test admin may READ (so the KinTale
  // composer renders), never write. Writes stay admin-only.
@@ -618,6 +634,14 @@ service cloud.firestore {
     match /visit_logs/{id}                      { allow read, write: if isAuntie(); }
     match /visit_routes/{id}                    { allow read, write: if isAuntie(); }
     match /voicemails/{id}                      { allow read, write: if isAuntie(); }
+ // Dashboard-widget collections (AO-40/41/39): admin-only read+write. Mutations
+ // normally flow through the server-bound admin callables (logExpense /
+ // adjustSupply / upsertSupply / upsertExpiration; the Admin SDK bypasses rules
+ // so the audit entry is bound to the mutation), but the read is admin-scoped so
+ // the widgets can list, and no non-admin can ever read or write these.
+    match /expenses/{id}                        { allow read, write: if isAuntie(); }
+    match /supplies/{id}                        { allow read, write: if isAuntie(); }
+    match /expirations/{id}                     { allow read, write: if isAuntie(); }
  // Server-written rate-limit + Stripe dedupe ledgers. Admin reads for
  // monitoring; client writes denied (admin SDK in Cloud Functions bypasses).
     match /ipRateLimits/{key}                   { allow read: if isAuntie(); allow write: if false; }
