@@ -95,6 +95,9 @@ fun HomeScreen(
     // AO-38: load conversations only while the Unread Messages widget is shown.
     val showsUnread = dashboard.any { it.key == DashKey.UNREAD_MESSAGES }
     LaunchedEffect(showsUnread) { if (showsUnread) viewModel.loadConversations() }
+    // AO-36: load the kinfolk list only while the Safebox widget is shown.
+    val showsSafebox = dashboard.any { it.key == DashKey.SAFEBOX }
+    LaunchedEffect(showsSafebox) { if (showsSafebox) viewModel.loadSafeboxKinfolk() }
 
     AuntieScreenScaffold(
         title = null,
@@ -439,6 +442,18 @@ fun HomeScreen(
                             ) {
                                 UnreadMessagesWidget(state.conversations)
                             }
+                            DashKey.SAFEBOX -> DenPanel(
+                                title = "Key & code safebox",
+                                subtitle = "Access notes for your next visit only.",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                SafeboxWidget(
+                                    sessions = state.allSessions,
+                                    sessionsLoading = state.isLoading,
+                                    kinfolkResult = state.safeboxKinfolk,
+                                    nowIso = java.time.Instant.now().toString(),
+                                )
+                            }
                         }
                         }
                     }
@@ -487,6 +502,7 @@ private fun dashLabel(key: DashKey): String = when (key) {
     DashKey.FREQUENT_FLYERS -> "Frequent flyers"
     DashKey.HOLIDAY_RUNWAY -> "Holiday runway"
     DashKey.UNREAD_MESSAGES -> "Unread messages"
+    DashKey.SAFEBOX -> "Key & code safebox"
 }
 
 /** Den tone for a [WeatherRisk] level. */

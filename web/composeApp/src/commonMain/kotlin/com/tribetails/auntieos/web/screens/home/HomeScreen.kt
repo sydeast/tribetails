@@ -521,6 +521,7 @@ fun HomeScreen(
                             DashKey.FREQUENT_FLYERS -> FrequentFlyersWidget(sessionsState, todayKey)
                             DashKey.HOLIDAY_RUNWAY -> HolidayRunwayWidget(sessionsState, todayKey)
                             DashKey.UNREAD_MESSAGES -> UnreadMessagesWidget(conversations)
+                            DashKey.SAFEBOX -> SafeboxWidget(sessionsState, kinfolkState, nowIso())
                         }
                         }
                     }
@@ -560,6 +561,7 @@ private fun dashLabel(key: DashKey): String = when (key) {
     DashKey.FREQUENT_FLYERS -> "Frequent flyers"
     DashKey.HOLIDAY_RUNWAY -> "Holiday runway"
     DashKey.UNREAD_MESSAGES -> "Unread messages"
+    DashKey.SAFEBOX -> "Key & code safebox"
 }
 
 /** Den tone for a [WeatherRisk] level. */

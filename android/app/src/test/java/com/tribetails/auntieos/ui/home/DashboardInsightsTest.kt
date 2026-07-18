@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.home
 
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareSession
+import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.ui.inbox.ConversationSummary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -206,5 +207,56 @@ class DashboardInsightsTest {
     @Test
     fun `unread count is zero for an all-read list`() {
         assertEquals(0, unreadClientMessageCount(listOf(conv(unread = false), conv(unread = false))))
+    }
+
+    // ── AO-36 / W3 key & code safebox ───────────────────────────────────────────
+
+    @Test
+    fun `next upcoming picks the earliest future non-cancelled non-completed visit`() {
+        val sessions = listOf(
+            visit("2026-07-21T09:00:00Z", kinId = "a"),
+            visit("2026-07-20T08:00:00Z", kinId = "b"),
+            visit("2026-07-18T09:00:00Z", kinId = "c"),
+        )
+        assertEquals("b", nextUpcomingSession(sessions, "2026-07-19T12:00:00Z")?.kinfolkId)
+    }
+
+    @Test
+    fun `next upcoming skips cancelled and completed even when soonest`() {
+        val sessions = listOf(
+            visit("2026-07-20T07:00:00Z", status = "CANCELLED", kinId = "cx"),
+            visit("2026-07-20T07:30:00Z", status = "COMPLETED", kinId = "done"),
+            visit("2026-07-20T09:00:00Z", status = "SCHEDULED", kinId = "real"),
+        )
+        assertEquals("real", nextUpcomingSession(sessions, "2026-07-19T12:00:00Z")?.kinfolkId)
+    }
+
+    @Test
+    fun `next upcoming is null when nothing is coming up`() {
+        assertNull(nextUpcomingSession(listOf(visit("2026-07-18T09:00:00Z")), "2026-07-19T12:00:00Z"))
+    }
+
+    @Test
+    fun `safebox lines drop blanks, keep arrival order, flag codes mono`() {
+        val k = Kinfolk(
+            id = "k1",
+            serviceAddress = "12 Oak St",
+            gateCode = "4417",
+            entryNotes = "Side door",
+            wifiName = "Rivera",
+            wifiPassword = "hunter2",
+        )
+        val lines = safeboxAccessLines(k)
+        assertEquals(
+            listOf("Address", "Gate / door code", "Entry notes", "WiFi network", "WiFi password"),
+            lines.map { it.label },
+        )
+        assertTrue(lines.first { it.label == "Gate / door code" }.mono)
+        assertTrue(!lines.first { it.label == "Address" }.mono)
+    }
+
+    @Test
+    fun `safebox lines are empty for a household with no access notes`() {
+        assertTrue(safeboxAccessLines(Kinfolk(id = "k1")).isEmpty())
     }
 }
