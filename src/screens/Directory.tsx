@@ -24,6 +24,7 @@ import { Avatar } from '../components/Avatar';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { AddKinfolkDialog } from '../components/AddKinfolkDialog';
 import { AddKinDialog, type KinfolkOption } from '../components/AddKinDialog';
+import { KinfolkProfile } from './KinfolkProfile';
 import './Directory.css';
 
 type DirectoryTab = 'kinfolk' | 'kin';
@@ -213,7 +214,12 @@ function KinCard({ kin, onClick }: KinCardProps) {
 }
 
 interface DirectoryProps {
-  /** Placeholder: KinfolkProfileScreen doesn't exist yet in React. Called with a kinfolk id on card-select. */
+  /**
+   * Card-open override. Propless (the router default), a kinfolk card now opens
+   * the in-screen `KinfolkProfile` detail view. A caller can pass its own handler
+   * (a test, or a future route) to take over selection; then the in-screen
+   * profile never opens.
+   */
   onSelectKinfolk?: (id: string) => void;
   /** Placeholder: KinViewScreen/KinEditScreen don't exist yet in React. Called with a kin id on card-select. */
   onSelectKin?: (id: string) => void;
@@ -240,6 +246,10 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
   const [tab, setTab] = useState<DirectoryTab>('kinfolk');
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortOption>(SORT_OPTION_DEFAULT);
+  // The household profile detail view: a sibling VIEW of this list (the Inbox /
+  // Communicate pattern), opened when a card is activated and no external
+  // onSelectKinfolk overrides. Holds the id; the profile reads the full doc.
+  const [openKinfolkId, setOpenKinfolkId] = useState<string | null>(null);
 
   // Roving-tabindex keyboard nav for the Kinfolk/Kin tablist below
   // (Left/Right, Home/End, roving tabIndex).
@@ -290,6 +300,21 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
     kinState.status === 'ready'
       ? kinState.data.filter((k) => k.status !== 'archived').length
       : null;
+
+  // Household profile takes over the screen when a card is opened (propless mount).
+  // The kin come from the KIN_QUERY stream this screen already holds (no second read).
+  if (openKinfolkId !== null) {
+    const kf =
+      kinfolkState.status === 'ready' ? kinfolkState.data.find((k) => k._id === openKinfolkId) : undefined;
+    return (
+      <KinfolkProfile
+        kinfolkId={openKinfolkId}
+        kinfolkName={kf ? kinfolkDisplayName(kf) : ''}
+        kin={kinByKinfolk.get(openKinfolkId) ?? []}
+        onBack={() => setOpenKinfolkId(null)}
+      />
+    );
+  }
 
   return (
     <div className="screen">
@@ -401,7 +426,7 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
                     kf={kf}
                     kin={kinByKinfolk.get(kf._id) ?? []}
                     kinPending={kinPending}
-                    {...(onSelectKinfolk ? { onClick: () => onSelectKinfolk(kf._id) } : {})}
+                    onClick={() => (onSelectKinfolk ? onSelectKinfolk(kf._id) : setOpenKinfolkId(kf._id))}
                   />
                 ))}
               </ul>
