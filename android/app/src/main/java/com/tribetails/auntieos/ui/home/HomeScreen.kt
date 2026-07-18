@@ -92,6 +92,9 @@ fun HomeScreen(
     // W16/W17: fetch weather only when a weather widget is on the dashboard.
     val showsWeather = dashboard.any { it.key == DashKey.WEATHER_WATCHDOG || it.key == DashKey.HEAT_INDEX }
     LaunchedEffect(showsWeather) { if (showsWeather) viewModel.loadWeather() }
+    // AO-38: load conversations only while the Unread Messages widget is shown.
+    val showsUnread = dashboard.any { it.key == DashKey.UNREAD_MESSAGES }
+    LaunchedEffect(showsUnread) { if (showsUnread) viewModel.loadConversations() }
 
     AuntieScreenScaffold(
         title = null,
@@ -429,6 +432,13 @@ fun HomeScreen(
                                 if (state.isLoading) EmptyHint("Loading visits…")
                                 else HolidayRunwayWidget(state.allSessions, java.time.LocalDate.now().toString())
                             }
+                            DashKey.UNREAD_MESSAGES -> DenPanel(
+                                title = "Unread client messages",
+                                subtitle = "Threads waiting on a reply, newest first.",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                UnreadMessagesWidget(state.conversations)
+                            }
                         }
                         }
                     }
@@ -476,6 +486,7 @@ private fun dashLabel(key: DashKey): String = when (key) {
     DashKey.PET_BREAKDOWN -> "Pets by type"
     DashKey.FREQUENT_FLYERS -> "Frequent flyers"
     DashKey.HOLIDAY_RUNWAY -> "Holiday runway"
+    DashKey.UNREAD_MESSAGES -> "Unread messages"
 }
 
 /** Den tone for a [WeatherRisk] level. */

@@ -24,7 +24,10 @@ enum class DashKey(val token: String) {
     OVERDUE_TRACKER("overdueTracker"),
     PET_BREAKDOWN("petBreakdown"),
     FREQUENT_FLYERS("frequentFlyers"),
-    HOLIDAY_RUNWAY("holidayRunway");
+    HOLIDAY_RUNWAY("holidayRunway"),
+    // AO-38 / W6 Unread Client Messages. Token matches web exactly so a layout
+    // round-trips through UserProfile.dashboardWidgets.
+    UNREAD_MESSAGES("unreadMessages");
 
     companion object {
         fun parse(s: String?): DashKey? = entries.firstOrNull { it.token == s?.trim() }

@@ -33,6 +33,8 @@ import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareSession
+import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.screens.inbox.ConversationSummary
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.web.ui.components.CountUpText
@@ -406,6 +408,72 @@ internal fun HolidayRunwayWidget(sessionsState: FirestoreResult<List<KinCareSess
                                     Text("booked", style = AuntieTheme.typography.bodySmall, color = c.textDim)
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+// ── AO-38 / W6 unread client messages ─────────────────────────────────────────
+/**
+ * Unread Client Messages (AO-38 / W6). Reads the one-shot `listConversations`
+ * result ([state] == null while it loads, since it is a callable not a stream)
+ * and surfaces the unread threads, newest first, with a headline total. Empty is
+ * a real caught-up state, distinct from a failed load. Logic lives in
+ * DashboardInsights.kt; this only renders. Mirrors the React UnreadMessagesWidget.
+ */
+@Composable
+internal fun UnreadMessagesWidget(state: WriteResult<List<ConversationSummary>>?) {
+    DenPanel(
+        title = "Unread client messages",
+        subtitle = "Threads waiting on a reply, newest first.",
+        modifier = Modifier.fillMaxWidth(),
+        hoverLift = true,
+    ) {
+        when (state) {
+            null -> EmptyHint("Loading messages…")
+            is WriteResult.Err -> EmptyHint("Couldn't load messages: ${state.message}", error = true)
+            is WriteResult.Ok -> {
+                val total = unreadClientMessageCount(state.value)
+                if (total == 0) {
+                    EmptyHint("Inbox is all caught up.")
+                } else {
+                    val c = AuntieTheme.colors
+                    val rows = unreadClientMessages(state.value)
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "$total unread",
+                            style = AuntieTheme.typography.titleMedium,
+                            color = c.textPrimary,
+                        )
+                        rows.forEach { m ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(c.primary.copy(alpha = 0.08f))
+                                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                PulsingBadge(color = c.primary, size = 9.dp)
+                                Column(Modifier.weight(1f)) {
+                                    Text(m.household, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                                    Text(
+                                        m.preview.ifBlank { "(no preview)" },
+                                        style = AuntieTheme.typography.bodySmall,
+                                        color = c.textDim,
+                                    )
+                                }
+                            }
+                        }
+                        if (total > rows.size) {
+                            Text(
+                                "and ${total - rows.size} more waiting in the inbox",
+                                style = AuntieTheme.typography.bodySmall,
+                                color = c.textDim,
+                            )
                         }
                     }
                 }

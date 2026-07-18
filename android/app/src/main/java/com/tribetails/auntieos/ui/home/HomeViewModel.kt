@@ -63,6 +63,9 @@ data class HomeUiState(
     // W16/W17 weather widgets: one-shot getLocalWeather result (server-cached). null =
     // not loaded yet. Loaded lazily only when a weather widget is on the dashboard.
     val weather: Result<com.tribetails.auntieos.data.model.LocalWeather>? = null,
+    // AO-38 Unread Messages widget: one-shot listConversations result. null = not
+    // loaded yet. Loaded lazily only while the widget is on the dashboard.
+    val conversations: Result<List<com.tribetails.auntieos.ui.inbox.ConversationSummary>>? = null,
     val actionError: String? = null
 )
 
@@ -93,6 +96,15 @@ class HomeViewModel(
         viewModelScope.launch {
             val result = repo.getLocalWeather()
             _uiState.value = _uiState.value.copy(weather = result)
+        }
+    }
+
+    /** AO-38: one-shot load of the Unread Messages widget's conversations. */
+    fun loadConversations() {
+        if (_uiState.value.conversations?.isSuccess == true) return
+        viewModelScope.launch {
+            val result = repo.listConversations()
+            _uiState.value = _uiState.value.copy(conversations = result)
         }
     }
 

@@ -24,7 +24,10 @@ enum class DashKey(val token: String) {
     OVERDUE_TRACKER("overdueTracker"),
     PET_BREAKDOWN("petBreakdown"),
     FREQUENT_FLYERS("frequentFlyers"),
-    HOLIDAY_RUNWAY("holidayRunway");
+    HOLIDAY_RUNWAY("holidayRunway"),
+    // AO-38 / W6 Unread Client Messages. One-shot listConversations (not a
+    // stream); hidden by default like the other insight widgets.
+    UNREAD_MESSAGES("unreadMessages");
 
     companion object {
         fun parse(s: String?): DashKey? = entries.firstOrNull { it.token == s?.trim() }
