@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.home
 
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareSession
+import com.tribetails.auntieos.ui.inbox.ConversationSummary
 import java.time.LocalDate
 
 /**
@@ -179,3 +180,33 @@ fun holidayRunway(
             )
         }
 }
+// ── AO-38 / W6 unread client messages ─────────────────────────────────────────
+data class UnreadMessageRow(
+    val kinfolkId: String,
+    val household: String,
+    val preview: String,
+    val atMs: Long,
+)
+/**
+ * The most recent unread client threads for the "Unread Client Messages" widget
+ * (AO-38 / W6). Keeps only rows the admin has not read ([ConversationSummary.
+ * unreadForAdmin], the positive signal, never a negation), most recent first,
+ * capped at [limit]. Blank name falls back to the id and blank preview trims to
+ * "". Mirrors the web DashboardInsights.unreadClientMessages exactly.
+ */
+fun unreadClientMessages(rows: List<ConversationSummary>, limit: Int = 5): List<UnreadMessageRow> =
+    rows.asSequence()
+        .filter { it.unreadForAdmin }
+        .sortedByDescending { it.lastMessageAtMs }
+        .take(limit.coerceAtLeast(0))
+        .map { r ->
+            UnreadMessageRow(
+                kinfolkId = r.kinfolkId,
+                household = r.kinfolkName.trim().ifBlank { r.kinfolkId },
+                preview = r.lastMessagePreview.trim(),
+                atMs = r.lastMessageAtMs,
+            )
+        }
+        .toList()
+/** Total unread threads (the widget headline), independent of the display cap. */
+fun unreadClientMessageCount(rows: List<ConversationSummary>): Int = rows.count { it.unreadForAdmin }

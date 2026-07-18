@@ -52,6 +52,7 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.UserProfile
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.screens.inbox.ConversationSummary
 import com.tribetails.auntieos.web.data.GeneratedDraft
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareSession
@@ -206,6 +207,11 @@ fun HomeScreen(
     val allKinState by remember(showsPets) {
         if (showsPets) client.allKinStream() else flowOf<FirestoreResult<List<Kin>>>(FirestoreResult.Loading)
     }.collectAsState(initial = FirestoreResult.Loading)
+    // AO-38 unread messages: one-shot listConversations (callable, not a stream),
+    // loaded only while the widget is on the dashboard. null = not loaded yet.
+    val showsUnread = layout.any { it.key == DashKey.UNREAD_MESSAGES }
+    var conversations by remember { mutableStateOf<WriteResult<List<ConversationSummary>>?>(null) }
+    LaunchedEffect(showsUnread) { if (showsUnread && conversations == null) conversations = client.listConversations() }
     val dashScope = rememberReportingScope()
     val dashSaveMutex = remember { Mutex() }
     val applyLayout: (List<DashWidget>) -> Unit = { next ->
@@ -514,6 +520,7 @@ fun HomeScreen(
                             DashKey.PET_BREAKDOWN -> PetBreakdownWidget(allKinState)
                             DashKey.FREQUENT_FLYERS -> FrequentFlyersWidget(sessionsState, todayKey)
                             DashKey.HOLIDAY_RUNWAY -> HolidayRunwayWidget(sessionsState, todayKey)
+                            DashKey.UNREAD_MESSAGES -> UnreadMessagesWidget(conversations)
                         }
                         }
                     }
@@ -552,6 +559,7 @@ private fun dashLabel(key: DashKey): String = when (key) {
     DashKey.PET_BREAKDOWN -> "Pets by type"
     DashKey.FREQUENT_FLYERS -> "Frequent flyers"
     DashKey.HOLIDAY_RUNWAY -> "Holiday runway"
+    DashKey.UNREAD_MESSAGES -> "Unread messages"
 }
 
 /** Den tone for a [WeatherRisk] level. */

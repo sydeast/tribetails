@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareSession
+import com.tribetails.auntieos.ui.inbox.ConversationSummary
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.CountUpText
 import com.tribetails.auntieos.ui.components.PulsingBadge
@@ -308,6 +309,63 @@ internal fun HolidayRunwayWidget(sessions: List<KinCareSession>, todayIso: Strin
                             color = c.textDim,
                         )
                         Text("booked", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    }
+                }
+            }
+        }
+    }
+}
+// ── AO-38 / W6 unread client messages ─────────────────────────────────────────
+/**
+ * Unread Client Messages (AO-38 / W6). Reads the one-shot listConversations
+ * result ([state] == null while it loads, since it is a callable not a stream)
+ * and surfaces the unread threads, newest first, with a headline total. Empty is
+ * a real caught-up state, distinct from a failed load (fail-loud InsightHint).
+ * Logic lives in DashboardInsights.kt; this only renders. Mirrors web + React.
+ */
+@Composable
+internal fun UnreadMessagesWidget(state: Result<List<ConversationSummary>>?) {
+    when {
+        state == null -> InsightHint("Loading messages…")
+        state.isFailure ->
+            InsightHint("Couldn't load messages: ${state.exceptionOrNull()?.message ?: "unknown error"}", error = true)
+        else -> {
+            val rows = state.getOrDefault(emptyList())
+            val total = unreadClientMessageCount(rows)
+            if (total == 0) {
+                InsightHint("Inbox is all caught up.")
+            } else {
+                val c = AuntieTheme.colors
+                val shown = unreadClientMessages(rows)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("$total unread", style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
+                    shown.forEach { m ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(c.primary.copy(alpha = 0.08f))
+                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            PulsingBadge(color = c.primary, size = 9.dp)
+                            Column(Modifier.weight(1f)) {
+                                Text(m.household, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                                Text(
+                                    m.preview.ifBlank { "(no preview)" },
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = c.textDim,
+                                )
+                            }
+                        }
+                    }
+                    if (total > shown.size) {
+                        Text(
+                            "and ${total - shown.size} more waiting in the inbox",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
                     }
                 }
             }

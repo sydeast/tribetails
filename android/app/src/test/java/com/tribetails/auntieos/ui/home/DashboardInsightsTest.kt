@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.home
 
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareSession
+import com.tribetails.auntieos.ui.inbox.ConversationSummary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -158,5 +159,52 @@ class DashboardInsightsTest {
         assertEquals(0, runway[0].daysUntil)
         assertEquals("2027-01-01", runway[1].dateIso)
         assertEquals(7, runway[1].daysUntil)
+    }
+
+    // ── AO-38 / W6 unread client messages ──────────────────────────────────────
+
+    private fun conv(
+        id: String = "k1",
+        name: String = "Rivera",
+        preview: String = "Hi Auntie",
+        atMs: Long = 1_000,
+        unread: Boolean = true,
+    ) = ConversationSummary(
+        kinfolkId = id,
+        kinfolkName = name,
+        lastMessagePreview = preview,
+        lastMessageAtMs = atMs,
+        lastSenderRole = "kinfolk",
+        unreadForAdmin = unread,
+        messageCount = 2,
+    )
+
+    @Test
+    fun `unread keeps only unread threads, newest first`() {
+        val rows = listOf(
+            conv(id = "a", atMs = 100, unread = true),
+            conv(id = "b", atMs = 300, unread = true),
+            conv(id = "c", atMs = 200, unread = false),
+        )
+        assertEquals(listOf("b", "a"), unreadClientMessages(rows).map { it.kinfolkId })
+    }
+
+    @Test
+    fun `unread caps display but count is the full unread total`() {
+        val rows = (0 until 8).map { conv(id = "k$it", atMs = it.toLong(), unread = true) }
+        assertEquals(3, unreadClientMessages(rows, limit = 3).size)
+        assertEquals(8, unreadClientMessageCount(rows))
+    }
+
+    @Test
+    fun `unread falls back to id for a blank name and trims a blank preview`() {
+        val row = unreadClientMessages(listOf(conv(id = "k9", name = "   ", preview = "  "))).first()
+        assertEquals("k9", row.household)
+        assertEquals("", row.preview)
+    }
+
+    @Test
+    fun `unread count is zero for an all-read list`() {
+        assertEquals(0, unreadClientMessageCount(listOf(conv(unread = false), conv(unread = false))))
     }
 }
