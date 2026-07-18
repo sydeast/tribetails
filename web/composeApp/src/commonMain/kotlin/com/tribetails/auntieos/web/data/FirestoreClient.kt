@@ -15,6 +15,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -1515,6 +1516,108 @@ class FirestoreClient {
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
+
+    // ── Home dashboard widgets fan-out (AO-35 / AO-39 / AO-40 / AO-41) ──────────
+
+    /**
+     * AO-35 Route Optimizer: server-optimized visit order for [date] (YYYY-MM-DD)
+     * via the admin-gated `optimizeRoute` callable (Mapbox on the server). Returns
+     * the ordered stops, trip totals, and the fail-loud `unroutable` list of
+     * households with no service address. Fail-loud: a missing Mapbox key or a bad
+     * body surfaces via [WriteResult.Err] so the widget never fakes a route.
+     */
+    suspend fun optimizeRoute(date: String): WriteResult<RouteResult> {
+        val payload = buildJsonObject { put("date", JsonPrimitive(date)) }
+        return when (val r = platformInvokeCallable("optimizeRoute", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeRouteResult(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "route decode failed") }
+        }
+    }
+
+    /**
+     * AO-40 Expense Quick-Log: recent expenses + week/month totals via the
+     * admin-gated `listExpenses` callable (defaults to the last 30 days server-side
+     * when [sinceIso] is null). Totals are server-computed (cents). Fail-loud on
+     * callable / decode error.
+     */
+    suspend fun listExpenses(sinceIso: String? = null): WriteResult<ExpenseSummary> {
+        val payload = buildJsonObject { if (!sinceIso.isNullOrBlank()) put("sinceIso", JsonPrimitive(sinceIso)) }
+        return when (val r = platformInvokeCallable("listExpenses", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeExpenseSummary(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "expenses decode failed") }
+        }
+    }
+
+    /**
+     * AO-40: record one expense via the admin-gated `logExpense` callable. Amount
+     * is whole cents; [occurredAt] defaults to now server-side when null. Returns
+     * the new expense id. Fail-loud on validation / callable error.
+     */
+    suspend fun logExpense(
+        kind: String,
+        amountCents: Int,
+        note: String? = null,
+        occurredAt: String? = null,
+    ): WriteResult<String> {
+        val payload = buildJsonObject {
+            put("kind", JsonPrimitive(kind))
+            put("amountCents", JsonPrimitive(amountCents))
+            if (!note.isNullOrBlank()) put("note", JsonPrimitive(note))
+            if (!occurredAt.isNullOrBlank()) put("occurredAt", JsonPrimitive(occurredAt))
+        }
+        return when (val r = platformInvokeCallable("logExpense", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching {
+                WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["id"]?.jsonPrimitive?.contentOrNull.orEmpty())
+            }.getOrElse { WriteResult.Err(it.message ?: "log expense decode failed") }
+        }
+    }
+
+    /**
+     * AO-41 Supplies Tracker: the supplies list + a server-computed [SupplySummary.
+     * lowCount] (onHand <= par) via the admin-gated `listSupplies` callable.
+     * Fail-loud on callable / decode error.
+     */
+    suspend fun listSupplies(): WriteResult<SupplySummary> {
+        return when (val r = platformInvokeCallable("listSupplies", "{}")) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeSupplySummary(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "supplies decode failed") }
+        }
+    }
+
+    /**
+     * AO-41: nudge one supply's on-hand count by [delta] via the admin-gated
+     * `adjustSupply` callable (server clamps at 0, fails loud if the supply is
+     * missing). Returns the new on-hand count.
+     */
+    suspend fun adjustSupply(supplyId: String, delta: Int): WriteResult<Int> {
+        val payload = buildJsonObject {
+            put("supplyId", JsonPrimitive(supplyId))
+            put("delta", JsonPrimitive(delta))
+        }
+        return when (val r = platformInvokeCallable("adjustSupply", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching {
+                WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["onHand"]?.jsonPrimitive?.intOrNull ?: 0)
+            }.getOrElse { WriteResult.Err(it.message ?: "adjust supply decode failed") }
+        }
+    }
+
+    /**
+     * AO-39 Expiration Countdown: the expiration reminders (gate codes, vet
+     * records, cards, licenses) via the admin-gated `listExpirations` callable
+     * (server sorts by dateIso asc). Fail-loud on callable / decode error.
+     */
+    suspend fun listExpirations(): WriteResult<List<ExpirationItem>> {
+        return when (val r = platformInvokeCallable("listExpirations", "{}")) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching { WriteResult.Ok(decodeExpirations(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "expirations decode failed") }
+        }
+    }
 }
 
 /** Result of a single Firestore write - Ok carries the new doc id (for creates) or Unit. */
@@ -1848,6 +1951,189 @@ internal fun decodeStaffList(dataJson: String): List<StaffMember> =
  */
 internal fun decodeArchivedCount(dataJson: String): Int =
     importedCountJson.parseToJsonElement(dataJson).jsonObject["archived"]?.jsonPrimitive?.intOrNull ?: 0
+
+// ── Home dashboard widgets fan-out models + decoders (AO-35/39/40/41) ──────────
+//
+// Plain models decoded from the new admin callables, imported by the pure-logic
+// layer (screens/home/DashboardInsights.kt) so every rule is JVM-unit-testable and
+// the callable is the single source of truth. JSON numbers may arrive as ints or
+// doubles (firebase-bridge stringifies res.data), so numeric reads fall back
+// through doubleOrNull. All throw on malformed JSON so the caller maps to
+// WriteResult.Err (fail loud, never fake).
+
+private fun JsonObject.intField(key: String): Int =
+    this[key]?.jsonPrimitive?.let { it.intOrNull ?: it.doubleOrNull?.toInt() } ?: 0
+
+private fun JsonObject.doubleField(key: String): Double =
+    this[key]?.jsonPrimitive?.doubleOrNull ?: 0.0
+
+private fun JsonObject.strField(key: String): String =
+    this[key]?.jsonPrimitive?.contentOrNull ?: ""
+
+/** AO-35 Route Optimizer: one optimized stop on the day's route. */
+data class RouteStop(
+    val order: Int,
+    val sessionId: String,
+    val kinfolkId: String,
+    val household: String,
+    val address: String,
+    val arrivalEta: String,   // HH:MM
+)
+
+/** AO-35: a visit that could not be routed (fail-loud, e.g. no service address). */
+data class RouteUnroutable(
+    val sessionId: String,
+    val household: String,
+    val reason: String,
+)
+
+/** AO-35: the whole optimizeRoute result. */
+data class RouteResult(
+    val stops: List<RouteStop>,
+    val totalMiles: Double,
+    val totalMinutes: Int,
+    val unroutable: List<RouteUnroutable>,
+)
+
+/**
+ * Pure decode of the optimizeRoute body
+ * `{stops:[{order,sessionId,kinfolkId,household,address,arrivalEta}], totalMiles,
+ * totalMinutes, unroutable:[{sessionId,household,reason}]}`. Throws on malformed
+ * JSON. Missing arrays decode to empty (no fabricated stops).
+ */
+internal fun decodeRouteResult(dataJson: String): RouteResult {
+    val o = importedCountJson.parseToJsonElement(dataJson).jsonObject
+    val stops = (o["stops"] as? JsonArray).orEmpty().mapNotNull { el ->
+        val s = el as? JsonObject ?: return@mapNotNull null
+        RouteStop(
+            order = s.intField("order"),
+            sessionId = s.strField("sessionId"),
+            kinfolkId = s.strField("kinfolkId"),
+            household = s.strField("household"),
+            address = s.strField("address"),
+            arrivalEta = s.strField("arrivalEta"),
+        )
+    }
+    val unroutable = (o["unroutable"] as? JsonArray).orEmpty().mapNotNull { el ->
+        val u = el as? JsonObject ?: return@mapNotNull null
+        RouteUnroutable(
+            sessionId = u.strField("sessionId"),
+            household = u.strField("household"),
+            reason = u.strField("reason"),
+        )
+    }
+    return RouteResult(
+        stops = stops,
+        totalMiles = o.doubleField("totalMiles"),
+        totalMinutes = o.intField("totalMinutes"),
+        unroutable = unroutable,
+    )
+}
+
+/** AO-40 Expense Quick-Log: one recorded expense. */
+data class ExpenseItem(
+    val _id: String,
+    val kind: String,        // gas | parking | supplies | other
+    val amountCents: Int,
+    val note: String,
+    val occurredAt: String,  // ISO
+)
+
+/** AO-40: the listExpenses result (rows + server-computed rolling totals). */
+data class ExpenseSummary(
+    val expenses: List<ExpenseItem>,
+    val weekTotalCents: Int,
+    val monthTotalCents: Int,
+)
+
+/**
+ * Pure decode of the listExpenses body
+ * `{expenses:[{_id,kind,amountCents,note,occurredAt}], weekTotalCents,
+ * monthTotalCents}`. Throws on malformed JSON; missing rows decode to empty.
+ */
+internal fun decodeExpenseSummary(dataJson: String): ExpenseSummary {
+    val o = importedCountJson.parseToJsonElement(dataJson).jsonObject
+    val rows = (o["expenses"] as? JsonArray).orEmpty().mapNotNull { el ->
+        val e = el as? JsonObject ?: return@mapNotNull null
+        val id = e["_id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        ExpenseItem(
+            _id = id,
+            kind = e.strField("kind"),
+            amountCents = e.intField("amountCents"),
+            note = e.strField("note"),
+            occurredAt = e.strField("occurredAt"),
+        )
+    }
+    return ExpenseSummary(
+        expenses = rows,
+        weekTotalCents = o.intField("weekTotalCents"),
+        monthTotalCents = o.intField("monthTotalCents"),
+    )
+}
+
+/** AO-41 Supplies Tracker: one tracked supply line. */
+data class SupplyItem(
+    val _id: String,
+    val name: String,
+    val onHand: Int,
+    val par: Int,          // reorder threshold
+    val unit: String,
+)
+
+/** AO-41: the listSupplies result (rows + server-computed low count). */
+data class SupplySummary(
+    val supplies: List<SupplyItem>,
+    val lowCount: Int,
+)
+
+/**
+ * Pure decode of the listSupplies body
+ * `{supplies:[{_id,name,onHand,par,unit}], lowCount}`. Throws on malformed JSON;
+ * missing rows decode to empty.
+ */
+internal fun decodeSupplySummary(dataJson: String): SupplySummary {
+    val o = importedCountJson.parseToJsonElement(dataJson).jsonObject
+    val rows = (o["supplies"] as? JsonArray).orEmpty().mapNotNull { el ->
+        val s = el as? JsonObject ?: return@mapNotNull null
+        val id = s["_id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        SupplyItem(
+            _id = id,
+            name = s.strField("name"),
+            onHand = s.intField("onHand"),
+            par = s.intField("par"),
+            unit = s.strField("unit"),
+        )
+    }
+    return SupplySummary(supplies = rows, lowCount = o.intField("lowCount"))
+}
+
+/** AO-39 Expiration Countdown: one expiration reminder. */
+data class ExpirationItem(
+    val _id: String,
+    val label: String,
+    val dateIso: String,     // YYYY-MM-DD
+    val kinfolkId: String,
+    val kind: String,        // gateCode | vetRecord | card | license | other
+)
+
+/**
+ * Pure decode of the listExpirations body
+ * `{expirations:[{_id,label,dateIso,kinfolkId,kind}]}`. Throws on malformed JSON;
+ * a missing array decodes to empty. Server sorts by dateIso asc.
+ */
+internal fun decodeExpirations(dataJson: String): List<ExpirationItem> =
+    (importedCountJson.parseToJsonElement(dataJson).jsonObject["expirations"] as? JsonArray)
+        .orEmpty().mapNotNull { el ->
+            val e = el as? JsonObject ?: return@mapNotNull null
+            val id = e["_id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            ExpirationItem(
+                _id = id,
+                label = e.strField("label"),
+                dateIso = e.strField("dateIso"),
+                kinfolkId = e.strField("kinfolkId"),
+                kind = e.strField("kind"),
+            )
+        }
 
 /**
  * Pure compute: given the full set of catalog keys and the set already bound to

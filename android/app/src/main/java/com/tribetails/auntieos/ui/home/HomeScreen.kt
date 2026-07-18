@@ -98,6 +98,15 @@ fun HomeScreen(
     // AO-36: load the kinfolk list only while the Safebox widget is shown.
     val showsSafebox = dashboard.any { it.key == DashKey.SAFEBOX }
     LaunchedEffect(showsSafebox) { if (showsSafebox) viewModel.loadSafeboxKinfolk() }
+    // AO-39/40/41/35: load each callable-backed widget's data only while it is shown.
+    val showsExpirations = dashboard.any { it.key == DashKey.EXPIRATIONS }
+    LaunchedEffect(showsExpirations) { if (showsExpirations) viewModel.loadExpirations() }
+    val showsExpenses = dashboard.any { it.key == DashKey.EXPENSE_LOG }
+    LaunchedEffect(showsExpenses) { if (showsExpenses) viewModel.loadExpenses() }
+    val showsSupplies = dashboard.any { it.key == DashKey.SUPPLIES }
+    LaunchedEffect(showsSupplies) { if (showsSupplies) viewModel.loadSupplies() }
+    val showsRoute = dashboard.any { it.key == DashKey.ROUTE_OPTIMIZER }
+    LaunchedEffect(showsRoute) { if (showsRoute) viewModel.loadRoute() }
 
     AuntieScreenScaffold(
         title = null,
@@ -454,6 +463,46 @@ fun HomeScreen(
                                     nowIso = java.time.Instant.now().toString(),
                                 )
                             }
+                            DashKey.CARE_FLAGS -> DenPanel(
+                                title = "Care flags",
+                                subtitle = "Reactive, medication, and feeding notes for today's kin.",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                CareFlagsWidget(
+                                    sessions = state.allSessions,
+                                    kin = state.kin,
+                                    isLoading = state.isLoading,
+                                    todayIso = java.time.LocalDate.now().toString(),
+                                )
+                            }
+                            DashKey.EXPIRATIONS -> DenPanel(
+                                title = "Expiration countdown",
+                                subtitle = "Gate codes, vet records, and cards coming due.",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                ExpirationsWidget(state.expirations, java.time.LocalDate.now().toString())
+                            }
+                            DashKey.ROUTE_OPTIMIZER -> DenPanel(
+                                title = "Route optimizer",
+                                subtitle = "Today's visits in the shortest drive order.",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                RouteOptimizerWidget(state.route)
+                            }
+                            DashKey.EXPENSE_LOG -> DenPanel(
+                                title = "Expense quick-log",
+                                subtitle = "This week and month, plus your latest expenses.",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                ExpenseLogWidget(state.expenses)
+                            }
+                            DashKey.SUPPLIES -> DenPanel(
+                                title = "Supplies tracker",
+                                subtitle = "What's running low against its reorder par.",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                SuppliesWidget(state.supplies) { id -> viewModel.adjustSupply(id) }
+                            }
                         }
                         }
                     }
@@ -503,6 +552,11 @@ private fun dashLabel(key: DashKey): String = when (key) {
     DashKey.HOLIDAY_RUNWAY -> "Holiday runway"
     DashKey.UNREAD_MESSAGES -> "Unread messages"
     DashKey.SAFEBOX -> "Key & code safebox"
+    DashKey.CARE_FLAGS -> "Care flags"
+    DashKey.EXPIRATIONS -> "Expiration countdown"
+    DashKey.ROUTE_OPTIMIZER -> "Route optimizer"
+    DashKey.EXPENSE_LOG -> "Expense quick-log"
+    DashKey.SUPPLIES -> "Supplies tracker"
 }
 
 /** Den tone for a [WeatherRisk] level. */

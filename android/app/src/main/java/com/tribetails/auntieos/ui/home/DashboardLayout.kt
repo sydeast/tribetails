@@ -29,7 +29,15 @@ enum class DashKey(val token: String) {
     // round-trips through UserProfile.dashboardWidgets.
     UNREAD_MESSAGES("unreadMessages"),
     // AO-36 / W3 Key & Code Safebox. Token matches web.
-    SAFEBOX("safebox");
+    SAFEBOX("safebox"),
+    // AO-37/39/35/40/41 dashboard widgets. Tokens match web + React exactly so a
+    // layout customized on any surface round-trips through UserProfile.dashboardWidgets.
+    // All hidden by default (not in DEFAULT_DASHBOARD).
+    CARE_FLAGS("careFlags"),
+    EXPIRATIONS("expirations"),
+    ROUTE_OPTIMIZER("routeOptimizer"),
+    EXPENSE_LOG("expenseLog"),
+    SUPPLIES("supplies");
 
     companion object {
         fun parse(s: String?): DashKey? = entries.firstOrNull { it.token == s?.trim() }

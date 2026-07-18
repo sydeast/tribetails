@@ -805,6 +805,149 @@ class AuntieRepository(
         Unit
     }.onFailure { AuntieLog.e("markConversationRead failed", it) }
 
+    // ── Dashboard widget callables (AO-35/39/40/41) ──────────────────────────
+    // Admin-gated MyTribe callables backing the hidden-by-default Home widgets.
+    // Fail-loud: every failure (missing Mapbox key, missing supply, etc) rides the
+    // Result.failure so the widget surfaces a real reason, never a fake value.
+
+    /**
+     * AO-35: optimize [dateYmd]'s (YYYY-MM-DD) route via the optimizeRoute callable.
+     * Returns ordered stops + totals, and the fail-loud `unroutable` households that
+     * have no serviceAddress. A missing Mapbox key surfaces as the callable's error.
+     */
+    suspend fun optimizeRoute(dateYmd: String): Result<RouteResult> = runCatching {
+        ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("optimizeRoute")
+            .call(mapOf("date" to dateYmd)).await().data as? Map<String, Any?>
+            ?: error("optimizeRoute: non-map payload")
+        decodeRouteResult(raw)
+    }.onFailure { AuntieLog.e("optimizeRoute failed", it) }
+
+    /** AO-40: recent expenses + server week/month totals via listExpenses (default last 30 days). */
+    suspend fun listExpenses(sinceIso: String? = null): Result<ExpenseSummary> = runCatching {
+        ensureAuthenticated()
+        val payload = buildMap<String, Any?> { if (!sinceIso.isNullOrBlank()) put("sinceIso", sinceIso) }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listExpenses")
+            .call(payload).await().data as? Map<String, Any?>
+            ?: error("listExpenses: non-map payload")
+        decodeExpenseSummary(raw)
+    }.onFailure { AuntieLog.e("listExpenses failed", it) }
+
+    /** AO-40: quick-log an expense via logExpense; returns the new doc id. occurredAt defaults server-side to now. */
+    suspend fun logExpense(
+        kind: String,
+        amountCents: Int,
+        note: String? = null,
+        occurredAt: String? = null,
+    ): Result<String> = runCatching {
+        ensureAuthenticated()
+        val payload = buildMap<String, Any?> {
+            put("kind", kind)
+            put("amountCents", amountCents)
+            if (!note.isNullOrBlank()) put("note", note)
+            if (!occurredAt.isNullOrBlank()) put("occurredAt", occurredAt)
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("logExpense").call(payload).await().data as? Map<String, Any?>
+            ?: error("logExpense: non-map payload")
+        raw["id"] as? String ?: error("logExpense: missing id")
+    }.onFailure { AuntieLog.e("logExpense failed", it) }
+
+    /** AO-41: supplies + low count (onHand <= par) via listSupplies. */
+    suspend fun listSupplies(): Result<SuppliesResult> = runCatching {
+        ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listSupplies")
+            .call(emptyMap<String, Any?>()).await().data as? Map<String, Any?>
+            ?: error("listSupplies: non-map payload")
+        decodeSuppliesResult(raw)
+    }.onFailure { AuntieLog.e("listSupplies failed", it) }
+
+    /** AO-41: bump a supply's on-hand by [delta] via adjustSupply (server clamps at 0); returns the new onHand. */
+    suspend fun adjustSupply(supplyId: String, delta: Int): Result<Int> = runCatching {
+        ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("adjustSupply")
+            .call(mapOf("supplyId" to supplyId, "delta" to delta)).await().data as? Map<String, Any?>
+            ?: error("adjustSupply: non-map payload")
+        (raw["onHand"] as? Number)?.toInt() ?: error("adjustSupply: missing onHand")
+    }.onFailure { AuntieLog.e("adjustSupply failed", it) }
+
+    /** AO-39: upcoming expirations via listExpirations (server sorts by dateIso asc). */
+    suspend fun listExpirations(): Result<List<ExpirationItem>> = runCatching {
+        ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listExpirations")
+            .call(emptyMap<String, Any?>()).await().data as? Map<String, Any?>
+            ?: error("listExpirations: non-map payload")
+        decodeExpirations(raw)
+    }.onFailure { AuntieLog.e("listExpirations failed", it) }
+
+    private fun decodeExpirations(raw: Map<String, Any?>): List<ExpirationItem> =
+        (raw["expirations"] as? List<*>).orEmpty().mapNotNull { el ->
+            val m = el as? Map<*, *> ?: return@mapNotNull null
+            ExpirationItem(
+                id = (m["_id"] ?: m["id"]) as? String ?: "",
+                label = m["label"] as? String ?: "",
+                dateIso = m["dateIso"] as? String ?: "",
+                kinfolkId = m["kinfolkId"] as? String ?: "",
+                kind = m["kind"] as? String ?: "",
+            )
+        }
+
+    private fun decodeExpense(m: Map<*, *>): Expense = Expense(
+        id = (m["_id"] ?: m["id"]) as? String ?: "",
+        kind = m["kind"] as? String ?: "",
+        amountCents = (m["amountCents"] as? Number)?.toInt() ?: 0,
+        note = m["note"] as? String ?: "",
+        occurredAt = m["occurredAt"] as? String ?: "",
+    )
+
+    private fun decodeExpenseSummary(raw: Map<String, Any?>): ExpenseSummary = ExpenseSummary(
+        expenses = (raw["expenses"] as? List<*>).orEmpty().mapNotNull { (it as? Map<*, *>)?.let(::decodeExpense) },
+        weekTotalCents = (raw["weekTotalCents"] as? Number)?.toInt() ?: 0,
+        monthTotalCents = (raw["monthTotalCents"] as? Number)?.toInt() ?: 0,
+    )
+
+    private fun decodeSupply(m: Map<*, *>): Supply = Supply(
+        id = (m["_id"] ?: m["id"]) as? String ?: "",
+        name = m["name"] as? String ?: "",
+        onHand = (m["onHand"] as? Number)?.toInt() ?: 0,
+        par = (m["par"] as? Number)?.toInt() ?: 0,
+        unit = m["unit"] as? String ?: "",
+    )
+
+    private fun decodeSuppliesResult(raw: Map<String, Any?>): SuppliesResult = SuppliesResult(
+        supplies = (raw["supplies"] as? List<*>).orEmpty().mapNotNull { (it as? Map<*, *>)?.let(::decodeSupply) },
+        lowCount = (raw["lowCount"] as? Number)?.toInt() ?: 0,
+    )
+
+    private fun decodeRouteResult(raw: Map<String, Any?>): RouteResult = RouteResult(
+        stops = (raw["stops"] as? List<*>).orEmpty().mapNotNull { el ->
+            val m = el as? Map<*, *> ?: return@mapNotNull null
+            RouteStop(
+                order = (m["order"] as? Number)?.toInt() ?: 0,
+                sessionId = m["sessionId"] as? String ?: "",
+                kinfolkId = m["kinfolkId"] as? String ?: "",
+                household = m["household"] as? String ?: "",
+                address = m["address"] as? String ?: "",
+                arrivalEta = m["arrivalEta"] as? String ?: "",
+            )
+        },
+        totalMiles = (raw["totalMiles"] as? Number)?.toDouble() ?: 0.0,
+        totalMinutes = (raw["totalMinutes"] as? Number)?.toInt() ?: 0,
+        unroutable = (raw["unroutable"] as? List<*>).orEmpty().mapNotNull { el ->
+            val m = el as? Map<*, *> ?: return@mapNotNull null
+            UnroutableStop(
+                sessionId = m["sessionId"] as? String ?: "",
+                household = m["household"] as? String ?: "",
+                reason = m["reason"] as? String ?: "",
+            )
+        },
+    )
+
     suspend fun getRecentDrafts(): Result<List<Draft>> = runCatching {
         AuntieLog.d("Fetching recent drafts")
         ensureAuthenticated()

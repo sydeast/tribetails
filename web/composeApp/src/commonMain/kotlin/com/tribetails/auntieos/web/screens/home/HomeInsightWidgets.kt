@@ -30,10 +30,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import com.tribetails.auntieos.web.data.ExpenseSummary
+import com.tribetails.auntieos.web.data.ExpirationItem
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Kinfolk
+import com.tribetails.auntieos.web.data.RouteResult
+import com.tribetails.auntieos.web.data.SupplySummary
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.screens.inbox.ConversationSummary
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -41,6 +45,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.web.ui.components.CountUpText
 import com.tribetails.auntieos.web.ui.components.DenPanel
 import com.tribetails.auntieos.web.ui.components.EmptyHint
+import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.PulsingBadge
 import com.tribetails.auntieos.web.ui.components.ServicePill
 import com.tribetails.auntieos.web.ui.components.color
@@ -554,6 +559,357 @@ internal fun SafeboxWidget(
                 }
             }
             else -> EmptyHint("Loading…")
+        }
+    }
+}
+// ── AO-37 care flags ───────────────────────────────────────────────────────────
+/**
+ * Care Flags (AO-37). Joins today's sessions + the kin stream (no callable) and
+ * surfaces the reactive / medication / feeding alerts the operator needs before a
+ * visit. Fail-loud on either stream's error; a real empty ("nothing to flag") is
+ * distinct from a failed load. Logic in DashboardInsights.kt. Mirrors the React
+ * CareFlagsWidget.
+ */
+@Composable
+internal fun CareFlagsWidget(
+    sessionsState: FirestoreResult<List<KinCareSession>>,
+    kinState: FirestoreResult<List<Kin>>,
+    todayIso: String,
+) {
+    DenPanel(
+        title = "Care flags",
+        subtitle = "Medication, feeding, and handle-with-care notes for today.",
+        modifier = Modifier.fillMaxWidth(),
+        hoverLift = true,
+    ) {
+        when {
+            sessionsState is FirestoreResult.Error ->
+                EmptyHint("Couldn't load visits: ${sessionsState.message}", error = true)
+            kinState is FirestoreResult.Error ->
+                EmptyHint("Couldn't load kin: ${kinState.message}", error = true)
+            sessionsState is FirestoreResult.Data && kinState is FirestoreResult.Data -> {
+                val kinById = kinState.value.associateBy { it._id }
+                val flags = careFlags(sessionsState.value, kinById, todayIso)
+                if (flags.isEmpty()) {
+                    EmptyHint("No care flags on today's visits.")
+                } else {
+                    val c = AuntieTheme.colors
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        flags.forEach { f ->
+                            val tone = when (f.kind) {
+                                "reactive" -> c.error
+                                "medication" -> c.warning
+                                else -> c.primary
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(tone.copy(alpha = 0.10f))
+                                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                PulsingBadge(color = tone, size = 9.dp)
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        "${f.kinName} · ${f.household}",
+                                        style = AuntieTheme.typography.titleSmall,
+                                        color = c.textPrimary,
+                                    )
+                                    Text(
+                                        f.text,
+                                        style = AuntieTheme.typography.bodySmall,
+                                        color = c.textDim,
+                                    )
+                                }
+                                ServicePill(careFlagKindLabel(f.kind))
+                            }
+                        }
+                    }
+                }
+            }
+            else -> EmptyHint("Loading…")
+        }
+    }
+}
+
+private fun careFlagKindLabel(kind: String): String = when (kind) {
+    "reactive" -> "Reactive"
+    "medication" -> "Meds"
+    "feeding" -> "Feeding"
+    else -> kind
+}
+// ── AO-39 expiration countdown ─────────────────────────────────────────────────
+/**
+ * Expiration Countdown (AO-39). Reads the one-shot `listExpirations` result
+ * ([state] == null while it loads) and shows what expires within 60 days, soonest
+ * first, with a days-until countdown. Empty is a real caught-up state. Logic in
+ * DashboardInsights.kt. Mirrors the React ExpirationsWidget.
+ */
+@Composable
+internal fun ExpirationsWidget(state: WriteResult<List<ExpirationItem>>?, todayIso: String) {
+    DenPanel(
+        title = "Expiration countdown",
+        subtitle = "Gate codes, vet records, and cards expiring soon.",
+        modifier = Modifier.fillMaxWidth(),
+        hoverLift = true,
+    ) {
+        when (state) {
+            null -> EmptyHint("Loading reminders…")
+            is WriteResult.Err -> EmptyHint("Couldn't load reminders: ${state.message}", error = true)
+            is WriteResult.Ok -> {
+                val rows = upcomingExpirations(state.value, todayIso)
+                if (rows.isEmpty()) {
+                    EmptyHint("Nothing expiring in the next 60 days.")
+                } else {
+                    val c = AuntieTheme.colors
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        rows.forEach { r ->
+                            val urgent = r.daysUntil <= 7
+                            val tone = if (urgent) c.warning else c.primary
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(tone.copy(alpha = 0.08f))
+                                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(r.label.ifBlank { "(unlabeled)" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                                    Text(r.dateIso, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                }
+                                Text(
+                                    countdownLabel(r.daysUntil),
+                                    style = AuntieTheme.typography.titleSmall,
+                                    color = tone,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun countdownLabel(daysUntil: Int): String = when {
+    daysUntil <= 0 -> "today"
+    daysUntil == 1 -> "1 day"
+    else -> "$daysUntil days"
+}
+// ── AO-40 expense quick-log ────────────────────────────────────────────────────
+/**
+ * Expense Quick-Log (AO-40). Reads the one-shot `listExpenses` result ([state] ==
+ * null while it loads) and shows the server-computed week + month totals plus the
+ * 5 most recent expenses. Logic in DashboardInsights.kt. Mirrors the React
+ * ExpenseLogWidget.
+ */
+@Composable
+internal fun ExpenseLogWidget(state: WriteResult<ExpenseSummary>?) {
+    DenPanel(
+        title = "Expense quick-log",
+        subtitle = "Gas, parking, and supplies, this week and month.",
+        modifier = Modifier.fillMaxWidth(),
+        hoverLift = true,
+    ) {
+        when (state) {
+            null -> EmptyHint("Loading expenses…")
+            is WriteResult.Err -> EmptyHint("Couldn't load expenses: ${state.message}", error = true)
+            is WriteResult.Ok -> {
+                val c = AuntieTheme.colors
+                val summary = state.value
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                        Column {
+                            Text("This week", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            Text(formatCents(summary.weekTotalCents), style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
+                        }
+                        Column {
+                            Text("This month", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            Text(formatCents(summary.monthTotalCents), style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
+                        }
+                    }
+                    val recent = recentExpenses(summary.expenses)
+                    if (recent.isEmpty()) {
+                        EmptyHint("No expenses logged yet.")
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            recent.forEach { e ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            e.kind.replaceFirstChar { it.uppercase() },
+                                            style = AuntieTheme.typography.titleSmall,
+                                            color = c.textPrimary,
+                                        )
+                                        val sub = listOf(e.note.trim(), e.occurredAt.take(10)).filter { it.isNotBlank() }.joinToString(" · ")
+                                        if (sub.isNotBlank()) {
+                                            Text(sub, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                        }
+                                    }
+                                    Text(formatCents(e.amountCents), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+// ── AO-41 supplies tracker ─────────────────────────────────────────────────────
+/**
+ * Supplies Tracker (AO-41). Reads the one-shot `listSupplies` result ([state] ==
+ * null while it loads), headlines the low count, and lists the most-depleted
+ * supplies with an on-hand / par read and a +1 restock control that calls
+ * adjustSupply via [onAdjust]. Logic in DashboardInsights.kt. Mirrors the React
+ * SuppliesWidget.
+ */
+@Composable
+internal fun SuppliesWidget(state: WriteResult<SupplySummary>?, onAdjust: (String) -> Unit) {
+    DenPanel(
+        title = "Supplies tracker",
+        subtitle = "What's running low against its reorder par.",
+        modifier = Modifier.fillMaxWidth(),
+        hoverLift = true,
+    ) {
+        when (state) {
+            null -> EmptyHint("Loading supplies…")
+            is WriteResult.Err -> EmptyHint("Couldn't load supplies: ${state.message}", error = true)
+            is WriteResult.Ok -> {
+                val c = AuntieTheme.colors
+                val low = lowSupplies(state.value.supplies)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        if (state.value.lowCount == 0) "Everything's stocked" else "${state.value.lowCount} running low",
+                        style = AuntieTheme.typography.titleMedium,
+                        color = if (state.value.lowCount == 0) c.textPrimary else c.warning,
+                    )
+                    if (low.isEmpty()) {
+                        EmptyHint("Nothing at or below par.")
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            low.forEach { s ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(c.warning.copy(alpha = 0.08f))
+                                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(s.name.ifBlank { "(unnamed)" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                                        Text(
+                                            "${s.onHand} / ${s.par}${if (s.unit.isNotBlank()) " " + s.unit else ""} on hand",
+                                            style = AuntieTheme.typography.bodySmall,
+                                            color = c.textDim,
+                                        )
+                                    }
+                                    GhostButton(label = "+1", onClick = { onAdjust(s._id) })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+// ── AO-35 route optimizer ──────────────────────────────────────────────────────
+/**
+ * Route Optimizer (AO-35). Reads the one-shot `optimizeRoute` result ([state] ==
+ * null while it loads): trip totals headline, the ordered stops with arrival ETAs,
+ * and a fail-loud "unroutable" section for households with no service address.
+ * The optimize itself is server-side (Mapbox); formatting in DashboardInsights.kt.
+ * Mirrors the React RouteOptimizerWidget.
+ */
+@Composable
+internal fun RouteOptimizerWidget(state: WriteResult<RouteResult>?) {
+    DenPanel(
+        title = "Route optimizer",
+        subtitle = "Today's visits in the shortest driving order.",
+        modifier = Modifier.fillMaxWidth(),
+        hoverLift = true,
+    ) {
+        when (state) {
+            null -> EmptyHint("Optimizing today's route…")
+            is WriteResult.Err -> EmptyHint("Couldn't optimize route: ${state.message}", error = true)
+            is WriteResult.Ok -> {
+                val c = AuntieTheme.colors
+                val route = state.value
+                if (route.stops.isEmpty() && route.unroutable.isEmpty()) {
+                    EmptyHint("No visits to route today.")
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            "${formatMiles(route.totalMiles)} · ${formatDuration(route.totalMinutes)}",
+                            style = AuntieTheme.typography.titleMedium,
+                            color = c.textPrimary,
+                        )
+                        route.stops.forEach { stop ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(c.primary.copy(alpha = 0.08f))
+                                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Text(
+                                    "${stop.order}",
+                                    style = AuntieTheme.typography.titleMedium,
+                                    color = c.primary,
+                                )
+                                Column(Modifier.weight(1f)) {
+                                    Text(stop.household.ifBlank { "Kinfolk" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                                    if (stop.address.isNotBlank()) {
+                                        Text(stop.address, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                    }
+                                }
+                                if (stop.arrivalEta.isNotBlank()) {
+                                    Text(stop.arrivalEta, style = AuntieTheme.typography.titleSmall, color = c.textDim)
+                                }
+                            }
+                        }
+                        if (route.unroutable.isNotEmpty()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    "${route.unroutable.size} couldn't be routed",
+                                    style = AuntieTheme.typography.titleSmall,
+                                    color = c.error,
+                                )
+                                route.unroutable.forEach { u ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(c.error.copy(alpha = 0.10f))
+                                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        PulsingBadge(color = c.error, size = 9.dp)
+                                        Column(Modifier.weight(1f)) {
+                                            Text(u.household.ifBlank { "Kinfolk" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                                            Text(u.reason.ifBlank { "No service address on file." }, style = AuntieTheme.typography.bodySmall, color = c.error)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

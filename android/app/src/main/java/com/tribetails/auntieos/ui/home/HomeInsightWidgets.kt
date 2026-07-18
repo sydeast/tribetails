@@ -5,6 +5,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -431,6 +432,335 @@ internal fun SafeboxWidget(
                                         color = if (line.mono) c.primary else c.textPrimary,
                                     )
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+// ── AO-37 care flags ────────────────────────────────────────────────────────
+/**
+ * Care Flags (AO-37). Handling notes for every kin on TODAY's schedule: reactive
+ * banner, medication/health notes, feeding brand. Joins the already-loaded
+ * [sessions] + [kin] in-memory (no callable). Empty is an honest "nothing flagged"
+ * state, distinct from still-loading. Logic in DashboardInsights.kt. Mirrors web.
+ */
+@Composable
+internal fun CareFlagsWidget(
+    sessions: List<KinCareSession>,
+    kin: List<Kin>,
+    isLoading: Boolean,
+    todayIso: String,
+) {
+    if (isLoading) {
+        InsightHint("Loading today's pack…")
+        return
+    }
+    val flags = careFlags(sessions, kin.associateBy { it.id }, todayIso)
+    if (flags.isEmpty()) {
+        InsightHint("Nothing flagged on today's visits.")
+        return
+    }
+    val c = AuntieTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        flags.forEach { f ->
+            val tone = when (f.kind) {
+                "reactive" -> c.error
+                "medication" -> c.secondary
+                else -> c.primary
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(tone.copy(alpha = 0.10f))
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(Modifier.size(width = 4.dp, height = 34.dp).clip(RoundedCornerShape(4.dp)).background(tone))
+                Column(Modifier.weight(1f)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(f.kinName, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                        Text(careFlagLabel(f.kind), style = AuntieTheme.typography.labelSmall, color = tone)
+                    }
+                    Text(f.text, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    if (f.household.isNotBlank()) {
+                        Text(f.household, style = AuntieTheme.typography.bodySmall, color = c.textFaint)
+                    }
+                }
+            }
+        }
+    }
+}
+private fun careFlagLabel(kind: String): String = when (kind) {
+    "reactive" -> "Reactive"
+    "medication" -> "Medication"
+    "feeding" -> "Feeding"
+    else -> kind
+}
+// ── AO-39 expiration countdown ──────────────────────────────────────────────
+/**
+ * Expiration Countdown (AO-39). The next 60 days of expiring gate codes, vet
+ * records, cards, and licenses via the one-shot listExpirations callable
+ * ([state] == null while it loads). Empty (nothing in the window) is a real
+ * caught-up state, distinct from a failed load. Logic in DashboardInsights.kt.
+ */
+@Composable
+internal fun ExpirationsWidget(
+    state: Result<List<com.tribetails.auntieos.data.model.ExpirationItem>>?,
+    todayIso: String,
+) {
+    when {
+        state == null -> InsightHint("Loading expirations…")
+        state.isFailure ->
+            InsightHint("Couldn't load expirations: ${state.exceptionOrNull()?.message ?: "unknown error"}", error = true)
+        else -> {
+            val rows = upcomingExpirations(state.getOrDefault(emptyList()), todayIso)
+            if (rows.isEmpty()) {
+                InsightHint("Nothing expiring in the next 60 days.")
+            } else {
+                val c = AuntieTheme.colors
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    rows.forEach { r ->
+                        val urgent = r.daysUntil <= 7
+                        val tone = if (urgent) c.error else c.textPrimary
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(r.label.ifBlank { "(unnamed)" }, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                                Text(
+                                    "${r.dateIso} · ${expirationKindLabel(r.kind)}",
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = c.textDim,
+                                )
+                            }
+                            Text(
+                                if (r.daysUntil == 0) "today" else "${r.daysUntil}d",
+                                style = AuntieTheme.typography.titleMedium,
+                                color = tone,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+private fun expirationKindLabel(kind: String): String = when (kind) {
+    "gateCode" -> "Gate code"
+    "vetRecord" -> "Vet record"
+    "card" -> "Card"
+    "license" -> "License"
+    else -> "Other"
+}
+// ── AO-40 expense quick-log ─────────────────────────────────────────────────
+/**
+ * Expense Quick-Log (AO-40). The server's week + month totals as the headline,
+ * then the most recent 5 expenses via the one-shot listExpenses callable
+ * ([state] == null while it loads). Fail-loud on a failed load. Totals + formatting
+ * from DashboardInsights.kt. Mirrors web + React.
+ */
+@Composable
+internal fun ExpenseLogWidget(
+    state: Result<com.tribetails.auntieos.data.model.ExpenseSummary>?,
+) {
+    when {
+        state == null -> InsightHint("Loading expenses…")
+        state.isFailure ->
+            InsightHint("Couldn't load expenses: ${state.exceptionOrNull()?.message ?: "unknown error"}", error = true)
+        else -> {
+            val summary = state.getOrThrow()
+            val c = AuntieTheme.colors
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    Column {
+                        Text("This week", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        Text(formatCents(summary.weekTotalCents), style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
+                    }
+                    Column {
+                        Text("This month", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        Text(formatCents(summary.monthTotalCents), style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
+                    }
+                }
+                val recent = recentExpenses(summary.expenses)
+                if (recent.isEmpty()) {
+                    InsightHint("No expenses logged yet.")
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        recent.forEach { e ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        expenseKindLabel(e.kind) + (if (e.note.isNotBlank()) ": ${e.note}" else ""),
+                                        style = AuntieTheme.typography.bodyMedium,
+                                        color = c.textPrimary,
+                                    )
+                                    if (e.occurredAt.isNotBlank()) {
+                                        Text(e.occurredAt.take(10), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                    }
+                                }
+                                Text(formatCents(e.amountCents), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+private fun expenseKindLabel(kind: String): String = when (kind) {
+    "gas" -> "Gas"
+    "parking" -> "Parking"
+    "supplies" -> "Supplies"
+    else -> "Other"
+}
+// ── AO-41 supplies tracker ──────────────────────────────────────────────────
+/**
+ * Supplies Tracker (AO-41). The low-stock count as the headline, then the depleted
+ * rows (onHand <= par, most-depleted first) via the one-shot listSupplies callable
+ * ([state] == null while it loads). Each row has a "+1" that calls adjustSupply and
+ * reloads. Fail-loud on a failed load. Logic in DashboardInsights.kt. Mirrors web.
+ */
+@Composable
+internal fun SuppliesWidget(
+    state: Result<com.tribetails.auntieos.data.model.SuppliesResult>?,
+    onAdjust: (String) -> Unit,
+) {
+    when {
+        state == null -> InsightHint("Loading supplies…")
+        state.isFailure ->
+            InsightHint("Couldn't load supplies: ${state.exceptionOrNull()?.message ?: "unknown error"}", error = true)
+        else -> {
+            val result = state.getOrThrow()
+            val low = lowSupplies(result.supplies)
+            val c = AuntieTheme.colors
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    if (result.lowCount == 0) "Fully stocked" else "${result.lowCount} low on stock",
+                    style = AuntieTheme.typography.titleMedium,
+                    color = if (result.lowCount == 0) c.textPrimary else c.error,
+                )
+                if (low.isEmpty()) {
+                    InsightHint("Nothing at or below par.")
+                } else {
+                    low.forEach { s ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(c.error.copy(alpha = 0.08f))
+                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(s.name.ifBlank { "(unnamed)" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                                Text(
+                                    "${s.onHand} / ${s.par} ${s.unit}".trim(),
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = c.textDim,
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(c.primary.copy(alpha = 0.18f))
+                                    .clickable { onAdjust(s.id) }
+                                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                            ) {
+                                Text("+1", style = AuntieTheme.typography.labelMedium, color = c.primary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+// ── AO-35 route optimizer ───────────────────────────────────────────────────
+/**
+ * Route Optimizer (AO-35). Total miles + drive time as the headline, the ordered
+ * stops (order, household, arrival ETA), and a fail-loud "unroutable" section for
+ * households with no service address, via the one-shot optimizeRoute callable
+ * ([state] == null while it loads). Formatting from DashboardInsights.kt. Mirrors web.
+ */
+@Composable
+internal fun RouteOptimizerWidget(
+    state: Result<com.tribetails.auntieos.data.model.RouteResult>?,
+) {
+    when {
+        state == null -> InsightHint("Optimizing today's route…")
+        state.isFailure ->
+            InsightHint("Couldn't optimize the route: ${state.exceptionOrNull()?.message ?: "unknown error"}", error = true)
+        else -> {
+            val route = state.getOrThrow()
+            val c = AuntieTheme.colors
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (route.stops.isEmpty() && route.unroutable.isEmpty()) {
+                    InsightHint("No visits to route today.")
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                        Column {
+                            Text("Distance", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            Text(formatMiles(route.totalMiles), style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
+                        }
+                        Column {
+                            Text("Drive time", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            Text(formatDuration(route.totalMinutes), style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
+                        }
+                    }
+                    if (route.stops.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            route.stops.forEach { stop ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .clip(CircleShape)
+                                            .background(c.primary.copy(alpha = 0.18f)),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text("${stop.order}", style = AuntieTheme.typography.labelMedium, color = c.primary)
+                                    }
+                                    Column(Modifier.weight(1f)) {
+                                        Text(stop.household.ifBlank { "Kinfolk" }, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                                        if (stop.address.isNotBlank()) {
+                                            Text(stop.address, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                        }
+                                    }
+                                    if (stop.arrivalEta.isNotBlank()) {
+                                        Text(stop.arrivalEta, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (route.unroutable.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                "${route.unroutable.size} can't be routed",
+                                style = AuntieTheme.typography.titleSmall,
+                                color = c.error,
+                            )
+                            route.unroutable.forEach { u ->
+                                Text(
+                                    "${u.household.ifBlank { "Kinfolk" }}: ${u.reason.ifBlank { "no service address" }}",
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = c.textDim,
+                                )
                             }
                         }
                     }

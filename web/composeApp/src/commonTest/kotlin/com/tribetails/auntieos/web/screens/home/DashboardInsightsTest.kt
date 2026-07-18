@@ -1,8 +1,11 @@
 package com.tribetails.auntieos.web.screens.home
 
+import com.tribetails.auntieos.web.data.ExpenseItem
+import com.tribetails.auntieos.web.data.ExpirationItem
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Kinfolk
+import com.tribetails.auntieos.web.data.SupplyItem
 import com.tribetails.auntieos.web.screens.inbox.ConversationSummary
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -261,5 +264,138 @@ class DashboardInsightsTest {
     @Test
     fun `safebox lines are empty for a household with no access notes`() {
         assertTrue(safeboxAccessLines(Kinfolk(_id = "k1")).isEmpty())
+    }
+
+    // ── AO-37 care flags ────────────────────────────────────────────────────────
+
+    private fun kin(id: String, reactive: Boolean = false, meds: String = "", feeding: String = "", name: String = "Rex") =
+        Kin(_id = id, name = name, reactive = reactive, medicationHealthNotes = meds, feedingBrand = feeding)
+
+    private fun careSession(date: String, kinIds: List<String>, status: String = "SCHEDULED", household: String = "the Bs") =
+        KinCareSession(kinfolkName = household, startTime = date, status = status, kinIds = kinIds)
+
+    @Test
+    fun `care flags emit reactive, medication, feeding and sort reactive first`() {
+        val kinById = mapOf("k1" to kin("k1", reactive = true, meds = "2 pills AM", feeding = "Blue Buffalo", name = "Rex"))
+        val sessions = listOf(careSession("2026-07-18T09:00:00Z", listOf("k1")))
+        val flags = careFlags(sessions, kinById, "2026-07-18")
+        assertEquals(listOf("reactive", "medication", "feeding"), flags.map { it.kind })
+        assertEquals("Reactive, handle with care", flags.first().text)
+        assertEquals("2 pills AM", flags[1].text)
+        assertEquals("Blue Buffalo", flags[2].text)
+        assertEquals("Rex", flags.first().kinName)
+        assertEquals("the Bs", flags.first().household)
+    }
+
+    @Test
+    fun `care flags dedup by kin and kind across two sessions`() {
+        val kinById = mapOf("k1" to kin("k1", meds = "insulin"))
+        val sessions = listOf(
+            careSession("2026-07-18T09:00:00Z", listOf("k1")),
+            careSession("2026-07-18T14:00:00Z", listOf("k1")),
+        )
+        assertEquals(1, careFlags(sessions, kinById, "2026-07-18").size)
+    }
+
+    @Test
+    fun `care flags skip cancelled sessions, other days, and unflagged kin`() {
+        val kinById = mapOf(
+            "k1" to kin("k1", meds = "pill"),
+            "k2" to kin("k2"),  // nothing to flag
+        )
+        val sessions = listOf(
+            careSession("2026-07-18T09:00:00Z", listOf("k1"), status = "CANCELLED"),  // cancelled
+            careSession("2026-07-19T09:00:00Z", listOf("k1")),                        // other day
+            careSession("2026-07-18T10:00:00Z", listOf("k2")),                        // unflagged kin
+        )
+        assertTrue(careFlags(sessions, kinById, "2026-07-18").isEmpty())
+    }
+
+    @Test
+    fun `care flags fall back to the single kinId when kinIds is empty`() {
+        val kinById = mapOf("solo" to kin("solo", reactive = true))
+        val sessions = listOf(KinCareSession(kinfolkName = "the Cs", startTime = "2026-07-18T09:00:00Z", kinId = "solo"))
+        assertEquals(1, careFlags(sessions, kinById, "2026-07-18").size)
+    }
+
+    // ── AO-39 expiration countdown ──────────────────────────────────────────────
+
+    private fun exp(id: String, dateIso: String, label: String = "Gate code", kind: String = "gateCode") =
+        ExpirationItem(_id = id, label = label, dateIso = dateIso, kinfolkId = "", kind = kind)
+
+    @Test
+    fun `expirations keep only today through the window, sorted ascending`() {
+        val items = listOf(
+            exp("a", "2026-09-20"),   // beyond 60 days
+            exp("b", "2026-07-25"),   // in window
+            exp("c", "2026-07-10"),   // past
+            exp("d", "2026-07-18"),   // today
+        )
+        val rows = upcomingExpirations(items, "2026-07-18", withinDays = 60)
+        assertEquals(listOf("2026-07-18", "2026-07-25"), rows.map { it.dateIso })
+        assertEquals(0, rows.first().daysUntil)
+        assertEquals(7, rows[1].daysUntil)
+    }
+
+    @Test
+    fun `expirations drop undated rows and honor a bad today`() {
+        assertTrue(upcomingExpirations(listOf(exp("a", "")), "2026-07-18").isEmpty())
+        assertTrue(upcomingExpirations(listOf(exp("a", "2026-07-25")), "not-a-date").isEmpty())
+    }
+
+    // ── AO-40 expense quick-log ─────────────────────────────────────────────────
+
+    private fun expense(id: String, occurredAt: String, cents: Int = 100, kind: String = "gas", note: String = "") =
+        ExpenseItem(_id = id, kind = kind, amountCents = cents, note = note, occurredAt = occurredAt)
+
+    @Test
+    fun `recent expenses are newest first and capped`() {
+        val list = listOf(
+            expense("a", "2026-07-10T09:00:00Z"),
+            expense("b", "2026-07-16T09:00:00Z"),
+            expense("c", "2026-07-12T09:00:00Z"),
+        )
+        assertEquals(listOf("b", "c", "a"), recentExpenses(list).map { it._id })
+        assertEquals(2, recentExpenses(list, limit = 2).size)
+    }
+
+    @Test
+    fun `format cents renders dollars with two-digit cents and a leading sign`() {
+        assertEquals("$12.34", formatCents(1234))
+        assertEquals("$0.05", formatCents(5))
+        assertEquals("$8.00", formatCents(800))
+        assertEquals("-$1.50", formatCents(-150))
+    }
+
+    // ── AO-41 supplies tracker ──────────────────────────────────────────────────
+
+    private fun supply(id: String, onHand: Int, par: Int, name: String = "Poop bags", unit: String = "rolls") =
+        SupplyItem(_id = id, name = name, onHand = onHand, par = par, unit = unit)
+
+    @Test
+    fun `low supplies keep onHand at or below par, most depleted first`() {
+        val list = listOf(
+            supply("ok", onHand = 10, par = 3),    // healthy, excluded
+            supply("low", onHand = 2, par = 5),     // shortfall -3
+            supply("at", onHand = 4, par = 4),      // shortfall 0 (at par, included)
+            supply("empty", onHand = 0, par = 6),   // shortfall -6
+        )
+        assertEquals(listOf("empty", "low", "at"), lowSupplies(list).map { it._id })
+    }
+
+    // ── AO-35 route optimizer helpers ───────────────────────────────────────────
+
+    @Test
+    fun `format miles rounds to one decimal`() {
+        assertEquals("12.3 mi", formatMiles(12.34))
+        assertEquals("0.0 mi", formatMiles(0.0))
+    }
+
+    @Test
+    fun `format duration reads hours and minutes`() {
+        assertEquals("45m", formatDuration(45))
+        assertEquals("1h 05m", formatDuration(65))
+        assertEquals("2h 00m", formatDuration(120))
+        assertEquals("0m", formatDuration(-5))
     }
 }

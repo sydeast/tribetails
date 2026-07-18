@@ -30,7 +30,20 @@ enum class DashKey(val token: String) {
     UNREAD_MESSAGES("unreadMessages"),
     // AO-36 / W3 Key & Code Safebox. Joins sessions + kinfolk (both already
     // streamed on Home); hidden by default.
-    SAFEBOX("safebox");
+    SAFEBOX("safebox"),
+    // AO-37 Care Flags. Joins today's sessions + the kin stream (no callable);
+    // hidden by default.
+    CARE_FLAGS("careFlags"),
+    // AO-39 Expiration Countdown. One-shot listExpirations; hidden by default.
+    EXPIRATIONS("expirations"),
+    // AO-35 Route Optimizer. One-shot optimizeRoute (Mapbox server-side); hidden
+    // by default.
+    ROUTE_OPTIMIZER("routeOptimizer"),
+    // AO-40 Expense Quick-Log. One-shot listExpenses; hidden by default.
+    EXPENSE_LOG("expenseLog"),
+    // AO-41 Supplies Tracker. One-shot listSupplies + adjustSupply write; hidden
+    // by default.
+    SUPPLIES("supplies");
 
     companion object {
         fun parse(s: String?): DashKey? = entries.firstOrNull { it.token == s?.trim() }
