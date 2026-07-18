@@ -66,6 +66,10 @@ data class HomeUiState(
     // AO-38 Unread Messages widget: one-shot listConversations result. null = not
     // loaded yet. Loaded lazily only while the widget is on the dashboard.
     val conversations: Result<List<com.tribetails.auntieos.ui.inbox.ConversationSummary>>? = null,
+    // AO-36 Safebox widget: full kinfolk list (with access fields), loaded lazily
+    // only while the widget is shown. null = not loaded yet. Joined in-memory with
+    // allSessions to find the next visit's household.
+    val safeboxKinfolk: Result<List<Kinfolk>>? = null,
     val actionError: String? = null
 )
 
@@ -105,6 +109,15 @@ class HomeViewModel(
         viewModelScope.launch {
             val result = repo.listConversations()
             _uiState.value = _uiState.value.copy(conversations = result)
+        }
+    }
+
+    /** AO-36: one-shot load of the full kinfolk list for the Safebox widget. */
+    fun loadSafeboxKinfolk() {
+        if (_uiState.value.safeboxKinfolk?.isSuccess == true) return
+        viewModelScope.launch {
+            val result = repo.getKinfolk()
+            _uiState.value = _uiState.value.copy(safeboxKinfolk = result)
         }
     }
 

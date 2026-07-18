@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareSession
+import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.screens.inbox.ConversationSummary
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -478,6 +479,81 @@ internal fun UnreadMessagesWidget(state: WriteResult<List<ConversationSummary>>?
                     }
                 }
             }
+        }
+    }
+}
+// ── AO-36 / W3 key & code safebox ──────────────────────────────────────────────
+/**
+ * Key & Code Safebox (AO-36 / W3). Joins the sessions + kinfolk streams (both
+ * already live on Home) to show the access notes for the ONE next upcoming
+ * visit's household. Fail-loud on either stream's error; honest "not found" if
+ * the next visit's household is not in the (active) kinfolk list. Logic in
+ * DashboardInsights.kt. Mirrors the React SafeboxWidget.
+ */
+@Composable
+internal fun SafeboxWidget(
+    sessionsState: FirestoreResult<List<KinCareSession>>,
+    kinfolkState: FirestoreResult<List<Kinfolk>>,
+    nowIso: String,
+) {
+    DenPanel(
+        title = "Key & code safebox",
+        subtitle = "Access notes for your next visit only.",
+        modifier = Modifier.fillMaxWidth(),
+        hoverLift = true,
+    ) {
+        when {
+            sessionsState is FirestoreResult.Error ->
+                EmptyHint("Couldn't load visits: ${sessionsState.message}", error = true)
+            kinfolkState is FirestoreResult.Error ->
+                EmptyHint("Couldn't load households: ${kinfolkState.message}", error = true)
+            sessionsState is FirestoreResult.Data && kinfolkState is FirestoreResult.Data -> {
+                val next = nextUpcomingSession(sessionsState.value, nowIso)
+                if (next == null) {
+                    EmptyHint("No upcoming visits on the books.")
+                } else {
+                    val c = AuntieTheme.colors
+                    val household = kinfolkState.value.firstOrNull { it._id == next.kinfolkId }
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                next.kinfolkName.ifBlank { "Kinfolk" },
+                                style = AuntieTheme.typography.titleMedium,
+                                color = c.textPrimary,
+                            )
+                            if (next.serviceType.isNotBlank()) ServicePill(next.serviceType)
+                        }
+                        Text(
+                            "${next.startTime.take(10)} ${formatTime(next.startTime)}".trim(),
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                        val lines = household?.let { safeboxAccessLines(it) } ?: emptyList()
+                        when {
+                            household == null ->
+                                EmptyHint("Household record not found for this visit.", error = true)
+                            lines.isEmpty() ->
+                                EmptyHint("No access notes on file for this household.")
+                            else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                lines.forEach { line ->
+                                    Column {
+                                        Text(line.label, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                        Text(
+                                            line.value,
+                                            style = AuntieTheme.typography.bodyMedium,
+                                            color = if (line.mono) c.primary else c.textPrimary,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else -> EmptyHint("Loading…")
         }
     }
 }

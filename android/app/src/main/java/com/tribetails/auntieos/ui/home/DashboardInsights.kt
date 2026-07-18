@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.home
 
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareSession
+import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.ui.inbox.ConversationSummary
 import java.time.LocalDate
 
@@ -210,3 +211,32 @@ fun unreadClientMessages(rows: List<ConversationSummary>, limit: Int = 5): List<
         .toList()
 /** Total unread threads (the widget headline), independent of the display cap. */
 fun unreadClientMessageCount(rows: List<ConversationSummary>): Int = rows.count { it.unreadForAdmin }
+// ── AO-36 / W3 key & code safebox ──────────────────────────────────────────────
+/**
+ * The single NEXT upcoming visit for the Key & Code Safebox widget (AO-36 / W3).
+ * Earliest visit whose start is now or later ([nowIso] a full ISO instant, string
+ * compare) and whose state is neither cancelled nor completed. Mirrors web + React.
+ */
+fun nextUpcomingSession(sessions: List<KinCareSession>, nowIso: String): KinCareSession? =
+    sessions.asSequence()
+        .filter { !it.isCancelled() && it.status.uppercase() != "COMPLETED" }
+        .filter { it.startTime.isNotBlank() && it.startTime >= nowIso }
+        .minByOrNull { it.startTime }
+data class AccessLine(val label: String, val value: String, val mono: Boolean = false)
+/**
+ * A household's access notes as display lines, blank fields dropped. Codes/
+ * passwords flagged [mono]. Arrival order. Mirrors web + React safeboxAccessLines.
+ */
+fun safeboxAccessLines(k: Kinfolk): List<AccessLine> {
+    val lines = mutableListOf<AccessLine>()
+    fun add(label: String, value: String, mono: Boolean = false) {
+        if (value.isNotBlank()) lines.add(AccessLine(label, value, mono))
+    }
+    add("Address", k.serviceAddress)
+    add("Gate / door code", k.gateCode, mono = true)
+    add("Entry notes", k.entryNotes)
+    add("Parking", k.parkingInstructions)
+    add("WiFi network", k.wifiName)
+    add("WiFi password", k.wifiPassword, mono = true)
+    return lines
+}

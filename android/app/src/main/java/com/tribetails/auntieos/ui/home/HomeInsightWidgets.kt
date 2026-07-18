@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareSession
+import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.ui.inbox.ConversationSummary
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.CountUpText
@@ -366,6 +367,72 @@ internal fun UnreadMessagesWidget(state: Result<List<ConversationSummary>>?) {
                             style = AuntieTheme.typography.bodySmall,
                             color = c.textDim,
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+// ── AO-36 / W3 key & code safebox ──────────────────────────────────────────────
+/**
+ * Key & Code Safebox (AO-36 / W3). Shows access notes for the ONE next upcoming
+ * visit's household. Joins the already-loaded sessions with a lazily-loaded
+ * kinfolk list ([kinfolkResult] null = still loading). Fail-loud on the kinfolk
+ * load; honest "not found" if the next visit's household is not in the list.
+ * Logic in DashboardInsights.kt. Mirrors web + React.
+ */
+@Composable
+internal fun SafeboxWidget(
+    sessions: List<KinCareSession>,
+    sessionsLoading: Boolean,
+    kinfolkResult: Result<List<Kinfolk>>?,
+    nowIso: String,
+) {
+    when {
+        kinfolkResult?.isFailure == true ->
+            InsightHint(
+                "Couldn't load households: ${kinfolkResult.exceptionOrNull()?.message ?: "unknown error"}",
+                error = true,
+            )
+        sessionsLoading || kinfolkResult == null -> InsightHint("Loading…")
+        else -> {
+            val next = nextUpcomingSession(sessions, nowIso)
+            if (next == null) {
+                InsightHint("No upcoming visits on the books.")
+            } else {
+                val c = AuntieTheme.colors
+                val household = kinfolkResult.getOrDefault(emptyList()).firstOrNull { it.id == next.kinfolkId }
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            next.kinfolkName.ifBlank { "Kinfolk" },
+                            style = AuntieTheme.typography.titleMedium,
+                            color = c.textPrimary,
+                        )
+                        if (next.serviceType.isNotBlank()) ServicePill(next.serviceType)
+                    }
+                    Text(next.startTime.take(10), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    val lines = household?.let { safeboxAccessLines(it) } ?: emptyList()
+                    when {
+                        household == null ->
+                            InsightHint("Household record not found for this visit.", error = true)
+                        lines.isEmpty() ->
+                            InsightHint("No access notes on file for this household.")
+                        else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            lines.forEach { line ->
+                                Column {
+                                    Text(line.label, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                    Text(
+                                        line.value,
+                                        style = AuntieTheme.typography.bodyMedium,
+                                        color = if (line.mono) c.primary else c.textPrimary,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

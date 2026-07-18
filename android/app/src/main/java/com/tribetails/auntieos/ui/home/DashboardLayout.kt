@@ -27,7 +27,9 @@ enum class DashKey(val token: String) {
     HOLIDAY_RUNWAY("holidayRunway"),
     // AO-38 / W6 Unread Client Messages. Token matches web exactly so a layout
     // round-trips through UserProfile.dashboardWidgets.
-    UNREAD_MESSAGES("unreadMessages");
+    UNREAD_MESSAGES("unreadMessages"),
+    // AO-36 / W3 Key & Code Safebox. Token matches web.
+    SAFEBOX("safebox");
 
     companion object {
         fun parse(s: String?): DashKey? = entries.firstOrNull { it.token == s?.trim() }
