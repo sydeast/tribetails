@@ -19,6 +19,7 @@ import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton } from '../components/Buttons';
+import { ConversationThread } from './ConversationThread';
 import './Inbox.css';
 
 /**
@@ -41,16 +42,12 @@ const FILTERS: readonly FilterDef[] = [
 
 interface InboxProps {
   /**
-   * Placeholder: the thread/detail view (reading a thread's messages, and
-   * replying via `getConversationThread`/`replyToConversation`) is a separate,
-   * not-yet-built screen; this port is LIST ONLY, per the port brief. The
-   * router mounts this screen PROPLESS, so `onSelectThread` is undefined in
-   * production. See `ThreadRow`: unwired, the row renders a STATIC <div> (no
-   * button role, no cursor, no hover), not a <button> with its handler
-   * withheld, a handler-less <button> is still a focusable dead control (the
-   * Sessions.tsx/Invoices.tsx/FormSchemas.tsx convention). A real <button>
-   * only appears once a detail route wires `onSelectThread`, touching only the
-   * router later, not this file.
+   * Row-open override. The router mounts this screen PROPLESS, and in that case
+   * opening a row now shows the in-screen `ConversationThread` detail view
+   * (reads the thread via `getConversationThread`, replies via
+   * `replyToConversation`), a sibling view of this list. A caller (a test, or a
+   * future detail ROUTE) can still pass its own `onSelectThread` to take over
+   * selection instead; when it does, the in-screen thread view never opens.
    */
   onSelectThread?: (kinfolkId: string) => void;
 }
@@ -74,6 +71,11 @@ interface InboxProps {
 export function Inbox({ onSelectThread }: InboxProps) {
   const [threads, setThreads] = useState<Async<ConversationSummary[]>>({ status: 'loading' });
   const [filter, setFilter] = useState<FilterKey>('all');
+  // The thread/detail view: a sibling VIEW of this list (the Communicate.tsx /
+  // Templates.tsx pattern), not a route. Opening a row sets it; ConversationThread
+  // renders in place. Only used when the caller does NOT pass its own
+  // onSelectThread (the router mounts this screen propless).
+  const [openThread, setOpenThread] = useState<{ id: string; name: string } | null>(null);
 
   // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
   // Home/End, roving tabIndex); called unconditionally at the top level per
@@ -116,6 +118,22 @@ export function Inbox({ onSelectThread }: InboxProps) {
   // follows throughout; see lib/async.ts).
   const unreadCount = threads.status === 'ready' ? unreadThreadCount(threads.data) : 0;
 
+  // Thread detail takes over the whole screen when a row is opened (and no
+  // external onSelectThread overrides selection). Reading a thread clears its
+  // unread server-side, so on Back we reload the list to reflect that.
+  if (openThread) {
+    return (
+      <ConversationThread
+        kinfolkId={openThread.id}
+        kinfolkName={openThread.name}
+        onBack={() => {
+          setOpenThread(null);
+          load();
+        }}
+      />
+    );
+  }
+
   return (
     <div className="screen">
       <DenScreenHeading
@@ -138,6 +156,15 @@ export function Inbox({ onSelectThread }: InboxProps) {
           }
         >
           {(data) => {
+            // Row-open handler: an external onSelectThread wins; otherwise open the
+            // in-screen ConversationThread, resolving the household name from this
+            // same loaded row (no second lookup).
+            const openHandler =
+              onSelectThread ??
+              ((id: string) => {
+                const r = data.find((x) => x.kinfolkId === id);
+                setOpenThread({ id, name: threadHouseholdName(r?.kinfolkName ?? '', id) });
+              });
             // Non-null: FILTERS lists both FilterKey members above, and
             // `filter` only ever holds a key set via setFilter(f.key) from
             // that same array (the Sessions.tsx/Invoices.tsx .find()! comment).
@@ -172,7 +199,7 @@ export function Inbox({ onSelectThread }: InboxProps) {
                         <h3 className="inbox__day-header">{threadDayLabel(g.dayKeyValue, todayIso)}</h3>
                         <ul className="inbox__day-rows">
                           {g.rows.map((row) => (
-                            <ThreadRow key={row.kinfolkId} row={row} onSelectThread={onSelectThread} />
+                            <ThreadRow key={row.kinfolkId} row={row} onSelectThread={openHandler} />
                           ))}
                         </ul>
                       </li>
