@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type ConversationSummary } from '../api/inbox';
 
@@ -22,6 +22,13 @@ const { listConversations } = vi.hoisted(() => ({ listConversations: vi.fn() }))
 vi.mock('../api/inbox', async (orig) => ({
   ...(await orig<typeof import('../api/inbox')>()),
   listConversations,
+}));
+
+// The in-screen thread detail view (opened when propless) loads via this callable.
+const { getConversationThread } = vi.hoisted(() => ({ getConversationThread: vi.fn() }));
+vi.mock('../api/inboxThread', async (orig) => ({
+  ...(await orig<typeof import('../api/inboxThread')>()),
+  getConversationThread,
 }));
 
 import { Inbox } from './Inbox';
@@ -222,17 +229,19 @@ describe('Inbox screen', () => {
     expect(onSelectThread).toHaveBeenCalledWith('k1');
   });
 
-  it('renders a row STATIC (not a live no-op button) when onSelectThread is unwired, matching the propless-mount dead-control rule', async () => {
-    listConversations.mockResolvedValue([thread({})]);
+  it('propless, opening a row shows the in-screen ConversationThread (rows are interactive)', async () => {
+    listConversations.mockResolvedValue([thread({ kinfolkId: 'k1' })]);
+    getConversationThread.mockResolvedValue([]);
     render(<Inbox />);
-    await screen.findByText('The Alvarez Household');
-    const row = screen.getByText('The Alvarez Household').closest('.inbox__row-main');
-    expect(row).not.toBeNull();
-    expect(row?.tagName).toBe('DIV');
-    expect(row).not.toHaveAttribute('role', 'button');
-    // Scoped to the row container, not a bare button lookup: no button role
-    // reaches this row at all when unwired.
-    expect(within(row as HTMLElement).queryByRole('button')).toBeNull();
+    // The row is now a real button (the thread detail view exists), not a static div.
+    const row = (await screen.findByText('The Alvarez Household')).closest('.inbox__row-main');
+    expect(row?.tagName).toBe('BUTTON');
+
+    await userEvent.click(row as HTMLElement);
+    // The thread detail view took over: its Back control + reply composer render.
+    expect(await screen.findByRole('button', { name: /back to inbox/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /send reply/i })).toBeInTheDocument();
+    expect(getConversationThread).toHaveBeenCalledWith('k1');
   });
 
   it('renders a real <button> row once onSelectThread IS wired', async () => {

@@ -1,0 +1,85 @@
+.thread__hint {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.thread__list,
+.thread__day-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.thread__day-group {
+  margin-bottom: var(--space-3);
+}
+
+.thread__day-header {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+  text-align: center;
+  margin: var(--space-2) 0;
+}
+
+.thread__msg {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.thread__msg--mine {
+  justify-content: flex-end;
+}
+
+.thread__bubble {
+  max-width: 72%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border-soft);
+}
+
+.thread__msg--mine .thread__bubble {
+  background: var(--color-accent-soft, var(--color-surface-2));
+  border-color: var(--color-accent, var(--color-border));
+}
+
+.thread__body {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.thread__time {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+  align-self: flex-end;
+}
+
+.thread__compose {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+
+.thread__input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-chip);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font: inherit;
+  resize: vertical;
+}
+
+.thread__input:disabled {
+  opacity: 0.6;
+}
