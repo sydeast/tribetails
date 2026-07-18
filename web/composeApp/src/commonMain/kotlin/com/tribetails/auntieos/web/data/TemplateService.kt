@@ -17,9 +17,11 @@ import kotlinx.serialization.json.put
  * assignTemplate, listTemplates, listTemplateBindings).
  *
  * Mirrors the Android `TemplateRepository`. All four callables are
- * admin-claim-gated server-side. wasmJs hits the real callables via the
- * `window.__fb.callFunction` JS bridge; jvm returns `WriteResult.Err` until
- * desktop wiring is added.
+ * admin-claim-gated server-side. Both platforms hit the REAL callables through
+ * `platformInvokeCallable`: wasmJs via the `window.__fb.callFunction` JS bridge,
+ * jvm/desktop via `JvmFirestoreRest.callable` (a Bearer-idToken POST to
+ * us-central1 cloudfunctions). The old "jvm returns Err until wired" note was
+ * stale, that desktop wiring exists.
  */
 class TemplateService {
 
