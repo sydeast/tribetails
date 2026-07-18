@@ -66,6 +66,19 @@ interface AuntieDataSource {
     suspend fun rejectBooking(bookingId: String): WriteResult<Unit>
     suspend fun createBooking(booking: KinCareSession): WriteResult<String>
 
+    /**
+     * AO-25: admin multi-date / recurring booking request (envelope model). Inert
+     * default so the many screen-local fakes that never create bookings need no
+     * change; the real FirestoreAuntieDataSource overrides it.
+     */
+    suspend fun createMultiDateBookingRequest(
+        kinfolkId: String,
+        visits: List<NewBookingVisitInput>,
+        notes: String? = null,
+        pattern: String = "individual",
+        weeklyDays: List<Int>? = null,
+    ): WriteResult<MultiDateBookingResult> = WriteResult.Err("Multi-date booking is not available here.")
+
     // 16.5: incoming MyTribe booking-envelope requests (collectionGroup kinCares,
     // status=='requested') + series approve/cancel. Defaults are inert so the many
     // screen-local fakes that never touch the queue need no change; the real

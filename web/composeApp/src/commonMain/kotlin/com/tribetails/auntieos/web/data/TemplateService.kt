@@ -160,6 +160,28 @@ class TemplateService {
         }
     }
 
+    /**
+     * AO-56: remove the binding for [catalogKey] via the unassignTemplate callable
+     * (deletes notificationTemplateBindings/{catalogKey}). The inverse of
+     * [assignTemplate], and the half that used to be missing: without it a bound
+     * template could never be deleted (deleteTemplate refuses while a binding
+     * points at it). Returns the server's `removed` flag (false = the key was
+     * already unbound; the call is idempotent, never a not-found error).
+     */
+    suspend fun unassignTemplate(catalogKey: String): WriteResult<Boolean> {
+        val payload = buildJsonObject { put("catalogKey", JsonPrimitive(catalogKey)) }
+        val r = platformInvokeCallable("unassignTemplate", json.encodeToString(JsonObject.serializer(), payload))
+        return when (r) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> {
+                runCatching {
+                    val obj = json.parseToJsonElement(r.value).jsonObject
+                    WriteResult.Ok(obj["removed"]?.jsonPrimitive?.booleanOrNull ?: false)
+                }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+            }
+        }
+    }
+
     private fun decodeTemplate(o: JsonObject): EmailTemplate = EmailTemplate(
         templateId = o["templateId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
         subject = o["subject"]?.jsonPrimitive?.contentOrNull.orEmpty(),
