@@ -70,6 +70,13 @@ data class HomeUiState(
     // only while the widget is shown. null = not loaded yet. Joined in-memory with
     // allSessions to find the next visit's household.
     val safeboxKinfolk: Result<List<Kinfolk>>? = null,
+    // AO-39/40/41/35 dashboard widgets: one-shot callable results, each loaded lazily
+    // only while its widget is on the dashboard. null = not loaded yet. (AO-37 care
+    // flags needs no callable: it joins the already-loaded allSessions + kin.)
+    val expirations: Result<List<com.tribetails.auntieos.data.model.ExpirationItem>>? = null,
+    val expenses: Result<com.tribetails.auntieos.data.model.ExpenseSummary>? = null,
+    val supplies: Result<com.tribetails.auntieos.data.model.SuppliesResult>? = null,
+    val route: Result<com.tribetails.auntieos.data.model.RouteResult>? = null,
     val actionError: String? = null
 )
 
@@ -118,6 +125,61 @@ class HomeViewModel(
         viewModelScope.launch {
             val result = repo.getKinfolk()
             _uiState.value = _uiState.value.copy(safeboxKinfolk = result)
+        }
+    }
+
+    /** AO-39: one-shot load of the Expiration Countdown widget's rows. */
+    fun loadExpirations() {
+        if (_uiState.value.expirations?.isSuccess == true) return
+        viewModelScope.launch {
+            val result = repo.listExpirations()
+            _uiState.value = _uiState.value.copy(expirations = result)
+        }
+    }
+
+    /** AO-40: one-shot load of the Expense Quick-Log widget's summary. */
+    fun loadExpenses() {
+        if (_uiState.value.expenses?.isSuccess == true) return
+        viewModelScope.launch {
+            val result = repo.listExpenses()
+            _uiState.value = _uiState.value.copy(expenses = result)
+        }
+    }
+
+    /** AO-41: one-shot load of the Supplies Tracker widget's rows. */
+    fun loadSupplies() {
+        if (_uiState.value.supplies?.isSuccess == true) return
+        viewModelScope.launch {
+            val result = repo.listSupplies()
+            _uiState.value = _uiState.value.copy(supplies = result)
+        }
+    }
+
+    /**
+     * AO-41: bump a supply's on-hand by [delta] (default +1), then reload the list so
+     * the row + low count reflect the new counts. Fail loud: an adjust failure surfaces
+     * via actionError, never a fake success.
+     */
+    fun adjustSupply(supplyId: String, delta: Int = 1) {
+        viewModelScope.launch {
+            repo.adjustSupply(supplyId, delta).fold(
+                onSuccess = {
+                    val refreshed = repo.listSupplies()
+                    _uiState.value = _uiState.value.copy(supplies = refreshed)
+                },
+                onFailure = { e ->
+                    _uiState.value = _uiState.value.copy(actionError = "Couldn't adjust supply: ${e.message}")
+                },
+            )
+        }
+    }
+
+    /** AO-35: one-shot optimize of TODAY's route for the Route Optimizer widget. */
+    fun loadRoute() {
+        if (_uiState.value.route?.isSuccess == true) return
+        viewModelScope.launch {
+            val result = repo.optimizeRoute(LocalDate.now().toString())
+            _uiState.value = _uiState.value.copy(route = result)
         }
     }
 

@@ -1,8 +1,11 @@
 package com.tribetails.auntieos.ui.home
 
+import com.tribetails.auntieos.data.model.Expense
+import com.tribetails.auntieos.data.model.ExpirationItem
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
+import com.tribetails.auntieos.data.model.Supply
 import com.tribetails.auntieos.ui.inbox.ConversationSummary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -258,5 +261,108 @@ class DashboardInsightsTest {
     @Test
     fun `safebox lines are empty for a household with no access notes`() {
         assertTrue(safeboxAccessLines(Kinfolk(id = "k1")).isEmpty())
+    }
+
+    // ── AO-37 care flags ────────────────────────────────────────────────────────
+
+    @Test
+    fun `care flags emit reactive medication feeding for today's kin, deduped and ordered`() {
+        val kinById = mapOf(
+            "k1" to Kin(id = "k1", name = "Rex", reactive = true, medicationHealthNotes = "Insulin 2x"),
+            "k2" to Kin(id = "k2", name = "Milo", feedingBrand = "Acme Chow"),
+        )
+        val sessions = listOf(
+            KinCareSession(id = "s1", kinfolkName = "the Bs", startTime = "2026-07-18T09:00:00Z", kinIds = listOf("k1", "k2")),
+            // a second session for k1 the same day must not double the flags (dedup by kinId+kind)
+            KinCareSession(id = "s2", kinfolkName = "the Bs", startTime = "2026-07-18T15:00:00Z", kinIds = listOf("k1")),
+        )
+        val flags = careFlags(sessions, kinById, "2026-07-18")
+        assertEquals(listOf("reactive", "medication", "feeding"), flags.map { it.kind })
+        assertEquals("Reactive, handle with care", flags.first { it.kind == "reactive" }.text)
+        assertEquals("Insulin 2x", flags.first { it.kind == "medication" }.text)
+        assertEquals("Acme Chow", flags.first { it.kind == "feeding" }.text)
+    }
+
+    @Test
+    fun `care flags skip cancelled sessions and other days`() {
+        val kinById = mapOf("k1" to Kin(id = "k1", name = "Rex", reactive = true))
+        val sessions = listOf(
+            KinCareSession(id = "c", kinfolkName = "the Bs", startTime = "2026-07-18T09:00:00Z", status = "CANCELLED", kinIds = listOf("k1")),
+            KinCareSession(id = "y", kinfolkName = "the Cs", startTime = "2026-07-17T09:00:00Z", kinIds = listOf("k1")),
+        )
+        assertTrue(careFlags(sessions, kinById, "2026-07-18").isEmpty())
+    }
+
+    @Test
+    fun `care flags fall back to legacy single kinId and skip unknown kin`() {
+        val kinById = mapOf("k1" to Kin(id = "k1", name = "Rex", feedingBrand = "Chow"))
+        val sessions = listOf(
+            KinCareSession(id = "s1", kinfolkName = "the Bs", startTime = "2026-07-18T09:00:00Z", kinId = "k1"),
+            KinCareSession(id = "s2", kinfolkName = "the Cs", startTime = "2026-07-18T09:00:00Z", kinIds = listOf("ghost")),
+        )
+        val flags = careFlags(sessions, kinById, "2026-07-18")
+        assertEquals(listOf("feeding"), flags.map { it.kind })
+        assertEquals("Rex", flags.first().kinName)
+    }
+
+    // ── AO-39 expiration countdown ──────────────────────────────────────────────
+
+    @Test
+    fun `upcoming expirations keeps today through the window, sorted ascending`() {
+        val items = listOf(
+            ExpirationItem(id = "1", label = "Gate", dateIso = "2026-08-01", kind = "gateCode"),
+            ExpirationItem(id = "2", label = "Past", dateIso = "2026-07-10", kind = "card"),
+            ExpirationItem(id = "3", label = "Soon", dateIso = "2026-07-18", kind = "license"),
+            ExpirationItem(id = "4", label = "Far", dateIso = "2026-12-01", kind = "other"),
+        )
+        val rows = upcomingExpirations(items, "2026-07-18", withinDays = 60)
+        assertEquals(listOf("Soon", "Gate"), rows.map { it.label })
+        assertEquals(0, rows.first().daysUntil)
+        assertEquals(14, rows[1].daysUntil)
+    }
+
+    // ── AO-40 expense quick-log ─────────────────────────────────────────────────
+
+    @Test
+    fun `recent expenses are newest first and capped`() {
+        val list = listOf(
+            Expense(id = "a", occurredAt = "2026-07-10T00:00:00Z", amountCents = 100),
+            Expense(id = "b", occurredAt = "2026-07-18T00:00:00Z", amountCents = 200),
+            Expense(id = "c", occurredAt = "2026-07-15T00:00:00Z", amountCents = 300),
+        )
+        assertEquals(listOf("b", "c", "a"), recentExpenses(list).map { it.id })
+        assertEquals(2, recentExpenses(list, limit = 2).size)
+    }
+
+    @Test
+    fun `format cents renders dollars and cents`() {
+        assertEquals("\$12.34", formatCents(1234))
+        assertEquals("\$0.05", formatCents(5))
+        assertEquals("\$0.00", formatCents(0))
+        assertEquals("-\$1.50", formatCents(-150))
+    }
+
+    // ── AO-41 supplies tracker ──────────────────────────────────────────────────
+
+    @Test
+    fun `low supplies keeps at-or-below par, most depleted first`() {
+        val list = listOf(
+            Supply(id = "ok", name = "Bags", onHand = 10, par = 3),
+            Supply(id = "low", name = "Treats", onHand = 1, par = 5),   // -4
+            Supply(id = "edge", name = "Leash", onHand = 2, par = 2),   // 0
+            Supply(id = "deep", name = "Poop", onHand = 0, par = 6),    // -6
+        )
+        assertEquals(listOf("deep", "low", "edge"), lowSupplies(list).map { it.id })
+    }
+
+    // ── AO-35 route optimizer ───────────────────────────────────────────────────
+
+    @Test
+    fun `format miles is one decimal and duration is h m`() {
+        assertEquals("12.3 mi", formatMiles(12.34))
+        assertEquals("0.0 mi", formatMiles(0.0))
+        assertEquals("45m", formatDuration(45))
+        assertEquals("1h 05m", formatDuration(65))
+        assertEquals("2h 00m", formatDuration(120))
     }
 }

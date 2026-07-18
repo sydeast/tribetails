@@ -1,8 +1,11 @@
 package com.tribetails.auntieos.web.screens.home
 
+import com.tribetails.auntieos.web.data.ExpenseItem
+import com.tribetails.auntieos.web.data.ExpirationItem
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Kinfolk
+import com.tribetails.auntieos.web.data.SupplyItem
 import com.tribetails.auntieos.web.screens.inbox.ConversationSummary
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
@@ -218,6 +221,147 @@ fun safeboxAccessLines(k: Kinfolk): List<AccessLine> {
     add("WiFi network", k.wifiName)
     add("WiFi password", k.wifiPassword, mono = true)
     return lines
+}
+
+// ── AO-37 care flags ──────────────────────────────────────────────────────────
+
+/**
+ * A single care alert for today's visits (AO-37). [kind] is "reactive" |
+ * "medication" | "feeding"; [text] is the operator-facing detail.
+ */
+data class CareFlag(
+    val kinName: String,
+    val household: String,
+    val kind: String,
+    val text: String,
+)
+
+private val CARE_FLAG_RANK = mapOf("reactive" to 0, "medication" to 1, "feeding" to 2)
+
+/**
+ * Care flags for TODAY's visits (AO-37 / Care Flags widget). For each of today's
+ * non-cancelled sessions, join the session's kin ([KinCareSession.kinIds], falling
+ * back to the single [KinCareSession.kinId]) to [kinById] and emit a flag when the
+ * kin is reactive ("Reactive, handle with care"), carries non-blank
+ * medicationHealthNotes (kind medication), or a non-blank feedingBrand (kind
+ * feeding). Deduped by (kinId, kind) so a kin on two visits flags once per kind,
+ * and ordered reactive first, then medication, then feeding (stable within a kind).
+ * Needs NO callable: reads the existing kin + kin_care_sessions streams. Mirrors
+ * the React careFlags (lib/dashboardInsights.ts).
+ */
+fun careFlags(
+    todaySessions: List<KinCareSession>,
+    kinById: Map<String, Kin>,
+    todayIso: String,
+): List<CareFlag> {
+    val today = todayIso.take(10)
+    val seen = mutableSetOf<Pair<String, String>>()
+    val out = mutableListOf<CareFlag>()
+    todaySessions.asSequence()
+        .filter { !it.isCancelled() }
+        .filter { it.startTime.take(10) == today }
+        .forEach { s ->
+            val kinIds = s.kinIds.ifEmpty { listOfNotNull(s.kinId.takeIf { id -> id.isNotBlank() }) }
+            val household = s.kinfolkName.ifBlank { "Kinfolk" }
+            kinIds.forEach { kinId ->
+                val kin = kinById[kinId] ?: return@forEach
+                val kinName = kin.name.ifBlank { "This kin" }
+                fun emit(kind: String, text: String) {
+                    if (text.isNotBlank() && seen.add(kinId to kind)) {
+                        out.add(CareFlag(kinName = kinName, household = household, kind = kind, text = text))
+                    }
+                }
+                if (kin.reactive) emit("reactive", "Reactive, handle with care")
+                emit("medication", kin.medicationHealthNotes.trim())
+                emit("feeding", kin.feedingBrand.trim())
+            }
+        }
+    return out.sortedBy { CARE_FLAG_RANK[it.kind] ?: Int.MAX_VALUE }
+}
+
+// ── AO-39 expiration countdown ────────────────────────────────────────────────
+
+/** One row in the Expiration Countdown widget (AO-39). */
+data class ExpRow(
+    val label: String,
+    val dateIso: String,
+    val daysUntil: Int,
+    val kind: String,
+)
+
+/**
+ * Upcoming expirations within [withinDays] (AO-39). Keeps entries whose date is
+ * today or later AND no more than [withinDays] out, sorted by date ascending, with
+ * a days-until countdown. Undated / unparseable rows are dropped (never faked to
+ * "0 days"). Mirrors the React upcomingExpirations (lib/dashboardInsights.ts).
+ */
+fun upcomingExpirations(
+    items: List<ExpirationItem>,
+    todayIso: String,
+    withinDays: Int = 60,
+): List<ExpRow> {
+    val today = parseDay(todayIso) ?: return emptyList()
+    val limit = today.plus(withinDays, DateTimeUnit.DAY)
+    return items
+        .mapNotNull { item ->
+            val d = parseDay(item.dateIso) ?: return@mapNotNull null
+            if (d < today || d > limit) return@mapNotNull null
+            ExpRow(
+                label = item.label,
+                dateIso = item.dateIso.take(10),
+                daysUntil = (d.toEpochDays() - today.toEpochDays()).toInt(),
+                kind = item.kind,
+            )
+        }
+        .sortedBy { it.dateIso }
+}
+
+// ── AO-40 expense quick-log ───────────────────────────────────────────────────
+
+/**
+ * The most recent expenses for the AO-40 widget, newest first by occurredAt (ISO
+ * string compare), capped at [limit]. The week/month totals are server-provided.
+ * Mirrors the React recentExpenses.
+ */
+fun recentExpenses(list: List<ExpenseItem>, limit: Int = 5): List<ExpenseItem> =
+    list.sortedByDescending { it.occurredAt }.take(limit.coerceAtLeast(0))
+
+/**
+ * Whole-cents money as "$12.34" (AO-40). Negative amounts keep the sign in front
+ * of the dollar sign ("-$1.50"). Mirrors the React formatCents.
+ */
+fun formatCents(cents: Int): String {
+    val sign = if (cents < 0) "-" else ""
+    val abs = if (cents < 0) -cents else cents
+    val dollars = abs / 100
+    val rem = (abs % 100).toString().padStart(2, '0')
+    return "$sign$$dollars.$rem"
+}
+
+// ── AO-41 supplies tracker ────────────────────────────────────────────────────
+
+/**
+ * Supplies at or below their reorder threshold (onHand <= par), most depleted
+ * first (by onHand - par ascending, so the deepest shortfall tops the list).
+ * Mirrors the React lowSupplies.
+ */
+fun lowSupplies(list: List<SupplyItem>): List<SupplyItem> =
+    list.filter { it.onHand <= it.par }.sortedBy { it.onHand - it.par }
+
+// ── AO-35 route optimizer (formatting helpers; server does the optimize) ───────
+
+/** Trip distance as "12.3 mi" (AO-35). Mirrors the React formatMiles. */
+fun formatMiles(miles: Double): String {
+    val rounded = kotlin.math.round(miles * 10) / 10
+    return "$rounded mi"
+}
+
+/** Trip duration as "1h 05m" (or "45m" under an hour) (AO-35). Mirrors formatDuration. */
+fun formatDuration(minutes: Int): String {
+    val safe = minutes.coerceAtLeast(0)
+    val h = safe / 60
+    val m = safe % 60
+    return if (h > 0) "${h}h ${m.toString().padStart(2, '0')}m" else "${m}m"
 }
 
 // ── W13 holiday runway ────────────────────────────────────────────────────────

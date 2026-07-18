@@ -53,9 +53,13 @@ import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.UserProfile
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.screens.inbox.ConversationSummary
+import com.tribetails.auntieos.web.data.ExpenseSummary
+import com.tribetails.auntieos.web.data.ExpirationItem
 import com.tribetails.auntieos.web.data.GeneratedDraft
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareSession
+import com.tribetails.auntieos.web.data.RouteResult
+import com.tribetails.auntieos.web.data.SupplySummary
 import com.tribetails.auntieos.web.screens.invoices.formatMoney
 import com.tribetails.auntieos.web.screens.weeklyRevenue
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -201,19 +205,50 @@ fun HomeScreen(
     val showsWeather = layout.any { it.key == DashKey.WEATHER_WATCHDOG || it.key == DashKey.HEAT_INDEX }
     var weather by remember { mutableStateOf<WriteResult<LocalWeather>?>(null) }
     LaunchedEffect(showsWeather) { if (showsWeather && weather == null) weather = client.getLocalWeather() }
-    // W10 pets-by-type: the all-kin stream is only subscribed while the widget is
-    // actually on the dashboard (same lazy pattern as the weather widgets).
+    // W10 pets-by-type + AO-37 care flags: the all-kin stream is only subscribed
+    // while one of those widgets is on the dashboard (same lazy pattern as the
+    // weather widgets).
     val showsPets = layout.any { it.key == DashKey.PET_BREAKDOWN }
-    val allKinState by remember(showsPets) {
-        if (showsPets) client.allKinStream() else flowOf<FirestoreResult<List<Kin>>>(FirestoreResult.Loading)
+    val showsCareFlags = layout.any { it.key == DashKey.CARE_FLAGS }
+    val showsAllKin = showsPets || showsCareFlags
+    val allKinState by remember(showsAllKin) {
+        if (showsAllKin) client.allKinStream() else flowOf<FirestoreResult<List<Kin>>>(FirestoreResult.Loading)
     }.collectAsState(initial = FirestoreResult.Loading)
     // AO-38 unread messages: one-shot listConversations (callable, not a stream),
     // loaded only while the widget is on the dashboard. null = not loaded yet.
     val showsUnread = layout.any { it.key == DashKey.UNREAD_MESSAGES }
     var conversations by remember { mutableStateOf<WriteResult<List<ConversationSummary>>?>(null) }
     LaunchedEffect(showsUnread) { if (showsUnread && conversations == null) conversations = client.listConversations() }
+    // AO-39 expirations: one-shot listExpirations, loaded only while shown.
+    val showsExpirations = layout.any { it.key == DashKey.EXPIRATIONS }
+    var expirations by remember { mutableStateOf<WriteResult<List<ExpirationItem>>?>(null) }
+    LaunchedEffect(showsExpirations) { if (showsExpirations && expirations == null) expirations = client.listExpirations() }
+    // AO-40 expenses: one-shot listExpenses, loaded only while shown.
+    val showsExpenses = layout.any { it.key == DashKey.EXPENSE_LOG }
+    var expenses by remember { mutableStateOf<WriteResult<ExpenseSummary>?>(null) }
+    LaunchedEffect(showsExpenses) { if (showsExpenses && expenses == null) expenses = client.listExpenses() }
+    // AO-35 route optimizer: one-shot optimizeRoute for today, loaded only while shown.
+    val showsRoute = layout.any { it.key == DashKey.ROUTE_OPTIMIZER }
+    var route by remember { mutableStateOf<WriteResult<RouteResult>?>(null) }
+    LaunchedEffect(showsRoute) { if (showsRoute && route == null) route = client.optimizeRoute(nowIso().take(10)) }
+    // AO-41 supplies: one-shot listSupplies, re-fetched whenever a +1 adjust bumps
+    // the reload key so the low list stays honest after a restock write.
+    val showsSupplies = layout.any { it.key == DashKey.SUPPLIES }
+    var supplies by remember { mutableStateOf<WriteResult<SupplySummary>?>(null) }
+    var suppliesReloadKey by remember { mutableStateOf(0) }
+    LaunchedEffect(showsSupplies, suppliesReloadKey) { if (showsSupplies) supplies = client.listSupplies() }
     val dashScope = rememberReportingScope()
     val dashSaveMutex = remember { Mutex() }
+    // AO-41: +1 restock. Write via adjustSupply, then bump the reload key so the
+    // list re-fetches; a write error surfaces on the dashboard's fail-loud banner.
+    val onAdjustSupply: (String) -> Unit = { supplyId ->
+        dashScope.launch {
+            when (val r = client.adjustSupply(supplyId, 1)) {
+                is WriteResult.Err -> dashError = "Couldn't update supply: ${r.message}"
+                is WriteResult.Ok -> { dashError = null; suppliesReloadKey += 1 }
+            }
+        }
+    }
     val applyLayout: (List<DashWidget>) -> Unit = { next ->
         layout = next
         liveProfile?.let { base ->
@@ -522,6 +557,11 @@ fun HomeScreen(
                             DashKey.HOLIDAY_RUNWAY -> HolidayRunwayWidget(sessionsState, todayKey)
                             DashKey.UNREAD_MESSAGES -> UnreadMessagesWidget(conversations)
                             DashKey.SAFEBOX -> SafeboxWidget(sessionsState, kinfolkState, nowIso())
+                            DashKey.CARE_FLAGS -> CareFlagsWidget(sessionsState, allKinState, todayKey)
+                            DashKey.EXPIRATIONS -> ExpirationsWidget(expirations, todayKey)
+                            DashKey.ROUTE_OPTIMIZER -> RouteOptimizerWidget(route)
+                            DashKey.EXPENSE_LOG -> ExpenseLogWidget(expenses)
+                            DashKey.SUPPLIES -> SuppliesWidget(supplies, onAdjustSupply)
                         }
                         }
                     }
@@ -562,6 +602,11 @@ private fun dashLabel(key: DashKey): String = when (key) {
     DashKey.HOLIDAY_RUNWAY -> "Holiday runway"
     DashKey.UNREAD_MESSAGES -> "Unread messages"
     DashKey.SAFEBOX -> "Key & code safebox"
+    DashKey.CARE_FLAGS -> "Care flags"
+    DashKey.EXPIRATIONS -> "Expiration countdown"
+    DashKey.ROUTE_OPTIMIZER -> "Route optimizer"
+    DashKey.EXPENSE_LOG -> "Expense quick-log"
+    DashKey.SUPPLIES -> "Supplies tracker"
 }
 
 /** Den tone for a [WeatherRisk] level. */

@@ -738,3 +738,64 @@ data class UserProfile(
             else -> "Unnamed User"
         }
 }
+// ── Dashboard widget models (AO-35/39/40/41) ─────────────────────────────────
+// Callable-backed read models for the hidden-by-default Home dashboard widgets.
+// These arrive from admin-gated MyTribe callables as decoded maps (not Firestore
+// toObject targets), so they carry no @DocumentId; the repo decodes them by hand.
+/** AO-39 expiration-countdown row (expirations collection, via listExpirations). */
+data class ExpirationItem(
+    val id: String = "",
+    val label: String = "",
+    val dateIso: String = "",   // YYYY-MM-DD
+    val kinfolkId: String = "",
+    val kind: String = "",      // gateCode|vetRecord|card|license|other
+)
+/** AO-40 expense-quick-log row (expenses collection, via listExpenses). */
+data class Expense(
+    val id: String = "",
+    val kind: String = "",      // gas|parking|supplies|other
+    val amountCents: Int = 0,
+    val note: String = "",
+    val occurredAt: String = "", // ISO instant
+)
+/** AO-40 listExpenses envelope: the rows plus server-computed week/month totals. */
+data class ExpenseSummary(
+    val expenses: List<Expense> = emptyList(),
+    val weekTotalCents: Int = 0,
+    val monthTotalCents: Int = 0,
+)
+/** AO-41 supplies-tracker row (supplies collection, via listSupplies). */
+data class Supply(
+    val id: String = "",
+    val name: String = "",
+    val onHand: Int = 0,
+    val par: Int = 0,           // reorder threshold; low when onHand <= par
+    val unit: String = "",
+)
+/** AO-41 listSupplies envelope: the rows plus the low count (onHand <= par). */
+data class SuppliesResult(
+    val supplies: List<Supply> = emptyList(),
+    val lowCount: Int = 0,
+)
+/** AO-35 one routed stop, in arrival order, from optimizeRoute. */
+data class RouteStop(
+    val order: Int = 0,
+    val sessionId: String = "",
+    val kinfolkId: String = "",
+    val household: String = "",
+    val address: String = "",
+    val arrivalEta: String = "", // HH:MM
+)
+/** AO-35 a stop that could not be routed (household with no serviceAddress). */
+data class UnroutableStop(
+    val sessionId: String = "",
+    val household: String = "",
+    val reason: String = "",
+)
+/** AO-35 optimizeRoute envelope: ordered stops, totals, and fail-loud unroutables. */
+data class RouteResult(
+    val stops: List<RouteStop> = emptyList(),
+    val totalMiles: Double = 0.0,
+    val totalMinutes: Int = 0,
+    val unroutable: List<UnroutableStop> = emptyList(),
+)
