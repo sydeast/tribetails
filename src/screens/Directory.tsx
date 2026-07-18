@@ -25,6 +25,7 @@ import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { AddKinfolkDialog } from '../components/AddKinfolkDialog';
 import { AddKinDialog, type KinfolkOption } from '../components/AddKinDialog';
 import { KinfolkProfile } from './KinfolkProfile';
+import { KinView } from './KinView';
 import './Directory.css';
 
 type DirectoryTab = 'kinfolk' | 'kin';
@@ -221,7 +222,10 @@ interface DirectoryProps {
    * profile never opens.
    */
   onSelectKinfolk?: (id: string) => void;
-  /** Placeholder: KinViewScreen/KinEditScreen don't exist yet in React. Called with a kin id on card-select. */
+  /**
+   * Kin card-open override. Propless (the router default), a kin card opens the
+   * in-screen `KinView` detail. A caller can pass its own handler to take over.
+   */
   onSelectKin?: (id: string) => void;
 }
 
@@ -250,6 +254,8 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
   // Communicate pattern), opened when a card is activated and no external
   // onSelectKinfolk overrides. Holds the id; the profile reads the full doc.
   const [openKinfolkId, setOpenKinfolkId] = useState<string | null>(null);
+  // Kin (pet) detail: same sibling-view pattern as the household profile.
+  const [openKinId, setOpenKinId] = useState<{ id: string; name: string } | null>(null);
 
   // Roving-tabindex keyboard nav for the Kinfolk/Kin tablist below
   // (Left/Right, Home/End, roving tabIndex).
@@ -314,6 +320,10 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
         onBack={() => setOpenKinfolkId(null)}
       />
     );
+  }
+
+  if (openKinId !== null) {
+    return <KinView kinId={openKinId.id} kinName={openKinId.name} onBack={() => setOpenKinId(null)} />;
   }
 
   return (
@@ -452,7 +462,7 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
                   <KinCard
                     key={k._id}
                     kin={k}
-                    {...(onSelectKin ? { onClick: () => onSelectKin(k._id) } : {})}
+                    onClick={() => (onSelectKin ? onSelectKin(k._id) : setOpenKinId({ id: k._id, name: k.name }))}
                   />
                 ))}
               </ul>
