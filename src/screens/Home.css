@@ -1,0 +1,10 @@
+/* Home dashboard grid. Responsive auto-fit so widgets reflow from a single
+   column on narrow viewports up to a multi-column board on wide ones, without a
+   media-query per breakpoint. */
+
+.home-dash {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: 1rem;
+  align-items: start;
+}
