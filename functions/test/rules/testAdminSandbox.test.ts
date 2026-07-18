@@ -36,6 +36,10 @@ describe('rules: test-admin sandbox', () => {
         await db.doc(`kin_care_reports/${tribe}-r1`).set({ kinfolkId: tribe, status: 'SENT' });
         await db.doc(`payments/${tribe}-p1`).set({ kinfolkId: tribe, amount: 60 });
         await db.doc(`media_files/${tribe}-m1`).set({ kinfolkId: tribe, storageUrl: 'x' });
+        // Stage-0I read-gap fix: dossier is keyed one-per-kinfolk (doc id == tribe);
+        // generated_drafts carry the snake_case `kinfolk_id` field (see generate.js).
+        await db.doc(`dossiers/${tribe}`).set({ kinfolkId: tribe, householdNotes: 'x' });
+        await db.doc(`generated_drafts/${tribe}-d1`).set({ kinfolk_id: tribe, generated_copy: 'x', status: 'generated' });
       }
       // global config
       await db.doc('vet_clinics/vc1').set({ name: 'Clinic' });
@@ -63,6 +67,49 @@ describe('rules: test-admin sandbox', () => {
     await assertSucceeds(fs.doc(`kin_care_reports/${TEST_TRIBE}-r1`).get());
     await assertSucceeds(fs.doc(`payments/${TEST_TRIBE}-p1`).get());
     await assertSucceeds(fs.doc(`media_files/${TEST_TRIBE}-m1`).get());
+  });
+
+  // ── Stage-0I read-gap fix (2026-07-18): dossier + generated_drafts ─────────
+  // These collections were added AFTER Stage 0I and granted read to isAuntie ONLY,
+  // so the sandbox test-admin was denied and the app showed false permission
+  // banners. The rule now ORs in a scoped test-admin READ branch (writes stay
+  // admin-only).
+  it('reads its own dossier (single-doc, doc id == testScope)', async () => {
+    const env = await getEnv();
+    await assertSucceeds(asTestAdmin(env).firestore().doc(`dossiers/${TEST_TRIBE}`).get());
+  });
+
+  it('reads its own generated_drafts (single doc + kinfolk_id-scoped query)', async () => {
+    const env = await getEnv();
+    const fs = asTestAdmin(env).firestore();
+    await assertSucceeds(fs.doc(`generated_drafts/${TEST_TRIBE}-d1`).get());
+    await assertSucceeds(fs.collection('generated_drafts').where('kinfolk_id', '==', TEST_TRIBE).get());
+  });
+
+  it('is DENIED reading another tribe dossier / draft', async () => {
+    const env = await getEnv();
+    const fs = asTestAdmin(env).firestore();
+    await assertFails(fs.doc(`dossiers/${LIVE_TRIBE}`).get());
+    await assertFails(fs.doc(`generated_drafts/${LIVE_TRIBE}-d1`).get());
+  });
+
+  it('is DENIED an unfiltered list of generated_drafts (cross-tenant)', async () => {
+    const env = await getEnv();
+    await assertFails(asTestAdmin(env).firestore().collection('generated_drafts').get());
+  });
+
+  it('is DENIED a generated_drafts query scoped to another tribe', async () => {
+    const env = await getEnv();
+    await assertFails(
+      asTestAdmin(env).firestore().collection('generated_drafts').where('kinfolk_id', '==', LIVE_TRIBE).get(),
+    );
+  });
+
+  it('is DENIED writing its own dossier / draft (writes stay admin-only)', async () => {
+    const env = await getEnv();
+    const fs = asTestAdmin(env).firestore();
+    await assertFails(fs.doc(`dossiers/${TEST_TRIBE}`).set({ kinfolkId: TEST_TRIBE, householdNotes: 'y' }, { merge: true }));
+    await assertFails(fs.doc(`generated_drafts/${TEST_TRIBE}-d1`).set({ status: 'approved' }, { merge: true }));
   });
 
   // ── Own tribe: write OK ───────────────────────────────────────────────────
