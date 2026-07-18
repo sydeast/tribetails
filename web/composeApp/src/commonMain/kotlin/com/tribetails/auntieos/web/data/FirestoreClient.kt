@@ -1123,6 +1123,55 @@ class FirestoreClient {
         }
     }
 
+    /**
+     * AO-25: admin multi-date / recurring booking REQUEST via the
+     * createMultiDateBookingRequest callable. Writes the envelope model
+     * (families/{kinfolkId}/bookings) as 'requested', the Incoming-requests queue,
+     * so it flows through the same approve path as a kinfolk-submitted request.
+     * [visits] carry per-visit epoch-ms start times (non-consecutive dates need no
+     * special handling); a weekly recurrence is expanded to concrete visits by the
+     * caller and flagged via [pattern] = "weekly" + [weeklyDays].
+     */
+    suspend fun createMultiDateBookingRequest(
+        kinfolkId: String,
+        visits: List<NewBookingVisitInput>,
+        notes: String? = null,
+        pattern: String = "individual",
+        weeklyDays: List<Int>? = null,
+        kinIds: List<String>? = null,
+    ): WriteResult<MultiDateBookingResult> {
+        val payload = buildJsonObject {
+            put("kinfolkId", JsonPrimitive(enforceWriteKinfolkId(testMode, kinfolkId)))
+            put("pattern", JsonPrimitive(pattern))
+            if (!notes.isNullOrBlank()) put("notes", JsonPrimitive(notes))
+            weeklyDays?.let { days -> put("weeklyDays", buildJsonArray { days.forEach { add(JsonPrimitive(it)) } }) }
+            kinIds?.let { ids -> put("kinIds", buildJsonArray { ids.forEach { add(JsonPrimitive(it)) } }) }
+            put("visits", buildJsonArray {
+                visits.forEach { v ->
+                    add(buildJsonObject {
+                        put("startTimeMs", JsonPrimitive(v.startTimeMs))
+                        v.endTimeMs?.let { put("endTimeMs", JsonPrimitive(it)) }
+                        if (!v.serviceId.isNullOrBlank()) put("serviceId", JsonPrimitive(v.serviceId))
+                        put("serviceName", JsonPrimitive(v.serviceName))
+                    })
+                }
+            })
+        }
+        return when (val r = platformInvokeCallable("createMultiDateBookingRequest", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatching {
+                val obj = callableJson.parseToJsonElement(r.value).jsonObject
+                WriteResult.Ok(
+                    MultiDateBookingResult(
+                        batchId = obj["batchId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                        visitCount = obj["visitCount"]?.jsonPrimitive?.intOrNull ?: visits.size,
+                        visitIds = (obj["visitIds"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty(),
+                    ),
+                )
+            }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
     /** 1E §A.9: reschedule an existing session (Schedule drag / Bookings reschedule). */
     suspend fun rescheduleBooking(sessionId: String, startTime: String, endTime: String): WriteResult<Unit> {
         val payload = buildJsonObject {
@@ -1925,6 +1974,22 @@ data class ContactOverride(
  * so the same `kin_care_sessions` documents deserialize cleanly here.
  */
 @Serializable
+/** AO-25: one visit in a multi-date/recurring request. [startTimeMs] is epoch ms
+ *  from the operator's LOCAL wall-clock pick. [serviceId] optional (server resolves). */
+data class NewBookingVisitInput(
+    val startTimeMs: Long,
+    val serviceName: String,
+    val endTimeMs: Long? = null,
+    val serviceId: String? = null,
+)
+
+/** AO-25: createMultiDateBookingRequest result (created envelope + its visits). */
+data class MultiDateBookingResult(
+    val batchId: String,
+    val visitCount: Int,
+    val visitIds: List<String>,
+)
+
 data class KinCareSession(
     val _id: String = "",
     val kinId: String = "",

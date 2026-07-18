@@ -7,6 +7,8 @@ import com.tribetails.auntieos.web.data.ActivityLogEntry
 import com.tribetails.auntieos.web.data.AuntieDataSource
 import com.tribetails.auntieos.web.data.BookingSeriesAction
 import com.tribetails.auntieos.web.data.KinCareSession
+import com.tribetails.auntieos.web.data.MultiDateBookingResult
+import com.tribetails.auntieos.web.data.NewBookingVisitInput
 import com.tribetails.auntieos.web.data.WriteResult
 
 class BookingViewModel(
@@ -118,6 +120,36 @@ class BookingViewModel(
                 if (warnings.isNotEmpty()) errorMessage = warnings.joinToString("; ")
             }
             is WriteResult.Err -> errorMessage = "Create booking failed: ${r.message}"
+        }
+    }
+
+    /**
+     * AO-25: create a multi-date / recurring booking REQUEST (envelope model). On
+     * success returns the result (batchId + visitCount); the request enters the
+     * Incoming-requests queue for approval, so it appears in that live stream, not
+     * the scheduled sessions list. Fail-loud into [errorMessage] on rejection.
+     */
+    suspend fun createBookingRequest(
+        kinfolkId: String,
+        visits: List<NewBookingVisitInput>,
+        notes: String?,
+        pattern: String,
+        weeklyDays: List<Int>?,
+    ): MultiDateBookingResult? {
+        errorMessage = null
+        return when (val r = dataSource.createMultiDateBookingRequest(kinfolkId, visits, notes, pattern, weeklyDays)) {
+            is WriteResult.Ok -> {
+                audit(
+                    actionType = "CREATE_BOOKING",
+                    description = "Created ${r.value.visitCount} visit(s) ($pattern) request for $kinfolkId",
+                    targetId = r.value.batchId,
+                )
+                r.value
+            }
+            is WriteResult.Err -> {
+                errorMessage = "Create booking request failed: ${r.message}"
+                null
+            }
         }
     }
 

@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
+
 package com.tribetails.auntieos.web.screens.booking
 
 import androidx.compose.foundation.background
@@ -48,6 +50,7 @@ import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.FormSchema
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.KinCareSession
+import com.tribetails.auntieos.web.data.NewBookingVisitInput
 import com.tribetails.auntieos.web.screens.schedule.BookingDetailModal
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.appliesToSchemaIds
@@ -716,6 +719,41 @@ internal fun sortServiceTypesByDuration(types: List<String>): List<String> {
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, ExperimentalTime::class)
+/** AO-25 booking repeat mode for the create form. */
+enum class BookingRepeat { SINGLE, MULTI, WEEKLY }
+
+private val WEEKDAY_LABELS = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+
+/** Parse "HH:MM" to (hour, minute); defaults to 09:00 when blank/unparseable. */
+private fun parseHourMinute(time: String): Pair<Int, Int> {
+    val parts = time.trim().split(":")
+    val h = parts.getOrNull(0)?.toIntOrNull()?.coerceIn(0, 23) ?: 9
+    val m = parts.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 59) ?: 0
+    return h to m
+}
+
+/** Build the visit start times (epoch ms, LOCAL) for the chosen repeat mode. */
+private fun buildStartTimesMs(
+    mode: BookingRepeat,
+    startDateIso: String,
+    extraDatesIso: List<String>,
+    time: String,
+    weekdays: Set<Int>,
+    weeks: Int,
+): List<Long> {
+    val (h, m) = parseHourMinute(time)
+    val start = runCatching { kotlinx.datetime.LocalDate.parse(startDateIso) }.getOrNull() ?: return emptyList()
+    return when (mode) {
+        BookingRepeat.SINGLE -> listOf(NewBookingMath.localMs(start, h, m))
+        BookingRepeat.MULTI -> {
+            val all = (listOf(startDateIso) + extraDatesIso)
+                .mapNotNull { runCatching { kotlinx.datetime.LocalDate.parse(it) }.getOrNull() }
+            NewBookingMath.visitMs(all.map { NewBookingMath.localMs(it, h, m) })
+        }
+        BookingRepeat.WEEKLY -> NewBookingMath.expandWeekly(start, h, m, weekdays, weeks)
+    }
+}
+
 @Composable
 private fun BookingCreateScreen(
     vm: BookingViewModel,
@@ -739,6 +777,16 @@ private fun BookingCreateScreen(
     var kinfolkAdditionalInfo by remember { mutableStateOf("") }
     var adminInternalNotes    by remember { mutableStateOf("") }
     var saving          by remember { mutableStateOf(false) }
+
+    // AO-25: multi-date / recurring request. SINGLE keeps the original one-visit
+    // createBooking path; MULTI/WEEKLY route Submit to createMultiDateBookingRequest
+    // (the envelope model / Incoming-requests queue). startDate is visit 1 (MULTI)
+    // or the recurrence start (WEEKLY); startTime is the shared time.
+    var repeatMode         by remember { mutableStateOf(BookingRepeat.SINGLE) }
+    var extraDates         by remember { mutableStateOf<List<String>>(emptyList()) }
+    var showExtraDatePicker by remember { mutableStateOf(false) }
+    var weekdays           by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var weeks              by remember { mutableStateOf(4) }
 
     // Phase 14: BOOKING form_schemas (appliesTo == BOOKING) rendered at booking-create
     // time; answers persist into KinCareSession.formValues (one map, shared with the
@@ -930,6 +978,87 @@ private fun BookingCreateScreen(
             )
             Spacer(Modifier.height(20.dp))
 
+            // ── AO-25: repeat / multi-date (non-consecutive dates OR weekly) ─────
+            AuntieFieldLabel(text = "Repeat", optionalNote = "Multiple dates or weekly")
+            AuntieChipGroup(
+                options = listOf("Single", "Multiple dates", "Weekly"),
+                selected = setOf(
+                    when (repeatMode) {
+                        BookingRepeat.SINGLE -> "Single"
+                        BookingRepeat.MULTI -> "Multiple dates"
+                        BookingRepeat.WEEKLY -> "Weekly"
+                    },
+                ),
+                onSelectionChange = { next ->
+                    next.firstOrNull()?.let {
+                        repeatMode = when (it) {
+                            "Multiple dates" -> BookingRepeat.MULTI
+                            "Weekly" -> BookingRepeat.WEEKLY
+                            else -> BookingRepeat.SINGLE
+                        }
+                    }
+                },
+                label = { it },
+                singleSelect = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (repeatMode == BookingRepeat.MULTI) {
+                Spacer(Modifier.height(10.dp))
+                if (extraDates.isNotEmpty()) {
+                    Text(
+                        "Also on: ${extraDates.joinToString(", ")}",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+                GhostButton(label = "Add another date", onClick = { showExtraDatePicker = true })
+                AuntieDatePickerDialog(
+                    visible = showExtraDatePicker,
+                    selectedDate = null,
+                    today = today,
+                    onPick = { picked ->
+                        val iso = picked.toString()
+                        if (iso != startDate && iso !in extraDates) extraDates = extraDates + iso
+                        showExtraDatePicker = false
+                    },
+                    onDismiss = { showExtraDatePicker = false },
+                )
+            }
+            if (repeatMode == BookingRepeat.WEEKLY) {
+                Spacer(Modifier.height(10.dp))
+                AuntieChipGroup(
+                    options = WEEKDAY_LABELS,
+                    selected = weekdays.map { WEEKDAY_LABELS[it] }.toSet(),
+                    onSelectionChange = { next ->
+                        weekdays = next.mapNotNull { WEEKDAY_LABELS.indexOf(it).takeIf { i -> i >= 0 } }.toSet()
+                    },
+                    label = { it },
+                    singleSelect = false,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                AuntieFieldLabel(text = "For how many weeks")
+                AuntieChipGroup(
+                    options = (1..12).map { it.toString() },
+                    selected = setOf(weeks.toString()),
+                    onSelectionChange = { next -> next.firstOrNull()?.toIntOrNull()?.let { weeks = it } },
+                    label = { it },
+                    singleSelect = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (repeatMode != BookingRepeat.SINGLE) {
+                val previewCount = buildStartTimesMs(repeatMode, startDate, extraDates, startTime, weekdays, weeks).size
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    if (previewCount > 0) "$previewCount visit(s) will be requested for approval." else "Pick date(s) to request.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                )
+            }
+            Spacer(Modifier.height(20.dp))
+
             // ── Kinfolk-facing note (visible to kinfolk, editable until 3hr before) ──
             MultilineField(
                 value         = kinfolkAdditionalInfo,
@@ -979,7 +1108,11 @@ private fun BookingCreateScreen(
 
             val hasKinfolk  = selectedKinfolk != null
             val hasDate     = startDate.isNotBlank()
-            val canSubmit   = hasKinfolk && hasDate
+            // AO-25: in MULTI/WEEKLY the request also needs at least one resolved visit
+            // (e.g. Weekly with no weekday selected yields none).
+            val requestVisits = if (repeatMode == BookingRepeat.SINGLE) emptyList()
+                else buildStartTimesMs(repeatMode, startDate, extraDates, startTime, weekdays, weeks)
+            val canSubmit   = hasKinfolk && hasDate && (repeatMode == BookingRepeat.SINGLE || requestVisits.isNotEmpty())
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1004,17 +1137,30 @@ private fun BookingCreateScreen(
                     modifier = Modifier.weight(1f),
                 )
                 PrimaryButton(
-                    label   = "Submit request",
+                    label   = if (repeatMode == BookingRepeat.SINGLE) "Submit request" else "Submit ${requestVisits.size} visit(s)",
                     enabled = canSubmit && !saving,
                     loading = saving,
                     onClick = {
                         scope.launch {
                             saving = true
-                            vm.createBooking(
-                                booking = buildSession(selectedKinfolk!!, serviceType, startDate, startTime, kinfolkAdditionalInfo, "PENDING", bookingFormValues.toMap()),
-                                kinfolkFacingNote = kinfolkAdditionalInfo,
-                                adminInternalNote = adminInternalNotes,
-                            )
+                            if (repeatMode == BookingRepeat.SINGLE) {
+                                vm.createBooking(
+                                    booking = buildSession(selectedKinfolk!!, serviceType, startDate, startTime, kinfolkAdditionalInfo, "PENDING", bookingFormValues.toMap()),
+                                    kinfolkFacingNote = kinfolkAdditionalInfo,
+                                    adminInternalNote = adminInternalNotes,
+                                )
+                            } else {
+                                // AO-25: multi-date / weekly -> the envelope (Incoming-requests)
+                                // path. serviceName is the KinCare type; the server resolves
+                                // price at invoice time (no client price).
+                                vm.createBookingRequest(
+                                    kinfolkId = selectedKinfolk!!._id,
+                                    visits = requestVisits.map { NewBookingVisitInput(startTimeMs = it, serviceName = serviceType) },
+                                    notes = kinfolkAdditionalInfo.ifBlank { null },
+                                    pattern = if (repeatMode == BookingRepeat.WEEKLY) "weekly" else "individual",
+                                    weeklyDays = if (repeatMode == BookingRepeat.WEEKLY) weekdays.sorted() else null,
+                                )
+                            }
                             saving = false
                             if (vm.errorMessage == null) onBack()
                         }

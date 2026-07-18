@@ -21,6 +21,15 @@ class FirestoreAuntieDataSource(
     override suspend fun approveBooking(bookingId: String): WriteResult<Unit> = client.approveBooking(bookingId)
     override suspend fun rejectBooking(bookingId: String): WriteResult<Unit> = client.rejectBooking(bookingId)
     override suspend fun createBooking(booking: KinCareSession): WriteResult<String> = client.createBookingRequest(booking)
+
+    override suspend fun createMultiDateBookingRequest(
+        kinfolkId: String,
+        visits: List<NewBookingVisitInput>,
+        notes: String?,
+        pattern: String,
+        weeklyDays: List<Int>?,
+    ): WriteResult<MultiDateBookingResult> =
+        client.createMultiDateBookingRequest(kinfolkId, visits, notes, pattern, weeklyDays)
     override fun incomingKinCaresStream(): Flow<FirestoreResult<List<KinCareVisit>>> = client.incomingKinCaresStream()
     override suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String): WriteResult<ManageSeriesResult> =
         client.manageBookingSeries(action, kinfolkId, batchId)

@@ -342,9 +342,26 @@ fun TemplateAssignmentBody(
             templates = templates,
             // catalogKey is the Firestore doc ID. On an existing binding it is
             // immutable here: editing it would orphan the old doc and create a new
-            // one (no delete/unassign callable exists). The field is locked on edit.
+            // one. The field is locked on edit; removing the binding entirely goes
+            // through Unassign (AO-56), not a catalogKey rename.
             isNew = current.catalogKey.isBlank(),
             onDismiss = { selected = null },
+            // AO-56: unassign an existing binding via the unassignTemplate callable.
+            // Null for a brand-new (unsaved) binding, so the action only shows on edit.
+            onUnassign = if (current.catalogKey.isBlank()) null else {
+                {
+                    scope.launch {
+                        when (val r = templateService.unassignTemplate(current.catalogKey)) {
+                            is WriteResult.Ok -> {
+                                selected = null
+                                saveError = null
+                                reload()
+                            }
+                            is WriteResult.Err -> saveError = r.message
+                        }
+                    }
+                }
+            },
             onSave = { updated ->
                 scope.launch {
                     when (
@@ -429,12 +446,17 @@ private fun BindingEditorOverlay(
     isNew: Boolean,
     onDismiss: () -> Unit,
     onSave: (TemplateService.TemplateBinding) -> Unit,
+    // AO-56: edit-mode only. Null on a new binding (nothing to unassign yet).
+    onUnassign: (() -> Unit)? = null,
 ) {
     var catalogKey by remember(binding.catalogKey) { mutableStateOf(binding.catalogKey) }
     var templateId by remember(binding.templateId) { mutableStateOf(binding.templateId) }
     var audience by remember(binding) { mutableStateOf(binding.audience) }
     var triggerKey by remember(binding) { mutableStateOf(binding.triggerKey ?: "") }
     var active by remember(binding) { mutableStateOf(binding.active) }
+    // Two-tap confirm for the destructive unassign, rather than a second nested
+    // dialog (two AuntieDialogs would fight over dismiss).
+    var confirmingUnassign by remember(binding) { mutableStateOf(false) }
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
 
@@ -453,6 +475,15 @@ private fun BindingEditorOverlay(
         hint = "Catalog key + optional audience / trigger override binds to a Firestore email template. The dispatcher resolves the right template per notification trigger.",
         footer = {
             GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
+            if (onUnassign != null) {
+                GhostButton(
+                    // First tap arms, second tap unassigns: a lightweight confirm on a
+                    // change that alters what dispatch sends.
+                    label = if (confirmingUnassign) "Confirm unassign" else "Unassign",
+                    onClick = { if (confirmingUnassign) onUnassign() else confirmingUnassign = true },
+                    modifier = Modifier.weight(1f),
+                )
+            }
             PrimaryButton(
                 label = "Save",
                 // Save enabled only when catalogKey AND templateId are both non-blank.
