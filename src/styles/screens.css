@@ -173,6 +173,10 @@
   font-size: 0.82rem;
   color: var(--color-secondary, #5a5c6a);
 }
+.notif-row__desc {
+  font-size: 0.86rem;
+  color: var(--color-text-primary, #11131f);
+}
 .notif-row__channels {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.72rem;

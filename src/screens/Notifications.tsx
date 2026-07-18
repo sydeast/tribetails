@@ -181,8 +181,14 @@ export function Notifications() {
                             onChange={(e) => toggleSelected(entry._id, e.target.checked)}
                           />
                           <div className="notif-row__body">
-                            <span className="notif-row__key">{entry.key || '(no key)'}</span>
+                            {/* AO-28: prefer the human title (catalog label); fall
+                                back to the raw key for pre-AO-28 rows. */}
+                            <span className="notif-row__key">{entry.title || entry.key || '(no key)'}</span>
+                            {entry.description ? (
+                              <span className="notif-row__desc">{entry.description}</span>
+                            ) : null}
                             <span className="notif-row__meta">
+                              {entry.actorName ? `${entry.actorName} · ` : ''}
                               {entry.category || 'uncategorized'} · {entry.mode || 'trigger'}
                             </span>
                             {entry.channels.length > 0 ? (

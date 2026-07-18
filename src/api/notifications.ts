@@ -27,6 +27,14 @@ export interface NotificationEntry {
   category: string;
   recipientUid: string;
   actorUid?: string | null;
+  // AO-28: human-renderable content written by dispatcher.ts (title = catalog
+  // `label`, description = catalog `description`) + the resolved actor identity.
+  // Optional: notifications dispatched BEFORE this landed have neither, so the
+  // UI falls back to `key` for the title and hides an absent actor.
+  title?: string;
+  description?: string;
+  actorName?: string | null;
+  actorPhotoUrl?: string | null;
   status: string; // pending | dispatched
   mode: string; // trigger | debounced | batched | scheduled
   channels: string[];
