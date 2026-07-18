@@ -37,6 +37,9 @@ fun LiquidGlassSurface(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val c = AuntieTheme.colors
+    // AO-16: damp the hardcoded white rim in dark theme so it stays a subtle glass
+    // highlight instead of a harsh white halo on every surface. Light unchanged.
+    val rimColor = Color.White.copy(alpha = if (c.isDark) rimAlpha * 0.4f else rimAlpha)
     val blurMod = if (android.os.Build.VERSION.SDK_INT >= 31) {
         Modifier.blur(blurRadius, edgeTreatment = BlurredEdgeTreatment.Unbounded)
     } else Modifier
@@ -45,7 +48,7 @@ fun LiquidGlassSurface(
             .clip(RoundedCornerShape(cornerRadius))
             .then(blurMod)
             .background(c.surfaceGlass)
-            .border(1.dp, Color.White.copy(alpha = rimAlpha), RoundedCornerShape(cornerRadius)),
+            .border(1.dp, rimColor, RoundedCornerShape(cornerRadius)),
         content = content,
     )
 }

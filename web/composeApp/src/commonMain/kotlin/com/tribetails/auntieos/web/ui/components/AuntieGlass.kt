@@ -31,12 +31,16 @@ fun LiquidGlassSurface(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val c = AuntieTheme.colors
+    // AO-16: the glass rim was a hardcoded white at full rimAlpha, which reads as a
+    // harsh white HALO on every glass surface in the dark theme. Damp it in dark so
+    // it stays a subtle highlight; light theme keeps the original strength.
+    val rimColor = Color.White.copy(alpha = if (c.isDark) rimAlpha * 0.4f else rimAlpha)
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(cornerRadius))
             .blur(blurRadius)
             .background(c.surfaceGlass)
-            .border(1.dp, Color.White.copy(alpha = rimAlpha), RoundedCornerShape(cornerRadius)),
+            .border(1.dp, rimColor, RoundedCornerShape(cornerRadius)),
         content = content,
     )
 }
