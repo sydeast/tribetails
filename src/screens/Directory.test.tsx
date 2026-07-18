@@ -9,6 +9,13 @@ import { type Kinfolk, type Kin } from '../api/directory';
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
+// The in-screen KinfolkProfile (opened by a card when propless) reads the full doc.
+const { getKinfolkProfile } = vi.hoisted(() => ({ getKinfolkProfile: vi.fn() }));
+vi.mock('../api/kinfolkProfile', async (orig) => ({
+  ...(await orig<typeof import('../api/kinfolkProfile')>()),
+  getKinfolkProfile,
+}));
+
 import { Directory } from './Directory';
 
 function fakeTs(iso: string): Timestamp {
@@ -152,12 +159,18 @@ describe('Directory screen, Kinfolk tab', () => {
     expect(onSelectKinfolk).toHaveBeenCalledWith('kf1');
   });
 
-  it('renders the card STATIC (not an interactive button) when onSelectKinfolk is omitted', () => {
+  it('propless, a kinfolk card opens the in-screen KinfolkProfile', async () => {
     kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
+    getKinfolkProfile.mockResolvedValue(
+      (await import('../api/kinfolkProfile')).mergeKinfolkProfile('kf1', { firstName: 'Jamie', lastName: 'Halbrook' }),
+    );
     render(<Directory />);
-    // Card content renders, but it is NOT a clickable button when unwired.
-    expect(screen.getByText('Jamie Halbrook')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Jamie Halbrook/i })).toBeNull();
+    // The card is now an interactive button (the profile detail view exists).
+    const card = screen.getByRole('button', { name: /Jamie Halbrook/i });
+    await userEvent.click(card);
+    // The profile detail view took over.
+    expect(await screen.findByRole('button', { name: /back to directory/i })).toBeInTheDocument();
+    expect(getKinfolkProfile).toHaveBeenCalledWith('kf1');
   });
 
   it('the sort select reverses alphabetical order between A→Z and Z→A', async () => {

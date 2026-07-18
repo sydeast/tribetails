@@ -1,0 +1,96 @@
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+
+/**
+ * The FULL household record at `kinfolk/{id}` (rules: `allow read: if isAuntie()`),
+ * for the profile detail view. The Directory LIST type (`api/directory.ts#Kinfolk`)
+ * carries only list fields; a household profile needs the rich contact / home-access
+ * / emergency / vet fields the wasm `KinfolkProfileScreen` renders, so this is read
+ * directly via a one-shot getDoc (the `api/account.ts` pattern; there is no
+ * getKinfolkProfile callable, and useCollection is collection-only).
+ *
+ * A subset of the real doc, not a blind mirror: booking/dossier/tag fields belong
+ * to other surfaces and are intentionally omitted (the directory.ts convention).
+ * Every field is defaulted so a legacy/partial doc never renders `undefined`.
+ */
+export interface KinfolkProfile {
+  _id: string;
+  firstName: string;
+  lastName: string;
+  phoneNumber: string;
+  email: string;
+  profilePictureUrl: string;
+  status: string;
+  joinDate: string;
+  // Contact & Identity
+  secondaryPhone: string;
+  secondaryEmail: string;
+  preferredContactMethod: string;
+  bestTimeToContact: string;
+  // Home & Access
+  serviceAddress: string;
+  gateCode: string;
+  parkingInstructions: string;
+  entryNotes: string;
+  wifiName: string;
+  wifiPassword: string;
+  // Emergency
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  emergencyContactRelation: string;
+  // Vet clinic (household-level)
+  vetClinicName: string;
+  vetClinicAddress: string;
+  vetClinicPhone: string;
+}
+
+const EMPTY: Omit<KinfolkProfile, '_id'> = {
+  firstName: '', lastName: '', phoneNumber: '', email: '', profilePictureUrl: '', status: 'active', joinDate: '',
+  secondaryPhone: '', secondaryEmail: '', preferredContactMethod: '', bestTimeToContact: '',
+  serviceAddress: '', gateCode: '', parkingInstructions: '', entryNotes: '', wifiName: '', wifiPassword: '',
+  emergencyContactName: '', emergencyContactPhone: '', emergencyContactRelation: '',
+  vetClinicName: '', vetClinicAddress: '', vetClinicPhone: '',
+};
+
+/** Defensive field-by-field merge over the empty shape (never `undefined`, never fabricates). */
+export function mergeKinfolkProfile(id: string, raw: Record<string, unknown> | undefined | null): KinfolkProfile {
+  const r = (raw ?? {}) as Partial<KinfolkProfile>;
+  const s = (v: unknown, def: string): string => (typeof v === 'string' ? v : def);
+  return {
+    _id: id,
+    firstName: s(r.firstName, EMPTY.firstName),
+    lastName: s(r.lastName, EMPTY.lastName),
+    phoneNumber: s(r.phoneNumber, EMPTY.phoneNumber),
+    email: s(r.email, EMPTY.email),
+    profilePictureUrl: s(r.profilePictureUrl, EMPTY.profilePictureUrl),
+    status: s(r.status, EMPTY.status),
+    joinDate: s(r.joinDate, EMPTY.joinDate),
+    secondaryPhone: s(r.secondaryPhone, EMPTY.secondaryPhone),
+    secondaryEmail: s(r.secondaryEmail, EMPTY.secondaryEmail),
+    preferredContactMethod: s(r.preferredContactMethod, EMPTY.preferredContactMethod),
+    bestTimeToContact: s(r.bestTimeToContact, EMPTY.bestTimeToContact),
+    serviceAddress: s(r.serviceAddress, EMPTY.serviceAddress),
+    gateCode: s(r.gateCode, EMPTY.gateCode),
+    parkingInstructions: s(r.parkingInstructions, EMPTY.parkingInstructions),
+    entryNotes: s(r.entryNotes, EMPTY.entryNotes),
+    wifiName: s(r.wifiName, EMPTY.wifiName),
+    wifiPassword: s(r.wifiPassword, EMPTY.wifiPassword),
+    emergencyContactName: s(r.emergencyContactName, EMPTY.emergencyContactName),
+    emergencyContactPhone: s(r.emergencyContactPhone, EMPTY.emergencyContactPhone),
+    emergencyContactRelation: s(r.emergencyContactRelation, EMPTY.emergencyContactRelation),
+    vetClinicName: s(r.vetClinicName, EMPTY.vetClinicName),
+    vetClinicAddress: s(r.vetClinicAddress, EMPTY.vetClinicAddress),
+    vetClinicPhone: s(r.vetClinicPhone, EMPTY.vetClinicPhone),
+  };
+}
+
+/**
+ * One-shot read of `kinfolk/{id}`. A MISSING doc throws (a profile is only ever
+ * opened from an existing Directory card, so a missing household is a real error
+ * the screen surfaces fail-loud, not a silent empty). A read rejection propagates.
+ */
+export async function getKinfolkProfile(id: string): Promise<KinfolkProfile> {
+  const snap = await getDoc(doc(db, 'kinfolk', id));
+  if (!snap.exists()) throw new Error(`Household not found: ${id}`);
+  return mergeKinfolkProfile(id, snap.data() as Record<string, unknown>);
+}
