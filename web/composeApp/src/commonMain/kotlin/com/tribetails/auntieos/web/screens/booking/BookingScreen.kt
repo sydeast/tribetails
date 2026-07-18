@@ -50,7 +50,9 @@ import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.FormSchema
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.KinCareSession
+import com.tribetails.auntieos.web.data.LocalTestMode
 import com.tribetails.auntieos.web.data.NewBookingVisitInput
+import com.tribetails.auntieos.web.data.TestMode
 import com.tribetails.auntieos.web.screens.schedule.BookingDetailModal
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.appliesToSchemaIds
@@ -115,6 +117,22 @@ internal fun BookingScreenContent(
     }
 }
 
+/**
+ * Stage-0I sandbox: "Incoming requests" is a collectionGroup('kinCares') query
+ * spanning every tenant, so a test admin cannot read it at all — and unlike flat
+ * kin_care_sessions (see bookingRequestsStream, which IS scoped to the tribe) it is
+ * not scopeable by a simple field. Its permission-denied must therefore NOT paint
+ * the red "Couldn't load ..." banner. In test mode swap it for a neutral sandbox
+ * note; out of test mode behave exactly as before. Pure so the decision is tested.
+ */
+enum class RequestBanner { None, Error, Sandbox }
+
+fun requestBanner(testMode: TestMode, state: FirestoreResult<*>): RequestBanner = when {
+    state !is FirestoreResult.Error -> RequestBanner.None
+    testMode.active                 -> RequestBanner.Sandbox
+    else                            -> RequestBanner.Error
+}
+
 @Composable
 private fun BookingListScreen(
     vm: BookingViewModel,
@@ -123,6 +141,7 @@ private fun BookingListScreen(
 ) {
     val c     = AuntieTheme.colors
     val scope = rememberReportingScope()
+    val testMode = LocalTestMode.current
 
     // History + Scheduled lifecycle come from the whole kin_care_sessions store
     // (this stays mapped through the VM so the VM test contract is unchanged).
@@ -322,6 +341,8 @@ private fun BookingListScreen(
                 trailing = { SectionCount("${incomingSeries.size}") },
             ) {
                 when {
+                    requestBanner(testMode, incomingState) == RequestBanner.Sandbox ->
+                        EmptyHint("Incoming requests aren't available in the sandbox (cross-tenant data).")
                     incomingState is FirestoreResult.Error ->
                         EmptyHint("Couldn't load incoming requests: ${(incomingState as FirestoreResult.Error).message}", error = true)
                     else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

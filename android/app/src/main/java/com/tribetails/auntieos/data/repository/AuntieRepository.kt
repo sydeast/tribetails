@@ -188,6 +188,15 @@ class AuntieRepository(
     private fun clearTestModeCache() { cachedTestMode = null }
 
     /**
+     * True iff a Stage-0I test admin is signed in. Plain-Boolean wrapper around
+     * [getTestMode] (defaults to false if the claim can't be read) so a caller — e.g.
+     * a ViewModel deciding whether to suppress a cross-tenant permission banner — can
+     * ask without unpacking a value-class `Result`. (Value-class returns also trip up
+     * mockk-relaxed test doubles, so the plain Boolean keeps those green by default.)
+     */
+    suspend fun isTestAdminActive(): Boolean = getTestMode().getOrNull()?.active == true
+
+    /**
      * Resolve the active TestMode for an in-flight scoped read. Throws (rather
      * than silently treating the user as a normal admin) if the claim can't be
      * read, so a denied/failed claim check fails loud instead of leaking a broad
@@ -951,11 +960,24 @@ class AuntieRepository(
     suspend fun getRecentDrafts(): Result<List<Draft>> = runCatching {
         AuntieLog.d("Fetching recent drafts")
         ensureAuthenticated()
-        firestore.collection("generated_drafts")
-            .orderBy("createdOn", com.google.firebase.firestore.Query.Direction.DESCENDING)
-            .limit(3)
-            .get().await()
-            .toObjects(Draft::class.java)
+        val mode = requireTestMode()
+        val col = firestore.collection("generated_drafts")
+        if (mode.active) {
+            // Stage-0I sandbox: rules DENY an unfiltered list of generated_drafts, so
+            // constrain to this tribe's own drafts (the doc's snake_case `kinfolk_id`
+            // field == testScope; see generate.js). Sort + cap client-side to avoid a
+            // composite (kinfolk_id, createdOn) index; the sandbox draft set is tiny.
+            col.whereEqualTo("kinfolk_id", mode.testTribeId)
+                .get().await()
+                .toObjects(Draft::class.java)
+                .sortedByDescending { it.createdOn }
+                .take(3)
+        } else {
+            col.orderBy("createdOn", com.google.firebase.firestore.Query.Direction.DESCENDING)
+                .limit(3)
+                .get().await()
+                .toObjects(Draft::class.java)
+        }
     }.onFailure { AuntieLog.e("Failed to get recent drafts", it) }
 
     suspend fun getKinfolkCount(): Result<Int> = runCatching {
@@ -976,10 +998,20 @@ class AuntieRepository(
 
     suspend fun getPendingDraftCount(): Result<Int> = runCatching {
         ensureAuthenticated()
-        firestore.collection("generated_drafts")
-            .whereEqualTo("status", "pending")
-            .get().await()
-            .size()
+        val mode = requireTestMode()
+        val col = firestore.collection("generated_drafts")
+        if (mode.active) {
+            // Stage-0I sandbox: scope to this tribe (kinfolk_id == testScope) and count
+            // 'pending' client-side to avoid a composite (kinfolk_id, status) index. An
+            // unfiltered read is denied by rules for a test admin.
+            col.whereEqualTo("kinfolk_id", mode.testTribeId)
+                .get().await()
+                .documents.count { it.getString("status") == "pending" }
+        } else {
+            col.whereEqualTo("status", "pending")
+                .get().await()
+                .size()
+        }
     }.onFailure { AuntieLog.e("Failed to get pending draft count", it) }
 
     // Business/Operational Settings
