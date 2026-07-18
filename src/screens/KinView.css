@@ -1,0 +1,67 @@
+.kview__hint {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.kview__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.kview__head-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.kview__name {
+  font-size: var(--type-title-md-size, 1.1rem);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.kview__detail {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.kview__status {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+}
+
+.kview__facts {
+  display: grid;
+  grid-template-columns: minmax(9rem, max-content) 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.kview__fact {
+  display: contents;
+}
+
+.kview__fact-label {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.kview__fact-value {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.kview__fact-value--mono {
+  font-family: var(--font-mono);
+}
+
+.kview__notes {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  margin: 0;
+}
