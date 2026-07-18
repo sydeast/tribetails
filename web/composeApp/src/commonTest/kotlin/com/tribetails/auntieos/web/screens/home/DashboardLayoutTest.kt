@@ -78,7 +78,9 @@ class DashboardLayoutTest {
                 DashKey.STATS, DashKey.TODAYS_PACK, DashKey.CASH_FLOW, DashKey.GATEKEEPER,
                 DashKey.WEATHER_WATCHDOG, DashKey.HEAT_INDEX, DashKey.WEEKLY_CAPACITY,
                 DashKey.OVERDUE_TRACKER, DashKey.PET_BREAKDOWN, DashKey.FREQUENT_FLYERS,
-                DashKey.HOLIDAY_RUNWAY,
+                DashKey.HOLIDAY_RUNWAY, DashKey.UNREAD_MESSAGES, DashKey.SAFEBOX,
+                DashKey.CARE_FLAGS, DashKey.EXPIRATIONS, DashKey.ROUTE_OPTIMIZER,
+                DashKey.EXPENSE_LOG, DashKey.SUPPLIES,
             ),
             hiddenKeys(shown),
         )

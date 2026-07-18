@@ -50,6 +50,8 @@ import com.tribetails.auntieos.web.data.BookingTimeSlot
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.KinCareSession
+import com.tribetails.auntieos.web.data.LocalTestMode
+import com.tribetails.auntieos.web.data.TestMode
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.screens.RescheduleArgs
 import com.tribetails.auntieos.web.screens.rescheduleArgsForDrop
@@ -106,16 +108,24 @@ private val GUTTER_WIDTH = 56.dp
  * Calendar sync is configured (BusinessSettings.calendarSyncId set) AND the
  * busy-blocks stream errored. With no calendar sync there is nothing to load, so
  * a permission/empty error must not surface as a failure to the operator.
+ *
+ * Stage-0I sandbox: `booking_time_slots` is a GLOBAL calendar-busy collection
+ * (not tribe-scoped) that a test admin cannot read at all, yet businessSettings
+ * may still resolve a calendarSyncId (guard true), so the banner fired falsely in
+ * the sandbox. Suppress it whenever a test admin is signed in — there is no
+ * sandbox equivalent to load.
  */
 fun shouldShowBusyBlockError(
     calendarSyncConfigured: Boolean,
     busyState: FirestoreResult<*>,
-): Boolean = calendarSyncConfigured && busyState is FirestoreResult.Error
+    testMode: TestMode = TestMode.OFF,
+): Boolean = calendarSyncConfigured && busyState is FirestoreResult.Error && !testMode.active
 
 @OptIn(ExperimentalTime::class)
 @Composable
 fun ScheduleScreen() {
     val client = remember { FirestoreClient() }
+    val testMode = LocalTestMode.current
     val sessionsState by remember { client.sessionsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val busyState by remember { client.bookingTimeSlotsStream() }.collectAsState(initial = FirestoreResult.Loading)
     // #4: busy blocks (Google Calendar "Busy") only exist once calendar sync is set
@@ -239,7 +249,7 @@ fun ScheduleScreen() {
                 // week grid below (read-only, no event detail). Surface a load error
                 // loud ONLY when calendar sync is actually configured (#4): without
                 // setup there is nothing to load, so the banner would be noise.
-                if (shouldShowBusyBlockError(calendarSyncConfigured, busyState)) {
+                if (shouldShowBusyBlockError(calendarSyncConfigured, busyState, testMode)) {
                     Spacer(Modifier.height(10.dp))
                     AuntieBanner(
                         tone = AuntieBannerTone.Error,

@@ -139,6 +139,10 @@ class EnhancedSchedulingViewModel(
      */
     private fun observeIncomingSeries() {
         viewModelScope.launch {
+            // Stage-0I sandbox: collectionGroup('kinCares') is cross-tenant and a test
+            // admin cannot read it, so its permission-denied must NOT paint a banner.
+            // Resolve once before collecting (race-free vs the stream's first emission).
+            val sandbox = auntieRepository.isTestAdminActive()
             bookingRepository.incomingKinCareRequestsStream().collect { result ->
                 result
                     .onSuccess { incoming ->
@@ -149,8 +153,9 @@ class EnhancedSchedulingViewModel(
                         )
                     }
                     .onFailure { e ->
-                        // Fail-loud: keep any existing list, surface the error.
-                        _state.value = _state.value.copy(
+                        // Fail-loud: keep any existing list, surface the error — but not in
+                        // the sandbox, where the denial is expected (no cross-tenant data).
+                        if (!sandbox) _state.value = _state.value.copy(
                             incomingError = e.message ?: "Couldn't load incoming requests",
                         )
                     }
@@ -210,13 +215,16 @@ class EnhancedSchedulingViewModel(
      */
     private fun observeBusyTimeSlots() {
         viewModelScope.launch {
+            // Stage-0I sandbox: booking_time_slots is a global collection a test admin
+            // cannot read; suppress the false banner (nothing to load in the sandbox).
+            val sandbox = auntieRepository.isTestAdminActive()
             bookingRepository.bookingTimeSlotsStream().collect { result ->
                 result
                     .onSuccess { slots ->
                         _state.value = _state.value.copy(timeSlots = slots, busyError = null)
                     }
                     .onFailure { e ->
-                        _state.value = _state.value.copy(
+                        if (!sandbox) _state.value = _state.value.copy(
                             busyError = e.message ?: "Couldn't load busy blocks"
                         )
                     }

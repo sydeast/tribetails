@@ -56,6 +56,8 @@ class HomeViewModelTest {
         coEvery { mockRepo.getInvoices() } returns Result.success(emptyList())
         // Gatekeeper widget: Home now loads all sessions for the visit-gap ranking.
         coEvery { mockRepo.getKinCareSessions() } returns Result.success(emptyList())
+        // Care-flags widget (AO-37): Home also loads all kin to join against sessions.
+        coEvery { mockRepo.getAllKin() } returns Result.success(emptyList())
     }
 
     private fun buildViewModel() = HomeViewModel(repo = mockRepo, notifier = mockNotifier)

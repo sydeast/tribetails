@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.web.screens.schedule
 
 import com.tribetails.auntieos.web.data.FirestoreResult
+import com.tribetails.auntieos.web.data.TestMode
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -33,6 +34,25 @@ class BusyBlockBannerTest {
                 calendarSyncConfigured = true,
                 busyState = FirestoreResult.Error("network unreachable"),
             ),
+        )
+    }
+
+    // Stage-0I sandbox: booking_time_slots is a global collection a test admin cannot
+    // read, yet calendarSyncId may still resolve (configured = true). The banner must
+    // stay suppressed for a test admin — there is no sandbox equivalent to load.
+    @Test fun `no banner in the sandbox even when configured and errored`() {
+        assertFalse(
+            shouldShowBusyBlockError(
+                calendarSyncConfigured = true,
+                busyState = FirestoreResult.Error("Missing or insufficient permissions"),
+                testMode = TestMode(active = true, testTribeId = "test-kinfolk-001"),
+            ),
+        )
+    }
+
+    @Test fun `banner still shows for a normal admin when test mode is OFF`() {
+        assertTrue(
+            shouldShowBusyBlockError(true, FirestoreResult.Error("boom"), TestMode.OFF),
         )
     }
 }

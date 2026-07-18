@@ -41,9 +41,15 @@ class DashboardLayoutTest {
     @Test
     fun hiddenKeys_is_known_minus_shown_in_enum_order() {
         assertEquals(
+            // Every DashKey except the one shown (KINTALES), in enum order. Kept in
+            // sync with the DashKey enum as widgets are added (AO-24 / AO-35..41).
             listOf(
                 DashKey.STATS, DashKey.TODAYS_PACK, DashKey.CASH_FLOW, DashKey.GATEKEEPER,
                 DashKey.WEATHER_WATCHDOG, DashKey.HEAT_INDEX,
+                DashKey.WEEKLY_CAPACITY, DashKey.OVERDUE_TRACKER, DashKey.PET_BREAKDOWN,
+                DashKey.FREQUENT_FLYERS, DashKey.HOLIDAY_RUNWAY, DashKey.UNREAD_MESSAGES,
+                DashKey.SAFEBOX, DashKey.CARE_FLAGS, DashKey.EXPIRATIONS,
+                DashKey.ROUTE_OPTIMIZER, DashKey.EXPENSE_LOG, DashKey.SUPPLIES,
             ),
             hiddenKeys(listOf(DashWidget(DashKey.KINTALES, DashSize.COMPACT))),
         )

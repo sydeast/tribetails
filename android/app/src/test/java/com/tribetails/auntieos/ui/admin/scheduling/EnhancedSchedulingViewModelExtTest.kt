@@ -49,6 +49,8 @@ class EnhancedSchedulingViewModelExtTest {
         coEvery { serviceRepo.getSupplementalServices() } returns Result.success(emptyList())
         coEvery { serviceRepo.getBusinessHours() } returns Result.success(emptyList())
         coEvery { auntieRepo.getKinfolk() } returns Result.success(emptyList())
+        // Stage-0I: the VM's cross-tenant-banner observers resolve sandbox state on init.
+        coEvery { auntieRepo.isTestAdminActive() } returns false
         coEvery { auntieRepo.getBusinessSettings() } returns Result.success(BusinessSettings())
         coEvery { auntieRepo.saveBusinessSettings(any(), any()) } returns Result.success(Unit)
         coEvery { auntieRepo.logActivity(any()) } returns Result.success(Unit)
@@ -186,6 +188,7 @@ class EnhancedSchedulingViewModelExtTest {
                 coEvery { sRepo.getSupplementalServices() } returns Result.success(emptyList())
                 coEvery { sRepo.getBusinessHours() } returns Result.success(emptyList())
                 coEvery { aRepo.getBusinessSettings() } returns Result.success(BusinessSettings())
+                coEvery { aRepo.isTestAdminActive() } returns false
                 coEvery { bRepo.getBookings(any(), any(), any(), any()) } returns Result.success(emptyList())
                 coEvery { bRepo.getTimeSlots(any(), any(), any()) } returns Result.success(emptyList())
                 every { bRepo.bookingTimeSlotsStream() } returns flowOf(Result.success(emptyList()))
