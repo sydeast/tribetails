@@ -80,3 +80,55 @@
   font-size: var(--type-label-sm-size, 0.72rem);
   color: var(--color-text-faint);
 }
+
+/* AO-36 Key & Code Safebox */
+.safebox__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+}
+
+.safebox__who {
+  font-family: var(--font-fraunces, var(--font-hanken));
+  font-size: var(--type-title-md-size, 1.1rem);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.safebox__when {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size, 0.72rem);
+  color: var(--color-text-faint);
+}
+
+.safebox__facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.safebox__fact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.safebox__fact-label {
+  font-size: var(--type-label-sm-size, 0.72rem);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-faint);
+}
+
+.safebox__fact-value {
+  font-size: var(--type-body-sm-size, 0.85rem);
+  color: var(--color-text-primary);
+}
+
+.safebox__fact-value--mono {
+  font-family: var(--font-mono);
+  font-size: var(--type-body-md-size, 0.95rem);
+  color: var(--color-accent);
+}

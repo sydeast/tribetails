@@ -1,5 +1,8 @@
 import { threadHouseholdName, threadPreviewText } from './inboxFormat';
+import { sessionState } from './sessionFormat';
 import type { ConversationSummary } from '../api/inbox';
+import type { SessionEntry } from '../api/sessions';
+import type { KinfolkProfile } from '../api/kinfolkProfile';
 
 /**
  * Pure logic behind the Home dashboard insight widgets (the React port of the
@@ -56,4 +59,57 @@ export function unreadClientMessages(
  */
 export function unreadClientMessageCount(rows: readonly ConversationSummary[]): number {
   return rows.reduce((n, r) => (r.unreadForAdmin ? n + 1 : n), 0);
+}
+
+// ── AO-36 / W3 Key & Code Safebox ──────────────────────────────────────────────
+
+/**
+ * The single NEXT upcoming visit for the "Key & Code Safebox" widget (AO-36 /
+ * W3), which surfaces the access notes for that visit's household only. Keeps a
+ * session whose start is now or later ([nowIso] is a full ISO instant, and start
+ * times compare lexicographically for the `...Z` writes, the same string-compare
+ * the sessions list already relies on) and whose state is neither cancelled nor
+ * completed (the positive `sessionState` enum, never a status-string negation),
+ * then returns the earliest such start. `null` when nothing is coming up.
+ */
+export function nextUpcomingSession(
+  sessions: readonly SessionEntry[],
+  nowIso: string,
+): SessionEntry | null {
+  let best: SessionEntry | null = null;
+  for (const s of sessions) {
+    const state = sessionState(s.status);
+    if (state === 'cancelled' || state === 'completed') continue;
+    if (s.startTime === '' || s.startTime < nowIso) continue;
+    if (best === null || s.startTime < best.startTime) best = s;
+  }
+  return best;
+}
+
+/** One labelled access fact (gate code, entry notes, ...). */
+export interface AccessLine {
+  label: string;
+  value: string;
+  /** Render monospaced (a code / password), not prose. */
+  mono?: boolean;
+}
+
+/**
+ * The household's access notes as display lines, blank fields dropped so a
+ * partial household never renders an empty "Gate code:" row. Codes/passwords are
+ * flagged [mono] so the widget renders them monospaced. Order is arrival order:
+ * where you're going, how you get in, then the wifi once inside.
+ */
+export function safeboxAccessLines(p: KinfolkProfile): AccessLine[] {
+  const lines: AccessLine[] = [];
+  const add = (label: string, value: string, mono = false): void => {
+    if (value.trim() !== '') lines.push(mono ? { label, value, mono: true } : { label, value });
+  };
+  add('Address', p.serviceAddress);
+  add('Gate / door code', p.gateCode, true);
+  add('Entry notes', p.entryNotes);
+  add('Parking', p.parkingInstructions);
+  add('WiFi network', p.wifiName);
+  add('WiFi password', p.wifiPassword, true);
+  return lines;
 }

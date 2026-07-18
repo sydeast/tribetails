@@ -1,6 +1,7 @@
 import { useNavigate } from '@tanstack/react-router';
 import { DenScreenHeading } from '../components/DenScreenKit';
 import { UnreadMessagesWidget } from './widgets/UnreadMessagesWidget';
+import { SafeboxWidget } from './widgets/SafeboxWidget';
 import './Home.css';
 
 /**
@@ -13,8 +14,8 @@ import './Home.css';
  * behind each lives in `lib/dashboardInsights.ts` (the React port of
  * `DashboardInsights.kt`) so it is unit-tested apart from the DOM.
  *
- * Live so far: Unread Client Messages (AO-38). Still to port: Key & Code Safebox
- * (AO-36), Care Flags (AO-37), Expiration Countdown (AO-39), Route Optimizer
+ * Live so far: Unread Client Messages (AO-38), Key & Code Safebox (AO-36). Still
+ * to port: Care Flags (AO-37), Expiration Countdown (AO-39), Route Optimizer
  * (AO-35, needs the `optimizeRoute` callable), Expense Quick-Log (AO-40) and
  * Supplies Tracker (AO-41), the last two of which need new backend models.
  */
@@ -33,6 +34,7 @@ export function Home() {
       />
 
       <div className="home-dash">
+        <SafeboxWidget />
         <UnreadMessagesWidget onOpenInbox={() => void navigate({ to: '/inbox' })} />
       </div>
     </div>
