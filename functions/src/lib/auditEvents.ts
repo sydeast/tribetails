@@ -180,6 +180,15 @@ export const AUDIT_EVENTS = {
   // not every staff call (a staff member acting on their own linked
   // household, if any, is not "cross-tenant").
   OPERATOR_CROSSTENANT_ACCESS: 'OPERATOR_CROSSTENANT_ACCESS',
+
+  // Dashboard-widget ops (AO-39/40/41): admin-only quick-log + tracker writes.
+  // All go through server-bound callables so the audit entry is structurally
+  // tied to the mutation. Reads (listExpenses/listSupplies/listExpirations/
+  // optimizeRoute) are NOT audited, matching the read-callable convention.
+  EXPENSE_LOGGED: 'EXPENSE_LOGGED',
+  SUPPLY_ADJUSTED: 'SUPPLY_ADJUSTED',
+  SUPPLY_UPSERTED: 'SUPPLY_UPSERTED',
+  EXPIRATION_UPSERTED: 'EXPIRATION_UPSERTED',
 } as const;
 
 export type AuditEvent = (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];

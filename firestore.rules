@@ -618,6 +618,14 @@ service cloud.firestore {
     match /visit_logs/{id}                      { allow read, write: if isAuntie(); }
     match /visit_routes/{id}                    { allow read, write: if isAuntie(); }
     match /voicemails/{id}                      { allow read, write: if isAuntie(); }
+ // Dashboard-widget collections (AO-40/41/39): admin-only read+write. Mutations
+ // normally flow through the server-bound admin callables (logExpense /
+ // adjustSupply / upsertSupply / upsertExpiration; the Admin SDK bypasses rules
+ // so the audit entry is bound to the mutation), but the read is admin-scoped so
+ // the widgets can list, and no non-admin can ever read or write these.
+    match /expenses/{id}                        { allow read, write: if isAuntie(); }
+    match /supplies/{id}                        { allow read, write: if isAuntie(); }
+    match /expirations/{id}                     { allow read, write: if isAuntie(); }
  // Server-written rate-limit + Stripe dedupe ledgers. Admin reads for
  // monitoring; client writes denied (admin SDK in Cloud Functions bypasses).
     match /ipRateLimits/{key}                   { allow read: if isAuntie(); allow write: if false; }
