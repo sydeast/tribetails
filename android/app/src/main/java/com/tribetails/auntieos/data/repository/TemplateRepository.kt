@@ -120,6 +120,23 @@ class TemplateRepository(
     }.onFailure { AuntieLog.e("TemplateRepository.assignTemplate failed", it) }
 
     /**
+     * AO-56: remove the binding for [catalogKey] (deletes
+     * notificationTemplateBindings/{catalogKey}). The inverse of [assignTemplate]
+     * and the half that used to be missing: without it a bound template could
+     * never be deleted, since deleteTemplate refuses while a binding points at
+     * it. Idempotent server-side (removed:false when the key was already gone);
+     * returns that flag so the UI can distinguish "unassigned" from "was already
+     * unassigned".
+     */
+    suspend fun unassignTemplate(catalogKey: String): Result<Boolean> = runCatching {
+        val payload = mapOf("catalogKey" to catalogKey)
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("unassignTemplate").call(payload).await().data as? Map<String, Any?>
+            ?: error("unassignTemplate: non-map payload")
+        raw["removed"] as? Boolean ?: false
+    }.onFailure { AuntieLog.e("TemplateRepository.unassignTemplate failed", it) }
+
+    /**
      * Stage 2 tail: the distinct set of template catalog keys currently in use, via
      * the read-only listCatalogKeys callable. Optional case-insensitive substring
      * filter. These are the keys the dispatcher knows about; comparing them against

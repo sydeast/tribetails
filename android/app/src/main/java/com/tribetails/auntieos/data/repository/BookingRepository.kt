@@ -41,6 +41,53 @@ class BookingRepository(
         docRef.id
     }.onFailure { AuntieLog.e("Error creating enhanced booking", it) }
 
+    /**
+     * AO-25: admin multi-date / recurring booking REQUEST, via the
+     * createMultiDateBookingRequest callable. Writes the ENVELOPE model
+     * (families/{kinfolkId}/bookings/{batchId}) as 'requested', so the result
+     * lands in [incomingKinCareRequestsStream] (the Incoming-requests queue) for
+     * approval, NOT the enhanced_bookings collection [createBooking] writes.
+     *
+     * [visits] carry per-visit epoch-ms start times, so non-consecutive dates
+     * need no special handling; a weekly recurrence is expanded to concrete
+     * visits by the caller and flagged via [pattern] = "weekly" + [weeklyDays].
+     * Times are LOCAL (the caller derives ms from the operator's wall-clock pick).
+     */
+    suspend fun createMultiDateBookingRequest(
+        kinfolkId: String,
+        visits: List<NewBookingVisit>,
+        notes: String? = null,
+        pattern: String = "individual",
+        weeklyDays: List<Int>? = null,
+        kinIds: List<String>? = null,
+    ): Result<MultiDateBookingResult> = runCatching {
+        require(visits.isNotEmpty()) { "At least one visit is required." }
+        val payload = buildMap<String, Any> {
+            put("kinfolkId", kinfolkId)
+            put("pattern", pattern)
+            notes?.takeIf { it.isNotBlank() }?.let { put("notes", it) }
+            weeklyDays?.let { put("weeklyDays", it) }
+            kinIds?.let { put("kinIds", it) }
+            put("visits", visits.map { v ->
+                buildMap<String, Any> {
+                    put("startTimeMs", v.startTimeMs)
+                    v.endTimeMs?.let { put("endTimeMs", it) }
+                    v.serviceId?.takeIf { it.isNotBlank() }?.let { put("serviceId", it) }
+                    put("serviceName", v.serviceName)
+                }
+            })
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("createMultiDateBookingRequest").call(payload).await().data as? Map<String, Any?>
+            ?: error("createMultiDateBookingRequest: non-map payload")
+        MultiDateBookingResult(
+            batchId = raw["batchId"] as? String ?: error("createMultiDateBookingRequest: missing batchId"),
+            visitIds = (raw["visitIds"] as? List<*>).orEmpty().mapNotNull { it as? String },
+            // Firebase serializes JS numbers as Double/Long; normalize to Int.
+            visitCount = (raw["visitCount"] as? Number)?.toInt() ?: visits.size,
+        )
+    }.onFailure { AuntieLog.e("BookingRepository.createMultiDateBookingRequest failed", it) }
+
     suspend fun getBookings(
         startDate: String? = null,
         endDate: String? = null,
@@ -713,4 +760,23 @@ data class ManageSeriesResult(
     val affectedVisits: Int,
     val failedVisits: Int = 0,
     val sessionsCreated: Int = 0,
+)
+
+/**
+ * AO-25: one visit in a multi-date/recurring booking request. [startTimeMs] is
+ * epoch ms derived from the operator's LOCAL wall-clock pick (no UTC skew).
+ * [serviceId] is optional; when set the server resolves the canonical name+price.
+ */
+data class NewBookingVisit(
+    val startTimeMs: Long,
+    val serviceName: String,
+    val endTimeMs: Long? = null,
+    val serviceId: String? = null,
+)
+
+/** AO-25: createMultiDateBookingRequest result (the created envelope + its visits). */
+data class MultiDateBookingResult(
+    val batchId: String,
+    val visitIds: List<String>,
+    val visitCount: Int,
 )

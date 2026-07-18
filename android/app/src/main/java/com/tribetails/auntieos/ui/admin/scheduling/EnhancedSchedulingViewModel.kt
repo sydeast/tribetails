@@ -35,6 +35,12 @@ data class SchedulingState(
     val errorMessage: String? = null,
     val selectedBooking: EnhancedBooking? = null,
     val showAddBookingDialog: Boolean = false,
+    // AO-25: admin multi-date / recurring booking REQUEST (envelope model). Distinct
+    // from showAddBookingDialog (the direct enhanced_bookings form): a request enters
+    // the Incoming-requests queue for approval. Success reuses [seriesActionMessage].
+    val showNewRequestDialog: Boolean = false,
+    val newRequestInFlight: Boolean = false,
+    val newRequestError: String? = null,
     val showConflictDialog: Boolean = false,
     val dragState: DragState? = null,
     val availabilityResult: BookingAvailabilityResult? = null,
@@ -924,6 +930,54 @@ class EnhancedSchedulingViewModel(
 
     fun hideAddBookingDialog() {
         _state.value = _state.value.copy(showAddBookingDialog = false)
+    }
+
+    fun showNewRequestDialog() {
+        _state.value = _state.value.copy(showNewRequestDialog = true, newRequestError = null)
+    }
+
+    fun hideNewRequestDialog() {
+        if (_state.value.newRequestInFlight) return
+        _state.value = _state.value.copy(showNewRequestDialog = false, newRequestError = null)
+    }
+
+    /**
+     * AO-25: create a multi-date / recurring booking REQUEST via
+     * [BookingRepository.createMultiDateBookingRequest]. On success the request
+     * enters the Incoming-requests queue ([incomingKinCareRequestsStream], a live
+     * listener, so the new envelope appears without a manual refresh); the dialog
+     * closes and [seriesActionMessage] reports the count. Fail-loud on rejection.
+     */
+    fun createBookingRequest(
+        kinfolkId: String,
+        visits: List<com.tribetails.auntieos.data.repository.NewBookingVisit>,
+        notes: String?,
+        pattern: String,
+        weeklyDays: List<Int>?,
+    ) {
+        if (_state.value.newRequestInFlight) return
+        _state.value = _state.value.copy(newRequestInFlight = true, newRequestError = null)
+        viewModelScope.launch {
+            bookingRepository.createMultiDateBookingRequest(
+                kinfolkId = kinfolkId,
+                visits = visits,
+                notes = notes,
+                pattern = pattern,
+                weeklyDays = weeklyDays,
+            ).onSuccess { result ->
+                _state.value = _state.value.copy(
+                    newRequestInFlight = false,
+                    showNewRequestDialog = false,
+                    seriesActionMessage = "Booking request created: ${result.visitCount} visit(s) submitted for approval. " +
+                        "It enters the Incoming-requests queue and appears above once approved.",
+                )
+            }.onFailure { t ->
+                _state.value = _state.value.copy(
+                    newRequestInFlight = false,
+                    newRequestError = t.message ?: "Failed to create the booking request.",
+                )
+            }
+        }
     }
 
     fun selectBooking(booking: EnhancedBooking?) {

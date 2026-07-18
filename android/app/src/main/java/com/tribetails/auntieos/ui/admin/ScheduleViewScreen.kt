@@ -487,7 +487,13 @@ fun ScheduleViewScreen(
                 DenPanel(
                     title = "Pending approval",
                     subtitle = "New booking requests waiting on your call.",
-                    trailing = { SectionCount(pendingBookings.size.toString()) },
+                    trailing = {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // AO-25: create a multi-date / recurring request (envelope model).
+                            AuntieTextBtn(onClick = { viewModel.showNewRequestDialog() }) { Text("+ New request") }
+                            SectionCount(pendingBookings.size.toString())
+                        }
+                    },
                 ) {
                     if (pendingBookings.isEmpty()) {
                         EmptyHint("No requests waiting. New bookings land here for approval.")
@@ -589,6 +595,19 @@ fun ScheduleViewScreen(
                 },
                 bookingSchemas = state.bookingFormSchemas,
                 schemaError    = state.bookingSchemaError,
+            )
+        }
+
+        if (state.showNewRequestDialog) {
+            NewBookingRequestDialog(
+                allKinfolk   = state.allKinfolk,
+                baseServices = state.baseServices.filter { it.isActive },
+                inFlight     = state.newRequestInFlight,
+                error        = state.newRequestError,
+                onDismiss    = { viewModel.hideNewRequestDialog() },
+                onCreate     = { kinfolkId, visits, notes, pattern, weeklyDays ->
+                    viewModel.createBookingRequest(kinfolkId, visits, notes, pattern, weeklyDays)
+                },
             )
         }
 
