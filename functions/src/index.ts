@@ -149,6 +149,11 @@ export { verifyActivityLogChain } from './admin/verifyActivityLogChain';
 export { setFeatureFlags } from './admin/setFeatureFlags';
 export { logActivity } from './admin/logActivity';
 export { getNotificationCatalog } from './notifications/getNotificationCatalog';
+// Dashboard-widget callables (AO-35/39/40/41): all admin-gated.
+export { optimizeRoute } from './admin/optimizeRoute';
+export { logExpense, listExpenses } from './admin/expenses';
+export { listSupplies, adjustSupply, upsertSupply } from './admin/supplies';
+export { listExpirations, upsertExpiration } from './admin/expirations';
 export {
   getBusinessNotificationOverrides,
   saveBusinessNotificationOverride,
