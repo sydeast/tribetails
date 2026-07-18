@@ -302,3 +302,95 @@ describe('mergeAdminClaim (claim preservation)', () => {
     assert.strictEqual(out.kinfolkId, 'kf_123');
   });
 });
+
+// ---------------------------------------------------------------------------
+// projectN8nDocResponse (AO-32 / W11) — getTrainingDoc & getDraft must return
+// ONLY the fields the n8n "Update Profiles" workflow consumes, never the whole
+// Firestore document (which carries operator raw_notes, createdBy uid,
+// attachment storage URLs, kinfolk PII, model/source metadata, etc.).
+// ---------------------------------------------------------------------------
+describe('projectN8nDocResponse (AO-32 field projection)', () => {
+  const { projectN8nDocResponse, N8N_DOC_RESPONSE_FIELDS } = idx;
+
+  it('projects only the whitelisted generated_drafts fields the consumer reads', () => {
+    // Real generated_drafts shape (web/functions/generate.js:325-336).
+    const draft = {
+      communication_type: 'text',
+      recipient: 'Jane Doe',
+      kinfolk_id: 'kf_1',
+      kinfolk_name: 'Jane Doe',
+      raw_notes: 'operator private notes',
+      generated_copy: 'Hi there!',
+      model: 'claude-sonnet-4-5',
+      status: 'generated',
+      source: 'function:generate',
+      generated_at: '2026-07-16T00:00:00.000Z',
+    };
+    const out = projectN8nDocResponse('draft_1', draft);
+    assert.deepStrictEqual(out, {
+      id: 'draft_1',
+      generated_copy: 'Hi there!',
+      communication_type: 'text',
+    });
+    // Sensitive / internal fields must NOT leak.
+    for (const leaked of ['raw_notes', 'kinfolk_id', 'kinfolk_name', 'recipient', 'model', 'source', 'status', 'generated_at']) {
+      assert.ok(!(leaked in out), `${leaked} must not be in the response`);
+    }
+  });
+
+  it('projects only the whitelisted training_documents fields the consumer reads', () => {
+    // Real training_documents shape (MyTribe createTrainingDocument.ts:77-92).
+    const doc = {
+      title: 'Vet visit',
+      content: 'Bella saw Dr. Smith.',
+      notes: 'internal reviewer notes',
+      communicationType: 'note',
+      targetType: 'KINFOLK',
+      targetKinfolkId: 'kf_1',
+      targetKinId: '',
+      kinfolkRef: 'kf_1',
+      attachments: [{ storageUrl: 'https://…', cloudinaryPublicId: 'abc' }],
+      reconcileStatus: 'pending',
+      reconcileNotes: '',
+      reconciledAt: '',
+      uploadedAt: '2026-07-16T00:00:00.000Z',
+      createdBy: 'uid_admin',
+    };
+    const out = projectN8nDocResponse('td_1', doc);
+    assert.deepStrictEqual(out, {
+      id: 'td_1',
+      content: 'Bella saw Dr. Smith.',
+      communicationType: 'note',
+      title: 'Vet visit',
+    });
+    for (const leaked of ['notes', 'attachments', 'createdBy', 'targetKinfolkId', 'kinfolkRef', 'reconcileNotes', 'reconcileStatus', 'uploadedAt']) {
+      assert.ok(!(leaked in out), `${leaked} must not be in the response`);
+    }
+  });
+
+  it('always includes the doc id and never emits keys absent on the source', () => {
+    const out = projectN8nDocResponse('x', { generated_copy: 'c' });
+    assert.strictEqual(out.id, 'x');
+    assert.strictEqual(out.generated_copy, 'c');
+    // Whitelisted-but-absent keys must not appear as undefined.
+    assert.ok(!('content' in out));
+    assert.ok(!('title' in out));
+    assert.strictEqual(Object.keys(out).length, 2);
+  });
+
+  it('tolerates missing / empty data without throwing', () => {
+    assert.deepStrictEqual(projectN8nDocResponse('x', undefined), { id: 'x' });
+    assert.deepStrictEqual(projectN8nDocResponse('x', {}), { id: 'x' });
+  });
+
+  it('the whitelist is exactly the fields Build Update Prompts references', () => {
+    // Guard against silent widening of the projection.
+    assert.deepStrictEqual([...N8N_DOC_RESPONSE_FIELDS].sort(), [
+      'communicationType',
+      'communication_type',
+      'content',
+      'generated_copy',
+      'title',
+    ]);
+  });
+});

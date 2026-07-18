@@ -246,6 +246,41 @@ exports.writeDraft = onRequest({ secrets: [N8N_SHARED_SECRET], cors: false }, as
   }
 });
 
+// AO-32 (W11): getTrainingDoc / getDraft used to return the ENTIRE Firestore
+// document on shared-secret auth alone. That leaked internal/sensitive fields
+// the caller never needs — operator raw_notes, createdBy uid, attachment storage
+// URLs / cloudinaryPublicId, kinfolk PII (kinfolk_id/kinfolk_name/recipient),
+// model/source/status metadata, reconcile bookkeeping, etc.
+//
+// The ONLY consumer is the n8n "Update Profiles" workflow's "Build Update
+// Prompts" node, which reads exactly these fields off the returned row
+// (create_n8n_workflows.py:834-835, and patch_update_profiles_firestore.py:140
+// which adds the camelCase communicationType variant):
+//   new_content  = row.generated_copy || row.content
+//   content_type = row.communicationType || row.communication_type || row.title
+// (the trigger's kinfolk_id / row_id come from the workflow's own trigger body,
+// not from this response.)
+//
+// So project ONLY those fields (plus the doc id) — nothing else crosses the
+// boundary. Keys absent on a given collection simply don't appear in the
+// response. Exported for hermetic unit tests.
+const N8N_DOC_RESPONSE_FIELDS = [
+  'generated_copy', // generated_drafts: draft body -> new_content
+  'content', // training_documents: doc body -> new_content
+  'communicationType', // training_documents: content_type (camelCase)
+  'communication_type', // generated_drafts: content_type (snake_case)
+  'title', // both: content_type fallback
+];
+
+function projectN8nDocResponse(id, data) {
+  const out = { id };
+  const src = data || {};
+  for (const key of N8N_DOC_RESPONSE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(src, key)) out[key] = src[key];
+  }
+  return out;
+}
+
 // Same shape but reads a single training document. Used by Update Profiles n8n workflow.
 exports.getTrainingDoc = onRequest({ secrets: [N8N_SHARED_SECRET], cors: false }, async (req, res) => {
   if (!(await n8nKeyAuth(req, res, 'getTrainingDoc'))) return;
@@ -260,7 +295,7 @@ exports.getTrainingDoc = onRequest({ secrets: [N8N_SHARED_SECRET], cors: false }
       res.status(404).json({ error: `training_documents/${id} not found` });
       return;
     }
-    res.status(200).json({ id: snap.id, ...snap.data() });
+    res.status(200).json(projectN8nDocResponse(snap.id, snap.data()));
   } catch (err) {
     console.error('getTrainingDoc failed', err);
     res.status(500).json({ error: err.message || 'internal error' });
@@ -281,7 +316,7 @@ exports.getDraft = onRequest({ secrets: [N8N_SHARED_SECRET], cors: false }, asyn
       res.status(404).json({ error: `generated_drafts/${id} not found` });
       return;
     }
-    res.status(200).json({ id: snap.id, ...snap.data() });
+    res.status(200).json(projectN8nDocResponse(snap.id, snap.data()));
   } catch (err) {
     console.error('getDraft failed', err);
     res.status(500).json({ error: err.message || 'internal error' });
@@ -696,3 +731,5 @@ module.exports.ANTHROPIC_MODEL_DEFAULT = ANTHROPIC_MODEL_DEFAULT;
 module.exports.validateUploadFolder = validateUploadFolder;
 module.exports.assertAdminRemovalAllowed = assertAdminRemovalAllowed;
 module.exports.mergeAdminClaim = mergeAdminClaim;
+module.exports.projectN8nDocResponse = projectN8nDocResponse;
+module.exports.N8N_DOC_RESPONSE_FIELDS = N8N_DOC_RESPONSE_FIELDS;
