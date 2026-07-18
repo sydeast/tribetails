@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
+import { resolveActor, type ResolvedActor } from '../lib/resolveActor';
 import { getNotificationDef } from './catalog';
 import { loadBusinessOverride, loadUserPrefs, resolveChannels, streamForRecipient } from './prefs';
 import { resolveRecipients } from './recipientResolver';
@@ -123,6 +124,10 @@ export async function enqueueNotification(args: EnqueueArgs): Promise<string[]> 
     return true;
   });
 
+  // AO-28: resolve the actor's name + photo ONCE (not per recipient) so every
+  // written NotificationEntry can render who caused it with an avatar.
+  const actor = await resolveActor(args.actorUid);
+
   const writtenIds: string[] = [];
   for (const recipient of recipients) {
     const [userPrefs, businessOverride] = await Promise.all([
@@ -149,7 +154,7 @@ export async function enqueueNotification(args: EnqueueArgs): Promise<string[]> 
       continue;
     }
 
-    const id = await routeByDeliveryMode(def, args, recipient.uid, channels);
+    const id = await routeByDeliveryMode(def, args, recipient.uid, channels, actor);
     if (id) writtenIds.push(id);
   }
 
@@ -169,6 +174,7 @@ async function routeByDeliveryMode(
   args: EnqueueArgs,
   recipientUid: string,
   channels: ResolvedChannels,
+  actor: ResolvedActor,
 ): Promise<string | null> {
   const { targetType, targetId } = resolveTargetRef(args);
   const baseDoc = {
@@ -176,6 +182,13 @@ async function routeByDeliveryMode(
     category: def.category,
     recipientUid,
     actorUid: args.actorUid ?? null,
+    // AO-28: human-renderable content on the entry itself (title + description
+    // from the catalog def) + the resolved actor identity, so a client renders
+    // "<title> — <actorName>" with an avatar instead of a bare key.
+    title: def.label,
+    description: def.description,
+    actorName: actor.actorName,
+    actorPhotoUrl: actor.actorPhotoUrl,
     data: args.data,
     channels: activeChannelList(channels),
     // Deep-link reference for open-linked + quick approve/deny. Always present
