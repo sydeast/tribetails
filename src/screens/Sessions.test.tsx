@@ -69,8 +69,8 @@ describe('Sessions screen', () => {
   it('renders a streamed row with its household, service, time window, and status chip', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Sessions />);
-    // Scope by the row container, not the button, the row is only a <button>
-    // once a detail route wires onSelect; here (unwired) it renders static.
+    // Scope by the row container: the household name also seeds the row button's
+    // accessible name, so scoping keeps these assertions on the row's own cells.
     const row = screen.getByText('The Whitfields').closest('.sessions__row') as HTMLElement;
     expect(within(row).getByText('The Whitfields')).toBeInTheDocument();
     expect(within(row).getByText('Dog Walk')).toBeInTheDocument();
@@ -178,13 +178,18 @@ describe('Sessions screen', () => {
     expect(onSelect).toHaveBeenCalledWith('sess-42');
   });
 
-  it('omitting onSelect renders each row STATIC (not a live no-op button)', () => {
+  it('propless, a row is now interactive and opens the in-screen SessionDetail view', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Sessions />);
-    // The row content renders, but it is NOT an interactive button when unwired, 
-    // a live button that no-ops on click is the dead-control anti-pattern.
+    // No external onSelect: the row is a real <button> that opens SessionDetail
+    // (fed from this same stream, no second fetch), NOT a static dead control.
+    // The list-only STATIC-row behavior this used to assert is now inverted:
+    // the detail view it opens has shipped.
+    await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    // The detail view has taken over the screen (Directory/KinfolkProfile
+    // pattern): its Back control is present, and the household is its heading.
+    expect(screen.getByRole('button', { name: /back to auntie time/i })).toBeInTheDocument();
     expect(screen.getByText('The Whitfields')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /The Whitfields/i })).toBeNull();
   });
 
   it('the "In flight" stat counts only the three active states', () => {

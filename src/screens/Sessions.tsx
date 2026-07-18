@@ -17,6 +17,7 @@ import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { SessionDetail } from './SessionDetail';
 import './Sessions.css';
 
 /**
@@ -42,13 +43,13 @@ const FILTERS: readonly FilterDef[] = [
 
 interface SessionsProps {
   /**
-   * Placeholder: the detail/edit screen (clock-in/out, GPS, KinTale compose, 
-   * `KinCareDetailScreen`/`KinTaleComposeScreen` in the wasm) is a separate,
-   * not-yet-built screen; this port is LIST ONLY. The router mounts this screen
-   * propless, so `onSelect` is undefined in production, see `SessionRow`: when
-   * unwired the row is a STATIC <div>, not a <button>. A handler-less <button>
-   * is still a focusable dead control, so the row only becomes a real <button>
-   * once a detail route wires the handler.
+   * Row-select override. The router mounts this screen propless, and by default
+   * a selected row now opens the in-screen `SessionDetail` read-only view, fed
+   * from the SAME live SESSIONS_QUERY stream this list already reads (no second
+   * fetch, see the `detailEntry` lookup below), the Bookings.tsx onSelectBooking
+   * pattern. Passing `onSelect` explicitly overrides that default (a future
+   * detail ROUTE, or a test, owns selection instead); when overridden this
+   * screen's own detail view never renders (see the `!onSelect` guard).
    */
   onSelect?: (sessionId: string) => void;
 }
@@ -62,14 +63,20 @@ interface SessionsProps {
  * negation) and groups the FILTERED rows by LOCAL calendar day
  * (`groupSessionsByDay`, the AO-18 fix) for display.
  *
- * List only: clock-in/out, GPS tracking, and the per-session detail/KinTale
- * flows (`KinCareDetailScreen`, `KinTaleComposeScreen` in the wasm reference)
- * are a separate, not-yet-built screen. `onSelect` is this screen's only hook
- * into that later work.
+ * Selecting a row opens `SessionDetail`, a read-only detail view of that one
+ * session (status/service, timing, household/kin, notes), resolved from this
+ * list's own stream (no second fetch, see SessionsProps.onSelect's doc and the
+ * `detailEntry` lookup below). Still NOT built here: the WRITE flows,
+ * clock-in/out, GPS tracking, and KinTale compose (`KinCareDetailScreen`/
+ * `KinTaleComposeScreen` in the wasm reference), which are a separate surface.
  */
 export function Sessions({ onSelect }: SessionsProps) {
   const rows = useCollection<SessionEntry>(SESSIONS_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
+  // The detail view's own selection state, used only when no external onSelect
+  // is supplied (see SessionsProps's doc above).
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const handleSelect = onSelect ?? setDetailId;
 
   // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
   // Home/End, roving tabIndex); called unconditionally at the top level per
@@ -97,6 +104,22 @@ export function Sessions({ onSelect }: SessionsProps) {
       data.filter((e) => sessionState(e.status) === 'completed' && sessionDayKey(e.completedAt) === todayIso)
         .length,
   );
+
+  // The row SessionDetail shows, resolved from the SAME live stream `rows`
+  // already holds (never a second fetch): the Bookings.tsx `detailEntry`
+  // pattern. `null` (stream not ready, or the id no longer resolves to a row)
+  // gets its own honest "unavailable" state inside SessionDetail, never a blank.
+  const detailEntry =
+    detailId !== null && rows.status === 'ready'
+      ? (rows.data.find((r) => r._id === detailId) ?? null)
+      : null;
+
+  // Only this screen's OWN selection takes over with its own detail view; an
+  // external onSelect (see the prop's doc) means the caller owns the detail UI
+  // instead. A sibling VIEW of the list, the Directory/KinfolkProfile pattern.
+  if (!onSelect && detailId !== null) {
+    return <SessionDetail entry={detailEntry} onBack={() => setDetailId(null)} />;
+  }
 
   return (
     <div className="screen">
@@ -162,7 +185,7 @@ export function Sessions({ onSelect }: SessionsProps) {
                         <h3 className="sessions__day-header">{sessionDayLabel(g.dayKeyValue, todayIso)}</h3>
                         <ul className="sessions__day-rows">
                           {g.rows.map((entry) => (
-                            <SessionRow key={entry._id} entry={entry} onSelect={onSelect} />
+                            <SessionRow key={entry._id} entry={entry} onSelect={handleSelect} />
                           ))}
                         </ul>
                       </li>
