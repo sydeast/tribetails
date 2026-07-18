@@ -6,7 +6,8 @@ import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKi
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
 import { Banner } from '../components/Banner';
-import { GhostButton } from '../components/Buttons';
+import { GhostButton, PrimaryButton } from '../components/Buttons';
+import { KinEdit } from './KinEdit';
 import './KinView.css';
 
 interface KinViewProps {
@@ -40,6 +41,9 @@ function any(...vals: string[]): boolean {
  */
 export function KinView({ kinId, kinName, onBack }: KinViewProps) {
   const [kin, setKin] = useState<Async<KinDetail>>({ status: 'loading' });
+  // The editor is a sub-view of this detail screen: Edit swaps to KinEdit, and a
+  // save/archive returns here + reloads so the fresh doc renders.
+  const [editing, setEditing] = useState(false);
 
   const load = useCallback(() => {
     let live = true;
@@ -65,13 +69,32 @@ export function KinView({ kinId, kinName, onBack }: KinViewProps) {
 
   useEffect(() => load(), [load]);
 
+  if (editing) {
+    return (
+      <KinEdit
+        kinId={kinId}
+        kinName={kinName}
+        onDone={() => {
+          setEditing(false);
+          load();
+        }}
+        onCancel={() => setEditing(false)}
+      />
+    );
+  }
+
   return (
     <div className="screen">
       <DenScreenHeading
         kicker="The Den · Directory"
         title={kinName || kinId}
         subtitle="Kin profile."
-        trailing={<GhostButton label="Back to Directory" onClick={onBack} />}
+        trailing={
+          <>
+            <GhostButton label="Back to Directory" onClick={onBack} />
+            <PrimaryButton label="Edit" onClick={() => setEditing(true)} />
+          </>
+        }
       />
 
       <AsyncRegion

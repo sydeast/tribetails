@@ -1,4 +1,4 @@
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
 /**
@@ -165,4 +165,60 @@ export async function createKin(input: NewKinInput): Promise<string> {
     updatedAt: serverTimestamp(),
   });
   return ref.id;
+}
+
+/**
+ * The editable flat-`kin` fields (the rich model KinView reads). Every field is
+ * optional so the editor sends exactly what it edits; `updateDoc` is a MERGE,
+ * so unlisted fields (and `status`, owned by the archive action) are untouched.
+ *
+ * DIRECT write to `kin/{id}`, not the `updateKin` CALLABLE: the callable edits a
+ * DIFFERENT portal model (ageYears/feedingInstructions/... on the source doc that
+ * a trigger mirrors to this flat one) and cannot set most of the rich flat fields
+ * this admin shows. The flat `kin` collection is `isAuntie`-writable (the same
+ * rule `createKin` above relies on), so the edit is a direct merge, mirroring
+ * `createKin`'s direct create. `updatedAt` is re-stamped so KIN_QUERY's
+ * `orderBy('updatedAt', 'desc')` surfaces the edit.
+ */
+export interface KinEditPatch {
+  name?: string;
+  species?: string;
+  breed?: string;
+  age?: string;
+  sex?: string;
+  weight?: string;
+  colorMarkings?: string;
+  spayedNeutered?: boolean;
+  reactive?: boolean;
+  staysAs?: string;
+  routine?: string;
+  trainingCommands?: string;
+  feedingBrand?: string;
+  vaccinations?: string;
+  medicationHealthNotes?: string;
+  vetInfo?: string;
+  officeNotes?: string;
+  ownerEmail?: string;
+  ownerPhone?: string;
+}
+
+export async function updateKin(kinId: string, patch: KinEditPatch): Promise<void> {
+  const id = kinId.trim();
+  if (id === '') throw new Error('updateKin requires a kin id');
+  if ((patch.name ?? '').trim() === '' && 'name' in patch) throw new Error('A kin name is required.');
+  await updateDoc(doc(db, 'kin', id), { ...patch, updatedAt: serverTimestamp() });
+}
+
+/**
+ * Archive / restore a pet: the ONLY status control (createKin's doc notes status
+ * is never edited on the main form). Ports the wasm's archive action. Direct
+ * status write to the flat doc, same transport as `updateKin`.
+ */
+export async function setKinArchived(kinId: string, archived: boolean): Promise<void> {
+  const id = kinId.trim();
+  if (id === '') throw new Error('setKinArchived requires a kin id');
+  await updateDoc(doc(db, 'kin', id), {
+    status: archived ? 'archived' : 'active',
+    updatedAt: serverTimestamp(),
+  });
 }
