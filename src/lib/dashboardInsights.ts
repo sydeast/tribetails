@@ -1,8 +1,12 @@
 import { threadHouseholdName, threadPreviewText } from './inboxFormat';
-import { sessionState } from './sessionFormat';
+import { sessionState, sessionDayKey, sessionHousehold } from './sessionFormat';
+import { isoDatePrefixOrNull } from './invoiceFormat';
 import type { ConversationSummary } from '../api/inbox';
 import type { SessionEntry } from '../api/sessions';
 import type { KinfolkProfile } from '../api/kinfolkProfile';
+import type { ExpirationRow } from '../api/expirations';
+import type { ExpenseRow } from '../api/expenses';
+import type { SupplyRow } from '../api/supplies';
 
 /**
  * Pure logic behind the Home dashboard insight widgets (the React port of the
@@ -112,4 +116,201 @@ export function safeboxAccessLines(p: KinfolkProfile): AccessLine[] {
   add('WiFi network', p.wifiName);
   add('WiFi password', p.wifiPassword, true);
   return lines;
+}
+
+// ── shared date helper ─────────────────────────────────────────────────────────
+
+/**
+ * Whole-calendar-day difference `b - a` for two `YYYY-MM-DD` strings, via
+ * UTC-anchored arithmetic (no time-of-day involved, so no zone ambiguity). Same
+ * approach `sessionFormat.ts` uses for its day-group labels; duplicated here as a
+ * tiny private helper rather than widening that module's surface.
+ */
+function wholeDaysBetween(aIso: string, bIso: string): number {
+  const [ay, am, ad] = aIso.slice(0, 10).split('-').map(Number);
+  const [by, bm, bd] = bIso.slice(0, 10).split('-').map(Number);
+  const aUtc = Date.UTC(ay ?? 1970, (am ?? 1) - 1, ad ?? 1);
+  const bUtc = Date.UTC(by ?? 1970, (bm ?? 1) - 1, bd ?? 1);
+  return Math.round((bUtc - aUtc) / 86_400_000);
+}
+
+// ── AO-37 Care Flags ────────────────────────────────────────────────────────────
+
+/** Which care concern a flag is about. Drives both the label and the sort order. */
+export type CareFlagKind = 'reactive' | 'medication' | 'feeding';
+
+/** One care concern for one pet on today's roster, ready to render as a row. */
+export interface CareFlag {
+  kinId: string;
+  kinName: string;
+  household: string;
+  kind: CareFlagKind;
+  text: string;
+}
+
+/**
+ * The three care fields `careFlags` reads off a `kin` doc. Kept minimal (a subset
+ * of `api/kinCare.ts#KinCareRow`) so a caller can build the lookup map from any
+ * pet source. `reactive` is already narrowed to a real boolean and the two note
+ * fields to real strings by the caller, so this module never sees `undefined`.
+ */
+export interface KinCareInfo {
+  name: string;
+  reactive: boolean;
+  medicationHealthNotes: string;
+  feedingBrand: string;
+}
+
+/** reactive first, then medication, then feeding (the render + sort priority). */
+const CARE_KIND_RANK: Record<CareFlagKind, number> = { reactive: 0, medication: 1, feeding: 2 };
+
+/**
+ * The care flags for TODAY's roster (AO-37). Reads no backend of its own: it
+ * joins today's non-cancelled sessions ([sessions], filtered by LOCAL day via
+ * `sessionDayKey` so the AO-18 zone bug cannot creep back in) to the pet docs in
+ * [kinById] (keyed by the flat `kin` doc id, which is what `session.kinIds`
+ * holds). For each pet on a session it emits a flag when the pet is reactive
+ * (text "Reactive, handle with care"), has non-blank medication/health notes
+ * (text = those notes), or has a non-blank feeding brand (text = the brand).
+ *
+ * A pet appearing on two of today's sessions is flagged once per concern (dedup
+ * by `kinId` + `kind`), and the result is sorted reactive, then medication, then
+ * feeding (a stable sort, so same-kind rows keep their first-seen order). A
+ * session whose pet is not in [kinById] contributes nothing rather than a blank
+ * row. Does not mutate its inputs.
+ */
+export function careFlags(
+  sessions: readonly SessionEntry[],
+  kinById: ReadonlyMap<string, KinCareInfo>,
+  todayIso: string,
+): CareFlag[] {
+  const flags: CareFlag[] = [];
+  const seen = new Set<string>();
+  const push = (
+    kinId: string,
+    info: KinCareInfo,
+    household: string,
+    kind: CareFlagKind,
+    text: string,
+  ): void => {
+    const key = `${kinId}|${kind}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    flags.push({ kinId, kinName: info.name, household, kind, text });
+  };
+
+  for (const s of sessions) {
+    if (sessionState(s.status) === 'cancelled') continue;
+    if (sessionDayKey(s.startTime) !== todayIso) continue;
+    const household = sessionHousehold(s.kinfolkName);
+    for (const kinId of s.kinIds) {
+      const info = kinById.get(kinId);
+      if (!info) continue;
+      if (info.reactive) push(kinId, info, household, 'reactive', 'Reactive, handle with care');
+      const meds = info.medicationHealthNotes.trim();
+      if (meds !== '') push(kinId, info, household, 'medication', meds);
+      const feed = info.feedingBrand.trim();
+      if (feed !== '') push(kinId, info, household, 'feeding', feed);
+    }
+  }
+
+  flags.sort((a, b) => CARE_KIND_RANK[a.kind] - CARE_KIND_RANK[b.kind]);
+  return flags;
+}
+
+// ── AO-39 Expiration Countdown ──────────────────────────────────────────────────
+
+/** One upcoming expiry, ready to render as a countdown row. */
+export interface ExpRow {
+  label: string;
+  /** Normalized `YYYY-MM-DD`. */
+  dateIso: string;
+  /** Whole days from today until the expiry (0 = expires today). */
+  daysUntil: number;
+  kind: string;
+}
+
+/**
+ * The expiries falling in the near horizon (AO-39). Keeps a row whose `dateIso`
+ * parses to a real `YYYY-MM-DD` (via `isoDatePrefixOrNull`, so "soon" text never
+ * fabricates an ordering) AND is today-or-later AND within [withinDays], then
+ * sorts by `dateIso` ascending. `daysUntil` is the whole-day gap from [todayIso].
+ * A row with an unparseable date is dropped, not guessed at. Does not mutate its
+ * input.
+ */
+export function upcomingExpirations(
+  rows: readonly Pick<ExpirationRow, 'label' | 'dateIso' | 'kind'>[],
+  todayIso: string,
+  withinDays = 60,
+): ExpRow[] {
+  const out: ExpRow[] = [];
+  for (const r of rows) {
+    const iso = isoDatePrefixOrNull(r.dateIso);
+    if (iso === null) continue;
+    const daysUntil = wholeDaysBetween(todayIso, iso);
+    if (daysUntil < 0 || daysUntil > withinDays) continue;
+    out.push({ label: r.label, dateIso: iso, daysUntil, kind: r.kind });
+  }
+  out.sort((a, b) => (a.dateIso < b.dateIso ? -1 : a.dateIso > b.dateIso ? 1 : 0));
+  return out;
+}
+
+// ── AO-40 Expense Quick-Log ──────────────────────────────────────────────────────
+
+/**
+ * The most recent expenses, newest first (AO-40). Sorts by `occurredAt` (an ISO
+ * instant string, so a lexical compare is chronological for the `...Z` writes)
+ * descending and caps at [limit]. A non-positive limit yields no rows. Does not
+ * mutate its input.
+ */
+export function recentExpenses(list: readonly ExpenseRow[], limit = 5): ExpenseRow[] {
+  return list
+    .slice()
+    .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : a.occurredAt > b.occurredAt ? -1 : 0))
+    .slice(0, Math.max(0, limit));
+}
+
+/**
+ * "$12.34" from an integer count of cents. Negative renders "-$12.34" (a refund
+ * / correction), and a non-finite input reads as $0.00 rather than "$NaN".
+ */
+export function formatCents(cents: number): string {
+  const n = Number.isFinite(cents) ? cents : 0;
+  const sign = n < 0 ? '-' : '';
+  return `${sign}$${(Math.abs(n) / 100).toFixed(2)}`;
+}
+
+// ── AO-41 Supplies Tracker ───────────────────────────────────────────────────────
+
+/**
+ * The supplies at or below their reorder threshold (AO-41), most-depleted first.
+ * Keeps `onHand <= par` (the same "low" rule the server counts by) and sorts by
+ * `onHand - par` ascending, so the deepest shortfall (most negative) leads. Does
+ * not mutate its input.
+ */
+export function lowSupplies(list: readonly SupplyRow[]): SupplyRow[] {
+  return list
+    .filter((s) => s.onHand <= s.par)
+    .slice()
+    .sort((a, b) => a.onHand - a.par - (b.onHand - b.par));
+}
+
+// ── AO-35 Route Optimizer ────────────────────────────────────────────────────────
+
+/** "12.3 mi" from a mileage. Non-finite reads as "0.0 mi", never "NaN mi". */
+export function formatMiles(miles: number): string {
+  const n = Number.isFinite(miles) ? miles : 0;
+  return `${n.toFixed(1)} mi`;
+}
+
+/**
+ * "45m" / "1h 05m" from a whole-minute duration. Rounds to the nearest minute,
+ * floors negatives at zero, and pads the minutes inside an hour so "1h 5m" reads
+ * "1h 05m". Non-finite reads as "0m".
+ */
+export function formatDuration(minutes: number): string {
+  const total = Number.isFinite(minutes) ? Math.max(0, Math.round(minutes)) : 0;
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return h === 0 ? `${m}m` : `${h}h ${String(m).padStart(2, '0')}m`;
 }

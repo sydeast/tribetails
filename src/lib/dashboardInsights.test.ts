@@ -4,9 +4,20 @@ import {
   unreadClientMessageCount,
   nextUpcomingSession,
   safeboxAccessLines,
+  careFlags,
+  upcomingExpirations,
+  recentExpenses,
+  formatCents,
+  lowSupplies,
+  formatMiles,
+  formatDuration,
+  type KinCareInfo,
 } from './dashboardInsights';
 import type { ConversationSummary } from '../api/inbox';
 import type { SessionEntry } from '../api/sessions';
+import type { ExpirationRow } from '../api/expirations';
+import type { ExpenseRow } from '../api/expenses';
+import type { SupplyRow } from '../api/supplies';
 import { mergeKinfolkProfile } from '../api/kinfolkProfile';
 
 function sess(over: Partial<SessionEntry> = {}): SessionEntry {
@@ -154,5 +165,174 @@ describe('safeboxAccessLines', () => {
 
   it('is empty for a household with no access notes', () => {
     expect(safeboxAccessLines(mergeKinfolkProfile('k1', {}))).toEqual([]);
+  });
+});
+
+// ── AO-37 careFlags ─────────────────────────────────────────────────────────
+import { sessionDayKey } from './sessionFormat';
+
+function kin(over: Partial<KinCareInfo> = {}): KinCareInfo {
+  return { name: 'Biscuit', reactive: false, medicationHealthNotes: '', feedingBrand: '', ...over };
+}
+
+describe('careFlags', () => {
+  // Derive "today" from a session's own start via the same LOCAL day-key the
+  // function uses, so the join is deterministic regardless of the test machine's
+  // timezone (no reliance on where the wall clock lands the UTC instant).
+  const START = '2026-07-20T15:00:00.000Z';
+  const OTHER_DAY = '2026-07-25T15:00:00.000Z';
+  const today = sessionDayKey(START);
+
+  it('emits reactive, medication and feeding flags for today, in that order, deduped', () => {
+    const kinById = new Map<string, KinCareInfo>([
+      ['p1', kin({ name: 'Biscuit', reactive: true, medicationHealthNotes: 'Insulin 2x', feedingBrand: 'Acana' })],
+    ]);
+    const out = careFlags(
+      [
+        sess({ _id: 'a', kinfolkName: 'Rivera', kinIds: ['p1'], startTime: START }),
+        // Same pet, second visit today: must not double-flag.
+        sess({ _id: 'b', kinfolkName: 'Rivera', kinIds: ['p1'], startTime: START }),
+      ],
+      kinById,
+      today,
+    );
+    expect(out.map((f) => f.kind)).toEqual(['reactive', 'medication', 'feeding']);
+    expect(out.map((f) => f.text)).toEqual(['Reactive, handle with care', 'Insulin 2x', 'Acana']);
+    expect(out.every((f) => f.household === 'Rivera' && f.kinName === 'Biscuit')).toBe(true);
+  });
+
+  it('skips cancelled sessions and sessions that are not today', () => {
+    const kinById = new Map<string, KinCareInfo>([['p1', kin({ reactive: true })]]);
+    const out = careFlags(
+      [
+        sess({ _id: 'cx', kinIds: ['p1'], startTime: START, status: 'CANCELLED' }),
+        sess({ _id: 'future', kinIds: ['p1'], startTime: OTHER_DAY, status: 'SCHEDULED' }),
+      ],
+      kinById,
+      today,
+    );
+    expect(out).toEqual([]);
+  });
+
+  it('ignores a pet not in the lookup and a pet with no care notes', () => {
+    const kinById = new Map<string, KinCareInfo>([['p1', kin()]]); // all blank/false
+    const out = careFlags(
+      [sess({ kinIds: ['p1', 'unknown'], startTime: START })],
+      kinById,
+      today,
+    );
+    expect(out).toEqual([]);
+  });
+});
+
+// ── AO-39 upcomingExpirations ───────────────────────────────────────────────
+function exp(over: Partial<ExpirationRow> = {}): ExpirationRow {
+  return { _id: 'e1', label: 'Gate code', dateIso: '2026-08-01', kind: 'gateCode', ...over };
+}
+
+describe('upcomingExpirations', () => {
+  const today = '2026-07-20';
+
+  it('keeps today-or-later within the horizon, sorted ascending, with day counts', () => {
+    const out = upcomingExpirations(
+      [
+        exp({ label: 'Far', dateIso: '2026-09-30' }), // 72 days: out of a 60-day window
+        exp({ label: 'Soon', dateIso: '2026-07-25' }), // 5 days
+        exp({ label: 'Today', dateIso: '2026-07-20' }), // 0 days
+        exp({ label: 'Past', dateIso: '2026-07-10' }), // negative: dropped
+      ],
+      today,
+      60,
+    );
+    expect(out.map((r) => r.label)).toEqual(['Today', 'Soon']);
+    expect(out.map((r) => r.daysUntil)).toEqual([0, 5]);
+  });
+
+  it('drops a row whose date does not parse rather than guessing', () => {
+    const out = upcomingExpirations([exp({ label: 'Vague', dateIso: 'Net 30' })], today, 60);
+    expect(out).toEqual([]);
+  });
+});
+
+// ── AO-40 recentExpenses / formatCents ──────────────────────────────────────
+function expense(over: Partial<ExpenseRow> = {}): ExpenseRow {
+  return { _id: 'x1', kind: 'gas', amountCents: 1234, note: '', occurredAt: '2026-07-20T09:00:00.000Z', ...over };
+}
+
+describe('recentExpenses', () => {
+  it('returns newest first, capped at the limit', () => {
+    const out = recentExpenses(
+      [
+        expense({ _id: 'old', occurredAt: '2026-07-01T09:00:00.000Z' }),
+        expense({ _id: 'new', occurredAt: '2026-07-18T09:00:00.000Z' }),
+        expense({ _id: 'mid', occurredAt: '2026-07-10T09:00:00.000Z' }),
+      ],
+      2,
+    );
+    expect(out.map((e) => e._id)).toEqual(['new', 'mid']);
+  });
+
+  it('does not mutate the input and treats a non-positive limit as zero rows', () => {
+    const rows = [expense({ _id: 'a' }), expense({ _id: 'b' })];
+    recentExpenses(rows, 5);
+    expect(rows.map((r) => r._id)).toEqual(['a', 'b']);
+    expect(recentExpenses(rows, 0)).toEqual([]);
+  });
+});
+
+describe('formatCents', () => {
+  it('formats cents as dollars, with a sign for a negative', () => {
+    expect(formatCents(1234)).toBe('$12.34');
+    expect(formatCents(0)).toBe('$0.00');
+    expect(formatCents(-500)).toBe('-$5.00');
+  });
+
+  it('reads a non-finite amount as $0.00, never "$NaN"', () => {
+    expect(formatCents(Number.NaN)).toBe('$0.00');
+  });
+});
+
+// ── AO-41 lowSupplies ────────────────────────────────────────────────────────
+function supply(over: Partial<SupplyRow> = {}): SupplyRow {
+  return { _id: 's1', name: 'Poop bags', onHand: 5, par: 10, unit: 'rolls', ...over };
+}
+
+describe('lowSupplies', () => {
+  it('keeps only at-or-below par, most-depleted first', () => {
+    const out = lowSupplies([
+      supply({ _id: 'ok', onHand: 20, par: 10 }), // above par: excluded
+      supply({ _id: 'edge', onHand: 10, par: 10 }), // at par: included, shortfall 0
+      supply({ _id: 'deep', onHand: 1, par: 12 }), // shortfall -11
+      supply({ _id: 'mild', onHand: 8, par: 10 }), // shortfall -2
+    ]);
+    expect(out.map((s) => s._id)).toEqual(['deep', 'mild', 'edge']);
+  });
+
+  it('does not mutate the input', () => {
+    const rows = [supply({ _id: 'a', onHand: 1, par: 5 }), supply({ _id: 'b', onHand: 2, par: 5 })];
+    lowSupplies(rows);
+    expect(rows.map((r) => r._id)).toEqual(['a', 'b']);
+  });
+});
+
+// ── AO-35 formatMiles / formatDuration ──────────────────────────────────────
+describe('formatMiles', () => {
+  it('shows one decimal, and reads a non-finite value as 0.0 mi', () => {
+    expect(formatMiles(12.34)).toBe('12.3 mi');
+    expect(formatMiles(0)).toBe('0.0 mi');
+    expect(formatMiles(Number.POSITIVE_INFINITY)).toBe('0.0 mi');
+  });
+});
+
+describe('formatDuration', () => {
+  it('formats minutes, padding the minute part inside an hour', () => {
+    expect(formatDuration(45)).toBe('45m');
+    expect(formatDuration(65)).toBe('1h 05m');
+    expect(formatDuration(130)).toBe('2h 10m');
+  });
+
+  it('floors a negative at zero and reads non-finite as 0m', () => {
+    expect(formatDuration(-10)).toBe('0m');
+    expect(formatDuration(Number.NaN)).toBe('0m');
   });
 });
