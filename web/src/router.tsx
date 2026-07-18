@@ -152,6 +152,13 @@ const kinDetailRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/KinDetail'), 'KinDetail'),
 });
 
+const kinEditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/kin/$kinId/edit',
+  beforeLoad: requireActiveTribe,
+  component: lazyRouteComponent(() => import('./screens/KinEdit'), 'KinEdit'),
+});
+
 const kinTalesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kintales',
@@ -215,6 +222,7 @@ const routeTree = rootRoute.addChildren([
   messagesRoute,
   kinRoute,
   kinDetailRoute,
+  kinEditRoute,
   kinTalesRoute,
   invoicesRoute,
   invoiceDetailRoute,

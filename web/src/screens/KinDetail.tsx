@@ -16,8 +16,8 @@ const FALLBACK = 'Not set';
  * detail field, so this screen reads the same ['myKin'] cache as Home/Kin
  * and finds the row by id. The mockup's vet-clinic line has no backing
  * field on KinDto (no vetClinicId anywhere in the kin doc), so it's
- * omitted rather than faked. Edit has no mockup yet either — the button is
- * present but inert (see plan doc Open Items, O-17).
+ * omitted rather than faked. Edit (O-17) links to the KinEdit form at
+ * /kin/$kinId/edit, mirroring Compose's AddEditKinDialog.
  */
 export function KinDetail() {
   const { kinId } = useParams({ from: '/kin/$kinId' });
@@ -85,9 +85,9 @@ export function KinDetail() {
           </Link>
           <div className="seg">
             <span className="page">Profile</span>
-            <span className="btn grad navlink-inert" title="Coming soon">
+            <Link className="btn grad" to="/kin/$kinId/edit" params={{ kinId }}>
               {'✎'} Edit
-            </span>
+            </Link>
           </div>
         </div>
 

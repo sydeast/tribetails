@@ -207,6 +207,36 @@ export interface ArchiveKinResult {
   ok: true;
 }
 
+// ── updateKin (functions/src/portal/kinWrites.ts, authed) ───────────────────
+// Editable subset of a kin doc, mirroring the KinPayload zod schema in
+// kinWrites.ts. `name` is required when present; every other field is
+// optional and nullable (sending null clears it via the server merge write).
+
+export interface KinPayloadPartial {
+  name?: string;
+  species?: string | null;
+  breed?: string | null;
+  ageYears?: number | null;
+  photoUrl?: string | null;
+  feedingInstructions?: string | null;
+  walkingInstructions?: string | null;
+  medications?: string | null;
+  allergies?: string | null;
+  emergencyNotes?: string | null;
+  sitterNotes?: string | null;
+  legacyKinId?: string | null;
+}
+
+export interface UpdateKinRequest {
+  kinfolkId?: string;
+  kinId: string;
+  kin: KinPayloadPartial;
+}
+
+export interface UpdateKinResult {
+  ok: true;
+}
+
 // ── getMyKinTales (functions/src/portal/getMyKinTales.ts) ───────────────────
 
 export interface GetMyKinTalesRequest {

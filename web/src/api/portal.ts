@@ -23,6 +23,9 @@ import type {
   GetMyVisitsRequest,
   GetMyVisitsResult,
   InvitePreviewResult,
+  KinPayloadPartial,
+  UpdateKinRequest,
+  UpdateKinResult,
 } from './types';
 
 /** Access list for the signed-in user; drives launch routing (NoTribes / Home / Pick). */
@@ -95,6 +98,15 @@ export function getMyKin(kinfolkId?: string): Promise<GetMyKinResult> {
 export function archiveKin(kinId: string, reason: 'noLongerWithUs' | 'restore', kinfolkId?: string): Promise<ArchiveKinResult> {
   const payload: ArchiveKinRequest = { kinId, reason, ...(kinfolkId !== undefined ? { kinfolkId } : {}) };
   return call<ArchiveKinRequest, ArchiveKinResult>('archiveKin', payload);
+}
+
+/**
+ * Merges an editable subset of one kin's fields. The `kin_edit` permission is
+ * enforced server-side; a denial throws and must surface (fail loud).
+ */
+export function updateKin(kinId: string, kin: KinPayloadPartial, kinfolkId?: string): Promise<UpdateKinResult> {
+  const payload: UpdateKinRequest = { kinId, kin, ...(kinfolkId !== undefined ? { kinfolkId } : {}) };
+  return call<UpdateKinRequest, UpdateKinResult>('updateKin', payload);
 }
 
 /** Most-recent-first KinTales (kin_care_reports), paginated. */
