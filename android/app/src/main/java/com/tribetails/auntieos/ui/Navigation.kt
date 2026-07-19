@@ -542,7 +542,8 @@ private fun AuthenticatedNavHost(
              }
              composable(Screen.AuntieTime.route) {
                  KinCareSessionsScreen(
-                     onBack = { /* AuntieTime is a main nav tab */ },
+                     // Main nav tab: no onBack, so no breadcrumb (I11 renders it only
+                     // for the Admin Data entry below, which passes a real back).
                      onOpenDetail = { kinCareId ->
                          navController.navigate(Screen.KinCareDetail.createRoute(kinCareId))
                      },

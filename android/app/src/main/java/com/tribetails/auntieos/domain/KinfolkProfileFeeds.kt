@@ -35,7 +35,7 @@ fun recentTalesFor(
     reports.asSequence()
         .filter { it.kinfolkId == kinfolkId }
         .filter { it.status.equals("SENT", ignoreCase = true) }
-        .sortedByDescending { it.sentAt.ifBlank { it.visitDate } }
+        .sortedByDescending { it.sentAt.orEmpty().ifBlank { it.visitDate } }
         .take(limit)
         .toList()
 

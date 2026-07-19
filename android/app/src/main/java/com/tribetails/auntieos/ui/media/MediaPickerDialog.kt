@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -42,7 +43,6 @@ data class MediaPickerState(
     val selectedUris: List<Uri> = emptyList(),
     val isUploading: Boolean = false,
     val uploadProgress: Float = 0f,
-    val permissionsGranted: Boolean = false,
     val error: String? = null
 )
 
@@ -57,43 +57,41 @@ fun MediaPickerDialog(
 ) {
     val context = LocalContext.current
     var state by remember { mutableStateOf(MediaPickerState()) }
-    var showPermissionDialog by remember { mutableStateOf(false) }
     var cameraImageUri by remember { mutableStateOf<Uri?>(null) }
 
-    // Check permissions on first composition
-    LaunchedEffect(Unit) {
-        state = state.copy(
-            permissionsGranted = hasMediaPermissions(context)
-        )
-    }
-
-    // Permission launcher
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val allGranted = permissions.values.all { it }
-        state = state.copy(permissionsGranted = allGranted)
-        if (!allGranted) {
-            state = state.copy(error = "Camera and storage permissions are required for media upload")
-        }
-    }
-
-    // Gallery picker launcher
+    // Gallery via the Android Photo Picker - permission-free, same pattern as the
+    // Profile avatar path. Images + videos, multi-select. No storage permission,
+    // no up-front gate: the first-upload experience just works. (I3)
     val galleryLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetMultipleContents()
+        ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
         if (uris.isNotEmpty()) {
             state = state.copy(selectedUris = state.selectedUris + uris)
         }
     }
 
-    // Camera launcher
+    // Camera capture launcher (writes into a FileProvider uri).
     val cameraLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicture()
     ) { success ->
         if (success && cameraImageUri != null) {
             state = state.copy(selectedUris = state.selectedUris + cameraImageUri!!)
         }
+    }
+
+    fun launchCameraCapture() {
+        val uri = createImageUri(context)
+        cameraImageUri = uri
+        cameraLauncher.launch(uri)
+    }
+
+    // CAMERA is requested ONLY when the user chooses "Camera" - the gallery path
+    // needs no runtime permission at all.
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) launchCameraCapture()
+        else state = state.copy(error = "Camera permission is needed to take a photo.")
     }
 
     AuntieModal(
@@ -140,7 +138,7 @@ fun MediaPickerDialog(
                         )
                     }
                 },
-                enabled = state.selectedUris.isNotEmpty() && !state.isUploading && state.permissionsGranted,
+                enabled = state.selectedUris.isNotEmpty() && !state.isUploading,
                 loading = state.isUploading,
             )
         },
@@ -154,38 +152,29 @@ fun MediaPickerDialog(
         }
     ) {
         Column {
-            if (!state.permissionsGranted) {
-                PermissionRequestCard(
-                    onRequestPermissions = {
-                        permissionLauncher.launch(
-                            arrayOf(
-                                Manifest.permission.CAMERA,
-                                Manifest.permission.READ_EXTERNAL_STORAGE,
-                                Manifest.permission.READ_MEDIA_IMAGES,
-                                Manifest.permission.READ_MEDIA_VIDEO
-                            )
-                        )
+            MediaPickerContent(
+                state = state,
+                onTakePhoto = {
+                    if (ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.CAMERA
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        launchCameraCapture()
+                    } else {
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                     }
-                )
-            } else {
-                MediaPickerContent(
-                    state = state,
-                    onTakePhoto = {
-                        cameraImageUri = createImageUri(context)
-                        cameraImageUri?.let { uri ->
-                            cameraLauncher.launch(uri)
-                        }
-                    },
-                    onPickFromGallery = {
-                        galleryLauncher.launch("image/*,video/*")
-                    },
-                    onRemoveMedia = { uri ->
-                        state = state.copy(
-                            selectedUris = state.selectedUris.filter { it != uri }
-                        )
-                    }
-                )
-            }
+                },
+                onPickFromGallery = {
+                    galleryLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                    )
+                },
+                onRemoveMedia = { uri ->
+                    state = state.copy(
+                        selectedUris = state.selectedUris.filter { it != uri }
+                    )
+                }
+            )
 
             // Error display
             if (state.error != null) {
@@ -221,44 +210,6 @@ fun MediaPickerDialog(
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun PermissionRequestCard(
-    onRequestPermissions: () -> Unit
-) {
-    AuntieCard(
-        containerColor = AuntieTheme.colors.surface2,
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(
-                Lucide.Camera,
-                contentDescription = null,
-                modifier = Modifier.size(48.dp),
-                tint = AuntieTheme.colors.kinfolkOrange
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "Camera & Storage Access",
-                style = AuntieTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Allow access to camera and storage to upload photos and videos.",
-                style = AuntieTheme.typography.bodySmall,
-                color = AuntieTheme.colors.textDim
-            )
-            Spacer(Modifier.height(16.dp))
-            PrimaryButton(
-                label = "Grant Permissions",
-                onClick = onRequestPermissions
-            )
         }
     }
 }
@@ -369,15 +320,6 @@ private fun MediaPreviewItem(
             }
         }
     }
-}
-
-private fun hasMediaPermissions(context: Context): Boolean {
-    return ContextCompat.checkSelfPermission(
-        context, Manifest.permission.CAMERA
-    ) == PackageManager.PERMISSION_GRANTED &&
-    ContextCompat.checkSelfPermission(
-        context, Manifest.permission.READ_EXTERNAL_STORAGE
-    ) == PackageManager.PERMISSION_GRANTED
 }
 
 private fun createImageUri(context: Context): Uri {

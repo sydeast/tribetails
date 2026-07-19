@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.data.model
 
+import androidx.annotation.Keep
+
 import com.google.firebase.firestore.DocumentId
 
 // A KinTaleTemplate defines the shape of a visit recap. Different service types
@@ -13,6 +15,7 @@ import com.google.firebase.firestore.DocumentId
 // via the rules engine. The simple editor doesn't yet expose the condition
 // builder - that's a follow-up.
 
+@Keep
 data class KinTaleTemplate(
     @DocumentId val id: String = "",
     var name: String = "",                     // e.g. "Default Pet Care Report"
@@ -41,6 +44,7 @@ data class KinTaleTemplate(
 
 // ----- Checklist -----
 
+@Keep
 data class ChecklistItem(
     var key: String = "",                      // stable id for fieldResponses
     var text: String = "",                     // user-visible label ("Peed", "Fed")
@@ -53,6 +57,7 @@ data class ChecklistItem(
 enum class ChecklistScope { PER_PET, PER_VISIT }
 
 /** Run-4 #7b: one item in the shared bank of common KinTale checklist tasks. */
+@Keep
 data class ChecklistBankItem(
     val id: String = "",
     val text: String = "",
@@ -61,6 +66,7 @@ data class ChecklistBankItem(
 
 // ----- Pet mood -----
 
+@Keep
 data class MoodOption(
     var key: String = "",
     var label: String = "",                    // "Happy", "Anxious", "Cuddly"
@@ -70,6 +76,7 @@ data class MoodOption(
 
 // ----- Review booster -----
 
+@Keep
 data class ReviewBoosterConfig(
     var googleEnabled: Boolean = false,
     var yelpEnabled: Boolean = false,
@@ -81,6 +88,7 @@ data class ReviewBoosterConfig(
 
 // ----- Conditional rules -----
 
+@Keep
 data class FieldCondition(
     var source: String = ConditionSource.KIN_SPECIES.name,
     var op: String = ConditionOp.EQUALS.name,
@@ -103,6 +111,7 @@ enum class ConditionOp {
 
 // ----- Field response stored on the KinCareReport -----
 
+@Keep
 data class FieldResponse(
     var fieldKey: String = "",
     var kinId: String = "",

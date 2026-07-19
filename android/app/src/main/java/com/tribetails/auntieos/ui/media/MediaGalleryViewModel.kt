@@ -67,10 +67,10 @@ class MediaGalleryViewModel(
         viewModelScope.launch {
             repository.setMediaProfilePhoto(
                 mediaFileId = mediaFile.id,
-                entityType = mediaFile.entityType,
+                entityType = mediaFile.entityTypeEnum,
                 entityId = mediaFile.entityId,
             ).onSuccess {
-                loadMedia(mediaFile.entityId, mediaFile.entityType)
+                loadMedia(mediaFile.entityId, mediaFile.entityTypeEnum)
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     error = "Failed to set profile photo: ${error.message}"

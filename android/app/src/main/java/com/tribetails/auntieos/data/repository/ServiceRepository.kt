@@ -153,6 +153,16 @@ class ServiceRepository() {
         snapshot.toObjects(Surcharge::class.java)
     }.onFailure { AuntieLog.e("Error fetching surcharges", it) }
 
+    /** Edit an existing surcharge (rules allow `write: if isAuntie()`). Full set of
+     *  the pre-filled record preserves createdAt; only updatedAt is refreshed. */
+    suspend fun updateSurcharge(surcharge: Surcharge): Result<Unit> = runCatching {
+        AuntieLog.i("Updating surcharge: ${surcharge.id}")
+        val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        firestore.collection("surcharges").document(surcharge.id)
+            .set(surcharge.copy(updatedAt = now)).await()
+        Unit
+    }.onFailure { AuntieLog.e("Error updating surcharge ${surcharge.id}", it) }
+
     // === Discounts ===
 
     suspend fun createDiscount(discount: Discount): Result<String> = runCatching {
@@ -182,6 +192,15 @@ class ServiceRepository() {
         snapshot.toObjects(Discount::class.java)
     }.onFailure { AuntieLog.e("Error fetching discounts", it) }
 
+    /** Edit an existing discount (rules allow `write: if isAuntie()`). */
+    suspend fun updateDiscount(discount: Discount): Result<Unit> = runCatching {
+        AuntieLog.i("Updating discount: ${discount.id}")
+        val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        firestore.collection("discounts").document(discount.id)
+            .set(discount.copy(updatedAt = now)).await()
+        Unit
+    }.onFailure { AuntieLog.e("Error updating discount ${discount.id}", it) }
+
     // === Promo Codes ===
 
     suspend fun createPromoCode(promoCode: PromoCode): Result<String> = runCatching {
@@ -201,6 +220,15 @@ class ServiceRepository() {
         docRef.set(promoCodeWithTimestamp).await()
         docRef.id
     }.onFailure { AuntieLog.e("Error creating promo code", it) }
+
+    /** Edit an existing promo code (rules allow `write: if isAuntie()`). */
+    suspend fun updatePromoCode(promoCode: PromoCode): Result<Unit> = runCatching {
+        AuntieLog.i("Updating promo code: ${promoCode.id}")
+        val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        firestore.collection("promo_codes").document(promoCode.id)
+            .set(promoCode.copy(updatedAt = now)).await()
+        Unit
+    }.onFailure { AuntieLog.e("Error updating promo code ${promoCode.id}", it) }
 
     suspend fun getPromoCodeByCode(code: String): Result<PromoCode?> = runCatching {
         AuntieLog.d("Fetching promo code: $code")

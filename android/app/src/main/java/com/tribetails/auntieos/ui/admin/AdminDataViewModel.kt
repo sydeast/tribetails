@@ -315,7 +315,7 @@ class AdminDataViewModel(
 
     private fun sortKey(r: KinCareReport): String = sequenceOf(
         r.sentAt, r.updatedAt, r.visitDate, r.createdAt,
-    ).firstOrNull { it.isNotBlank() } ?: ""
+    ).firstOrNull { !it.isNullOrBlank() } ?: ""
 
     fun loadActivityLog() {
         viewModelScope.launch {

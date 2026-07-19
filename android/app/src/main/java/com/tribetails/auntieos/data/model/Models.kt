@@ -1,9 +1,11 @@
 package com.tribetails.auntieos.data.model
 
+import androidx.annotation.Keep
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.PropertyName
 import com.google.gson.annotations.SerializedName
 
+@Keep
 data class BaserowFile(
     val url: String = "",
     val name: String = "",
@@ -14,6 +16,7 @@ data class BaserowFile(
 
 // --- Primary CRM Models (Spec-Complete) ---
 
+@Keep
 data class Kinfolk(
     @DocumentId val id: String = "",
     var firstName: String = "",
@@ -90,6 +93,7 @@ data class Kinfolk(
  * The default [preferredContactMethod] on [Kinfolk] is unchanged - this just
  * supersedes it temporarily, with full provenance back to the source message.
  */
+@Keep
 data class ContactOverride(
     var channel: String = "",            // text, email, phone, none
     var effectiveFrom: String = "",      // ISO-8601 (inclusive)
@@ -100,6 +104,7 @@ data class ContactOverride(
     var setAt: String = "",              // when the reconcile step wrote it
 )
 
+@Keep
 data class Dossier(
     @DocumentId val id: String = "",
     var kinfolkId: String = "",
@@ -119,6 +124,7 @@ data class Dossier(
     var needsMoreSamples: Boolean = false,
 )
 
+@Keep
 data class Kin(
     @DocumentId val id: String = "",
     var kinfolkId: String = "",
@@ -153,6 +159,7 @@ data class Kin(
     var formValues: Map<String, String> = emptyMap()
 )
 
+@Keep
 data class Kin411(
     @DocumentId val id: String = "",
     var kinId: String = "",
@@ -165,12 +172,13 @@ data class Kin411(
     var tldr: String = "",         // AI-generated 1-2 sentence summary; blank until reconcile writes it
     var gallery: List<BaserowFile> = emptyList(),
 
-    // Repaired for UI
-    var vetName: String = "",
-    var vetPhone: String = "",
-    var feedingAmount: String = "",
-    var feedingFrequency: String = "",
-    var pottyRoutine: String = "",
+    // Repaired for UI. Nullable: legacy/optional 411 docs store these as null;
+    // a non-null String setter throws under toObject() (Class B decode crash).
+    var vetName: String? = "",
+    var vetPhone: String? = "",
+    var feedingAmount: String? = "",
+    var feedingFrequency: String? = "",
+    var pottyRoutine: String? = "",
     var reactive: Boolean = false,
 
     // Reconciliation provenance - see Dossier for shape semantics.
@@ -208,6 +216,7 @@ object DossierAnnotations {
 
 // --- New Admin & Business Data Models ---
 
+@Keep
 data class Invoice(
     @DocumentId val id: String = "",
     var kinfolkId: String = "",
@@ -220,7 +229,8 @@ data class Invoice(
     var dueDate: String = "",
     var discount: String = "",
     var total: Double = 0.0,
-    var paymentsHistory: String = "",
+    // Nullable: legacy invoices store paymentsHistory as null (Class B decode crash).
+    var paymentsHistory: String? = "",
     var amountDue: Double = 0.0,
     var status: String = "",
     var viewed: String = "",
@@ -230,6 +240,7 @@ data class Invoice(
     @get:PropertyName("_attributionAt") @set:PropertyName("_attributionAt") var attributionAt: String = "",
 )
 
+@Keep
 data class Payment(
     @DocumentId val id: String = "",
     var kinfolkId: String = "",
@@ -249,6 +260,7 @@ data class Payment(
     var invoiceNumber: String = ""
 )
 
+@Keep
 data class VisitLog(
     @DocumentId val id: String = "",
     var journalId: String = "",
@@ -261,6 +273,7 @@ data class VisitLog(
     var rawStagingRef: String = ""
 )
 
+@Keep
 data class TrainingDocument(
     @DocumentId val id: String = "",
     var title: String = "",
@@ -278,6 +291,7 @@ data class TrainingDocument(
     var reconcileNotes: String = ""
 )
 
+@Keep
 data class TrainingDocAttachment(
     var storageUrl: String = "",
     var cloudinaryPublicId: String = "",
@@ -292,11 +306,13 @@ data class TrainingDocAttachment(
  * never mirrored onto kin_care_sessions, so it is read off the visit doc
  * directly. Both null on an unassigned visit.
  */
+@Keep
 data class KinCareAssignment(
     val assignedAuntieUid: String? = null,
     val auntieDisplayName: String? = null,
 )
 
+@Keep
 data class KinCareSession(
     @DocumentId val id: String = "",
     var kinId: String = "",
@@ -319,11 +335,14 @@ data class KinCareSession(
     var kinfolkNotes: String = "",           // pre-visit notes from kinfolk
     var status: String = VisitStatus.SCHEDULED.name,
 
-    // Lifecycle timestamps (ISO)
-    var onMyWayAt: String = "",
-    var arrivedAt: String = "",
-    var departedAt: String = "",
-    var completedAt: String = "",
+    // Lifecycle timestamps (ISO). Nullable: legacy / optional docs (and some
+    // MyTribe writers) store these as null. A non-null String setter throws
+    // under Firestore toObject() and blanks the whole query (Class B decode
+    // crash), so they are String? and every read site is null-safe.
+    var onMyWayAt: String? = "",
+    var arrivedAt: String? = "",
+    var departedAt: String? = "",
+    var completedAt: String? = "",
 
     // GPS
     var visitRouteId: String = "",        // FK -> visit_routes/{id}, set on Arrived
@@ -335,8 +354,13 @@ data class KinCareSession(
     var sentReportCount: Int = 0,         // bumps when a KinTale is sent to kinfolk
     var autoCompleteEligible: Boolean = false, // set true when departed AND >=1 sent
 
-    var createdAt: String = "",
-    var updatedAt: String = "",
+    // createdAt/updatedAt hold EITHER a Firestore server Timestamp (MyTribe
+    // callables write FieldValue.serverTimestamp()) OR an ISO-8601 String
+    // (AuntieOS Android writes ISO). Typed Any? so toObject() tolerates both
+    // shapes instead of throwing on the mixed data (Class A decode crash). Read
+    // via createdAtIso()/updatedAtIso(), never as a raw String.
+    var createdAt: Any? = null,
+    var updatedAt: Any? = null,
 
     // Phase 14: answers to admin-authored form_schemas. A booking-create field
     // (appliesTo == "BOOKING") and a visit-day field (appliesTo == "SESSION") both
@@ -353,8 +377,32 @@ enum class VisitStatus {
     CANCELLED
 }
 
+/**
+ * Normalize a Firestore "timestamp-ish" value to an ISO-8601 String. A field
+ * written by `FieldValue.serverTimestamp()` decodes as a [com.google.firebase.Timestamp]
+ * (or a [java.util.Date]); a field written by AuntieOS Android decodes as an
+ * ISO String. Mirrors the web FirestoreInstantStringSerializer so both platforms
+ * render the same instant.
+ *  - Timestamp / Date -> ISO-8601 (e.g. 2026-06-27T17:07:24.579Z)
+ *  - already-ISO String -> passed through unchanged
+ *  - null / anything else -> "" (matches the model defaults)
+ */
+fun firestoreInstantToIso(value: Any?): String = when (value) {
+    is String -> value
+    is com.google.firebase.Timestamp -> value.toDate().toInstant().toString()
+    is java.util.Date -> value.toInstant().toString()
+    else -> ""
+}
+
+/** ISO-8601 view of [KinCareSession.createdAt] (Timestamp OR String OR null). */
+fun KinCareSession.createdAtIso(): String = firestoreInstantToIso(createdAt)
+
+/** ISO-8601 view of [KinCareSession.updatedAt] (Timestamp OR String OR null). */
+fun KinCareSession.updatedAtIso(): String = firestoreInstantToIso(updatedAt)
+
 // KinCareReport (a "KinTale") - visit recap sent to the kinfolk after a session.
 // One session can have many KinTales (multi-day visits, midway updates).
+@Keep
 data class KinCareReport(
     @DocumentId val id: String = "",
     var sessionId: String = "",
@@ -367,8 +415,9 @@ data class KinCareReport(
     // Auto-prefilled from the session (so the report is self-contained)
     var serviceType: String = "",
     var visitDate: String = "",
-    var arrivedAt: String = "",
-    var departedAt: String = "",
+    // Nullable: prefilled from the session, which may be null (Class B decode crash).
+    var arrivedAt: String? = "",
+    var departedAt: String? = "",
     var visitRouteId: String = "",
 
     // Template that drives the dynamic fields. Empty = built-in default template.
@@ -392,7 +441,8 @@ data class KinCareReport(
 
     // Draft / send lifecycle
     var status: String = ReportStatus.DRAFT.name,
-    var sentAt: String = "",
+    // Nullable: unsent drafts store sentAt as null (Class B decode crash).
+    var sentAt: String? = "",
     var sentVia: String = "",          // "sms" / "email" / "fcm"
     var deliveryReceiptId: String = "", // n8n message id / SMS sid / etc.
 
@@ -451,6 +501,7 @@ enum class ReportStatus {
 // Dossier / Kin411, which were skipped (spam, system noise), and which failed.
 
 /** Firestore collection: voicemails */
+@Keep
 data class VoicemailLog(
     @DocumentId val id: String = "",
     var kinfolkId: String? = null,
@@ -475,6 +526,7 @@ data class VoicemailLog(
 )
 
 /** Firestore collection: calls_log */
+@Keep
 data class CallLog(
     @DocumentId val id: String = "",
     var kinfolkId: String? = null,
@@ -495,6 +547,7 @@ data class CallLog(
 )
 
 /** Firestore collection: sms_messages - covers SMS, MMS, RCS via [subType]. */
+@Keep
 data class SmsMessage(
     @DocumentId val id: String = "",
     var kinfolkId: String? = null,
@@ -515,6 +568,7 @@ data class SmsMessage(
 )
 
 /** Firestore collection: emails */
+@Keep
 data class EmailMessage(
     @DocumentId val id: String = "",
     var kinfolkId: String? = null,
@@ -538,6 +592,7 @@ data class EmailMessage(
 )
 
 /** Firestore collection: fcm_messages - outbound push notifications from Auntie OS to a kinfolk's MyTribe app. */
+@Keep
 data class FcmMessage(
     @DocumentId val id: String = "",
     var kinfolkId: String? = null,
@@ -558,6 +613,7 @@ data class FcmMessage(
 
 // --- Legacy in-memory comms model (no Firestore collection currently writes here) ---
 
+@Keep
 data class CommunicationLog(
     @DocumentId val id: String = "",
     var callSid: String = "",
@@ -572,6 +628,7 @@ data class CommunicationLog(
     var direction: String = "inbound"
 )
 
+@Keep
 data class MessageEvent(
     val messageSid: String,
     val body: String,
@@ -583,6 +640,7 @@ data class MessageEvent(
     var kinfolkId: String? = null
 )
 
+@Keep
 data class VoicemailEvent(
     val callerNumber: String,
     val transcript: String,
@@ -592,6 +650,7 @@ data class VoicemailEvent(
     var kinfolkId: String? = null
 )
 
+@Keep
 data class CallEvent(
     val callSid: String,
     val callerNumber: String,
@@ -607,6 +666,7 @@ data class CallEvent(
 // --- API Models ---
 
 
+@Keep
 data class SendMessageRequest(
     val recipient_phone: String,
     val recipient_email: String? = null,
@@ -615,28 +675,43 @@ data class SendMessageRequest(
     val channel: String = "sms"
 )
 
+@Keep
 data class SendMessageResponse(
     val receiptId: String = ""
 )
 
 /** Firestore collection: generated_drafts - outputs from the Generate n8n workflow,
- *  approved/edited via the AdminDashboard, then triggers the Update Profiles workflow. */
+ *  approved/edited via the AdminDashboard, then triggers the Update Profiles workflow.
+ *
+ *  WRITER MISMATCH (do not silently trust field names): these camelCase fields
+ *  match the n8n/migrated docs (which Android's recent-drafts list reads, ordered
+ *  by `createdOn`). The newer web/functions/generate.js Cloud Function writes the
+ *  SAME collection in snake_case (`kinfolk_id`, `kinfolk_name`, `generated_copy`,
+ *  `communication_type`, `generated_at`) with status `"generated"`, so those docs
+ *  read blank here and are excluded from the createdOn-ordered query entirely.
+ *  Fixing that convergence belongs in generate.js (write camelCase, or mirror
+ *  fields) - a @PropertyName alias can only bind ONE name and would break the
+ *  migrated path. Left as-is; the fields below are only made null-safe so a null
+ *  value can't crash toObject(). TODO(generate.js): converge on camelCase. */
+@Keep
 data class Draft(
     @DocumentId val id: String = "",
     var status: String = "pending",                  // pending | approved | rejected
     var generatedCopy: String = "",
     var communicationType: String = "",
-    var kinfolkId: String = "",
-    var kinfolkName: String = "",
+    // Nullable: migrated/approve-flow docs store these as null (Class B decode crash).
+    var kinfolkId: String? = "",
+    var kinfolkName: String? = "",
     var rawNotes: String = "",
     var toneHint: String = "",
     var maxLength: String = "",
     var model: String = "",
     var createdOn: String = "",                      // ISO-8601 (legacy field name kept)
-    var approvedAt: String = "",
+    var approvedAt: String? = "",
     var approvedBy: String = "",                     // uid
 )
 
+@Keep
 data class GenerateResponse(
     @SerializedName("generated_copy") val generatedCopy: String = "",
     @SerializedName("draft_id") val draftId: String? = null,
@@ -647,6 +722,7 @@ data class GenerateResponse(
     val error: String? = null
 )
 
+@Keep
 data class GenerateRequest(
     val communication_type: String,
     val recipient: String,
@@ -657,6 +733,7 @@ data class GenerateRequest(
     val avoid_opening: String? = null,
 )
 
+@Keep
 data class ApproveRequest(
     val trigger_source: String = "generated_draft",
     val row_id: String = "",
@@ -664,6 +741,7 @@ data class ApproveRequest(
 )
 
 /** Run-4 #6: dog + cat breed name banks from the getBreeds callable. */
+@Keep
 data class BreedBank(
     val dogBreeds: List<String> = emptyList(),
     val catBreeds: List<String> = emptyList(),
@@ -675,6 +753,7 @@ data class BreedBank(
  * common pool. New entries land here when an admin types a clinic name not
  * already in the list and taps "Add new".
  */
+@Keep
 data class VetClinic(
     @DocumentId var id: String = "",
     var name: String = "",
@@ -699,6 +778,7 @@ data class VetClinic(
  * across web + Android. Photo upload goes through MediaUploadManager →
  * Cloudinary; the resulting Cloudinary URL is stored in [photoUrl].
  */
+@Keep
 data class UserProfile(
     @DocumentId var id: String = "",
     var uid: String = "",
@@ -743,6 +823,7 @@ data class UserProfile(
 // These arrive from admin-gated MyTribe callables as decoded maps (not Firestore
 // toObject targets), so they carry no @DocumentId; the repo decodes them by hand.
 /** AO-39 expiration-countdown row (expirations collection, via listExpirations). */
+@Keep
 data class ExpirationItem(
     val id: String = "",
     val label: String = "",
@@ -751,6 +832,7 @@ data class ExpirationItem(
     val kind: String = "",      // gateCode|vetRecord|card|license|other
 )
 /** AO-40 expense-quick-log row (expenses collection, via listExpenses). */
+@Keep
 data class Expense(
     val id: String = "",
     val kind: String = "",      // gas|parking|supplies|other
@@ -759,12 +841,14 @@ data class Expense(
     val occurredAt: String = "", // ISO instant
 )
 /** AO-40 listExpenses envelope: the rows plus server-computed week/month totals. */
+@Keep
 data class ExpenseSummary(
     val expenses: List<Expense> = emptyList(),
     val weekTotalCents: Int = 0,
     val monthTotalCents: Int = 0,
 )
 /** AO-41 supplies-tracker row (supplies collection, via listSupplies). */
+@Keep
 data class Supply(
     val id: String = "",
     val name: String = "",
@@ -773,11 +857,13 @@ data class Supply(
     val unit: String = "",
 )
 /** AO-41 listSupplies envelope: the rows plus the low count (onHand <= par). */
+@Keep
 data class SuppliesResult(
     val supplies: List<Supply> = emptyList(),
     val lowCount: Int = 0,
 )
 /** AO-35 one routed stop, in arrival order, from optimizeRoute. */
+@Keep
 data class RouteStop(
     val order: Int = 0,
     val sessionId: String = "",
@@ -787,12 +873,14 @@ data class RouteStop(
     val arrivalEta: String = "", // HH:MM
 )
 /** AO-35 a stop that could not be routed (household with no serviceAddress). */
+@Keep
 data class UnroutableStop(
     val sessionId: String = "",
     val household: String = "",
     val reason: String = "",
 )
 /** AO-35 optimizeRoute envelope: ordered stops, totals, and fail-loud unroutables. */
+@Keep
 data class RouteResult(
     val stops: List<RouteStop> = emptyList(),
     val totalMiles: Double = 0.0,

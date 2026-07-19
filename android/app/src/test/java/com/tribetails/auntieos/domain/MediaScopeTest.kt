@@ -28,7 +28,7 @@ class MediaScopeTest {
 
     @Test
     fun withSandboxScope_stampsForTestAdmin() {
-        val base = MediaFile(entityId = "sess1", entityType = MediaEntityType.VISIT_LOG)
+        val base = MediaFile(entityId = "sess1", entityType = MediaEntityType.VISIT_LOG.name)
         val scoped = base.withSandboxScope("test-kinfolk-001")
         assertEquals("test-kinfolk-001", scoped.kinfolkId)
         assertEquals("sess1", scoped.entityId)
@@ -36,7 +36,7 @@ class MediaScopeTest {
 
     @Test
     fun withSandboxScope_noStampForOperator() {
-        val base = MediaFile(entityId = "sess1", entityType = MediaEntityType.VISIT_LOG)
+        val base = MediaFile(entityId = "sess1", entityType = MediaEntityType.VISIT_LOG.name)
         assertEquals("", base.withSandboxScope(null).kinfolkId)
         assertEquals("", base.withSandboxScope("").kinfolkId)
         assertSame(base, base.withSandboxScope("   "))

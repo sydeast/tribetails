@@ -403,9 +403,9 @@ private fun invoiceDetailBody(
             trailing = { GhostButton(label = "Record payment", onClick = onRecordPayment) },
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (invoice.paymentsHistory.isNotBlank()) {
+                if (!invoice.paymentsHistory.isNullOrBlank()) {
                     Text(
-                        invoice.paymentsHistory,
+                        invoice.paymentsHistory.orEmpty(),
                         style = AuntieTheme.typography.bodySmall,
                         color = AuntieTheme.colors.textDim,
                     )
@@ -443,7 +443,7 @@ private fun invoiceDetailBody(
                         }
                     }
 
-                    invoice.paymentsHistory.isBlank() ->
+                    invoice.paymentsHistory.isNullOrBlank() ->
                         EmptyHint("No payment recorded against this invoice yet. Use Record payment to log one.")
                 }
             }
@@ -596,7 +596,7 @@ private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
     val c = AuntieTheme.colors
     val hairline = AuntieTheme.dims.borderHairline
     val ruleColor = c.borderSoft
-    val dateLabel = session.completedAt.take(10).ifBlank { session.startTime.take(10) }.ifBlank { "-" }
+    val dateLabel = session.completedAt.orEmpty().take(10).ifBlank { session.startTime.take(10) }.ifBlank { "-" }
     val statusText = session.status.lowercase().replace('_', ' ')
     Row(
         modifier = Modifier
@@ -729,7 +729,7 @@ private fun LinkSessionsDialog(
                 verticalArrangement   = Arrangement.spacedBy(8.dp),
             ) {
                 available.forEach { session ->
-                    val dateLabel = session.completedAt.take(10)
+                    val dateLabel = session.completedAt.orEmpty().take(10)
                         .ifBlank { session.startTime.take(10) }
                         .ifBlank { "-" }
                     val chipLabel = "${session.serviceType.ifBlank { "Session" }} · $dateLabel"

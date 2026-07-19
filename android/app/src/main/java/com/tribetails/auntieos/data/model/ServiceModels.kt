@@ -1,9 +1,12 @@
 package com.tribetails.auntieos.data.model
 
+import androidx.annotation.Keep
+
 import com.google.firebase.firestore.DocumentId
 
 // === SERVICE MANAGEMENT MODELS ===
 
+@Keep
 data class BaseService(
     @DocumentId val id: String = "",
     var title: String = "",
@@ -22,6 +25,7 @@ data class BaseService(
     val displayDuration: String get() = "${durationMinutes / 60}h ${durationMinutes % 60}m".replace(" 0m", "")
 }
 
+@Keep
 data class ServiceBusinessRules(
     var allowWeekends: Boolean = true,
     var allowHolidays: Boolean = false,
@@ -31,6 +35,7 @@ data class ServiceBusinessRules(
     var requiresApproval: Boolean = false
 )
 
+@Keep
 data class SupplementalService(
     @DocumentId val id: String = "",
     var title: String = "",
@@ -46,6 +51,7 @@ data class SupplementalService(
 
 // === PRICING & PROMOTIONS MODELS ===
 
+@Keep
 data class Surcharge(
     @DocumentId val id: String = "",
     var title: String = "",
@@ -62,6 +68,7 @@ enum class SurchargeType {
     FIXED_AMOUNT, PERCENTAGE_OF_TOTAL, PERCENTAGE_OF_SERVICE
 }
 
+@Keep
 data class SurchargeConditions(
     var applyOnWeekends: Boolean = false,
     var applyOnHolidays: Boolean = false,
@@ -73,6 +80,7 @@ data class SurchargeConditions(
     var applicableDayOfWeek: List<Int> = emptyList() // 1=Monday, 7=Sunday
 )
 
+@Keep
 data class Discount(
     @DocumentId val id: String = "",
     var title: String = "",
@@ -89,6 +97,7 @@ enum class DiscountType {
     PERCENTAGE, FIXED_AMOUNT
 }
 
+@Keep
 data class DiscountConditions(
     var minimumPurchase: Double = 0.0,
     var applicableServiceIds: List<String> = emptyList(), // Empty = applies to all
@@ -99,12 +108,14 @@ data class DiscountConditions(
     var buyXGetYConfig: BuyXGetYConfig? = null
 )
 
+@Keep
 data class BuyXGetYConfig(
     var buyQuantity: Int = 1,
     var getQuantity: Int = 1,
     var getDiscountPercentage: Double = 100.0 // 100% = free, 50% = half price
 )
 
+@Keep
 data class PromoCode(
     @DocumentId val id: String = "",
     var code: String = "",
@@ -125,6 +136,7 @@ data class PromoCode(
 
 // === ENHANCED BOOKING & SCHEDULING MODELS ===
 
+@Keep
 data class BookingTimeSlot(
     @DocumentId val id: String = "",
     var date: String = "", // YYYY-MM-DD format
@@ -161,6 +173,7 @@ enum class TimeSlotSyncState {
     FAILED
 }
 
+@Keep
 data class TimeBlockDefinition(
     var id: String = "midday",
     var label: String = "Midday",
@@ -169,6 +182,7 @@ data class TimeBlockDefinition(
     var isActive: Boolean = true
 )
 
+@Keep
 data class BusinessHours(
     @DocumentId val id: String = "",
     var dayOfWeek: Int = 1, // 1=Monday, 7=Sunday
@@ -197,6 +211,7 @@ enum class BookingStatus {
 
 // === ENHANCED EVENT MODEL ===
 
+@Keep
 data class EnhancedBooking(
     @DocumentId val id: String = "",
     var title: String = "",
@@ -267,12 +282,14 @@ data class EnhancedBooking(
     val isArchived: Boolean get() = archivedAt.isNotBlank()
 }
 
+@Keep
 data class BookedSupplementalService(
     val serviceId: String,
     val title: String,
     val price: Double
 )
 
+@Keep
 data class AppliedSurcharge(
     val surchargeId: String,
     val title: String,
@@ -280,6 +297,7 @@ data class AppliedSurcharge(
     val type: SurchargeType
 )
 
+@Keep
 data class AppliedDiscount(
     val discountId: String?,
     val title: String,
@@ -300,12 +318,14 @@ enum class UnavailabilityReasonType {
     UNKNOWN
 }
 
+@Keep
 data class AvailabilityOption(
     val startDateTime: String,
     val endDateTime: String,
     val reason: String
 )
 
+@Keep
 data class BookingAvailabilityRequest(
     val startDateTime: String,
     val endDateTime: String,
@@ -315,6 +335,7 @@ data class BookingAvailabilityRequest(
     val treatDraftAsUnavailable: Boolean = true
 )
 
+@Keep
 data class BookingAvailabilityResult(
     val isAvailable: Boolean,
     val reason: UnavailabilityReasonType? = null,
@@ -325,6 +346,7 @@ data class BookingAvailabilityResult(
     val showWaitlist: Boolean = false
 )
 
+@Keep
 data class ExternalBusyCalendarEvent(
     val externalEventId: String,
     val calendarId: String,
