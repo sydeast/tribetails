@@ -92,6 +92,48 @@ describe('onNotificationChannelCreate central enrichment', () => {
     expect(sentWrite).toBeTruthy();
   });
 
+  it('SOFT-SKIP: a sender that returns { skipped } stamps status "skipped", warns, does NOT throw, and writes no delivery audit', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'invoices/inv1': { invoiceNumber: 'TT-1001', amountDue: 40, dueDate: 'Jul 5, 2026' },
+        'families/fam1': { displayName: 'The Rivera Home' },
+      },
+      queryDocs: { kin: [{ id: 'k1', data: { kinfolkId: 'fam1', name: 'Rex', status: 'active' } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    // Recipient has no email on file -> emailChannel returns a soft skip.
+    mocks.emailSender.mockResolvedValueOnce({ skipped: true, skipReason: 'recipient_no_email' });
+
+    const { onNotificationChannelCreateHandler } = await import(
+      '../src/notifications/triggers/onNotificationChannelCreate'
+    );
+    const { event, setSpy } = makeEvent('email', {
+      key: 'invoice.reminder',
+      recipientUid: 'cli-no-email',
+      data: { invoiceId: 'inv1', kinfolkId: 'fam1' },
+    });
+
+    // must resolve (no throw) so Cloud Functions does not retry / Sentry-capture.
+    await expect(onNotificationChannelCreateHandler(event)).resolves.toBeUndefined();
+
+    const skippedWrite = setSpy.mock.calls.find(
+      (c) => (c[0] as { status?: string }).status === 'skipped',
+    );
+    expect(skippedWrite).toBeTruthy();
+    expect((skippedWrite![0] as { skipReason?: string }).skipReason).toBe('recipient_no_email');
+    // no 'sent' stamp, and no 'failed' stamp.
+    expect(setSpy.mock.calls.find((c) => (c[0] as { status?: string }).status === 'sent')).toBeFalsy();
+    expect(setSpy.mock.calls.find((c) => (c[0] as { status?: string }).status === 'failed')).toBeFalsy();
+    // visible: a warning is logged.
+    const warn = mocks.logEventFn.mock.calls
+      .map((c) => c[0])
+      .find((a: any) => a?.event === 'notification.channel.skipped');
+    expect(warn).toBeTruthy();
+    expect(warn.extra.reason).toBe('recipient_no_email');
+    // undelivered -> no NOTIFICATION_RECEIVED audit entry.
+    expect(mocks.writeAudit).not.toHaveBeenCalled();
+  });
+
   it('passes enriched data to the sms sender too (same hook, all channels)', async () => {
     const ctx = buildDbMock({
       docs: {

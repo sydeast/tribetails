@@ -34,6 +34,19 @@ const Args = z.object({
   description: z.string().max(1000).optional(),
   tags: z.array(z.string().max(60)).max(20).optional(),
   category: z.string().max(60).optional(),
+  // I9: operator-authoring metadata. Not Handlebars-rendered to kinfolk (unlike
+  // subject/body/html), so they carry no triple-stash guard, matching the
+  // unguarded title/description/tags convention above.
+  usageInstructions: z.string().max(2000).optional(),
+  sectionDefinitions: z
+    .array(
+      z.object({
+        title: z.string().min(1).max(200),
+        description: z.string().max(1000),
+      }),
+    )
+    .max(50)
+    .optional(),
 });
 
 export async function saveTemplateHandler(
@@ -48,21 +61,27 @@ export async function saveTemplateHandler(
   const snap = await ref.get();
   const isCreate = !snap.exists;
 
-  await ref.set(
-    {
-      subject: args.subject,
-      body: args.body,
-      html: args.html ?? null,
-      title: args.title ?? args.templateId,
-      description: args.description ?? null,
-      tags: args.tags ?? [],
-      category: args.category ?? null,
-      updatedAt: FieldValue.serverTimestamp(),
-      updatedBy: uid,
-      ...(isCreate ? { createdAt: FieldValue.serverTimestamp(), createdBy: uid } : {}),
-    },
-    { merge: true },
-  );
+  const data: Record<string, unknown> = {
+    subject: args.subject,
+    body: args.body,
+    html: args.html ?? null,
+    title: args.title ?? args.templateId,
+    description: args.description ?? null,
+    tags: args.tags ?? [],
+    category: args.category ?? null,
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: uid,
+    ...(isCreate ? { createdAt: FieldValue.serverTimestamp(), createdBy: uid } : {}),
+  };
+  // I9 backward compat: write the two new fields ONLY when the caller supplied
+  // them. Under {merge:true} this means an older client (the Compose web/android
+  // apps, which do not know these fields) that omits them never clobbers a value
+  // a newer client set. The React editor always sends them (a possibly-empty
+  // string / array), so clearing them from that surface still works.
+  if (args.usageInstructions !== undefined) data.usageInstructions = args.usageInstructions;
+  if (args.sectionDefinitions !== undefined) data.sectionDefinitions = args.sectionDefinitions;
+
+  await ref.set(data, { merge: true });
 
   // Hybrid category pool: persist the chosen category into `template_categories`
   // so it survives even if this template is later deleted, and so `listCategories`

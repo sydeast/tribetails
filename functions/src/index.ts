@@ -93,6 +93,7 @@ export { addInternalBookingNote } from './admin/addInternalBookingNote';
 export { saveTemplate } from './admin/saveTemplate';
 export { deleteTemplate } from './admin/deleteTemplate';
 export { assignTemplate } from './admin/assignTemplate';
+export { assignTemplatesToCategory } from './admin/assignTemplatesToCategory';
 export { unassignTemplate } from './admin/unassignTemplate';
 export { createMultiDateBookingRequest } from './admin/createMultiDateBookingRequest';
 export { listTemplates, listTemplateBindings } from './admin/listTemplates';
