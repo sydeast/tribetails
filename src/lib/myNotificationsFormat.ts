@@ -1,6 +1,7 @@
 import {
   NOTIFICATION_CHANNELS,
   STREAM_BUSINESS,
+  STREAM_KINFOLK,
   STREAM_STAFF,
   type AdminNotificationPrefs,
   type NotificationCatalogEntry,
@@ -197,7 +198,14 @@ export function userChannelChoice(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Workflow sections (business + staff only; matches the two sections this screen renders)
+// Workflow sections (the ONE taxonomy for both notification surfaces)
+//
+// This My Notifications screen only renders Business + Staff, but the same
+// bucketing is the single source of truth for the business gate matrix
+// (`screens/NotificationGate.tsx`), whose Kinfolk tab needs its own sections.
+// So `notifSections` covers all three streams (matching the Kotlin
+// `notifSections` in NotificationOverridesRepository.kt); `adminVisibleNotifications`
+// is what keeps Kinfolk-stream rows off THIS screen, not the section list.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface NotifSection {
@@ -224,6 +232,16 @@ export function notifSections(stream: NotifStream): NotifSection[] {
         { title: 'Visit workflow', categories: ['visit'] },
         { title: 'KinTales and comments', categories: ['kintale'] },
         { title: 'Pets and profiles', categories: ['home'] },
+      ];
+    case STREAM_KINFOLK:
+      return [
+        { title: 'Visit updates', categories: ['visit'] },
+        { title: 'Upcoming care', categories: ['schedule'] },
+        { title: 'KinTales', categories: ['kintale'] },
+        { title: 'Billing and payments', categories: ['invoice'] },
+        { title: 'Home and pets', categories: ['home'] },
+        { title: 'Account and security', categories: ['account', 'security'] },
+        { title: 'Newsletters and community', categories: ['marketing'] },
       ];
     default:
       return [];

@@ -32,6 +32,18 @@ import { call } from '../lib/fns';
  * on this doc to omit; the backend's own summary shape already is the full
  * template.
  */
+/**
+ * One authored section of a template, as guidance for the operator. I9 added
+ * `sectionDefinitions` to the template model; the shape is `{ title, description }`
+ * because the template doc has no richer sub-structure to mirror and this fits a
+ * "the parts of this template, described" list. The backend guarantees `title`
+ * is non-empty on any persisted section and defaults `description` to `''`.
+ */
+export interface TemplateSection {
+  title: string;
+  description: string;
+}
+
 export interface TemplateSummary {
   templateId: string;
   subject: string;
@@ -42,16 +54,22 @@ export interface TemplateSummary {
   tags: string[];
   /** Free-text, operator-entered. Null/blank means uncategorized: see `lib/templateFormat.ts#templateCategoryState`. */
   category: string | null;
+  /**
+   * I9 operator-authoring metadata. The backend always returns these (defaulted:
+   * `''` / `[]`) so a pre-existing doc without them still decodes; older docs
+   * simply carry the defaults.
+   */
+  usageInstructions: string;
+  sectionDefinitions: TemplateSection[];
 }
 
 /**
- * listTemplates (admin) -> { templates }. Every `emailTemplates` doc,
- * UNSORTED (see the doc comment above: the source has no order field and the
- * wasm reference does not re-sort either). No pagination/cap server-side: the
- * wasm reference has none, and this is a curated content library an operator
- * authors by hand, not an append-only activity log (unlike
- * `kin_care_reports`/`invoices`), so an unbounded read here is not the AO-29
- * pattern `useCollection`'s required `max` exists to close off.
+ * listTemplates (admin) -> the WHOLE `emailTemplates` collection, ordered by
+ * document id server-side (I8). Kept for the surfaces that genuinely need every
+ * template at once: the assignment picker (TemplateAssignments) and the New
+ * Binding category dialog, whose whole job is to choose across all templates.
+ * The bank LIST view (Templates.tsx) uses `listTemplatesPage` instead, so the
+ * default screen no longer fetches the entire collection up front.
  */
 export async function listTemplates(): Promise<TemplateSummary[]> {
   const res = await call<Record<string, never>, { templates: TemplateSummary[] }>(
@@ -59,6 +77,34 @@ export async function listTemplates(): Promise<TemplateSummary[]> {
     {},
   );
   return res.templates ?? [];
+}
+
+export interface TemplatesPage {
+  templates: TemplateSummary[];
+  /** The id to pass as `startAfter` for the next page, or null when exhausted. */
+  nextCursor: string | null;
+}
+
+export interface ListTemplatesPageArgs {
+  limit: number;
+  /** Doc-id cursor from a previous page's `nextCursor`. Omit for the first page. */
+  startAfter?: string;
+}
+
+/**
+ * listTemplates (admin), paginated (I8). Same callable as `listTemplates`, but
+ * with a server-side `limit` + doc-id `startAfter` cursor so the bank list loads
+ * a page at a time instead of the entire collection. `nextCursor` is the doc id
+ * to page forward from, or null once the list is exhausted. Backward compatible:
+ * the backend returns the full collection (nextCursor null) when no `limit` is
+ * passed, which is exactly what `listTemplates` above relies on.
+ */
+export async function listTemplatesPage(args: ListTemplatesPageArgs): Promise<TemplatesPage> {
+  const res = await call<ListTemplatesPageArgs, { templates?: TemplateSummary[]; nextCursor?: string | null }>(
+    'listTemplates',
+    args,
+  );
+  return { templates: res.templates ?? [], nextCursor: res.nextCursor ?? null };
 }
 
 /**

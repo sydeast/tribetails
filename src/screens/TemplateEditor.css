@@ -100,3 +100,34 @@
   font-size: 0.75rem;
   color: var(--color-text-faint);
 }
+
+/* ── section rows (I9) ─────────────────────────────────────────────────────── */
+
+.template-editor__sections {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.template-editor__section {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
+}
+
+.template-editor__section-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* Keep the two inputs readable and let them shrink without clipping; the
+     Remove button sits alongside and never squeezes these below a usable width. */
+  flex: 1 1 auto;
+  min-width: 0;
+}

@@ -1,4 +1,11 @@
-import type { AdminNotificationPrefs, NotificationChannel } from '../api/myNotifications';
+import type {
+  AdminNotificationPrefs,
+  NotificationCatalogEntry,
+  NotificationChannel,
+  NotificationMatrix,
+  NotifStream,
+} from '../api/myNotifications';
+import { adminChannelForced, adminGateEnabledChannels } from './myNotificationsFormat';
 
 /**
  * Pure draft-editing helpers for the My Notifications EDITOR
@@ -31,6 +38,40 @@ export function setUserChannelChoice(
       [key]: { ...prefs.byKey[key], [channel]: value },
     },
   };
+}
+
+/**
+ * Select-all for one section: flips every EDITABLE channel of every visible
+ * notification in `entries` to `on`, in a single new prefs object. "Editable"
+ * is exactly the set the row-level toggles let the operator change: a channel
+ * the business gate currently OFFERS on this stream
+ * (`adminGateEnabledChannels`) that is NOT forced on
+ * (`adminChannelForced` = catalog-required or business-locked). Forced channels
+ * are pinned on by the gate and their `Toggle` is `disabled`, so a bulk flip
+ * must skip them too, never writing a `byKey` entry that the gate would just
+ * override, and never pretending to turn a required channel off.
+ *
+ * Writes only `byKey` (per-notification), the same field a single-row toggle
+ * writes via `setUserChannelChoice`; `byCategory` and `marketingOptIn` are left
+ * exactly as they were. The result feeds the normal draft/Save flow, so the
+ * whole section commits in ONE `saveMyAdminNotificationPrefs` write, not one
+ * per channel.
+ */
+export function applyBulkToggle(
+  prefs: AdminNotificationPrefs,
+  matrix: NotificationMatrix,
+  entries: readonly NotificationCatalogEntry[],
+  stream: NotifStream,
+  on: boolean,
+): AdminNotificationPrefs {
+  let next = prefs;
+  for (const entry of entries) {
+    for (const channel of adminGateEnabledChannels(matrix, entry, stream)) {
+      if (adminChannelForced(matrix, entry, stream, channel)) continue;
+      next = setUserChannelChoice(next, entry.key, channel, on);
+    }
+  }
+  return next;
 }
 
 /**

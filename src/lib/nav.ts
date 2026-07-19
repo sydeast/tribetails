@@ -29,11 +29,13 @@ export type Destination =
   | 'settings'
   | 'trainingDocs'
   | 'templates'
+  | 'kinTaleTemplates'
   | 'formSchemas'
   | 'featureFlags'
   | 'mediaGallery'
   | 'accountSettings'
-  | 'myNotifications';
+  | 'myNotifications'
+  | 'notificationGate';
 
 export type NavGroup = 'den' | 'careOps' | 'more';
 
@@ -74,6 +76,10 @@ export const NAV: readonly NavEntry[] = [
   { dest: 'settings', title: 'Settings', group: 'more', slug: 'settings' },
   { dest: 'trainingDocs', title: 'Tribal Intel', group: 'more', slug: 'tribal-intel' },
   { dest: 'templates', title: 'Templates', group: 'more', slug: 'templates' },
+  // The visit-recap / checklist template editor (kintale_templates), distinct
+  // from the email "Templates" above. Reachable from KinTales conceptually; a
+  // pinned rail entry so it is discoverable next to the other authoring screens.
+  { dest: 'kinTaleTemplates', title: 'KinTale templates', group: 'more', slug: 'kintale-templates' },
   { dest: 'formSchemas', title: 'Form Schemas', group: 'more', slug: 'form-schemas' },
   { dest: 'featureFlags', title: 'Feature Flags', group: 'more', slug: 'feature-flags' },
 
@@ -85,6 +91,14 @@ export const NAV: readonly NavEntry[] = [
     title: 'My notifications',
     group: 'more',
     slug: 'my-notifications',
+    contextual: true,
+  },
+  // The business notification gate matrix. Reached from Settings, not pinned.
+  {
+    dest: 'notificationGate',
+    title: 'Notification gate',
+    group: 'more',
+    slug: 'notification-gate',
     contextual: true,
   },
 ];

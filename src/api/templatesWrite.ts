@@ -56,3 +56,35 @@ export async function deleteTemplate(templateId: string): Promise<{ templateId: 
   });
   return result;
 }
+
+export interface AssignTemplatesToCategoryArgs {
+  category: string;
+  templateIds: string[];
+}
+
+export interface AssignTemplatesToCategoryResult {
+  category: string;
+  assigned: number;
+  templateIds: string[];
+}
+
+/**
+ * assignTemplatesToCategory (admin) -> { category, assigned, templateIds }. The
+ * I9 "New Binding" batch write: merge one category onto MANY templates in a
+ * single call, creating the category inline (the backend upserts the managed
+ * `template_categories` pool). A binding of a template to a category is the
+ * template's own `category` field; a batch callable rather than looping
+ * `saveTemplate` because `saveTemplate` requires the full subject+body payload
+ * on every call (see `MyTribe/functions/src/admin/assignTemplatesToCategory.ts`).
+ * Rejects (fail-loud, via `lib/fns.call`) with `not-found` naming any missing
+ * template, or an auth error; the caller surfaces the message rather than
+ * swallowing it, same as `saveTemplate` above.
+ */
+export async function assignTemplatesToCategory(
+  args: AssignTemplatesToCategoryArgs,
+): Promise<AssignTemplatesToCategoryResult> {
+  return await call<AssignTemplatesToCategoryArgs, AssignTemplatesToCategoryResult>(
+    'assignTemplatesToCategory',
+    args,
+  );
+}

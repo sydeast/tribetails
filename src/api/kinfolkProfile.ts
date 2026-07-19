@@ -9,8 +9,11 @@ import { db } from '../lib/firebase';
  * directly via a one-shot getDoc (the `api/account.ts` pattern; there is no
  * getKinfolkProfile callable, and useCollection is collection-only).
  *
- * A subset of the real doc, not a blind mirror: booking/dossier/tag fields belong
- * to other surfaces and are intentionally omitted (the directory.ts convention).
+ * A subset of the real doc, not a blind mirror: booking/dossier fields belong to
+ * other surfaces and are intentionally omitted (the directory.ts convention).
+ * `tags` IS modeled: the KinTale condition engine (`lib/kinTale/engine.ts`)
+ * evaluates KINFOLK_TAG conditions against it, and it exists on the `kinfolk`
+ * doc in Firestore (the Kotlin `Kinfolk` model carries `tags: List<String>`).
  * Every field is defaulted so a legacy/partial doc never renders `undefined`.
  */
 export interface KinfolkProfile {
@@ -22,6 +25,8 @@ export interface KinfolkProfile {
   profilePictureUrl: string;
   status: string;
   joinDate: string;
+  /** Household tags (e.g. "VIP"); the KinTale engine's KINFOLK_TAG source. */
+  tags: string[];
   // Contact & Identity
   secondaryPhone: string;
   secondaryEmail: string;
@@ -45,7 +50,7 @@ export interface KinfolkProfile {
 }
 
 const EMPTY: Omit<KinfolkProfile, '_id'> = {
-  firstName: '', lastName: '', phoneNumber: '', email: '', profilePictureUrl: '', status: 'active', joinDate: '',
+  firstName: '', lastName: '', phoneNumber: '', email: '', profilePictureUrl: '', status: 'active', joinDate: '', tags: [],
   secondaryPhone: '', secondaryEmail: '', preferredContactMethod: '', bestTimeToContact: '',
   serviceAddress: '', gateCode: '', parkingInstructions: '', entryNotes: '', wifiName: '', wifiPassword: '',
   emergencyContactName: '', emergencyContactPhone: '', emergencyContactRelation: '',
@@ -56,8 +61,12 @@ const EMPTY: Omit<KinfolkProfile, '_id'> = {
 export function mergeKinfolkProfile(id: string, raw: Record<string, unknown> | undefined | null): KinfolkProfile {
   const r = (raw ?? {}) as Partial<KinfolkProfile>;
   const s = (v: unknown, def: string): string => (typeof v === 'string' ? v : def);
+  /** Keep only string entries; a legacy/malformed `tags` never yields `undefined` rows. */
+  const arr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
   return {
     _id: id,
+    tags: arr(r.tags),
     firstName: s(r.firstName, EMPTY.firstName),
     lastName: s(r.lastName, EMPTY.lastName),
     phoneNumber: s(r.phoneNumber, EMPTY.phoneNumber),

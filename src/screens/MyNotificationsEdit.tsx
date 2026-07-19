@@ -21,7 +21,7 @@ import {
   sectionedNotifications,
   userChannelChoice,
 } from '../lib/myNotificationsFormat';
-import { prefsEqual, setUserChannelChoice } from '../lib/myNotificationsEdit';
+import { applyBulkToggle, prefsEqual, setUserChannelChoice } from '../lib/myNotificationsEdit';
 import { type Async } from '../lib/async';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
@@ -106,6 +106,17 @@ export function MyNotificationsEdit() {
     setJustSaved(false);
   }
 
+  // Section select-all: flips every editable channel of the section's visible
+  // notifications into the draft in one go. It only stages the draft; the
+  // operator still reviews and commits with the single Save below (one write),
+  // matching the deliberate no-auto-save model this screen documents.
+  function bulkToggle(entries: readonly NotificationCatalogEntry[], stream: NotifStream, on: boolean) {
+    const matrix = state.status === 'ready' ? state.data.matrix : null;
+    if (!matrix) return;
+    setDraft((prev) => (prev ? applyBulkToggle(prev, matrix, entries, stream, on) : prev));
+    setJustSaved(false);
+  }
+
   function discard() {
     if (savedPrefs) setDraft(savedPrefs);
     setSaveError(null);
@@ -185,6 +196,7 @@ export function MyNotificationsEdit() {
                 prefs={draft}
                 stream={STREAM_BUSINESS}
                 onChannelChange={setChannel}
+                onBulkChange={bulkToggle}
               />
               <NotifHatSection
                 title="As the Auntie"
@@ -193,6 +205,7 @@ export function MyNotificationsEdit() {
                 prefs={draft}
                 stream={STREAM_STAFF}
                 onChannelChange={setChannel}
+                onBulkChange={bulkToggle}
               />
             </>
           )
@@ -209,10 +222,19 @@ interface NotifHatSectionProps {
   prefs: AdminNotificationPrefs;
   stream: NotifStream;
   onChannelChange: (key: string, channel: NotificationChannel, next: boolean) => void;
+  onBulkChange: (entries: readonly NotificationCatalogEntry[], stream: NotifStream, on: boolean) => void;
 }
 
 /** One hat's panel ("As the owner" / "As the Auntie"), or nothing if it has no visible rows. */
-function NotifHatSection({ title, subtitle, matrix, prefs, stream, onChannelChange }: NotifHatSectionProps) {
+function NotifHatSection({
+  title,
+  subtitle,
+  matrix,
+  prefs,
+  stream,
+  onChannelChange,
+  onBulkChange,
+}: NotifHatSectionProps) {
   const rows = adminVisibleNotifications(matrix, stream);
   if (rows.length === 0) return null;
   return (
@@ -220,7 +242,17 @@ function NotifHatSection({ title, subtitle, matrix, prefs, stream, onChannelChan
       <div className="mynotif__sections">
         {sectionedNotifications(rows, stream).map(([section, entries]) => (
           <section key={section.title} className="mynotif__section">
-            <h3 className="mynotif__section-heading">{section.title.toUpperCase()}</h3>
+            <div className="mynotif__section-head">
+              <h3 className="mynotif__section-heading">{section.title.toUpperCase()}</h3>
+              <div
+                className="mynotif__section-actions"
+                role="group"
+                aria-label={`Set every editable channel in ${section.title}`}
+              >
+                <GhostButton label="All on" onClick={() => onBulkChange(entries, stream, true)} />
+                <GhostButton label="All off" onClick={() => onBulkChange(entries, stream, false)} />
+              </div>
+            </div>
             <div className="mynotif__rows">
               {entries.map((entry) => (
                 <NotifBlock

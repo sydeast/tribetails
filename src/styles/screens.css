@@ -52,6 +52,36 @@
   color: var(--color-secondary, #5a5c6a);
   margin: 0;
 }
+
+/* Per-row in-flight indicator: shown only on the row whose write is committing. */
+.flags__saving {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--color-secondary, #5a5c6a);
+  white-space: nowrap;
+}
+.flags__spinner {
+  box-sizing: border-box;
+  width: 13px;
+  height: 13px;
+  border: 2px solid color-mix(in srgb, var(--color-secondary, #5a5c6a) 35%, transparent);
+  border-top-color: var(--color-secondary, #5a5c6a);
+  border-radius: var(--radius-pill, 999px);
+  animation: flags-spin 800ms linear infinite;
+}
+@keyframes flags-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flags__spinner {
+    animation-duration: 2400ms;
+  }
+}
 .shell__pending-note {
   font-size: 0.68rem;
   opacity: 0.7;

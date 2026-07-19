@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { listTemplates, listTemplateCategories, type TemplateSummary } from '../api/templates';
+import { listTemplatesPage, listTemplateCategories, type TemplateSummary } from '../api/templates';
 import {
   categoryCount,
   categoryMatchesFilter,
@@ -14,10 +14,22 @@ import { type Async, asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { TemplateEditor } from './TemplateEditor';
 import { TemplateAssignments } from './TemplateAssignments';
+import { CategoryBindingDialog } from './CategoryBindingDialog';
 import './Templates.css';
+
+/**
+ * I8: the bank list loads a page at a time (server-side limit + doc-id cursor)
+ * with a "Load more" control, instead of fetching the entire `emailTemplates`
+ * collection up front. 50 is generous for a first screen and small enough that
+ * a large bank is not one blocking read. The stat strip + category chip counts
+ * derive from what is LOADED so far (they grow as pages load) rather than
+ * claiming a full-collection total the paged read never fetched.
+ */
+const TEMPLATE_PAGE_SIZE = 50;
 
 /**
  * Admin Template Bank, ported from `TemplateBankScreen.kt#TemplateBankBody`
@@ -94,6 +106,14 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<string | null>(ALL_FILTER);
   const [editor, setEditor] = useState<EditorState | null>(null);
+  // I8 paging: the cursor for the NEXT page (null = list exhausted) and the
+  // in-flight / failed state for "Load more".
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  // I9 New Binding dialog + its success notice.
+  const [bindingOpen, setBindingOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   // The assignment manager is a sibling VIEW of this screen, not a route (the
   // Communicate.tsx compose/personalize pattern): swap the whole tree rather
   // than grow an if/else through the JSX. Ports TemplateAssignmentScreen.kt,
@@ -108,8 +128,13 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   const load = useCallback(() => {
     let live = true;
     setTemplates({ status: 'loading' });
-    listTemplates()
-      .then((data) => live && setTemplates({ status: 'ready', data }))
+    setLoadMoreError(null);
+    listTemplatesPage({ limit: TEMPLATE_PAGE_SIZE })
+      .then((page) => {
+        if (!live) return;
+        setTemplates({ status: 'ready', data: page.templates });
+        setNextCursor(page.nextCursor);
+      })
       .catch(
         (err: unknown) =>
           live &&
@@ -123,6 +148,29 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
       live = false;
     };
   }, []);
+
+  // Append the next page. Fail-loud into its own inline error (never blanks the
+  // rows already shown, and never claims success). Guarded so a double-click or
+  // a click with no cursor is a no-op.
+  const loadMore = useCallback(() => {
+    if (nextCursor === null || loadingMore) return;
+    setLoadingMore(true);
+    setLoadMoreError(null);
+    listTemplatesPage({ limit: TEMPLATE_PAGE_SIZE, startAfter: nextCursor })
+      .then((page) => {
+        setTemplates((prev) =>
+          prev.status === 'ready' ? { status: 'ready', data: [...prev.data, ...page.templates] } : prev,
+        );
+        setNextCursor(page.nextCursor);
+        setLoadingMore(false);
+      })
+      .catch((err: unknown) => {
+        setLoadingMore(false);
+        setLoadMoreError(
+          `listTemplates failed: ${err instanceof Error ? err.message : 'Load more failed'}`,
+        );
+      });
+  }, [nextCursor, loadingMore]);
 
   const loadCategories = useCallback(() => {
     let live = true;
@@ -189,6 +237,16 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
     load();
   }
 
+  // I9: after a successful bulk bind, reload both the bank (a template's
+  // category changed) and the category list (a brand-new category may exist),
+  // and confirm what happened. Same reload-after-write convention as handleSaved.
+  function handleBound({ category, assigned }: { category: string; assigned: number }) {
+    setBindingOpen(false);
+    setNotice(`Added ${assigned} template${assigned === 1 ? '' : 's'} to ${category}.`);
+    load();
+    loadCategories();
+  }
+
   const templateCount = asyncScalar(templates, (data) => data.length);
   const categoryCountStat = asyncScalar(categories, (data) => data.length);
   const untaggedCount = asyncScalar(templates, (data) => data.filter(isUntagged).length);
@@ -219,13 +277,20 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
         trailing={
           <>
             <GhostButton label="Manage assignments" onClick={() => setView('assignments')} />
+            <GhostButton label="New binding" onClick={() => setBindingOpen(true)} />
             <PrimaryButton label="New template" onClick={handleNew} leading={<PlusGlyph />} />
           </>
         }
       />
 
+      {notice && (
+        <Banner tone="success" title="Done" onDismiss={() => setNotice(null)}>
+          {notice}
+        </Banner>
+      )}
+
       <div className="templates__summary">
-        <StatCard label="Templates" value={templateCount} trend="in the bank" tone="orange" feature />
+        <StatCard label="Templates" value={templateCount} trend="loaded" tone="orange" feature />
         <StatCard label="Categories" value={categoryCountStat} trend="in use" tone="purple" />
         <StatCard label="Untagged" value={untaggedCount} trend="no tags yet" tone="teal" />
       </div>
@@ -305,7 +370,22 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
                   </ul>
                 )}
 
-                <GhostButton label="Reload" onClick={load} className="templates__reload" />
+                {loadMoreError && (
+                  <p className="templates__categories-error" role="alert">
+                    {loadMoreError}
+                  </p>
+                )}
+
+                <div className="templates__list-actions">
+                  {nextCursor !== null && (
+                    <GhostButton
+                      label={loadingMore ? 'Loading…' : 'Load more'}
+                      onClick={loadMore}
+                      disabled={loadingMore}
+                    />
+                  )}
+                  <GhostButton label="Reload" onClick={load} />
+                </div>
               </>
             );
           }}
@@ -319,6 +399,14 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
           onClose={() => setEditor(null)}
           onSaved={handleSaved}
           onDeleted={handleDeleted}
+        />
+      ) : null}
+
+      {bindingOpen ? (
+        <CategoryBindingDialog
+          categories={categoryList}
+          onClose={() => setBindingOpen(false)}
+          onBound={handleBound}
         />
       ) : null}
     </div>

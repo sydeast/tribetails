@@ -119,6 +119,12 @@ export function FeatureFlags() {
                     <code className="flags__key">{meta.key}</code>
                     <span className="flags__detail">{meta.detail}</span>
                   </div>
+                  {savingKey === meta.key ? (
+                    <span className="flags__saving" role="status">
+                      <span className="flags__spinner" aria-hidden="true" />
+                      Saving…
+                    </span>
+                  ) : null}
                   <Toggle
                     label={`Toggle ${meta.label}`}
                     checked={data[meta.key] ?? false}

@@ -24,6 +24,19 @@ vi.mock('./SettingsEdit', () => ({
   },
 }));
 
+// Stubbed the same way as SettingsEdit: this file asserts Settings.tsx's own
+// wiring (does "Open notification gate" swap to the gate, and does its onBack
+// return to the overview), not the gate's own behavior (NotificationGate.test.tsx).
+vi.mock('./NotificationGate', () => ({
+  NotificationGate: ({ onBack }: { onBack?: () => void }) => (
+    <div data-testid="notification-gate-stub">
+      <button type="button" onClick={onBack}>
+        stub: back to settings
+      </button>
+    </div>
+  ),
+}));
+
 import { Settings } from './Settings';
 import type { BusinessSettings } from '../api/settings';
 
@@ -251,6 +264,19 @@ describe('Settings screen (read-only overview)', () => {
     await userEvent.click(screen.getByRole('button', { name: /edit settings/i }));
     expect(onEdit).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('settings-edit-stub')).toBeInTheDocument();
+  });
+
+  it('opens the notification gate in place, and its Back returns to the overview', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByText('Business profile');
+
+    await userEvent.click(screen.getByRole('button', { name: /open notification gate/i }));
+    expect(screen.getByTestId('notification-gate-stub')).toBeInTheDocument();
+    expect(screen.queryByText('Business profile')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText('stub: back to settings'));
+    expect(await screen.findByText('Business profile')).toBeInTheDocument();
   });
 
   it('returning from the editor (onDone) reloads the overview', async () => {

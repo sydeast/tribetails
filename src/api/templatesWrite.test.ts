@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { call } = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('../lib/fns', () => ({ call }));
 
-import { saveTemplate, deleteTemplate } from './templatesWrite';
+import { saveTemplate, deleteTemplate, assignTemplatesToCategory } from './templatesWrite';
 import type { SaveTemplatePayload } from '../lib/templateFormat';
 
 beforeEach(() => call.mockReset());
@@ -15,6 +15,8 @@ function payload(over: Partial<SaveTemplatePayload> = {}): SaveTemplatePayload {
     body: 'Hi {{kinfolk_name}}',
     html: null,
     tags: [],
+    usageInstructions: '',
+    sectionDefinitions: [],
     ...over,
   };
 }
@@ -71,5 +73,26 @@ describe('templatesWrite api', () => {
       ),
     );
     await expect(deleteTemplate('booking.confirmed')).rejects.toThrow(/failed-precondition/);
+  });
+
+  it('assignTemplatesToCategory calls the callable by name with { category, templateIds }, unwrapping the result', async () => {
+    call.mockResolvedValue({ category: 'Booking', assigned: 2, templateIds: ['a', 'b'] });
+    const result = await assignTemplatesToCategory({ category: 'Booking', templateIds: ['a', 'b'] });
+    expect(call).toHaveBeenCalledWith('assignTemplatesToCategory', {
+      category: 'Booking',
+      templateIds: ['a', 'b'],
+    });
+    expect(result).toEqual({ category: 'Booking', assigned: 2, templateIds: ['a', 'b'] });
+  });
+
+  it('assignTemplatesToCategory propagates a not-found rejection fail-loud (never swallowed here)', async () => {
+    // mockImplementationOnce, not mockRejectedValue: see the saveTemplate
+    // rejection test above for why (Vitest 2.1.9 unhandled-rejection race).
+    call.mockImplementationOnce(() =>
+      Promise.reject(new Error('not-found: Template(s) not found: ghost')),
+    );
+    await expect(
+      assignTemplatesToCategory({ category: 'Booking', templateIds: ['ghost'] }),
+    ).rejects.toThrow(/not-found/);
   });
 });
