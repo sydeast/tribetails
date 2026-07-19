@@ -257,6 +257,44 @@ describe('signCloudinaryUpload handler (onRequest)', () => {
     assert.ok(!JSON.stringify(out).includes('demo-secret'));
   });
 
+  it('Stage-0I test-admin (testTribeId, no admin) may sign an upload PINNED to its own tribe', async () => {
+    configureCloudinary();
+    // no admin claim; carries a non-empty testTribeId sandbox claim.
+    installAdmin({ auth: authReturning({ uid: 'test-1', testTribeId: 'kf_test' }) });
+    const res = makeRes();
+    const body = { folder: 'tribetails/kinfolk/kf_test', entityType: 'kinfolk', entityId: 'kf_test' };
+    await idx.signCloudinaryUpload(makeReq({ headers: ADMIN_BEARER, body }), res);
+
+    assert.strictEqual(res.statusCode, 200);
+    const out = res.jsonBody;
+    assert.strictEqual(out.folder, 'tribetails/kinfolk/kf_test');
+    assert.strictEqual(out.signedBy, 'test-1');
+    // signature still signs exactly folder+timestamp with the secret appended.
+    const base = `folder=${out.folder}&timestamp=${out.timestamp}` + 'demo-secret';
+    assert.strictEqual(out.signature, crypto.createHash('sha1').update(base).digest('hex'));
+  });
+
+  it('403 test_scope_denied when a test-admin signs an upload OUTSIDE its tribe', async () => {
+    configureCloudinary();
+    installAdmin({ auth: authReturning({ uid: 'test-1', testTribeId: 'kf_test' }) });
+    const res = makeRes();
+    // entityId (kf_other) != testTribeId (kf_test) -> out of sandbox scope.
+    const body = { folder: 'tribetails/kinfolk/kf_other', entityType: 'kinfolk', entityId: 'kf_other' };
+    await idx.signCloudinaryUpload(makeReq({ headers: ADMIN_BEARER, body }), res);
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual(res.jsonBody.error, 'test_scope_denied');
+  });
+
+  it('403 admin_required for a signed-in caller with NEITHER admin NOR testTribeId', async () => {
+    configureCloudinary();
+    installAdmin({ auth: authReturning({ uid: 'nobody' }) });
+    const res = makeRes();
+    const body = { folder: 'tribetails/kinfolk/kf_test', entityType: 'kinfolk', entityId: 'kf_test' };
+    await idx.signCloudinaryUpload(makeReq({ headers: ADMIN_BEARER, body }), res);
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual(res.jsonBody.error, 'admin_required');
+  });
+
   it('400 when the folder attempts path traversal (validateUploadFolder enforced)', async () => {
     configureCloudinary();
     installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
