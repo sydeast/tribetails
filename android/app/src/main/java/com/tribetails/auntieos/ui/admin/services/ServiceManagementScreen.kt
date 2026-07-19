@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -35,7 +37,11 @@ fun ServiceManagementScreen(
     var showAddSurchargeDialog by remember { mutableStateOf(false) }
     var showAddDiscountDialog by remember { mutableStateOf(false) }
     var showAddPromoCodeDialog by remember { mutableStateOf(false) }
+    var showPricingMenu by remember { mutableStateOf(false) }
     var editingService by remember { mutableStateOf<BaseService?>(null) }
+    var editingSurcharge by remember { mutableStateOf<Surcharge?>(null) }
+    var editingDiscount by remember { mutableStateOf<Discount?>(null) }
+    var editingPromo by remember { mutableStateOf<PromoCode?>(null) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         AuntieScreenScaffold(
@@ -102,7 +108,10 @@ fun ServiceManagementScreen(
                     promoCodes = state.promoCodes,
                     onAddSurcharge = { showAddSurchargeDialog = true },
                     onAddDiscount = { showAddDiscountDialog = true },
-                    onAddPromoCode = { showAddPromoCodeDialog = true }
+                    onAddPromoCode = { showAddPromoCodeDialog = true },
+                    onEditSurcharge = { editingSurcharge = it },
+                    onEditDiscount = { editingDiscount = it },
+                    onEditPromo = { editingPromo = it }
                 )
                 ServiceTab.SETTINGS -> SettingsTab(
                     businessHours = state.businessHours,
@@ -138,7 +147,7 @@ fun ServiceManagementScreen(
                         .height(56.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(AuntieTheme.colors.kinfolkOrange)
-                        .clickable { showAddSurchargeDialog = true }
+                        .clickable { showPricingMenu = true }
                         .padding(horizontal = 16.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -146,6 +155,24 @@ fun ServiceManagementScreen(
                         Icon(Lucide.Plus, contentDescription = null, tint = AuntieTheme.colors.background, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text("Add Pricing Rule", color = AuntieTheme.colors.background, style = AuntieTheme.typography.labelLarge)
+                    }
+                    // I6: chooser so the FAB isn't hardwired to Surcharge only.
+                    DropdownMenu(
+                        expanded = showPricingMenu,
+                        onDismissRequest = { showPricingMenu = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Surcharge") },
+                            onClick = { showPricingMenu = false; showAddSurchargeDialog = true },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Discount") },
+                            onClick = { showPricingMenu = false; showAddDiscountDialog = true },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Promo Code") },
+                            onClick = { showPricingMenu = false; showAddPromoCodeDialog = true },
+                        )
                     }
                 }
             }
@@ -219,6 +246,38 @@ fun ServiceManagementScreen(
                 viewModel.updateBaseService(edited)
                 editingService = null
             },
+        )
+    }
+
+    // I5: edit an existing pricing rule by reopening its Add dialog pre-filled.
+    editingSurcharge?.let { s ->
+        AddSurchargeDialog(
+            baseServices = state.baseServices.filter { it.isActive },
+            initial      = s,
+            titleText    = "Edit Surcharge",
+            saveLabel    = "Save Changes",
+            onDismiss    = { editingSurcharge = null },
+            onSave       = { edited -> viewModel.updateSurcharge(edited); editingSurcharge = null },
+        )
+    }
+    editingDiscount?.let { d ->
+        AddDiscountDialog(
+            baseServices = state.baseServices.filter { it.isActive },
+            initial      = d,
+            titleText    = "Edit Discount",
+            saveLabel    = "Save Changes",
+            onDismiss    = { editingDiscount = null },
+            onSave       = { edited -> viewModel.updateDiscount(edited); editingDiscount = null },
+        )
+    }
+    editingPromo?.let { p ->
+        AddPromoCodeDialog(
+            baseServices = state.baseServices.filter { it.isActive },
+            initial      = p,
+            titleText    = "Edit Promo Code",
+            saveLabel    = "Save Changes",
+            onDismiss    = { editingPromo = null },
+            onSave       = { edited -> viewModel.updatePromoCode(edited); editingPromo = null },
         )
     }
 }
@@ -437,7 +496,10 @@ fun PricingTab(
     promoCodes: List<PromoCode>,
     onAddSurcharge: () -> Unit,
     onAddDiscount: () -> Unit,
-    onAddPromoCode: () -> Unit
+    onAddPromoCode: () -> Unit,
+    onEditSurcharge: (Surcharge) -> Unit = {},
+    onEditDiscount: (Discount) -> Unit = {},
+    onEditPromo: (PromoCode) -> Unit = {},
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -467,17 +529,17 @@ fun PricingTab(
 
         item { PricingSectionHeader(title = "Surcharges", subtitle = "${surcharges.size} active", onAdd = onAddSurcharge) }
         items(surcharges.take(3)) { surcharge ->
-            PricingRuleCard(title = surcharge.title, description = surcharge.description, amount = surcharge.amount, type = surcharge.type.name, isActive = surcharge.isActive)
+            PricingRuleCard(title = surcharge.title, description = surcharge.description, amount = surcharge.amount, type = surcharge.type.name, isActive = surcharge.isActive, onEdit = { onEditSurcharge(surcharge) })
         }
 
         item { PricingSectionHeader(title = "Discounts", subtitle = "${discounts.size} active", onAdd = onAddDiscount) }
         items(discounts.take(3)) { discount ->
-            PricingRuleCard(title = discount.title, description = discount.description, amount = discount.amount, type = discount.type.name, isActive = discount.isActive)
+            PricingRuleCard(title = discount.title, description = discount.description, amount = discount.amount, type = discount.type.name, isActive = discount.isActive, onEdit = { onEditDiscount(discount) })
         }
 
         item { PricingSectionHeader(title = "Promo Codes", subtitle = "${promoCodes.size} codes", onAdd = onAddPromoCode) }
         items(promoCodes.take(3)) { promoCode ->
-            PromoCodeCard(promoCode = promoCode)
+            PromoCodeCard(promoCode = promoCode, onEdit = { onEditPromo(promoCode) })
         }
     }
 }
@@ -512,11 +574,13 @@ fun PricingRuleCard(
     description: String,
     amount: Double,
     type: String,
-    isActive: Boolean
+    isActive: Boolean,
+    onEdit: () -> Unit = {},
 ) {
     AuntieCard(
         modifier = Modifier.fillMaxWidth(),
-        containerColor = if (isActive) AuntieTheme.colors.surface else AuntieTheme.colors.surface.copy(alpha = 0.6f)
+        containerColor = if (isActive) AuntieTheme.colors.surface else AuntieTheme.colors.surface.copy(alpha = 0.6f),
+        onClick = onEdit,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -551,10 +615,11 @@ fun PricingRuleCard(
 }
 
 @Composable
-fun PromoCodeCard(promoCode: PromoCode) {
+fun PromoCodeCard(promoCode: PromoCode, onEdit: () -> Unit = {}) {
     AuntieCard(
         modifier = Modifier.fillMaxWidth(),
-        containerColor = if (promoCode.isActive) AuntieTheme.colors.surface else AuntieTheme.colors.surface.copy(alpha = 0.6f)
+        containerColor = if (promoCode.isActive) AuntieTheme.colors.surface else AuntieTheme.colors.surface.copy(alpha = 0.6f),
+        onClick = onEdit,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),

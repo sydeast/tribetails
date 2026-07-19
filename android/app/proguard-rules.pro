@@ -9,6 +9,21 @@
 -keep class com.tribetails.auntieos.data.model.** { *; }
 -keepclassmembers class com.tribetails.auntieos.data.model.** { *; }
 
+# ---- Admin data models (Firestore toObject() reflection — the no-arg
+#      constructor + field setters must survive R8, else "Class d6 does not
+#      define a no-argument constructor" at runtime; ActivityLogEntry,
+#      NotificationEntry live here, outside data.model). Every Firebase-decoded
+#      model in both packages is also @androidx.annotation.Keep-annotated so this
+#      never regresses on a package move. ----
+-keep class com.tribetails.auntieos.data.admin.** { *; }
+-keepclassmembers class com.tribetails.auntieos.data.admin.** { *; }
+
+# ---- Belt-and-suspenders: any class annotated @Keep keeps its no-arg ctor + members ----
+-keep @androidx.annotation.Keep class * { *; }
+-keepclassmembers class * {
+    @androidx.annotation.Keep <init>(...);
+}
+
 # ---- Gson (2.10+ ships consumer-rules.pro; only pattern-based rules needed) ----
 -keep class * implements com.google.gson.TypeAdapterFactory
 -keep class * implements com.google.gson.JsonSerializer

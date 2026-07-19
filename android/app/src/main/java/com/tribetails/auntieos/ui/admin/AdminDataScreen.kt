@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tribetails.auntieos.ui.components.AuntieCard
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieTopBar
@@ -36,40 +37,55 @@ fun AdminDataScreen(
     onNavigateToInvoices: () -> Unit,
     onNavigateToKinTaleLogs: () -> Unit,
     onNavigateToTrainingDocs: () -> Unit,
-    onNavigateToKinCareSessions: () -> Unit
+    onNavigateToKinCareSessions: () -> Unit,
+    vm: AdminDataViewModel = viewModel(),
 ) {
-    val dataCards = remember {
-        listOf(
-            AdminDataCard(
-                title       = "Invoices",
-                description = "View and manage client invoices, billing status, and payment history",
-                icon        = Lucide.Receipt,
-                count       = "15",
-                route       = "invoices"
-            ),
-            AdminDataCard(
-                title       = "KinTales",
-                description = "Visit recaps sent home to Kinfolk after every session",
-                icon        = Lucide.FileText,
-                count       = "84",
-                route       = "kintale_logs"
-            ),
-            AdminDataCard(
-                title       = "Auntie Time",
-                description = "Day-of view - Kin Cares in flight, scheduled, and just completed",
-                icon        = Lucide.Clock3,
-                count       = "12",
-                route       = "auntie_time"
-            ),
-            AdminDataCard(
-                title       = "Tribal Intel",
-                description = "Training materials, guides, and educational resources",
-                icon        = Lucide.BookOpen,
-                count       = "3",
-                route       = "training_docs"
-            )
-        )
+    // Live counts drive the badges + confirm each bank is populated. Previously
+    // these were hardcoded literals ("15"/"84"/...) and the load* fns were never
+    // called, so the banks read as full while the sub-screens were empty (I10).
+    val invoices by vm.invoices.collectAsState()
+    val reports by vm.kinCareReports.collectAsState()
+    val sessions by vm.kinCareSessions.collectAsState()
+    val trainingDocs by vm.trainingDocuments.collectAsState()
+    val loadError by vm.error.collectAsState()
+
+    LaunchedEffect(Unit) {
+        vm.loadInvoices()
+        vm.loadKinCareReports()
+        vm.loadKinCareSessions()
+        vm.loadTrainingDocuments()
     }
+
+    val dataCards = listOf(
+        AdminDataCard(
+            title       = "Invoices",
+            description = "View and manage client invoices, billing status, and payment history",
+            icon        = Lucide.Receipt,
+            count       = invoices.size.toString(),
+            route       = "invoices"
+        ),
+        AdminDataCard(
+            title       = "KinTales",
+            description = "Visit recaps sent home to Kinfolk after every session",
+            icon        = Lucide.FileText,
+            count       = reports.size.toString(),
+            route       = "kintale_logs"
+        ),
+        AdminDataCard(
+            title       = "Auntie Time",
+            description = "Day-of view - Kin Cares in flight, scheduled, and just completed",
+            icon        = Lucide.Clock3,
+            count       = sessions.size.toString(),
+            route       = "auntie_time"
+        ),
+        AdminDataCard(
+            title       = "Tribal Intel",
+            description = "Training materials, guides, and educational resources",
+            icon        = Lucide.BookOpen,
+            count       = trainingDocs.size.toString(),
+            route       = "training_docs"
+        )
+    )
 
     AuntieScreenScaffold(title = "Admin Data", onBack = onBack) {
         LazyColumn(
@@ -86,6 +102,36 @@ fun AdminDataScreen(
                     color    = AuntieTheme.colors.textPrimary,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
+            }
+
+            // Fail-loud: a load failure surfaces here, never a silent empty bank.
+            loadError?.let { err ->
+                item {
+                    AuntieCard(
+                        modifier       = Modifier.fillMaxWidth(),
+                        containerColor = AuntieTheme.colors.error.copy(alpha = 0.1f),
+                        border         = BorderStroke(0.5.dp, AuntieTheme.colors.error),
+                        shape          = RoundedCornerShape(12.dp),
+                    ) {
+                        Row(
+                            modifier          = Modifier.fillMaxWidth().padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector        = Lucide.CircleAlert,
+                                contentDescription = null,
+                                tint               = AuntieTheme.colors.error,
+                                modifier           = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                text  = "Couldn't load admin data: $err",
+                                style = AuntieTheme.typography.bodySmall,
+                                color = AuntieTheme.colors.error,
+                            )
+                        }
+                    }
+                }
             }
 
             items(dataCards.size) { index ->

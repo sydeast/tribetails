@@ -35,7 +35,7 @@ fun lastVisitByKinfolk(sessions: List<KinCareSession>): Map<String, String> {
     for (s in sessions) {
         if (s.status.uppercase() != "COMPLETED") continue
         if (s.kinfolkId.isBlank()) continue
-        val stamp = s.completedAt.ifBlank { s.startTime }
+        val stamp = s.completedAt.orEmpty().ifBlank { s.startTime }
         val date = isoDatePrefixOrNull(stamp) ?: continue
         val prev = out[s.kinfolkId]
         if (prev == null || date > prev) out[s.kinfolkId] = date

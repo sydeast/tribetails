@@ -21,7 +21,7 @@ class BatchMediaUploadResultTest {
     private fun mediaFile(id: String) = MediaFile(
         id = id,
         entityId = "sess-1",
-        entityType = MediaEntityType.VISIT_LOG,
+        entityType = MediaEntityType.VISIT_LOG.name,
         fileType = MediaType.IMAGE,
     )
 

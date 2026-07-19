@@ -987,12 +987,12 @@ private fun VisitMetaPanel(state: KinTaleUiState) {
             if (visitDate.isNotBlank()) {
                 AuntieKeyValueRow(label = "Visit date", value = visitDate, valueMono = true)
             }
-            if (session.arrivedAt.isNotBlank()) {
-                AuntieKeyValueRow(label = "Arrived", value = session.arrivedAt, valueMono = true)
+            if (!session.arrivedAt.isNullOrBlank()) {
+                AuntieKeyValueRow(label = "Arrived", value = session.arrivedAt.orEmpty(), valueMono = true)
             }
             AuntieKeyValueRow(
                 label = "Departed",
-                value = session.departedAt.takeIf { it.isNotBlank() } ?: "-",
+                value = session.departedAt?.takeIf { it.isNotBlank() } ?: "-",
                 valueMono = true,
                 showDivider = false,
             )
@@ -1010,11 +1010,11 @@ private fun VisitMetaPanel(state: KinTaleUiState) {
  */
 @Composable
 private fun DeliveryPanel(report: KinCareReport) {
-    if (report.sentAt.isBlank() && report.sentVia.isBlank() && report.deliveryReceiptId.isBlank()) return
+    if (report.sentAt.isNullOrBlank() && report.sentVia.isBlank() && report.deliveryReceiptId.isBlank()) return
     DenPanel(title = "Delivery") {
         Column {
-            if (report.sentAt.isNotBlank()) {
-                AuntieKeyValueRow(label = "Sent at", value = report.sentAt, valueMono = true)
+            if (!report.sentAt.isNullOrBlank()) {
+                AuntieKeyValueRow(label = "Sent at", value = report.sentAt.orEmpty(), valueMono = true)
             }
             if (report.sentVia.isNotBlank()) {
                 AuntieKeyValueRow(label = "Sent via", value = report.sentVia, valueMono = true)

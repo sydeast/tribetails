@@ -751,7 +751,7 @@ internal fun formatRevenue(amount: Double): String {
 
 @Composable
 fun OfflineBanner(
-    message: String = "AuntieOS is offline. Check the tunnel.",
+    message: String = "Couldn't reach the server. Check your connection and tap retry.",
     onRetry: () -> Unit
 ) {
     Row(
@@ -808,7 +808,7 @@ private fun TaleRow(draft: Draft, index: Int) {
             Text(
                 buildString {
                     append(draft.status.uppercase())
-                    if (draft.kinfolkName.isNotBlank()) append(" · ${draft.kinfolkName}")
+                    if (!draft.kinfolkName.isNullOrBlank()) append(" · ${draft.kinfolkName}")
                     if (draft.createdOn.isNotBlank()) append(" · ${draft.createdOn.take(10)}")
                 },
                 style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp, letterSpacing = 0.4.sp),

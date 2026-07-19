@@ -313,16 +313,19 @@ fun AddSupplementalServiceDialog(
 fun AddSurchargeDialog(
     baseServices: List<BaseService>,
     onDismiss: () -> Unit,
-    onSave: (Surcharge) -> Unit
+    onSave: (Surcharge) -> Unit,
+    initial: Surcharge? = null,
+    titleText: String = "Add Surcharge",
+    saveLabel: String = "Save Surcharge",
 ) {
-    var title by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
-    var amount by remember { mutableStateOf("") }
-    var type by remember { mutableStateOf(SurchargeType.FIXED_AMOUNT) }
-    var applyOnWeekends by remember { mutableStateOf(false) }
-    var applyOnHolidays by remember { mutableStateOf(false) }
-    var applyAfterHours by remember { mutableStateOf(false) }
-    var isActive by remember { mutableStateOf(true) }
+    var title by remember { mutableStateOf(initial?.title ?: "") }
+    var description by remember { mutableStateOf(initial?.description ?: "") }
+    var amount by remember { mutableStateOf(initial?.amount?.takeIf { it > 0 }?.toString() ?: "") }
+    var type by remember { mutableStateOf(initial?.type ?: SurchargeType.FIXED_AMOUNT) }
+    var applyOnWeekends by remember { mutableStateOf(initial?.applicableConditions?.applyOnWeekends ?: false) }
+    var applyOnHolidays by remember { mutableStateOf(initial?.applicableConditions?.applyOnHolidays ?: false) }
+    var applyAfterHours by remember { mutableStateOf(initial?.applicableConditions?.applyAfterHours ?: false) }
+    var isActive by remember { mutableStateOf(initial?.isActive ?: true) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -338,7 +341,7 @@ fun AddSurchargeDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Add Surcharge", style = AuntieTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = AuntieTheme.colors.textPrimary)
+                    Text(titleText, style = AuntieTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = AuntieTheme.colors.textPrimary)
                     AuntieIconBtn(onClick = onDismiss) { Icon(Lucide.X, contentDescription = "Close") }
                 }
 
@@ -409,12 +412,14 @@ fun AddSurchargeDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
                     PrimaryButton(
-                        label = "Save Surcharge",
+                        label = saveLabel,
                         onClick = {
-                            onSave(Surcharge(
+                            onSave((initial ?: Surcharge()).copy(
                                 title = title.trim(), description = description.trim(), type = type,
                                 amount = amount.toDoubleOrNull() ?: 0.0, isActive = isActive,
-                                applicableConditions = SurchargeConditions(applyOnWeekends = applyOnWeekends, applyOnHolidays = applyOnHolidays, applyAfterHours = applyAfterHours)
+                                applicableConditions = (initial?.applicableConditions ?: SurchargeConditions()).copy(
+                                    applyOnWeekends = applyOnWeekends, applyOnHolidays = applyOnHolidays, applyAfterHours = applyAfterHours
+                                )
                             ))
                         },
                         modifier = Modifier.weight(1f),
@@ -430,19 +435,22 @@ fun AddSurchargeDialog(
 fun AddDiscountDialog(
     baseServices: List<BaseService>,
     onDismiss: () -> Unit,
-    onSave: (Discount) -> Unit
+    onSave: (Discount) -> Unit,
+    initial: Discount? = null,
+    titleText: String = "Add Discount",
+    saveLabel: String = "Save Discount",
 ) {
-    var title by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
-    var amount by remember { mutableStateOf("") }
-    var type by remember { mutableStateOf(DiscountType.PERCENTAGE) }
-    var minimumPurchase by remember { mutableStateOf("0") }
-    var maxUsagePerCustomer by remember { mutableStateOf("-1") }
-    var requiresNewCustomer by remember { mutableStateOf(false) }
-    var isActive by remember { mutableStateOf(true) }
-    var validFrom by remember { mutableStateOf(LocalDate.now().toString()) }
-    var validUntil by remember { mutableStateOf(LocalDate.now().plusMonths(3).toString()) }
-    var selectedServices by remember { mutableStateOf(setOf<String>()) }
+    var title by remember { mutableStateOf(initial?.title ?: "") }
+    var description by remember { mutableStateOf(initial?.description ?: "") }
+    var amount by remember { mutableStateOf(initial?.amount?.takeIf { it > 0 }?.toString() ?: "") }
+    var type by remember { mutableStateOf(initial?.type ?: DiscountType.PERCENTAGE) }
+    var minimumPurchase by remember { mutableStateOf(initial?.conditions?.minimumPurchase?.toString() ?: "0") }
+    var maxUsagePerCustomer by remember { mutableStateOf(initial?.conditions?.maxUsagePerCustomer?.toString() ?: "-1") }
+    var requiresNewCustomer by remember { mutableStateOf(initial?.conditions?.requiresNewCustomer ?: false) }
+    var isActive by remember { mutableStateOf(initial?.isActive ?: true) }
+    var validFrom by remember { mutableStateOf(initial?.conditions?.validFrom?.takeIf { it.isNotBlank() } ?: LocalDate.now().toString()) }
+    var validUntil by remember { mutableStateOf(initial?.conditions?.validUntil?.takeIf { it.isNotBlank() } ?: LocalDate.now().plusMonths(3).toString()) }
+    var selectedServices by remember { mutableStateOf(initial?.conditions?.applicableServiceIds?.toSet() ?: setOf<String>()) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -458,7 +466,7 @@ fun AddDiscountDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Add Discount", style = AuntieTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = AuntieTheme.colors.textPrimary)
+                    Text(titleText, style = AuntieTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = AuntieTheme.colors.textPrimary)
                     AuntieIconBtn(onClick = onDismiss) { Icon(Lucide.X, contentDescription = "Close") }
                 }
 
@@ -539,17 +547,17 @@ fun AddDiscountDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
                     PrimaryButton(
-                        label = "Save Discount",
+                        label = saveLabel,
                         onClick = {
-                            onSave(Discount(
+                            onSave((initial ?: Discount()).copy(
                                 title = title.trim(), description = description.trim(), type = type,
                                 amount = amount.toDoubleOrNull() ?: 0.0, isActive = isActive,
-                                conditions = DiscountConditions(
+                                conditions = (initial?.conditions ?: DiscountConditions()).copy(
                                     minimumPurchase = minimumPurchase.toDoubleOrNull() ?: 0.0,
                                     applicableServiceIds = selectedServices.toList(),
                                     validFrom = validFrom.trim(), validUntil = validUntil.trim(),
                                     maxUsagePerCustomer = maxUsagePerCustomer.toIntOrNull() ?: -1,
-                                    requiresNewCustomer = requiresNewCustomer, buyXGetYConfig = null
+                                    requiresNewCustomer = requiresNewCustomer
                                 )
                             ))
                         },
@@ -566,19 +574,22 @@ fun AddDiscountDialog(
 fun AddPromoCodeDialog(
     baseServices: List<BaseService>,
     onDismiss: () -> Unit,
-    onSave: (PromoCode) -> Unit
+    onSave: (PromoCode) -> Unit,
+    initial: PromoCode? = null,
+    titleText: String = "Add Promo Code",
+    saveLabel: String = "Save Promo",
 ) {
-    var code by remember { mutableStateOf("") }
-    var title by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
-    var discountType by remember { mutableStateOf(DiscountType.PERCENTAGE) }
-    var discountAmount by remember { mutableStateOf("") }
-    var usageLimit by remember { mutableStateOf("-1") }
-    var minimumPurchase by remember { mutableStateOf("0") }
-    var validFrom by remember { mutableStateOf(LocalDate.now().toString()) }
-    var validUntil by remember { mutableStateOf(LocalDate.now().plusMonths(3).toString()) }
-    var isActive by remember { mutableStateOf(true) }
-    var selectedServices by remember { mutableStateOf(setOf<String>()) }
+    var code by remember { mutableStateOf(initial?.code ?: "") }
+    var title by remember { mutableStateOf(initial?.title ?: "") }
+    var description by remember { mutableStateOf(initial?.description ?: "") }
+    var discountType by remember { mutableStateOf(initial?.discountType ?: DiscountType.PERCENTAGE) }
+    var discountAmount by remember { mutableStateOf(initial?.discountAmount?.takeIf { it > 0 }?.toString() ?: "") }
+    var usageLimit by remember { mutableStateOf(initial?.usageLimit?.toString() ?: "-1") }
+    var minimumPurchase by remember { mutableStateOf(initial?.minimumPurchase?.toString() ?: "0") }
+    var validFrom by remember { mutableStateOf(initial?.validFrom?.takeIf { it.isNotBlank() } ?: LocalDate.now().toString()) }
+    var validUntil by remember { mutableStateOf(initial?.validUntil?.takeIf { it.isNotBlank() } ?: LocalDate.now().plusMonths(3).toString()) }
+    var isActive by remember { mutableStateOf(initial?.isActive ?: true) }
+    var selectedServices by remember { mutableStateOf(initial?.applicableServiceIds?.toSet() ?: setOf<String>()) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -594,7 +605,7 @@ fun AddPromoCodeDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Add Promo Code", style = AuntieTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = AuntieTheme.colors.textPrimary)
+                    Text(titleText, style = AuntieTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = AuntieTheme.colors.textPrimary)
                     AuntieIconBtn(onClick = onDismiss) { Icon(Lucide.X, contentDescription = "Close") }
                 }
 
@@ -667,9 +678,9 @@ fun AddPromoCodeDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
                     PrimaryButton(
-                        label = "Save Promo",
+                        label = saveLabel,
                         onClick = {
-                            onSave(PromoCode(
+                            onSave((initial ?: PromoCode()).copy(
                                 code = code.trim(), title = title.trim(), description = description.trim(),
                                 discountType = discountType, discountAmount = discountAmount.toDoubleOrNull() ?: 0.0,
                                 isActive = isActive, usageLimit = usageLimit.toIntOrNull() ?: -1,

@@ -463,12 +463,12 @@ object AndroidDemoFixtures {
     )
 
     val kinTaleMedia: List<MediaFile> = listOf(
-        MediaFile(id = "m1", entityId = "demo-s1", entityType = MediaEntityType.VISIT_LOG,
+        MediaFile(id = "m1", entityId = "demo-s1", entityType = MediaEntityType.VISIT_LOG.name,
             fileType = MediaType.IMAGE, storageUrl = "https://demo/m1.jpg",
             thumbnailUrl = "https://demo/m1-thumb.jpg", description = "Biscuit on the trail"),
-        MediaFile(id = "m2", entityId = "demo-s1", entityType = MediaEntityType.VISIT_LOG,
+        MediaFile(id = "m2", entityId = "demo-s1", entityType = MediaEntityType.VISIT_LOG.name,
             fileType = MediaType.IMAGE, storageUrl = "https://demo/m2.jpg"),
-        MediaFile(id = "m3", entityId = "demo-s1", entityType = MediaEntityType.VISIT_LOG,
+        MediaFile(id = "m3", entityId = "demo-s1", entityType = MediaEntityType.VISIT_LOG.name,
             fileType = MediaType.IMAGE, storageUrl = "https://demo/m3.jpg"),
     )
 }

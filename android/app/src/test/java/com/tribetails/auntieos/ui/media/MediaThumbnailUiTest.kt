@@ -36,7 +36,7 @@ class MediaThumbnailUiTest {
     private fun image(id: String, isProfile: Boolean) = MediaFile(
         id = id,
         entityId = "kf1",
-        entityType = MediaEntityType.KINFOLK,
+        entityType = MediaEntityType.KINFOLK.name,
         fileType = MediaType.IMAGE,
         isProfilePhoto = isProfile,
     )

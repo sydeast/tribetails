@@ -757,7 +757,7 @@ private fun SortChipRow(selected: ReportSort, onSelect: (ReportSort) -> Unit) {
 
 /** Raw ISO date key for ordering (first non-blank). Mirror of the web sortKey. */
 private fun sortKey(r: KinCareReport): String =
-    sequenceOf(r.sentAt, r.visitDate, r.arrivedAt, r.createdAt).firstOrNull { it.isNotBlank() } ?: ""
+    sequenceOf(r.sentAt, r.visitDate, r.arrivedAt, r.createdAt).firstOrNull { !it.isNullOrBlank() } ?: ""
 
 /** KT1 (A8): operator-chosen ordering for the KinTales list. Mirror of web ReportSort. */
 internal enum class ReportSort(val label: String) {
@@ -786,7 +786,7 @@ internal fun matchesSearch(r: KinCareReport, query: String): Boolean {
 
 private fun visitTimestamp(r: KinCareReport): String {
     val raw = sequenceOf(r.visitDate, r.arrivedAt, r.sentAt, r.createdAt)
-        .firstOrNull { it.isNotBlank() } ?: return "Date TBD"
+        .firstOrNull { !it.isNullOrBlank() } ?: return "Date TBD"
     return shortDateTime(raw)
 }
 

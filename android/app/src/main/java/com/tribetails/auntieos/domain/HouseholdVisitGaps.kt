@@ -29,7 +29,7 @@ fun householdVisitGaps(
             val name = group.firstOrNull { it.kinfolkName.isNotBlank() }?.kinfolkName
                 ?: return@mapNotNull null
             val lastDate = group
-                .mapNotNull { s -> parseIsoDate((s.completedAt.ifBlank { s.startTime }).take(10)) }
+                .mapNotNull { s -> parseIsoDate((s.completedAt.orEmpty().ifBlank { s.startTime }).take(10)) }
                 .maxOrNull() ?: return@mapNotNull null
             val days = ChronoUnit.DAYS.between(lastDate, today).toInt()
             if (days < 0) null else HouseholdGap(name, days)

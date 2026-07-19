@@ -1863,7 +1863,7 @@ class AuntieRepository(
         docRef.set(session.copy(
             id = docRef.id,
             kinIds = kinIds,
-            createdAt = if (session.createdAt.isBlank()) timestamp else session.createdAt,
+            createdAt = if (session.createdAtIso().isBlank()) timestamp else session.createdAt,
             updatedAt = timestamp
         )).await()
         docRef.id
