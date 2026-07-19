@@ -30,6 +30,8 @@ function tpl(over: Partial<TemplateSummary>): TemplateSummary {
     description: null,
     tags: [],
     category: null,
+    usageInstructions: '',
+    sectionDefinitions: [],
     ...over,
   };
 }
@@ -44,6 +46,8 @@ function fields(over: Partial<TemplateFormFields> = {}): TemplateFormFields {
     description: '',
     category: '',
     tagsInput: '',
+    usageInstructions: '',
+    sections: [],
     ...over,
   };
 }
@@ -191,6 +195,8 @@ describe('templateToFormFields', () => {
       description: '',
       category: '',
       tagsInput: 'a, b',
+      usageInstructions: '',
+      sections: [],
     });
   });
 
@@ -200,6 +206,15 @@ describe('templateToFormFields', () => {
     expect(result.html).toBe('<p>Hi</p>');
     expect(result.description).toBe('A note');
     expect(result.category).toBe('Booking');
+  });
+
+  it('carries usageInstructions + sectionDefinitions through, copying section rows (no shared reference)', () => {
+    const sections = [{ title: 'Greeting', description: 'Hello' }];
+    const row = tpl({ usageInstructions: 'Send after first visit.', sectionDefinitions: sections });
+    const result = templateToFormFields(row);
+    expect(result.usageInstructions).toBe('Send after first visit.');
+    expect(result.sections).toEqual(sections);
+    expect(result.sections[0]).not.toBe(sections[0]); // copied, not the same object
   });
 });
 
@@ -214,6 +229,8 @@ describe('blankFormFields', () => {
       description: '',
       category: '',
       tagsInput: '',
+      usageInstructions: '',
+      sections: [],
     });
   });
 });
@@ -328,5 +345,38 @@ describe('buildSaveTemplatePayload', () => {
   it('parses tagsInput into the tags array', () => {
     const payload = buildSaveTemplatePayload(fields({ tagsInput: 'booking, confirmation' }));
     expect(payload.tags).toEqual(['booking', 'confirmation']);
+  });
+
+  // ── I9 usageInstructions + sectionDefinitions ──────────────────────────────
+
+  it('always sends usageInstructions (trimmed, possibly empty) so a save can clear it', () => {
+    expect(buildSaveTemplatePayload(fields({ usageInstructions: '  Send after visit.  ' })).usageInstructions).toBe(
+      'Send after visit.',
+    );
+    const blank = buildSaveTemplatePayload(fields({ usageInstructions: '   ' }));
+    expect(blank).toHaveProperty('usageInstructions');
+    expect(blank.usageInstructions).toBe('');
+  });
+
+  it('trims sections and drops any row whose title is blank (mirrors parseTagsInput)', () => {
+    const payload = buildSaveTemplatePayload(
+      fields({
+        sections: [
+          { title: '  Greeting  ', description: '  Hello  ' },
+          { title: '   ', description: 'orphan description with no title' },
+          { title: 'Body', description: '' },
+        ],
+      }),
+    );
+    expect(payload.sectionDefinitions).toEqual([
+      { title: 'Greeting', description: 'Hello' },
+      { title: 'Body', description: '' },
+    ]);
+  });
+
+  it('always sends sectionDefinitions (possibly empty) so a save can clear them', () => {
+    const payload = buildSaveTemplatePayload(fields({ sections: [] }));
+    expect(payload).toHaveProperty('sectionDefinitions');
+    expect(payload.sectionDefinitions).toEqual([]);
   });
 });

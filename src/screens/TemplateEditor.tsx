@@ -3,6 +3,7 @@ import { saveTemplate, deleteTemplate } from '../api/templatesWrite';
 import type { TemplateSummary } from '../api/templates';
 import {
   blankFormFields,
+  blankSection,
   buildSaveTemplatePayload,
   templateFormError,
   templateToFormFields,
@@ -109,6 +110,23 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
 
   function setField<K extends keyof TemplateFormFields>(key: K, value: TemplateFormFields[K]) {
     setFields((prev) => ({ ...prev, [key]: value }));
+  }
+
+  // Section-row editors (I9). A copy-on-write over the sections array so form
+  // state is never mutated in place, matching FormSchemaEditor's field-row
+  // handlers. A titleless row is dropped at save time (buildSaveTemplatePayload),
+  // so an empty added row is harmless until filled.
+  function addSection() {
+    setFields((prev) => ({ ...prev, sections: [...prev.sections, blankSection()] }));
+  }
+  function updateSection(idx: number, patch: Partial<TemplateFormFields['sections'][number]>) {
+    setFields((prev) => ({
+      ...prev,
+      sections: prev.sections.map((s, i) => (i === idx ? { ...s, ...patch } : s)),
+    }));
+  }
+  function removeSection(idx: number) {
+    setFields((prev) => ({ ...prev, sections: prev.sections.filter((_, i) => i !== idx) }));
   }
 
   // useCallback, not a plain function: Dialog's own focus-management effect
@@ -373,6 +391,59 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
             onChange={(e) => setField('tagsInput', e.target.value)}
             placeholder="booking, confirmation"
           />
+        </div>
+
+        <div className="template-editor__field">
+          <label className="template-editor__label" htmlFor="template-editor-usage">
+            Usage instructions (optional)
+          </label>
+          <textarea
+            id="template-editor-usage"
+            className="template-editor__textarea"
+            value={fields.usageInstructions}
+            onChange={(e) => setField('usageInstructions', e.target.value)}
+            placeholder="When and how to use this template"
+            rows={3}
+            maxLength={2000}
+          />
+        </div>
+
+        <div className="template-editor__field">
+          <span className="template-editor__label">Sections (optional)</span>
+          <p className="template-editor__hint">
+            Describe the parts of this template for other admins. A section needs a title to be
+            saved; blank ones are dropped.
+          </p>
+          {fields.sections.length > 0 ? (
+            <ul className="template-editor__sections">
+              {fields.sections.map((section, idx) => (
+                <li key={idx} className="template-editor__section">
+                  <div className="template-editor__section-fields">
+                    <input
+                      type="text"
+                      className="template-editor__input"
+                      aria-label={`Section ${idx + 1} title`}
+                      value={section.title}
+                      onChange={(e) => updateSection(idx, { title: e.target.value })}
+                      placeholder="Section title"
+                      maxLength={200}
+                    />
+                    <textarea
+                      className="template-editor__textarea"
+                      aria-label={`Section ${idx + 1} description`}
+                      value={section.description}
+                      onChange={(e) => updateSection(idx, { description: e.target.value })}
+                      placeholder="What this section covers"
+                      rows={2}
+                      maxLength={1000}
+                    />
+                  </div>
+                  <GhostButton label="Remove" onClick={() => removeSection(idx)} />
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <GhostButton label="Add section" onClick={addSection} />
         </div>
       </fieldset>
     </Dialog>

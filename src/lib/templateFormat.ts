@@ -1,4 +1,4 @@
-import type { TemplateSummary } from '../api/templates';
+import type { TemplateSummary, TemplateSection } from '../api/templates';
 
 /**
  * Pure Template Bank list classification + display helpers, kept out of the
@@ -164,6 +164,19 @@ export interface TemplateFormFields {
   description: string;
   category: string;
   tagsInput: string;
+  /** I9: free-text guidance for the operator. Plain string; `''` when unset. */
+  usageInstructions: string;
+  /**
+   * I9: the editable section rows. Held as-typed (a row can be half-filled while
+   * the operator works); `buildSaveTemplatePayload` trims and drops any row whose
+   * title is blank, the same way `parseTagsInput` drops blank tags.
+   */
+  sections: TemplateSection[];
+}
+
+/** A fresh, empty section row for the editor's "Add section" control. */
+export function blankSection(): TemplateSection {
+  return { title: '', description: '' };
 }
 
 /** An editor pre-filled from an existing row (edit mode). templateId is carried through but the editor renders it read-only. */
@@ -177,6 +190,9 @@ export function templateToFormFields(tpl: TemplateSummary): TemplateFormFields {
     description: tpl.description ?? '',
     category: tpl.category ?? '',
     tagsInput: formatTagsInput(tpl.tags),
+    usageInstructions: tpl.usageInstructions ?? '',
+    // Copy each row so editing form state never mutates the loaded template.
+    sections: (tpl.sectionDefinitions ?? []).map((s) => ({ ...s })),
   };
 }
 
@@ -191,7 +207,20 @@ export function blankFormFields(): TemplateFormFields {
     description: '',
     category: '',
     tagsInput: '',
+    usageInstructions: '',
+    sections: [],
   };
+}
+
+/**
+ * Trims each section row and drops any whose title is blank (a titleless section
+ * is meaningless and the backend rejects it). `description` may be empty. Mirrors
+ * `parseTagsInput`'s drop-the-blanks behaviour for the structured-list case.
+ */
+export function parseSections(sections: TemplateSection[]): TemplateSection[] {
+  return sections
+    .map((s) => ({ title: s.title.trim(), description: s.description.trim() }))
+    .filter((s) => s.title !== '');
 }
 
 /**
@@ -286,6 +315,14 @@ export interface SaveTemplatePayload {
   description?: string;
   tags: string[];
   category?: string;
+  /**
+   * I9: always sent (a possibly-empty string / array), the same as `tags` above,
+   * so a save can CLEAR them. The backend writes them only because the field is
+   * present; an older client that omits them leaves any existing value intact
+   * (see `saveTemplate.ts`).
+   */
+  usageInstructions: string;
+  sectionDefinitions: TemplateSection[];
 }
 
 export function buildSaveTemplatePayload(fields: TemplateFormFields): SaveTemplatePayload {
@@ -303,5 +340,7 @@ export function buildSaveTemplatePayload(fields: TemplateFormFields): SaveTempla
     ...(description !== '' ? { description } : {}),
     ...(category !== '' ? { category } : {}),
     tags: parseTagsInput(fields.tagsInput),
+    usageInstructions: fields.usageInstructions.trim(),
+    sectionDefinitions: parseSections(fields.sections),
   };
 }

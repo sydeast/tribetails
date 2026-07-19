@@ -6,6 +6,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton } from '../components/Buttons';
 import { SettingsEdit } from './SettingsEdit';
+import { NotificationGate } from './NotificationGate';
 import {
   businessHoursRows,
   serviceRateRows,
@@ -58,7 +59,10 @@ interface SettingsProps {
  */
 export function Settings({ onEdit }: SettingsProps) {
   const [settings, setSettings] = useState<Async<BusinessSettings>>({ status: 'loading' });
-  const [editing, setEditing] = useState(false);
+  // Three in-place views on this one route (no router change), the same swap
+  // pattern "Edit settings" already uses: 'overview' | 'edit' (SettingsEdit) |
+  // 'gate' (the business notification gate matrix).
+  const [mode, setMode] = useState<'overview' | 'edit' | 'gate'>('overview');
 
   // Hoisted so a failed load can hand AsyncRegion a real retry (the
   // FeatureFlags.tsx / FormSchemas.tsx convention).
@@ -83,15 +87,19 @@ export function Settings({ onEdit }: SettingsProps) {
 
   useEffect(() => load(), [load]);
 
-  if (editing) {
+  if (mode === 'edit') {
     return (
       <SettingsEdit
         onDone={() => {
-          setEditing(false);
+          setMode('overview');
           load();
         }}
       />
     );
+  }
+
+  if (mode === 'gate') {
+    return <NotificationGate onBack={() => setMode('overview')} />;
   }
 
   return (
@@ -106,7 +114,7 @@ export function Settings({ onEdit }: SettingsProps) {
             label="Edit settings"
             onClick={() => {
               onEdit?.();
-              setEditing(true);
+              setMode('edit');
             }}
           />
         }
@@ -116,6 +124,17 @@ export function Settings({ onEdit }: SettingsProps) {
         This is an overview, not the editor. Values below are exactly what&rsquo;s saved; click
         &ldquo;Edit settings&rdquo; above to change them.
       </Banner>
+
+      <DenPanel
+        title="Notifications"
+        subtitle="Audience tabs (Business, Staff, Kinfolk) and the per-channel gate for every notification."
+      >
+        <p className="settings__hint">
+          Set which channels each notification can use, and lock any that must stay on. This is the gate
+          that everyone&rsquo;s own notification choices sit inside.
+        </p>
+        <PrimaryButton label="Open notification gate" onClick={() => setMode('gate')} />
+      </DenPanel>
 
       <AsyncRegion
         state={settings}

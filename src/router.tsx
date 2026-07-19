@@ -21,6 +21,7 @@ import { Sessions } from './screens/Sessions';
 import { KinTales } from './screens/KinTales';
 import { Gallery } from './screens/Gallery';
 import { Templates } from './screens/Templates';
+import { KinTaleTemplates } from './screens/KinTaleTemplates';
 import { TribalIntel } from './screens/TribalIntel';
 import { Schedule } from './screens/Schedule';
 import { Inbox } from './screens/Inbox';
@@ -28,6 +29,7 @@ import { Settings } from './screens/Settings';
 import { Communicate } from './screens/Communicate';
 import { Account } from './screens/Account';
 import { MyNotificationsEdit } from './screens/MyNotificationsEdit';
+import { NotificationGate } from './screens/NotificationGate';
 import { Media } from './screens/Media';
 import { type MediaTargetType } from './lib/mediaScopeFormat';
 import { FormSchemaEditor } from './screens/FormSchemaEditor';
@@ -220,6 +222,18 @@ const templatesRoute = createRoute({
   component: Templates,
 });
 
+/**
+ * The KinTale template editor (visit-recap / checklist templates in
+ * `kintale_templates`). Distinct from the email `templates` route above; the
+ * screen is list + edit in one, so it mounts as a bare route component with no
+ * multi-view wrapper.
+ */
+const kinTaleTemplatesRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'kintale-templates',
+  component: KinTaleTemplates,
+});
+
 const tribalIntelRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'tribal-intel',
@@ -262,6 +276,12 @@ const myNotificationsRoute = createRoute({
   component: MyNotificationsEdit,
 });
 
+const notificationGateRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'notification-gate',
+  component: NotificationGate,
+});
+
 /** Adapts the `media/$type/$id` route params to Media's typed props. */
 function MediaRouteView() {
   const { type, id } = mediaRoute.useParams();
@@ -278,7 +298,7 @@ const mediaRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, tribalIntelRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, mediaRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, mediaRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

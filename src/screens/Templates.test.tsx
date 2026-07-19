@@ -10,15 +10,25 @@ const { listTemplates, listTemplateCategories } = vi.hoisted(() => ({
 }));
 vi.mock('../api/templates', async (orig) => ({
   ...(await orig<typeof import('../api/templates')>()),
+  // The New Binding dialog calls listTemplates directly.
   listTemplates,
+  // The bank list calls the paginated variant. Wrap the array-returning
+  // `listTemplates` mock into a page envelope so existing per-test setup
+  // (listTemplates.mockResolvedValue([...])) keeps driving it unchanged; a test
+  // can instead resolve an explicit { templates, nextCursor } to drive Load more.
+  listTemplatesPage: (args: unknown) =>
+    Promise.resolve(listTemplates(args)).then((r: unknown) =>
+      Array.isArray(r) ? { templates: r, nextCursor: null } : r,
+    ),
   listTemplateCategories,
 }));
 
-const { saveTemplate, deleteTemplate } = vi.hoisted(() => ({
+const { saveTemplate, deleteTemplate, assignTemplatesToCategory } = vi.hoisted(() => ({
   saveTemplate: vi.fn(),
   deleteTemplate: vi.fn(),
+  assignTemplatesToCategory: vi.fn(),
 }));
-vi.mock('../api/templatesWrite', () => ({ saveTemplate, deleteTemplate }));
+vi.mock('../api/templatesWrite', () => ({ saveTemplate, deleteTemplate, assignTemplatesToCategory }));
 
 import { Templates } from './Templates';
 
@@ -32,6 +42,8 @@ function tpl(over: Partial<TemplateSummary>): TemplateSummary {
     description: null,
     tags: [],
     category: null,
+    usageInstructions: '',
+    sectionDefinitions: [],
     ...over,
   };
 }
@@ -262,5 +274,67 @@ describe('Templates screen', () => {
     expect(within(templatesCard as HTMLElement).getByText('2')).toBeInTheDocument();
     expect(within(categoriesCard as HTMLElement).getByText('1')).toBeInTheDocument();
     expect(within(untaggedCard as HTMLElement).getByText('1')).toBeInTheDocument();
+  });
+});
+
+describe('Templates screen: I8 pagination', () => {
+  beforeEach(() => {
+    listTemplates.mockReset();
+    listTemplateCategories.mockReset();
+    listTemplateCategories.mockResolvedValue([]);
+  });
+
+  it('shows Load more when the first page returns a cursor, and appends the next page on click', async () => {
+    listTemplates
+      .mockResolvedValueOnce({ templates: [tpl({ templateId: 'a', title: 'Alpha' })], nextCursor: 'a' })
+      .mockResolvedValueOnce({ templates: [tpl({ templateId: 'b', title: 'Beta' })], nextCursor: null });
+    render(<Templates />);
+
+    await screen.findByText('Alpha');
+    expect(screen.queryByText('Beta')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: /load more/i }));
+
+    expect(await screen.findByText('Beta')).toBeInTheDocument();
+    expect(screen.getByText('Alpha')).toBeInTheDocument(); // previous page still shown
+    expect(screen.queryByRole('button', { name: /load more/i })).toBeNull();
+  });
+
+  it('shows no Load more when the first page is exhausted (nextCursor null)', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    expect(screen.queryByRole('button', { name: /load more/i })).toBeNull();
+  });
+
+  it('surfaces a Load more failure fail-loud, keeping the already-loaded rows', async () => {
+    listTemplates
+      .mockResolvedValueOnce({ templates: [tpl({ templateId: 'a', title: 'Alpha' })], nextCursor: 'a' })
+      .mockRejectedValueOnce(new Error('permission-denied'));
+    render(<Templates />);
+    await screen.findByText('Alpha');
+
+    await userEvent.click(screen.getByRole('button', { name: /load more/i }));
+
+    expect(await screen.findByText(/listTemplates failed: permission-denied/)).toBeInTheDocument();
+    expect(screen.getByText('Alpha')).toBeInTheDocument();
+  });
+});
+
+describe('Templates screen: I9 New binding', () => {
+  beforeEach(() => {
+    listTemplates.mockReset();
+    listTemplateCategories.mockReset();
+    listTemplateCategories.mockResolvedValue(['Booking']);
+  });
+
+  it('opens the bulk category (New binding) dialog from the header', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+
+    await userEvent.click(screen.getByRole('button', { name: /new binding/i }));
+
+    expect(screen.getByRole('dialog', { name: /new binding/i })).toBeInTheDocument();
   });
 });

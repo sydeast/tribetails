@@ -70,6 +70,48 @@ describe('FeatureFlags screen', () => {
     await waitFor(() => expect(recap).not.toBeDisabled());
   });
 
+  it('shows a per-row saving indicator during the write and clears it on success', async () => {
+    getFeatureFlags.mockResolvedValue({});
+    let release!: () => void;
+    setFeatureFlags.mockReturnValue(
+      new Promise<void>((r) => {
+        release = () => r();
+      }),
+    );
+    render(<FeatureFlags />);
+    const recap = await screen.findByRole('switch', { name: /comms recap/i });
+    // Indicator absent before any write.
+    expect(screen.queryByText(/saving/i)).toBeNull();
+    await userEvent.click(recap);
+    // Present on the committing row while the write is in flight.
+    const saving = screen.getByRole('status');
+    expect(saving).toHaveTextContent(/saving/i);
+    expect(saving.closest('.flags__row')).toContainElement(recap);
+    // Not shown on the other, untouched row.
+    const integration = screen.getByRole('switch', { name: /integration manage/i });
+    expect(integration.closest('.flags__row')).not.toContainElement(saving);
+    release();
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+  });
+
+  it('clears the per-row saving indicator when the write fails', async () => {
+    getFeatureFlags.mockResolvedValue({});
+    let reject!: (e: Error) => void;
+    setFeatureFlags.mockReturnValue(
+      new Promise<void>((_r, rej) => {
+        reject = rej;
+      }),
+    );
+    render(<FeatureFlags />);
+    const recap = await screen.findByRole('switch', { name: /comms recap/i });
+    await userEvent.click(recap);
+    expect(screen.getByRole('status')).toHaveTextContent(/saving/i);
+    reject(new Error('permission-denied'));
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+    // And the failure is surfaced fail-loud.
+    expect(screen.getByText(/permission-denied/i)).toBeInTheDocument();
+  });
+
   it('clears the write-error banner on the next toggle attempt', async () => {
     getFeatureFlags.mockResolvedValue({});
     setFeatureFlags.mockRejectedValueOnce(new Error('boom')).mockResolvedValue({});

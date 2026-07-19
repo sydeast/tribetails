@@ -28,7 +28,7 @@ function binding(over: Partial<TemplateBinding> = {}): TemplateBinding {
   return { catalogKey: 'booking.confirmed', templateId: 'tmpl_ok', audience: 'kinfolk', triggerKey: null, active: true, ...over };
 }
 function template(over: Partial<TemplateSummary> = {}): TemplateSummary {
-  return { templateId: 'tmpl_ok', subject: 's', body: 'b', html: null, title: 'Booking confirmed', description: null, tags: [], category: null, ...over };
+  return { templateId: 'tmpl_ok', subject: 's', body: 'b', html: null, title: 'Booking confirmed', description: null, tags: [], category: null, usageInstructions: '', sectionDefinitions: [], ...over };
 }
 
 beforeEach(() => {

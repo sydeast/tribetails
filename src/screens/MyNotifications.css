@@ -27,6 +27,25 @@
   margin: 0 0 var(--space-2);
 }
 
+/* Section header row: heading on the left, the select-all controls on the right. */
+.mynotif__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
+}
+.mynotif__section-head .mynotif__section-heading {
+  margin-bottom: 0;
+}
+.mynotif__section-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
+
 .mynotif__rows {
   display: flex;
   flex-direction: column;

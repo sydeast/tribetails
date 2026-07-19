@@ -1,0 +1,282 @@
+/**
+ * KinTale template editor styling. Scoped to this screen and imported directly
+ * by KinTaleTemplates.tsx, the FormSchemaEditor.css convention: nothing here
+ * belongs in the shared styles. Every value comes from styles/tokens.css, no
+ * literal colours, radii, or spacing.
+ */
+
+.ktt__hint {
+  color: var(--color-text-dim);
+  margin: 0;
+}
+
+.ktt__note {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-faint);
+}
+
+/* ── heading actions ─────────────────────────────────────────────────────── */
+
+.ktt__heading-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ktt__status {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  letter-spacing: 0.04em;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  border: var(--border-hairline) solid var(--color-border);
+}
+.ktt__status--dirty {
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+.ktt__status--saved {
+  color: var(--color-text-faint);
+}
+
+/* ── fields ──────────────────────────────────────────────────────────────── */
+
+.ktt__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.ktt__field--grow {
+  flex: 1 1 9rem;
+}
+.ktt__field--emoji {
+  flex: 0 0 4.5rem;
+}
+
+.ktt__label {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.ktt__input,
+.ktt__textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.ktt__textarea {
+  resize: vertical;
+  min-height: 2.5rem;
+}
+.ktt__input:focus-visible,
+.ktt__textarea:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+/* Space the stacked fields in Basic settings. */
+.ktt__field + .ktt__field {
+  margin-top: var(--space-4);
+}
+
+/* ── template picker ─────────────────────────────────────────────────────── */
+
+.ktt__picker {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ktt__picker-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: left;
+  font: inherit;
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-11);
+  padding: var(--space-3);
+  cursor: pointer;
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.ktt__picker-row:hover {
+  border-color: var(--color-border);
+}
+.ktt__picker-row--active {
+  border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface-2));
+}
+
+.ktt__picker-name {
+  flex: 1 1 auto;
+  font-family: var(--type-title-md-family);
+  font-size: var(--type-title-md-size);
+}
+
+.ktt__tag {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  padding: 0.1rem var(--space-2);
+  border-radius: var(--radius-chip);
+}
+.ktt__tag--default {
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+}
+.ktt__tag--muted {
+  color: var(--color-text-faint);
+  background: color-mix(in srgb, var(--color-text-faint) 14%, transparent);
+}
+
+/* ── toggle rows ─────────────────────────────────────────────────────────── */
+
+.ktt__toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-top: var(--border-hairline) solid var(--color-border-soft);
+}
+.ktt__toggle-row:first-child {
+  border-top: none;
+}
+
+.ktt__toggle-copy {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.ktt__toggle-label {
+  font-family: var(--type-title-sm-family);
+  font-size: var(--type-title-sm-size);
+  color: var(--color-text-primary);
+}
+.ktt__toggle-desc {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+/* ── checklist items ─────────────────────────────────────────────────────── */
+
+.ktt__items,
+.ktt__moods {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.ktt__item {
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-13);
+  background: var(--color-surface-2);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ktt__item-head {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.ktt__item-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.ktt__item-toggles {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── conditions ──────────────────────────────────────────────────────────── */
+
+.ktt__conditions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: var(--border-hairline) solid var(--color-border-soft);
+  padding-top: var(--space-3);
+}
+
+.ktt__conditions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.ktt__conditions-title {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.ktt__condition-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ktt__condition {
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-10);
+  background: var(--color-surface);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ktt__condition-row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.ktt__condition-summary {
+  margin: 0;
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  color: var(--color-accent);
+}
+
+/* ── moods ───────────────────────────────────────────────────────────────── */
+
+.ktt__mood {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-11);
+  background: var(--color-surface-2);
+  padding: var(--space-3);
+}

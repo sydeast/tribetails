@@ -179,6 +179,53 @@ describe('MyNotificationsEdit screen', () => {
     expect(screen.getByRole('button', { name: /save changes/i })).not.toBeDisabled();
   });
 
+  it('section All on flips every editable channel and commits them in ONE save', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [entry({ key: 'k' })] }));
+    render(<MyNotificationsEdit />);
+
+    // Wait for the section to render, then flip the whole section on.
+    const smsRow = (await screen.findByText('Text (SMS)')).closest('.mynotif__channel-row') as HTMLElement;
+    const smsToggle = within(smsRow).getByRole('switch');
+    expect(smsToggle).toHaveAttribute('aria-checked', 'false');
+
+    await userEvent.click(screen.getByRole('button', { name: /^all on$/i }));
+    // The section's editable toggles are now on (default-off sms visibly flipped).
+    expect(smsToggle).toHaveAttribute('aria-checked', 'true');
+
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() =>
+      expect(saveMyAdminNotificationPrefs).toHaveBeenCalledWith({
+        byKey: { k: { email: true, sms: true, push: true } },
+        byCategory: {},
+        marketingOptIn: {},
+      }),
+    );
+    // One save writes the whole section, not one call per channel.
+    expect(saveMyAdminNotificationPrefs).toHaveBeenCalledTimes(1);
+  });
+
+  it('section All off does not fake a forced channel off, and still saves once', async () => {
+    // email is catalog-required (forced); only sms/push are editable.
+    getNotificationMatrix.mockResolvedValue(
+      matrix({ catalog: [entry({ key: 'k', required: { email: true } })] }),
+    );
+    render(<MyNotificationsEdit />);
+    await screen.findByText('As the owner');
+
+    await userEvent.click(screen.getByRole('button', { name: /^all off$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() =>
+      expect(saveMyAdminNotificationPrefs).toHaveBeenCalledWith({
+        byKey: { k: { sms: false, push: false } },
+        byCategory: {},
+        marketingOptIn: {},
+      }),
+    );
+    expect(saveMyAdminNotificationPrefs).toHaveBeenCalledTimes(1);
+  });
+
   it('surfaces a load failure fail-loud, same as the read screen', async () => {
     getNotificationMatrix.mockRejectedValue(new Error('permission-denied'));
     render(<MyNotificationsEdit />);
