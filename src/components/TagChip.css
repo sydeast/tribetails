@@ -1,0 +1,79 @@
+/**
+ * TagChip. Every color derives from --tag-tone (a --color-* role token TagChip.tsx
+ * points at per tag), composited with color-mix the same way Banner does, so this
+ * file holds no literal colors. A neutral chip (unknown/free-form/removed tag)
+ * drops the tone and reads on the plain surface token instead.
+ */
+
+.tag-chip {
+  --tag-wash: 14%;
+  --tag-rim: 42%;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: var(--border-hairline) solid color-mix(in srgb, var(--tag-tone) var(--tag-rim), transparent);
+  background: color-mix(in srgb, var(--tag-tone) var(--tag-wash), var(--color-surface));
+  color: var(--color-text-primary);
+  font-family: var(--type-label-lg-family);
+  font-size: var(--type-label-lg-size);
+  font-weight: var(--type-label-lg-weight);
+  line-height: 1.2;
+}
+
+[data-theme='dark'] .tag-chip {
+  --tag-wash: 20%;
+  --tag-rim: 50%;
+}
+
+/* No tone: a plain surface chip. The name is unknown to the vocab, so it earns no color. */
+.tag-chip--neutral {
+  border-color: var(--color-border);
+  background: var(--color-surface-2);
+  color: var(--color-text-dim);
+}
+
+.tag-chip__icon {
+  font-size: 0.95em;
+  line-height: 1;
+}
+
+.tag-chip__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-chip__remove {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-right: -3px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tag-chip__remove:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 12%, transparent);
+}
+
+.tag-chip__remove svg {
+  width: 11px;
+  height: 11px;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.tag-chip__remove:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-accent);
+  outline-offset: 1px;
+}

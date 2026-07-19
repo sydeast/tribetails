@@ -34,6 +34,13 @@ export interface KinDetail {
   vetInfo: string;
   officeNotes: string;
   /**
+   * Pet tag NAMES (e.g. "Reactive"), the `petTags` vocabulary's assignment side.
+   * NEW field: legacy `kin` docs have no `tags`, so it reads default `[]`, and
+   * writes (`updateKinTags`) are a merge, leaving legacy docs untouched until the
+   * first tag is assigned. String-only reader, matching `KinfolkProfile.tags`.
+   */
+  tags: string[];
+  /**
    * Free-text care checklist on the pet doc. Read by the KinTale condition
    * engine (`lib/kinTale/engine.ts`, KIN_ATTRIBUTE key `checklist`). It exists
    * in Firestore on the `kin` doc (the Kotlin `Kin` model carries it); modeled
@@ -49,7 +56,7 @@ const EMPTY: Omit<KinDetail, '_id'> = {
   kinfolkId: '', name: '', species: 'Dog', breed: '', age: '', sex: '', weight: '', status: 'active',
   profilePictureUrl: '', colorMarkings: '', spayedNeutered: false, reactive: false,
   staysAs: '', routine: '', trainingCommands: '', feedingBrand: '', vaccinations: '',
-  medicationHealthNotes: '', vetInfo: '', officeNotes: '', checklist: '', ownerEmail: '', ownerPhone: '',
+  medicationHealthNotes: '', vetInfo: '', officeNotes: '', tags: [], checklist: '', ownerEmail: '', ownerPhone: '',
 };
 
 /** Defensive field-by-field merge (never `undefined`, never fabricates a value). */
@@ -57,8 +64,12 @@ export function mergeKinDetail(id: string, raw: Record<string, unknown> | undefi
   const r = (raw ?? {}) as Record<string, unknown>;
   const s = (v: unknown, def: string): string => (typeof v === 'string' ? v : def);
   const b = (v: unknown): boolean => v === true;
+  /** Keep only string entries; a legacy/malformed `tags` never yields `undefined` rows. */
+  const arr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
   return {
     _id: id,
+    tags: arr(r.tags),
     kinfolkId: s(r.kinfolkId, EMPTY.kinfolkId),
     name: s(r.name, EMPTY.name),
     species: s(r.species, EMPTY.species),

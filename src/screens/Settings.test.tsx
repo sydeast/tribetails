@@ -37,6 +37,19 @@ vi.mock('./NotificationGate', () => ({
   ),
 }));
 
+// Stubbed like the others: this file asserts Settings.tsx's own wiring (does
+// "Open tags" swap to the Tags editor, and does its onBack return to the
+// overview), not the editor's CRUD (TagsEditor.test.tsx).
+vi.mock('./TagsEditor', () => ({
+  TagsEditor: ({ onBack }: { onBack?: () => void }) => (
+    <div data-testid="tags-editor-stub">
+      <button type="button" onClick={onBack}>
+        stub: back to settings from tags
+      </button>
+    </div>
+  ),
+}));
+
 import { Settings } from './Settings';
 import type { BusinessSettings } from '../api/settings';
 
@@ -93,6 +106,8 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   brandTagline: '',
   homeGreeting: '',
   homeAccentTail: '',
+  householdTags: [],
+  petTags: [],
   mytribePortal: {
     logoUrl: '',
     themeId: 'default',
@@ -276,6 +291,19 @@ describe('Settings screen (read-only overview)', () => {
     expect(screen.queryByText('Business profile')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByText('stub: back to settings'));
+    expect(await screen.findByText('Business profile')).toBeInTheDocument();
+  });
+
+  it('opens the Tags editor in place, and its Back returns to the overview', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByText('Business profile');
+
+    await userEvent.click(screen.getByRole('button', { name: /open tags/i }));
+    expect(screen.getByTestId('tags-editor-stub')).toBeInTheDocument();
+    expect(screen.queryByText('Business profile')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText('stub: back to settings from tags'));
     expect(await screen.findByText('Business profile')).toBeInTheDocument();
   });
 

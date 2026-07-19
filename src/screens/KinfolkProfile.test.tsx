@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Kin } from '../api/directory';
 import type { KinfolkProfile as Profile } from '../api/kinfolkProfile';
@@ -9,6 +9,16 @@ const { getKinfolkProfile } = vi.hoisted(() => ({ getKinfolkProfile: vi.fn() }))
 vi.mock('../api/kinfolkProfile', async (orig) => ({
   ...(await orig<typeof import('../api/kinfolkProfile')>()),
   getKinfolkProfile,
+}));
+// The Tags panel (ProfileTagsSection) loads the vocab + persists tag edits.
+const getBusinessSettings = vi.fn();
+vi.mock('../api/settings', () => ({ getBusinessSettings: () => getBusinessSettings() }));
+const saveBusinessSettings = vi.fn();
+vi.mock('../api/settingsWrite', () => ({ saveBusinessSettings: (patch: unknown) => saveBusinessSettings(patch) }));
+const { updateKinfolkTags } = vi.hoisted(() => ({ updateKinfolkTags: vi.fn() }));
+vi.mock('../api/directoryWrite', async (orig) => ({
+  ...(await orig<typeof import('../api/directoryWrite')>()),
+  updateKinfolkTags,
 }));
 
 import { KinfolkProfile } from './KinfolkProfile';
@@ -27,7 +37,15 @@ function kin(over: Partial<Kin> = {}): Kin {
   return { _id: 'p1', name: 'Willow', species: 'Dog', breed: 'Lab', age: '4', sex: 'F', status: 'active', profilePictureUrl: '', ...over } as Kin;
 }
 
-beforeEach(() => getKinfolkProfile.mockReset());
+beforeEach(() => {
+  getKinfolkProfile.mockReset();
+  getBusinessSettings.mockReset();
+  getBusinessSettings.mockResolvedValue({ householdTags: [], petTags: [] });
+  saveBusinessSettings.mockReset();
+  saveBusinessSettings.mockResolvedValue({ updatedAt: 'now', updatedBy: 'auntie' });
+  updateKinfolkTags.mockReset();
+  updateKinfolkTags.mockResolvedValue(undefined);
+});
 
 describe('mergeKinfolkProfile (pure)', () => {
   it('defaults every field so a partial doc never renders undefined', () => {
@@ -84,5 +102,13 @@ describe('KinfolkProfile', () => {
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={onBack} />);
     await userEvent.click(await screen.findByRole('button', { name: /back to directory/i }));
     expect(onBack).toHaveBeenCalledOnce();
+  });
+
+  it('shows and edits household tags, saving via updateKinfolkTags', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ tags: ['VIP'] }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    expect(await screen.findByText('VIP')).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/add a household tag/i), 'Slow pay{Enter}');
+    await waitFor(() => expect(updateKinfolkTags).toHaveBeenCalledWith('k1', ['VIP', 'Slow pay']));
   });
 });

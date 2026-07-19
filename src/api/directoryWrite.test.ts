@@ -1,14 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { addDoc, collection, serverTimestamp } = vi.hoisted(() => ({
+const { addDoc, collection, serverTimestamp, doc, updateDoc } = vi.hoisted(() => ({
   addDoc: vi.fn(),
   collection: vi.fn(),
   serverTimestamp: vi.fn(),
+  doc: vi.fn(),
+  updateDoc: vi.fn(),
 }));
-vi.mock('firebase/firestore', () => ({ addDoc, collection, serverTimestamp }));
+vi.mock('firebase/firestore', () => ({ addDoc, collection, serverTimestamp, doc, updateDoc }));
 vi.mock('../lib/firebase', () => ({ db: {} }));
 
-import { createKinfolk, createKin, type NewKinfolkInput, type NewKinInput } from './directoryWrite';
+import {
+  createKinfolk,
+  createKin,
+  updateKinTags,
+  updateKinfolkTags,
+  type NewKinfolkInput,
+  type NewKinInput,
+} from './directoryWrite';
 
 function kinfolkInput(over: Partial<NewKinfolkInput> = {}): NewKinfolkInput {
   return {
@@ -38,7 +47,10 @@ beforeEach(() => {
   addDoc.mockReset();
   collection.mockReset();
   serverTimestamp.mockReset();
+  doc.mockReset();
+  updateDoc.mockReset();
   collection.mockImplementation((_db: unknown, path: string) => `collection-ref:${path}`);
+  doc.mockImplementation((_db: unknown, path: string, id: string) => `doc-ref:${path}/${id}`);
   serverTimestamp.mockReturnValue('server-timestamp-sentinel');
 });
 
@@ -118,5 +130,49 @@ describe('createKin', () => {
   it('propagates a genuine write failure for the caller to surface fail-loud', async () => {
     addDoc.mockRejectedValue(new Error('permission-denied'));
     await expect(createKin(kinInput())).rejects.toThrow('permission-denied');
+  });
+});
+
+describe('updateKinTags', () => {
+  it('merges the tag name list plus a stamped updatedAt onto the flat kin doc', async () => {
+    updateDoc.mockResolvedValue(undefined);
+    await updateKinTags('p1', ['Reactive', 'Feeding']);
+    expect(doc).toHaveBeenCalledWith({}, 'kin', 'p1');
+    expect(updateDoc).toHaveBeenCalledWith('doc-ref:kin/p1', {
+      tags: ['Reactive', 'Feeding'],
+      updatedAt: 'server-timestamp-sentinel',
+    });
+  });
+
+  it('rejects a blank kin id without calling updateDoc', async () => {
+    await expect(updateKinTags('  ', ['x'])).rejects.toThrow(/kin id/i);
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+
+  it('propagates a genuine write failure for the caller to surface fail-loud', async () => {
+    updateDoc.mockRejectedValue(new Error('permission-denied'));
+    await expect(updateKinTags('p1', [])).rejects.toThrow('permission-denied');
+  });
+});
+
+describe('updateKinfolkTags', () => {
+  it('merges the tag name list plus a stamped updatedAt onto the kinfolk doc', async () => {
+    updateDoc.mockResolvedValue(undefined);
+    await updateKinfolkTags('kf1', ['VIP']);
+    expect(doc).toHaveBeenCalledWith({}, 'kinfolk', 'kf1');
+    expect(updateDoc).toHaveBeenCalledWith('doc-ref:kinfolk/kf1', {
+      tags: ['VIP'],
+      updatedAt: 'server-timestamp-sentinel',
+    });
+  });
+
+  it('rejects a blank kinfolk id without calling updateDoc', async () => {
+    await expect(updateKinfolkTags('', ['x'])).rejects.toThrow(/kinfolk id/i);
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+
+  it('propagates a genuine write failure for the caller to surface fail-loud', async () => {
+    updateDoc.mockRejectedValue(new Error('permission-denied'));
+    await expect(updateKinfolkTags('kf1', [])).rejects.toThrow('permission-denied');
   });
 });

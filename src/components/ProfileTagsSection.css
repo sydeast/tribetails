@@ -1,0 +1,5 @@
+/** The Tags panel on the kinfolk + kin profiles. Spacing tokens only. */
+
+.profileTags__banner {
+  margin-bottom: var(--space-3);
+}

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getKinfolkProfile, type KinfolkProfile as Profile } from '../api/kinfolkProfile';
+import { updateKinfolkTags } from '../api/directoryWrite';
 import { kinfolkDisplayName, initialsOf, type Kin } from '../api/directory';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
 import { GhostButton } from '../components/Buttons';
+import { ProfileTagsSection } from '../components/ProfileTagsSection';
 import './KinfolkProfile.css';
 
 interface KinfolkProfileProps {
@@ -114,6 +116,12 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkP
                   </div>
                 </div>
               </DenPanel>
+
+              <ProfileTagsSection
+                scope="household"
+                initialTags={p.tags}
+                onSaveTags={(next) => updateKinfolkTags(p._id !== '' ? p._id : kinfolkId, next)}
+              />
 
               <DenPanel title="Contact">
                 <dl className="kprofile__facts">

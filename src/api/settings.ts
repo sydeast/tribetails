@@ -1,5 +1,6 @@
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import type { TagDef } from '../lib/tags/model';
 
 /**
  * Business Settings (read-only overview).
@@ -131,6 +132,16 @@ export interface BusinessSettings {
   brandTagline: string;
   homeGreeting: string;
   homeAccentTail: string;
+  /**
+   * The two tag vocabularies operators manage in the Tags settings panel:
+   * `householdTags` label `kinfolk` (e.g. "VIP"), `petTags` label `kin` (e.g.
+   * "Reactive"). Each is a list of rich `{ name, color, icon }` defs; assignments
+   * on a profile store only the tag NAME. Default `[]`; a legacy doc without
+   * either field, or with malformed rows, decodes to a clean list (see
+   * `decodeTagDefs`), never `undefined` and never a thrown decode.
+   */
+  householdTags: TagDef[];
+  petTags: TagDef[];
   mytribePortal: MyTribePortalConfig;
   updatedAt: string;
   updatedBy: string;
@@ -214,10 +225,34 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   brandTagline: '',
   homeGreeting: '',
   homeAccentTail: '',
+  householdTags: [],
+  petTags: [],
   mytribePortal: DEFAULT_MYTRIBE_PORTAL,
   updatedAt: '',
   updatedBy: '',
 };
+
+/**
+ * Decode a raw `householdTags`/`petTags` array into clean `TagDef[]`, keeping
+ * only well-formed `{ name, color: { token, css }, icon }` rows and dropping
+ * anything malformed (a hand-edited doc, a half-written row, a legacy shape).
+ * Never throws: a bad vocabulary must never take down the whole settings read.
+ */
+function decodeTagDefs(raw: unknown): TagDef[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TagDef[] = [];
+  for (const row of raw) {
+    if (typeof row !== 'object' || row === null) continue;
+    const r = row as Record<string, unknown>;
+    if (typeof r.name !== 'string' || r.name.trim() === '') continue;
+    if (typeof r.icon !== 'string') continue;
+    if (typeof r.color !== 'object' || r.color === null) continue;
+    const c = r.color as Record<string, unknown>;
+    if (typeof c.token !== 'string' || typeof c.css !== 'string') continue;
+    out.push({ name: r.name, color: { token: c.token, css: c.css }, icon: r.icon });
+  }
+  return out;
+}
 
 /** A raw Firestore doc body: unknown shape, since a hand-edited or legacy doc can be missing/malformed any field. */
 type RawSettings = Record<string, unknown>;
@@ -323,6 +358,8 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
     brandTagline: (r.brandTagline as string) ?? d.brandTagline,
     homeGreeting: (r.homeGreeting as string) ?? d.homeGreeting,
     homeAccentTail: (r.homeAccentTail as string) ?? d.homeAccentTail,
+    householdTags: decodeTagDefs(r.householdTags),
+    petTags: decodeTagDefs(r.petTags),
     mytribePortal: mergeMyTribePortal(r.mytribePortal),
     updatedAt: (r.updatedAt as string) ?? d.updatedAt,
     updatedBy: (r.updatedBy as string) ?? d.updatedBy,
