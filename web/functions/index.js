@@ -200,7 +200,13 @@ async function n8nKeyAuth(req, res, scope) {
   return true;
 }
 
-async function requireAdminToken(req, res, scope) {
+// Verifies the Bearer Firebase ID token and enforces the caller is a real admin
+// (`admin === true`). When `allowTestAdmin` is set, a Stage-0I sandbox test-admin
+// — a real Auth user that carries a non-empty `testTribeId` custom claim instead
+// of `admin` — is ALSO accepted; the CALLER is then responsible for scoping the
+// request to that test tribe (see signCloudinaryUpload). All other endpoints keep
+// the admin-only gate (allowTestAdmin defaults false).
+async function requireAdminToken(req, res, scope, { allowTestAdmin = false } = {}) {
   const authHeader = req.get('Authorization') || '';
   if (!authHeader.startsWith('Bearer ')) {
     res.status(401).json({ error: 'missing_bearer_token' });
@@ -209,7 +215,10 @@ async function requireAdminToken(req, res, scope) {
 
   try {
     const decodedToken = await admin.auth().verifyIdToken(authHeader.slice('Bearer '.length).trim(), true);
-    if (decodedToken.admin !== true) {
+    const isAdmin = decodedToken.admin === true;
+    const testTribeId = typeof decodedToken.testTribeId === 'string' ? decodedToken.testTribeId : '';
+    const isTestAdmin = testTribeId.length > 0;
+    if (!isAdmin && !(allowTestAdmin && isTestAdmin)) {
       res.status(403).json({ error: 'admin_required' });
       return null;
     }
@@ -385,7 +394,10 @@ exports.signCloudinaryUpload = onRequest(
       return;
     }
 
-    const decodedToken = await requireAdminToken(req, res, 'signCloudinaryUpload');
+    // allowTestAdmin: the Stage-0I sandbox test-admin (testTribeId claim, no
+    // admin) may upload media too, but only pinned to its own test tribe (see
+    // the entityId === testTribeId check below).
+    const decodedToken = await requireAdminToken(req, res, 'signCloudinaryUpload', { allowTestAdmin: true });
     if (!decodedToken) return;
 
     const cloudName = CLOUDINARY_CLOUD_NAME.value();
@@ -414,6 +426,22 @@ exports.signCloudinaryUpload = onRequest(
     } catch (e) {
       res.status(400).json({ error: e.message });
       return;
+    }
+
+    // Stage-0I sandbox scope: a test-admin (no admin claim, non-empty
+    // testTribeId) may ONLY sign uploads pinned to its own test tribe. This
+    // mirrors the media_files firestore rule (testOwnsIncoming: the persisted
+    // doc's kinfolkId must == testTribeId, and the clients stamp
+    // kinfolkId=entityId only for the KINFOLK entity). So the folder's pinned
+    // entityId (already forced to be the folder's last segment by
+    // validateUploadFolder) must equal testTribeId; any other entity is out of
+    // scope and denied. A real admin (admin===true) is unrestricted.
+    if (decodedToken.admin !== true) {
+      const testTribeId = typeof decodedToken.testTribeId === 'string' ? decodedToken.testTribeId : '';
+      if (!testTribeId || entityId !== testTribeId) {
+        res.status(403).json({ error: 'test_scope_denied' });
+        return;
+      }
     }
 
     const timestamp = Math.floor(Date.now() / 1000);
@@ -638,12 +666,21 @@ exports.sendMessage = onRequest({ cors: false }, async (req, res) => {
   }
 });
 
-// generate: Auntie copy generator. Replaces the n8n `auntie-generate` webhook
-// (workflow SIg2KsWn0oyRkSzR). Admin-only (Firebase ID token), reads admin-only
-// Firestore context (dossiers / kin / the_411 / visit_logs), builds the prompt
-// from the consolidated Voice Bible + exemplars (web/functions/voice), calls
-// Claude, writes a draft, and returns a byte-compatible GenerateResponse.
+// generateAuntieCopy: Auntie copy generator. Replaces the n8n `auntie-generate`
+// webhook (workflow SIg2KsWn0oyRkSzR). Admin-only (Firebase ID token), reads
+// admin-only Firestore context (dossiers / kin / the_411 / visit_logs), builds
+// the prompt from the consolidated Voice Bible + exemplars (web/functions/voice),
+// calls Claude, writes a draft, and returns a byte-compatible GenerateResponse.
 // Exposed at POST /api/generate via the web/firebase.json rewrite.
+//
+// NAME: this function is DELIBERATELY named `generateAuntieCopy`, not `generate`.
+// The MyTribe kinfolk-portal codebase (same Firebase project) exports an ONCALL
+// callable named `generate` (functions/src/portal/generate.ts). Two codebases
+// cannot share a function id, and the /api/generate Hosting rewrite was resolving
+// to that callable — a plain HTTP POST (no `{data:...}` envelope) hit the
+// callable protocol and came back 400 {"error":{...,"status":"INVALID_ARGUMENT"}}
+// (Sentry AUNTIEOS-ADMIN-Q/P). Renaming this onRequest breaks the collision; the
+// rewrite SOURCE path stays /api/generate so android + web clients are unchanged.
 //
 // Body: { communication_type, recipient, raw_notes, tone_hint?, max_length?, avoid_opening? }
 // Returns (GenerateResponse):
@@ -673,13 +710,13 @@ function resolveAnthropicModel() {
   return ALLOWED_ANTHROPIC_MODELS.has(requested) ? requested : ANTHROPIC_MODEL_DEFAULT;
 }
 
-exports.generate = onRequest({ secrets: [ANTHROPIC_API_KEY], cors: false }, async (req, res) => {
+exports.generateAuntieCopy = onRequest({ secrets: [ANTHROPIC_API_KEY], cors: false }, async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'method_not_allowed' });
     return;
   }
 
-  const decodedToken = await requireAdminToken(req, res, 'generate');
+  const decodedToken = await requireAdminToken(req, res, 'generateAuntieCopy');
   if (!decodedToken) return;
 
   const commType = (req.body && req.body.communication_type) || '';
