@@ -98,7 +98,7 @@ class MediaGalleryViewModelTest {
     @Test
     fun `setProfilePhoto success reloads media with the chosen photo flagged`() = runTest(testDispatcher) {
         val chosen = MediaFile(
-            id = "m2", entityId = "kf1", entityType = MediaEntityType.KINFOLK, fileType = MediaType.IMAGE,
+            id = "m2", entityId = "kf1", entityType = MediaEntityType.KINFOLK.name, fileType = MediaType.IMAGE,
         )
         // After the callable flips the flag, the reload returns m2 as the profile.
         coEvery { mockRepo.setMediaProfilePhoto("m2", MediaEntityType.KINFOLK, "kf1") } returns Result.success(Unit)
@@ -120,7 +120,7 @@ class MediaGalleryViewModelTest {
     @Test
     fun `setProfilePhoto failure surfaces error loud and does not reload`() = runTest(testDispatcher) {
         val chosen = MediaFile(
-            id = "m1", entityId = "kf1", entityType = MediaEntityType.KINFOLK, fileType = MediaType.IMAGE,
+            id = "m1", entityId = "kf1", entityType = MediaEntityType.KINFOLK.name, fileType = MediaType.IMAGE,
         )
         coEvery { mockRepo.setMediaProfilePhoto(any(), any(), any()) } returns
             Result.failure(RuntimeException("permission-denied"))

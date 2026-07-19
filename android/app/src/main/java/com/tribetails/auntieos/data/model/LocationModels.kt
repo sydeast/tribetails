@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.data.model
 
+import androidx.annotation.Keep
+
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.GeoPoint
 
@@ -10,6 +12,7 @@ import com.google.firebase.firestore.GeoPoint
  * Down-sampled to ≤1000 points so the doc stays well under Firestore's 1MB
  * limit even for multi-hour overnights.
  */
+@Keep
 data class GpsSummary(
     var distanceMeters: Double = 0.0,
     var durationSeconds: Long = 0L,
@@ -21,6 +24,7 @@ data class GpsSummary(
     var computedAt: String = "",
 )
 
+@Keep
 data class GpsPoint(
     var lat: Double = 0.0,
     var lng: Double = 0.0,
@@ -29,6 +33,7 @@ data class GpsPoint(
 )
 
 // Location tracking models for kin care visits
+@Keep
 data class LocationPoint(
     val latitude: Double = 0.0,
     val longitude: Double = 0.0,
@@ -55,6 +60,7 @@ data class LocationPoint(
     }
 }
 
+@Keep
 data class VisitRoute(
     @DocumentId val id: String = "",
     var kinCareSessionId: String = "",
@@ -75,6 +81,7 @@ data class VisitRoute(
     var updatedAt: String = ""
 )
 
+@Keep
 data class LocationCheckpoint(
     @DocumentId val id: String = "",
     var routeId: String = "",
@@ -95,6 +102,7 @@ enum class CheckpointType {
     END         // Visit end location
 }
 
+@Keep
 data class VisitLocationSummary(
     val visitDuration: Long = 0L, // milliseconds at client location
     val walkDistance: Double = 0.0, // meters walked with pets
@@ -107,6 +115,7 @@ data class VisitLocationSummary(
 )
 
 // Enhanced KinCareSession with location tracking
+@Keep
 data class KinCareSessionWithLocation(
     @DocumentId val id: String = "",
     var kinId: String = "",
@@ -133,6 +142,7 @@ data class KinCareSessionWithLocation(
 // Firestore wire names. Saves go through AuntieRepository.saveBusinessSettings
 // with SetOptions.merge() read-modify-write so no sibling field is ever
 // clobbered.
+@Keep
 data class BusinessSettings(
     @DocumentId val id: String = "business_settings", // Single document
     // --- Business profile (migrated from admin_settings) ---
@@ -240,6 +250,7 @@ enum class TrackingAccuracy {
 }
 
 // Location sharing preferences for kinfolk - VIEWING ONLY, not tracking control
+@Keep
 data class LocationSharingPreferences(
     @DocumentId val id: String = "",
     var kinfolkId: String = "",

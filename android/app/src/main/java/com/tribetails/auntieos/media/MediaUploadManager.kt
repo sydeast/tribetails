@@ -91,7 +91,7 @@ class MediaUploadManager(
             // Create MediaFile object
             val mediaFile = MediaFile(
                 entityId = entityId,
-                entityType = entityType,
+                entityType = entityType.name,
                 // #3 (2026-06-08): stamp kinfolkId so the gallery scopes kin-tagging to
                 // the owning household. When the entity IS a household, entityId is the
                 // kinfolkId. Parity with web platformUploadMedia.

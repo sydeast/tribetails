@@ -202,6 +202,23 @@ class ServiceManagementViewModel(
         }
     }
 
+    fun updateSurcharge(surcharge: Surcharge) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true)
+
+            val result = serviceRepository.updateSurcharge(surcharge)
+
+            if (result.isSuccess) {
+                loadSurcharges()
+            } else {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to update surcharge: ${result.exceptionOrNull()?.message}"
+                )
+            }
+        }
+    }
+
     private fun loadSurcharges() {
         viewModelScope.launch {
             val result = serviceRepository.getSurcharges(includeInactive = true)
@@ -233,6 +250,23 @@ class ServiceManagementViewModel(
         }
     }
 
+    fun updateDiscount(discount: Discount) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true)
+
+            val result = serviceRepository.updateDiscount(discount)
+
+            if (result.isSuccess) {
+                loadDiscounts()
+            } else {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to update discount: ${result.exceptionOrNull()?.message}"
+                )
+            }
+        }
+    }
+
     private fun loadDiscounts() {
         viewModelScope.launch {
             val result = serviceRepository.getDiscounts(includeInactive = true)
@@ -259,6 +293,23 @@ class ServiceManagementViewModel(
                 _state.value = _state.value.copy(
                     isLoading = false,
                     errorMessage = "Failed to create promo code: ${result.exceptionOrNull()?.message}"
+                )
+            }
+        }
+    }
+
+    fun updatePromoCode(promoCode: PromoCode) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true)
+
+            val result = serviceRepository.updatePromoCode(promoCode)
+
+            if (result.isSuccess) {
+                loadPromoCodes()
+            } else {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to update promo code: ${result.exceptionOrNull()?.message}"
                 )
             }
         }

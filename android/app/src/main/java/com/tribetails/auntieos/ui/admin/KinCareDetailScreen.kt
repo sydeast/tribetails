@@ -81,7 +81,7 @@ fun KinCareDetailScreen(
                         repo.get411ByKinIds(ids).onSuccess { fourOnes = it }
                     }
                     repo.getReportsForSession(kinCareId).onSuccess { list ->
-                        reports = list.sortedByDescending { it.sentAt.ifBlank { it.createdAt } }
+                        reports = list.sortedByDescending { it.sentAt.orEmpty().ifBlank { it.createdAt } }
                     }
                 }
             }
@@ -188,14 +188,14 @@ fun KinCareDetailScreen(
             item {
                 DetailSection("Lifecycle") {
                     TimelineRow("Scheduled", s.startTime)
-                    TimelineRow("On my way", s.onMyWayAt)
-                    TimelineRow("Arrived",   s.arrivedAt)
-                    TimelineRow("Departed",  s.departedAt)
-                    TimelineRow("Completed", s.completedAt)
+                    TimelineRow("On my way", s.onMyWayAt.orEmpty())
+                    TimelineRow("Arrived",   s.arrivedAt.orEmpty())
+                    TimelineRow("Departed",  s.departedAt.orEmpty())
+                    TimelineRow("Completed", s.completedAt.orEmpty())
                 }
             }
 
-            val isActive = s.arrivedAt.isNotBlank() && s.departedAt.isBlank()
+            val isActive = !s.arrivedAt.isNullOrBlank() && s.departedAt.isNullOrBlank()
             val hasRoute = s.visitRouteId.isNotBlank()
             if (isActive || hasRoute) {
                 item {
@@ -555,7 +555,7 @@ private fun KinTaleSnippet(report: KinCareReport) {
                     color = accent,
                     fontWeight = FontWeight.SemiBold,
                 )
-                val ts = report.sentAt.ifBlank { report.updatedAt.ifBlank { report.createdAt } }
+                val ts = report.sentAt.orEmpty().ifBlank { report.updatedAt.ifBlank { report.createdAt } }
                 if (ts.isNotBlank()) {
                     Text(ts, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textPrimary.copy(alpha = 0.5f))
                 }
@@ -635,13 +635,13 @@ private fun KinCard(kin: Kin?, fourOneOne: Kin411?) {
 
 private fun feedingSummary(k: Kin411?): String {
     if (k == null) return ""
-    val parts = listOf(k.dietaryDetails, k.feedingAmount, k.feedingFrequency).filter { it.isNotBlank() }
+    val parts = listOf(k.dietaryDetails, k.feedingAmount, k.feedingFrequency).filter { !it.isNullOrBlank() }
     return parts.joinToString(" · ")
 }
 
 private fun vetSummary(k: Kin411?): String {
     if (k == null) return ""
-    val parts = listOf(k.vetName, k.vetPhone).filter { it.isNotBlank() }
+    val parts = listOf(k.vetName, k.vetPhone).filter { !it.isNullOrBlank() }
     return parts.joinToString(" · ")
 }
 

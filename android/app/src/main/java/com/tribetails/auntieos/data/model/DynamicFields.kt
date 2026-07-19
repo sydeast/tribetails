@@ -1,9 +1,11 @@
 package com.tribetails.auntieos.data.model
 
+import androidx.annotation.Keep
 import com.google.firebase.firestore.DocumentId
 import com.google.gson.annotations.SerializedName
 
 // Dynamic Field Definition - defines the structure of custom fields
+@Keep
 data class FieldDefinition(
     @DocumentId val id: String = "",
     var fieldName: String = "",
@@ -50,6 +52,7 @@ enum class TargetEntity {
     HOUSEHOLD       // Field applies to household data
 }
 
+@Keep
 data class ValidationRules(
     var minLength: Int? = null,
     var maxLength: Int? = null,
@@ -60,6 +63,7 @@ data class ValidationRules(
 )
 
 // Dynamic Field Value - stores the actual field data
+@Keep
 data class DynamicFieldValue(
     @DocumentId val id: String = "",
     var entityId: String = "", // ID of the Kinfolk/Kin this value belongs to
@@ -72,6 +76,7 @@ data class DynamicFieldValue(
 )
 
 // Household Data - shared data for all animals in a household
+@Keep
 data class HouseholdData(
     @DocumentId val id: String = "",
     var kinfolkId: String = "",
@@ -121,10 +126,15 @@ data class HouseholdData(
 )
 
 // Media Storage Models
+@Keep
 data class MediaFile(
     @DocumentId val id: String = "",
     var entityId: String = "", // ID of Kinfolk/Kin/Household this media belongs to
-    var entityType: MediaEntityType = MediaEntityType.KIN,
+    // String, not the MediaEntityType enum: web writes lowercase ("kinfolk") while
+    // Android writes the UPPERCASE enum name, so an enum-typed setter throws under
+    // toObject() on web-written docs (Class C decode crash). Read the enum via
+    // [entityTypeEnum]; Android's own writes still store MediaEntityType.name.
+    var entityType: String = "KIN",
     var kinfolkId: String = "",                 // Stage 0I sandbox scope: == testTribeId on test-admin writes so the rules (testOwnsIncoming/Existing) allow them; blank for the operator (media stays keyed by entityId/entityType).
     var fileName: String = "",
     var originalFileName: String = "",
@@ -143,7 +153,10 @@ data class MediaFile(
     var isProfilePhoto: Boolean = false,
     var cloudinaryPublicId: String = "",   // parity with web MediaFile; needed for delete + Tribal Intel attachment refs
     var metadata: MediaMetadata = MediaMetadata()
-)
+) {
+    /** Case-insensitive view of [entityType] as the enum; unknown -> KIN. */
+    val entityTypeEnum: MediaEntityType get() = MediaEntityType.fromWire(entityType)
+}
 
 enum class MediaType {
     IMAGE,
@@ -161,9 +174,17 @@ enum class MediaEntityType {
     TRAINING,   // Training videos, progress photos
     TRIBAL_INTEL, // Tribal Intel note attachments (spec 23): screenshots/files Auntie feeds the AI
     USER,       // Admin/Auntie profile avatar
-    BUSINESS    // 17.2 Branding: the workspace logo (entityType "BUSINESS", matches web)
+    BUSINESS;   // 17.2 Branding: the workspace logo (entityType "BUSINESS", matches web)
+
+    companion object {
+        /** Parse a stored entityType string case-insensitively (web writes lowercase,
+         *  Android writes the UPPERCASE enum name). Unknown/blank -> KIN. */
+        fun fromWire(value: String?): MediaEntityType =
+            entries.firstOrNull { it.name.equals(value?.trim(), ignoreCase = true) } ?: KIN
+    }
 }
 
+@Keep
 data class MediaMetadata(
     var width: Int? = null,
     var height: Int? = null,
@@ -173,12 +194,14 @@ data class MediaMetadata(
     var visitDate: String? = null // When photo was taken during visit
 )
 
+@Keep
 data class GeoLocation(
     var latitude: Double = 0.0,
     var longitude: Double = 0.0,
     var accuracy: Float? = null
 )
 
+@Keep
 data class CameraInfo(
     var make: String? = null,
     var model: String? = null,
@@ -186,10 +209,12 @@ data class CameraInfo(
 )
 
 // Gallery Organization
+@Keep
 data class MediaAlbum(
     @DocumentId val id: String = "",
     var entityId: String = "",
-    var entityType: MediaEntityType = MediaEntityType.KIN,
+    // String, not the enum: mirrors [MediaFile.entityType] (web writes lowercase).
+    var entityType: String = "KIN",
     var albumName: String = "",
     var description: String = "",
     var coverPhotoId: String = "",
@@ -199,6 +224,7 @@ data class MediaAlbum(
     var sortOrder: Int = 0
 )
 
+@Keep
 data class MediaAlbumItem(
     @DocumentId val id: String = "",
     var albumId: String = "",

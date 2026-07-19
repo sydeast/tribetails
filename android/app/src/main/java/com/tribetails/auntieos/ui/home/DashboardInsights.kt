@@ -116,7 +116,7 @@ fun frequentFlyers(
     return sessions
         .filter { s ->
             s.status.uppercase() == "COMPLETED" &&
-                parseDay(s.completedAt.ifBlank { s.startTime })?.let { it in since..today } == true
+                parseDay(s.completedAt.orEmpty().ifBlank { s.startTime })?.let { it in since..today } == true
         }
         .groupBy { it.kinfolkId.ifBlank { it.kinfolkName } }
         .mapNotNull { (_, group) ->

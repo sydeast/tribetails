@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.data.admin
 
+import androidx.annotation.Keep
 import com.google.firebase.firestore.DocumentId
 import com.tribetails.auntieos.data.model.BookingStatus
 import java.time.LocalDateTime
@@ -38,6 +39,7 @@ data class AdminProfile(
  * write entries here. Until those hooks are wired, the collection sits empty
  * and the screen renders an honest empty state.
  */
+@Keep
 data class ActivityLogEntry(
     @DocumentId val id: String = "",
     var timestamp: String = "",        // ISO-8601
@@ -61,6 +63,7 @@ data class ActivityLogEntry(
  * recipient uid + status; AuntieOS Android displays the operator's own
  * inbox of business-side notifications.
  */
+@Keep
 data class NotificationEntry(
     @DocumentId val id: String = "",
     var key: String = "",              // catalog key, e.g. 'kincare.booking.confirm'

@@ -77,7 +77,9 @@ private enum class Phase(val label: String, val tone: AuntieStatusTone) {
 @Composable
 fun KinCareSessionsScreen(
     viewModel: AdminDataViewModel = viewModel(),
-    onBack: () -> Unit,
+    // Nullable so the main-nav-tab entry shows no breadcrumb, while the entry
+    // reached from Admin Data passes a real back and the scaffold renders it (I11).
+    onBack: (() -> Unit)? = null,
     onOpenDetail: (kinCareId: String) -> Unit = {},
     onWriteKinTale: (sessionId: String) -> Unit = {},
     onLiveTrack: (sessionId: String, kinfolkId: String, kinfolkName: String) -> Unit = { _, _, _ -> },
@@ -146,7 +148,7 @@ fun KinCareSessionsScreen(
     val activeCount = grouped[Phase.Active].orEmpty().size
     val upcomingToday = grouped[Phase.Upcoming].orEmpty().count { it.startTime.take(10) == today }
     val recentDone = grouped[Phase.CompletedToday].orEmpty()
-        .count { it.status.uppercase() == "COMPLETED" && it.completedAt.take(10) == today }
+        .count { it.status.uppercase() == "COMPLETED" && it.completedAt.orEmpty().take(10) == today }
 
     val patchFn: (String, Map<String, Any>, String) -> Unit = { id, patch, msg ->
         viewModel.patchKinCareSession(id, patch) { err ->
@@ -158,7 +160,7 @@ fun KinCareSessionsScreen(
         }
     }
 
-    AuntieScreenScaffold(title = "Auntie Time") {
+    AuntieScreenScaffold(title = "Auntie Time", onBack = onBack) {
         Box(modifier = Modifier.fillMaxSize()) {
             AuntiePullRefresh(
                 isRefreshing = isLoading,
@@ -576,7 +578,7 @@ private fun ActionRow(
                 GhostButton(
                     label = "Undo Arrival",
                     onClick = {
-                        val undoTo = if (session.onMyWayAt.isNotBlank()) "ON_MY_WAY" else "SCHEDULED"
+                        val undoTo = if (!session.onMyWayAt.isNullOrBlank()) "ON_MY_WAY" else "SCHEDULED"
                         onPatch(mapOf("status" to undoTo, "arrivedAt" to ""), "Arrival undone.")
                     },
                     modifier = Modifier.fillMaxWidth(),
