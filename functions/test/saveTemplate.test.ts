@@ -111,4 +111,71 @@ describe('saveTemplate', () => {
       saveTemplateHandler(req({ templateId: 'x', subject: '', body: 'b' })),
     ).rejects.toThrow();
   });
+
+  // ── I9: usageInstructions + sectionDefinitions ──────────────────────────────
+
+  it('I9 HAPPY: persists usageInstructions and sectionDefinitions when supplied', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await saveTemplateHandler(
+      req({
+        templateId: 'welcome.kinfolk',
+        subject: 's',
+        body: 'b',
+        usageInstructions: 'Send after the first visit is confirmed.',
+        sectionDefinitions: [
+          { title: 'Greeting', description: 'Warm hello by first name.' },
+          { title: 'Next steps', description: '' },
+        ],
+      }),
+    );
+    const write = ctx.writes.find((w) => w.path === 'emailTemplates/welcome.kinfolk');
+    expect(write?.data.usageInstructions).toBe('Send after the first visit is confirmed.');
+    expect(write?.data.sectionDefinitions).toEqual([
+      { title: 'Greeting', description: 'Warm hello by first name.' },
+      { title: 'Next steps', description: '' },
+    ]);
+  });
+
+  it('I9 backward compat: omitting the new fields does NOT write them (merge preserves an older value)', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await saveTemplateHandler(req({ templateId: 'welcome.kinfolk', subject: 's', body: 'b' }));
+    const write = ctx.writes.find((w) => w.path === 'emailTemplates/welcome.kinfolk');
+    expect(write).toBeDefined();
+    expect('usageInstructions' in (write!.data as object)).toBe(false);
+    expect('sectionDefinitions' in (write!.data as object)).toBe(false);
+  });
+
+  it('I9 HAPPY: an explicit empty string / empty array IS written (so a save can clear them)', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await saveTemplateHandler(
+      req({
+        templateId: 'welcome.kinfolk',
+        subject: 's',
+        body: 'b',
+        usageInstructions: '',
+        sectionDefinitions: [],
+      }),
+    );
+    const write = ctx.writes.find((w) => w.path === 'emailTemplates/welcome.kinfolk');
+    expect(write!.data.usageInstructions).toBe('');
+    expect(write!.data.sectionDefinitions).toEqual([]);
+  });
+
+  it('I9 SAD: a section with a blank title is rejected', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      saveTemplateHandler(
+        req({
+          templateId: 'welcome.kinfolk',
+          subject: 's',
+          body: 'b',
+          sectionDefinitions: [{ title: '', description: 'x' }],
+        }),
+      ),
+    ).rejects.toThrow();
+  });
 });

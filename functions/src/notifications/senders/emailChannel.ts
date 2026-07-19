@@ -8,11 +8,15 @@ import type { ChannelSendArgs, ChannelSendResult } from './index';
  * via SendGrid (existing sendFromTemplate wrapper).
  *
  * Throws if:
- *   - recipient record missing
- *   - recipient has no email on file
  *   - template missing
  *   - SendGrid send fails
- * Outer trigger wrap captures to Sentry per fail-loud policy.
+ * Soft-skips (returns { skipped } instead of throwing) if:
+ *   - recipient has no email on file — a PERMANENT, undeliverable condition, not
+ *     an infrastructure error. Throwing here would Sentry-capture + retry an
+ *     unfixable case (e.g. MYTRIBE-FUNCTIONS-8: invoice.reminder to a kinfolk
+ *     with no email). The fan-out handler records status 'skipped' + a warning
+ *     so it is visible, never silently swallowed.
+ * Outer trigger wrap captures genuine throws to Sentry per fail-loud policy.
  */
 export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSendResult> {
   const { def, recipientUid, data } = args;
@@ -23,7 +27,8 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
 
   const email = await lookupRecipientEmail(recipientUid);
   if (!email) {
-    throw new Error(`emailChannel(${def.key}): recipient ${recipientUid} has no email on file`);
+    // Fail-soft: undeliverable, not an error. Do NOT throw (no Sentry, no retry).
+    return { skipped: true, skipReason: 'recipient_no_email' };
   }
 
   const providerMessageId = await sendFromTemplate(templateId, email, {

@@ -167,6 +167,20 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "sharedKinTales",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "revoked",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "expiresAt",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [

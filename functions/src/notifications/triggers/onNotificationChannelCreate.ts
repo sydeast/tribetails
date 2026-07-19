@@ -1,6 +1,7 @@
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import { wrapTrigger } from '../../lib/wrapTrigger';
+import { logEvent } from '../../lib/logger';
 import { getNotificationDef } from '../catalog';
 import { enrichTemplateData } from '../enrichTemplateData';
 import { channelSenders } from '../senders';
@@ -55,6 +56,29 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
         recipientUid: parent.recipientUid,
         data: enrichedData,
       });
+      // Fail-soft skip (e.g. recipient has no email on file): a permanent,
+      // undeliverable-on-this-channel condition that must NOT throw — throwing
+      // would Sentry-capture + retry an unfixable case (MYTRIBE-FUNCTIONS-8).
+      // Record it visibly (status 'skipped' + a warning log) so it is never
+      // silently swallowed, then return without the delivery audit entry.
+      if (result.skipped) {
+        await snap.ref.set(
+          {
+            status: 'skipped',
+            skipReason: result.skipReason ?? 'unknown',
+            skippedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        logEvent({
+          severity: 'warn',
+          function: 'onNotificationChannelCreate',
+          event: 'notification.channel.skipped',
+          uid: parent.recipientUid,
+          extra: { key: parent.key, channel, reason: result.skipReason ?? 'unknown' },
+        });
+        return;
+      }
       await snap.ref.set(
         {
           status: 'sent',

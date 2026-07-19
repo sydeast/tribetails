@@ -230,9 +230,23 @@ export async function syncGoogleCalendarBusyEventsHandler(
     });
     const calBlock = resp.data.calendars?.[calId];
     // freebusy can return a per-calendar `errors` array (e.g. notFound) with a
-    // 200 envelope. Treat that as the not-shared / not-found fail-loud case.
+    // 200 envelope. Treat that as the not-shared / not-found fail-loud case, but
+    // first log the raw per-calendar errors + reasons so the operator sees the
+    // exact Google reason (notFound vs another failure) and surface a distinct,
+    // reason-specific message (a typo'd calendar id or a share to the wrong
+    // address both come back as `notFound`, which the message calls out).
     if (calBlock?.errors && calBlock.errors.length > 0) {
-      throw new HttpsError('permission-denied', calendarNotSharedMessage(calId));
+      const reasons = calBlock.errors
+        .map((e) => (typeof e?.reason === 'string' ? e.reason : ''))
+        .filter((r): r is string => r.length > 0);
+      logEvent({
+        severity: 'warn',
+        function: 'syncGoogleCalendarBusyEvents',
+        event: 'gcal.freebusy.calendar_error',
+        uid,
+        extra: { calendarId: calId, reasons, errors: calBlock.errors },
+      });
+      throw new HttpsError('permission-denied', calendarFreebusyErrorMessage(calId, reasons));
     }
     busy = (calBlock?.busy ?? [])
       .filter((b): b is { start: string; end: string } => !!b.start && !!b.end)
@@ -301,6 +315,31 @@ export function calendarNotSharedMessage(calId: string): string {
   return (
     `calendar_not_shared: share calendar ${calId} with ${CALENDAR_SYNC_SA_EMAIL} ` +
     `at "See only free/busy (hide details)" so the sync service account can read availability.`
+  );
+}
+
+/**
+ * Distinct, reason-specific message for the freebusy per-calendar `errors`
+ * array (200 envelope with an error block, not an HTTP 4xx). `notFound` is the
+ * reason Google returns both when the calendar id is wrong AND when the calendar
+ * was shared with the WRONG address (so the sync SA still cannot see it), so the
+ * message names the EXACT service account + calendar id and calls out the typo
+ * case explicitly. Other reasons fall back to a generic-but-named message.
+ */
+export function calendarFreebusyErrorMessage(calId: string, reasons: string[]): string {
+  if (reasons.includes('notFound')) {
+    return (
+      `calendar_not_shared: Google returned notFound for calendar ${calId}. The calendar id may ` +
+      `be mistyped, OR it was shared with the wrong address so ${CALENDAR_SYNC_SA_EMAIL} still ` +
+      `cannot see it. Share calendar ${calId} with EXACTLY ${CALENDAR_SYNC_SA_EMAIL} (double-check ` +
+      `the domain for a typo) at "See only free/busy (hide details)" so the sync service account ` +
+      `can read availability.`
+    );
+  }
+  const reasonStr = reasons.length > 0 ? reasons.join(', ') : 'unknown';
+  return (
+    `calendar_freebusy_error (${reasonStr}) for calendar ${calId}: confirm the calendar is shared ` +
+    `with ${CALENDAR_SYNC_SA_EMAIL} at "See only free/busy (hide details)".`
   );
 }
 

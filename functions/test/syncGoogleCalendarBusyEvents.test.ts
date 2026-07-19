@@ -6,11 +6,12 @@ const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   freebusyQuery: vi.fn(),
   calendarIdValue: vi.fn(() => 'team-cal@group.calendar.google.com'),
+  logEventFn: vi.fn(),
 }));
 
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
-vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEventFn }));
 vi.mock('../src/lib/writeAuditEntry', () => ({
   writeAuditEntry: vi.fn().mockResolvedValue('audit-1'),
 }));
@@ -31,6 +32,7 @@ import {
   busyIntervalToSlot,
   clampLookAheadDays,
   pickCalendarIdFromDocs,
+  calendarFreebusyErrorMessage,
   CALENDAR_SYNC_SA_EMAIL,
   SettingsDocLike,
 } from '../src/admin/syncGoogleCalendarBusyEvents';
@@ -50,6 +52,7 @@ beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.freebusyQuery.mockReset();
   mocks.calendarIdValue.mockReset().mockReturnValue('team-cal@group.calendar.google.com');
+  mocks.logEventFn.mockReset();
   (writeAuditEntry as any).mockClear();
 });
 
@@ -97,6 +100,26 @@ describe('busyIntervalToSlot', () => {
     );
     expect(a.externalEventId).toBe(b.externalEventId);
     expect(a.externalEventId.startsWith('busy_cal-x_')).toBe(true);
+  });
+});
+
+describe('calendarFreebusyErrorMessage', () => {
+  it('notFound: names the SA + calId and flags the typo / wrong-address case', () => {
+    const msg = calendarFreebusyErrorMessage('typo-cal@group.calendar.google.com', ['notFound']);
+    expect(msg).toContain(CALENDAR_SYNC_SA_EMAIL);
+    expect(msg).toContain('typo-cal@group.calendar.google.com');
+    expect(msg).toContain('notFound');
+  });
+  it('other reason: still names the SA + calId with the reason surfaced', () => {
+    const msg = calendarFreebusyErrorMessage('cal-x', ['rateLimitExceeded']);
+    expect(msg).toContain('rateLimitExceeded');
+    expect(msg).toContain(CALENDAR_SYNC_SA_EMAIL);
+    expect(msg).toContain('cal-x');
+  });
+  it('empty reasons: falls back to unknown but still names the SA', () => {
+    const msg = calendarFreebusyErrorMessage('cal-x', []);
+    expect(msg).toContain('unknown');
+    expect(msg).toContain(CALENDAR_SYNC_SA_EMAIL);
   });
 });
 
@@ -292,7 +315,7 @@ describe('syncGoogleCalendarBusyEvents handler', () => {
     expect((thrown as HttpsError).message).toContain(CALENDAR_SYNC_SA_EMAIL);
   });
 
-  it('ERROR: per-calendar errors array (404 notFound) also fails loud with SA name', async () => {
+  it('ERROR: per-calendar errors array (notFound) fails loud, names the SA + calId, calls out the typo, and logs the reason', async () => {
     mocks.dbFn.mockReturnValue(
       buildDbMock({
         queryDocs: {
@@ -312,9 +335,25 @@ describe('syncGoogleCalendarBusyEvents handler', () => {
         },
       },
     });
-    await expect(syncGoogleCalendarBusyEventsHandler(req())).rejects.toMatchObject({
-      code: 'permission-denied',
-    });
+    let thrown: unknown;
+    try {
+      await syncGoogleCalendarBusyEventsHandler(req());
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(HttpsError);
+    expect((thrown as HttpsError).code).toBe('permission-denied');
+    const msg = (thrown as HttpsError).message;
+    expect(msg).toContain(CALENDAR_SYNC_SA_EMAIL);
+    expect(msg).toContain('team-cal@group.calendar.google.com');
+    expect(msg).toContain('notFound');
+    // the raw per-calendar error + reason is logged for the operator.
+    const errLog = mocks.logEventFn.mock.calls
+      .map((c) => c[0])
+      .find((a: any) => a?.event === 'gcal.freebusy.calendar_error');
+    expect(errLog).toBeTruthy();
+    expect(errLog.extra.calendarId).toBe('team-cal@group.calendar.google.com');
+    expect(errLog.extra.reasons).toEqual(['notFound']);
   });
 
   it('ERROR: other googleapis failure surfaces unavailable', async () => {

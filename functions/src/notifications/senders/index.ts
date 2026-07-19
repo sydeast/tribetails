@@ -11,6 +11,17 @@ export interface ChannelSendArgs {
 
 export interface ChannelSendResult {
   providerMessageId?: string;
+  /**
+   * Set true when the channel could not deliver for a PERMANENT, non-error
+   * reason that must NOT throw (so it is neither Sentry-captured nor retried by
+   * Cloud Functions). Example: the recipient has no email on file, so an email
+   * notification is simply undeliverable to them. The fan-out handler stamps the
+   * channel subdoc `status: 'skipped'` and logs a warning (fail-soft, visible,
+   * never silent). Genuine failures (missing template, provider error) still throw.
+   */
+  skipped?: boolean;
+  /** Machine-readable reason for a `skipped` result (e.g. 'recipient_no_email'). */
+  skipReason?: string;
 }
 
 export type ChannelSender = (args: ChannelSendArgs) => Promise<ChannelSendResult>;
