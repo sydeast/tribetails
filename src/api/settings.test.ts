@@ -73,4 +73,30 @@ describe('mergeBusinessSettings', () => {
     expect(result.travelBufferMinutes).toBe(0);
     expect(result.businessName).toBe('');
   });
+
+  it('defaults both tag vocabularies to [] when the doc has neither field', () => {
+    const result = mergeBusinessSettings({ businessName: 'Tribe Tails' });
+    expect(result.householdTags).toEqual([]);
+    expect(result.petTags).toEqual([]);
+  });
+
+  it('keeps only well-formed tag rows and drops malformed ones (never throws)', () => {
+    const result = mergeBusinessSettings({
+      householdTags: [
+        { name: 'VIP', color: { token: 'orange', css: 'var(--color-primary)' }, icon: '⭐' },
+        { name: '', color: { token: 'teal', css: 'var(--color-accent)' }, icon: '' }, // blank name -> dropped
+        { name: 'NoColor', icon: '' }, // missing color -> dropped
+        { name: 'BadColor', color: { token: 'teal' }, icon: '' }, // color missing css -> dropped
+        { name: 'BadIcon', color: { token: 'teal', css: 'var(--color-accent)' }, icon: 5 }, // icon not a string -> dropped
+        'not-an-object', // -> dropped
+      ],
+      petTags: [{ name: 'Reactive', color: { token: 'coral', css: 'var(--color-coral)' }, icon: '' }],
+    });
+    expect(result.householdTags).toEqual([
+      { name: 'VIP', color: { token: 'orange', css: 'var(--color-primary)' }, icon: '⭐' },
+    ]);
+    expect(result.petTags).toEqual([
+      { name: 'Reactive', color: { token: 'coral', css: 'var(--color-coral)' }, icon: '' },
+    ]);
+  });
 });

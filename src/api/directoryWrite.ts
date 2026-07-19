@@ -222,3 +222,34 @@ export async function setKinArchived(kinId: string, archived: boolean): Promise<
     updatedAt: serverTimestamp(),
   });
 }
+
+// ── Tags (kin + kinfolk) ─────────────────────────────────────────────────────
+
+/**
+ * Replace a pet's tag NAME list on the flat `kin/{id}` doc. Tags are stored as
+ * a `string[]` of vocabulary names (the vocabulary itself lives on
+ * `business_settings`); this is a whole-list replace, not a per-tag merge, so
+ * removing the last tag genuinely clears the field. Same direct, rules-backed
+ * transport as `updateKin` (the flat `kin` collection is `isAuntie`-writable),
+ * with `updatedAt` re-stamped so KIN_QUERY's `orderBy('updatedAt')` surfaces the
+ * edit. Fail-loud: a rejected write propagates to the caller.
+ */
+export async function updateKinTags(kinId: string, tags: string[]): Promise<void> {
+  const id = kinId.trim();
+  if (id === '') throw new Error('updateKinTags requires a kin id');
+  await updateDoc(doc(db, 'kin', id), { tags, updatedAt: serverTimestamp() });
+}
+
+/**
+ * Replace a household's tag NAME list on the `kinfolk/{id}` doc. Ports the same
+ * pattern as `updateKinTags`: a whole-list `string[]` replace, direct
+ * rules-backed `updateDoc` (kinfolk is `isAuntie`-writable), fail-loud. This is
+ * the write half of the otherwise read-only `api/kinfolkProfile.ts`. `updatedAt`
+ * is stamped for consistency with the kin write, but no kinfolk list orders on
+ * it, so it is informational only.
+ */
+export async function updateKinfolkTags(kinfolkId: string, tags: string[]): Promise<void> {
+  const id = kinfolkId.trim();
+  if (id === '') throw new Error('updateKinfolkTags requires a kinfolk id');
+  await updateDoc(doc(db, 'kinfolk', id), { tags, updatedAt: serverTimestamp() });
+}

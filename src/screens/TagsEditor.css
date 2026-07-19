@@ -1,0 +1,186 @@
+/** Tags settings panel. Tokens only, matching the SettingsEdit editors. */
+
+.tagsEditor__fieldset {
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.tagsEditor__hint {
+  color: var(--color-text-dim);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  margin: 0 0 var(--space-3);
+}
+
+.tagsEditor__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.tagsEditor__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-card-lg);
+  background: var(--color-surface);
+}
+
+.tagsEditor__rowChip {
+  min-width: 120px;
+}
+
+.tagsEditor__rowControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+
+.tagsEditor__addForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: var(--border-hairline) solid var(--color-border-soft);
+}
+
+.tagsEditor__addPickers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.tagsEditor__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.tagsEditor__label {
+  font-family: var(--type-label-md-family);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  color: var(--color-text-dim);
+}
+
+.tagsEditor__input {
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+}
+
+.tagsEditor__input:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* ── Color swatches ─────────────────────────────────────────────────────── */
+
+.tagsEditor__swatches {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+.tagsEditor__swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: var(--border-emphasis) solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--tag-tone);
+  cursor: pointer;
+}
+
+.tagsEditor__swatch--selected {
+  border-color: var(--color-text-primary);
+  box-shadow: 0 0 0 2px var(--color-background);
+}
+
+.tagsEditor__swatch:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ── Emoji picker ───────────────────────────────────────────────────────── */
+
+.tagsEditor__emoji {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tagsEditor__emojiRow {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.tagsEditor__emojiBtn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 var(--space-1);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-chip);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tagsEditor__emojiBtn--selected {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
+.tagsEditor__emojiBtn:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.tagsEditor__emojiInput {
+  width: 92px;
+  box-sizing: border-box;
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-chip);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+}
+
+/* ── Save bar ───────────────────────────────────────────────────────────── */
+
+.tagsEditor__saveRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.tagsEditor__savedNote {
+  color: var(--color-success);
+  font-family: var(--type-label-md-family);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+}

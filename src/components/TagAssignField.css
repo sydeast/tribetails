@@ -1,0 +1,91 @@
+/**
+ * TagAssignField: a chip row above a text input with an autocomplete popover.
+ * Tokens only; the popover sits on the glass surface like the rest of the Den.
+ */
+
+.tag-assign__fieldset {
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.tag-assign__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.tag-assign__inputWrap {
+  position: relative;
+}
+
+.tag-assign__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+}
+
+.tag-assign__input:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.tag-assign__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.tag-assign__list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  background: var(--color-surface-glass);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.14);
+}
+
+.tag-assign__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tag-assign__option:hover,
+.tag-assign__option:focus-visible {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  outline: none;
+}
+
+.tag-assign__option--create {
+  color: var(--color-text-dim);
+  font-style: italic;
+}

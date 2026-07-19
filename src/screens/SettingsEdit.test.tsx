@@ -64,6 +64,8 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   brandTagline: '',
   homeGreeting: '',
   homeAccentTail: '',
+  householdTags: [],
+  petTags: [],
   mytribePortal: {
     logoUrl: '',
     themeId: 'default',

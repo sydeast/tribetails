@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getKin, type KinDetail } from '../api/kinView';
+import { updateKinTags } from '../api/directoryWrite';
 import { initialsOf } from '../api/directory';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
@@ -7,6 +8,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
 import { Banner } from '../components/Banner';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
+import { ProfileTagsSection } from '../components/ProfileTagsSection';
 import { KinEdit } from './KinEdit';
 import './KinView.css';
 
@@ -136,6 +138,8 @@ export function KinView({ kinId, kinName, onBack }: KinViewProps) {
                   </div>
                 </div>
               </DenPanel>
+
+              <ProfileTagsSection scope="pet" initialTags={k.tags} onSaveTags={(next) => updateKinTags(k._id !== '' ? k._id : kinId, next)} />
 
               <DenPanel title="Basics">
                 <dl className="kview__facts">

@@ -7,6 +7,7 @@ import { Banner } from '../components/Banner';
 import { PrimaryButton } from '../components/Buttons';
 import { SettingsEdit } from './SettingsEdit';
 import { NotificationGate } from './NotificationGate';
+import { TagsEditor } from './TagsEditor';
 import {
   businessHoursRows,
   serviceRateRows,
@@ -59,10 +60,10 @@ interface SettingsProps {
  */
 export function Settings({ onEdit }: SettingsProps) {
   const [settings, setSettings] = useState<Async<BusinessSettings>>({ status: 'loading' });
-  // Three in-place views on this one route (no router change), the same swap
-  // pattern "Edit settings" already uses: 'overview' | 'edit' (SettingsEdit) |
-  // 'gate' (the business notification gate matrix).
-  const [mode, setMode] = useState<'overview' | 'edit' | 'gate'>('overview');
+  // In-place views on this one route (no router change), the same swap pattern
+  // "Edit settings" already uses: 'overview' | 'edit' (SettingsEdit) | 'gate'
+  // (the business notification gate matrix) | 'tags' (the tag vocabularies).
+  const [mode, setMode] = useState<'overview' | 'edit' | 'gate' | 'tags'>('overview');
 
   // Hoisted so a failed load can hand AsyncRegion a real retry (the
   // FeatureFlags.tsx / FormSchemas.tsx convention).
@@ -102,6 +103,10 @@ export function Settings({ onEdit }: SettingsProps) {
     return <NotificationGate onBack={() => setMode('overview')} />;
   }
 
+  if (mode === 'tags') {
+    return <TagsEditor onBack={() => setMode('overview')} />;
+  }
+
   return (
     <div className="screen">
       <DenScreenHeading
@@ -134,6 +139,17 @@ export function Settings({ onEdit }: SettingsProps) {
           that everyone&rsquo;s own notification choices sit inside.
         </p>
         <PrimaryButton label="Open notification gate" onClick={() => setMode('gate')} />
+      </DenPanel>
+
+      <DenPanel
+        title="Tags"
+        subtitle="The labels you put on households and pets, each with its own color and emoji."
+      >
+        <p className="settings__hint">
+          Build the two tag lists (household and pet) that show up as suggestions when you tag a
+          profile, and that broadcasts and KinTale rules match on.
+        </p>
+        <PrimaryButton label="Open tags" onClick={() => setMode('tags')} />
       </DenPanel>
 
       <AsyncRegion
