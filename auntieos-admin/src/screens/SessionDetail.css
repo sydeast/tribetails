@@ -1,0 +1,104 @@
+/**
+ * SessionDetail ("Auntie Time" read-only detail) styling. Scoped to this screen
+ * and imported directly by SessionDetail.tsx (the KinfolkProfile.css / Sessions.css
+ * convention). Every value comes from styles/tokens.css, no literal colours,
+ * radii, or spacing outside the status-chip block below, which mirrors Sessions.css's
+ * own chip palette verbatim (session states need more distinct hues than the shared
+ * DenTone palette carries; the same rem chip padding Sessions.css uses).
+ */
+
+.sdetail__hint {
+  color: var(--color-text-dim);
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+}
+
+.sdetail__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sdetail__head-tags {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sdetail__facts {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.sdetail__fact {
+  display: contents;
+}
+
+.sdetail__fact-label {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.sdetail__fact-value {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  margin: 0;
+  word-break: break-word;
+}
+
+.sdetail__fact-value--mono {
+  font-family: var(--font-mono);
+}
+
+.sdetail__notes {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── status chip (mirrors Sessions.css's chip palette, token-based) ────────── */
+
+.sdetail__chip {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  text-align: center;
+}
+.sdetail__chip--scheduled {
+  background: var(--color-surface-2);
+  color: var(--color-text-dim);
+}
+.sdetail__chip--onmyway {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  color: var(--color-primary);
+}
+.sdetail__chip--arrived {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+}
+.sdetail__chip--departed {
+  background: color-mix(in srgb, var(--color-tertiary) 18%, transparent);
+  color: var(--color-tertiary);
+}
+.sdetail__chip--completed {
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
+  color: var(--color-success);
+}
+.sdetail__chip--cancelled {
+  background: var(--color-surface-2);
+  color: var(--color-text-faint);
+  text-decoration: line-through;
+}
+.sdetail__chip--unknown {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}

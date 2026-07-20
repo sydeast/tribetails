@@ -1,0 +1,195 @@
+/**
+ * Gallery screen styling. Scoped to this screen and imported directly by
+ * Gallery.tsx (the Directory.css / Invoices.css convention): nothing here
+ * touches the shared styles/screens.css or styles/tokens.css. Every value
+ * comes from tokens.css: no literal colours, radii, or durations. The one
+ * literal pixel value (the 132px tile edge) is a design constant carried in
+ * from the source, not a token: see Gallery.tsx's `TILE_SIZE` comment.
+ */
+
+.gallery__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-4);
+}
+
+.gallery__hint {
+  color: var(--color-text-dim);
+  margin: 0;
+}
+
+.gallery__count {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-faint);
+  margin: var(--space-2) 0;
+}
+
+/* ── filters: three optional chip rows (household / type / month) ─────────── */
+
+.gallery__filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.gallery__filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.gallery__filter-label {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+  flex: 0 0 auto;
+  min-width: 6rem;
+}
+
+.gallery__filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.gallery__chip {
+  font: inherit;
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  color: var(--color-text-dim);
+  background: var(--color-surface-glass);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: 0.35rem 0.85rem;
+  cursor: pointer;
+  transition:
+    background var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard),
+    border-color var(--dur-base) var(--ease-standard);
+}
+.gallery__chip[data-active='true'] {
+  background: var(--color-text-primary);
+  color: var(--color-background);
+  border-color: var(--color-text-primary);
+}
+.gallery__chip:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ── grid ───────────────────────────────────────────────────────────────── */
+
+.gallery__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.gallery__cell {
+  display: block;
+}
+
+.gallery__tile {
+  display: flex;
+  flex-direction: column;
+  width: 132px;
+}
+
+.gallery__tile-media {
+  position: relative;
+  width: 132px;
+  height: 132px;
+}
+
+/* The tile is read-only (no lightbox in scope), so its Avatar gets a plain
+   hairline frame rather than the interactive hover-lift the wasm's clickable
+   cell used: there is nothing here for a hover state to promise. */
+.gallery__tile-avatar {
+  border: var(--border-hairline) solid var(--color-border);
+}
+
+.gallery__tile-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--tt-brand-cream);
+  pointer-events: none;
+}
+.gallery__tile-play svg {
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2);
+}
+
+.gallery__tile-duration {
+  position: absolute;
+  right: var(--space-1);
+  bottom: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--tt-brand-cream);
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: var(--radius-chip);
+  padding: 0.1rem 0.4rem;
+}
+
+.gallery__tile-profile-badge {
+  position: absolute;
+  left: var(--space-1);
+  top: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  color: var(--color-background);
+  background: var(--color-accent);
+  border-radius: var(--radius-pill);
+  padding: 0.1rem 0.5rem;
+}
+
+.gallery__tile-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-top: var(--space-2);
+  min-width: 0;
+}
+
+.gallery__tile-caption {
+  font-family: var(--font-fraunces);
+  font-size: var(--type-title-sm-size);
+  font-weight: var(--type-title-sm-weight);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.gallery__tile-household {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gallery__tile-meta {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

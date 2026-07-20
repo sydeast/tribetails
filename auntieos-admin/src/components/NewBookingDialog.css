@@ -1,0 +1,135 @@
+.new-booking__banner {
+  margin-bottom: var(--space-3);
+}
+
+.new-booking__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+
+.new-booking__sr-legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.new-booking__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.new-booking__label {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.new-booking__input {
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-chip);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+.new-booking__input:disabled {
+  opacity: 0.6;
+}
+
+.new-booking__textarea {
+  resize: vertical;
+}
+
+.new-booking__error {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-error);
+}
+
+.new-booking__preview {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.new-booking__mode {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.new-booking__mode-tab {
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.new-booking__mode-tab--active {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-soft);
+}
+
+.new-booking__dates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.new-booking__date-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.new-booking__date-row .new-booking__input {
+  flex: 1 1 auto;
+}
+
+.new-booking__weekly {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.new-booking__weekly-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.new-booking__subfield {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1 1 8rem;
+}
+
+.new-booking__sublabel {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+}
+
+.new-booking__weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.new-booking__weekday {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+}

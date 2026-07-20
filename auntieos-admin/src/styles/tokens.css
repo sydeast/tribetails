@@ -1,0 +1,324 @@
+/**
+ * AuntieOS Den design tokens.
+ *
+ * Ported 2026-07-15 from the LIVE Compose source, cross-checked against
+ * TribeTails_Docs/auntieos_design_system.md (2026-06-17), which turned out to be
+ * accurate and more complete than this port's first pass:
+ *   theme/AuntieColors.kt      brand constants + Light/DarkAuntieColors
+ *   theme/AuntieTypography.kt  the 15-style scale
+ *   theme/AuntieFonts.kt       rememberDenTypography (family + WEIGHT binding)
+ *   theme/AuntieShapes.kt      pill/cardLg/card/chip/tight (WEB values)
+ *   theme/AuntieDimensions.kt  space1..space12 + border + structural widths
+ *   theme/Gradients.kt         tribe/orangeToPink/tealToPurple/rainbowAccent
+ *
+ * IGNORE docs/2026-05-31-den-redesign-design.md and ui-ideas/*.html. Both were
+ * last touched 2026-05-28/31 and all 179 commonMain files changed after them.
+ * That doc is an implementation PLAN for the Compose redesign, not a spec.
+ * auntieos_design_system.md is the real one.
+ *
+ * THEME DEFAULT, unresolved on purpose: `AuntieAppTheme(themeMode = ThemeMode.DARK)`
+ * and the design doc both say the app defaults to DARK, but the live admin renders
+ * cream because the operator's stored preference is light. This file keeps LIGHT
+ * on bare `:root` so an unstyled first paint matches what the operator actually
+ * sees today. The app must set `data-theme` explicitly from resolved state either
+ * way; the `:root` default only governs the pre-hydration flash. Revisit when the
+ * shell wires theme resolution.
+ *
+ * PORTING TRAP, do not undo: AuntieTypography's base styles declare Bold for
+ * display/headline, but rememberDenTypography OVERRIDES that to Normal/Medium when
+ * it binds Fraunces. The weights below are the EFFECTIVE ones (what actually
+ * renders), not the base declarations.
+ *
+ * Compose colors are 0xAARRGGBB. Where alpha < FF the port below is rgba():
+ *   0xCCF8F6F0 -> rgba(248, 246, 240, 0.8)    surfaceGlass, light
+ *   0x991B1D2B -> rgba(27, 29, 43, 0.6)       surfaceGlass, dark
+ *   0x33D5535A -> rgba(213, 83, 90, 0.2)      errorContainer, light
+ */
+
+/* ── Brand constants (theme-invariant) ──────────────────────────────────────
+   These seven never change between light and dark. The scheme below re-points
+   the ROLES at brightened variants for dark; the brand itself is fixed. */
+:root {
+  --tt-kinfolk-orange: #df8431; /* PRIMARY: the anchor. CTAs, headers, brand emphasis */
+  --tt-pack-pink: #d55c87; /* playful highlight */
+  --tt-kin-teal: #0a8595; /* calming, trust */
+  --tt-family-purple: #74538a; /* community / creative */
+  --tt-snuggle-coral: #d5535a; /* comforting warmth */
+  --tt-brand-cream: #fbfbf9;
+  --tt-brand-navy: #11131f;
+}
+
+/* ── Light scheme (default: cream + navy, playful and welcoming) ─────────── */
+:root,
+[data-theme='light'] {
+  --color-background: var(--tt-brand-cream);
+  --color-surface: #f4f2ec;
+  --color-surface-2: #eae6dc;
+  --color-surface-glass: rgba(248, 246, 240, 0.8);
+  --color-border: #d8d1c2;
+  --color-border-soft: #e7e2d5;
+
+  --color-primary: var(--tt-kinfolk-orange);
+  --color-primary-dim: #b36724;
+  --color-secondary: var(--tt-pack-pink);
+  --color-accent: var(--tt-kin-teal);
+  --color-tertiary: var(--tt-family-purple);
+  --color-coral: var(--tt-snuggle-coral);
+
+  --color-text-primary: var(--tt-brand-navy);
+  --color-text-dim: #5a5860;
+  --color-text-faint: #9a98a2;
+
+  --color-success: #2e7d52;
+  --color-warning: #c77d1a;
+  --color-error: var(--tt-snuggle-coral);
+  --color-error-container: rgba(213, 83, 90, 0.2);
+
+  color-scheme: light;
+}
+
+/* ── Dark scheme (deep-navy base, NOT pure black; cream text) ─────────────── */
+[data-theme='dark'] {
+  --color-background: var(--tt-brand-navy);
+  --color-surface: #1b1d2b;
+  --color-surface-2: #252736;
+  --color-surface-glass: rgba(27, 29, 43, 0.6);
+  --color-border: #353748;
+  --color-border-soft: #2a2c3c;
+
+  /* Brand roles brighten for contrast on navy. primaryDim falls back to the
+     unbrightened brand orange, which is why it is not var(--color-primary). */
+  --color-primary: #f09446;
+  --color-primary-dim: var(--tt-kinfolk-orange);
+  --color-secondary: #e07499;
+  --color-accent: #1fa0b0;
+  --color-tertiary: #8e6ba6;
+  --color-coral: #e76e75;
+
+  --color-text-primary: var(--tt-brand-cream);
+  --color-text-dim: #a8a4b2;
+  --color-text-faint: #65626e;
+
+  --color-success: #4caf7d;
+  --color-warning: #ffb458;
+  --color-error: #e76e75;
+  --color-error-container: rgba(231, 110, 117, 0.2);
+
+  color-scheme: dark;
+}
+
+/* ── Brand gradients ────────────────────────────────────────────────────────
+   Signature element. Per AuntieColors.kt: "never substitute solid fills where a
+   brand gradient is called for." Reserved for hero and CTA moments, never page
+   backgrounds (auntieos_design_system.md).
+
+   All follow the ROLE vars, so they brighten automatically in dark without a
+   second definition. Source: theme/Gradients.kt (TribeGradients).
+
+   Angles are not decoration. Gradients.kt uses TWO different constructions:
+     linearGradient  Offset(0,0) -> Offset(1000,1000)   diagonal, 135deg
+     horizontalGradient                                  90deg
+   rainbowAccent is the horizontal one. Rendering it at 135deg would be a
+   different mark. */
+:root {
+  /* THE Tribe Gradient, the primary brand mark: orange -> pink -> teal. */
+  --gradient-tribe: linear-gradient(
+    135deg,
+    var(--color-primary),
+    var(--color-secondary),
+    var(--color-accent)
+  );
+  --gradient-orange-pink: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+  --gradient-teal-purple: linear-gradient(135deg, var(--color-accent), var(--color-tertiary));
+
+  /* Same three stops as Tribe, but horizontal. A distinct mark, not a variant. */
+  --gradient-rainbow-accent: linear-gradient(
+    90deg,
+    var(--color-primary),
+    var(--color-secondary),
+    var(--color-accent)
+  );
+
+  /* Sunset Glow: 135deg per brandColors.md, the brand source of truth.
+     NOTE a genuine conflict between the two docs, resolved in favour of brand:
+       brandColors.md            linear-gradient(135deg, orange, pink, purple)
+       auntieos_design_system.md linear-gradient(90deg,  orange, pink, purple)
+     Same stops, different angle. Neither is a transcription error: in Compose
+     `sunsetGlowColors` is a COLOR LIST on AuntieColors, not a Brush, so it has
+     no angle in code at all. It feeds the Sunset accent personalization. The
+     design-system doc had to pick an angle to render it and picked 90; the brand
+     doc defines the mark as 135. Brand wins for a brand gradient. */
+  --gradient-sunset-glow: linear-gradient(
+    135deg,
+    var(--color-primary),
+    var(--color-secondary),
+    var(--color-tertiary)
+  );
+}
+
+/* ── Typography ─────────────────────────────────────────────────────────────
+   Three faces, per AuntieFonts.kt:
+     Fraunces        editorial serif: display, headline, titleLarge
+     Hanken Grotesk  UI + body, smaller titles, most labels
+     Spline Sans Mono  mono AND the uppercase tracked kicker (labelSmall) */
+:root {
+  --font-fraunces: 'Fraunces', ui-serif, Georgia, serif;
+  --font-hanken: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Spline Sans Mono', ui-monospace, 'SF Mono', monospace;
+
+  /* Fraunces. Weight is the EFFECTIVE one from rememberDenTypography, which
+     overrides the Bold in AuntieTypography's base declarations. */
+  --type-display-lg-family: var(--font-fraunces);
+  --type-display-lg-size: 34px;
+  --type-display-lg-weight: 400;
+  --type-display-lg-tracking: -0.5px;
+
+  --type-display-md-family: var(--font-fraunces);
+  --type-display-md-size: 30px;
+  --type-display-md-weight: 400;
+  --type-display-md-tracking: -0.4px;
+
+  --type-headline-lg-family: var(--font-fraunces);
+  --type-headline-lg-size: 26px;
+  --type-headline-lg-weight: 400;
+  --type-headline-lg-tracking: -0.3px;
+
+  --type-headline-md-family: var(--font-fraunces);
+  --type-headline-md-size: 20px;
+  --type-headline-md-weight: 500;
+
+  --type-headline-sm-family: var(--font-fraunces);
+  --type-headline-sm-size: 18px;
+  --type-headline-sm-weight: 500;
+
+  --type-title-lg-family: var(--font-fraunces);
+  --type-title-lg-size: 17px;
+  --type-title-lg-weight: 500;
+
+  /* Hanken */
+  --type-title-md-family: var(--font-hanken);
+  --type-title-md-size: 15px;
+  --type-title-md-weight: 600;
+
+  --type-title-sm-family: var(--font-hanken);
+  --type-title-sm-size: 13px;
+  --type-title-sm-weight: 600;
+
+  --type-body-lg-family: var(--font-hanken);
+  --type-body-lg-size: 15px;
+  --type-body-lg-weight: 400;
+  --type-body-lg-line: 22px;
+
+  --type-body-md-family: var(--font-hanken);
+  --type-body-md-size: 14px;
+  --type-body-md-weight: 400;
+  --type-body-md-line: 20px;
+
+  --type-body-sm-family: var(--font-hanken);
+  --type-body-sm-size: 12px;
+  --type-body-sm-weight: 400;
+  --type-body-sm-line: 16px;
+
+  --type-label-lg-family: var(--font-hanken);
+  --type-label-lg-size: 13px;
+  --type-label-lg-weight: 600;
+  --type-label-lg-tracking: 0.4px;
+
+  --type-label-md-family: var(--font-hanken);
+  --type-label-md-size: 12px;
+  --type-label-md-weight: 600;
+  --type-label-md-tracking: 0.5px;
+
+  /* labelSmall is MONO, not Hanken. This is the "THE DEN . HOME" kicker. */
+  --type-label-sm-family: var(--font-mono);
+  --type-label-sm-size: 11px;
+  --type-label-sm-weight: 600;
+  --type-label-sm-tracking: 0.6px;
+
+  --type-mono-family: var(--font-mono);
+  --type-mono-size: 13px;
+  --type-mono-weight: 400;
+}
+
+/* ── Shape ──────────────────────────────────────────────────────────────────
+   The five named shapes from the WEB AuntieShapes.kt. This admin replaces the
+   web target, so these are the right five: per auntieos_design_system.md the
+   platforms deliberately diverge here (web cards 8/12dp, Android cards
+   16/22/28dp plus a cardXl the web module does not have). Do not "reconcile"
+   them; the divergence is the design.
+
+   Be aware the named scale describes about half of the app. Measured
+   2026-07-15 across the component lib and screens: `AuntieTheme.shapes` is
+   referenced 11 times, 31 component files declare a raw `RoundedCornerShape(N.dp)`
+   instead, and 17 distinct radii are in use. Porting only the five forces every
+   component to round to the nearest, which is real drift: 10dp (27 uses) becomes
+   8, 16/18dp become 12. The raw radii below are therefore ALSO tokenised, by
+   frequency, so the port stays faithful and the drift stays visible.
+
+   OPEN DECISION for the owner: consolidate to the five (accepting diffs across
+   ~100 usages) or keep all 17. The design doc documents the five as the system,
+   so the raw values look like drift that accumulated after it was written. The
+   numeric names are deliberate: they describe what IS. Naming them semantically
+   would imply an intent the source does not express. */
+:root {
+  /* ONE radius scale (AO-17 consolidation, 2026-07-16). The wasm port measured 17
+     distinct raw radii; that drift is collapsed here to a 7-step scale + pill.
+     New code uses the SEMANTIC names. Do NOT introduce raw px radii.
+       tight 4 · chip 6 · card 8 · card-lg 12 · panel 16 · lg 20 · pill 999 */
+  --radius-tight: 4px;
+  --radius-chip: 6px;
+  --radius-card: 8px;
+  --radius-card-lg: 12px;
+  --radius-panel: 16px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+
+  /* DEPRECATED numeric aliases: kept only so in-flight ported components resolve
+     to the consolidated value (each rounds to the nearest scale step). Migrate
+     off these; do not add more. */
+  --radius-10: var(--radius-card);
+  --radius-11: var(--radius-card-lg);
+  --radius-13: var(--radius-card-lg);
+  --radius-14: var(--radius-card-lg);
+  --radius-16: var(--radius-panel);
+  --radius-18: var(--radius-panel);
+  --radius-20: var(--radius-lg);
+}
+
+/* ── Spacing (AuntieDimensions.kt) ──────────────────────────────────────────
+   A real, deliberate scale. Note the gaps: there is no space7, space9 or
+   space11. That is the scale, not an omission, so do not fill them in.
+
+   Web and Android share this scale exactly (auntieos_design_system.md), unlike
+   the radii, which diverge. */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+}
+
+/* ── Dimensions (AuntieDimensions.kt) ───────────────────────────────────── */
+:root {
+  --border-hairline: 1px;
+  --border-emphasis: 1.5px;
+  /* Structural. Density presets scale space-1..space-12 ONLY, never these. */
+  --side-rail-width: 240px; /* web only; the Android dimensions omit it */
+  --bottom-dock-height: 72px;
+  --max-content-width: 1280px;
+}
+/* ── Motion (AO-17: no motion tokens existed) ───────────────────────────────
+   Grounded in the source's tween(160)/tween(180). One standard easing + a small
+   duration scale. prefers-reduced-motion is honored globally (base.css). */
+:root {
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 300ms;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+}

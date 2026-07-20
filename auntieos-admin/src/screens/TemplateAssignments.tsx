@@ -1,0 +1,333 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  listTemplateBindings,
+  assignTemplate,
+  unassignTemplate,
+  BINDING_AUDIENCES,
+  type TemplateBinding,
+} from '../api/templateBindings';
+import { listTemplates, type TemplateSummary } from '../api/templates';
+import { type Async } from '../lib/async';
+import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
+import { AsyncRegion } from '../components/AsyncRegion';
+import { Banner } from '../components/Banner';
+import { PrimaryButton, GhostButton } from '../components/Buttons';
+import './TemplateAssignments.css';
+
+interface TemplateAssignmentsProps {
+  /** Returns to the Template Bank list (this is a sibling view of Templates, not a route). */
+  onClose: () => void;
+}
+
+/**
+ * Template ASSIGNMENT manager (AO-56), ported from `TemplateAssignmentScreen.kt`:
+ * the surface Templates.tsx's own doc comment named as "a wholly separate
+ * screen ... not this bank list at all". Binds a notification catalog key to an
+ * email template so dispatch knows which template to send.
+ *
+ * Reads `listTemplateBindings` (the current bindings) + `listTemplates` (the
+ * bank, for the picker and for showing each binding's template TITLE, not just
+ * its id). Writes via `assignTemplate` (upsert a binding) and `unassignTemplate`
+ * (remove one). Unassign is the half AO-56 was missing: without it a bound
+ * template can never be deleted, because `deleteTemplate` refuses while a
+ * binding still points at it.
+ *
+ * Fail-loud throughout: every write names its callable on rejection, buttons
+ * disable while a call is in flight, and Unassign is confirm-gated (it changes
+ * what real notifications dispatch sends).
+ */
+export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
+  const [bindings, setBindings] = useState<Async<TemplateBinding[]>>({ status: 'loading' });
+  const [templates, setTemplates] = useState<Async<TemplateSummary[]>>({ status: 'loading' });
+
+  // The assign/change form. `editingKey` null = assigning a brand-new key
+  // (catalogKey editable); non-null = changing an existing binding (locked).
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [catalogKey, setCatalogKey] = useState('');
+  const [templateId, setTemplateId] = useState('');
+  const [audience, setAudience] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const [pendingUnassign, setPendingUnassign] = useState<string | null>(null);
+  const [unassigning, setUnassigning] = useState(false);
+
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const loadBindings = useCallback(() => {
+    let live = true;
+    setBindings({ status: 'loading' });
+    listTemplateBindings()
+      .then((data) => live && setBindings({ status: 'ready', data }))
+      .catch(
+        (err: unknown) =>
+          live &&
+          setBindings({
+            status: 'error',
+            message: `listTemplateBindings failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            retry: loadBindings,
+          }),
+      );
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const loadTemplates = useCallback(() => {
+    let live = true;
+    setTemplates({ status: 'loading' });
+    listTemplates()
+      .then((data) => live && setTemplates({ status: 'ready', data }))
+      .catch(
+        (err: unknown) =>
+          live &&
+          setTemplates({
+            status: 'error',
+            message: `listTemplates failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            retry: loadTemplates,
+          }),
+      );
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  useEffect(() => loadBindings(), [loadBindings]);
+  useEffect(() => loadTemplates(), [loadTemplates]);
+
+  // templateId -> title, so a binding renders "Booking confirmed", not "tmpl_x".
+  const titleById = useMemo(() => {
+    const map = new Map<string, string>();
+    if (templates.status === 'ready') {
+      for (const t of templates.data) map.set(t.templateId, t.title || t.templateId);
+    }
+    return map;
+  }, [templates]);
+
+  const templateOptions = templates.status === 'ready' ? templates.data : [];
+
+  function resetForm() {
+    setEditingKey(null);
+    setCatalogKey('');
+    setTemplateId('');
+    setAudience('');
+  }
+
+  function startChange(binding: TemplateBinding) {
+    setActionError(null);
+    setNotice(null);
+    setEditingKey(binding.catalogKey);
+    setCatalogKey(binding.catalogKey);
+    setTemplateId(binding.templateId);
+    // Re-send the current audience so a re-assign doesn't null it (assignTemplate
+    // merges `audience ?? null`); '' means the binding had none.
+    setAudience(binding.audience ?? '');
+  }
+
+  const canAssign = catalogKey.trim() !== '' && templateId !== '' && !saving;
+
+  async function handleAssign() {
+    if (!canAssign) return;
+    setSaving(true);
+    setActionError(null);
+    setNotice(null);
+    try {
+      await assignTemplate({
+        catalogKey: catalogKey.trim(),
+        templateId,
+        ...(audience !== '' && { audience }),
+      });
+      setSaving(false);
+      setNotice(`Assigned ${titleById.get(templateId) ?? templateId} to ${catalogKey.trim()}.`);
+      resetForm();
+      loadBindings();
+    } catch (err) {
+      setSaving(false);
+      setActionError(`assignTemplate failed: ${err instanceof Error ? err.message : 'Assign failed'}`);
+    }
+  }
+
+  async function confirmUnassign(key: string) {
+    if (unassigning) return;
+    setUnassigning(true);
+    setActionError(null);
+    setNotice(null);
+    try {
+      const res = await unassignTemplate(key);
+      setUnassigning(false);
+      setPendingUnassign(null);
+      setNotice(res.removed ? `Unassigned ${key}.` : `${key} was already unassigned.`);
+      // If the form was editing the key just removed, drop back to a blank assign.
+      if (editingKey === key) resetForm();
+      loadBindings();
+    } catch (err) {
+      setUnassigning(false);
+      setActionError(`unassignTemplate failed: ${err instanceof Error ? err.message : 'Unassign failed'}`);
+    }
+  }
+
+  return (
+    <div className="screen">
+      <DenScreenHeading
+        kicker="The Den · Admin"
+        title="Template"
+        accentTail="Assignments"
+        subtitle="Bind a notification catalog key to the email template dispatch sends for it."
+        trailing={<GhostButton label="Back to Template Bank" onClick={onClose} />}
+      />
+
+      {notice && (
+        <Banner tone="success" title="Done" onDismiss={() => setNotice(null)}>
+          {notice}
+        </Banner>
+      )}
+      {actionError && (
+        <Banner tone="error" title="Action failed" onDismiss={() => setActionError(null)}>
+          {actionError}
+        </Banner>
+      )}
+
+      <DenPanel
+        title={editingKey ? `Change binding: ${editingKey}` : 'Assign a template'}
+        subtitle={
+          editingKey
+            ? 'Pick the template this catalog key should dispatch.'
+            : 'Enter a catalog key and pick the template dispatch should send for it.'
+        }
+      >
+        {templates.status === 'error' && (
+          <p className="tassign__templates-error" role="alert">
+            Template list unavailable, so the picker is empty: {templates.message}
+          </p>
+        )}
+        <div className="tassign__form">
+          <label className="tassign__field">
+            <span className="tassign__label">Catalog key</span>
+            <input
+              type="text"
+              className="tassign__input"
+              value={catalogKey}
+              onChange={(e) => setCatalogKey(e.target.value)}
+              disabled={editingKey !== null || saving}
+              placeholder="e.g. booking.confirmed"
+            />
+          </label>
+
+          <label className="tassign__field">
+            <span className="tassign__label">Template</span>
+            <select
+              className="tassign__input"
+              value={templateId}
+              onChange={(e) => setTemplateId(e.target.value)}
+              disabled={saving}
+            >
+              <option value="">Choose a template…</option>
+              {/* Preserve a stored templateId that is no longer in the bank rather
+                  than silently dropping it from the select. */}
+              {templateId !== '' && !titleById.has(templateId) && (
+                <option value={templateId}>{templateId} (missing from bank)</option>
+              )}
+              {templateOptions.map((t) => (
+                <option key={t.templateId} value={t.templateId}>
+                  {t.title || t.templateId}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="tassign__field">
+            <span className="tassign__label">Audience (optional)</span>
+            <select
+              className="tassign__input"
+              value={audience}
+              onChange={(e) => setAudience(e.target.value)}
+              disabled={saving}
+            >
+              <option value="">(none)</option>
+              {BINDING_AUDIENCES.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="tassign__form-actions">
+            {editingKey && <GhostButton label="Cancel" onClick={resetForm} disabled={saving} />}
+            <PrimaryButton
+              label={saving ? 'Assigning…' : editingKey ? 'Update binding' : 'Assign'}
+              onClick={() => void handleAssign()}
+              disabled={!canAssign}
+              busy={saving}
+            />
+          </div>
+        </div>
+      </DenPanel>
+
+      <DenPanel title="Current bindings" subtitle="Every catalog key that dispatch currently maps to a template.">
+        <AsyncRegion
+          state={bindings}
+          what="bindings"
+          isEmpty={(rows) => rows.length === 0}
+          loading={<p className="tassign__hint">Loading bindings…</p>}
+          empty={<EmptyHint>No catalog keys are bound yet. Assign one above.</EmptyHint>}
+        >
+          {(rows) => (
+            <ul className="tassign__list">
+              {rows.map((b) => (
+                <li key={b.catalogKey} className="tassign__row">
+                  <div className="tassign__row-main">
+                    <code className="tassign__row-key">{b.catalogKey}</code>
+                    <span className="tassign__row-template">
+                      {titleById.get(b.templateId) ?? b.templateId ?? '(no template)'}
+                    </span>
+                    <span className="tassign__row-meta">
+                      {b.audience ? `audience: ${b.audience}` : 'no audience'}
+                      {' · '}
+                      <span
+                        className={
+                          b.active ? 'tassign__badge tassign__badge--on' : 'tassign__badge tassign__badge--off'
+                        }
+                      >
+                        {b.active ? 'active' : 'inactive'}
+                      </span>
+                    </span>
+                  </div>
+
+                  {pendingUnassign === b.catalogKey ? (
+                    <div className="tassign__confirm">
+                      <span className="tassign__confirm-copy">Unassign this key?</span>
+                      <GhostButton
+                        label="Cancel"
+                        onClick={() => setPendingUnassign(null)}
+                        disabled={unassigning}
+                      />
+                      <PrimaryButton
+                        label={unassigning ? 'Unassigning…' : 'Unassign'}
+                        onClick={() => void confirmUnassign(b.catalogKey)}
+                        disabled={unassigning}
+                        busy={unassigning}
+                      />
+                    </div>
+                  ) : (
+                    <div className="tassign__row-actions">
+                      <GhostButton label="Change" onClick={() => startChange(b)} />
+                      <GhostButton
+                        label="Unassign"
+                        onClick={() => {
+                          setActionError(null);
+                          setNotice(null);
+                          setPendingUnassign(b.catalogKey);
+                        }}
+                      />
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </AsyncRegion>
+      </DenPanel>
+    </div>
+  );
+}

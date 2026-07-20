@@ -1,0 +1,29 @@
+/**
+ * KinCare rates sub-editor styling. Scoped to this component, imported
+ * directly (the SettingsEdit.css convention). Every value comes from
+ * styles/tokens.css.
+ */
+
+.kinCareRates__list {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.kinCareRates__row,
+.kinCareRates__addRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.kinCareRates__typeField {
+  flex: 2;
+}
+
+.kinCareRates__rateField {
+  flex: 1;
+}

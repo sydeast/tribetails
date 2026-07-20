@@ -1,0 +1,45 @@
+.toggle {
+  --toggle-w: 44px;
+  --toggle-h: 26px;
+  --toggle-pad: 2px;
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--toggle-w);
+  height: var(--toggle-h);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-border, #d8d6cf);
+  cursor: pointer;
+  transition: background var(--dur-base) var(--ease-standard);
+}
+
+.toggle--on {
+  background: var(--color-accent, #e8a06a);
+}
+
+.toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--color-accent, #e8a06a);
+  outline-offset: 2px;
+}
+
+.toggle__thumb {
+  position: absolute;
+  top: var(--toggle-pad);
+  left: var(--toggle-pad);
+  width: calc(var(--toggle-h) - 2 * var(--toggle-pad));
+  height: calc(var(--toggle-h) - 2 * var(--toggle-pad));
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+
+.toggle--on .toggle__thumb {
+  transform: translateX(calc(var(--toggle-w) - var(--toggle-h)));
+}

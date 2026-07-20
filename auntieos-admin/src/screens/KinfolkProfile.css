@@ -1,0 +1,89 @@
+.kprofile__hint {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.kprofile__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.kprofile__head-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.kprofile__name {
+  font-size: var(--type-title-md-size, 1.1rem);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.kprofile__status {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.kprofile__since {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+}
+
+.kprofile__facts {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.kprofile__fact {
+  display: contents;
+}
+
+.kprofile__fact-label {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.kprofile__fact-value {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  margin: 0;
+  word-break: break-word;
+}
+
+.kprofile__fact-value--mono {
+  font-family: var(--font-mono);
+}
+
+.kprofile__kin {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.kprofile__kin-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.kprofile__kin-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.kprofile__kin-name {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+}
+
+.kprofile__kin-detail {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+}

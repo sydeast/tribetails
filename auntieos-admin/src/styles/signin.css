@@ -1,0 +1,55 @@
+.signin {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+}
+
+.signin__card {
+  width: min(100%, 26rem);
+  padding: 2.25rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.signin__title {
+  font-family: var(--font-fraunces, serif);
+  font-weight: 600;
+  font-size: 2rem;
+  margin: 0;
+}
+
+.signin__subtitle {
+  margin: 0 0 0.5rem;
+  color: var(--color-secondary, #5a5c6a);
+}
+
+.signin__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.signin__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--color-secondary, #5a5c6a);
+}
+
+.signin__field input {
+  font: inherit;
+  font-size: 1rem;
+  color: var(--color-primary, #1a1c28);
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border, #d8d6cf);
+  border-radius: var(--radius-card);
+  background: var(--color-surface, #fff);
+}
+
+.signin__field input:focus-visible {
+  outline: 2px solid var(--color-accent, #e8a06a);
+  outline-offset: 1px;
+}

@@ -1,0 +1,251 @@
+/* Shared screen-content styling (rendered into the AppShell <Outlet/>). */
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* ── Feature Flags ───────────────────────────────────────────────────────── */
+
+.flags {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.flags__row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--color-border-soft, #e6e4dd);
+}
+.flags__row:last-child {
+  border-bottom: none;
+}
+
+.flags__meta {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.flags__label {
+  font-weight: 600;
+  color: var(--color-primary, #1a1c28);
+}
+.flags__key {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.78rem;
+  color: var(--color-text-faint, #9a988f);
+  word-break: break-all;
+}
+.flags__detail {
+  font-size: 0.85rem;
+  color: var(--color-secondary, #5a5c6a);
+}
+
+.flags__hint {
+  color: var(--color-secondary, #5a5c6a);
+  margin: 0;
+}
+
+/* Per-row in-flight indicator: shown only on the row whose write is committing. */
+.flags__saving {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--color-secondary, #5a5c6a);
+  white-space: nowrap;
+}
+.flags__spinner {
+  box-sizing: border-box;
+  width: 13px;
+  height: 13px;
+  border: 2px solid color-mix(in srgb, var(--color-secondary, #5a5c6a) 35%, transparent);
+  border-top-color: var(--color-secondary, #5a5c6a);
+  border-radius: var(--radius-pill, 999px);
+  animation: flags-spin 800ms linear infinite;
+}
+@keyframes flags-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flags__spinner {
+    animation-duration: 2400ms;
+  }
+}
+.shell__pending-note {
+  font-size: 0.68rem;
+  opacity: 0.7;
+}
+
+/* ── Activity Log ────────────────────────────────────────────────────────── */
+.log { display: flex; flex-direction: column; gap: 1rem; }
+.log__day-label { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-secondary, #5a5c6a); margin: 0 0 0.4rem; }
+.log__rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.log__row { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--color-border-soft, #e6e4dd); }
+.log__row:last-child { border-bottom: none; }
+.log__seq { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.75rem; color: var(--color-text-faint, #9a988f); white-space: nowrap; }
+.log__body { display: flex; flex-direction: column; min-width: 0; }
+.log__action { font-weight: 600; font-size: 0.9rem; }
+.log__desc { font-size: 0.82rem; color: var(--color-secondary, #5a5c6a); }
+.log__status { font-size: 0.72rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: var(--radius-pill); white-space: nowrap; text-align: center; }
+.log__status--ok { background: color-mix(in srgb, var(--color-success, #3a9a7a) 18%, transparent); color: var(--color-success, #3a9a7a); }
+.log__status--fail { background: color-mix(in srgb, var(--color-error, #c44) 18%, transparent); color: var(--color-error, #c44); }
+.log__status--pending { background: var(--color-surface2, #eee); color: var(--color-secondary, #666); }
+.log__time { font-size: 0.78rem; color: var(--color-text-faint, #9a988f); font-variant-numeric: tabular-nums; }
+.log__hint { color: var(--color-secondary, #5a5c6a); margin: 0; }
+.log__ctx { font-size: 0.76rem; color: var(--color-text-faint, #9a988f); }
+/* ─────────────────────────────────────────────────────────────────────────
+   Notifications, APPEND to src/styles/screens.css (not a standalone file).
+   Follows the existing .flags__* / .log__* section conventions in that file:
+   BEM-ish `.notif-*` names, token vars with the same literal fallbacks already
+   used there, radii from the --radius-* scale (no raw px), motion from
+   --dur-base/--ease-standard (no raw ms).
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* ── Notifications ───────────────────────────────────────────────────────── */
+
+.notif-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--color-coral, #d5535a);
+  color: var(--color-background, #fbfbf9);
+  font-family: var(--font-hanken, ui-sans-serif, sans-serif);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.notif-hint {
+  color: var(--color-secondary, #5a5c6a);
+  margin: 0;
+}
+
+.notif-bulkbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-card-lg);
+  background: var(--color-surface-2, #eae6dc);
+  border: var(--border-hairline) solid var(--color-border, #d8d1c2);
+}
+.notif-bulkbar__count {
+  flex: 1 1 auto;
+  font-weight: 600;
+  color: var(--color-text-primary, #11131f);
+}
+
+.notif-feed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.notif-day__label {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-secondary, #5a5c6a);
+  margin: 0 0 var(--space-1);
+}
+.notif-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.notif-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-panel);
+  border: var(--border-hairline) solid var(--color-border-soft, #e7e2d5);
+  background: var(--color-surface, #f4f2ec);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.notif-row--unread {
+  border-color: color-mix(in srgb, var(--color-accent, #0a8595) 40%, transparent);
+}
+
+.notif-row__select {
+  margin-top: var(--space-1);
+}
+
+.notif-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.notif-row__key {
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--color-text-primary, #11131f);
+}
+.notif-row__meta {
+  font-size: 0.82rem;
+  color: var(--color-secondary, #5a5c6a);
+}
+.notif-row__desc {
+  font-size: 0.86rem;
+  color: var(--color-text-primary, #11131f);
+}
+.notif-row__channels {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--color-text-faint, #9a988f);
+}
+.notif-row__status {
+  align-self: flex-start;
+  margin-top: var(--space-1);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.1rem var(--space-2);
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  text-transform: capitalize;
+}
+.notif-row__status--dispatched {
+  background: color-mix(in srgb, var(--color-success, #2e7d52) 18%, transparent);
+  color: var(--color-success, #2e7d52);
+}
+.notif-row__status--pending {
+  background: color-mix(in srgb, var(--color-warning, #c77d1a) 18%, transparent);
+  color: var(--color-warning, #c77d1a);
+}
+.notif-row__status--unknown {
+  background: var(--color-surface-2, #eae6dc);
+  color: var(--color-secondary, #5a5c6a);
+}
+
+.notif-row__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+.notif-row__time {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.72rem;
+  color: var(--color-text-faint, #9a988f);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

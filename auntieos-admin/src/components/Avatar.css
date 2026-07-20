@@ -1,0 +1,107 @@
+/**
+ * Avatar, ported from AuntieAvatar.kt.
+ *
+ * The seeded gradient arrives as --avatar-gradient (a --gradient-* token, chosen
+ * by gradientForSeed) and the geometry all scales off --avatar-size, so this file
+ * ships one rule per part instead of one per size.
+ *
+ * RING: Compose draws a hairline border in the seeded accent at 55% alpha. There
+ * is no per-stop colour and no alpha token to reach for once the palette is a
+ * gradient token, so the ring is the gradient itself, laid down as a hairline of
+ * padding that the inner element sits inside. It reads as intended over a photo,
+ * which is the case the ring is for, and blends into the gradient-only tile,
+ * which is the case it was never doing much work in.
+ */
+
+.avatar {
+  --avatar-size: 42px;
+  --avatar-gradient: var(--gradient-orange-pink);
+
+  box-sizing: border-box;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  border-radius: var(--radius-pill);
+  /* Always underneath. It shows through whenever the photo is absent or fails,
+     which is what keeps a broken thumbnail from collapsing to an empty box. */
+  background-image: var(--avatar-gradient);
+  overflow: hidden;
+}
+
+.avatar[data-shape='rounded'] {
+  border-radius: var(--radius-card-lg);
+}
+
+.avatar-ring {
+  padding: var(--border-hairline);
+}
+
+.avatar-inner {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background-image: var(--avatar-gradient);
+  overflow: hidden;
+}
+
+/* A photo gets a neutral base rather than the gradient behind it, matching the
+   surface2 layer the Compose source stacks on top of the gradient for this case.
+   It also makes the gradient ring visible, since the two no longer blend. */
+.avatar-inner-photo {
+  background-image: none;
+  background-color: var(--color-surface-2);
+}
+
+.avatar-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-fallback {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+}
+
+.avatar-initials {
+  /* Cream, not a theme-following text token. onGradientText() in the Compose
+     source resolves to cream in BOTH themes (dark returns textPrimary, which IS
+     brand cream; light returns the cream literal), because the contrast that
+     matters is against the brand stops, not against the page. */
+  color: var(--tt-brand-cream);
+  font-family: var(--type-title-sm-family);
+  font-weight: var(--type-title-sm-weight);
+  /* Scales the monogram to the avatar so initials read at any size. */
+  font-size: calc(var(--avatar-size) * 0.4);
+  line-height: 1;
+  user-select: none;
+}
+
+.avatar-emoji {
+  font-size: calc(var(--avatar-size) * 0.5);
+  line-height: 1;
+  user-select: none;
+}
+
+.avatar-glyph {
+  display: grid;
+  place-items: center;
+  /* The Den glyph-in-tile ratio, same 52% as AuntieIconTile. */
+  width: calc(var(--avatar-size) * 0.52);
+  height: calc(var(--avatar-size) * 0.52);
+  color: var(--tt-brand-cream);
+}
+
+.avatar-glyph svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

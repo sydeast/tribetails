@@ -1,0 +1,210 @@
+/**
+ * Invoices screen styling. Scoped to this screen and imported directly by
+ * Invoices.tsx (the DenScreenKit.css / Banner.css / FormSchemas.css convention),
+ * so nothing here needs to land in the shared styles/screens.css. Every value
+ * comes from styles/tokens.css, no literal colours, radii, durations, or px
+ * spacing outside the chip palette below (which mirrors DenScreenKit.css's own
+ * data-tone block, since invoice states need more distinct hues than the
+ * shared DenTone palette carries).
+ */
+
+.invoices__new-actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.invoices__summary {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-5);
+}
+.invoices__summary > * {
+  flex: 1 1 12rem;
+}
+
+.invoices__hint {
+  color: var(--color-text-dim);
+  margin: 0;
+}
+
+/* ── filter tabs ─────────────────────────────────────────────────────────── */
+
+.invoices__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.invoices__tab {
+  font: inherit;
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  color: var(--color-text-dim);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  transition:
+    background var(--dur-base) var(--ease-standard),
+    border-color var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
+}
+.invoices__tab:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+.invoices__tab:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.invoices__tab--active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-background);
+}
+
+/* ── row list ────────────────────────────────────────────────────────────── */
+
+.invoices__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.invoices__row {
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+.invoices__row:last-child {
+  border-bottom: none;
+}
+
+.invoices__row-main {
+  width: 100%;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 5.5rem 1.7fr 1.1fr auto auto;
+  align-items: center;
+  gap: var(--space-4);
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  padding: var(--space-3) var(--space-2);
+  border-radius: var(--radius-card);
+  transition: background var(--dur-base) var(--ease-standard);
+}
+.invoices__row-main:hover,
+.invoices__row-main:focus-visible {
+  background: var(--color-surface-2);
+}
+.invoices__row-main:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.invoices__row-number {
+  font-family: var(--font-mono);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+
+.invoices__row-who {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.invoices__row-name {
+  font-family: var(--font-hanken);
+  font-size: var(--type-title-md-size);
+  font-weight: var(--type-title-md-weight);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.invoices__row-secondary {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.invoices__row-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--color-text-dim);
+}
+.invoices__row-meta--overdue {
+  color: var(--color-error);
+}
+.invoices__row-visits {
+  color: var(--color-accent);
+}
+
+.invoices__row-amount {
+  font-family: var(--font-fraunces);
+  font-size: var(--type-title-lg-size);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+/* ── status chip ─────────────────────────────────────────────────────────── */
+
+.invoices__chip {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  text-align: center;
+}
+.invoices__chip--open {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  color: var(--color-primary);
+}
+.invoices__chip--overdue {
+  background: color-mix(in srgb, var(--color-error) 18%, transparent);
+  color: var(--color-error);
+}
+.invoices__chip--paid {
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
+  color: var(--color-success);
+}
+.invoices__chip--draft {
+  background: var(--color-surface-2);
+  color: var(--color-text-faint);
+}
+.invoices__chip--quote {
+  background: color-mix(in srgb, var(--color-tertiary) 18%, transparent);
+  color: var(--color-tertiary);
+}
+.invoices__chip--credit {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+}
+.invoices__chip--redeemed {
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
+  color: var(--color-success);
+}
+.invoices__chip--zero {
+  background: var(--color-surface-2);
+  color: var(--color-text-faint);
+}
+.invoices__chip--cancelled {
+  background: var(--color-surface-2);
+  color: var(--color-text-faint);
+  text-decoration: line-through;
+}

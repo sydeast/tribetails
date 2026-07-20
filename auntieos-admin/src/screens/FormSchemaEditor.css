@@ -1,0 +1,142 @@
+/**
+ * Form Schema Editor styling. Scoped to this screen and imported directly by
+ * FormSchemaEditor.tsx, mirroring the FormSchemas.css convention (nothing
+ * here belongs in the shared styles/screens.css). Every value comes from
+ * styles/tokens.css, no literal colours, radii, or durations.
+ */
+
+.fse__hint {
+  color: var(--color-text-dim);
+  margin: 0;
+}
+
+.fse__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-4);
+}
+
+.fse__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+/**
+ * Groups a label span + its control WITHOUT joining a trailing error/note
+ * span into the control's accessible name: a <label>'s computed name is all
+ * of its text content, so that sibling must live outside the <label> (as a
+ * sibling of it inside .fse__field), and this rule keeps it invisible to the
+ * flex layout so .fse__field's flex-column still lays out span / input /
+ * error in one visual column exactly as if the label were not there.
+ */
+.fse__field-label {
+  display: contents;
+}
+
+.fse__field--wide {
+  grid-column: 1 / -1;
+}
+
+.fse__field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: flex-start;
+}
+
+.fse__label {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.fse__input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.fse__input:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.fse__input[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+
+.fse__note {
+  font-size: 0.72rem;
+  color: var(--color-text-faint);
+}
+
+.fse__error {
+  font-size: 0.72rem;
+  color: var(--color-error);
+}
+
+.fse__fields {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.fse__field-card {
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  background: var(--color-surface-glass);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.fse__field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+.fse__field-row .fse__field {
+  flex: 1 1 9rem;
+}
+
+.fse__field-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.fse__advanced {
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+}
+.fse__advanced summary {
+  cursor: pointer;
+  color: var(--color-text-dim);
+}
+.fse__advanced .fse__grid {
+  margin-top: var(--space-3);
+}
+
+.fse__errors {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.fse__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}

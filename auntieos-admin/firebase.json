@@ -1,0 +1,29 @@
+{
+  "hosting": {
+    "site": "auntieos-admin",
+    "public": "dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/api/cloudinary/sign-upload",
+        "function": "signCloudinaryUpload"
+      },
+      {
+        "source": "/api/generate",
+        "function": "generate"
+      },
+      {
+        "source": "/api/send-message",
+        "function": "sendMessage"
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

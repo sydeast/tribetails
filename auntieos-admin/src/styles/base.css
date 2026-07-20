@@ -1,0 +1,59 @@
+/* Band A global base. Screen-specific chrome lives in signin.css / shell.css;
+   component styles are co-located with their components. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-hanken, system-ui, sans-serif);
+  color: var(--color-primary, #1a1c28);
+  background: var(--color-background, #fbfbf9);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+/* The two drifting Den orbs behind every screen. Purely decorative; the RootLayout
+   marks them aria-hidden. Kept subtle so foreground text stays legible. */
+.orb {
+  position: fixed;
+  z-index: -1;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.5;
+  pointer-events: none;
+}
+.orb.a {
+  width: 42vw;
+  height: 42vw;
+  top: -12vw;
+  left: -8vw;
+  background: var(--color-accent, #e8a06a);
+}
+.orb.b {
+  width: 38vw;
+  height: 38vw;
+  bottom: -14vw;
+  right: -10vw;
+  background: var(--color-teal, #6ab0a6);
+}
+
+code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.9em;
+}
