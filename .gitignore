@@ -1,0 +1,6 @@
+
+# JVM heap dumps. A 754 MB one was committed in the first AuntieOS commit and
+# had to be purged from history to push at all. They are build debris, they can
+# contain whatever was in memory at the time (tokens, PII), and they are far
+# over GitHub's 100 MB limit.
+*.hprof
