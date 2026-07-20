@@ -183,7 +183,7 @@ describe('seed_test_sandbox: buildSandboxPayload', () => {
 
   describe('invoices (flat) + payment', () => {
     it('one per getMyInvoices bucket with the spec amounts', () => {
-      const byStatus = Object.fromEntries(p.invoices.map((i) => [i.invoiceStatus, i]));
+      const byStatus = Object.fromEntries(p.invoices.map((i) => [i.status, i]));
       expect(Object.keys(byStatus).sort()).toEqual(['credit', 'open', 'paid']);
       expect(byStatus.open.amountDue).toBe(4500);
       expect(byStatus.paid.total).toBe(6000);
@@ -202,6 +202,19 @@ describe('seed_test_sandbox: buildSandboxPayload', () => {
         }
         expect(inv.kinfolkId).toBe(TEST_TRIBE_ID);
         expect(inv.isTestData).toBe(true);
+      }
+    });
+
+    it('viewed is a "Yes"/"No" string, matching the 14 real invoices', () => {
+      // The AuntieOS Kotlin models (android Models.kt, commonMain
+      // FirestoreClient.kt) both declare `viewed: String`, and every non-test
+      // invoice in prod stores "Yes" or "No". Seeding a Firestore boolean here
+      // made toObjects(Invoice) throw for the WHOLE batch, so the android
+      // invoice list came back empty in test mode. That was Sentry
+      // AUNTIEOS-ADMIN-1J.
+      for (const inv of p.invoices) {
+        expect(typeof inv.viewed, `${inv._id}.viewed`).toBe('string');
+        expect(['Yes', 'No']).toContain(inv.viewed);
       }
     });
 

@@ -12,7 +12,8 @@ import { call } from '../lib/fns';
 // ── getMyInvoices (functions/src/portal/getMyInvoices.ts) ───────────────────
 
 export type InvoiceStatus = 'draft' | 'open' | 'paid' | 'credit' | 'cancelled';
-export type CreditTarget = 'accountBalance' | 'originalPaymentMethod';
+/** Account balance is the only redemption target: credits are NOT refundable. */
+export type CreditTarget = 'accountBalance';
 
 export interface InvoiceLineItemDto {
   sessionId: string;
@@ -43,7 +44,6 @@ export interface InvoiceDto {
   creditAmountCents: number | null;
   creditTarget: CreditTarget | null;
   creditRedeemedAtMs: number | null;
-  originalPaymentIntentId: string | null;
   /**
    * Per-visit line items resolved from the invoice's `sessionIds`. OPTIONAL:
    * absent when the invoice carries no sessionIds or the session lookups
@@ -131,19 +131,23 @@ export function payInvoice(
 export interface RedeemCreditRequest {
   invoiceId: string;
   kinfolkId?: string;
-  target: CreditTarget;
 }
 
 export interface RedeemCreditResult {
   ok: true;
   redeemedAmountCents: number;
-  target: CreditTarget;
+  target: 'accountBalance';
   newAccountBalanceCents: number | null;
-  refundId: string | null;
 }
 
-/** Redeems a credit invoice into the account balance or a refund to the original card. */
-export function redeemCredit(invoiceId: string, target: CreditTarget, kinfolkId?: string): Promise<RedeemCreditResult> {
-  const payload: RedeemCreditRequest = { invoiceId, target, ...(kinfolkId !== undefined ? { kinfolkId } : {}) };
+/**
+ * Redeems a credit invoice into the household's account balance.
+ *
+ * There is no target to choose: credits are NOT refundable, so a kinfolk cannot
+ * ask for money back to their card. The former 'originalPaymentMethod' target
+ * and its Stripe refund leg were removed on 2026-07-20.
+ */
+export function redeemCredit(invoiceId: string, kinfolkId?: string): Promise<RedeemCreditResult> {
+  const payload: RedeemCreditRequest = { invoiceId, ...(kinfolkId !== undefined ? { kinfolkId } : {}) };
   return call<RedeemCreditRequest, RedeemCreditResult>('redeemCredit', payload);
 }

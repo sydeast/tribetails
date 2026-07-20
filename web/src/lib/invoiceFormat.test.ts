@@ -99,9 +99,10 @@ describe('invoiceStatusInfo', () => {
 });
 
 describe('creditTargetLabel', () => {
+  // 'originalPaymentMethod' is deliberately absent: credits are NOT refundable,
+  // so account balance is the only target the type permits.
   it.each([
     ['accountBalance', 'Saved to Account Balance'],
-    ['originalPaymentMethod', 'Returned to Original Payment Method'],
     [null, 'Redeemed'],
   ] as const)('%s -> %s', (target, expected) => {
     expect(creditTargetLabel(target)).toBe(expected);

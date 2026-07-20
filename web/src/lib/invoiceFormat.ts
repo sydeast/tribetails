@@ -86,14 +86,11 @@ export function invoiceStatusInfo(status: InvoiceStatus, creditRedeemedAtMs: num
   }
 }
 
-/** "Saved to Account Balance" / "Returned to Original Payment Method" / "Redeemed", per InvoicesScreen.kt's targetLabel. */
-export function creditTargetLabel(target: 'accountBalance' | 'originalPaymentMethod' | null): string {
-  switch (target) {
-    case 'accountBalance':
-      return 'Saved to Account Balance';
-    case 'originalPaymentMethod':
-      return 'Returned to Original Payment Method';
-    default:
-      return 'Redeemed';
-  }
+/**
+ * "Saved to Account Balance" / "Redeemed", per InvoicesScreen.kt's targetLabel.
+ * The old "Returned to Original Payment Method" case is gone: credits are NOT
+ * refundable, so account balance is the only target a credit can carry.
+ */
+export function creditTargetLabel(target: 'accountBalance' | null): string {
+  return target === 'accountBalance' ? 'Saved to Account Balance' : 'Redeemed';
 }

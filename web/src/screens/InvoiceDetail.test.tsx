@@ -65,7 +65,6 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditAmountCents: null,
   creditTarget: null,
   creditRedeemedAtMs: null,
-  originalPaymentIntentId: null,
 };
 
 const CREDIT_INVOICE: GetMyInvoicesResult['credits'][number] = {
@@ -125,7 +124,9 @@ describe('InvoiceDetail — mutation error surfacing', () => {
       </QueryClientProvider>,
     );
 
-    await userEvent.click(await screen.findByRole('button', { name: /Redeem Credit/ }));
+    // Single-action button now: credits are NOT refundable, so there is no
+    // target to choose and the CTA names the only outcome.
+    await userEvent.click(await screen.findByRole('button', { name: /Save to Account Balance/ }));
     await waitFor(() => expect(screen.getByText(/Credit already redeemed\./)).toBeInTheDocument());
   });
 });
