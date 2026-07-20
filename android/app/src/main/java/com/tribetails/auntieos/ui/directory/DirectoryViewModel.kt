@@ -708,7 +708,7 @@ class DirectoryViewModel(private val repository: AuntieRepository) : ViewModel()
             email = kinfolk.email,
             status = kinfolk.status,
             outstandingBalance = kinfolk.outstandingBalance,
-            tags = kinfolk.tags.joinToString(", "),
+            tags = kinfolk.tagNames().joinToString(", "),
 
             secondaryPhone = kinfolk.secondaryPhone,
             secondaryEmail = kinfolk.secondaryEmail,

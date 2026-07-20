@@ -1,9 +1,14 @@
 package com.tribetails.auntieos.web
 
+import com.tribetails.auntieos.web.data.ConditionOp
+import com.tribetails.auntieos.web.data.ConditionSource
 import com.tribetails.auntieos.web.data.DefaultKinTaleTemplate
+import com.tribetails.auntieos.web.data.FieldCondition
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -115,5 +120,71 @@ class KinTaleModelsTest {
     @Test
     fun defaultTemplate_defaultEmailMessage_isNotBlank() {
         assertTrue(DefaultKinTaleTemplate.template.defaultEmailMessage.isNotBlank())
+    }
+
+    // ---- ConditionSource / ConditionOp wire format ----
+    // FieldCondition.source and .op are plain Strings holding the CONSTANT NAME,
+    // so these identifiers ARE the Firestore wire format. They must match the
+    // React admin (src/lib/kinTale/model.ts) and the Android enums exactly, or a
+    // condition authored on one platform stops parsing on another.
+
+    @Test
+    fun conditionSource_hasFiveWireNames_inParseWhitelistOrder() {
+        // Order mirrors the React parse whitelist (engine.ts SOURCE_NAMES) and is
+        // also the order the condition editor offers, so it is load-bearing.
+        assertEquals(
+            listOf("KIN_SPECIES", "KIN_ATTRIBUTE", "SERVICE_TYPE", "KINFOLK_ATTRIBUTE", "KINFOLK_TAG"),
+            ConditionSource.entries.map { it.name },
+        )
+    }
+
+    @Test
+    fun conditionOp_hasFourWireNames_inParseWhitelistOrder() {
+        assertEquals(
+            listOf("EQUALS", "NOT_EQUALS", "CONTAINS", "EXISTS"),
+            ConditionOp.entries.map { it.name },
+        )
+    }
+
+    @Test
+    fun conditionSource_kinfolkAttribute_parsesFromWireString() {
+        assertEquals(ConditionSource.KINFOLK_ATTRIBUTE, ConditionSource.valueOf("KINFOLK_ATTRIBUTE"))
+    }
+
+    @Test
+    fun conditionSource_kinfolkTag_parsesFromWireString() {
+        assertEquals(ConditionSource.KINFOLK_TAG, ConditionSource.valueOf("KINFOLK_TAG"))
+    }
+
+    @Test
+    fun conditionSource_unknownName_doesNotParse_documentingFailOpen() {
+        // Documents the deliberate fail-open contract: an unrecognised source name
+        // does not parse, and KinTaleConditionEngine turns that null into "always
+        // visible" instead of throwing. Kept for FORWARD compatibility (a newer app
+        // writing a source this build has never heard of must not hide the item).
+        assertNull(runCatching { ConditionSource.valueOf("SOMETHING_NEWER") }.getOrNull())
+    }
+
+    @Test
+    fun conditionSource_kinfolkNames_noLongerHitTheFailOpenBranch() {
+        // The live bug this port closes. Both names were authored in the React admin
+        // but missing from this enum, so they fell through to the fail-open branch
+        // above and every KINFOLK_ATTRIBUTE / KINFOLK_TAG condition silently
+        // evaluated TRUE on web and desktop. They must parse now.
+        listOf("KINFOLK_ATTRIBUTE", "KINFOLK_TAG").forEach { wire ->
+            assertNotNull(
+                runCatching { ConditionSource.valueOf(wire) }.getOrNull(),
+                "$wire must parse, or the engine fails open and the condition silently evaluates true",
+            )
+        }
+    }
+
+    @Test
+    fun fieldCondition_defaults_matchWireContract() {
+        val c = FieldCondition()
+        assertEquals("KIN_SPECIES", c.source)
+        assertEquals("EQUALS", c.op)
+        assertEquals("", c.value)
+        assertEquals("", c.attributeKey)
     }
 }

@@ -943,7 +943,14 @@ private fun ChecklistSections(report: KinCareReport, kinById: Map<String, Kin>) 
         client.activeTemplateForService(report.serviceType)
     }.collectAsState(initial = DefaultKinTaleTemplate.template)
 
-    val resolved = resolveSentChecklist(template, report, kinById)
+    // The household the visit belongs to, for the KINFOLK_* conditions. Without
+    // it those rules evaluate against an empty household and silently hide
+    // checked items (see resolveSentChecklist). remember{} so the stream is not
+    // re-subscribed every recomposition.
+    val kinfolkState by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val kinfolk = (kinfolkState as? FirestoreResult.Data)?.value?.firstOrNull { it._id == report.kinfolkId }
+
+    val resolved = resolveSentChecklist(template, report, kinById, kinfolk)
     if (resolved.perKin.isEmpty() && resolved.perVisit.isEmpty()) return
 
     @Composable

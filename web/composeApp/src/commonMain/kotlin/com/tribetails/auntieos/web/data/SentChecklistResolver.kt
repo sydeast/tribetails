@@ -24,12 +24,21 @@ data class SentChecklist(
  *    the visit was checked) does NOT render. When the kin can't be resolved we
  *    can't evaluate KIN conditions, so the item is kept rather than dropped.
  *
+ * [kinfolk] is the household the visit belongs to, and it is only read by the
+ * KINFOLK_* condition sources. Passing it is not optional in practice: a null
+ * household is not neutral, because KINFOLK_ATTRIBUTE then reads "" and
+ * KINFOLK_TAG reads an empty list, so an EQUALS or CONTAINS rule never matches
+ * and the checked item is silently HIDDEN from the sent report. It stays
+ * nullable only so the resolver still works for reports whose household cannot
+ * be resolved, and for the callers that build no household rules.
+ *
  * Pure + unit-tested ([SentChecklistResolverTest]); the composable just renders it.
  */
 fun resolveSentChecklist(
     template: KinTaleTemplate,
     report: KinCareReport,
     kinById: Map<String, Kin>,
+    kinfolk: Kinfolk? = null,
 ): SentChecklist {
     val itemByKey = template.checklistItems.associateBy { it.key }
     val orderByKey = template.checklistItems.withIndex().associate { (i, it) -> it.key to i }
@@ -50,7 +59,7 @@ fun resolveSentChecklist(
                 .filter { item ->
                     // Honor conditions when we can resolve the kin; otherwise keep
                     // the checked item (never hide on missing data).
-                    kin == null || KinTaleConditionEngine.isChecklistItemVisible(item, session, listOf(kin))
+                    kin == null || KinTaleConditionEngine.isChecklistItemVisible(item, session, listOf(kin), kinfolk)
                 }
             SentKinChecklist(kinId, ordered(items))
         }
@@ -60,7 +69,7 @@ fun resolveSentChecklist(
     val perVisitItems = checked
         .mapNotNull { itemByKey[it.fieldKey] }
         .filter { it.scope.equalsScope("PER_VISIT") }
-        .filter { KinTaleConditionEngine.isChecklistItemVisible(it, session, visitKin) }
+        .filter { KinTaleConditionEngine.isChecklistItemVisible(it, session, visitKin, kinfolk) }
     val perVisit = ordered(perVisitItems)
 
     return SentChecklist(perKin, perVisit)

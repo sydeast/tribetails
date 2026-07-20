@@ -200,10 +200,15 @@ describe('setAdminClaim handler (onCall)', () => {
 // signCloudinaryUpload (onRequest)
 // ===========================================================================
 describe('signCloudinaryUpload handler (onRequest)', () => {
-  function configureCloudinary() {
+  function configureCloudinary({ pingStatus = 200 } = {}) {
     process.env.CLOUDINARY_CLOUD_NAME = 'demo-cloud';
     process.env.CLOUDINARY_API_KEY = 'demo-key';
     process.env.CLOUDINARY_API_SECRET = 'demo-secret';
+    // The handler verifies the credentials against Cloudinary's /ping before it
+    // signs, so a WRONG secret fails here instead of silently downstream. Stub
+    // that ping, and clear the per-instance cache so each test starts cold.
+    idx.__resetCloudinaryCredentialCache();
+    global.fetch = async () => ({ status: pingStatus });
   }
 
   it('405 on a non-POST method', async () => {

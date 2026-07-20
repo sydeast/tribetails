@@ -386,6 +386,48 @@ function validateUploadFolder(folder, entityType, entityId) {
   return folder;
 }
 
+// Fail loud on a WRONG secret, not just a MISSING one.
+//
+// On 2026-07-19 CLOUDINARY_API_SECRET was replaced with an invalid value. This
+// signer kept returning HTTP 200 because it only checked the secrets were
+// non-empty, so every signature it issued was computed with the wrong key and
+// died later at api.cloudinary.com, which writes nothing to Cloud Run logs. The
+// backend looked healthy for a day while no photo could be uploaded.
+//
+// Cloudinary's /ping authenticates the key+secret pair without side effects, so
+// we verify once per instance and cache. A bad credential now surfaces here, as
+// a 500 naming the cause, instead of as a silent "Invalid Signature" the
+// operator only sees in the client.
+const CREDENTIAL_RECHECK_MS = 10 * 60 * 1000;
+let cloudinaryCredentialCheck = null;
+
+async function cloudinaryCredentialsValid(cloudName, apiKey, apiSecret, fetchImpl = fetch) {
+  const fingerprint = `${cloudName}:${apiKey}:${apiSecret}`;
+  const cached = cloudinaryCredentialCheck;
+  if (cached && cached.fingerprint === fingerprint && cached.ok && Date.now() - cached.checkedAt < CREDENTIAL_RECHECK_MS) {
+    return { ok: true };
+  }
+
+  let ok = false;
+  let detail = '';
+  try {
+    const auth = Buffer.from(`${apiKey}:${apiSecret}`).toString('base64');
+    const resp = await fetchImpl(`https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/ping`, {
+      method: 'GET',
+      headers: { Authorization: `Basic ${auth}` },
+    });
+    ok = resp.status === 200;
+    if (!ok) detail = `cloudinary /ping returned HTTP ${resp.status}`;
+  } catch (e) {
+    // A network failure is not proof the credential is bad, so do not cache it
+    // as a failure, but do not pretend it passed either.
+    return { ok: false, detail: `cloudinary /ping unreachable: ${e.message}`, transient: true };
+  }
+
+  cloudinaryCredentialCheck = { fingerprint, ok, checkedAt: Date.now() };
+  return { ok, detail };
+}
+
 exports.signCloudinaryUpload = onRequest(
   { secrets: [CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET], cors: false },
   async (req, res) => {
@@ -407,6 +449,7 @@ exports.signCloudinaryUpload = onRequest(
       res.status(500).json({ error: 'cloudinary_signing_not_configured' });
       return;
     }
+
 
     const { folder, entityType, entityId } = req.body || {};
     if (typeof folder !== 'string' || !folder) {
@@ -442,6 +485,25 @@ exports.signCloudinaryUpload = onRequest(
         res.status(403).json({ error: 'test_scope_denied' });
         return;
       }
+    }
+
+    // Last gate before signing: a WRONG secret must fail here, loudly, rather
+    // than downstream at api.cloudinary.com where it writes no Cloud Run log.
+    // Deliberately after validation and the test-scope check, so a malformed or
+    // unauthorized request still gets its own 400/403 and we do not ping
+    // Cloudinary on its behalf.
+    const credential = await cloudinaryCredentialsValid(cloudName, apiKey, apiSecret);
+    if (!credential.ok) {
+      console.error('signCloudinaryUpload: cloudinary credentials rejected', {
+        event: 'cloudinary.credentials_invalid',
+        detail: credential.detail,
+        transient: credential.transient === true,
+      });
+      res.status(500).json({
+        error: 'cloudinary_credentials_invalid',
+        detail: credential.detail,
+      });
+      return;
     }
 
     const timestamp = Math.floor(Date.now() / 1000);
@@ -766,6 +828,10 @@ module.exports.resolveAnthropicModel = resolveAnthropicModel;
 module.exports.ALLOWED_ANTHROPIC_MODELS = ALLOWED_ANTHROPIC_MODELS;
 module.exports.ANTHROPIC_MODEL_DEFAULT = ANTHROPIC_MODEL_DEFAULT;
 module.exports.validateUploadFolder = validateUploadFolder;
+module.exports.cloudinaryCredentialsValid = cloudinaryCredentialsValid;
+module.exports.__resetCloudinaryCredentialCache = () => {
+  cloudinaryCredentialCheck = null;
+};
 module.exports.assertAdminRemovalAllowed = assertAdminRemovalAllowed;
 module.exports.mergeAdminClaim = mergeAdminClaim;
 module.exports.projectN8nDocResponse = projectN8nDocResponse;

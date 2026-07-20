@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,6 +40,7 @@ import com.composables.icons.lucide.Mail
 import com.composables.icons.lucide.TriangleAlert
 import com.composables.icons.lucide.Megaphone
 import com.composables.icons.lucide.RefreshCw
+import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Send
 import com.composables.icons.lucide.Sparkles
 import com.tribetails.auntieos.data.model.Dossier
@@ -59,6 +62,7 @@ import com.tribetails.auntieos.ui.components.AuntieSelectField
 import com.tribetails.auntieos.ui.components.AuntieSpinner
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
+import com.tribetails.auntieos.ui.components.TagChip
 import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.EmptyHint
@@ -419,7 +423,11 @@ private fun BroadcastSection(state: CommunicateUiState, viewModel: CommunicateVi
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
 
-    LaunchedEffect(Unit) { viewModel.loadSegments() }
+    LaunchedEffect(Unit) {
+        viewModel.loadSegments()
+        // The household tag vocabulary the "By tag" audience picks from.
+        viewModel.loadHouseholdTagVocab()
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(dims.space4)) {
         // ── Audience ────────────────────────────────────────────────────────
@@ -463,13 +471,115 @@ private fun BroadcastSection(state: CommunicateUiState, viewModel: CommunicateVi
                 )
             }
             if (state.bcKind == SegmentKind.Tags) {
-                AuntieField(
-                    value = state.bcTagsText,
-                    onValueChange = viewModel::setBcTags,
-                    label = "Tags",
-                    placeholder = "vip, monthly",
+                AuntieFieldLabel(text = "Household tags")
+                Text(
+                    text = "A broadcast matches tags on the household, not tags on individual pets.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                )
+
+                state.tagVocabError?.let { msg ->
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Error,
+                        title = "Your tag list did not load",
+                        icon = Lucide.TriangleAlert,
+                    ) {
+                        Text(
+                            text = "$msg. You can still type a tag name, but spell it exactly as it appears on the household.",
+                            style = AuntieTheme.typography.bodyMedium,
+                            color = c.textDim,
+                        )
+                    }
+                }
+
+                // The chosen tags, painted from the vocabulary entry so the chip
+                // here reads the same as the chip on the profile.
+                if (state.bcSelectedTags.isNotEmpty()) {
+                    TagChipFlow {
+                        state.bcSelectedTags.forEach { name ->
+                            TagChip(
+                                name = name,
+                                vocab = state.householdTagVocab,
+                                onRemove = { viewModel.removeBcTag(name) },
+                            )
+                        }
+                    }
+                }
+
+                AuntieSearchField(
+                    value = state.bcTagQuery,
+                    onValueChange = viewModel::setBcTagQuery,
+                    placeholder = "Type or pick a household tag",
+                    leadingIcon = Lucide.Search,
+                    onClear = { viewModel.setBcTagQuery("") },
+                    // Submit takes what was typed, so a free-form tag that predates
+                    // the vocabulary is still reachable.
+                    onSubmit = { viewModel.addBcTag(state.bcTagQuery) },
                     modifier = Modifier.fillMaxWidth(),
                 )
+
+                val suggestions = broadcastTagSuggestions(
+                    query = state.bcTagQuery,
+                    vocab = state.householdTagVocab,
+                    selected = state.bcSelectedTags,
+                )
+                when {
+                    !state.tagVocabLoaded && state.tagVocabError == null ->
+                        Text("Loading your tag list…", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    state.householdTagVocab.isEmpty() ->
+                        Text(
+                            text = "No household tags yet. Add some in Settings, Tags, or type one here to use it anyway.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    suggestions.isEmpty() && state.bcTagQuery.isNotBlank() ->
+                        Text(
+                            text = "Nothing in your list matches \"${state.bcTagQuery.trim()}\". Press the keyboard's search key to use it anyway.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    suggestions.isEmpty() ->
+                        Text(
+                            text = "Every household tag is already on this audience.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    // TagChip is a read-only pill (its only affordance is remove),
+                    // so a suggestion gets its tap target from the wrapper.
+                    else -> TagChipFlow {
+                        suggestions.forEach { def ->
+                            Box(modifier = Modifier.clickable { viewModel.addBcTag(def.name) }) {
+                                TagChip(name = def.name, vocab = state.householdTagVocab)
+                            }
+                        }
+                    }
+                }
+
+                // Fail loud on both counts: a tag nobody carries would report a
+                // clean zero, and going over the cap is a whole-call rejection.
+                broadcastTagVocabWarning(
+                    selected = state.bcSelectedTags,
+                    vocab = state.householdTagVocab,
+                    vocabLoaded = state.tagVocabLoaded,
+                )?.let { warn ->
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Warning,
+                        title = "Check these tag names",
+                        icon = Lucide.TriangleAlert,
+                    ) {
+                        Text(text = warn, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                    }
+                }
+                broadcastTagCapProblem(state.bcSelectedTags)?.let { problem ->
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Error,
+                        title = "Too many tags",
+                        icon = Lucide.TriangleAlert,
+                    ) {
+                        Text(text = problem, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                    }
+                }
+
                 AuntieChipGroup(
                     options = TagMatch.values().toList(),
                     selected = setOf(state.bcTagMatch),
@@ -542,6 +652,17 @@ private fun BroadcastSection(state: CommunicateUiState, viewModel: CommunicateVi
             }
         }
     }
+}
+
+/** Wrapping row of tag chips, so a long vocabulary never pushes the form sideways. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TagChipFlow(content: @Composable () -> Unit) {
+    val dims = AuntieTheme.dims
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(dims.space2),
+        verticalArrangement = Arrangement.spacedBy(dims.space2),
+    ) { content() }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -394,3 +394,82 @@ describe('projectN8nDocResponse (AO-32 field projection)', () => {
     ]);
   });
 });
+// ---------------------------------------------------------------------------
+// cloudinaryCredentialsValid — fail loud on a WRONG secret, not just a MISSING
+// one.
+//
+// Regression guard for 2026-07-19: CLOUDINARY_API_SECRET was replaced with an
+// invalid value, the signer kept returning HTTP 200 because it only checked the
+// secrets were non-empty, and every signature it issued died downstream at
+// api.cloudinary.com, which writes nothing to Cloud Run logs. Photo upload was
+// broken for a day while the backend looked healthy.
+//
+// fetch is injected so these stay hermetic: no network, no key.
+// ---------------------------------------------------------------------------
+describe('cloudinaryCredentialsValid (fail loud on an invalid secret)', () => {
+  const { cloudinaryCredentialsValid, __resetCloudinaryCredentialCache } = idx;
+  afterEach(() => {
+    __resetCloudinaryCredentialCache();
+  });
+  const okFetch = async () => ({ status: 200 });
+  const rejectFetch = async () => ({ status: 401 });
+  it('accepts credentials Cloudinary answers 200 for', async () => {
+    const result = await cloudinaryCredentialsValid('tribetails', 'key', 'good', okFetch);
+    assert.strictEqual(result.ok, true);
+  });
+  it('rejects credentials Cloudinary answers 401 for, and says why', async () => {
+    const result = await cloudinaryCredentialsValid('tribetails', 'key', 'wrong', rejectFetch);
+    assert.strictEqual(result.ok, false);
+    assert.match(result.detail, /401/);
+  });
+  it('sends HTTP basic auth built from the key and secret', async () => {
+    let seenUrl = '';
+    let seenAuth = '';
+    await cloudinaryCredentialsValid('tribetails', 'key', 'secret', async (url, init) => {
+      seenUrl = url;
+      seenAuth = init.headers.Authorization;
+      return { status: 200 };
+    });
+    assert.match(seenUrl, /api\.cloudinary\.com\/v1_1\/tribetails\/ping$/);
+    assert.strictEqual(seenAuth, `Basic ${Buffer.from('key:secret').toString('base64')}`);
+  });
+  it('caches a success so the ping does not run on every upload', async () => {
+    let calls = 0;
+    const counting = async () => {
+      calls += 1;
+      return { status: 200 };
+    };
+    await cloudinaryCredentialsValid('tribetails', 'key', 'good', counting);
+    await cloudinaryCredentialsValid('tribetails', 'key', 'good', counting);
+    assert.strictEqual(calls, 1);
+  });
+  it('does NOT cache a failure, so re-setting the secret recovers without a redeploy', async () => {
+    let calls = 0;
+    const failing = async () => {
+      calls += 1;
+      return { status: 401 };
+    };
+    await cloudinaryCredentialsValid('tribetails', 'key', 'wrong', failing);
+    await cloudinaryCredentialsValid('tribetails', 'key', 'wrong', failing);
+    assert.strictEqual(calls, 2);
+  });
+  it('re-pings when the secret VALUE changes even if the cached one passed', async () => {
+    let calls = 0;
+    const counting = async () => {
+      calls += 1;
+      return { status: 200 };
+    };
+    await cloudinaryCredentialsValid('tribetails', 'key', 'first', counting);
+    await cloudinaryCredentialsValid('tribetails', 'key', 'second', counting);
+    assert.strictEqual(calls, 2);
+  });
+  it('reports a network failure as transient rather than claiming the secret is bad', async () => {
+    const exploding = async () => {
+      throw new Error('ECONNRESET');
+    };
+    const result = await cloudinaryCredentialsValid('tribetails', 'key', 'good', exploding);
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.transient, true);
+    assert.match(result.detail, /ECONNRESET/);
+  });
+});
