@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyTribe, Invoices</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     MyTribe DESIGN SYSTEM  (com.kinfolk.portal, pet parent web)
+     Identity: bright, sunny, glassmorphic. Top-nav airy consumer
+     web (NOT AuntieOS's dark left-rail admin). Signature = frosted
+     glass + the Tribe Gradient. Full-web layout; mobile collapses
+     responsively (single column + bottom tabs).
+     Palette locked to brandColors.md / KinfolkBrand. Fonts AuntieOS
+     does not use: Young Serif + Bricolage Grotesque + DM Mono.
+     ==> This <style> block is the shared system; reuse verbatim.
+     ============================================================ */
+  :root{
+    --cream:#FBFBF9; --navy:#11131F;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595;
+    --purple:#74538A; --coral:#D5535A;
+    --navy-soft:rgba(17,19,31,.78); --navy-muted:rgba(17,19,31,.55);
+    --hairline:rgba(17,19,31,.10);
+    --glass:rgba(255,255,255,.62); --glass-dim:rgba(255,255,255,.40);
+    --glass-border:rgba(255,255,255,.7);
+    --serif:"Young Serif",serif; --sans:"Bricolage Grotesque",sans-serif; --mono:"DM Mono",monospace;
+    --ease:cubic-bezier(.22,.8,.24,1);
+    --shadow-card:0 14px 34px -18px rgba(17,19,31,.30);
+    --shadow-lift:0 22px 46px -20px rgba(17,19,31,.36);
+    --shadow-warm:0 16px 34px -16px rgba(223,132,49,.55);
+    /* canonical brand gradients (brandColors.md) */
+    --tribe-grad:linear-gradient(135deg,#df8431,#d55c87,#0a8595);
+    --orange-pink:linear-gradient(to bottom right,#df8431,#d55c87);
+    --teal-purple:linear-gradient(to bottom right,#0a8595,#74538a);
+    --maxw:1140px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    font-family:var(--sans);color:var(--navy);min-height:100vh;-webkit-font-smoothing:antialiased;
+    background:
+      radial-gradient(120vmax 70vmax at 82% -10%, rgba(223,132,49,.20), transparent 55%),
+      radial-gradient(110vmax 70vmax at 5% 0%, rgba(213,92,135,.16), transparent 52%),
+      radial-gradient(130vmax 80vmax at 50% 118%, rgba(10,133,149,.16), transparent 55%),
+      var(--cream);
+    overflow-x:hidden;
+  }
+  .orb{position:fixed;border-radius:50%;filter:blur(60px);opacity:.42;z-index:0;pointer-events:none;
+    animation:drift 26s var(--ease) infinite alternate;}
+  .orb.a{width:32vmax;height:32vmax;top:-6vmax;right:-4vmax;background:radial-gradient(circle,var(--orange),transparent 64%);}
+  .orb.b{width:30vmax;height:30vmax;bottom:-10vmax;left:-8vmax;background:radial-gradient(circle,var(--teal),transparent 64%);animation-delay:-10s;}
+  @keyframes drift{to{transform:translate(2vmax,2vmax) scale(1.08);}}
+
+  /* ===== top nav ===== */
+  .nav{position:sticky;top:0;z-index:20;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+    background:rgba(251,251,249,.72);border-bottom:1px solid var(--hairline);}
+  .nav .in{max-width:var(--maxw);margin:0 auto;padding:14px 24px;display:flex;align-items:center;gap:20px;}
+  .wordmark{font-family:var(--serif);font-size:23px;letter-spacing:-.01em;line-height:1;white-space:nowrap;}
+  .wordmark .grad{background:var(--tribe-grad);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  .navlinks{display:flex;gap:4px;margin-left:8px;}
+  .navlinks a{padding:9px 14px;border-radius:11px;text-decoration:none;color:var(--navy-soft);font-weight:600;
+    font-size:14.5px;transition:.2s var(--ease);}
+  .navlinks a:hover{background:rgba(223,132,49,.12);color:var(--navy);}
+  .navlinks a.on{background:var(--navy);color:#fff;}
+  .nav .right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+  .iconbtn{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:17px;cursor:pointer;
+    background:var(--glass);border:1px solid var(--glass-border);box-shadow:var(--shadow-card);position:relative;
+    transition:.2s var(--ease);}
+  .iconbtn:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift);}
+  .iconbtn .ping{position:absolute;top:9px;right:10px;width:8px;height:8px;border-radius:50%;background:var(--coral);
+    box-shadow:0 0 0 3px var(--cream);}
+  .avatar{width:42px;height:42px;border-radius:50%;background:var(--tribe-grad);display:grid;place-items:center;
+    color:#fff;font-family:var(--serif);font-size:18px;cursor:pointer;box-shadow:var(--shadow-warm);}
+
+  /* ===== layout shell ===== */
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:34px 24px 80px;position:relative;z-index:1;}
+
+  .hero-greet{margin-bottom:24px;animation:rise .6s var(--ease) both;}
+  .hero-greet .kick{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--orange);margin-bottom:8px;}
+  .hero-greet h1{font-family:var(--serif);font-size:clamp(30px,4.4vw,46px);line-height:1.05;letter-spacing:-.01em;}
+  .hero-greet h1 span{color:var(--pink);}
+
+  /* glass primitives */
+  .glass{background:var(--glass);border:1px solid var(--glass-border);border-radius:22px;
+    box-shadow:var(--shadow-card);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);}
+  .card{padding:22px;}
+  .sectlabel{display:flex;align-items:center;gap:8px;margin:0 2px 12px;font-family:var(--mono);font-size:11px;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--navy-muted);}
+  .sectlabel a{margin-left:auto;color:var(--teal);text-decoration:none;font-weight:500;letter-spacing:.04em;}
+  h3.title{font-family:var(--serif);font-size:20px;font-weight:400;display:flex;align-items:center;gap:8px;}
+  .sub{color:var(--navy-muted);font-size:13px;margin-top:3px;}
+
+  /* buttons */
+  .btn{border:none;cursor:pointer;border-radius:14px;padding:14px 18px;font-family:var(--sans);font-size:14.5px;
+    font-weight:700;color:#fff;background:var(--navy);display:inline-flex;align-items:center;justify-content:center;gap:9px;
+    box-shadow:var(--shadow-card);transition:.2s var(--ease);text-decoration:none;}
+  .btn:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift);}
+  .btn.grad{background:var(--tribe-grad);box-shadow:var(--shadow-warm);}
+  .btn.ghost{background:transparent;color:var(--navy);border:1px solid var(--hairline);box-shadow:none;}
+  .btn.ghost:hover{background:rgba(223,132,49,.10);}
+  .btn.block{width:100%;}
+  .chip{font-family:var(--mono);font-size:10.5px;font-weight:500;padding:4px 10px;border-radius:20px;letter-spacing:.04em;}
+  .chip.go{background:rgba(10,133,149,.14);color:var(--teal);}
+  .chip.warm{background:rgba(223,132,49,.16);color:var(--orange);}
+  .chip.done{background:rgba(116,83,138,.14);color:var(--purple);}
+
+  /* ===== Live Visit hero (Tribe Gradient) ===== */
+  .live{padding:24px 26px;color:#fff;border-radius:24px;position:relative;overflow:hidden;background:var(--tribe-grad);
+    box-shadow:var(--shadow-warm);margin-bottom:30px;animation:rise .6s var(--ease) .08s both;}
+  .live::after{content:"";position:absolute;inset:0;background:radial-gradient(120% 90% at 88% 0%,rgba(255,255,255,.32),transparent 55%);pointer-events:none;}
+  .live .lrow{display:flex;align-items:center;gap:7px;position:relative;}
+  .live .tag{font-family:var(--mono);font-size:11px;letter-spacing:.16em;}
+  .pulse{width:9px;height:9px;border-radius:50%;background:#fff;animation:pulse 1.6s var(--ease) infinite;}
+  @keyframes pulse{70%{box-shadow:0 0 0 9px rgba(255,255,255,0);}100%{box-shadow:0 0 0 0 rgba(255,255,255,0);}}
+  .live h2{font-family:var(--serif);font-size:26px;margin:12px 0 4px;position:relative;}
+  .live p{font-size:14px;opacity:.93;position:relative;max-width:60ch;line-height:1.5;}
+  .live .lwho{display:flex;align-items:center;gap:13px;margin-top:18px;position:relative;}
+  .live .lav{width:48px;height:48px;border-radius:15px;background:rgba(255,255,255,.85);display:grid;place-items:center;font-size:25px;box-shadow:0 6px 14px -6px rgba(0,0,0,.4);overflow:hidden;}
+  .live .lwho b{font-size:15px;font-weight:700;} .live .lwho small{display:block;font-size:12px;opacity:.86;font-family:var(--mono);}
+  .live .track{flex:1;min-width:120px;height:7px;border-radius:99px;background:rgba(255,255,255,.3);position:relative;overflow:hidden;}
+  .live .track i{position:absolute;inset:0 38% 0 0;background:#fff;border-radius:99px;}
+
+  /* ===== two-column content ===== */
+  .cols{display:grid;grid-template-columns:1.6fr 1fr;gap:24px;align-items:start;}
+  .stack{display:flex;flex-direction:column;gap:24px;}
+
+  /* booking rows */
+  .visit{display:flex;align-items:center;gap:14px;padding:14px;border-radius:16px;cursor:pointer;border:1px solid transparent;transition:.2s var(--ease);}
+  .visit:hover{background:rgba(255,255,255,.5);border-color:var(--glass-border);transform:translateX(3px);}
+  .visit .cal{flex:0 0 auto;width:52px;text-align:center;border-radius:13px;overflow:hidden;border:1px solid var(--hairline);font-family:var(--mono);background:#fff;}
+  .visit .cal .m{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#fff;padding:3px 0;}
+  .visit.v1 .cal .m{background:var(--orange);} .visit.v2 .cal .m{background:var(--purple);} .visit.v3 .cal .m{background:var(--teal);}
+  .visit .cal .d{font-family:var(--serif);font-size:22px;padding:4px 0 5px;}
+  .visit .info{flex:1;} .visit .info b{font-size:15px;font-weight:600;} .visit .info small{display:block;color:var(--navy-muted);font-size:12.5px;margin-top:2px;}
+  .visit .pet{width:42px;height:42px;border-radius:13px;overflow:hidden;display:grid;place-items:center;font-size:23px;background:rgba(223,132,49,.12);}
+
+  /* KinTale cards */
+  .tale{display:flex;gap:14px;padding:15px;border-radius:16px;cursor:pointer;transition:.2s var(--ease);border:1px solid transparent;}
+  .tale:hover{background:rgba(255,255,255,.5);border-color:var(--glass-border);transform:translateX(3px);}
+  .tale .photo{flex:0 0 auto;width:56px;height:56px;border-radius:16px;display:grid;place-items:center;font-size:27px;overflow:hidden;}
+  .tale.a1 .photo{background:rgba(223,132,49,.16);} .tale.a2 .photo{background:rgba(10,133,149,.14);} .tale.a3 .photo{background:rgba(213,92,135,.14);}
+  .tale .tb b{font-size:14.5px;font-weight:600;} .tale .tb p{font-size:13px;color:var(--navy-soft);line-height:1.46;margin-top:3px;}
+  .tale .tb .meta{font-family:var(--mono);font-size:10.5px;color:var(--navy-muted);margin-top:8px;letter-spacing:.04em;}
+  .heart{color:var(--coral);}
+
+  /* Kin roster (Your Tribe) */
+  .kinrow{display:flex;align-items:center;gap:13px;padding:11px;border-radius:14px;cursor:pointer;transition:.2s var(--ease);}
+  .kinrow:hover{background:rgba(255,255,255,.55);transform:translateX(2px);}
+  .kinrow .pic{width:50px;height:50px;border-radius:50%;display:grid;place-items:center;font-size:25px;border:2px solid;overflow:hidden;flex:0 0 auto;}
+  .kinrow.k1 .pic{border-color:var(--orange);} .kinrow.k2 .pic{border-color:var(--teal);} .kinrow.k3 .pic{border-color:var(--pink);} .kinrow.k4 .pic{border-color:var(--purple);}
+  .kinrow b{font-size:14.5px;font-weight:600;} .kinrow small{display:block;font-size:11.5px;color:var(--navy-muted);font-family:var(--mono);}
+  .kinrow.add .pic{border:2px dashed var(--hairline);color:var(--navy-muted);background:var(--glass-dim);font-size:22px;}
+
+  .footnote{font-family:var(--mono);font-size:11px;color:var(--navy-muted);text-align:center;margin-top:40px;}
+  .footnote b{background:var(--tribe-grad);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:500;}
+
+  @keyframes rise{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
+  .d1{animation:rise .6s var(--ease) .14s both;}.d2{animation:rise .6s var(--ease) .2s both;}
+  .d3{animation:rise .6s var(--ease) .26s both;}.d4{animation:rise .6s var(--ease) .32s both;}
+
+  /* ===== responsive: tablet + phone ===== */
+  @media (max-width:880px){
+    .cols{grid-template-columns:1fr;}
+    .navlinks{display:none;}
+    .wrap{padding:24px 16px 96px;}
+  }
+  .tabbar{display:none;}
+  @media (max-width:880px){
+    .tabbar{display:flex;position:fixed;left:12px;right:12px;bottom:12px;z-index:30;justify-content:space-around;
+      padding:10px 6px;border-radius:22px;background:rgba(255,255,255,.8);border:1px solid var(--glass-border);
+      box-shadow:0 -8px 30px -16px rgba(17,19,31,.4);backdrop-filter:blur(20px);}
+    .tabbar a{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:20px;color:var(--navy-muted);text-decoration:none;}
+    .tabbar a small{font-size:10px;font-family:var(--mono);} .tabbar a.on{color:var(--orange);}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;}}
+
+  /* ============================================================
+     SCREEN CSS, Invoices (same glass/brand language as the system)
+     ============================================================ */
+  /* account balance hero, Teal to Purple gradient */
+  .balance{padding:26px 28px;color:#fff;border-radius:24px;position:relative;overflow:hidden;
+    background:var(--teal-purple);box-shadow:var(--shadow-warm);margin-bottom:30px;
+    animation:rise .6s var(--ease) .08s both;}
+  .balance::after{content:"";position:absolute;inset:0;
+    background:radial-gradient(120% 90% at 88% 0%,rgba(255,255,255,.30),transparent 55%);pointer-events:none;}
+  .balance .btag{font-family:var(--mono);font-size:11px;letter-spacing:.16em;position:relative;opacity:.92;}
+  .balance .bnum{font-family:var(--serif);font-size:clamp(36px,6vw,54px);line-height:1;margin:10px 0 4px;position:relative;}
+  .balance .bnote{font-size:13.5px;opacity:.92;position:relative;max-width:46ch;line-height:1.5;}
+  .balance .brow{display:flex;flex-wrap:wrap;gap:22px;margin-top:22px;position:relative;}
+  .balance .bcell{position:relative;}
+  .balance .bcell small{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
+    text-transform:uppercase;opacity:.82;margin-bottom:5px;}
+  .balance .bcell b{font-family:var(--serif);font-size:22px;font-weight:400;}
+  .balance .bdiv{width:1px;align-self:stretch;background:rgba(255,255,255,.28);}
+  .chip.light{background:rgba(255,255,255,.22);color:#fff;}
+
+  /* invoice rows */
+  .inv{display:flex;align-items:center;gap:14px;padding:15px 14px;border-radius:16px;border:1px solid transparent;
+    transition:.2s var(--ease);}
+  .inv:hover{background:rgba(255,255,255,.5);border-color:var(--glass-border);}
+  .inv + .inv{border-top:1px solid var(--hairline);border-radius:16px;}
+  .inv .cal{flex:0 0 auto;width:52px;text-align:center;border-radius:13px;overflow:hidden;
+    border:1px solid var(--hairline);font-family:var(--mono);background:#fff;}
+  .inv .cal .m{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#fff;padding:3px 0;background:var(--teal);}
+  .inv.due .cal .m{background:var(--orange);} .inv.draft .cal .m{background:var(--navy-muted);} .inv.credit .cal .m{background:var(--pink);}
+  .inv .cal .d{font-family:var(--serif);font-size:22px;padding:4px 0 5px;}
+  .inv .info{flex:1;min-width:0;}
+  .inv .info b{font-size:15px;font-weight:600;}
+  .inv .info small{display:block;color:var(--navy-muted);font-size:12.5px;margin-top:2px;}
+  .inv .info .id{font-family:var(--mono);}
+  .inv .amt{flex:0 0 auto;text-align:right;}
+  .inv .amt .v{font-family:var(--serif);font-size:18px;}
+  .inv .amt .due{display:block;font-family:var(--mono);font-size:10.5px;color:var(--navy-muted);
+    letter-spacing:.04em;margin-top:3px;text-transform:uppercase;}
+  .inv .end{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:9px;min-width:108px;}
+  .btn.sm{padding:9px 15px;font-size:13px;border-radius:11px;}
+  .chip.draft{background:rgba(17,19,31,.08);color:var(--navy-soft);}
+  .chip.pending{background:rgba(223,132,49,.16);color:var(--orange);}
+  .chip.paid{background:rgba(10,133,149,.14);color:var(--teal);}
+  .chip.cancelled{background:rgba(213,83,90,.14);color:var(--coral);}
+  .chip.creditc{background:rgba(213,92,135,.14);color:var(--pink);}
+  .chip.redeemed{background:rgba(116,83,138,.14);color:var(--purple);}
+
+  /* credit actions */
+  .creditcard .crow{display:flex;align-items:flex-start;gap:13px;padding:14px 12px;border-radius:14px;}
+  .creditcard .crow + .crow{border-top:1px solid var(--hairline);}
+  .creditcard .ci{width:42px;height:42px;border-radius:13px;flex:0 0 auto;display:grid;place-items:center;font-size:20px;
+    background:rgba(213,92,135,.14);}
+  .creditcard .cmeta{flex:1;}
+  .creditcard .cmeta b{font-size:14.5px;font-weight:600;display:block;}
+  .creditcard .cmeta small{display:block;color:var(--navy-muted);font-size:12.5px;margin-top:2px;line-height:1.45;}
+  .creditcard .camt{font-family:var(--serif);font-size:17px;flex:0 0 auto;}
+  .savedline{font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:var(--teal);
+    display:inline-flex;align-items:center;gap:6px;margin-top:10px;}
+  .savedline.muted{color:var(--purple);}
+
+  /* empty states */
+  .empty{padding:30px 18px;text-align:center;border-radius:16px;border:1px dashed var(--hairline);
+    background:var(--glass-dim);}
+  .empty .ico{font-size:30px;display:block;margin-bottom:10px;opacity:.8;}
+  .empty b{font-size:14.5px;font-weight:600;}
+  .empty p{font-size:12.5px;color:var(--navy-muted);margin-top:4px;}
+  .secondary-note{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--navy-muted);margin:0 2px 8px;}
+</style>
+</head>
+<body>
+  <span class="orb a"></span><span class="orb b"></span>
+
+  <!-- top nav -->
+  <nav class="nav">
+    <div class="in">
+      <div class="wordmark">My<span class="grad">Tribe</span></div>
+      <div class="navlinks">
+        <a href="#">Home</a>
+        <a href="#">Tribe</a>
+        <a href="#">Schedule</a>
+        <a href="#">KinTales</a>
+        <a class="on" href="#">Invoices</a>
+      </div>
+      <div class="right">
+        <div class="iconbtn" aria-label="Notifications">&#128276;<span class="ping"></span></div>
+        <div class="avatar">J</div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <!-- greeting -->
+    <header class="hero-greet">
+      <div class="kick">Billing</div>
+      <h1>Your <span>invoices</span> and balance.</h1>
+    </header>
+
+    <!-- ACCOUNT BALANCE (Teal to Purple) -->
+    <section class="balance">
+      <div class="btag">ACCOUNT BALANCE</div>
+      <div class="bnum">$36.00</div>
+      <p class="bnote">Available credit on your account. Applied automatically to your next invoice.</p>
+      <div class="brow">
+        <div class="bcell">
+          <small>Credits</small>
+          <b>$36.00</b>
+        </div>
+        <span class="bdiv"></span>
+        <div class="bcell">
+          <small>Open invoices</small>
+          <b>$108.00</b>
+        </div>
+        <span class="bdiv"></span>
+        <div class="bcell">
+          <small>Paid this month</small>
+          <b>$94.00</b>
+        </div>
+        <div class="bcell" style="margin-left:auto;align-self:flex-end;">
+          <span class="chip light">AUTO APPLIED</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- two columns -->
+    <div class="cols">
+      <!-- main -->
+      <div class="stack">
+
+        <!-- OPEN INVOICES -->
+        <section class="glass card d1">
+          <div class="sectlabel">Open Invoices <a href="#">Download all</a></div>
+
+          <!-- PENDING, payable -->
+          <div class="inv due">
+            <div class="cal"><div class="m">Jun</div><div class="d">07</div></div>
+            <div class="info">
+              <b>Weekend overnight, Biscuit</b>
+              <small class="id">INV-2061 &middot; Sat, Jun 7 with Auntie Maya</small>
+            </div>
+            <div class="amt"><span class="v">$72.00</span><span class="due">Due Jun 14</span></div>
+            <div class="end">
+              <span class="chip pending">PENDING</span>
+              <a class="btn grad sm" href="#">Pay now</a>
+            </div>
+          </div>
+
+          <!-- PENDING, smaller -->
+          <div class="inv due">
+            <div class="cal"><div class="m">Jun</div><div class="d">04</div></div>
+            <div class="info">
+              <b>Afternoon adventure, Biscuit</b>
+              <small class="id">INV-2058 &middot; Wed, Jun 4 with Auntie Sam</small>
+            </div>
+            <div class="amt"><span class="v">$36.00</span><span class="due">Due Jun 11</span></div>
+            <div class="end">
+              <span class="chip pending">PENDING</span>
+              <a class="btn grad sm" href="#">Pay now</a>
+            </div>
+          </div>
+
+          <!-- DRAFT, not yet payable -->
+          <div class="inv draft">
+            <div class="cal"><div class="m">Jun</div><div class="d">11</div></div>
+            <div class="info">
+              <b>Three drop ins, Miso</b>
+              <small class="id">INV-2064 &middot; Jun 11 to Jun 13, draft estimate</small>
+            </div>
+            <div class="amt"><span class="v">$54.00</span><span class="due">Not sent yet</span></div>
+            <div class="end">
+              <span class="chip draft">DRAFT</span>
+              <a class="btn ghost sm" href="#">View</a>
+            </div>
+          </div>
+        </section>
+
+        <!-- PAID HISTORY -->
+        <section class="glass card d2">
+          <div class="sectlabel">Paid History <a href="#">Receipts</a></div>
+
+          <!-- PAID -->
+          <div class="inv">
+            <div class="cal"><div class="m">Jun</div><div class="d">02</div></div>
+            <div class="info">
+              <b>Morning drop in, Miso</b>
+              <small class="id">INV-2055 &middot; Mon, Jun 2 with Auntie Maya</small>
+            </div>
+            <div class="amt"><span class="v">$30.00</span><span class="due">Paid Jun 2</span></div>
+            <div class="end">
+              <span class="chip paid">PAID</span>
+              <a class="btn ghost sm" href="#">Receipt</a>
+            </div>
+          </div>
+
+          <!-- REDEEMED, credit used against an invoice -->
+          <div class="inv credit">
+            <div class="cal"><div class="m">May</div><div class="d">29</div></div>
+            <div class="info">
+              <b>Weekend overnight, Clover</b>
+              <small class="id">INV-2049 &middot; Fri, May 29, credit applied</small>
+            </div>
+            <div class="amt"><span class="v">$64.00</span><span class="due">$18.00 credit used</span></div>
+            <div class="end">
+              <span class="chip redeemed">REDEEMED</span>
+              <a class="btn ghost sm" href="#">Receipt</a>
+            </div>
+          </div>
+
+          <!-- PAID -->
+          <div class="inv">
+            <div class="cal"><div class="m">May</div><div class="d">24</div></div>
+            <div class="info">
+              <b>Afternoon adventure, Biscuit</b>
+              <small class="id">INV-2042 &middot; Sun, May 24 with Auntie Sam</small>
+            </div>
+            <div class="amt"><span class="v">$36.00</span><span class="due">Paid May 24</span></div>
+            <div class="end">
+              <span class="chip paid">PAID</span>
+              <a class="btn ghost sm" href="#">Receipt</a>
+            </div>
+          </div>
+
+          <!-- CANCELLED -->
+          <div class="inv">
+            <div class="cal"><div class="m">May</div><div class="d">19</div></div>
+            <div class="info">
+              <b>Morning drop in, Pip</b>
+              <small class="id">INV-2038 &middot; Mon, May 19, visit cancelled</small>
+            </div>
+            <div class="amt"><span class="v">$30.00</span><span class="due">No charge</span></div>
+            <div class="end">
+              <span class="chip cancelled">CANCELLED</span>
+              <a class="btn ghost sm" href="#">View</a>
+            </div>
+          </div>
+        </section>
+
+        <!-- EMPTY STATE EXAMPLES (secondary) -->
+        <section class="glass card d3">
+          <p class="secondary-note">Empty states (secondary examples)</p>
+          <div class="cols" style="grid-template-columns:1fr 1fr;gap:14px;">
+            <div class="empty">
+              <span class="ico">&#128203;</span>
+              <b>No open invoices</b>
+              <p>You are all caught up. New invoices will land here.</p>
+            </div>
+            <div class="empty">
+              <span class="ico">&#129534;</span>
+              <b>No paid invoices yet</b>
+              <p>Past payments and receipts will appear here.</p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- aside -->
+      <div class="stack">
+
+        <!-- CREDITS -->
+        <section class="glass card creditcard d4">
+          <div class="sectlabel">Credits</div>
+
+          <!-- a credit you can save or return -->
+          <div class="crow">
+            <div class="ci">&#127881;</div>
+            <div class="cmeta">
+              <b>Referral credit</b>
+              <small>Credit amount $20.00. Applied automatically to next invoice.</small>
+            </div>
+            <span class="camt">$20.00</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px;margin:14px 2px 4px;">
+            <a class="btn grad block" href="#">Save to Account Balance</a>
+            <a class="btn ghost block" href="#">Return to Original Payment Method</a>
+          </div>
+
+          <!-- a credit already saved -->
+          <div class="crow" style="margin-top:8px;">
+            <div class="ci">&#9989;</div>
+            <div class="cmeta">
+              <b>Overnight overpayment</b>
+              <small>Saved to your account. Applied automatically to next invoice.</small>
+              <span class="savedline">&#10003; Saved to Account Balance</span>
+            </div>
+            <span class="camt">$16.00</span>
+          </div>
+
+          <!-- a credit returned -->
+          <div class="crow">
+            <div class="ci" style="background:rgba(116,83,138,.14);">&#8617;</div>
+            <div class="cmeta">
+              <b>Cancelled visit refund</b>
+              <small>Sent back to your card ending 4242.</small>
+              <span class="savedline muted">&#10003; Returned to Original Payment Method</span>
+            </div>
+            <span class="camt">$30.00</span>
+          </div>
+        </section>
+
+        <!-- payment method + help -->
+        <section class="glass card">
+          <div class="sectlabel">Payment method</div>
+          <div class="crow" style="padding:8px 2px;">
+            <div class="ci" style="background:rgba(10,133,149,.12);">&#128179;</div>
+            <div class="cmeta">
+              <b>Visa ending 4242</b>
+              <small>Default card for auto pay.</small>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px;">
+            <a class="btn ghost block" href="#">Update card</a>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <p class="footnote">Billed by <b>Tribe Tails Pet Care</b></p>
+  </div>
+
+  <!-- mobile bottom tabs (shown under 880px) -->
+  <nav class="tabbar">
+    <a href="#">&#127968;<small>Home</small></a>
+    <a href="#">&#128062;<small>Tribe</small></a>
+    <a href="#">&#128197;<small>Schedule</small></a>
+    <a href="#">&#128221;<small>Tales</small></a>
+    <a class="on" href="#">&#128176;<small>Invoices</small></a>
+  </nav>
+</body>
+</html>

@@ -1,0 +1,1 @@
+Tribe Tails: {{kinfolkName}} asked to cancel the {{serviceType}} for {{kinName}} on {{bookingDate}}. Review it here: []

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#DF8431">
+    <title>MyTribe</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { width: 100%; height: 100%; }
+        body { background: #FBFBF9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        /* Static boot splash: shown while the compiled app bundle downloads and
+           starts (cold loads measured 12-27s). Inline styles only — the CSP
+           allows style-src 'self' 'unsafe-inline' and no external requests.
+           Removed by Main.kt once ComposeViewport mounts (boot.js is the
+           fallback remover). Brand: tribe gradient orange → pink → teal. */
+        #boot-splash {
+            position: fixed; inset: 0; z-index: 9999;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center; gap: 18px;
+            background: linear-gradient(135deg, #DF8431 0%, #D55C87 52%, #0A8595 100%);
+            color: #FFFFFF; text-align: center;
+        }
+        #boot-splash .wordmark {
+            font-family: Georgia, 'Times New Roman', serif;
+            font-size: 42px; letter-spacing: -0.5px;
+            text-shadow: 0 1px 3px rgba(17, 19, 31, 0.18);
+        }
+        #boot-splash .spinner {
+            width: 28px; height: 28px; border-radius: 50%;
+            border: 3px solid rgba(255, 255, 255, 0.35);
+            border-top-color: #FFFFFF;
+            animation: boot-spin 0.9s linear infinite;
+        }
+        #boot-splash .hint { font-size: 14px; opacity: 0.92; }
+        @keyframes boot-spin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) {
+            #boot-splash .spinner { animation: none; }
+        }
+    </style>
+</head>
+<body>
+<div id="boot-splash">
+    <div class="wordmark">MyTribe</div>
+    <div class="spinner"></div>
+    <div class="hint">Loading your tribe…</div>
+</div>
+<!-- reCAPTCHA Enterprise (score-based, invisible).
+     Site key 6LeVress-... is the Identity Platform Web key. It MUST be the
+     ?render= target because Firebase Auth's initializeRecaptchaConfig fires a
+     preemptive verify()/execute() during init WITHOUT waiting for
+     grecaptcha.enterprise.ready() — so the key must be pre-registered or it
+     errors "Invalid site key or not loaded in api.js".
+     The guest-comment share key 6Leix-... is registered lazily via the share
+     code in Recaptcha.js.kt, which explicitly waits for ready() before
+     execute() — so it works without ?render= preregistration. -->
+<script src="https://www.google.com/recaptcha/enterprise.js?render=6LeVressAAAAAFmh-QFJ8FI_9AjlkjEk-o9kaKXi" async defer></script>
+<script src="kinfolk-portal.js"></script>
+<script src="boot.js"></script>
+</body>
+</html>

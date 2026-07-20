@@ -1,0 +1,45 @@
+/* ============================================================
+   SignedImageUpload — generic signed-Cloudinary upload widget
+   (src/components/SignedImageUpload.tsx). Self-contained (its own
+   `.siu-*` namespace) rather than the `.acct`-scoped photoblock rules
+   it replaces in account.css, since this component is meant to be
+   dropped into any screen — reuses the shared tokens/`.btn` base from
+   base.css/tokens.css, matching the account-settings mockup's visual
+   language (round avatar, gradient pick button, mono-caps status
+   chip) without depending on any one screen's scoping.
+   ============================================================ */
+
+.siu-block { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+
+.siu-avatar { position: relative; width: 88px; height: 88px; border-radius: 50%; background: var(--tribe-grad);
+  display: grid; place-items: center; color: #fff; font-family: var(--serif); font-size: 38px;
+  box-shadow: var(--shadow-warm); flex: 0 0 auto; overflow: hidden; cursor: pointer; transition: .2s var(--ease);
+  outline-offset: 3px; }
+.siu-avatar:hover { transform: translateY(-1px); }
+.siu-avatar--drag { box-shadow: 0 0 0 4px rgba(223, 132, 49, .30), var(--shadow-warm); }
+.siu-avatar--busy { cursor: default; }
+.siu-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.siu-fallback { display: grid; place-items: center; width: 100%; height: 100%; }
+
+.siu-overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(17, 19, 31, .38); }
+.siu-spinner { width: 26px; height: 26px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, .35);
+  border-top-color: #fff; animation: siu-spin .8s linear infinite; }
+
+@keyframes siu-spin { to { transform: rotate(360deg); } }
+
+.siu-meta b { font-size: 15px; font-weight: 600; display: block; }
+.siu-meta small { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--navy-muted); }
+.siu-acts { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 11px; }
+
+.siu-btn-sm { padding: 9px 14px; font-size: 13px; border-radius: 11px; }
+.siu-link { background: transparent; color: var(--coral); border: none; box-shadow: none; padding: 9px 6px; }
+.siu-link:hover { transform: none; text-decoration: underline; }
+
+.siu-note { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11.5px; letter-spacing: .04em;
+  color: var(--coral); background: rgba(213, 83, 90, .12); border: 1px solid rgba(213, 83, 90, .28);
+  padding: 8px 12px; border-radius: 11px; margin: 12px 0 0; }
+.siu-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--coral); flex: 0 0 auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  .siu-spinner { animation-duration: 1.6s; }
+}

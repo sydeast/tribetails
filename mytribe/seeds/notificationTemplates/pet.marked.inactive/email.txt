@@ -1,0 +1,9 @@
+Subject: A Kin was marked inactive
+
+Quick records note: {{kinName}} was just marked inactive. I've updated the file so they won't show on active rosters.
+
+Nothing to do unless this looks off, in which case you can flip it back anytime.
+
+Open the Kin's profile here: []
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.

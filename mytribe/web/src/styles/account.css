@@ -1,0 +1,81 @@
+/* ============================================================
+   Account Settings screen styles, ported from
+   ui-ideas/mytribe-account-2026-05-31.html's "SCREEN CSS, Account
+   Settings only" block (the shared nav/glass/button/card system above
+   it in the mockup already lives in base.css and is reused as-is).
+
+   Everything below is scoped under a `.acct` root wrapper (added
+   around this screen's `.wrap` in Account.tsx) instead of reusing the
+   mockup's class names bare, because two of them collide with classes
+   already defined for other screens with different rules:
+     - `.field` / `.field input` (auth.css, guest screens) targets any
+       bare <input>, including ones with our `.input` class, at HIGHER
+       specificity (.field input = 0,1,1) than a lone `.input` class
+       (0,1,0) — bare reuse would let auth.css's padding/background win
+       over this screen's `.input` rule.
+     - `.note` (kindetail.css: a plain paragraph) vs this screen's
+       `.note` (an inline success/status chip with a dot).
+   Scoping every selector under `.acct` raises specificity just enough
+   to avoid both collisions without renaming any of the mockup's own
+   class names.
+   ============================================================ */
+
+.acct .field { margin-bottom: 16px; }
+.acct .field:last-child { margin-bottom: 0; }
+.acct .field label { display: block; font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--navy-muted); margin: 0 2px 7px; }
+.acct .input { width: 100%; font-family: var(--sans); font-size: 15px; color: var(--navy); background: rgba(255, 255, 255, .55);
+  border: 1px solid var(--hairline); border-radius: 14px; padding: 13px 15px; transition: .2s var(--ease); }
+.acct .input::placeholder { color: var(--navy-muted); }
+.acct .input:hover { background: rgba(255, 255, 255, .7); }
+.acct .input:focus { outline: none; border-color: var(--orange); background: #fff;
+  box-shadow: 0 0 0 4px rgba(223, 132, 49, .14); }
+.acct .input:disabled { color: var(--navy-muted); cursor: not-allowed; }
+.acct .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+/* profile photo block */
+.acct .photoblock { display: flex; align-items: center; gap: 20px; margin-bottom: 22px; flex-wrap: wrap; }
+.acct .bigav { width: 88px; height: 88px; border-radius: 50%; background: var(--tribe-grad); display: grid; place-items: center;
+  color: #fff; font-family: var(--serif); font-size: 38px; box-shadow: var(--shadow-warm); flex: 0 0 auto; overflow: hidden; }
+.acct .photoblock .meta b { font-size: 15px; font-weight: 600; display: block; }
+.acct .photoblock .meta small { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--navy-muted); }
+.acct .photoacts { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 11px; }
+.acct .btn.sm { padding: 9px 14px; font-size: 13px; border-radius: 11px; }
+.acct .btn.link { background: transparent; color: var(--coral); border: none; box-shadow: none; padding: 9px 6px; }
+.acct .btn.link:hover { transform: none; text-decoration: underline; }
+
+/* inline success/status notes (also used for the invite status) */
+.acct .note { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11.5px; letter-spacing: .04em;
+  color: var(--teal); background: rgba(10, 133, 149, .12); border: 1px solid rgba(10, 133, 149, .22);
+  padding: 8px 12px; border-radius: 11px; }
+.acct .note.err { color: var(--coral); background: rgba(213, 83, 90, .12); border-color: rgba(213, 83, 90, .28); }
+.acct .note .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); flex: 0 0 auto; }
+.acct .note.err .dot { background: var(--coral); }
+
+.acct .divider { height: 1px; background: var(--hairline); margin: 20px 0; }
+
+/* billing status row */
+.acct .billrow { display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 16px;
+  background: rgba(255, 255, 255, .5); border: 1px solid var(--glass-border); }
+.acct .billrow .ico { width: 46px; height: 46px; border-radius: 13px; display: grid; place-items: center; font-size: 23px;
+  background: rgba(116, 83, 138, .12); flex: 0 0 auto; }
+.acct .billrow .bt { flex: 1; min-width: 0; }
+.acct .billrow .bt b { font-size: 14.5px; font-weight: 600; }
+.acct .billrow .bt small { display: block; color: var(--navy-muted); font-size: 12.5px; margin-top: 2px; }
+
+/* sticky save bar */
+.acct .savebar { position: sticky; bottom: 18px; margin-top: 28px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 16px 20px; border-radius: 20px; background: rgba(255, 255, 255, .78); border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-lift); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  animation: rise .6s var(--ease) .38s both; }
+.acct .savebar .grow { flex: 1; min-width: 120px; }
+.acct .btn.coral { background: transparent; color: var(--coral); border: 1px solid rgba(213, 83, 90, .4); box-shadow: none; }
+.acct .btn.coral:hover { background: rgba(213, 83, 90, .10); }
+
+@media (max-width: 880px) {
+  .acct .field-row { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .acct .savebar { animation: none; }
+}

@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# MyTribe pre-commit gate (added 2026-07-16 with the repo).
+# Blocks real credentials from entering history, scanning the STAGED index
+# (git grep --cached), never the working tree. Mirrors the credentials-by-
+# content gate in the AuntieOS tree's .githooks/pre-commit. bash 3.2 safe.
+#
+#   - service-account JSON private keys (by content, not filename)
+#   - provider secret keys (sk-ant-, sk_live_) and PEM private keys
+#
+# The Firebase Web API key (AIzaSy...) is PUBLIC by design (ships in every web
+# bundle; protected by Firestore rules + App Check) and is intentionally NOT
+# flagged. Client PII in fixtures is handled by the two-bucket rule + a manual
+# `git grep --cached` name/email/phone sweep before commit, per the scrub map.
+#
+# The gate's own meta files (.gitignore, this hook) quote these patterns as
+# examples, so they are excluded via pathspec to avoid self-matching.
+#
+# Bypass for a known-safe commit: git commit --no-verify
+set -euo pipefail
+
+red() { printf '\033[31m%s\033[0m\n' "$1"; }
+fail=0
+EXCLUDE=(-- . ':!.gitignore' ':!.githooks/')
+
+# service-account private keys
+if git grep --cached -lIE '"type"[[:space:]]*:[[:space:]]*"service_account"' "${EXCLUDE[@]}" 2>/dev/null | grep -q .; then
+  red "BLOCKED: a staged file contains a service_account JSON key."; fail=1
+fi
+
+# provider secret keys + PEM private keys (NOT the public AIza Firebase key)
+if git grep --cached -nIE '(sk-ant-[A-Za-z0-9_-]{10}|sk_live_[A-Za-z0-9]{10}|-----BEGIN( RSA| EC)? PRIVATE KEY-----)' "${EXCLUDE[@]}" 2>/dev/null | grep -q .; then
+  red "BLOCKED: a staged file contains a provider secret / private key."; fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  red "Pre-commit gate failed. Fix the above, or 'git commit --no-verify' if verified safe."
+  exit 1
+fi
+exit 0

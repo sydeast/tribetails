@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyTribe, KinTales</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     MyTribe DESIGN SYSTEM  (com.kinfolk.portal, pet parent web)
+     Identity: bright, sunny, glassmorphic. Top-nav airy consumer
+     web (NOT AuntieOS's dark left-rail admin). Signature = frosted
+     glass + the Tribe Gradient. Full-web layout; mobile collapses
+     responsively (single column + bottom tabs).
+     Palette locked to brandColors.md / KinfolkBrand. Fonts AuntieOS
+     does not use: Young Serif + Bricolage Grotesque + DM Mono.
+     ==> This <style> block is the shared system; reuse verbatim.
+     ============================================================ */
+  :root{
+    --cream:#FBFBF9; --navy:#11131F;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595;
+    --purple:#74538A; --coral:#D5535A;
+    --navy-soft:rgba(17,19,31,.78); --navy-muted:rgba(17,19,31,.55);
+    --hairline:rgba(17,19,31,.10);
+    --glass:rgba(255,255,255,.62); --glass-dim:rgba(255,255,255,.40);
+    --glass-border:rgba(255,255,255,.7);
+    --serif:"Young Serif",serif; --sans:"Bricolage Grotesque",sans-serif; --mono:"DM Mono",monospace;
+    --ease:cubic-bezier(.22,.8,.24,1);
+    --shadow-card:0 14px 34px -18px rgba(17,19,31,.30);
+    --shadow-lift:0 22px 46px -20px rgba(17,19,31,.36);
+    --shadow-warm:0 16px 34px -16px rgba(223,132,49,.55);
+    /* canonical brand gradients (brandColors.md) */
+    --tribe-grad:linear-gradient(135deg,#df8431,#d55c87,#0a8595);
+    --orange-pink:linear-gradient(to bottom right,#df8431,#d55c87);
+    --teal-purple:linear-gradient(to bottom right,#0a8595,#74538a);
+    --maxw:1140px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    font-family:var(--sans);color:var(--navy);min-height:100vh;-webkit-font-smoothing:antialiased;
+    background:
+      radial-gradient(120vmax 70vmax at 82% -10%, rgba(223,132,49,.20), transparent 55%),
+      radial-gradient(110vmax 70vmax at 5% 0%, rgba(213,92,135,.16), transparent 52%),
+      radial-gradient(130vmax 80vmax at 50% 118%, rgba(10,133,149,.16), transparent 55%),
+      var(--cream);
+    overflow-x:hidden;
+  }
+  .orb{position:fixed;border-radius:50%;filter:blur(60px);opacity:.42;z-index:0;pointer-events:none;
+    animation:drift 26s var(--ease) infinite alternate;}
+  .orb.a{width:32vmax;height:32vmax;top:-6vmax;right:-4vmax;background:radial-gradient(circle,var(--orange),transparent 64%);}
+  .orb.b{width:30vmax;height:30vmax;bottom:-10vmax;left:-8vmax;background:radial-gradient(circle,var(--teal),transparent 64%);animation-delay:-10s;}
+  @keyframes drift{to{transform:translate(2vmax,2vmax) scale(1.08);}}
+
+  /* ===== top nav ===== */
+  .nav{position:sticky;top:0;z-index:20;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+    background:rgba(251,251,249,.72);border-bottom:1px solid var(--hairline);}
+  .nav .in{max-width:var(--maxw);margin:0 auto;padding:14px 24px;display:flex;align-items:center;gap:20px;}
+  .wordmark{font-family:var(--serif);font-size:23px;letter-spacing:-.01em;line-height:1;white-space:nowrap;}
+  .wordmark .grad{background:var(--tribe-grad);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  .navlinks{display:flex;gap:4px;margin-left:8px;}
+  .navlinks a{padding:9px 14px;border-radius:11px;text-decoration:none;color:var(--navy-soft);font-weight:600;
+    font-size:14.5px;transition:.2s var(--ease);}
+  .navlinks a:hover{background:rgba(223,132,49,.12);color:var(--navy);}
+  .navlinks a.on{background:var(--navy);color:#fff;}
+  .nav .right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+  .iconbtn{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:17px;cursor:pointer;
+    background:var(--glass);border:1px solid var(--glass-border);box-shadow:var(--shadow-card);position:relative;
+    transition:.2s var(--ease);}
+  .iconbtn:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift);}
+  .iconbtn .ping{position:absolute;top:9px;right:10px;width:8px;height:8px;border-radius:50%;background:var(--coral);
+    box-shadow:0 0 0 3px var(--cream);}
+  .avatar{width:42px;height:42px;border-radius:50%;background:var(--tribe-grad);display:grid;place-items:center;
+    color:#fff;font-family:var(--serif);font-size:18px;cursor:pointer;box-shadow:var(--shadow-warm);}
+
+  /* ===== layout shell ===== */
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:34px 24px 80px;position:relative;z-index:1;}
+
+  .hero-greet{margin-bottom:24px;animation:rise .6s var(--ease) both;}
+  .hero-greet .kick{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--orange);margin-bottom:8px;}
+  .hero-greet h1{font-family:var(--serif);font-size:clamp(30px,4.4vw,46px);line-height:1.05;letter-spacing:-.01em;}
+  .hero-greet h1 span{color:var(--pink);}
+
+  /* glass primitives */
+  .glass{background:var(--glass);border:1px solid var(--glass-border);border-radius:22px;
+    box-shadow:var(--shadow-card);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);}
+  .card{padding:22px;}
+  .sectlabel{display:flex;align-items:center;gap:8px;margin:0 2px 12px;font-family:var(--mono);font-size:11px;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--navy-muted);}
+  .sectlabel a{margin-left:auto;color:var(--teal);text-decoration:none;font-weight:500;letter-spacing:.04em;}
+  h3.title{font-family:var(--serif);font-size:20px;font-weight:400;display:flex;align-items:center;gap:8px;}
+  .sub{color:var(--navy-muted);font-size:13px;margin-top:3px;}
+
+  /* buttons */
+  .btn{border:none;cursor:pointer;border-radius:14px;padding:14px 18px;font-family:var(--sans);font-size:14.5px;
+    font-weight:700;color:#fff;background:var(--navy);display:inline-flex;align-items:center;justify-content:center;gap:9px;
+    box-shadow:var(--shadow-card);transition:.2s var(--ease);text-decoration:none;}
+  .btn:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift);}
+  .btn.grad{background:var(--tribe-grad);box-shadow:var(--shadow-warm);}
+  .btn.ghost{background:transparent;color:var(--navy);border:1px solid var(--hairline);box-shadow:none;}
+  .btn.ghost:hover{background:rgba(223,132,49,.10);}
+  .btn.block{width:100%;}
+  .chip{font-family:var(--mono);font-size:10.5px;font-weight:500;padding:4px 10px;border-radius:20px;letter-spacing:.04em;}
+  .chip.go{background:rgba(10,133,149,.14);color:var(--teal);}
+  .chip.warm{background:rgba(223,132,49,.16);color:var(--orange);}
+  .chip.done{background:rgba(116,83,138,.14);color:var(--purple);}
+
+  /* ===== Live Visit hero (Tribe Gradient) ===== */
+  .live{padding:24px 26px;color:#fff;border-radius:24px;position:relative;overflow:hidden;background:var(--tribe-grad);
+    box-shadow:var(--shadow-warm);margin-bottom:30px;animation:rise .6s var(--ease) .08s both;}
+  .live::after{content:"";position:absolute;inset:0;background:radial-gradient(120% 90% at 88% 0%,rgba(255,255,255,.32),transparent 55%);pointer-events:none;}
+  .live .lrow{display:flex;align-items:center;gap:7px;position:relative;}
+  .live .tag{font-family:var(--mono);font-size:11px;letter-spacing:.16em;}
+  .pulse{width:9px;height:9px;border-radius:50%;background:#fff;animation:pulse 1.6s var(--ease) infinite;}
+  @keyframes pulse{70%{box-shadow:0 0 0 9px rgba(255,255,255,0);}100%{box-shadow:0 0 0 0 rgba(255,255,255,0);}}
+  .live h2{font-family:var(--serif);font-size:26px;margin:12px 0 4px;position:relative;}
+  .live p{font-size:14px;opacity:.93;position:relative;max-width:60ch;line-height:1.5;}
+  .live .lwho{display:flex;align-items:center;gap:13px;margin-top:18px;position:relative;}
+  .live .lav{width:48px;height:48px;border-radius:15px;background:rgba(255,255,255,.85);display:grid;place-items:center;font-size:25px;box-shadow:0 6px 14px -6px rgba(0,0,0,.4);overflow:hidden;}
+  .live .lwho b{font-size:15px;font-weight:700;} .live .lwho small{display:block;font-size:12px;opacity:.86;font-family:var(--mono);}
+  .live .track{flex:1;min-width:120px;height:7px;border-radius:99px;background:rgba(255,255,255,.3);position:relative;overflow:hidden;}
+  .live .track i{position:absolute;inset:0 38% 0 0;background:#fff;border-radius:99px;}
+
+  /* ===== two-column content ===== */
+  .cols{display:grid;grid-template-columns:1.6fr 1fr;gap:24px;align-items:start;}
+  .stack{display:flex;flex-direction:column;gap:24px;}
+
+  /* booking rows */
+  .visit{display:flex;align-items:center;gap:14px;padding:14px;border-radius:16px;cursor:pointer;border:1px solid transparent;transition:.2s var(--ease);}
+  .visit:hover{background:rgba(255,255,255,.5);border-color:var(--glass-border);transform:translateX(3px);}
+  .visit .cal{flex:0 0 auto;width:52px;text-align:center;border-radius:13px;overflow:hidden;border:1px solid var(--hairline);font-family:var(--mono);background:#fff;}
+  .visit .cal .m{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#fff;padding:3px 0;}
+  .visit.v1 .cal .m{background:var(--orange);} .visit.v2 .cal .m{background:var(--purple);} .visit.v3 .cal .m{background:var(--teal);}
+  .visit .cal .d{font-family:var(--serif);font-size:22px;padding:4px 0 5px;}
+  .visit .info{flex:1;} .visit .info b{font-size:15px;font-weight:600;} .visit .info small{display:block;color:var(--navy-muted);font-size:12.5px;margin-top:2px;}
+  .visit .pet{width:42px;height:42px;border-radius:13px;overflow:hidden;display:grid;place-items:center;font-size:23px;background:rgba(223,132,49,.12);}
+
+  /* KinTale cards */
+  .tale{display:flex;gap:14px;padding:15px;border-radius:16px;cursor:pointer;transition:.2s var(--ease);border:1px solid transparent;}
+  .tale:hover{background:rgba(255,255,255,.5);border-color:var(--glass-border);transform:translateX(3px);}
+  .tale .photo{flex:0 0 auto;width:56px;height:56px;border-radius:16px;display:grid;place-items:center;font-size:27px;overflow:hidden;}
+  .tale.a1 .photo{background:rgba(223,132,49,.16);} .tale.a2 .photo{background:rgba(10,133,149,.14);} .tale.a3 .photo{background:rgba(213,92,135,.14);}
+  .tale .tb b{font-size:14.5px;font-weight:600;} .tale .tb p{font-size:13px;color:var(--navy-soft);line-height:1.46;margin-top:3px;}
+  .tale .tb .meta{font-family:var(--mono);font-size:10.5px;color:var(--navy-muted);margin-top:8px;letter-spacing:.04em;}
+  .heart{color:var(--coral);}
+
+  /* Kin roster (Your Tribe) */
+  .kinrow{display:flex;align-items:center;gap:13px;padding:11px;border-radius:14px;cursor:pointer;transition:.2s var(--ease);}
+  .kinrow:hover{background:rgba(255,255,255,.55);transform:translateX(2px);}
+  .kinrow .pic{width:50px;height:50px;border-radius:50%;display:grid;place-items:center;font-size:25px;border:2px solid;overflow:hidden;flex:0 0 auto;}
+  .kinrow.k1 .pic{border-color:var(--orange);} .kinrow.k2 .pic{border-color:var(--teal);} .kinrow.k3 .pic{border-color:var(--pink);} .kinrow.k4 .pic{border-color:var(--purple);}
+  .kinrow b{font-size:14.5px;font-weight:600;} .kinrow small{display:block;font-size:11.5px;color:var(--navy-muted);font-family:var(--mono);}
+  .kinrow.add .pic{border:2px dashed var(--hairline);color:var(--navy-muted);background:var(--glass-dim);font-size:22px;}
+
+  .footnote{font-family:var(--mono);font-size:11px;color:var(--navy-muted);text-align:center;margin-top:40px;}
+  .footnote b{background:var(--tribe-grad);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:500;}
+
+  @keyframes rise{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
+  .d1{animation:rise .6s var(--ease) .14s both;}.d2{animation:rise .6s var(--ease) .2s both;}
+  .d3{animation:rise .6s var(--ease) .26s both;}.d4{animation:rise .6s var(--ease) .32s both;}
+
+  /* ===== responsive: tablet + phone ===== */
+  @media (max-width:880px){
+    .cols{grid-template-columns:1fr;}
+    .navlinks{display:none;}
+    .wrap{padding:24px 16px 96px;}
+  }
+  .tabbar{display:none;}
+  @media (max-width:880px){
+    .tabbar{display:flex;position:fixed;left:12px;right:12px;bottom:12px;z-index:30;justify-content:space-around;
+      padding:10px 6px;border-radius:22px;background:rgba(255,255,255,.8);border:1px solid var(--glass-border);
+      box-shadow:0 -8px 30px -16px rgba(17,19,31,.4);backdrop-filter:blur(20px);}
+    .tabbar a{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:20px;color:var(--navy-muted);text-decoration:none;}
+    .tabbar a small{font-size:10px;font-family:var(--mono);} .tabbar a.on{color:var(--orange);}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;}}
+
+  /* ============================================================
+     SCREEN CSS, KinTales (same glass/brand language).
+     Adds: tab row, featured tale, captured-moments gallery grid,
+     comment thread. Tokens unchanged.
+     ============================================================ */
+  /* tab row */
+  .tabs{display:flex;gap:6px;margin:0 2px 26px;padding:5px;border-radius:16px;width:fit-content;
+    background:var(--glass-dim);border:1px solid var(--glass-border);box-shadow:var(--shadow-card);
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);}
+  .tabs a{padding:9px 18px;border-radius:12px;text-decoration:none;color:var(--navy-soft);font-weight:700;
+    font-size:14px;transition:.2s var(--ease);}
+  .tabs a:hover{background:rgba(223,132,49,.12);color:var(--navy);}
+  .tabs a.on{background:var(--navy);color:#fff;box-shadow:var(--shadow-card);}
+
+  /* featured KinTale */
+  .feature{padding:0;overflow:hidden;animation:rise .6s var(--ease) .08s both;}
+  .feature .banner{padding:22px 26px;color:#fff;background:var(--tribe-grad);position:relative;overflow:hidden;}
+  .feature .banner::after{content:"";position:absolute;inset:0;background:radial-gradient(120% 90% at 88% 0%,rgba(255,255,255,.32),transparent 55%);pointer-events:none;}
+  .feature .banner .kick{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;opacity:.92;position:relative;}
+  .feature .banner h2{font-family:var(--serif);font-size:28px;line-height:1.08;margin:9px 0 0;position:relative;}
+  .feature .byline{display:flex;align-items:center;gap:12px;margin-top:16px;position:relative;}
+  .feature .byline .bav{width:44px;height:44px;border-radius:14px;background:rgba(255,255,255,.85);display:grid;place-items:center;font-size:22px;flex:0 0 auto;box-shadow:0 6px 14px -6px rgba(0,0,0,.4);}
+  .feature .byline b{font-size:14.5px;font-weight:700;} .feature .byline small{display:block;font-size:11.5px;opacity:.86;font-family:var(--mono);letter-spacing:.04em;}
+  .feature .body{padding:24px 26px 6px;}
+  .feature .narrative{font-size:15.5px;line-height:1.62;color:var(--navy-soft);max-width:64ch;}
+  .feature .narrative p+p{margin-top:13px;}
+
+  /* captured moments gallery grid */
+  .gallery{margin-top:22px;}
+  .gallery .glabel{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--navy-muted);margin-bottom:11px;display:flex;align-items:center;gap:8px;}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+  .grid .shot{aspect-ratio:1;border-radius:16px;display:grid;place-items:center;font-size:40px;overflow:hidden;cursor:pointer;
+    border:1px solid var(--glass-border);box-shadow:var(--shadow-card);transition:.2s var(--ease);position:relative;}
+  .grid .shot:hover{transform:translateY(-3px) scale(1.02);box-shadow:var(--shadow-lift);}
+  .grid .shot.g1{background:rgba(223,132,49,.16);} .grid .shot.g2{background:rgba(213,92,135,.14);}
+  .grid .shot.g3{background:rgba(10,133,149,.14);} .grid .shot.g4{background:rgba(116,83,138,.14);}
+  .grid .shot .cap{position:absolute;left:8px;bottom:8px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;
+    background:rgba(17,19,31,.62);color:#fff;padding:3px 7px;border-radius:8px;}
+  .grid .shot.wide{grid-column:span 2;aspect-ratio:2/1;}
+  @media (max-width:560px){.grid{grid-template-columns:repeat(2,1fr);} .grid .shot.wide{grid-column:span 2;aspect-ratio:auto;height:120px;}}
+
+  .feature .actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:20px 26px 24px;border-top:1px solid var(--hairline);margin-top:22px;}
+  .feature .actions .react{margin-left:auto;display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11.5px;color:var(--navy-muted);letter-spacing:.04em;}
+
+  /* ===== comment thread ===== */
+  .thread{border-top:1px solid var(--hairline);padding:22px 26px 26px;}
+  .thread .thlabel{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--navy-muted);margin-bottom:18px;display:flex;align-items:center;gap:8px;}
+  .cmt{display:flex;gap:13px;padding:4px 0 18px;}
+  .cmt .cav{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;font-family:var(--serif);font-size:17px;color:#fff;flex:0 0 auto;box-shadow:var(--shadow-card);}
+  .cmt .cav.c1{background:var(--orange-pink);} .cmt .cav.c2{background:var(--teal-purple);} .cmt .cav.c3{background:linear-gradient(to bottom right,var(--purple),var(--coral));}
+  .cmt .cbody{flex:1;}
+  .cmt .chead{display:flex;align-items:center;gap:9px;flex-wrap:wrap;}
+  .cmt .chead b{font-size:14px;font-weight:700;}
+  .cmt .chead time{font-family:var(--mono);font-size:10.5px;color:var(--navy-muted);letter-spacing:.04em;}
+  .badge{font-family:var(--mono);font-size:9.5px;font-weight:500;padding:3px 8px;border-radius:20px;letter-spacing:.06em;text-transform:uppercase;}
+  .badge.kin{background:rgba(10,133,149,.14);color:var(--teal);}
+  .badge.guest{background:rgba(116,83,138,.14);color:var(--purple);}
+  .cmt .ctext{font-size:14px;line-height:1.55;color:var(--navy-soft);margin-top:5px;}
+  .cmt .creply{margin-top:8px;}
+  .cmt .creply a{font-family:var(--mono);font-size:11px;color:var(--teal);text-decoration:none;letter-spacing:.04em;font-weight:500;}
+  .cmt .creply a:hover{text-decoration:underline;}
+  .cmt.nested{margin-left:55px;padding-bottom:14px;}
+
+  .empty-cmt{font-size:14px;color:var(--navy-muted);font-style:italic;padding:6px 0 18px;}
+
+  /* post comment box */
+  .postbox{display:flex;gap:13px;margin-top:6px;padding-top:18px;border-top:1px solid var(--hairline);}
+  .postbox .cav{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;font-family:var(--serif);font-size:17px;color:#fff;flex:0 0 auto;background:var(--tribe-grad);box-shadow:var(--shadow-warm);}
+  .postbox .field{flex:1;}
+  .postbox textarea{width:100%;min-height:74px;resize:vertical;border-radius:14px;border:1px solid var(--hairline);
+    background:rgba(255,255,255,.7);padding:12px 14px;font-family:var(--sans);font-size:14px;color:var(--navy);line-height:1.5;
+    transition:.2s var(--ease);}
+  .postbox textarea::placeholder{color:var(--navy-muted);}
+  .postbox textarea:focus{outline:none;border-color:var(--orange);box-shadow:0 0 0 3px rgba(223,132,49,.16);background:#fff;}
+  .postbox .frow{display:flex;align-items:center;gap:10px;margin-top:10px;}
+  .postbox .hint{font-family:var(--mono);font-size:11px;letter-spacing:.04em;}
+  .postbox .hint.err{color:var(--coral);}
+  .postbox .hint.ok{color:var(--navy-muted);}
+
+  /* secondary tale cards (compact, link to thread) */
+  .talecard{padding:0;overflow:hidden;}
+  .talecard .tchead{display:flex;gap:14px;padding:18px 20px 14px;}
+  .talecard .tcphoto{width:54px;height:54px;border-radius:16px;display:grid;place-items:center;font-size:26px;flex:0 0 auto;overflow:hidden;}
+  .talecard.t1 .tcphoto{background:rgba(10,133,149,.14);} .talecard.t2 .tcphoto{background:rgba(213,92,135,.14);}
+  .talecard .tchead h3{font-family:var(--serif);font-size:18px;font-weight:400;}
+  .talecard .tchead .meta{font-family:var(--mono);font-size:10.5px;color:var(--navy-muted);margin-top:5px;letter-spacing:.04em;}
+  .talecard .tcbody{padding:0 20px;font-size:14px;line-height:1.58;color:var(--navy-soft);}
+  .talecard .tcstrip{display:flex;gap:9px;padding:14px 20px 6px;}
+  .talecard .tcstrip .sm{width:54px;height:54px;border-radius:13px;display:grid;place-items:center;font-size:26px;flex:0 0 auto;border:1px solid var(--glass-border);box-shadow:var(--shadow-card);}
+  .talecard .tcstrip .sm.s1{background:rgba(223,132,49,.16);} .talecard .tcstrip .sm.s2{background:rgba(213,92,135,.14);} .talecard .tcstrip .sm.s3{background:rgba(10,133,149,.14);}
+  .talecard .tcfoot{display:flex;align-items:center;gap:10px;padding:14px 20px 18px;}
+  .talecard .tcfoot .ct{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--navy-muted);letter-spacing:.04em;}
+
+  .loadmore{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:30px;}
+</style>
+</head>
+<body>
+  <span class="orb a"></span><span class="orb b"></span>
+
+  <!-- top nav -->
+  <nav class="nav">
+    <div class="in">
+      <div class="wordmark">My<span class="grad">Tribe</span></div>
+      <div class="navlinks">
+        <a href="#">Home</a>
+        <a href="#">Tribe</a>
+        <a href="#">Schedule</a>
+        <a class="on" href="#">KinTales</a>
+        <a href="#">Invoices</a>
+      </div>
+      <div class="right">
+        <div class="iconbtn" aria-label="Notifications">&#128276;<span class="ping"></span></div>
+        <div class="avatar">J</div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <!-- title + tab row -->
+    <header class="hero-greet">
+      <div class="kick">From your Aunties</div>
+      <h1>Your <span>KinTales</span></h1>
+    </header>
+
+    <div class="tabs" role="tablist">
+      <a class="on" href="#" role="tab">All</a>
+      <a href="#" role="tab">Lore</a>
+      <a href="#" role="tab">Gallery</a>
+    </div>
+
+    <!-- ===== FEATURED KINTALE ===== -->
+    <section class="glass feature">
+      <div class="banner">
+        <div class="kick">Featured KinTale</div>
+        <h2>Biscuit led the whole loop today <span class="heart">&#10084;</span></h2>
+        <div class="byline">
+          <div class="bav">&#128054;</div>
+          <div>
+            <b>From Auntie Maya</b>
+            <small>30 MIN WALK &middot; CEDAR ST LOOP &middot; TODAY, 9:14 AM</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="body">
+        <div class="narrative">
+          <p>Biscuit was already at the door doing his little spin before I had the leash off the hook. We took the long way down Cedar St so he could check every mailbox (he has opinions about all of them) and he greeted the corgi from number 14 with a full tail wag and a polite sniff.</p>
+          <p>About halfway through he found a warm patch of sidewalk and decided that was the spot for a sit and a think. I let him have a minute, then we carried on past the bakery, where he gave the door a very hopeful look. No luck, buddy, not today.</p>
+          <p>Back home he drank a good amount of water, earned his peanut butter treat, and was snoring on the cool kitchen tile before I locked up. A happy, tired boy. Doors locked, blinds left how you like them.</p>
+        </div>
+
+        <div class="gallery">
+          <div class="glabel">Captured Moments</div>
+          <div class="grid">
+            <div class="shot g1">&#128054;<span class="cap">MAILBOX PATROL</span></div>
+            <div class="shot g2">&#127795;<span class="cap">CEDAR ST</span></div>
+            <div class="shot g3">&#9728;&#65039;<span class="cap">SUN SIT</span></div>
+            <div class="shot g4">&#128062;<span class="cap">TREAT TIME</span></div>
+            <div class="shot wide g1">&#128054;<span class="cap">THE FULL LOOP</span></div>
+            <div class="shot g3">&#128166;<span class="cap">WATER BREAK</span></div>
+            <div class="shot g2">&#128164;<span class="cap">HOME, TIRED</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <a class="btn grad" href="#">&#128279; Share</a>
+        <a class="btn ghost" href="#">&#128172; Reply to Auntie Maya</a>
+        <span class="react"><span class="heart">&#10084;</span> You and 2 others loved this</span>
+      </div>
+
+      <!-- ===== COMMENT THREAD (expanded on featured) ===== -->
+      <div class="thread">
+        <div class="thlabel">Comments &middot; 2</div>
+
+        <div class="cmt">
+          <div class="cav c1">J</div>
+          <div class="cbody">
+            <div class="chead">
+              <b>Jordan</b>
+              <span class="badge kin">Kinfolk</span>
+              <time>TODAY, 9:31 AM</time>
+            </div>
+            <div class="ctext">The sun sit photo got me. He does that exact pause on our walks too, every single time. Thank you for letting him have his minute, Maya.</div>
+            <div class="creply"><a href="#">Reply</a></div>
+          </div>
+        </div>
+
+        <div class="cmt nested">
+          <div class="cav c2">M</div>
+          <div class="cbody">
+            <div class="chead">
+              <b>Auntie Maya</b>
+              <span class="badge kin">Kinfolk</span>
+              <time>TODAY, 9:40 AM</time>
+            </div>
+            <div class="ctext">Of course. He picks the warmest square of pavement on the whole street, every time. He knows what he likes.</div>
+            <div class="creply"><a href="#">Reply</a></div>
+          </div>
+        </div>
+
+        <div class="cmt">
+          <div class="cav c3">G</div>
+          <div class="cbody">
+            <div class="chead">
+              <b>Grandma Rose</b>
+              <span class="badge guest">Guest</span>
+              <time>TODAY, 10:02 AM</time>
+            </div>
+            <div class="ctext">Look at that face. Give him an extra treat from me, he deserves it.</div>
+            <div class="creply"><a href="#">Reply</a></div>
+          </div>
+        </div>
+
+        <!-- post comment box -->
+        <div class="postbox">
+          <div class="cav">J</div>
+          <div class="field">
+            <textarea placeholder="Say something nice..."></textarea>
+            <div class="frow">
+              <button class="btn grad">Post Comment</button>
+              <span class="hint ok">Be kind, your Aunties read these.</span>
+              <!-- validation state, shown when empty -->
+              <!-- <span class="hint err">Comment cannot be empty.</span> -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== MORE TALES ===== -->
+    <div class="sectlabel" style="margin-top:30px;">More from your Aunties</div>
+
+    <div class="stack">
+      <section class="glass talecard t1 d1">
+        <div class="tchead">
+          <div class="tcphoto">&#128049;</div>
+          <div style="flex:1;">
+            <h3 class="title">Miso ate every bite, then claimed the windowsill</h3>
+            <div class="meta">FROM AUNTIE SAM &middot; DROP IN FEED &middot; YESTERDAY, 6:12 PM</div>
+          </div>
+        </div>
+        <div class="tcbody">
+          Bowl was licked clean before I even sat down, so I topped up the water and gave the fountain a quick rinse. Miso supervised from the counter with that judging look, then chose violence on the feather wand for about four minutes before retiring to the sunny windowsill for the rest of my visit. Litter scooped, blinds tilted open the way she likes.
+        </div>
+        <div class="tcstrip">
+          <div class="sm s1">&#128049;</div>
+          <div class="sm s2">&#127837;</div>
+          <div class="sm s3">&#9728;&#65039;</div>
+        </div>
+        <div class="tcfoot">
+          <a class="btn ghost" href="#">&#128279; Share</a>
+          <a class="btn ghost" href="#">&#128172; Comment</a>
+          <span class="ct">3 Captured Moments &middot; 1 comment</span>
+        </div>
+      </section>
+
+      <section class="glass talecard t2 d2">
+        <div class="tchead">
+          <div class="tcphoto">&#128048;</div>
+          <div style="flex:1;">
+            <h3 class="title">Clover picked the parsley clean</h3>
+            <div class="meta">FROM AUNTIE MAYA &middot; DROP IN FEED &middot; 2 DAYS AGO, 4:45 PM</div>
+          </div>
+        </div>
+        <div class="tcbody">
+          Parsley first, kale ignored, classic Clover. I refilled the hay rack, swapped fresh water, and tidied the pen. She did a couple of happy binkies across the rug when I opened the gate, which is always the best part of my afternoon.
+        </div>
+        <div class="tcstrip">
+          <div class="sm s1">&#128048;</div>
+          <div class="sm s2">&#127807;</div>
+          <div class="sm s3">&#127809;</div>
+        </div>
+        <div class="tcfoot">
+          <a class="btn ghost" href="#">&#128279; Share</a>
+          <a class="btn ghost" href="#">&#128172; Comment</a>
+          <span class="ct">3 Captured Moments &middot; Be the first to say something nice.</span>
+        </div>
+      </section>
+    </div>
+
+    <!-- Load More -->
+    <div class="loadmore">
+      <button class="btn ghost">Load More</button>
+    </div>
+
+    <p class="footnote">Cared for by <b>Tribe Tails Pet Care</b></p>
+  </div>
+
+  <!-- mobile bottom tabs (shown under 880px) -->
+  <nav class="tabbar">
+    <a href="#">&#127968;<small>Home</small></a>
+    <a href="#">&#128062;<small>Tribe</small></a>
+    <a href="#">&#128197;<small>Schedule</small></a>
+    <a class="on" href="#">&#128221;<small>Tales</small></a>
+    <a href="#">&#128100;<small>Account</small></a>
+  </nav>
+</body>
+</html>

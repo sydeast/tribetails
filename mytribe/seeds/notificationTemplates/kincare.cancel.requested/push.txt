@@ -1,0 +1,1 @@
+Cancellation ask. {{kinfolkName}} wants to cancel {{kinName}}'s {{serviceType}} on {{bookingDate}}. Tap to review.

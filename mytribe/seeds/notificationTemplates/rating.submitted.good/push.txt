@@ -1,0 +1,1 @@
+A glowing rating came in. A Kinfolk left you a {{score}}-star rating. Tap to see it.

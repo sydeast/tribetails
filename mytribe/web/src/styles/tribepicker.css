@@ -1,0 +1,36 @@
+/*
+ * Tribe Picker + NoTribes, ported from ui-ideas/mytribe-tribe-picker-2026-05-31.html.
+ * Reuses .glass .card .btn .chip h3.title .kinrow .avatar + d1..d4 from base.css.
+ * No app top nav, no tabbar. Centered single column ~560px.
+ */
+.picker { max-width: 560px; margin: 0 auto; padding: 40px 20px 64px; position: relative; z-index: 1; }
+.brandhead { display: flex; justify-content: center; margin-bottom: 26px; animation: rise .6s var(--ease) both; }
+.pickhead { text-align: center; margin-bottom: 22px; }
+.pickhead h1 { font-family: var(--serif); font-size: clamp(30px, 7vw, 40px); line-height: 1.06; letter-spacing: -.01em; }
+.pickhead .sub { font-size: 14px; color: var(--navy-soft); margin-top: 8px; max-width: 38ch; margin-left: auto; margin-right: auto; line-height: 1.5; }
+
+/* selectable tribe rows (built on .kinrow rhythm) */
+.tribelist { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
+.tribe {
+  display: flex; align-items: center; gap: 15px; padding: 15px 16px; border-radius: 18px; cursor: pointer; text-align: left;
+  width: 100%; background: var(--glass-dim); border: 1.5px solid var(--glass-border);
+  box-shadow: var(--shadow-card); transition: .22s var(--ease); font-family: var(--sans); color: var(--navy);
+}
+.tribe:hover { transform: translateY(-3px); background: rgba(255, 255, 255, .62); box-shadow: var(--shadow-lift); }
+.tribe:focus-visible { outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px rgba(223, 132, 49, .28), var(--shadow-card); }
+.tribe.sel { border-color: transparent; background: rgba(255, 255, 255, .7); box-shadow: 0 0 0 2px var(--orange), var(--shadow-lift); }
+.tribe .avatar { width: 52px; height: 52px; border-radius: 17px; font-size: 23px; flex: 0 0 auto; }
+.tribe.t2 .avatar { background: var(--orange-pink); }
+.tribe.t3 .avatar { background: var(--teal-purple); }
+.tribe .tinfo { flex: 1; min-width: 0; }
+.tribe .tinfo b { display: block; font-family: var(--serif); font-size: 18px; font-weight: 400; letter-spacing: -.005em; }
+.tribe .tinfo small { display: block; font-family: var(--mono); font-size: 11px; color: var(--navy-muted); margin-top: 5px; letter-spacing: .03em; }
+.tribe .chev { flex: 0 0 auto; color: var(--navy-muted); font-size: 20px; transition: .22s var(--ease); }
+.tribe:hover .chev, .tribe.sel .chev { color: var(--orange); transform: translateX(3px); }
+
+.pickfoot { margin-top: 22px; }
+.pickfoot .hint { font-family: var(--mono); font-size: 11px; color: var(--navy-muted); text-align: center; margin-top: 14px; letter-spacing: .03em; }
+
+/* NoTribes onboarding — same centered-column shell as the picker. */
+.notribes-card { text-align: center; }
+.notribes-card p { margin-top: 12px; line-height: 1.6; }

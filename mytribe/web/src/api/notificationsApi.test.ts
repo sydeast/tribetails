@@ -1,0 +1,128 @@
+import { describe, expect, it } from 'vitest';
+import {
+  categoryChannels,
+  categoryMarketingCategories,
+  categoryMasterChecked,
+  categoryToggleableChannels,
+  channelChecked,
+  marketingMasterChecked,
+  type CategoryDto,
+  type NotificationKeyDto,
+} from './notificationsApi';
+
+function key(overrides: Partial<NotificationKeyDto>): NotificationKeyDto {
+  return {
+    key: 'test.key',
+    title: 'Test',
+    description: 'A test key.',
+    allowedChannels: ['email', 'push'],
+    required: [],
+    lockedChannels: [],
+    marketingCategory: null,
+    lockReason: null,
+    ...overrides,
+  };
+}
+
+function cat(id: string, keys: NotificationKeyDto[]): CategoryDto {
+  return { id, title: id, description: '', keys };
+}
+
+describe('categoryChannels', () => {
+  it('unions allowedChannels across keys in canonical push/email/sms order', () => {
+    const c = cat('visit', [
+      key({ allowedChannels: ['email', 'sms'] }),
+      key({ allowedChannels: ['push'] }),
+    ]);
+    expect(categoryChannels(c)).toEqual(['push', 'email', 'sms']);
+  });
+
+  it('is empty for a category with no keys', () => {
+    expect(categoryChannels(cat('empty', []))).toEqual([]);
+  });
+});
+
+describe('categoryToggleableChannels', () => {
+  it('includes a channel when at least one key leaves it unlocked', () => {
+    const c = cat('visit', [
+      key({ allowedChannels: ['email'], lockedChannels: ['email'] }), // locked here
+      key({ allowedChannels: ['email'], lockedChannels: [] }), // free here
+    ]);
+    expect(categoryToggleableChannels(c)).toEqual(['email']);
+  });
+
+  it('excludes a channel every key locks', () => {
+    const c = cat('visit', [
+      key({ allowedChannels: ['email', 'sms'], lockedChannels: ['email'] }),
+      key({ allowedChannels: ['email'], lockedChannels: ['email'] }),
+    ]);
+    // email locked everywhere it appears -> not toggleable; sms free -> toggleable.
+    expect(categoryToggleableChannels(c)).toEqual(['sms']);
+  });
+});
+
+describe('channelChecked', () => {
+  it('reads the saved byCategory value when the channel is toggleable', () => {
+    const c = cat('visit', [key({ allowedChannels: ['sms'] })]);
+    expect(channelChecked(c, 'sms', { sms: false })).toBe(false);
+    expect(channelChecked(c, 'sms', { sms: true })).toBe(true);
+  });
+
+  it('defaults email on and other channels off when unsaved', () => {
+    const c = cat('visit', [key({ allowedChannels: ['email', 'push', 'sms'] })]);
+    expect(channelChecked(c, 'email', undefined)).toBe(true);
+    expect(channelChecked(c, 'push', undefined)).toBe(false);
+    expect(channelChecked(c, 'sms', undefined)).toBe(false);
+  });
+
+  it('always reads true for a channel locked across every key, ignoring saved prefs', () => {
+    const c = cat('visit', [key({ allowedChannels: ['email'], lockedChannels: ['email'] })]);
+    expect(channelChecked(c, 'email', { email: false })).toBe(true);
+  });
+});
+
+describe('categoryMasterChecked', () => {
+  it('is on only when every toggleable channel currently reads on', () => {
+    const c = cat('visit', [key({ allowedChannels: ['email', 'sms'] })]);
+    expect(categoryMasterChecked(c, { email: true, sms: true })).toBe(true);
+    expect(categoryMasterChecked(c, { email: true, sms: false })).toBe(false);
+  });
+
+  it('reads on for a fully-locked category (nothing left to toggle)', () => {
+    const c = cat('visit', [key({ allowedChannels: ['email'], lockedChannels: ['email'] })]);
+    expect(categoryMasterChecked(c, undefined)).toBe(true);
+  });
+});
+
+describe('categoryMarketingCategories', () => {
+  it('collects distinct marketingCategory values across keys', () => {
+    const c = cat('marketing', [
+      key({ marketingCategory: 'newsletter' }),
+      key({ marketingCategory: 'survey' }),
+      key({ marketingCategory: 'newsletter' }),
+    ]);
+    expect(categoryMarketingCategories(c)).toEqual(['newsletter', 'survey']);
+  });
+
+  it('falls back to "marketing" when keys exist but none declare a marketingCategory', () => {
+    const c = cat('marketing', [key({ marketingCategory: null })]);
+    expect(categoryMarketingCategories(c)).toEqual(['marketing']);
+  });
+
+  it('is empty for a category with no keys', () => {
+    expect(categoryMarketingCategories(cat('empty', []))).toEqual([]);
+  });
+});
+
+describe('marketingMasterChecked', () => {
+  it('is on only when every referenced marketingCategory is opted in', () => {
+    const c = cat('marketing', [key({ marketingCategory: 'newsletter' }), key({ marketingCategory: 'survey' })]);
+    expect(marketingMasterChecked(c, { newsletter: true, survey: true })).toBe(true);
+    expect(marketingMasterChecked(c, { newsletter: true, survey: false })).toBe(false);
+    expect(marketingMasterChecked(c, undefined)).toBe(false);
+  });
+
+  it('is off for a category with no keys', () => {
+    expect(marketingMasterChecked(cat('empty', []), { marketing: true })).toBe(false);
+  });
+});

@@ -1,0 +1,1 @@
+Assignment changed. Your {{serviceType}} for {{kinName}} on {{bookingDate}} changed or was canceled. Tap to review.

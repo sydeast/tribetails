@@ -1,0 +1,9 @@
+Subject: A kinfolk asked to cancel a visit
+
+Heads up: {{kinfolkName}} asked to cancel the {{serviceType}} for {{kinName}} on {{bookingDate}}.
+
+Nothing is canceled yet. Review the visit and confirm or keep it on the books.
+
+Open the visit here: []
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.

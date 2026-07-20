@@ -1,0 +1,264 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Timestamp } from 'firebase-admin/firestore';
+import { buildDbMock } from './_helpers/mockDb';
+
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), writeAuditEntryFn: vi.fn() }));
+vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
+vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
+vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryFn }));
+vi.mock('firebase-admin/firestore', async () => {
+  const actual = await vi.importActual<any>('firebase-admin/firestore');
+  return { ...actual, FieldValue: { serverTimestamp: () => '__SERVER_TS__' } };
+});
+beforeEach(() => {
+  mocks.dbFn.mockReset();
+  mocks.writeAuditEntryFn.mockReset();
+  mocks.writeAuditEntryFn.mockResolvedValue('audit-id');
+});
+
+describe('requestBookingHandler — multi-visit envelope', () => {
+  it('default-assigns every new visit to the admin (2026-07-02 assignment feature)', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'base_services/s1': { name: "Auntie's In", priceCents: 1500 },
+        'businessSettings/admins': { uids: ['admin1'] },
+        'staff/admin1': { displayName: 'Auntie Dee' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    const res: any = await requestBookingHandler({
+      data: {
+        kinfolkId: '3',
+        kinIds: ['k1'],
+        pattern: 'individual',
+        visits: [{ startTimeMs: future, endTimeMs: future + 30 * 60_000, serviceId: 's1', serviceName: "Auntie's In" }],
+      },
+      auth: { uid: 'u1' },
+    } as any);
+    const visit = ctx.writes.find((w) =>
+      w.path.startsWith(`families/3/bookings/${res.batchId}/kinCares/`),
+    );
+    expect(visit?.data?.assignedAuntieUid).toBe('admin1');
+    expect(visit?.data?.auntieDisplayName).toBe('Auntie Dee');
+  });
+
+  it('creates unassigned visits when no admins doc exists (never blocks a booking)', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'base_services/s1': { name: "Auntie's In", priceCents: 1500 },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    const res: any = await requestBookingHandler({
+      data: {
+        kinfolkId: '3',
+        kinIds: ['k1'],
+        pattern: 'individual',
+        visits: [{ startTimeMs: future, endTimeMs: future + 30 * 60_000, serviceId: 's1', serviceName: "Auntie's In" }],
+      },
+      auth: { uid: 'u1' },
+    } as any);
+    const visit = ctx.writes.find((w) =>
+      w.path.startsWith(`families/3/bookings/${res.batchId}/kinCares/`),
+    );
+    expect(visit?.data?.assignedAuntieUid).toBeNull();
+    expect(visit?.data?.auntieDisplayName).toBeNull();
+  });
+
+  it('accepts visits[] payload + creates ONE parent envelope + one kinCare per visit in a transaction', async () => {
+    // NOTE-56: seed the canonical catalog so serviceName + priceCents resolve
+    // server-side (client-supplied price is ignored).
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'base_services/s1': { name: "Auntie's In", priceCents: 1500 },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    const res: any = await requestBookingHandler({
+      data: {
+        kinfolkId: '3',
+        kinIds: ['k1', 'k2'],
+        notes: 'park preferred',
+        pattern: 'individual',
+        visits: [
+          {
+            startTimeMs: future,
+            endTimeMs: future + 30 * 60_000,
+            serviceId: 's1',
+            serviceName: "Auntie's In",
+            priceCents: 1500,
+          },
+          {
+            startTimeMs: future + 86400_000,
+            endTimeMs: future + 86400_000 + 30 * 60_000,
+            serviceId: 's1',
+            serviceName: "Auntie's In",
+            priceCents: 1500,
+          },
+        ],
+      },
+      auth: { uid: 'u1' },
+    } as any);
+
+    // Envelope id is returned; bookingIds is the single-element [batchId].
+    expect(res.batchId).toBeTypeOf('string');
+    expect(res.bookingIds).toEqual([res.batchId]);
+
+    // One transaction wrote 1 parent + 2 kinCares (no `.add()` loop anymore).
+    expect(ctx.adds).toHaveLength(0);
+    const parentWrites = ctx.writes.filter((w) => w.path === `families/3/bookings/${res.batchId}`);
+    const visitWrites = ctx.writes.filter((w) =>
+      w.path.startsWith(`families/3/bookings/${res.batchId}/kinCares/`),
+    );
+    expect(parentWrites).toHaveLength(1);
+    expect(visitWrites).toHaveLength(2);
+
+    const parent = parentWrites[0].data;
+    expect(parent.envelopeStatus).toBe('requested');
+    expect(parent.pattern).toBe('individual');
+    expect(parent.visitCount).toBe(2);
+    expect(parent.kinIds).toEqual(['k1', 'k2']);
+    expect(parent.notes).toBe('park preferred');
+    // Homogeneous service → rolled onto the envelope.
+    expect(parent.serviceId).toBe('s1');
+    expect(parent.serviceName).toBe("Auntie's In");
+    // first/last derived from min/max visit start.
+    expect((parent.firstStartTime as Timestamp).toMillis()).toBe(future);
+    expect((parent.lastStartTime as Timestamp).toMillis()).toBe(future + 86400_000);
+
+    // serviceName + priceCents persisted on every visit doc.
+    expect(visitWrites[0].data.serviceName).toBe("Auntie's In");
+    expect(visitWrites[0].data.priceCents).toBe(1500);
+    expect(visitWrites[0].data.kinIds).toEqual(['k1', 'k2']);
+    expect(visitWrites[0].data.status).toBe('requested');
+    expect(visitWrites[0].data.batchId).toBe(res.batchId);
+  });
+
+  it('NOTE-56: ignores a client-supplied bogus priceCents, using the canonical catalog price', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        // Canonical price is 1500; client will lie and send 1.
+        'base_services/s1': { name: 'Drop-in Visit', priceCents: 1500 },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    const res: any = await requestBookingHandler({
+      data: {
+        kinfolkId: '3',
+        visits: [
+          { startTimeMs: future, serviceId: 's1', serviceName: 'Anything I Want', priceCents: 1 },
+        ],
+      },
+      auth: { uid: 'u1' },
+    } as any);
+
+    const visit = ctx.writes.find((w) =>
+      w.path.startsWith(`families/3/bookings/${res.batchId}/kinCares/`),
+    )!.data;
+    // Server-resolved values win over the client's claims.
+    expect(visit.priceCents).toBe(1500);
+    expect(visit.priceCents).not.toBe(1);
+    expect(visit.serviceName).toBe('Drop-in Visit');
+  });
+
+  it('NOTE-56: drops the client priceCents (null) when the serviceId is not in the catalog', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    const res: any = await requestBookingHandler({
+      data: {
+        kinfolkId: '3',
+        visits: [
+          { startTimeMs: future, serviceId: 'unknown-svc', serviceName: 'Mystery', priceCents: 99999 },
+        ],
+      },
+      auth: { uid: 'u1' },
+    } as any);
+
+    const visit = ctx.writes.find((w) =>
+      w.path.startsWith(`families/3/bookings/${res.batchId}/kinCares/`),
+    )!.data;
+    // Unknown service -> never persist the client price; resolve at invoice time.
+    expect(visit.priceCents).toBeNull();
+    // Display label falls back to the client name when the catalog has no entry.
+    expect(visit.serviceName).toBe('Mystery');
+  });
+
+  it('rolls envelope serviceId/serviceName to null when visits are heterogeneous', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    const res: any = await requestBookingHandler({
+      data: {
+        kinfolkId: '3',
+        visits: [
+          { startTimeMs: future, serviceId: 's1', serviceName: 'Walk', priceCents: 100 },
+          { startTimeMs: future + 60_000, serviceId: 's2', serviceName: 'Feed', priceCents: 200 },
+        ],
+      },
+      auth: { uid: 'u1' },
+    } as any);
+    const parent = ctx.writes.find((w) => w.path === `families/3/bookings/${res.batchId}`)!.data;
+    expect(parent.serviceId).toBeNull();
+    expect(parent.serviceName).toBeNull();
+    expect(parent.visitCount).toBe(2);
+  });
+
+  it('rejects visits[] with past startTime', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const past = Date.now() - 86400_000;
+    await expect(
+      requestBookingHandler({
+        data: {
+          kinfolkId: '3',
+          visits: [
+            { startTimeMs: past, serviceId: 's1', serviceName: 'X', priceCents: 100 },
+          ],
+        },
+        auth: { uid: 'u1' },
+      } as any),
+    ).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+
+  it('rejects empty visits[] when using new shape', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    await expect(
+      requestBookingHandler({
+        data: { kinfolkId: '3', visits: [] },
+        auth: { uid: 'u1' },
+      } as any),
+    ).rejects.toThrow();
+  });
+
+  it('legacy single-visit shape still works (backward compat)', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    const res: any = await requestBookingHandler({
+      data: { kinfolkId: '3', serviceType: 'walk', startTimeMs: future },
+      auth: { uid: 'u1' },
+    } as any);
+    expect(res.bookingId ?? res.bookingIds?.[0]).toBeDefined();
+    expect(res.batchId).toBeDefined();
+  });
+});

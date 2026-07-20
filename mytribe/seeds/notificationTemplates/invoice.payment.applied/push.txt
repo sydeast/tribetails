@@ -1,0 +1,1 @@
+Payment received. Your payment for invoice {{invoiceNumber}} came through. Thank you! Tap for details.

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyTribe, Design Mockups</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --cream:#FBFBF9;--navy:#11131F;--orange:#DF8431;--pink:#D55C87;--teal:#0A8595;--purple:#74538A;--coral:#D5535A;
+    --navy-muted:rgba(17,19,31,.55);--hairline:rgba(17,19,31,.10);
+    --glass:rgba(255,255,255,.62);--glass-border:rgba(255,255,255,.7);
+    --serif:"Young Serif",serif;--sans:"Bricolage Grotesque",sans-serif;--mono:"DM Mono",monospace;
+    --ease:cubic-bezier(.22,.8,.24,1);--shadow:0 14px 34px -18px rgba(17,19,31,.30);--lift:0 22px 46px -20px rgba(17,19,31,.36);
+    --tribe-grad:linear-gradient(135deg,#df8431,#d55c87,#0a8595);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:var(--sans);color:var(--navy);min-height:100vh;-webkit-font-smoothing:antialiased;
+    background:radial-gradient(120vmax 70vmax at 82% -10%,rgba(223,132,49,.20),transparent 55%),
+      radial-gradient(110vmax 70vmax at 5% 0%,rgba(213,92,135,.16),transparent 52%),
+      radial-gradient(130vmax 80vmax at 50% 118%,rgba(10,133,149,.16),transparent 55%),var(--cream);}
+  .wrap{max-width:1120px;margin:0 auto;padding:46px 24px 90px;}
+  header.top{margin-bottom:34px;animation:rise .6s var(--ease) both;}
+  .word{font-family:var(--serif);font-size:38px;letter-spacing:-.01em;}
+  .word .g{background:var(--tribe-grad);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  .kick{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--orange);margin-bottom:10px;}
+  header.top p{color:var(--navy-muted);margin-top:8px;max-width:62ch;line-height:1.55;font-size:14.5px;}
+  .meta{font-family:var(--mono);font-size:11px;color:var(--navy-muted);margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;}
+  .pill{background:var(--glass);border:1px solid var(--glass-border);border-radius:99px;padding:5px 11px;box-shadow:var(--shadow);}
+  h2.grp{font-family:var(--serif);font-size:21px;font-weight:400;margin:34px 2px 14px;display:flex;align-items:center;gap:10px;}
+  h2.grp .ln{flex:1;height:1px;background:var(--hairline);}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;}
+  a.card{display:block;text-decoration:none;color:inherit;background:var(--glass);border:1px solid var(--glass-border);
+    border-radius:20px;overflow:hidden;box-shadow:var(--shadow);backdrop-filter:blur(16px);transition:.2s var(--ease);
+    animation:rise .6s var(--ease) both;}
+  a.card:hover{transform:translateY(-4px);box-shadow:var(--lift);}
+  .thumb{height:86px;background:var(--tribe-grad);position:relative;display:grid;place-items:center;}
+  .thumb.t-op{background:linear-gradient(to bottom right,#df8431,#d55c87);}
+  .thumb.t-tp{background:linear-gradient(to bottom right,#0a8595,#74538a);}
+  .thumb.t-coral{background:linear-gradient(135deg,#d5535a,#df8431);}
+  .thumb .emo{font-size:34px;filter:drop-shadow(0 4px 8px rgba(0,0,0,.25));}
+  .thumb .num{position:absolute;top:8px;left:11px;font-family:var(--mono);font-size:11px;color:rgba(255,255,255,.85);}
+  .cbody{padding:13px 15px 15px;}
+  .cbody b{font-size:15px;font-weight:600;display:block;}
+  .cbody small{font-family:var(--mono);font-size:10.5px;color:var(--navy-muted);display:block;margin-top:3px;letter-spacing:.03em;}
+  .foot{font-family:var(--mono);font-size:11px;color:var(--navy-muted);text-align:center;margin-top:44px;}
+  .foot b{background:var(--tribe-grad);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  @keyframes rise{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="kick">Tribe Tails Pet Care</div>
+      <div class="word">My<span class="g">Tribe</span> design mockups</div>
+      <p>The pet parent portal (com.kinfolk.portal). Full web layout, mobile collapses responsively. Own identity in the Tribe Tails family: bright, sunny, glassmorphic, with the Tribe Gradient as the signature. Locked brand palette, Young Serif + Bricolage Grotesque + DM Mono.</p>
+      <div class="meta">
+        <span class="pill">18 screens</span><span class="pill">0 em / en dashes</span>
+        <span class="pill">android / web / desktop parity</span><span class="pill">anti-slop pass</span>
+      </div>
+    </header>
+
+    <h2 class="grp">In the app <span class="ln"></span></h2>
+    <div class="grid">
+      <a class="card" href="mytribe-home-2026-05-31.html"><div class="thumb"><span class="num">01</span><span class="emo">&#127968;</span></div><div class="cbody"><b>Home</b><small>LIVE VISIT, TRIBE, UP NEXT, TALES</small></div></a>
+      <a class="card" href="mytribe-tribe-2026-05-31.html"><div class="thumb t-tp"><span class="num">02</span><span class="emo">&#127969;</span></div><div class="cbody"><b>Tribe Profile</b><small>FAMILY, HOME INFO, VET CLINIC</small></div></a>
+      <a class="card" href="mytribe-kin-2026-05-31.html"><div class="thumb t-op"><span class="num">03</span><span class="emo">&#128062;</span></div><div class="cbody"><b>The Kin</b><small>PET ROSTER GRID</small></div></a>
+      <a class="card" href="mytribe-kin-detail-2026-05-31.html"><div class="thumb t-op"><span class="num">04</span><span class="emo">&#128054;</span></div><div class="cbody"><b>Kin Profile</b><small>ABOUT, CARE, SITTER NOTES</small></div></a>
+      <a class="card" href="mytribe-schedule-2026-05-31.html"><div class="thumb"><span class="num">05</span><span class="emo">&#128197;</span></div><div class="cbody"><b>Schedule</b><small>UPCOMING, PAST, LIVE VISIT</small></div></a>
+      <a class="card" href="mytribe-booking-wizard-2026-05-31.html"><div class="thumb t-op"><span class="num">06</span><span class="emo">&#10024;</span></div><div class="cbody"><b>New Booking</b><small>5 STEP WIZARD</small></div></a>
+      <a class="card" href="mytribe-booking-detail-2026-05-31.html"><div class="thumb"><span class="num">07</span><span class="emo">&#128221;</span></div><div class="cbody"><b>Booking Details</b><small>STATUS TIMELINE, NOTES</small></div></a>
+      <a class="card" href="mytribe-kintales-2026-05-31.html"><div class="thumb"><span class="num">08</span><span class="emo">&#128150;</span></div><div class="cbody"><b>KinTales</b><small>STORIES, GALLERY, COMMENTS</small></div></a>
+      <a class="card" href="mytribe-invoices-2026-05-31.html"><div class="thumb t-tp"><span class="num">09</span><span class="emo">&#128176;</span></div><div class="cbody"><b>Invoices</b><small>BALANCE, OPEN, PAID, CREDITS</small></div></a>
+      <a class="card" href="mytribe-invoice-detail-2026-05-31.html"><div class="thumb t-tp"><span class="num">10</span><span class="emo">&#129534;</span></div><div class="cbody"><b>Invoice</b><small>LINE ITEMS, PAYMENT HISTORY</small></div></a>
+      <a class="card" href="mytribe-account-2026-05-31.html"><div class="thumb"><span class="num">11</span><span class="emo">&#128100;</span></div><div class="cbody"><b>Account Settings</b><small>PROFILE, RECOVERY, BILLING</small></div></a>
+      <a class="card" href="mytribe-notifications-2026-05-31.html"><div class="thumb"><span class="num">12</span><span class="emo">&#128276;</span></div><div class="cbody"><b>Notification Settings</b><small>TOGGLES, MARKETING OPT-INS</small></div></a>
+    </div>
+
+    <h2 class="grp">Auth and onboarding <span class="ln"></span></h2>
+    <div class="grid">
+      <a class="card" href="mytribe-signin-2026-05-31.html"><div class="thumb"><span class="num">13</span><span class="emo">&#128075;</span></div><div class="cbody"><b>Sign In</b><small>WELCOME BACK TO TRIBE</small></div></a>
+      <a class="card" href="mytribe-claim-invite-2026-05-31.html"><div class="thumb t-op"><span class="num">14</span><span class="emo">&#127881;</span></div><div class="cbody"><b>Claim Invite</b><small>YOU'RE IN</small></div></a>
+      <a class="card" href="mytribe-tribe-picker-2026-05-31.html"><div class="thumb t-tp"><span class="num">15</span><span class="emo">&#128062;</span></div><div class="cbody"><b>Choose a Tribe</b><small>MULTI HOUSEHOLD PICKER</small></div></a>
+      <a class="card" href="mytribe-secure-reset-2026-05-31.html"><div class="thumb t-coral"><span class="num">16</span><span class="emo">&#128274;</span></div><div class="cbody"><b>Secure Account</b><small>PASSWORD RESET, ALERT</small></div></a>
+      <a class="card" href="mytribe-launch-error-2026-05-31.html"><div class="thumb t-coral"><span class="num">17</span><span class="emo">&#128064;</span></div><div class="cbody"><b>Launch Error</b><small>TROUBLE LOADING</small></div></a>
+    </div>
+
+    <h2 class="grp">Guest share <span class="ln"></span></h2>
+    <div class="grid">
+      <a class="card" href="mytribe-shared-kintale-2026-05-31.html"><div class="thumb"><span class="num">18</span><span class="emo">&#128247;</span></div><div class="cbody"><b>Shared KinTale</b><small>PUBLIC FAMILY SHARE, PASSCODE</small></div></a>
+    </div>
+
+    <p class="foot">Cared for by <b>Tribe Tails Pet Care</b></p>
+  </div>
+</body>
+</html>

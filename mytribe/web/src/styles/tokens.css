@@ -1,0 +1,35 @@
+/* ============================================================
+   MyTribe DESIGN SYSTEM tokens  (extracted verbatim from
+   ui-ideas/mytribe-home-2026-05-31.html shared style block)
+   Identity: bright, sunny, glassmorphic. Signature = frosted
+   glass + the Tribe Gradient. Palette locked to brandColors.md /
+   KinfolkBrand. Fonts: Young Serif + Bricolage Grotesque + DM Mono
+   (self-hosted via @fontsource, imported in main.tsx).
+   ============================================================ */
+:root {
+  --cream: #FBFBF9;
+  --navy: #11131F;
+  --orange: #DF8431;
+  --pink: #D55C87;
+  --teal: #0A8595;
+  --purple: #74538A;
+  --coral: #D5535A;
+  --navy-soft: rgba(17, 19, 31, .78);
+  --navy-muted: rgba(17, 19, 31, .55);
+  --hairline: rgba(17, 19, 31, .10);
+  --glass: rgba(255, 255, 255, .62);
+  --glass-dim: rgba(255, 255, 255, .40);
+  --glass-border: rgba(255, 255, 255, .7);
+  --serif: "Young Serif", serif;
+  --sans: "Bricolage Grotesque", sans-serif;
+  --mono: "DM Mono", monospace;
+  --ease: cubic-bezier(.22, .8, .24, 1);
+  --shadow-card: 0 14px 34px -18px rgba(17, 19, 31, .30);
+  --shadow-lift: 0 22px 46px -20px rgba(17, 19, 31, .36);
+  --shadow-warm: 0 16px 34px -16px rgba(223, 132, 49, .55);
+  /* canonical brand gradients (brandColors.md) */
+  --tribe-grad: linear-gradient(135deg, #df8431, #d55c87, #0a8595);
+  --orange-pink: linear-gradient(to bottom right, #df8431, #d55c87);
+  --teal-purple: linear-gradient(to bottom right, #0a8595, #74538a);
+  --maxw: 1140px;
+}
