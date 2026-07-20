@@ -14,6 +14,32 @@ function row(over: Partial<InvoiceStateInput>): InvoiceStateInput {
   return { status: '', amountDue: 0, total: 0, creditRedeemed: false, ...over };
 }
 
+describe('invoiceState with a missing status field', () => {
+  // Found by driving the LIVE app 2026-07-20. `row.status.trim()` threw
+  // "Cannot read properties of undefined (reading 'trim')" and the error
+  // boundary blanked the ENTIRE invoices page, because the seeded sandbox
+  // invoices carry the legacy `invoiceStatus` spelling and no `status`.
+  //
+  // One malformed document must never take the whole screen down. Same
+  // blast-radius lesson as Firestore's toObjects: degrade the row, not the page.
+  const noStatus = (over: Partial<InvoiceStateInput>): InvoiceStateInput =>
+    ({ ...row(over), status: undefined as unknown as string });
+
+  it('does not throw when status is absent', () => {
+    expect(() => invoiceState(noStatus({ amountDue: 45, total: 45 }))).not.toThrow();
+  });
+
+  it('still classifies from the money fields when status is absent', () => {
+    expect(invoiceState(noStatus({ amountDue: 45, total: 45 }))).toBe('open');
+    expect(invoiceState(noStatus({ amountDue: 0, total: 60 }))).toBe('paid');
+    expect(invoiceState(noStatus({ amountDue: -20, total: -20 }))).toBe('credit');
+  });
+
+  it('treats null the same as absent', () => {
+    expect(invoiceState({ ...row({ amountDue: 0, total: 60 }), status: null as unknown as string })).toBe('paid');
+  });
+});
+
 describe('invoiceState (AO-12 regression guard: enumerated, never paid-by-negation)', () => {
   it('an explicit "credit" status with no redemption stamp classifies as credit, never paid', () => {
     expect(invoiceState(row({ status: 'credit', amountDue: -20, total: -20 }))).toBe('credit');

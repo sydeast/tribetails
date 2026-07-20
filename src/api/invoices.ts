@@ -44,6 +44,36 @@ export interface InvoiceEntry {
 }
 
 /**
+ * Fill the fields this interface CLAIMS are always present but Firestore does
+ * not guarantee. The interface is a cast over raw document data, not a
+ * validation of it, so a legacy or seeded doc missing a key crashes any
+ * consumer that calls a method on it.
+ *
+ * Both failures below were found by driving the LIVE app on 2026-07-20, and
+ * both blanked the ENTIRE invoices page via the error boundary rather than
+ * degrading one row:
+ *   - the 4 seeded sandbox invoices had no `status`  -> `.trim()` of undefined
+ *   - `test-kinfolk-001-invoice-1` has no `sessionIds` -> `.length` of undefined
+ *
+ * Normalize here, once, so no screen has to remember. Money fields are left
+ * exactly as they arrive: coercing an absent `total` to 0 would invent a
+ * financial fact, and `invoiceState` already treats a non-finite number as "no
+ * evidence" rather than as a real zero.
+ */
+export function normalizeInvoice(row: InvoiceEntry): InvoiceEntry {
+  return {
+    ...row,
+    client: row.client ?? '',
+    kinfolkName: row.kinfolkName ?? '',
+    invoiceNumber: row.invoiceNumber ?? '',
+    date: row.date ?? '',
+    dueDate: row.dueDate ?? '',
+    status: row.status ?? '',
+    sessionIds: Array.isArray(row.sessionIds) ? row.sessionIds : [],
+  };
+}
+
+/**
  * The bounded, server-ordered invoices listener. Ordered by `createdAt`
  * descending, capped at 200 (the ActivityLog/Notifications convention).
  *

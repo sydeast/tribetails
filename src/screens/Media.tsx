@@ -130,7 +130,7 @@ function MediaGrid({ rows, typeFilter, onTypeFilterChange }: MediaGridProps) {
     () =>
       typeFilter === null
         ? safeRows
-        : safeRows.filter((m) => m.fileType.trim().toUpperCase() === typeFilter),
+        : safeRows.filter((m) => (m.fileType ?? '').trim().toUpperCase() === typeFilter),
     [safeRows, typeFilter],
   );
 
