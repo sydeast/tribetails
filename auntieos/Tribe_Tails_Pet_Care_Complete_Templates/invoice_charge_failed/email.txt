@@ -1,0 +1,9 @@
+Subject: Security: Payment failed for invoice {{invoiceNumber}}
+
+Hello {{kinfolkName}}. I take this seriously. The payment for {{invoiceNumber}} did not go through. I shall need this handled right quick so I can focus on the Kin.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

@@ -1,0 +1,173 @@
+{
+  "_note": "Raw per-source scrapes for the pilot. One record per (breed, source). Source field labels preserved in `sourceKey`. Values kept verbatim from the page (minus Purchase price, per instructions). `attrs` keys are already mapped to canonical attribute names; the source->canonical mapping is documented in SCHEMA.md. merge_breeds.py consumes this file.",
+  "records": [
+    {
+      "id": "affenpinscher", "name": "Affenpinscher", "species": "dog", "source": "wamiz",
+      "url": "https://wamiz.co.uk/dog/breeds/134/affenpinscher", "profileId": 134,
+      "attrs": {
+        "otherNames":     { "value": ["Monkey Dog"], "sourceKey": "Other name" },
+        "lifeExpectancy": { "value": "Between 12 and 14 years", "sourceKey": "Life expectancy" },
+        "temperament":    { "value": ["Playful", "High prey drive"], "sourceKey": "Temperament" },
+        "size":           { "value": "Small", "sourceKey": "Size" },
+        "adultHeight":    { "value": {"female": "Between 10 and 12 in", "male": "Between 10 and 12 in"}, "sourceKey": "Adult size" },
+        "adultWeight":    { "value": {"female": "Between 9 and 13 lb", "male": "Between 9 and 13 lb"}, "sourceKey": "Adult weight" },
+        "coatColour":     { "value": ["Black"], "sourceKey": "Coat colour" },
+        "coatType":       { "value": ["Long", "Hard"], "sourceKey": "Type of coat" },
+        "eyeColour":      { "value": ["Brown"], "sourceKey": "Eye colour" },
+        "shedding":       { "value": "Heavy", "sourceKey": "Shedding" }
+      },
+      "content": {
+        "description": "The Affenpinscher is a quirky looking dog who is bold and curious, yet affectionate and loving... highly adaptable and suitable for living in flats or apartments, requiring minimal exercise in comparison to other dog breeds.",
+        "commonIllnesses": ["Heart problems", "Cataracts", "Hip dysplasia", "Hernias", "Hypothyroidism", "Legg-Calve-Perthes Disease", "Patellar Luxation", "Obesity", "Oligodontia", "Sebaceous Cysts", "Von Willebrand Disease"]
+      }
+    },
+    {
+      "id": "affenpinscher", "name": "Affenpinscher", "species": "dog", "source": "rkc",
+      "url": "https://www.royalkennelclub.com/search/breeds-a-to-z/breeds/toy/affenpinscher/", "group": "toy",
+      "attrs": {
+        "size":                  { "value": "Small", "sourceKey": "Size" },
+        "exercise":              { "value": "Up to 1 hour per day", "sourceKey": "Exercise" },
+        "sizeOfHome":            { "value": "Flat/ Apartment", "sourceKey": "Size of home" },
+        "grooming":              { "value": "More than once a week", "sourceKey": "Grooming" },
+        "coatType":              { "value": "Medium", "sourceKey": "Coat length" },
+        "shedding":              { "value": "Yes", "sourceKey": "Sheds" },
+        "lifeExpectancy":        { "value": "Over 12 years", "sourceKey": "Lifespan" },
+        "vulnerableNativeBreed": { "value": "No", "sourceKey": "Vulnerable native breed" },
+        "townOrCountry":         { "value": "Either", "sourceKey": "Town or country" },
+        "sizeOfGarden":          { "value": "Small/ medium garden", "sourceKey": "Size of garden" }
+      },
+      "content": {
+        "description": "This little 'black devil' dog of German origin was developed as a vermin killer... The black, ragged street urchin look is matched by a mischievous curiosity and fearlessness.",
+        "breedWatchCategory": "Category 1"
+      }
+    },
+    {
+      "id": "affenpinscher", "name": "Affenpinscher", "species": "dog", "source": "chewy",
+      "url": "https://www.chewy.com/education/dog-breeds/affenpinscher",
+      "attrs": {
+        "temperament":             { "value": ["Inquisitive", "Loyal", "Spunky"], "sourceKey": "Temperament" },
+        "adultWeight":             { "value": {"male": "7-10 pounds", "female": "7-10 pounds"}, "sourceKey": "Weight" },
+        "adultHeight":             { "value": {"male": "9-11.5 inches", "female": "9-11.5 inches"}, "sourceKey": "Height" },
+        "lifeExpectancy":          { "value": "12 to 15 years", "sourceKey": "Life Expectancy" },
+        "coatColour":              { "value": ["Black", "Black and Tan", "Black and Silver", "Red", "Belge"], "sourceKey": "Coat Color" },
+        "maintenanceLevel":        { "value": 3, "scale": "1-5", "sourceKey": "Maintenance Level" },
+        "friendliness":            { "value": 4, "scale": "1-5", "sourceKey": "Friendliness" },
+        "exercise":                { "value": 3, "scale": "1-5", "sourceKey": "Exercise Needs" },
+        "healthIssuesRating":      { "value": 3, "scale": "1-5", "sourceKey": "Health Issues" },
+        "grooming":                { "value": 3, "scale": "1-5", "sourceKey": "Grooming Needs" },
+        "trainingNeeds":           { "value": 4, "scale": "1-5", "sourceKey": "Training Needs" },
+        "shedding":                { "value": 2, "scale": "1-5", "sourceKey": "Shedding Level" },
+        "playfulness":             { "value": 4, "scale": "1-5", "sourceKey": "Playfulness" },
+        "energyLevel":             { "value": 3, "scale": "1-5", "sourceKey": "Energy Level" },
+        "barkingTendencies":       { "value": 2, "scale": "1-5", "sourceKey": "Barking Tendencies" },
+        "goodForApartments":       { "value": 5, "scale": "1-5", "sourceKey": "Good for Apartments and Small Homes" },
+        "sensitiveToColdWeather":  { "value": 3, "scale": "1-5", "sourceKey": "Sensitive to Cold Weather" },
+        "sensitiveToWarmWeather":  { "value": 3, "scale": "1-5", "sourceKey": "Sensitive to Warm Weather" },
+        "goodForFirstTimeOwners":  { "value": 3, "scale": "1-5", "sourceKey": "Good for First-Time Pet Parents" },
+        "goodWithKids":            { "value": 2, "scale": "1-5", "sourceKey": "Good with Kids" },
+        "goodWithCats":            { "value": 3, "scale": "1-5", "sourceKey": "Good with Cats" },
+        "goodWithOtherDogs":       { "value": 3, "scale": "1-5", "sourceKey": "Good with Other Dogs" }
+      },
+      "content": {
+        "description": "Curious and confident little dogs, Affenpinschers are best for pet parents who can offer consistent training, positive reinforcement and guidance.",
+        "updated": "December 15, 2025"
+      }
+    },
+
+    {
+      "id": "abyssinian", "name": "Abyssinian", "species": "cat", "source": "tica",
+      "url": "https://tica.org/breed/abyssinian/",
+      "attrs": {
+        "temperament":    { "value": ["Playful"], "sourceKey": "body class temperament-*" },
+        "size":           { "value": "Medium", "sourceKey": "body class size-*" },
+        "exercise":       { "value": "High", "sourceKey": "body class activity-level-*" },
+        "grooming":       { "value": "Low", "sourceKey": "body class grooming-*" },
+        "coatType":       { "value": ["Short"], "sourceKey": "body class coat-length-*" },
+        "classification": { "value": "Championship", "sourceKey": "body class classification-*" }
+      },
+      "content": {
+        "atAGlance": "Considered to be one of the oldest cat breeds, Abyssinians are tremendously devoted felines. Their distinctive almond-shaped eyes resemble the elegance of the cat statues found in ancient Egyptian tombs. Easy to groom, they are easy to care for and make a great addition to a family."
+      }
+    },
+    {
+      "id": "abyssinian", "name": "Abyssinian", "species": "cat", "source": "wamiz",
+      "url": "https://wamiz.co.uk/cat/breeds/459/abyssinian-cat", "profileId": 459,
+      "attrs": {
+        "otherNames":     { "value": ["Bunny cat"], "sourceKey": "Other name" },
+        "lifeExpectancy": { "value": "Between 13 and 15 years", "sourceKey": "Life expectancy" },
+        "temperament":    { "value": ["Affectionate", "Playful", "Intelligent"], "sourceKey": "Temperament" },
+        "adultHeight":    { "value": {"female": "Approximately 12 in", "male": "Approximately 12 in"}, "sourceKey": "Adult size" },
+        "adultWeight":    { "value": {"female": "Between 7 and 9 lb", "male": "Between 9 and 11 lb"}, "sourceKey": "Adult weight" },
+        "coatColour":     { "value": ["Brown", "Red", "Cream", "Blue"], "sourceKey": "Coat colour" },
+        "coatType":       { "value": ["Short"], "sourceKey": "Type of coat" },
+        "eyeColour":      { "value": ["Green", "Yellow", "Brown"], "sourceKey": "Eye colour" },
+        "shedding":       { "value": "Light", "sourceKey": "Shedding" }
+      },
+      "content": {
+        "description": "The Abyssinian is a breed as magnificent as it is ancient, whose characteristic colour and regal appearance are the perfect match for their endearing personality and abundant energy.",
+        "commonIllnesses": ["Pyruvate kinase deficiency (anaemia)", "Progressive retinal atrophy (blindness)", "Amyloidosis (renal failure)", "Periodontal disease"]
+      }
+    },
+
+    {
+      "id": "bengal", "name": "Bengal", "species": "cat", "source": "tica",
+      "url": "https://tica.org/breed/bengal/",
+      "attrs": {
+        "temperament":    { "value": ["Playful"], "sourceKey": "body class temperament-*" },
+        "size":           { "value": "Medium", "sourceKey": "body class size-*" },
+        "exercise":       { "value": "High", "sourceKey": "body class activity-level-*" },
+        "grooming":       { "value": "Low", "sourceKey": "body class grooming-*" },
+        "coatType":       { "value": ["Long"], "sourceKey": "body class coat-length-*" },
+        "classification": { "value": "Championship", "sourceKey": "body class classification-*" }
+      },
+      "content": {}
+    },
+    {
+      "id": "bengal", "name": "Bengal", "species": "cat", "source": "wamiz",
+      "url": "https://wamiz.co.uk/cat/breeds/9/bengal", "profileId": 9,
+      "attrs": {
+        "lifeExpectancy": { "value": "Between 10 and 16 years", "sourceKey": "Life expectancy" },
+        "temperament":    { "value": ["Playful", "Intelligent"], "sourceKey": "Temperament" },
+        "adultHeight":    { "value": {"female": "Approximately 14 in", "male": "Approximately 14 in"}, "sourceKey": "Adult size" },
+        "adultWeight":    { "value": {"female": "Between 9 and 13 lb", "male": "Between 11 and 15 lb"}, "sourceKey": "Adult weight" },
+        "coatColour":     { "value": ["Brown"], "sourceKey": "Coat colour" },
+        "coatType":       { "value": ["Short"], "sourceKey": "Type of coat" },
+        "eyeColour":      { "value": ["Green", "Blue", "Yellow"], "sourceKey": "Eye colour" },
+        "shedding":       { "value": "Average", "sourceKey": "Shedding" }
+      },
+      "content": {
+        "description": "These cats turn heads with their beauty and boundless energy... just like little leopards thanks to their physique and temperament. When you buy a Bengal, you have to be prepared to live with a small tornado!",
+        "commonIllnesses": ["Pyruvate kinase deficiency", "Hypertrophic cardiomyopathy", "Progressive retinal atrophy"]
+      }
+    },
+    {
+      "id": "bengal", "name": "Bengal", "species": "cat", "source": "chewy",
+      "url": "https://www.chewy.com/education/cat-breeds/bengal-cat",
+      "attrs": {
+        "temperament":         { "value": ["Whip-Smart", "Energetic", "Curious"], "sourceKey": "Temperament" },
+        "lifeExpectancy":      { "value": "12-17 years", "sourceKey": "Life Expectancy" },
+        "adultWeight":         { "value": "6-15 pounds", "sourceKey": "Weight" },
+        "maintenanceLevel":    { "value": 5, "scale": "1-5", "sourceKey": "Maintenance Level" },
+        "friendliness":        { "value": 4, "scale": "1-5", "sourceKey": "Friendliness" },
+        "exercise":            { "value": 5, "scale": "1-5", "sourceKey": "Exercise Needs" },
+        "healthIssuesRating":  { "value": 3, "scale": "1-5", "sourceKey": "Health Issues" },
+        "grooming":            { "value": 2, "scale": "1-5", "sourceKey": "Grooming Needs" },
+        "trainingNeeds":       { "value": 4, "scale": "1-5", "sourceKey": "Trainability" },
+        "shedding":            { "value": 2, "scale": "1-5", "sourceKey": "Shedding Level" },
+        "playfulness":         { "value": 4, "scale": "1-5", "sourceKey": "Playfulness" },
+        "energyLevel":         { "value": 5, "scale": "1-5", "sourceKey": "Energy Level" },
+        "vocalLevel":          { "value": 4, "scale": "1-5", "sourceKey": "Vocal Level" },
+        "likesToBePickedUp":   { "value": 2, "scale": "1-5", "sourceKey": "Likes to be Picked Up" },
+        "likesToBePet":        { "value": 3, "scale": "1-5", "sourceKey": "Likes to be Pet" },
+        "goodForFirstTimeOwners": { "value": 1, "scale": "1-5", "sourceKey": "Good for First-Time Pet Parents" },
+        "goodWithKids":        { "value": 3, "scale": "1-5", "sourceKey": "Good with Kids" },
+        "goodWithDogs":        { "value": 3, "scale": "1-5", "sourceKey": "Good with Dogs" },
+        "goodWithOtherCats":   { "value": 3, "scale": "1-5", "sourceKey": "Good with Other Cats" }
+      },
+      "content": {
+        "description": "Known for their exotic coats and spunky personalities, Bengals are a cross of the Asian leopard cat and the domestic house cat.",
+        "updated": "February 5, 2026"
+      }
+    }
+  ]
+}

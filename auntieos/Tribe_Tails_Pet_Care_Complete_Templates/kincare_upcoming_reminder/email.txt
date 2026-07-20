@@ -1,0 +1,9 @@
+Subject: Reminder: I will be seeing {{kinName}} on {{bookingDate}}
+
+Hello {{kinfolkName}}. This is a quick note to say I am looking forward to our {{serviceType}} on {{bookingDate}} at {{bookingTime}}.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

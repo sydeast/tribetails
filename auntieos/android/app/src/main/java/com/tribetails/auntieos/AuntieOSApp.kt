@@ -1,0 +1,188 @@
+package com.tribetails.auntieos
+
+import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.os.Build
+import android.util.Log
+import com.tribetails.auntieos.BuildConfig
+import com.tribetails.auntieos.data.api.RetrofitClient
+import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.BookingRepository
+import com.tribetails.auntieos.data.repository.ServiceRepository
+import com.tribetails.auntieos.location.BreadcrumbDispatcher
+import com.tribetails.auntieos.media.MediaUploadManager
+import com.tribetails.auntieos.notifications.VisitNotifier
+import com.tribetails.auntieos.util.AuntieLog
+import com.tribetails.auntieos.util.baseUrlFlow
+import com.tribetails.auntieos.util.saveBaseUrl
+import com.tribetails.auntieos.voice.VoiceTokenManager
+import io.sentry.android.core.SentryAndroid
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+
+class AuntieOSApp : Application() {
+
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    var repository: AuntieRepository = buildRepo(RetrofitClient.DEFAULT_BASE_URL)
+        private set
+
+    val bookingRepository: BookingRepository by lazy { BookingRepository() }
+    val serviceRepository: ServiceRepository by lazy { ServiceRepository() }
+    val mediaUploadManager: MediaUploadManager by lazy { MediaUploadManager(applicationContext, repository) }
+    val visitNotifier: VisitNotifier by lazy { VisitNotifier() }
+    val breadcrumbDispatcher: BreadcrumbDispatcher by lazy {
+        BreadcrumbDispatcher(repository = repository, scope = appScope)
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+
+        // Read any pre-Sentry crash from the previous launch attempt. This
+        // exists because v0.2.0 sideloads on Android 16 (API 36) crashed during
+        // cold launch with zero Sentry events captured - meaning the crash is
+        // upstream of Sentry.init. Without this, every crash-loop session is
+        // observable only via `adb logcat`. With this, the next launch logs
+        // the prior stacktrace AND forwards it to Sentry once init succeeds.
+        val priorCrashReport = readPreviousCrashReport(applicationContext)
+
+        // Install the on-disk uncaught handler BEFORE Sentry.init so even a
+        // crash inside SentryAndroid.init() leaves a recoverable stacktrace.
+        installDefensiveCrashHandler(applicationContext)
+
+        // Skip Sentry under Robolectric - unit-test runs were polluting the
+        // production project (AUNTIEOS-ADMIN-4 retrofit 404: 476 events / 67
+        // fake "users", all tagged device.family=robolectric).
+        val isRobolectric =
+            Build.FINGERPRINT?.contains("robolectric", ignoreCase = true) == true
+        val sentryDsn = BuildConfig.SENTRY_DSN
+        if (!isRobolectric && sentryDsn.isNotBlank()) {
+            try {
+                SentryAndroid.init(this) { options ->
+                    options.dsn = sentryDsn
+                    options.setBeforeSend { event, _ -> event }
+                }
+                if (priorCrashReport != null) {
+                    io.sentry.Sentry.captureMessage(
+                        "pre-sentry-crash recovered from disk\n$priorCrashReport",
+                        io.sentry.SentryLevel.FATAL
+                    )
+                }
+            } catch (t: Throwable) {
+                AuntieLog.e("Sentry init failed", t)
+            }
+        }
+
+        AuntieLog.i("AuntieOSApp created")
+        
+        createNotificationChannels()
+
+        appScope.launch {
+            try {
+                val savedUrl = baseUrlFlow().first()
+                val effectiveUrl = if (savedUrl.contains(RetrofitClient.LEGACY_N8N_HOST)) {
+                    AuntieLog.i("Migrating stale base_url '$savedUrl' → ${RetrofitClient.DEFAULT_BASE_URL}")
+                    applicationContext.saveBaseUrl(RetrofitClient.DEFAULT_BASE_URL)
+                    RetrofitClient.DEFAULT_BASE_URL
+                } else savedUrl
+                if (effectiveUrl != RetrofitClient.DEFAULT_BASE_URL) {
+                    AuntieLog.i("Rebuilding repository with saved URL: $effectiveUrl")
+                    repository = buildRepo(effectiveUrl)
+                }
+            } catch (e: Exception) {
+                AuntieLog.e("Failed to load saved URL", e)
+            }
+        }
+
+        try {
+            VoiceTokenManager.initialize(this, RetrofitClient.buildTwilio(), appScope)
+        } catch (e: Exception) {
+            AuntieLog.e("Failed to initialize VoiceTokenManager", e)
+        }
+    }
+
+    private fun buildRepo(baseUrl: String) = AuntieRepository(
+        n8n = RetrofitClient.buildN8n(baseUrl)
+    )
+
+    fun rebuildRepository(baseUrl: String) {
+        AuntieLog.i("Rebuilding repository: $baseUrl")
+        repository = buildRepo(baseUrl)
+    }
+
+    private fun createNotificationChannels() {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        // 1. Call Channel (Highest Priority, Custom Sound)
+        val callChannel = NotificationChannel(
+            CALL_CHANNEL_ID,
+            "Incoming Calls",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Tribe Tails call screening and live calls"
+            enableVibration(true)
+            enableLights(true)
+        }
+        nm.createNotificationChannel(callChannel)
+
+        // 2. Message Channel (High Priority, Custom Sound)
+        val msgChannel = NotificationChannel(
+            MESSAGE_CHANNEL_ID,
+            "New Messages",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Tribe Tails SMS and RCS messages"
+            enableVibration(true)
+        }
+        nm.createNotificationChannel(msgChannel)
+    }
+
+    companion object {
+        const val CALL_CHANNEL_ID = "tribe_tails_calls"
+        const val MESSAGE_CHANNEL_ID = "tribe_tails_messages"
+        lateinit var instance: AuntieOSApp
+            private set
+    }
+}
+
+private const val CRASH_FILE = "last_crash.txt"
+
+private fun installDefensiveCrashHandler(ctx: Context) {
+    val prior = Thread.getDefaultUncaughtExceptionHandler()
+    Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+        try {
+            val sb = StringBuilder()
+            sb.append("thread=").append(thread.name).append('\n')
+            sb.append("when=").append(System.currentTimeMillis()).append('\n')
+            sb.append("os.sdk=").append(Build.VERSION.SDK_INT).append('\n')
+            sb.append("device=").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append('\n')
+            sb.append("fingerprint=").append(Build.FINGERPRINT).append('\n')
+            sb.append("version=").append(BuildConfig.VERSION_NAME).append('+').append(BuildConfig.VERSION_CODE).append('\n')
+            sb.append("---\n")
+            sb.append(Log.getStackTraceString(throwable))
+            ctx.openFileOutput(CRASH_FILE, Context.MODE_PRIVATE).use { it.write(sb.toString().toByteArray()) }
+        } catch (_: Throwable) {
+            // best-effort - do not mask the original crash
+        }
+        prior?.uncaughtException(thread, throwable)
+    }
+}
+
+private fun readPreviousCrashReport(ctx: Context): String? {
+    return try {
+        val f = ctx.getFileStreamPath(CRASH_FILE) ?: return null
+        if (!f.exists()) return null
+        val text = f.readText()
+        Log.e("AuntieOSApp", "Recovered prior-launch crash:\n$text")
+        f.delete()
+        text
+    } catch (_: Throwable) {
+        null
+    }
+}

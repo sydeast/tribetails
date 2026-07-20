@@ -1,0 +1,1 @@
+Update: I have modified your invoice for {{kinName}}. Tap to see details.

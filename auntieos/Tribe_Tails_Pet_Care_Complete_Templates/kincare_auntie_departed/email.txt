@@ -1,0 +1,9 @@
+Subject: Status: I have finished up my visit with {{kinName}}
+
+Hello. I have finished our {{serviceType}} and {{kinName}} is all settled. (Waste removed. Door locked. Key secured in the lockbox.)
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

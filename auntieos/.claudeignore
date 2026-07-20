@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+vendor/
+
+# Build output
+dist/
+build/
+.next/
+out/
+.nuxt/
+.turbo/
+
+# Cache
+.cache/
+.parcel-cache/
+.eslintcache
+
+# Logs and temp
+*.log
+*.tmp
+.DS_Store
+
+# Heavy media
+*.mp4
+*.mov
+*.psd
+*.zip
+
+# SOTU infrastructure paths (avoid mixing with product webapp tasks)
+sotu-hosting/public/
+sotu-hosting/functions/
+
+# Lockfiles (optional: comment out if needed)
+package-lock.json
+pnpm-lock.yaml
+yarn.lock

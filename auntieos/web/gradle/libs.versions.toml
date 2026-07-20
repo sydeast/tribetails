@@ -1,0 +1,65 @@
+[versions]
+# NOTE: the web-login focus bug was a modifier-ORDER bug in our own code
+# (focusProperties{canFocus=false} after .clickable), fixed on this 1.8.2 tree.
+# It did NOT need a Compose/Kotlin upgrade. Do not bump for that reason.
+kotlin              = "2.1.21"
+compose             = "1.8.2"
+coroutines          = "1.10.1"
+serialization       = "1.7.3"
+ktor                = "3.0.3"
+datetime            = "0.7.0"
+
+# Headless component kit + icons
+composablesUi       = "1.36.1"
+lucideIcons         = "1.1.0"
+
+# Calendar engine
+kizitonwoseCalendar = "2.7.0"
+
+# Firebase (KMP wrapper)
+gitliveFirebase     = "2.1.0"
+
+# Image loader (wasmJs supported as of 3.x)
+coil                = "3.0.4"
+
+# Sentry JVM SDK (desktop crash/error reporting; matches the Android app's 8.x line)
+sentry              = "8.40.0"
+
+[libraries]
+# Kotlin / coroutines / serialization / time
+kotlinx-coroutines-core         = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core",     version.ref = "coroutines" }
+kotlinx-coroutines-test         = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test",     version.ref = "coroutines" }
+kotlinx-serialization-json      = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+kotlinx-datetime                = { module = "org.jetbrains.kotlinx:kotlinx-datetime",            version.ref = "datetime" }
+
+# Ktor (for n8n webhook + any HTTP)
+ktor-client-core                = { module = "io.ktor:ktor-client-core",                version.ref = "ktor" }
+ktor-client-js                  = { module = "io.ktor:ktor-client-js",                  version.ref = "ktor" }
+ktor-client-java                = { module = "io.ktor:ktor-client-java",                version.ref = "ktor" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+
+# Composables UI (headless kit) + Lucide icons
+composables-core                = { module = "com.composables:core",          version.ref = "composablesUi" }
+composables-icons-lucide        = { module = "com.composables:icons-lucide",  version.ref = "lucideIcons" }
+
+# Calendar
+kizitonwose-calendar            = { module = "com.kizitonwose.calendar:compose-multiplatform", version.ref = "kizitonwoseCalendar" }
+
+# Firebase (KMP wrapper — Wasm support landed in 2.x)
+firebase-app                    = { module = "dev.gitlive:firebase-app",       version.ref = "gitliveFirebase" }
+firebase-auth                   = { module = "dev.gitlive:firebase-auth",      version.ref = "gitliveFirebase" }
+firebase-firestore              = { module = "dev.gitlive:firebase-firestore", version.ref = "gitliveFirebase" }
+
+# Coil 3 — multiplatform image loader (wasmJs target supported)
+coil-compose                    = { module = "io.coil-kt.coil3:coil-compose",          version.ref = "coil" }
+coil-network-ktor3              = { module = "io.coil-kt.coil3:coil-network-ktor3",    version.ref = "coil" }
+
+# Sentry JVM SDK (desktop target only)
+sentry-jvm                      = { module = "io.sentry:sentry",                       version.ref = "sentry" }
+
+[plugins]
+kotlinMultiplatform   = { id = "org.jetbrains.kotlin.multiplatform",     version.ref = "kotlin" }
+kotlinSerialization   = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+composeMultiplatform  = { id = "org.jetbrains.compose",                  version.ref = "compose" }
+composeCompiler       = { id = "org.jetbrains.kotlin.plugin.compose",    version.ref = "kotlin" }

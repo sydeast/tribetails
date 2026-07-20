@@ -1,0 +1,1 @@
+Auntie here! Reminder: Your invoice for {{kinName}} is ready. Check it here: []

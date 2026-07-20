@@ -1,0 +1,9 @@
+Subject: I received your care request for {{kinName}}
+
+Hello {{kinfolkName}}. I have received your request for a {{serviceType}} on {{bookingDate}}. I am checking my schedule now and I shall let you know the moment I have confirmed it.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

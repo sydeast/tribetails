@@ -1,0 +1,9 @@
+Subject: Update: Your visit for {{kinName}} has been cancelled
+
+Hello {{kinfolkName}}. I am writing to confirm that the {{serviceType}} for {{kinName}} on {{bookingDate}} has been cancelled. I shall keep an eye out for your next request.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

@@ -1,0 +1,1 @@
+Auntie here! Update: Your visit for {{kinName}} has been cancelled. Check it here: []

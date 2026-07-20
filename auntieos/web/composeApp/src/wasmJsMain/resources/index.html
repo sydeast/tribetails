@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#FBFBF9">
+  <title>AuntieOS</title>
+  <style>
+    :root { color-scheme: light; }
+    html, body {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      background: #FBFBF9; /* Brand Cream */
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    /* Container that ComposeViewport mounts its generated <canvas> into. */
+    #auntieosCanvas {
+      display: block;
+      width: 100%; height: 100%;
+      outline: none;
+    }
+    #auntieosCanvas > canvas { display: block; outline: none; }
+    #loading {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: #DF8431; /* Kinfolk Orange */
+      font-size: 14px; letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    #loading::after {
+      content: '';
+      width: 6px; height: 6px;
+      margin-left: 10px;
+      background: #DF8431;
+      border-radius: 50%;
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.3; transform: scale(0.9); }
+      50%      { opacity: 1.0; transform: scale(1.1); }
+    }
+  </style>
+
+  <!-- Crash/error bridge (0H). Self-hosted, loaded FIRST so window.onerror is hooked before
+       any other script (incl. Firebase) can fail unobserved. Exposes window.__sentry. -->
+  <script src="sentry-bridge.js"></script>
+
+  <!-- reCAPTCHA Enterprise preload - must load BEFORE Firebase Auth SDK so
+       initializeRecaptchaConfig can attach to the Identity Platform Web key
+       without racing the lazy loader. Matches MyTribe (kinfolk.tribetails.com)
+       pattern. Site key: Identity Platform Web key 6LeVress... -->
+  <script src="https://www.google.com/recaptcha/enterprise.js?render=6LeVressAAAAAFmh-QFJ8FI_9AjlkjEk-o9kaKXi" async defer></script>
+
+  <!-- Firebase Web SDK (CDN, ESM). Loaded BEFORE the Wasm bundle so window.__fb is ready. -->
+  <script type="module" src="firebase-bridge.js"></script>
+</head>
+<body>
+  <div id="auntieosCanvas"></div>
+  <div id="loading">Auntie OS</div>
+  <script src="auntieos-web.js"></script>
+</body>
+</html>

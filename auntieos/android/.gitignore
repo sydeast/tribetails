@@ -1,0 +1,18 @@
+.gradle/
+build/
+*.apk
+*.aab
+local.properties
+.idea/
+*.iml
+app/google-services.json
+
+# Firebase admin credentials - NEVER commit
+serviceAccount.json
+app/src/main/assets/service-account-key.json
+
+# Sentry auth token - NEVER commit
+sentry.properties
+migration/temp/
+*.log
+

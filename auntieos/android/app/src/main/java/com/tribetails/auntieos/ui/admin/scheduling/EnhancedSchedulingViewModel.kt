@@ -1,0 +1,1174 @@
+package com.tribetails.auntieos.ui.admin.scheduling
+
+import android.util.Log
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.tribetails.auntieos.data.admin.Event
+import com.tribetails.auntieos.data.admin.EventType
+import com.tribetails.auntieos.data.model.*
+import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.BookingRepository
+import com.tribetails.auntieos.data.repository.ServiceRepository
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+
+data class SchedulingState(
+    val bookings: List<EnhancedBooking> = emptyList(),
+    val timeSlots: List<BookingTimeSlot> = emptyList(),
+    // Live booking_time_slots stream error (Google-busy import + any block window).
+    // Surfaced as a fail-loud banner; the grid never silently shows an empty day
+    // when the stream is actually erroring. Mirrors web's "Couldn't load busy blocks".
+    val busyError: String? = null,
+    val baseServices: List<BaseService> = emptyList(),
+    val supplementalServices: List<SupplementalService> = emptyList(),
+    val allKinfolk: List<Kinfolk> = emptyList(),
+    val businessHours: List<BusinessHours> = emptyList(),
+    val selectedDate: LocalDate = LocalDate.now(),
+    val viewMode: CalendarViewMode = CalendarViewMode.WEEK,
+    val bookingMode: BookingMode = BookingMode.SPECIFIC_TIME,
+    val conflictingBookings: List<EnhancedBooking> = emptyList(),
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null,
+    val selectedBooking: EnhancedBooking? = null,
+    val showAddBookingDialog: Boolean = false,
+    // AO-25: admin multi-date / recurring booking REQUEST (envelope model). Distinct
+    // from showAddBookingDialog (the direct enhanced_bookings form): a request enters
+    // the Incoming-requests queue for approval. Success reuses [seriesActionMessage].
+    val showNewRequestDialog: Boolean = false,
+    val newRequestInFlight: Boolean = false,
+    val newRequestError: String? = null,
+    val showConflictDialog: Boolean = false,
+    val dragState: DragState? = null,
+    val availabilityResult: BookingAvailabilityResult? = null,
+    // Phase 14: admin-authored BOOKING form_schemas (appliesTo == BOOKING), rendered
+    // in the new-booking dialog; answers persist into EnhancedBooking.formValues.
+    val bookingFormSchemas: List<FormSchema> = emptyList(),
+    val bookingSchemaError: String? = null,
+    // Slice 8: result of the last server-side Google Calendar busy import. On
+    // success [calendarSyncMessage] reads "Imported N busy blocks"; on failure
+    // [errorMessage] carries the raw server message (which names the sync SA).
+    val calendarSyncMessage: String? = null,
+    // Front-facing Google Calendar id setup. Round-trips to business_settings via
+    // AuntieRepository. [businessSettings] is the persisted source of truth;
+    // [calendarSyncIdSaved] is a transient confirmation after a successful save.
+    val businessSettings: BusinessSettings = BusinessSettings(),
+    val calendarSyncIdSaved: Boolean = false,
+    // Stage 2 tail: bulk booking-transition result message (e.g. "Approved 3, 1 failed").
+    // Surfaced as a fail-loud banner/toast; null when no batch has run.
+    val bulkBookingMessage: String? = null,
+    val bulkBookingInFlight: Boolean = false,
+    // Stage 3 / 16.5: incoming MyTribe booking requests grouped into envelopes
+    // (one row per batchId). Approve/cancel the whole series via manageBookingSeries.
+    val incomingSeries: List<IncomingSeries> = emptyList(),
+    val incomingError: String? = null,
+    val seriesActionBatchId: String? = null, // batchId currently being approved/cancelled
+    val seriesActionMessage: String? = null,
+)
+
+enum class CalendarViewMode(val displayName: String) {
+    DAY("Day"),
+    WEEK("Week"),
+    MONTH("Month"),
+    AGENDA("Agenda")
+}
+
+data class DragState(
+    val draggedBooking: EnhancedBooking,
+    val newStartTime: LocalDateTime,
+    val newEndTime: LocalDateTime
+)
+
+/**
+ * Build the (startIso, endIso) reschedule pair from a local date+time, preserving the
+ * original visit duration (fallback 30m). Returns null on malformed input. Pure; tested.
+ * Mirrors the web `buildRescheduleTimes`.
+ */
+internal fun buildRescheduleTimes(date: String, time: String, originalStart: String, originalEnd: String): Pair<String, String>? {
+    if (date.length != 10 || time.length != 5) return null
+    val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+    val start = runCatching { LocalDateTime.parse("${date}T${time}:00") }.getOrNull() ?: return null
+    val durMin = runCatching {
+        val s = LocalDateTime.parse(originalStart, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        val e = LocalDateTime.parse(originalEnd, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        java.time.Duration.between(s, e).toMinutes().toInt()
+    }.getOrNull()?.takeIf { it > 0 } ?: 30
+    val end = start.plusMinutes(durMin.toLong())
+    return start.format(fmt) to end.format(fmt)
+}
+
+/**
+ * Human, fail-loud summary of a batch booking transition. Always names how many
+ * succeeded AND how many failed, so a partial result is never read as a clean
+ * success. Maps the SCREAMING action onto a past-tense verb. Pure; unit-tested.
+ */
+internal fun batchBookingSummary(result: com.tribetails.auntieos.data.repository.BatchBookingResult): String {
+    val verb = when (result.action.uppercase()) {
+        "APPROVE" -> "Approved"
+        "REJECT" -> "Rejected"
+        "CANCEL" -> "Cancelled"
+        else -> result.action
+    }
+    val failed = result.failedCount
+    return if (failed == 0) "$verb ${result.updated}."
+    else "$verb ${result.updated}, $failed failed."
+}
+
+class EnhancedSchedulingViewModel(
+    private val bookingRepository: BookingRepository,
+    private val serviceRepository: ServiceRepository,
+    private val auntieRepository: AuntieRepository = com.tribetails.auntieos.AuntieOSApp.instance.repository
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(SchedulingState())
+    val state: StateFlow<SchedulingState> = _state.asStateFlow()
+
+    init {
+        loadInitialData()
+        observeBusyTimeSlots()
+        observeIncomingSeries()
+    }
+
+    /**
+     * Stage 3 / 16.5: live incoming MyTribe booking requests, grouped into
+     * per-envelope series (one row per batchId). Fail-loud: a stream error sets
+     * [SchedulingState.incomingError]. No-op until kinfolk requests exist.
+     */
+    private fun observeIncomingSeries() {
+        viewModelScope.launch {
+            // Stage-0I sandbox: collectionGroup('kinCares') is cross-tenant and a test
+            // admin cannot read it, so its permission-denied must NOT paint a banner.
+            // Resolve once before collecting (race-free vs the stream's first emission).
+            val sandbox = auntieRepository.isTestAdminActive()
+            bookingRepository.incomingKinCareRequestsStream().collect { result ->
+                result
+                    .onSuccess { incoming ->
+                        val byId = _state.value.allKinfolk.associateBy { it.id }
+                        _state.value = _state.value.copy(
+                            incomingSeries = groupIncomingBySeries(incoming) { kid -> byId[kid]?.displayName },
+                            incomingError = null,
+                        )
+                    }
+                    .onFailure { e ->
+                        // Fail-loud: keep any existing list, surface the error — but not in
+                        // the sandbox, where the denial is expected (no cross-tenant data).
+                        if (!sandbox) _state.value = _state.value.copy(
+                            incomingError = e.message ?: "Couldn't load incoming requests",
+                        )
+                    }
+            }
+        }
+    }
+
+    /** Approve a whole incoming series: flips every visit confirmed + creates the
+     *  linked sessions server-side (manageBookingSeries). The stream then drops the
+     *  series (no longer 'requested'). */
+    fun approveSeries(series: IncomingSeries) = runSeriesAction(series, "APPROVE")
+
+    /** Cancel a whole incoming series. */
+    fun cancelSeries(series: IncomingSeries) = runSeriesAction(series, "CANCEL")
+
+    private fun runSeriesAction(series: IncomingSeries, action: String) {
+        if (_state.value.seriesActionBatchId != null) return
+        _state.value = _state.value.copy(seriesActionBatchId = series.batchId, seriesActionMessage = null, incomingError = null)
+        viewModelScope.launch {
+            auntieRepository.manageBookingSeries(action, series.kinfolkId, series.batchId)
+                .onSuccess { res ->
+                    val verb = if (action == "APPROVE") "Approved" else "Cancelled"
+                    val who = series.kinfolkName.ifBlank { "request" }
+                    if (res.failedVisits > 0) {
+                        // FAIL LOUD on a partial failure: the backend leaves the
+                        // envelope 'requested' for the failed visits. Surface it as
+                        // an error, not a clean success message.
+                        _state.value = _state.value.copy(
+                            seriesActionBatchId = null,
+                            seriesActionMessage = null,
+                            incomingError = "$verb $who: ${res.affectedVisits} succeeded, ${res.failedVisits} failed and stay pending. Retry after resolving.",
+                        )
+                    } else {
+                        _state.value = _state.value.copy(
+                            seriesActionBatchId = null,
+                            seriesActionMessage = "$verb $who: ${res.affectedVisits} visit(s).",
+                        )
+                    }
+                }
+                .onFailure { e ->
+                    _state.value = _state.value.copy(
+                        seriesActionBatchId = null,
+                        incomingError = "Couldn't $action series: ${e.message}",
+                    )
+                }
+        }
+    }
+
+    fun clearSeriesActionMessage() { _state.value = _state.value.copy(seriesActionMessage = null) }
+    fun clearIncomingError() { _state.value = _state.value.copy(incomingError = null) }
+
+    /**
+     * Live booking_time_slots subscription (replaces the one-shot getTimeSlots .get()).
+     * Busy blocks (Google Calendar imports + manual blocks) now update on the schedule
+     * as they change. Fail-loud: a stream error sets [SchedulingState.busyError] for a
+     * banner rather than silently clearing the grid. Mirrors web bookingTimeSlotsStream.
+     */
+    private fun observeBusyTimeSlots() {
+        viewModelScope.launch {
+            // Stage-0I sandbox: booking_time_slots is a global collection a test admin
+            // cannot read; suppress the false banner (nothing to load in the sandbox).
+            val sandbox = auntieRepository.isTestAdminActive()
+            bookingRepository.bookingTimeSlotsStream().collect { result ->
+                result
+                    .onSuccess { slots ->
+                        _state.value = _state.value.copy(timeSlots = slots, busyError = null)
+                    }
+                    .onFailure { e ->
+                        if (!sandbox) _state.value = _state.value.copy(
+                            busyError = e.message ?: "Couldn't load busy blocks"
+                        )
+                    }
+            }
+        }
+    }
+
+    private fun loadInitialData() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true)
+
+            try {
+                // Load services, settings, and kinfolk
+                val servicesResult = serviceRepository.getBaseServices()
+                val supplementalResult = serviceRepository.getSupplementalServices()
+                val businessHoursResult = serviceRepository.getBusinessHours()
+                val kinfolkResult = auntieRepository.getKinfolk()
+                // Unified settings (2026-06-05): booking config + timeBlocks now
+                // live on business_settings, read via AuntieRepository.
+                val businessSettingsResult = auntieRepository.getBusinessSettings()
+                val businessSettings = businessSettingsResult.getOrNull() ?: BusinessSettings()
+
+                _state.value = _state.value.copy(
+                    baseServices = servicesResult.getOrNull() ?: emptyList(),
+                    supplementalServices = supplementalResult.getOrNull() ?: emptyList(),
+                    allKinfolk = kinfolkResult.getOrDefault(emptyList()),
+                    businessHours = businessHoursResult.getOrNull() ?: emptyList(),
+                    businessSettings = businessSettings,
+                    bookingMode = businessSettings.defaultBookingModeEnum
+                )
+
+                // Phase 14: load BOOKING-placed form_schemas for the new-booking dialog.
+                // Fail-loud via bookingSchemaError; never a silent-empty panel.
+                val schemas = runCatching {
+                    val summaries = auntieRepository.listFormSchemas().getOrThrow()
+                    appliesToSchemaIds(summaries, "BOOKING").mapNotNull { auntieRepository.getFormSchema(it).getOrThrow() }
+                }
+                _state.value = _state.value.copy(
+                    bookingFormSchemas = schemas.getOrDefault(emptyList()),
+                    bookingSchemaError = schemas.exceptionOrNull()?.let { it.message ?: "Couldn't load custom fields" },
+                )
+
+                // Load bookings for current date range
+                loadBookingsForDateRange()
+
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to load data: ${e.message}"
+                )
+            }
+        }
+    }
+
+    private fun loadBookingsForDateRange() {
+        viewModelScope.launch {
+            try {
+                val startDate = _state.value.selectedDate.minusDays(7)
+                    .format(DateTimeFormatter.ISO_LOCAL_DATE)
+                val endDate = _state.value.selectedDate.plusDays(7)
+                    .format(DateTimeFormatter.ISO_LOCAL_DATE)
+
+                val bookingsResult = bookingRepository.getBookings(
+                    startDate = startDate,
+                    endDate = endDate
+                )
+
+                // timeSlots are no longer fetched one-shot here: observeBusyTimeSlots()
+                // keeps state.timeSlots live (and fail-loud) for the whole VM lifetime.
+                _state.value = _state.value.copy(
+                    bookings = bookingsResult.getOrNull() ?: emptyList(),
+                    isLoading = false
+                )
+
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to load bookings: ${e.message}"
+                )
+            }
+        }
+    }
+
+    fun selectDate(date: LocalDate) {
+        _state.value = _state.value.copy(selectedDate = date)
+        loadBookingsForDateRange()
+    }
+
+    fun changeViewMode(mode: CalendarViewMode) {
+        _state.value = _state.value.copy(viewMode = mode)
+    }
+
+    fun changeBookingMode(mode: BookingMode) {
+        _state.value = _state.value.copy(bookingMode = mode)
+
+        // Persist the default booking mode onto the unified settings doc (merge).
+        viewModelScope.launch {
+            val updatedSettings = _state.value.businessSettings.withBookingMode(mode)
+            auntieRepository.saveBusinessSettings(updatedSettings)
+            _state.value = _state.value.copy(businessSettings = updatedSettings)
+        }
+    }
+
+    fun createBooking(booking: EnhancedBooking, internalNote: String = "") {
+        if (_state.value.isLoading) return
+        _state.value = _state.value.copy(isLoading = true)
+        viewModelScope.launch {
+
+            if (_state.value.businessSettings.enableConflictDetection) {
+                val availabilityResult = bookingRepository.evaluateAvailability(
+                    BookingAvailabilityRequest(
+                        startDateTime = booking.startDateTime,
+                        endDateTime = booking.endDateTime,
+                        travelBufferMinutes = _state.value.businessSettings.travelBufferMinutes,
+                        timeBlocks = _state.value.businessSettings.timeBlocks
+                    )
+                )
+
+                val availability = availabilityResult.getOrNull()
+
+                if (availability != null && !availability.isAvailable) {
+                    _state.value = _state.value.copy(
+                        conflictingBookings = availability.conflictingBookings,
+                        availabilityResult = availability,
+                        selectedBooking = booking,
+                        showConflictDialog = true,
+                        isLoading = false
+                    )
+                    return@launch
+                }
+            }
+
+            // No conflicts, create the booking
+            val result = bookingRepository.createBooking(booking)
+
+            if (result.isSuccess) {
+                val newBookingId = result.getOrNull().orEmpty()
+                if (internalNote.isNotBlank() && newBookingId.isNotBlank() && booking.kinfolkId.isNotBlank()) {
+                    val notesRepo = com.tribetails.auntieos.data.repository.BookingNotesRepository()
+                    notesRepo.addInternalNote(booking.kinfolkId, newBookingId, internalNote)
+                        .onFailure { t ->
+                            _state.value = _state.value.copy(
+                                errorMessage = "Booking created but internal note save failed: ${t.message}",
+                            )
+                        }
+                }
+                com.tribetails.auntieos.data.admin.AuditLog.fire(
+                    scope            = viewModelScope,
+                    repository       = auntieRepository,
+                    actionType       = "CREATE_BOOKING",
+                    description      = "Created booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }} on ${booking.startDateTime}",
+                    targetId         = newBookingId,
+                    targetCollection = "enhanced_bookings",
+                )
+                loadBookingsForDateRange()
+            } else {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to create booking: ${result.exceptionOrNull()?.message}"
+                )
+            }
+        }
+    }
+
+    fun updateBooking(booking: EnhancedBooking) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true)
+
+            if (_state.value.businessSettings.enableConflictDetection) {
+                val availabilityResult = bookingRepository.evaluateAvailability(
+                    BookingAvailabilityRequest(
+                        startDateTime = booking.startDateTime,
+                        endDateTime = booking.endDateTime,
+                        excludeBookingId = booking.id,
+                        travelBufferMinutes = _state.value.businessSettings.travelBufferMinutes,
+                        timeBlocks = _state.value.businessSettings.timeBlocks
+                    )
+                )
+
+                val availability = availabilityResult.getOrNull()
+
+                if (availability != null && !availability.isAvailable) {
+                    _state.value = _state.value.copy(
+                        conflictingBookings = availability.conflictingBookings,
+                        availabilityResult = availability,
+                        selectedBooking = booking,
+                        showConflictDialog = true,
+                        isLoading = false
+                    )
+                    return@launch
+                }
+            }
+
+            // No conflicts, update the booking
+            val result = bookingRepository.updateBooking(booking)
+
+            if (result.isSuccess) {
+                com.tribetails.auntieos.data.admin.AuditLog.fire(
+                    scope            = viewModelScope,
+                    repository       = auntieRepository,
+                    actionType       = "UPDATE_BOOKING",
+                    description      = "Updated booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }}",
+                    targetId         = booking.id,
+                    targetCollection = "enhanced_bookings",
+                )
+                loadBookingsForDateRange()
+            } else {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to update booking: ${result.exceptionOrNull()?.message}"
+                )
+            }
+        }
+    }
+
+    fun deleteBooking(bookingId: String) {
+        // Legacy hard-delete entry point. Preferred path: archiveBooking (reversible).
+        // Kept temporarily for any call sites that haven't migrated.
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true)
+
+            val result = bookingRepository.deleteBooking(bookingId)
+
+            if (result.isSuccess) {
+                com.tribetails.auntieos.data.admin.AuditLog.fire(
+                    scope            = viewModelScope,
+                    repository       = auntieRepository,
+                    actionType       = "DELETE_BOOKING",
+                    description      = "Hard-deleted booking",
+                    targetId         = bookingId,
+                    targetCollection = "enhanced_bookings",
+                )
+                loadBookingsForDateRange()
+            } else {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to delete booking: ${result.exceptionOrNull()?.message}"
+                )
+            }
+        }
+    }
+
+    fun archiveBooking(bookingId: String, reason: String) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true)
+            val result = bookingRepository.archiveBooking(bookingId, reason.trim())
+            if (result.isSuccess) {
+                com.tribetails.auntieos.data.admin.AuditLog.fire(
+                    scope            = viewModelScope,
+                    repository       = auntieRepository,
+                    actionType       = "ARCHIVE_BOOKING",
+                    description      = if (reason.isBlank()) "Archived booking" else "Archived booking (reason: ${reason.trim()})",
+                    targetId         = bookingId,
+                    targetCollection = "enhanced_bookings",
+                )
+                loadBookingsForDateRange()
+            } else {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to archive booking: ${result.exceptionOrNull()?.message}"
+                )
+            }
+        }
+    }
+
+    fun unarchiveBooking(bookingId: String) {
+        viewModelScope.launch {
+            val result = bookingRepository.unarchiveBooking(bookingId)
+            if (result.isSuccess) {
+                com.tribetails.auntieos.data.admin.AuditLog.fire(
+                    scope            = viewModelScope,
+                    repository       = auntieRepository,
+                    actionType       = "UNARCHIVE_BOOKING",
+                    description      = "Unarchived booking",
+                    targetId         = bookingId,
+                    targetCollection = "enhanced_bookings",
+                )
+                loadBookingsForDateRange()
+            } else {
+                _state.value = _state.value.copy(
+                    errorMessage = "Failed to unarchive booking: ${result.exceptionOrNull()?.message}"
+                )
+            }
+        }
+    }
+
+    // `incoming` is the originating MyTribe kinCare request when this approval came
+    // from the booking-envelope queue (BookingRepository.incomingKinCareRequestsStream).
+    // It carries familyId/batchId/visitId so we can write status back onto the
+    // kinCare doc. Null for AuntieOS-native enhanced_bookings approvals (existing
+    // call sites), in which case the write-back is skipped.
+    fun approveBooking(
+        booking: EnhancedBooking,
+        incoming: com.tribetails.auntieos.data.repository.IncomingKinCare? = null,
+    ) {
+        viewModelScope.launch {
+            val approved = booking.copy(
+                status = BookingStatus.ACCEPTED,
+                approvedAt = java.time.Instant.now().toString()
+            )
+
+            _state.value = _state.value.copy(isLoading = true)
+            val updateResult = bookingRepository.updateBooking(approved)
+            if (updateResult.isFailure) {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to approve booking: ${updateResult.exceptionOrNull()?.message}"
+                )
+                return@launch
+            }
+            com.tribetails.auntieos.data.admin.AuditLog.fire(
+                scope            = viewModelScope,
+                repository       = auntieRepository,
+                actionType       = "APPROVE_BOOKING",
+                description      = "Approved booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }}",
+                targetId         = booking.id,
+                targetCollection = "enhanced_bookings",
+            )
+
+            // Bridge: create a KinCareSession so the visit appears on the Home screen,
+            // but keep this idempotent by using explicit booking linkage.
+            val existingSessionIds = findLinkedSessionIds(booking.id).getOrElse { lookupError ->
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = "Booking approved, but linked session lookup failed: ${lookupError.message}"
+                )
+                return@launch
+            }
+            if (existingSessionIds.isEmpty()) {
+                val durationMinutes = try {
+                    val start = LocalDateTime.parse(booking.startDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+                    val end = LocalDateTime.parse(booking.endDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+                    java.time.Duration.between(start, end).toMinutes().toInt()
+                } catch (e: Exception) { 0 }
+
+                val session = KinCareSession(
+                    kinfolkId = booking.kinfolkId,
+                    kinfolkName = booking.kinfolkName,
+                    sourceBookingId = booking.id,
+                    // MyTribe booking-envelope FK (additive; null for native approvals)
+                    kinCareBatchId = incoming?.batchId,
+                    kinCareVisitId = incoming?.visitId,
+                    kinIds = booking.kinIds,
+                    startTime = booking.startDateTime,
+                    endTime = booking.endDateTime,
+                    serviceType = booking.baseServiceTitle.ifBlank { booking.title },
+                    serviceDurationMinutes = durationMinutes,
+                    notes = booking.notes
+                )
+                auntieRepository.createKinCareSession(session)
+                    .onSuccess { kinCareSessionId ->
+                        // Booking-envelope write-back: stamp the originating MyTribe
+                        // kinCare doc so the kinfolk's live state resolves to confirmed
+                        // with the assigned Auntie. Skipped when this approval did not
+                        // originate from a MyTribe kinCare request.
+                        writeBackKinCareApproval(
+                            incoming = incoming,
+                            enhancedBookingId = booking.id,
+                            kinCareSessionId = kinCareSessionId,
+                        )
+                    }
+                    .onFailure { e ->
+                        Log.e("EnhancedSchedulingVM", "Failed to create KinCareSession from booking ${booking.id}", e)
+                        _state.value = _state.value.copy(
+                            errorMessage = "Booking approved but visit session failed to create: ${e.message}"
+                        )
+                    }
+            }
+
+            loadBookingsForDateRange()
+        }
+    }
+
+    /**
+     * Patches the originating MyTribe kinCare doc after an approval so the kinfolk
+     * sees the confirmed visit with the assigned Auntie. No-op when [incoming] is
+     * null (native enhanced_bookings approval with no kinCare envelope).
+     */
+    private suspend fun writeBackKinCareApproval(
+        incoming: com.tribetails.auntieos.data.repository.IncomingKinCare?,
+        enhancedBookingId: String,
+        kinCareSessionId: String,
+    ) {
+        if (incoming == null) return
+        val auntie = auntieRepository.getCurrentUserProfile().getOrNull()
+        val patch = mapOf(
+            "status" to "confirmed",
+            "auntieDisplayName" to (auntie?.displayLabel ?: ""),
+            "auntieAvatarUrl" to (auntie?.photoUrl ?: ""),
+            "sourceBookingId" to enhancedBookingId,
+            "sessionId" to kinCareSessionId,
+            "updatedAt" to java.time.Instant.now().toString(),
+        )
+        auntieRepository.patchKinCareDoc(
+            familyId = incoming.kinfolkId.ifBlank { incoming.familyId },
+            batchId = incoming.batchId,
+            visitId = incoming.visitId,
+            patch = patch,
+        ).onFailure { e ->
+            Log.e("EnhancedSchedulingVM", "Failed to write back kinCare approval for visit ${incoming.visitId}", e)
+            _state.value = _state.value.copy(
+                errorMessage = "Booking approved but kinCare write-back failed: ${e.message}"
+            )
+        }
+    }
+
+    fun cancelBooking(booking: EnhancedBooking, reason: String = "Cancelled by admin") {
+        viewModelScope.launch {
+            val cancelled = booking.copy(
+                status = BookingStatus.REJECTED,
+                cancellationReason = reason,
+                cancellationDate = java.time.Instant.now().toString()
+            )
+
+            _state.value = _state.value.copy(isLoading = true)
+            val updateResult = bookingRepository.updateBooking(cancelled)
+            if (updateResult.isFailure) {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to cancel booking: ${updateResult.exceptionOrNull()?.message}"
+                )
+                return@launch
+            }
+            com.tribetails.auntieos.data.admin.AuditLog.fire(
+                scope            = viewModelScope,
+                repository       = auntieRepository,
+                actionType       = "REJECT_BOOKING",
+                description      = "Cancelled booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }} (reason: $reason)",
+                targetId         = booking.id,
+                targetCollection = "enhanced_bookings",
+            )
+
+            bridgeCancellationToSession(booking, reason).onFailure { e ->
+                _state.value = _state.value.copy(
+                    errorMessage = "Booking cancelled, but linked session lookup/update failed: ${e.message}"
+                )
+            }
+            loadBookingsForDateRange()
+        }
+    }
+
+    /**
+     * Stage 2 tail: apply ONE transition (APPROVE/REJECT/CANCEL) to many bookings at
+     * once via the batchUpdateBookings callable. Fail-loud: the server-reported
+     * updated/failed counts are surfaced in [SchedulingState.bulkBookingMessage]; the
+     * range refreshes afterward so the sections reflect any applied transitions.
+     */
+    fun batchUpdateBookings(ids: List<String>, action: String) {
+        if (ids.isEmpty() || _state.value.bulkBookingInFlight) return
+        _state.value = _state.value.copy(bulkBookingInFlight = true, bulkBookingMessage = null)
+        viewModelScope.launch {
+            auntieRepository.batchUpdateBookings(ids, action)
+                .onSuccess { result ->
+                    com.tribetails.auntieos.data.admin.AuditLog.fire(
+                        scope            = viewModelScope,
+                        repository       = auntieRepository,
+                        actionType       = "BATCH_UPDATE_BOOKINGS",
+                        description      = "Batch $action on ${ids.size} booking(s): ${result.updated} updated, ${result.failedCount} failed",
+                        targetId         = ids.firstOrNull() ?: "",
+                        targetCollection = "kinCares",
+                    )
+                    _state.value = _state.value.copy(
+                        bulkBookingInFlight = false,
+                        bulkBookingMessage = batchBookingSummary(result),
+                    )
+                    loadBookingsForDateRange()
+                }
+                .onFailure { e ->
+                    _state.value = _state.value.copy(
+                        bulkBookingInFlight = false,
+                        bulkBookingMessage = "Bulk $action failed: ${e.message}",
+                    )
+                }
+        }
+    }
+
+    fun clearBulkBookingMessage() {
+        _state.value = _state.value.copy(bulkBookingMessage = null)
+    }
+
+    /**
+     * Reschedule the selected booking via the Stage-1 rescheduleBooking callable (§A.9).
+     * End is preserved from the original visit duration (fallback 30m). Fail-loud on a
+     * malformed date/time or a failed write; refreshes the range on success.
+     */
+    fun rescheduleSelectedBooking(date: String, time: String) {
+        val booking = _state.value.selectedBooking ?: return
+        val times = buildRescheduleTimes(date, time, booking.startDateTime, booking.endDateTime)
+        if (times == null) {
+            _state.value = _state.value.copy(errorMessage = "Enter a valid date (YYYY-MM-DD) and time (HH:MM).")
+            return
+        }
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true)
+            auntieRepository.rescheduleBooking(booking.id, times.first, times.second)
+                .onSuccess {
+                    com.tribetails.auntieos.data.admin.AuditLog.fire(
+                        scope            = viewModelScope,
+                        repository       = auntieRepository,
+                        actionType       = "RESCHEDULE_BOOKING",
+                        description      = "Rescheduled booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }} to ${times.first}",
+                        targetId         = booking.id,
+                        targetCollection = "enhanced_bookings",
+                    )
+                    _state.value = _state.value.copy(isLoading = false, selectedBooking = null)
+                    loadBookingsForDateRange()
+                }
+                .onFailure { e ->
+                    _state.value = _state.value.copy(isLoading = false, errorMessage = "Reschedule failed: ${e.message}")
+                }
+        }
+    }
+
+    // === Drag & Drop Functions ===
+
+    fun startDragBooking(booking: EnhancedBooking, newStartTime: LocalDateTime) {
+        val duration = try {
+            val start = LocalDateTime.parse(booking.startDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+            val end = LocalDateTime.parse(booking.endDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+            java.time.Duration.between(start, end)
+        } catch (e: Exception) {
+            java.time.Duration.ofHours(1) // Default duration
+        }
+
+        val newEndTime = newStartTime.plus(duration)
+
+        _state.value = _state.value.copy(
+            dragState = DragState(
+                draggedBooking = booking,
+                newStartTime = newStartTime,
+                newEndTime = newEndTime
+            )
+        )
+    }
+
+    fun updateDragPosition(newStartTime: LocalDateTime) {
+        val currentDragState = _state.value.dragState ?: return
+
+        val duration = try {
+            java.time.Duration.between(
+                LocalDateTime.parse(currentDragState.draggedBooking.startDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME),
+                LocalDateTime.parse(currentDragState.draggedBooking.endDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+            )
+        } catch (e: Exception) {
+            java.time.Duration.ofHours(1)
+        }
+
+        val newEndTime = newStartTime.plus(duration)
+
+        _state.value = _state.value.copy(
+            dragState = currentDragState.copy(
+                newStartTime = newStartTime,
+                newEndTime = newEndTime
+            )
+        )
+    }
+
+    fun completeDrag() {
+        val dragState = _state.value.dragState ?: return
+
+        // Update the booking with new times
+        val updatedBooking = dragState.draggedBooking.copy(
+            startDateTime = dragState.newStartTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
+            endDateTime = dragState.newEndTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        )
+
+        // Clear drag state
+        _state.value = _state.value.copy(dragState = null)
+
+        // Update the booking
+        updateBooking(updatedBooking)
+    }
+
+    fun cancelDrag() {
+        _state.value = _state.value.copy(dragState = null)
+    }
+
+    // === Time Slot Management ===
+
+    fun createTimeSlot(timeSlot: BookingTimeSlot) {
+        viewModelScope.launch {
+            val result = bookingRepository.createTimeSlot(timeSlot)
+
+            if (result.isSuccess) {
+                com.tribetails.auntieos.data.admin.AuditLog.fire(
+                    scope            = viewModelScope,
+                    repository       = auntieRepository,
+                    actionType       = "BLOCK_TIME_SLOT",
+                    description      = "Blocked ${timeSlot.date} ${timeSlot.startTime}-${timeSlot.endTime} (${timeSlot.notes.ifBlank { timeSlot.slotType.name }})",
+                    targetId         = result.getOrNull().orEmpty(),
+                    targetCollection = "booking_time_slots",
+                )
+                loadBookingsForDateRange()
+            } else {
+                _state.value = _state.value.copy(
+                    errorMessage = "Failed to create time slot: ${result.exceptionOrNull()?.message}"
+                )
+            }
+        }
+    }
+
+    fun blockTimeSlot(date: LocalDate, startTime: String, endTime: String, reason: String = "Blocked") {
+        val timeSlot = BookingTimeSlot(
+            date = date.format(DateTimeFormatter.ISO_LOCAL_DATE),
+            startTime = startTime,
+            endTime = endTime,
+            isAvailable = false,
+            slotType = TimeSlotType.BLOCKED,
+            notes = reason
+        )
+
+        createTimeSlot(timeSlot)
+    }
+
+    fun unblockTimeSlot(timeSlotId: String) {
+        viewModelScope.launch {
+            val result = bookingRepository.deleteTimeSlot(timeSlotId)
+
+            if (result.isSuccess) {
+                com.tribetails.auntieos.data.admin.AuditLog.fire(
+                    scope            = viewModelScope,
+                    repository       = auntieRepository,
+                    actionType       = "UNBLOCK_TIME_SLOT",
+                    description      = "Unblocked time slot",
+                    targetId         = timeSlotId,
+                    targetCollection = "booking_time_slots",
+                )
+                loadBookingsForDateRange()
+            } else {
+                _state.value = _state.value.copy(
+                    errorMessage = "Failed to unblock time slot: ${result.exceptionOrNull()?.message}"
+                )
+            }
+        }
+    }
+
+    /**
+     * Slice 8: trigger the server-side Google Calendar busy import. The Cloud
+     * Function reads the shared calendar via ADC and writes the BLOCKED slots, so
+     * the client only invokes the callable and surfaces the outcome. The server's
+     * fail-loud message (which NAMES the sync service account when the calendar is
+     * not shared) is routed verbatim into [SchedulingState.errorMessage].
+     */
+    fun importGoogleBusyEvents(lookAheadDays: Int = 30) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true, errorMessage = null, calendarSyncMessage = null)
+            val result = bookingRepository.syncGoogleBusyEventsViaServer(lookAheadDays)
+            if (result.isSuccess) {
+                val importedCount = result.getOrNull() ?: 0
+                loadBookingsForDateRange()
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    calendarSyncMessage = "Imported $importedCount busy blocks."
+                )
+                Log.d("EnhancedSchedulingViewModel", "Server imported $importedCount busy events")
+            } else {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = result.exceptionOrNull()?.message
+                        ?: "Failed to import Google busy events."
+                )
+            }
+        }
+    }
+
+    /** Clears the transient calendar-sync feedback (success + error). */
+    fun clearCalendarSyncFeedback() {
+        _state.value = _state.value.copy(calendarSyncMessage = null, errorMessage = null, calendarSyncIdSaved = false)
+    }
+
+    /**
+     * Front-facing Google Calendar id setup. Persists [calendarSyncId] onto the
+     * business_settings doc via AuntieRepository so the server-side sync resolves
+     * the admin-entered id (no operator secret needed). Trims input; fail-loud on
+     * a failed write. Auth model is unchanged: the admin still shares the calendar
+     * with the pinned sync service account.
+     */
+    fun saveCalendarSyncId(calendarSyncId: String) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true, errorMessage = null, calendarSyncIdSaved = false)
+            val updated = _state.value.businessSettings.copy(calendarSyncId = calendarSyncId.trim())
+            val result = auntieRepository.saveBusinessSettings(updated)
+            if (result.isSuccess) {
+                com.tribetails.auntieos.data.admin.AuditLog.fire(
+                    scope            = viewModelScope,
+                    repository       = auntieRepository,
+                    actionType       = "UPDATE_BUSINESS_SETTINGS",
+                    description      = "Set Google Calendar sync id",
+                    targetId         = "business_settings",
+                    targetCollection = "business_settings",
+                )
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    businessSettings = updated,
+                    calendarSyncIdSaved = true
+                )
+            } else {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to save calendar id: ${result.exceptionOrNull()?.message}"
+                )
+            }
+        }
+    }
+
+    // === Dialog Management ===
+
+    fun showAddBookingDialog() {
+        _state.value = _state.value.copy(showAddBookingDialog = true)
+    }
+
+    fun hideAddBookingDialog() {
+        _state.value = _state.value.copy(showAddBookingDialog = false)
+    }
+
+    fun showNewRequestDialog() {
+        _state.value = _state.value.copy(showNewRequestDialog = true, newRequestError = null)
+    }
+
+    fun hideNewRequestDialog() {
+        if (_state.value.newRequestInFlight) return
+        _state.value = _state.value.copy(showNewRequestDialog = false, newRequestError = null)
+    }
+
+    /**
+     * AO-25: create a multi-date / recurring booking REQUEST via
+     * [BookingRepository.createMultiDateBookingRequest]. On success the request
+     * enters the Incoming-requests queue ([incomingKinCareRequestsStream], a live
+     * listener, so the new envelope appears without a manual refresh); the dialog
+     * closes and [seriesActionMessage] reports the count. Fail-loud on rejection.
+     */
+    fun createBookingRequest(
+        kinfolkId: String,
+        visits: List<com.tribetails.auntieos.data.repository.NewBookingVisit>,
+        notes: String?,
+        pattern: String,
+        weeklyDays: List<Int>?,
+    ) {
+        if (_state.value.newRequestInFlight) return
+        _state.value = _state.value.copy(newRequestInFlight = true, newRequestError = null)
+        viewModelScope.launch {
+            bookingRepository.createMultiDateBookingRequest(
+                kinfolkId = kinfolkId,
+                visits = visits,
+                notes = notes,
+                pattern = pattern,
+                weeklyDays = weeklyDays,
+            ).onSuccess { result ->
+                _state.value = _state.value.copy(
+                    newRequestInFlight = false,
+                    showNewRequestDialog = false,
+                    seriesActionMessage = "Booking request created: ${result.visitCount} visit(s) submitted for approval. " +
+                        "It enters the Incoming-requests queue and appears above once approved.",
+                )
+            }.onFailure { t ->
+                _state.value = _state.value.copy(
+                    newRequestInFlight = false,
+                    newRequestError = t.message ?: "Failed to create the booking request.",
+                )
+            }
+        }
+    }
+
+    fun selectBooking(booking: EnhancedBooking?) {
+        _state.value = _state.value.copy(selectedBooking = booking)
+    }
+
+    fun resolveConflict(forceCreate: Boolean = false) {
+        if (forceCreate) {
+            // Force despite conflicts. If the selectedBooking already has an id,
+            // the conflict came from updateBooking (e.g. drag-drop edit) - UPDATE
+            // not CREATE, otherwise we'd duplicate the doc.
+            val booking = _state.value.selectedBooking ?: return
+            val isUpdate = booking.id.isNotBlank()
+
+            viewModelScope.launch {
+                val result = if (isUpdate) {
+                    bookingRepository.updateBooking(booking)
+                        .map { booking.id }
+                } else {
+                    bookingRepository.createBooking(booking)
+                }
+
+                if (result.isSuccess) {
+                    val targetId = result.getOrNull().orEmpty()
+                    com.tribetails.auntieos.data.admin.AuditLog.fire(
+                        scope            = viewModelScope,
+                        repository       = auntieRepository,
+                        actionType       = if (isUpdate) "FORCE_UPDATE_BOOKING" else "FORCE_CREATE_BOOKING",
+                        description      = "Force-${if (isUpdate) "updated" else "created"} booking despite conflict (${_state.value.conflictingBookings.size} conflicting bookings)",
+                        targetId         = targetId,
+                        targetCollection = "enhanced_bookings",
+                    )
+                    loadBookingsForDateRange()
+                } else {
+                    _state.value = _state.value.copy(
+                        errorMessage = "Failed to force-${if (isUpdate) "update" else "create"} booking: ${result.exceptionOrNull()?.message}"
+                    )
+                }
+
+                _state.value = _state.value.copy(
+                    showConflictDialog = false,
+                    conflictingBookings = emptyList(),
+                    availabilityResult = null,
+                    selectedBooking = null
+                )
+            }
+        } else {
+            // Cancel the conflicting booking action
+            _state.value = _state.value.copy(
+                showConflictDialog = false,
+                conflictingBookings = emptyList(),
+                availabilityResult = null,
+                selectedBooking = null
+            )
+        }
+    }
+
+    fun clearError() {
+        _state.value = _state.value.copy(errorMessage = null)
+    }
+
+    private suspend fun findLinkedSessionIds(sourceBookingId: String): Result<List<String>> =
+        auntieRepository.getKinCareSessionsBySourceBookingId(sourceBookingId)
+            .map { sessions ->
+                sessions
+                    .filter { it.status.uppercase() != VisitStatus.CANCELLED.name }
+                    .map { it.id }
+            }
+
+    private suspend fun bridgeCancellationToSession(booking: EnhancedBooking, reason: String): Result<Unit> {
+        val sessionIds = findLinkedSessionIds(booking.id).getOrElse { return Result.failure(it) }
+        if (sessionIds.isEmpty()) return Result.success(Unit)
+
+        val patch = mapOf(
+            "status" to VisitStatus.CANCELLED.name,
+            "notes" to if (reason.isBlank()) booking.notes else "${booking.notes}\n[Booking cancelled] $reason".trim(),
+        )
+
+        sessionIds.forEach { sessionId ->
+            auntieRepository.patchKinCareSession(sessionId, patch)
+                .onFailure { e ->
+                    Log.e("EnhancedSchedulingVM", "Failed to cancel linked KinCareSession $sessionId", e)
+                    return Result.failure(e)
+                }
+        }
+        return Result.success(Unit)
+    }
+
+    /**
+     * Apply an in-place edit to the unified [BusinessSettings] and persist it
+     * (merge write). Replaces the former AdminSettings updater; booking config
+     * now lives on the single business_settings doc.
+     */
+    fun updateBusinessSettings(update: (BusinessSettings) -> BusinessSettings) {
+        val newSettings = update(_state.value.businessSettings)
+        _state.value = _state.value.copy(businessSettings = newSettings)
+        viewModelScope.launch {
+            auntieRepository.saveBusinessSettings(newSettings)
+        }
+    }
+
+    // === Utility Functions ===
+
+    fun getBookingsForDate(date: LocalDate): List<EnhancedBooking> {
+        return _state.value.bookings.filter { booking ->
+            try {
+                val bookingDate = LocalDateTime.parse(
+                    booking.startDateTime,
+                    DateTimeFormatter.ISO_LOCAL_DATE_TIME
+                ).toLocalDate()
+                bookingDate == date
+            } catch (e: Exception) {
+                false
+            }
+        }
+    }
+
+    fun getTimeSlotsForDate(date: LocalDate): List<BookingTimeSlot> {
+        val dateString = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
+        return _state.value.timeSlots.filter { it.date == dateString }
+    }
+
+    fun isTimeSlotAvailable(date: LocalDate, startTime: String, endTime: String): Boolean {
+        val dateString = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
+        val requestedStart = runCatching { LocalDateTime.of(date, LocalTime.parse(startTime)) }.getOrNull() ?: return false
+        val requestedEnd = runCatching { LocalDateTime.of(date, LocalTime.parse(endTime)) }.getOrNull() ?: return false
+
+        val blockedSlots = _state.value.timeSlots.filter {
+            it.date == dateString && !it.isAvailable
+        }
+        val blockedConflict = blockedSlots.any { slot ->
+            val slotStart = runCatching { LocalDateTime.of(date, LocalTime.parse(slot.startTime)) }.getOrNull() ?: return@any false
+            val slotEnd = runCatching { LocalDateTime.of(date, LocalTime.parse(slot.endTime)) }.getOrNull() ?: return@any false
+            intervalsOverlap(requestedStart, requestedEnd, slotStart, slotEnd)
+        }
+
+        val bookingConflict = getBookingsForDate(date)
+            .filter { it.status == BookingStatus.DRAFT || it.status == BookingStatus.ACCEPTED }
+            .any { booking ->
+                val bookingStart = runCatching { LocalDateTime.parse(booking.startDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME) }.getOrNull() ?: return@any false
+                val bookingEnd = runCatching { LocalDateTime.parse(booking.endDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME) }.getOrNull() ?: return@any false
+                intervalsOverlap(requestedStart, requestedEnd, bookingStart, bookingEnd)
+            }
+
+        return !blockedConflict && !bookingConflict
+    }
+
+    private fun intervalsOverlap(
+        startA: LocalDateTime,
+        endA: LocalDateTime,
+        startB: LocalDateTime,
+        endB: LocalDateTime
+    ): Boolean = startA.isBefore(endB) && endA.isAfter(startB)
+
+    // === Legacy Event Conversion for Existing UI ===
+
+    fun getEventsForCompatibility(): List<Event> {
+        return _state.value.bookings.map { booking ->
+            try {
+                val startTime = LocalDateTime.parse(booking.startDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+                val endTime = LocalDateTime.parse(booking.endDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+
+                Event(
+                    id = booking.id,
+                    title = booking.title,
+                    startTime = startTime,
+                    endTime = endTime,
+                    eventType = EventType.KIN_CARE,
+                    status = booking.status,
+                    notes = booking.notes,
+                    kinName = booking.kinNames.joinToString(", ")
+                )
+            } catch (e: Exception) {
+                Event(
+                    id = booking.id,
+                    title = booking.title,
+                    startTime = LocalDateTime.now(),
+                    endTime = LocalDateTime.now().plusHours(1),
+                    eventType = EventType.KIN_CARE,
+                    status = BookingStatus.DRAFT,
+                    kinName = booking.kinfolkName
+                )
+            }
+        }
+    }
+}

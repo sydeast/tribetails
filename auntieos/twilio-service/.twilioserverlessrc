@@ -1,0 +1,15 @@
+{
+  "commands": {},
+  "environments": {
+    "default": {
+      "serviceName": "tribetailsattendant",
+      "functionsFolderName": "functions",
+      "assetsFolderName": "assets"
+    }
+  },
+  "projects": {},
+  "assets": true,
+  "functions": true,
+  "functionsEnv": "dev",
+  "runtime": "node18"
+}

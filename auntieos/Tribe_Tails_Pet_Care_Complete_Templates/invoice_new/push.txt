@@ -1,0 +1,1 @@
+Your invoice for {{kinName}}'s care is ready. Tap to see details.

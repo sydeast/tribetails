@@ -1,0 +1,66 @@
+# Visual regression — app vs golden (same renderer)
+
+Threshold: a screen regresses if > 0.5% of pixels differ (pixel delta tol 0.1).
+
+| surface | screen | result | % changed |
+|---|---|---|---|
+| android | activity-log | ok | 0 |
+| android | auntie-time | ok | 0 |
+| android | communicate | ok | 0 |
+| android | directory | ok | 0 |
+| android | formschema-editor | ok | 0 |
+| android | formschema-list | ok | 0 |
+| android | home | ok | 0 |
+| android | inbox | ok | 0 |
+| android | invoice-detail | ok | 0 |
+| android | invoices | ok | 0 |
+| android | kintale-logs | ok | 0 |
+| android | kintale-report | ok | 0 |
+| android | manage-bookings | ok | 0 |
+| android | notifications | ok | 0 |
+| android | payments | ok | 0 |
+| android | schedule | ok | 0.001 |
+| android | settings | ok | 0 |
+| android | template-assignment | ok | 0 |
+| android | template-bank | ok | 0 |
+| android | training-documents | ok | 0 |
+| desktop | activity-log | REGRESSION | 7.767 |
+| desktop | auntie-time | ok | 0 |
+| desktop | communicate | ok | 0.14 |
+| desktop | directory | ok | 0 |
+| desktop | formschema-editor | ok | 0 |
+| desktop | formschema-list | ok | 0 |
+| desktop | home | ok | 0 |
+| desktop | inbox | ok | 0 |
+| desktop | invoice-detail | ok | 0 |
+| desktop | invoices | ok | 0 |
+| desktop | kintale-logs | ok | 0 |
+| desktop | kintale-report | ok | 0 |
+| desktop | manage-bookings | ok | 0 |
+| desktop | notifications | ok | 0 |
+| desktop | payments | ok | 0 |
+| desktop | schedule | ok | 0.251 |
+| desktop | settings | ok | 0.062 |
+| desktop | template-assignment | ok | 0 |
+| desktop | template-bank | ok | 0 |
+| desktop | training-documents | ok | 0 |
+| web | activity-log | ok | 0 |
+| web | auntie-time | ok | 0 |
+| web | communicate | ok | 0 |
+| web | directory | ok | 0 |
+| web | formschema-editor | ok | 0 |
+| web | formschema-list | ok | 0 |
+| web | home | ok | 0 |
+| web | inbox | ok | 0 |
+| web | invoice-detail | ok | 0 |
+| web | invoices | ok | 0 |
+| web | kintale-logs | ok | 0 |
+| web | kintale-report | ok | 0 |
+| web | manage-bookings | ok | 0 |
+| web | notifications | ok | 0 |
+| web | payments | ok | 0 |
+| web | schedule | ok | 0 |
+| web | settings | ok | 0 |
+| web | template-assignment | ok | 0 |
+| web | template-bank | ok | 0 |
+| web | training-documents | ok | 0 |

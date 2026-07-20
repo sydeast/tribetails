@@ -1,0 +1,9 @@
+Subject: It is official: I have {{kinName}} on my books
+
+Hello {{kinfolkName}}. Well!!!! I have officially confirmed your {{serviceType}} for {{kinName}} on {{bookingDate}} at {{bookingTime}}. I shall be there to take care of everything.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

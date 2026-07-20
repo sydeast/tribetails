@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <!-- Media Upload Permissions -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+
+    <!-- Location Tracking Permissions -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <!-- Signature-level permission gating the in-app OPEN_CALL / OPEN_VOICEMAIL
+         / auntieos:// scheme intent-filters. protectionLevel="signature" means
+         only apps signed by the same cert can hold this permission, i.e. this
+         app itself. Prevents other installed apps from firing those intents to
+         pop the call UI or launch arbitrary screens (CWE-926). -->
+    <permission
+        android:name="com.tribetails.auntieos.permission.INTERNAL_NAV"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.tribetails.auntieos.permission.INTERNAL_NAV" />
+
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.location.gps"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.location.network"
+        android:required="false" />
+
+    <application
+        android:name=".AuntieOSApp"
+        android:allowBackup="false"
+        android:label="AuntieOS"
+        android:supportsRtl="true"
+        android:extractNativeLibs="false"
+        android:theme="@style/Theme.AuntieOS">
+
+        <!-- Sentry: disable the auto-init ContentProvider. The SDK is configured
+             from AuntieOSApp.onCreate(), which is gated on a non-blank DSN so
+             builds without a Sentry project don't crash on launch. -->
+        <meta-data android:name="io.sentry.auto-init" android:value="false" />
+
+        <!-- Strip the WorkManager initializer from androidx.startup.
+             WorkManagerInitializer.create() throws on Android 16 (API 36) when
+             constructing the Room-backed WorkDatabase - the ContentProvider
+             crash is pre-Application.onCreate so our defensive crash handler
+             never fires. We don't use WorkManager directly; it's pulled
+             transitively (Cloudinary upload queue / Mapbox telemetry). Removing
+             the auto-init meta-data lets InitializationProvider boot cleanly.
+             If a feature later requires WorkManager, opt back in via manual
+             Configuration.Provider in AuntieOSApp. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <!-- Launcher only. Custom internal actions live on the
+                 MainActivityInternal alias below, gated by INTERNAL_NAV
+                 signature permission so other installed apps can't pop our
+                 call/voicemail UI by firing a crafted Intent. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity-alias
+            android:name=".MainActivityInternal"
+            android:targetActivity=".MainActivity"
+            android:exported="true"
+            android:permission="com.tribetails.auntieos.permission.INTERNAL_NAV">
+            <intent-filter>
+                <action android:name="com.tribetails.auntieos.OPEN_CALL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.tribetails.auntieos.OPEN_VOICEMAIL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="auntieos" android:host="calls" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity
+            android:name=".ui.calls.CallScreenActivity"
+            android:exported="false"
+            android:showOnLockScreen="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:launchMode="singleInstance"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+
+        <service
+            android:name=".fcm.AuntieFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".voice.IncomingCallNotificationService"
+            android:foregroundServiceType="phoneCall|microphone"
+            android:exported="false" />
+
+        <!-- Location Tracking Service -->
+        <service
+            android:name=".location.LocationTrackingService"
+            android:foregroundServiceType="location"
+            android:exported="false" />
+
+        <!-- FileProvider for camera functionality -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+    </application>
+</manifest>

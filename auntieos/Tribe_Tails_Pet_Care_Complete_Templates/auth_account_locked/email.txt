@@ -1,0 +1,9 @@
+Subject: Security: I have locked your account for your protection
+
+Hello {{kinfolkName}}. Please do not delay in reading this. I have seen too many failed attempts to access your account, so I have locked it down to keep everything safe. I will not have unauthorized access to your information on my watch.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

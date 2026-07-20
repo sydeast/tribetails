@@ -1,0 +1,1 @@
+Security: Payment failed for invoice {{invoiceNumber}}. Tap to see details.

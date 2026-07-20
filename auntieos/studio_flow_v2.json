@@ -1,0 +1,324 @@
+{
+  "description": "Tribe Tails Pet Care — Spam-filtered voice routing (v2). Service base: tribetailsattendant-8587.twil.io. AUDIO TODO: all 6 assets (after_hours_greeting, open_hours_greeting, open_hours_retry, gather_intro, try_text_suggestion, thank_you_vm) require recording + upload to Twilio Assets before flow goes live.",
+  "states": [
+    {
+      "name": "Trigger",
+      "type": "trigger",
+      "transitions": [
+        { "event": "incomingMessage" },
+        { "next": "check_hours_business", "event": "incomingCall" },
+        { "event": "incomingConversationMessage" },
+        { "event": "incomingRequest" },
+        { "event": "incomingParent" }
+      ],
+      "properties": { "offset": { "x": 0, "y": 0 } }
+    },
+    {
+      "name": "check_hours_business",
+      "type": "make-http-request",
+      "transitions": [
+        { "next": "split_hours", "event": "success" },
+        { "next": "open_hours_greeting", "event": "failed" }
+      ],
+      "properties": {
+        "offset": { "x": 0, "y": 150 },
+        "method": "GET",
+        "content_type": "application/x-www-form-urlencoded;charset=utf-8",
+        "url": "https://tribetailsattendant-8587.twil.io/check-hours"
+      }
+    },
+    {
+      "name": "split_hours",
+      "type": "split-based-on",
+      "transitions": [
+        { "next": "after_hours_greeting", "event": "noMatch" },
+        {
+          "next": "open_hours_greeting",
+          "event": "match",
+          "conditions": [
+            { "friendly_name": "If body is yes", "arguments": ["{{widgets.check_hours_business.body}}"], "type": "equal_to", "value": "yes" }
+          ]
+        },
+        {
+          "next": "after_hours_greeting",
+          "event": "match",
+          "conditions": [
+            { "friendly_name": "If body is no", "arguments": ["{{widgets.check_hours_business.body}}"], "type": "equal_to", "value": "no" }
+          ]
+        }
+      ],
+      "properties": {
+        "offset": { "x": 0, "y": 300 },
+        "input": "{{widgets.check_hours_business.body}}"
+      }
+    },
+    {
+      "name": "after_hours_greeting",
+      "type": "gather-input-on-call",
+      "transitions": [
+        { "next": "route_after_hours", "event": "keypress" },
+        { "next": "try_text_suggestion", "event": "speech" },
+        { "next": "try_text_suggestion", "event": "timeout" }
+      ],
+      "properties": {
+        "offset": { "x": -300, "y": 450 },
+        "play": "https://tribetailsattendant-8587.twil.io/after_hours_greeting.mp3",
+        "number_of_digits": 1,
+        "timeout": 8,
+        "stop_gather": true,
+        "gather_language": "en-US",
+        "profanity_filter": "true",
+        "finish_on_key": "#"
+      }
+    },
+    {
+      "name": "route_after_hours",
+      "type": "split-based-on",
+      "transitions": [
+        { "next": "try_text_suggestion", "event": "noMatch" },
+        {
+          "next": "record_voicemail_after_hours",
+          "event": "match",
+          "conditions": [
+            { "friendly_name": "If digits == 4", "arguments": ["{{widgets.after_hours_greeting.Digits}}"], "type": "equal_to", "value": "4" }
+          ]
+        }
+      ],
+      "properties": {
+        "offset": { "x": -300, "y": 600 },
+        "input": "{{widgets.after_hours_greeting.Digits}}"
+      }
+    },
+    {
+      "name": "record_voicemail_after_hours",
+      "type": "record-voicemail",
+      "transitions": [
+        { "next": "thank_you_vm", "event": "recordingComplete" },
+        { "next": "try_text_suggestion", "event": "noAudio" },
+        { "event": "hangup" }
+      ],
+      "properties": {
+        "offset": { "x": -450, "y": 750 },
+        "transcribe": true,
+        "transcription_callback_url": "https://tribetailsattendant-8587.twil.io/notify-voicemail",
+        "trim": "trim-silence",
+        "play_beep": "true",
+        "timeout": 5,
+        "max_length": 180,
+        "finish_on_key": "#",
+        "recording_status_callback_method": "POST"
+      }
+    },
+    {
+      "name": "open_hours_greeting",
+      "type": "gather-input-on-call",
+      "transitions": [
+        { "next": "route_open_hours", "event": "keypress" },
+        { "next": "open_hours_retry", "event": "speech" },
+        { "next": "open_hours_retry", "event": "timeout" }
+      ],
+      "properties": {
+        "offset": { "x": 300, "y": 450 },
+        "play": "https://tribetailsattendant-8587.twil.io/open_hours_greeting.mp3",
+        "number_of_digits": 1,
+        "timeout": 8,
+        "stop_gather": true,
+        "gather_language": "en-US",
+        "profanity_filter": "true",
+        "finish_on_key": "#"
+      }
+    },
+    {
+      "name": "route_open_hours",
+      "type": "split-based-on",
+      "transitions": [
+        { "next": "open_hours_retry", "event": "noMatch" },
+        {
+          "next": "gather_intro",
+          "event": "match",
+          "conditions": [
+            { "friendly_name": "If digits == 3", "arguments": ["{{widgets.open_hours_greeting.Digits}}"], "type": "equal_to", "value": "3" }
+          ]
+        },
+        {
+          "next": "record_voicemail_business",
+          "event": "match",
+          "conditions": [
+            { "friendly_name": "If digits == 4", "arguments": ["{{widgets.open_hours_greeting.Digits}}"], "type": "equal_to", "value": "4" }
+          ]
+        }
+      ],
+      "properties": {
+        "offset": { "x": 300, "y": 600 },
+        "input": "{{widgets.open_hours_greeting.Digits}}"
+      }
+    },
+    {
+      "name": "open_hours_retry",
+      "type": "gather-input-on-call",
+      "transitions": [
+        { "next": "route_open_hours_retry", "event": "keypress" },
+        { "next": "try_text_suggestion", "event": "speech" },
+        { "next": "try_text_suggestion", "event": "timeout" }
+      ],
+      "properties": {
+        "offset": { "x": 150, "y": 750 },
+        "play": "https://tribetailsattendant-8587.twil.io/open_hours_retry.mp3",
+        "number_of_digits": 1,
+        "timeout": 8,
+        "stop_gather": true,
+        "gather_language": "en-US",
+        "profanity_filter": "true",
+        "finish_on_key": "#"
+      }
+    },
+    {
+      "name": "route_open_hours_retry",
+      "type": "split-based-on",
+      "transitions": [
+        { "next": "try_text_suggestion", "event": "noMatch" },
+        {
+          "next": "gather_intro",
+          "event": "match",
+          "conditions": [
+            { "friendly_name": "If digits == 3", "arguments": ["{{widgets.open_hours_retry.Digits}}"], "type": "equal_to", "value": "3" }
+          ]
+        },
+        {
+          "next": "record_voicemail_business",
+          "event": "match",
+          "conditions": [
+            { "friendly_name": "If digits == 4", "arguments": ["{{widgets.open_hours_retry.Digits}}"], "type": "equal_to", "value": "4" }
+          ]
+        }
+      ],
+      "properties": {
+        "offset": { "x": 150, "y": 900 },
+        "input": "{{widgets.open_hours_retry.Digits}}"
+      }
+    },
+    {
+      "name": "gather_intro",
+      "type": "gather-input-on-call",
+      "transitions": [
+        { "next": "http_notify_screen", "event": "keypress" },
+        { "next": "http_notify_screen", "event": "speech" },
+        { "next": "try_text_suggestion", "event": "timeout" }
+      ],
+      "properties": {
+        "offset": { "x": 600, "y": 900 },
+        "play": "https://tribetailsattendant-8587.twil.io/gather_intro.mp3",
+        "speech_timeout": "auto",
+        "timeout": 5,
+        "stop_gather": true,
+        "gather_language": "en-US",
+        "profanity_filter": "true",
+        "speech_model": "default",
+        "finish_on_key": "#"
+      }
+    },
+    {
+      "name": "http_notify_screen",
+      "type": "make-http-request",
+      "transitions": [
+        { "next": "add_call_recording", "event": "success" },
+        { "next": "try_text_suggestion", "event": "failed" }
+      ],
+      "properties": {
+        "offset": { "x": 600, "y": 1050 },
+        "method": "POST",
+        "content_type": "application/x-www-form-urlencoded;charset=utf-8",
+        "url": "https://tribetailsattendant-8587.twil.io/screen-notify",
+        "parameters": [
+          { "key": "callSid",      "value": "{{trigger.call.CallSid}}" },
+          { "key": "callerNumber", "value": "{{trigger.call.From}}" },
+          { "key": "transcript",   "value": "{{widgets.gather_intro.SpeechResult}}" },
+          { "key": "recordingUrl", "value": "{{widgets.gather_intro.RecordingUrl}}" }
+        ]
+      }
+    },
+    {
+      "name": "add_call_recording",
+      "type": "record-call",
+      "transitions": [
+        { "next": "caller_queue", "event": "success" },
+        { "next": "caller_queue", "event": "failed" }
+      ],
+      "properties": {
+        "offset": { "x": 600, "y": 1200 },
+        "record_call": true,
+        "recording_channels": "dual",
+        "recording_status_callback_url": "https://tribetailsattendant-8587.twil.io/notify-recording",
+        "recording_status_callback_method": "POST",
+        "recording_status_callback_event": ["completed"]
+      }
+    },
+    {
+      "name": "caller_queue",
+      "type": "enqueue-call",
+      "transitions": [
+        { "event": "callComplete" },
+        { "next": "try_text_suggestion", "event": "failedToEnqueue" },
+        { "next": "try_text_suggestion", "event": "callFailure" }
+      ],
+      "properties": {
+        "offset": { "x": 600, "y": 1350 },
+        "workflow_sid": "",
+        "queue_name": "TribeTails_Call_Queue",
+        "from": "{{trigger.call.From}}",
+        "wait_url": "https://tribetailsattendant-8587.twil.io/conference-wait",
+        "wait_url_method": "POST",
+        "priority": "0",
+        "timeout": "0"
+      }
+    },
+    {
+      "name": "try_text_suggestion",
+      "type": "say-play",
+      "transitions": [
+        { "event": "audioComplete" }
+      ],
+      "properties": {
+        "offset": { "x": -150, "y": 1200 },
+        "play": "https://tribetailsattendant-8587.twil.io/try_text_suggestion.mp3",
+        "loop": 1
+      }
+    },
+    {
+      "name": "record_voicemail_business",
+      "type": "record-voicemail",
+      "transitions": [
+        { "next": "thank_you_vm", "event": "recordingComplete" },
+        { "next": "thank_you_vm", "event": "noAudio" },
+        { "event": "hangup" }
+      ],
+      "properties": {
+        "offset": { "x": 300, "y": 1500 },
+        "transcribe": true,
+        "transcription_callback_url": "https://tribetailsattendant-8587.twil.io/notify-voicemail",
+        "trim": "trim-silence",
+        "play_beep": "true",
+        "timeout": 5,
+        "max_length": 180,
+        "finish_on_key": "#",
+        "recording_status_callback_method": "POST"
+      }
+    },
+    {
+      "name": "thank_you_vm",
+      "type": "say-play",
+      "transitions": [
+        { "event": "audioComplete" }
+      ],
+      "properties": {
+        "offset": { "x": 300, "y": 1650 },
+        "play": "https://tribetailsattendant-8587.twil.io/thank_you_vm.mp3",
+        "loop": 1
+      }
+    }
+  ],
+  "initial_state": "Trigger",
+  "flags": {
+    "allow_concurrent_calls": true
+  }
+}

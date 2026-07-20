@@ -1,0 +1,9 @@
+Subject: I'm here! {{kinName}} was waiting for me
+
+Hello. I just walked in and what a time we are already having! {{kinName}} greeted me at the door with {{arrivalBehavior}}.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

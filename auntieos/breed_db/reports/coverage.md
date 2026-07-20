@@ -1,0 +1,358 @@
+# Breed DB build report
+
+## Dogs: 478 merged breeds
+- multi-source (2+): 194
+- single-source only: 284
+- source-count distribution: 1 source(s): 284, 2 source(s): 93, 3 source(s): 101
+- breeds with alternative values: 194
+
+### Dogs — single-source breeds (needs-review for cross-source matching)
+- `akita-inu` (Akita Inu) — only **wamiz**
+- `alaskan-klee-kai` (Alaskan Klee Kai) — only **chewy**
+- `alpine-dachsbracke` (Alpine Dachsbracke) — only **wamiz**
+- `american-akita` (American Akita) — only **wamiz**
+- `american-eskimo` (American Eskimo Dog) — only **chewy**
+- `american-pit-bull-terrier` (American Pit Bull Terrier) — only **chewy**
+- `american-water-spaniel` (American Water Spaniel) — only **wamiz**
+- `appenzell-cattle` (Appenzell Cattle Dog) — only **wamiz**
+- `ariege-pointing` (Ariege Pointing Dog) — only **wamiz**
+- `ariegeois` (Ariegeois) — only **wamiz**
+- `artois-hound` (Artois Hound) — only **wamiz**
+- `atlas-mountain-dog-aidi` (Atlas Mountain Dog) — only **wamiz**
+- `aussiedoodle` (Aussiedoodle) — only **chewy**
+- `austrian-black-and-tan-hound` (Austrian Black and Tan Hound) — only **wamiz**
+- `austrian-pinscher` (Austrian Pinscher) — only **wamiz**
+- `auvergne-pointer` (Auvergne Pointer) — only **wamiz**
+- `basset-bleu-de-gascogne` (Basset Bleu De Gascogne) — only **rkc**
+- `bavarian-mountain-hound` (Bavarian Mountain Hound) — only **rkc**
+- `bavarian-mountain-scent-hound` (Bavarian Mountain Scent Hound) — only **wamiz**
+- `beagle-harrier` (Beagle Harrier) — only **wamiz**
+- `belgian-malinois` (Belgian Malinois) — only **chewy**
+- `belgian-sheepdog-groenendael` (Belgian Sheepdog) — only **chewy**
+- `belgian-shepherd` (Belgian Shepherd) — only **wamiz**
+- `belgian-shepherd-dog-groenendael` (Belgian Shepherd Dog) — only **rkc**
+- `belgian-shepherd-dog-laekenois` (Belgian Shepherd Dog) — only **rkc**
+- `belgian-shepherd-dog-malinois` (Belgian Shepherd Dog) — only **rkc**
+- `belgian-shepherd-dog-tervueren` (Belgian Shepherd Dog) — only **rkc**
+- `bergamasco` (Bergamasco) — only **rkc**
+- `bergamasco-shepherd` (Bergamasco Shepherd Dog) — only **wamiz**
+- `bernedoodle` (Bernedoodle) — only **chewy**
+- `biewer-terrier` (Biewer Terrier) — only **chewy**
+- `billy` (Billy) — only **wamiz**
+- `black-and-tan-coonhound` (Black and Tan Coonhound) — only **wamiz**
+- `black-russian-terrier` (Black Russian Terrier) — only **chewy**
+- `black-tan-coonhound` (Black & Tan Coonhound) — only **rkc**
+- `blue-gascony` (Blue Gascony) — only **wamiz**
+- `blue-picardy-spaniel` (Blue Picardy Spaniel) — only **wamiz**
+- `bluetick-coonhound` (Bluetick Coonhound) — only **chewy**
+- `bohemian-wire-haired-pointing-griffon` (Bohemian Wire-haired Pointing Griffon) — only **wamiz**
+- `borador` (Borador) — only **wamiz**
+- `bosnian-broken-haired-hound-called-barak` (Bosnian Broken-haired Hound) — only **wamiz**
+- `bourbonnais-pointing` (Bourbonnais Pointing Dog) — only **wamiz**
+- `bouvier-des-ardennes` (Bouvier des Ardennes) — only **wamiz**
+- `boxador` (Boxador) — only **wamiz**
+- `boykin-spaniel` (Boykin Spaniel) — only **chewy**
+- `braque-d-auvergne` (Braque D’Auvergne) — only **rkc**
+- `brazilian-terrier` (Brazilian Terrier) — only **wamiz**
+- `briquet-griffon-vendeen` (Briquet Griffon Vendeen) — only **wamiz**
+- `broholmer` (Broholmer) — only **wamiz**
+- `brussels-griffon` (Brussels Griffon) — only **chewy**
+- `bull-terrier-miniature` (Bull Terrier) — only **rkc**
+- `bullboxer` (Bullboxer) — only **wamiz**
+- `burgos-pointing` (Burgos Pointing Dog) — only **wamiz**
+- `canadian-eskimo` (Canadian Eskimo Dog) — only **rkc**
+- `canarian-warren-hound` (Canarian Warren Hound) — only **wamiz**
+- `carolina` (Carolina Dog) — only **chewy**
+- `castro-laboreiro` (Castro Laboreiro Dog) — only **wamiz**
+- `catahoula-leopard` (Catahoula Leopard Dog) — only **chewy**
+- `caucasian-shepherd` (Caucasian Shepherd Dog) — only **wamiz**
+- `cavachon` (Cavachon) — only **wamiz**
+- `cavapoo` (Cavapoo) — only **chewy**
+- `central-asia-shepherd` (Central Asia Shepherd Dog) — only **wamiz**
+- `chi-chi` (Chi-Chi) — only **wamiz**
+- `chihuahua-long-coat` (Chihuahua) — only **rkc**
+- `chihuahua-smooth-coat` (Chihuahua) — only **rkc**
+- `chug` (Chug Dog) — only **chewy**
+- `coarse-haired-styrian-hound` (Coarse-haired Styrian Hound) — only **wamiz**
+- `cockapoo` (Cockapoo) — only **chewy**
+- `collie` (Collie) — only **chewy**
+- `croatian-shepherd` (Croatian Shepherd Dog) — only **wamiz**
+- `cursinu` (Cursinu) — only **wamiz**
+- `czechoslovakian-wolfdog` (Czechoslovakian Wolfdog) — only **wamiz**
+- `dachshund-long-haired` (Dachshund) — only **rkc**
+- `dachshund-miniature-long-haired` (Dachshund) — only **rkc**
+- `dachshund-miniature-smooth-haired` (Dachshund) — only **rkc**
+- `dachshund-miniature-wire-haired` (Dachshund) — only **rkc**
+- `dachshund-smooth-haired` (Dachshund) — only **rkc**
+- `dachshund-wire-haired` (Dachshund) — only **rkc**
+- `deutsch-langhaar` (Deutsch Langhaar) — only **wamiz**
+- `doberman-pinscher` (Doberman Pinscher) — only **chewy**
+- `dogo-argentino` (Dogo Argentino) — only **chewy**
+- `dorkie` (Dorkie) — only **wamiz**
+- `drentsche-partridge` (Drentsche Partridge Dog) — only **wamiz**
+- `drever` (Drever) — only **wamiz**
+- `dutch-schapendoes` (Dutch Schapendoes) — only **wamiz**
+- `dutch-smoushond` (Dutch Smoushond) — only **wamiz**
+- `east-siberian-laika` (East Siberian Laika) — only **wamiz**
+- `english-cocker-spaniel` (English Cocker Spaniel) — only **chewy**
+- `english-foxhound` (English Foxhound) — only **wamiz**
+- `english-pointer` (English Pointer) — only **wamiz**
+- `entlebuch-cattle` (Entlebuch Cattle Dog) — only **wamiz**
+- `entlebucher-mountain` (Entlebucher Mountain Dog) — only **chewy**
+- `entlebucher-mountain-dog` (Entlebucher Mountain Dog) — only **rkc**
+- `fawn-brittany-griffon` (Fawn Brittany Griffon) — only **wamiz**
+- `fila-brasileiro` (Fila Brasileiro) — only **wamiz**
+- `finnish-hound` (Finnish Hound) — only **wamiz**
+- `finnish-lapphund` (Finnish Lapphund) — only **rkc**
+- `finnish-lapponian` (Finnish Lapponian Dog) — only **wamiz**
+- `fox-terrier` (Fox Terrier) — only **wamiz**
+- `foxhound` (Foxhound) — only **rkc**
+- `french-pointing` (French Pointing Dog) — only **wamiz**
+- `french-spaniel` (French Spaniel) — only **wamiz**
+- `french-tricolour-hound` (French Tricolour Hound) — only **wamiz**
+- `french-water` (French Water Dog) — only **wamiz**
+- `french-white-black-hound` (French White & Black Hound) — only **wamiz**
+- `french-white-orange-hound` (French White & Orange Hound) — only **wamiz**
+- `frisian-water` (Frisian Water Dog) — only **wamiz**
+- `gascon-saintongeois` (Gascon Saintongeois) — only **wamiz**
+- `gerberian-shepsky` (Gerberian Shepsky) — only **wamiz**
+- `german-hound` (German Hound) — only **wamiz**
+- `german-hunting-terrier` (German Hunting Terrier) — only **wamiz**
+- `german-longhaired-pointer` (German Longhaired Pointer) — only **rkc**
+- `german-spaniel` (German Spaniel) — only **wamiz**
+- `german-spitz-klein` (German Spitz) — only **rkc**
+- `german-spitz-mittel` (German Spitz) — only **rkc**
+- `german-wirehaired-pointing` (German Wirehaired Pointing Dog) — only **wamiz**
+- `glen-of-imaal-terrier` (Glen Of Imaal Terrier) — only **rkc**
+- `goberian` (Goberian) — only **wamiz**
+- `goldador` (Goldador) — only **wamiz**
+- `golden-cocker-retriever` (Golden Cocker Retriever) — only **wamiz**
+- `goldendoodle` (Goldendoodle) — only **chewy**
+- `grand-bleu-de-gascogne` (Grand Bleu De Gascogne) — only **rkc**
+- `grand-griffon-vendeen` (Grand Griffon Vendeen) — only **wamiz**
+- `great-anglo-french-tricolour-hound` (Great Anglo-French Tricolour Hound) — only **wamiz**
+- `great-anglo-french-white-black-hound` (Great Anglo-French White & Black Hound) — only **wamiz**
+- `great-anglo-french-white-orange-hound` (Great Anglo-French White & Orange Hound) — only **wamiz**
+- `great-pyrenees` (Great Pyrenees) — only **chewy**
+- `greater-swiss-mountain` (Greater Swiss Mountain Dog) — only **chewy**
+- `greek-harehound` (Greek Harehound) — only **wamiz**
+- `griffon-belge` (Griffon Belge) — only **wamiz**
+- `griffon-fauve-de-bretagne` (Griffon Fauve De Bretagne) — only **rkc**
+- `griffon-nivernais` (Griffon Nivernais) — only **wamiz**
+- `halden-hound` (Halden Hound) — only **wamiz**
+- `hamiltonstoevare` (Hamiltonstövare) — only **wamiz**
+- `hamiltonstovare` (Hamiltonstovare) — only **rkc**
+- `hanoverian-scent-hound` (Hanoverian Scent Hound) — only **wamiz**
+- `hokkaido` (Hokkaido) — only **wamiz**
+- `hungarian-greyhound` (Hungarian Greyhound) — only **wamiz**
+- `hungarian-hound-transylvanian-scent-hound` (Hungarian Hound - Transylvanian Scent Hound) — only **wamiz**
+- `hungarian-kuvasz` (Hungarian Kuvasz) — only **rkc**
+- `hungarian-mudi` (Hungarian Mudi) — only **rkc**
+- `hungarian-puli` (Hungarian Puli) — only **rkc**
+- `hungarian-pumi` (Hungarian Pumi) — only **rkc**
+- `hungarian-wirehaired-vizsla` (Hungarian Wirehaired Vizsla) — only **rkc**
+- `hygen-hound` (Hygen Hound) — only **wamiz**
+- `ibizan-hound` (Ibizan Hound) — only **rkc**
+- `ibizan-podenco` (Ibizan Podenco) — only **wamiz**
+- `irish-doodle` (Irish Doodle) — only **wamiz**
+- `irish-glen-of-imaal-terrier` (Irish Glen of Imaal Terrier) — only **wamiz**
+- `irish-red-setter` (Irish Red Setter) — only **wamiz**
+- `irish-soft-coated-wheaten-terrier` (Irish Soft-coated Wheaten Terrier) — only **wamiz**
+- `istrian-short-haired-hound` (Istrian Short-haired Hound) — only **wamiz**
+- `istrian-wire-haired-hound` (Istrian Wire-haired Hound) — only **wamiz**
+- `italian-segugio` (Italian Segugio) — only **wamiz**
+- `italian-sighthound` (Italian Sighthound) — only **wamiz**
+- `italian-volpino` (Italian Volpino) — only **wamiz**
+- `jaemthund` (Jämthund) — only **wamiz**
+- `japanese-akita-inu` (Japanese Akita Inu) — only **rkc**
+- `japanese-terrier` (Japanese Terrier) — only **wamiz**
+- `kai-ken` (Kai Ken) — only **wamiz**
+- `karelian-bear` (Karelian Bear Dog) — only **wamiz**
+- `karst-shepherd` (Karst Shepherd Dog) — only **wamiz**
+- `kishu` (Kishu) — only **wamiz**
+- `kleiner-muensterlaender` (Kleiner Münsterländer) — only **wamiz**
+- `kooikerhondje` (Kooikerhondje) — only **rkc**
+- `korea-jindo` (Korea Jindo Dog) — only **wamiz**
+- `korean-jindo` (Korean Jindo) — only **rkc**
+- `korthals-griffon` (Korthals Griffon) — only **rkc**
+- `kromfohrlaender` (Kromfohrländer) — only **wamiz**
+- `labernois` (Labernese) — only **wamiz**
+- `labrador` (Labrador) — only **wamiz**
+- `labsky` (Labsky) — only **wamiz**
+- `laekenois` (Laekenois) — only **wamiz**
+- `laika-de-yakoutie` (Laïka de Yakoutie) — only **wamiz**
+- `landseer` (Landseer) — only **wamiz**
+- `lapponian-herder` (Lapponian Herder) — only **wamiz**
+- `little-lion` (Little Lion Dog) — only **wamiz**
+- `long-haired-chihuahua` (Long-haired Chihuahua) — only **wamiz**
+- `lowchen-little-lion` (Lowchen) — only **rkc**
+- `lurcher` (Lurcher) — only **wamiz**
+- `majorca-mastiff` (Majorca Mastiff) — only **wamiz**
+- `majorca-shepherd` (Majorca Shepherd Dog) — only **wamiz**
+- `maltipoo` (Maltipoo) — only **chewy**
+- `maremma-and-the-abruzzes-sheepdog` (Maremma and the Abruzzes Sheepdog) — only **wamiz**
+- `maremma-sheepdog` (Maremma Sheepdog) — only **rkc**
+- `medium-sized-anglo-french-hound` (Medium-sized Anglo-French Hound) — only **wamiz**
+- `miniature-spitz` (Miniature Spitz) — only **wamiz**
+- `montenegrin-mountain-hound` (Montenegrin Mountain Hound) — only **wamiz**
+- `mudi` (Mudi) — only **wamiz**
+- `norfolk-terrier-and-norwich-terrier` (Norfolk Terrier and Norwich Terrier) — only **wamiz**
+- `norman-artesien-basset` (Norman Artesien Basset) — only **wamiz**
+- `norrbottenspitz` (Norrbottenspitz) — only **wamiz**
+- `norwegian-elkhound-grey` (Norwegian Elkhound Grey) — only **wamiz**
+- `norwegian-hound` (Dunker) — only **wamiz**
+- `norwegian-lundehund` (Norwegian Lundehund) — only **wamiz**
+- `old-danish-pointing` (Old Danish Pointing Dog) — only **wamiz**
+- `patterdale-terrier` (Patterdale Terrier) — only **chewy**
+- `peruvian-hairless` (Peruvian Hairless Dog) — only **wamiz**
+- `petit-brabancon` (Petit Brabançon) — only **wamiz**
+- `picardy-spaniel` (Picardy Spaniel) — only **wamiz**
+- `pinscher` (Pinscher) — only **wamiz**
+- `pitbull` (Pitbull) — only **wamiz**
+- `pitsky` (Pitsky) — only **wamiz**
+- `plott-hound` (Plott Hound) — only **chewy**
+- `poitevin` (Poitevin) — only **wamiz**
+- `polish-greyhound` (Polish Greyhound) — only **wamiz**
+- `polish-hound` (Polish Hound) — only **wamiz**
+- `polish-hunting` (Polish Hunting Dog) — only **wamiz**
+- `polish-hunting-dog` (Polish Hunting Dog) — only **rkc**
+- `pomapoo` (pomapoo) — only **wamiz**
+- `pomchi` (Pomchi) — only **wamiz**
+- `pomeranian-or-miniature-spitz` (Pomeranian or miniature Spitz) — only **wamiz**
+- `pont-audemer-spaniel` (Pont-Audemer Spaniel) — only **wamiz**
+- `porcelaine` (Porcelaine) — only **wamiz**
+- `portuguese-podengo` (Portuguese Podengo) — only **rkc**
+- `portuguese-pointer` (Portuguese Pointer) — only **rkc**
+- `portuguese-pointing` (Portuguese Pointing Dog) — only **wamiz**
+- `portuguese-sheepdog` (Portuguese Sheepdog) — only **wamiz**
+- `portuguese-warren-hound` (Portuguese Warren Hound) — only **wamiz**
+- `posavatz-hound` (Posavatz Hound) — only **wamiz**
+- `prague-ratter` (Prague Ratter) — only **wamiz**
+- `presa-canario-canary-mastiff` (Presa Canario) — only **wamiz**
+- `pudelpointer` (Pudelpointer) — only **wamiz**
+- `pyrenean-sheepdog` (Pyrenean Sheepdog) — only **wamiz**
+- `pyrenean-sheepdog-long-haired` (Pyrenean Sheepdog) — only **rkc**
+- `pyrenean-sheepdog-smooth-faced` (Pyrenean Sheepdog) — only **rkc**
+- `rafeiro-of-alentejo` (Rafeiro of Alentejo) — only **wamiz**
+- `rat-terrier` (Rat Terrier) — only **chewy**
+- `redbone-coonhound` (Redbone Coonhound) — only **chewy**
+- `rottsky` (Rottsky) — only **wamiz**
+- `russell-terrier` (Russell Terrier) — only **chewy**
+- `russian-european-laika` (Russian-European Laika) — only **wamiz**
+- `russian-tsvetnaya-bolonka` (Russian Tsvetnaya Bolonka) — only **chewy**
+- `saarloos-wolfhound` (Saarloos Wolfhound) — only **wamiz**
+- `saint-bernard` (Saint Bernard) — only **chewy**
+- `saint-germain-pointer` (Saint Germain Pointer) — only **wamiz**
+- `saint-miguel-cattle` (Saint Miguel Cattle Dog) — only **wamiz**
+- `schillerstoevare` (Schillerstövare) — only **wamiz**
+- `scottish-deerhound` (Scottish Deerhound) — only **chewy**
+- `serbian-hound` (Serbian Hound) — only **wamiz**
+- `serbian-tricolour-hound` (Serbian Tricolour Hound) — only **wamiz**
+- `shih-poo` (Shih-Poo) — only **wamiz**
+- `shikoku` (Shikoku) — only **wamiz**
+- `shorkie` (Shorkie) — only **wamiz**
+- `silken-windhound` (Silken Windhound) — only **chewy**
+- `silky-terrier` (Silky Terrier) — only **chewy**
+- `slovakian-chuvach` (Slovakian Chuvach) — only **wamiz**
+- `slovakian-hound` (Slovakian Hound) — only **wamiz**
+- `slovakian-rough-haired-pointer` (Slovakian Rough Haired Pointer) — only **rkc**
+- `smaalandsstoevare` (Smålandsstövare) — only **wamiz**
+- `small-gascon-saintongeois` (Small Gascon Saintongeois) — only **wamiz**
+- `small-munsterlander-imp-s` (Small Munsterlander (Imp)s) — only **rkc**
+- `small-swiss-hound` (Small Swiss Hound) — only **wamiz**
+- `south-russian-shepherd` (South Russian Shepherd Dog) — only **wamiz**
+- `spaniel-american-water` (Spaniel) — only **rkc**
+- `spanish-greyhound` (Spanish Greyhound) — only **wamiz**
+- `spanish-hound` (Spanish Hound) — only **wamiz**
+- `spanish-mastiff` (Spanish Mastiff) — only **wamiz**
+- `stabijhoun` (Stabijhoun) — only **wamiz**
+- `standard-schnauzer` (Standard Schnauzer) — only **chewy**
+- `swiss-hound` (Swiss Hound) — only **wamiz**
+- `taiwan` (Taiwan Dog) — only **wamiz**
+- `tatra-shepherd` (Tatra Shepherd Dog) — only **wamiz**
+- `thai-ridgeback` (Thai Ridgeback Dog) — only **wamiz**
+- `tosa` (Tosa) — only **wamiz**
+- `treeing-walker-coonhound` (Treeing Walker Coonhound) — only **chewy**
+- `turkish-kangal` (Turkish Kangal Dog) — only **rkc**
+- `tyrolean-hound` (Tyrolean Hound) — only **wamiz**
+- `vizsla` (Vizsla) — only **chewy**
+- `welsh-corgi` (Welsh Corgi) — only **wamiz**
+- `west-siberian-laika` (West Siberian Laika) — only **wamiz**
+- `westphalian-dachsbracke` (Westphalian Dachsbracke) — only **wamiz**
+- `white-swiss-shepherd` (White Swiss Shepherd Dog) — only **wamiz**
+- `white-swiss-shepherd-dog` (White Swiss Shepherd Dog) — only **rkc**
+- `wire-haired-pointing-griffon-korthals` (Wire-haired Pointing Griffon Korthals) — only **wamiz**
+- `wirehaired-pointing-griffon` (Wirehaired Pointing Griffon) — only **chewy**
+- `wirehaired-slovakian-pointer` (Wirehaired Slovakian Pointer) — only **wamiz**
+- `xoloitzcuintle` (Xoloitzcuintle) — only **wamiz**
+- `xoloitzcuintle-mex-hairless-int` (Xoloitzcuintle) — only **rkc**
+- `xoloitzcuintle-mex-hairless-min` (Xoloitzcuintle) — only **rkc**
+- `xoloitzcuintle-mex-hairless-std` (Xoloitzcuintle) — only **rkc**
+- `xoloitzcuintli` (Xoloitzcuintli) — only **chewy**
+- `yorkiepoo` (Yorkiepoo) — only **chewy**
+- `yugoslavian-shepherd` (Yugoslavian Shepherd Dog) — only **wamiz**
+
+## Cats: 103 merged breeds
+- multi-source (2+): 50
+- single-source only: 53
+- source-count distribution: 1 source(s): 53, 2 source(s): 33, 3 source(s): 17
+- breeds with alternative values: 49
+
+### Cats — single-source breeds (needs-review for cross-source matching)
+- `american-bobtail-shorthair` (American Bobtail Shorthair) — only **tica**
+- `american-curl-longhair` (American Curl Longhair) — only **tica**
+- `australian-mist` (Australian Mist) — only **tica**
+- `bengal-longhair` (Bengal Longhair) — only **tica**
+- `burmilla-longhair` (Burmilla Longhair) — only **tica**
+- `california-spangled` (California Spangled) — only **wamiz**
+- `californian-rex` (Californian Rex) — only **wamiz**
+- `ceylon` (Ceylon) — only **wamiz**
+- `cherubim` (Cherubim) — only **tica**
+- `chinchilla-persian` (Chinchilla Persian) — only **wamiz**
+- `cymric-tailed` (Cymric Tailed) — only **tica**
+- `domestic-shorthair` (Domestic shorthair) — only **wamiz**
+- `european-shorthair` (European Shorthair) — only **wamiz**
+- `german-rex` (German Rex) — only **wamiz**
+- `havana` (Havana) — only **tica**
+- `havana-brown` (Havana Brown) — only **wamiz**
+- `highland-fold` (Highland Fold) — only **wamiz**
+- `highlander` (Highlander) — only **tica**
+- `highlander-shorthair` (Highlander Shorthair) — only **tica**
+- `household-pet` (Household) — only **tica**
+- `household-pet-kitten` (Household Pet Kitten) — only **tica**
+- `japanese-bobtail-longhair` (Japanese Bobtail Longhair) — only **tica**
+- `javanese` (Javanese) — only **wamiz**
+- `khao-manee` (Khao Manee) — only **wamiz**
+- `khaomanee` (Khaomanee) — only **tica**
+- `kurilian-bobtail` (Kurilian Bobtail) — only **tica**
+- `kurilian-bobtail-longhair` (Kurilian Bobtail Longhair) — only **tica**
+- `laperm-shorthair` (LaPerm Shorthair) — only **tica**
+- `lykoi` (Lykoi) — only **tica**
+- `maine-coon-polydactyl` (Maine Coon Polydactyl) — only **tica**
+- `manx-tailed` (Manx Tailed) — only **tica**
+- `minuet` (Minuet) — only **tica**
+- `minuet-longhair` (Minuet Longhair) — only **tica**
+- `minuet-talls` (Minuet Talls) — only **tica**
+- `minuet-talls-longhair` (Minuet Talls Longhair) — only **tica**
+- `munchkin-longhair` (Munchkin Longhair) — only **tica**
+- `oriental` (Oriental) — only **wamiz**
+- `oriental-longhair` (Oriental Longhair) — only **tica**
+- `pixie-bob` (Pixie-bob) — only **wamiz**
+- `pixiebob` (Pixiebob) — only **tica**
+- `pixiebob-longhair` (Pixiebob Longhair) — only **tica**
+- `ragamuffin` (Ragamuffin) — only **wamiz**
+- `safari` (Safari) — only **wamiz**
+- `scottish-fold-longhair` (Scottish Fold Longhair) — only **tica**
+- `scottish-straight` (Scottish Straight) — only **tica**
+- `scottish-straight-longhair` (Scottish Straight Longhair) — only **tica**
+- `selkirk-rex-longhair` (Selkirk Rex Longhair) — only **tica**
+- `serengeti` (Serengeti) — only **tica**
+- `sokoke` (Sokoke) — only **wamiz**
+- `tennessee-rex` (Tennessee Rex) — only **tica**
+- `tiffany` (Tiffany) — only **wamiz**
+- `toybob` (Toybob) — only **tica**
+- `york-chocolate` (York Chocolate) — only **wamiz**
+
+## Dropped / known issues
+- `wamiz/chihuahua-a-poils-court` dropped: index entry resolves to the Fila Brasileiro page (mislabeled). Real Chihuahua retained.
+- TICA `tennessee-rex`, `toybob`: pages exist but carry no structured taxonomy yet — kept as content-only records.

@@ -1,0 +1,9 @@
+Subject: Update: Details have changed for {{kinName}}'s visit
+
+Hello {{kinfolkName}}. I have updated the details for your {{serviceType}} on {{bookingDate}}. Please review the new times to ensure they suit your family.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

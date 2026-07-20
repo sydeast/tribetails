@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AuntieOS — State of the Union</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    :root {
+      --gold: #C9921A;
+      --gold-light: #F0B429;
+      --slate-dark: #1A1E2E;
+      --slate-mid: #252B3E;
+      --slate-border: #353C55;
+      --text: #E8E4D9;
+      --text-muted: #9AA0B8;
+      --red: #E05B5B;
+      --yellow: #D4A017;
+      --green: #4CAF82;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--slate-dark);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 15px;
+      line-height: 1.7;
+    }
+    header {
+      background: var(--slate-mid);
+      border-bottom: 2px solid var(--gold);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      position: sticky; top: 0; z-index: 10;
+    }
+    header .logo { font-size: 22px; font-weight: 700; color: var(--gold-light); letter-spacing: -0.5px; }
+    header .badge {
+      background: var(--gold);
+      color: var(--slate-dark);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    header .updated { margin-left: auto; color: var(--text-muted); font-size: 12px; }
+    .container { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+    #content h1 { color: var(--gold-light); font-size: 2em; margin: 0 0 6px; }
+    #content h2 { color: var(--gold); font-size: 1.3em; margin: 40px 0 14px; border-bottom: 1px solid var(--slate-border); padding-bottom: 6px; }
+    #content h3 { color: var(--text); font-size: 1.05em; margin: 24px 0 10px; }
+    #content p { margin: 0 0 14px; color: var(--text); }
+    #content a { color: var(--gold-light); }
+    #content blockquote {
+      border-left: 3px solid var(--gold);
+      background: var(--slate-mid);
+      padding: 12px 16px;
+      border-radius: 0 6px 6px 0;
+      color: var(--text-muted);
+      margin: 16px 0;
+    }
+    #content table {
+      width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;
+    }
+    #content th {
+      background: var(--slate-mid);
+      color: var(--gold);
+      text-align: left;
+      padding: 8px 12px;
+      border: 1px solid var(--slate-border);
+    }
+    #content td {
+      padding: 7px 12px;
+      border: 1px solid var(--slate-border);
+      vertical-align: top;
+    }
+    #content tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+    #content code {
+      background: var(--slate-mid);
+      color: var(--gold-light);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    #content pre {
+      background: var(--slate-mid);
+      border: 1px solid var(--slate-border);
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 14px 0;
+    }
+    #content pre code { background: none; padding: 0; color: var(--text); }
+    #content ul, #content ol { padding-left: 22px; margin: 8px 0 14px; }
+    #content li { margin: 4px 0; }
+    #content hr { border: none; border-top: 1px solid var(--slate-border); margin: 32px 0; }
+    .loading { color: var(--text-muted); padding: 60px; text-align: center; font-size: 18px; }
+    .error { color: var(--red); padding: 40px; text-align: center; }
+    /* emoji priority colors */
+    #content td:nth-child(4) { white-space: nowrap; }
+    footer {
+      text-align: center;
+      padding: 20px;
+      color: var(--text-muted);
+      font-size: 12px;
+      border-top: 1px solid var(--slate-border);
+      margin-top: 40px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="logo">🐾 AuntieOS</span>
+    <span class="badge">State of the Union</span>
+    <span class="updated" id="headerDate">Loading…</span>
+  </header>
+
+  <div class="container">
+    <div id="content" class="loading">Loading SOTU…</div>
+  </div>
+
+  <footer>
+    AuntieOS · TribeTails · Firebase Project <code>auntieos-ttpc</code> ·
+    Auto-refreshes every hour
+  </footer>
+
+  <script>
+    // ─── Firestore REST fetch (no SDK needed) ─────────────────────────────────
+    const PROJECT = 'auntieos-ttpc';
+    const DOC_PATH = `projects/${PROJECT}/databases/(default)/documents/meta/stateOfTheUnion`;
+    const FIRESTORE_URL = `https://firestore.googleapis.com/v1/${DOC_PATH}`;
+
+    // Fallback: embedded markdown (always works even if Firestore doc doesn't exist yet)
+    const FALLBACK_MD = `# 🐾 AuntieOS — State of the Union\n\n> ⚠️ Firestore document \`meta/stateOfTheUnion\` not found yet.\n> Follow the upload instructions to push the live content.\n\nSee \`AuntieOS/android/_reference/STATE_OF_THE_UNION_2026-05-01.md\` in the repo.`;
+
+    async function loadSOTU() {
+      const el = document.getElementById('content');
+      const dateEl = document.getElementById('headerDate');
+      try {
+        const res = await fetch(FIRESTORE_URL);
+        if (res.ok) {
+          const data = await res.json();
+          const fields = data.fields || {};
+          const md = fields.content?.stringValue || FALLBACK_MD;
+          const date = fields.date?.stringValue || '';
+          const by = fields.lastUpdatedBy?.stringValue || '';
+          el.innerHTML = marked.parse(md);
+          dateEl.textContent = date ? `Updated ${date}${by ? ' · ' + by : ''}` : '';
+        } else {
+          el.innerHTML = marked.parse(FALLBACK_MD);
+          dateEl.textContent = 'Fallback (Firestore doc not yet created)';
+        }
+      } catch (e) {
+        el.innerHTML = marked.parse(FALLBACK_MD);
+        dateEl.textContent = 'Offline fallback';
+      }
+    }
+
+    loadSOTU();
+    // Auto-refresh every 5 minutes
+    setInterval(loadSOTU, 60 * 60 * 1000);
+  </script>
+</body>
+</html>
+

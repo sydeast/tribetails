@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+vendor/
+
+# Build output
+dist/
+build/
+.next/
+out/
+.nuxt/
+.turbo/
+
+# Cache
+.cache/
+.parcel-cache/
+.eslintcache
+
+# Logs and temp
+*.log
+*.tmp
+.DS_Store
+
+# Heavy media
+*.mp4
+*.mov
+*.psd
+*.zip
+
+# Lockfiles (optional: comment out if needed)
+package-lock.json
+pnpm-lock.yaml
+yarn.lock

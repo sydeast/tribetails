@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AuntieOS Legacy Admin UI (SOTU Tooling)</title>
+  <style>
+    :root {
+      --bg: #0f0f0f;
+      --surface: #1a1a1a;
+      --surface2: #242424;
+      --border: #333;
+      --accent: #c8a96e;
+      --accent-dim: #9c7d4a;
+      --text: #e8e8e8;
+      --text-dim: #888;
+      --success: #4caf7d;
+      --error: #e05c5c;
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px 16px;
+    }
+
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+
+    header h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: var(--accent);
+    }
+
+    header span {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    @media (max-width: 600px) {
+      .form-grid { grid-template-columns: 1fr; }
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field.full { grid-column: 1 / -1; }
+
+    label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    select, textarea {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 0.95rem;
+      padding: 10px 12px;
+      width: 100%;
+      outline: none;
+      transition: border-color 0.15s;
+      font-family: inherit;
+    }
+
+    select:focus, textarea:focus {
+      border-color: var(--accent);
+    }
+
+    select option { background: var(--surface2); }
+
+    textarea {
+      resize: vertical;
+      min-height: 120px;
+      line-height: 1.5;
+    }
+
+    textarea#notes { min-height: 160px; }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.9rem;
+      font-weight: 600;
+      padding: 11px 20px;
+      transition: all 0.15s;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #000;
+    }
+
+    .btn-primary:hover { background: #d4b87a; }
+    .btn-primary:active { background: var(--accent-dim); }
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-dim);
+      padding: 11px 14px;
+    }
+
+    .btn-ghost:hover { color: var(--text); }
+
+    /* Output section */
+    #output-section {
+      margin-top: 32px;
+      display: none;
+    }
+
+    #output-section.visible { display: block; }
+
+    .output-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .output-header h2 {
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .output-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    #output-copy {
+      font-family: inherit;
+      font-size: 0.95rem;
+      line-height: 1.65;
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 16px;
+      resize: vertical;
+      min-height: 180px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    #output-copy:focus { border-color: var(--accent); }
+
+    .meta-bar {
+      margin-top: 10px;
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    .meta-bar span { display: flex; align-items: center; gap: 4px; }
+
+    .pill {
+      display: inline-block;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 0.7rem;
+      color: var(--text-dim);
+    }
+
+    /* Profile panels */
+    .profile-panels {
+      display: none;
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .profile-panels.visible {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    @media (max-width: 600px) {
+      .profile-panels.visible { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+
+    .panel h3 {
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 12px;
+    }
+
+    .panel-section {
+      margin-bottom: 10px;
+    }
+
+    .panel-section label {
+      display: block;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-dim);
+      margin-bottom: 3px;
+    }
+
+    .panel-section p {
+      font-size: 0.85rem;
+      line-height: 1.5;
+      color: var(--text);
+    }
+
+    .kin-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+    }
+
+    .kin-card .kin-name {
+      font-weight: 700;
+      font-size: 0.9rem;
+      margin-bottom: 4px;
+    }
+
+    .kin-card .kin-meta {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+
+    .kin-card p {
+      font-size: 0.82rem;
+      line-height: 1.45;
+      color: var(--text);
+    }
+
+    /* Status / toast */
+    #status {
+      display: none;
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+    }
+
+    #status.error {
+      display: block;
+      background: rgba(224, 92, 92, 0.12);
+      border: 1px solid var(--error);
+      color: var(--error);
+    }
+
+    #status.success {
+      display: block;
+      background: rgba(76, 175, 125, 0.12);
+      border: 1px solid var(--success);
+      color: var(--success);
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(0,0,0,0.2);
+      border-top-color: #000;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 28px 0;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>Auntie OS</h1>
+    <span>Tribe Tails Pet Care</span>
+  </header>
+
+  <!-- FORM -->
+  <div class="form-grid">
+
+    <div class="field">
+      <label for="comm-type">Communication Type</label>
+      <select id="comm-type">
+        <option value="visit_report">Visit Report</option>
+        <option value="sms">SMS</option>
+        <option value="email">Email</option>
+        <option value="social_post">Social Post</option>
+        <option value="blog_post">Blog Post</option>
+        <option value="general">General</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="recipient">Recipient</label>
+      <select id="recipient">
+        <option value="">Loading...</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="tone">Tone Hint (optional)</label>
+      <select id="tone">
+        <option value="warm">Warm</option>
+        <option value="casual">Casual</option>
+        <option value="celebratory">Celebratory</option>
+        <option value="urgent">Urgent</option>
+        <option value="professional">Professional</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="length">Message Length (optional)</label>
+      <select id="length">
+        <option value="medium">Medium</option>
+        <option value="short">Short</option>
+        <option value="long">Long</option>
+      </select>
+    </div>
+
+    <div class="field full">
+      <label for="notes">Raw Notes</label>
+      <textarea id="notes" placeholder="Bullet points or free-form notes from the visit or what you want to communicate..."></textarea>
+    </div>
+
+  </div>
+
+  <div class="actions">
+    <button class="btn-primary" id="btn-generate">Generate</button>
+    <button class="btn-secondary" id="btn-dossier" disabled>View Dossier</button>
+    <button class="btn-secondary" id="btn-411" disabled>View 411s</button>
+  </div>
+
+  <div id="status"></div>
+
+  <!-- OUTPUT -->
+  <div id="output-section">
+    <hr>
+    <div class="output-header">
+      <h2>Generated Copy</h2>
+      <div class="output-actions">
+        <button class="btn-ghost" id="btn-clipboard">Copy</button>
+        <button class="btn-secondary" id="btn-regen">Regenerate</button>
+        <button class="btn-primary" id="btn-approve">Save Draft</button>
+      </div>
+    </div>
+    <textarea id="output-copy" spellcheck="true"></textarea>
+    <div class="meta-bar">
+      <span id="meta-kinfolk"></span>
+      <span id="meta-type"></span>
+      <span id="meta-model"></span>
+      <span id="meta-draft"></span>
+    </div>
+  </div>
+
+  <!-- PROFILE PANELS -->
+  <div class="profile-panels" id="profile-panels">
+
+    <div class="panel" id="dossier-panel">
+      <h3>The Dossier</h3>
+      <div id="dossier-content"><p style="color:var(--text-dim);font-size:0.85rem;">Select a Kinfolk to view their Dossier.</p></div>
+    </div>
+
+    <div class="panel" id="four11-panel">
+      <h3>The 411</h3>
+      <div id="four11-content"><p style="color:var(--text-dim);font-size:0.85rem;">Select a Kinfolk to view their Kin's 411s.</p></div>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+  // All paths are relative — the Cloudflare tunnel routes /api/* to Baserow
+  // and /webhook/* to n8n, so HTTPS mixed-content is never an issue.
+  const N8N_WEBHOOK    = '/webhook/auntie-generate';
+  const BASEROW        = '/api';
+  const TOKEN          = 'soBDGJj1NIVBc0hcF67lNPU8zSAXIZEB';
+  const APPROVE_WEBHOOK = '/webhook/auntie-update-profiles';
+
+  // Table IDs
+  const T_KINFOLK = 622;
+  const T_KIN     = 629;
+  const T_DOSSIER = 643;
+  const T_411     = 644;
+  const T_DRAFTS  = 636;
+
+  let state = {
+    kinfolk: [],        // all kinfolk rows
+    currentDraftId: null,
+    currentKinfolkId: null,
+    lastResult: null,
+  };
+
+  // ---- Baserow helpers ----
+  async function baserowGet(tableId, params = '') {
+    const r = await fetch(`${BASEROW}/database/rows/table/${tableId}/?user_field_names=true&size=200${params}`, {
+      headers: { Authorization: `Token ${TOKEN}` }
+    });
+    if (!r.ok) throw new Error(`Baserow ${r.status}`);
+    return r.json();
+  }
+
+  async function baserowPatch(tableId, rowId, data) {
+    const r = await fetch(`${BASEROW}/database/rows/table/${tableId}/${rowId}/?user_field_names=true`, {
+      method: 'PATCH',
+      headers: { Authorization: `Token ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!r.ok) throw new Error(`Baserow PATCH ${r.status}`);
+    return r.json();
+  }
+
+  // ---- UI helpers ----
+  function setStatus(msg, type = '') {
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = type;
+  }
+
+  function clearStatus() {
+    const el = document.getElementById('status');
+    el.textContent = '';
+    el.className = '';
+  }
+
+  function setGenerating(yes) {
+    const btn = document.getElementById('btn-generate');
+    btn.disabled = yes;
+    btn.innerHTML = yes
+      ? '<span class="spinner"></span>Generating...'
+      : 'Generate';
+    document.getElementById('btn-regen').disabled = yes;
+  }
+
+  // ---- Load Kinfolk into dropdown ----
+  async function loadKinfolk() {
+    try {
+      const data = await baserowGet(T_KINFOLK);
+      state.kinfolk = data.results || [];
+
+      const sel = document.getElementById('recipient');
+      sel.innerHTML = '<option value="">— Free text (social/blog) —</option>';
+
+      for (const kf of state.kinfolk) {
+        const opt = document.createElement('option');
+        opt.value = kf['Display Name'];
+        opt.dataset.id = kf.id;
+        opt.textContent = kf['Display Name'];
+        sel.appendChild(opt);
+      }
+    } catch (e) {
+      document.getElementById('recipient').innerHTML = '<option value="">Could not load Kinfolk</option>';
+    }
+  }
+
+  // ---- Enable profile buttons and auto-load panels when kinfolk selected ----
+  document.getElementById('recipient').addEventListener('change', function() {
+    const hasKinfolk = !!this.value;
+    document.getElementById('btn-dossier').disabled = !hasKinfolk;
+    document.getElementById('btn-411').disabled = !hasKinfolk;
+
+    if (hasKinfolk) {
+      const kfRow = state.kinfolk.find(k => k['Display Name'] === this.value);
+      if (kfRow) {
+        togglePanels(true);
+        loadDossier(kfRow);
+        loadFour11(kfRow);
+      }
+    } else {
+      hidePanels();
+      document.getElementById('dossier-content').innerHTML = '<p style="color:var(--text-dim);font-size:0.85rem;">Select a Kinfolk to view their Dossier.</p>';
+      document.getElementById('four11-content').innerHTML = '<p style="color:var(--text-dim);font-size:0.85rem;">Select a Kinfolk to view their Kin\'s 411s.</p>';
+    }
+  });
+
+  // ---- Generate ----
+  async function generate() {
+    const comm_type = document.getElementById('comm-type').value;
+    const recipient = document.getElementById('recipient').value;
+    const raw_notes = document.getElementById('notes').value.trim();
+    const tone_hint = document.getElementById('tone').value;
+    const max_length = document.getElementById('length').value;
+
+    if (!raw_notes) {
+      setStatus('Raw notes are required.', 'error');
+      return;
+    }
+
+    clearStatus();
+    setGenerating(true);
+    document.getElementById('output-section').classList.remove('visible');
+
+    try {
+      const resp = await fetch(N8N_WEBHOOK, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ communication_type: comm_type, recipient, raw_notes, tone_hint, max_length }),
+      });
+
+      const data = await resp.json();
+
+      if (!resp.ok || data.error) {
+        throw new Error(data.error || `HTTP ${resp.status}`);
+      }
+
+      state.lastResult = data;
+      state.currentDraftId = data.draft_id;
+      state.currentKinfolkId = data.kinfolk_id;
+
+      // Populate output
+      document.getElementById('output-copy').value = data.generated_copy;
+      document.getElementById('meta-kinfolk').innerHTML =
+        data.kinfolk_name ? `<span class="pill">${data.kinfolk_name}</span>` : '';
+      document.getElementById('meta-type').innerHTML =
+        `<span class="pill">${data.communication_type}</span>`;
+      document.getElementById('meta-model').textContent = data.model || '';
+      document.getElementById('meta-draft').textContent =
+        data.draft_id ? `draft #${data.draft_id}` : '';
+
+      document.getElementById('output-section').classList.add('visible');
+
+    } catch (e) {
+      setStatus(`Error: ${e.message}`, 'error');
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  document.getElementById('btn-generate').addEventListener('click', generate);
+  document.getElementById('btn-regen').addEventListener('click', generate);
+
+  // ---- Copy to clipboard ----
+  document.getElementById('btn-clipboard').addEventListener('click', async () => {
+    const text = document.getElementById('output-copy').value;
+    try {
+      await navigator.clipboard.writeText(text);
+      const btn = document.getElementById('btn-clipboard');
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy', 1800);
+    } catch {
+      setStatus('Could not copy — select text manually.', 'error');
+    }
+  });
+
+  // ---- Approve / Save Draft ----
+  document.getElementById('btn-approve').addEventListener('click', async () => {
+    const draftId = state.currentDraftId;
+    if (!draftId) { setStatus('No draft to approve.', 'error'); return; }
+
+    const edited = document.getElementById('output-copy').value;
+
+    try {
+      await baserowPatch(T_DRAFTS, draftId, {
+        status: 'approved',
+        generated_copy: edited,
+      });
+      setStatus(`Draft #${draftId} saved as approved.`, 'success');
+      document.getElementById('meta-draft').textContent = `draft #${draftId} — approved`;
+
+      // Trigger profile update if kinfolk known
+      if (state.currentKinfolkId) {
+        fetch(APPROVE_WEBHOOK, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            trigger_source: 'generated_draft',
+            row_id: draftId,
+            kinfolk_id: state.currentKinfolkId,
+          }),
+        }).catch(() => {}); // fire and forget
+      }
+
+    } catch (e) {
+      setStatus(`Save failed: ${e.message}`, 'error');
+    }
+  });
+
+  // ---- Dossier: standalone fetch function ----
+  async function loadDossier(kfRow) {
+    document.getElementById('dossier-content').innerHTML = '<p style="color:var(--text-dim);font-size:0.85rem;">Loading...</p>';
+    try {
+      const data = await baserowGet(T_DOSSIER, `&filter__kinfolk_id__equal=${kfRow.id}`);
+      const d = (data.results || [])[0];
+      if (!d) {
+        document.getElementById('dossier-content').innerHTML = '<p style="color:var(--text-dim);font-size:0.85rem;">No Dossier found for this Kinfolk.</p>';
+        return;
+      }
+      const fields = [
+        { label: 'Communication Style', key: 'communication_style' },
+        { label: 'Household Notes', key: 'household_notes' },
+        { label: 'Relationship with Auntie', key: 'relationship_with_auntie' },
+        { label: 'Life Context', key: 'important_life_context' },
+        { label: 'Preferred Contact', key: 'preferred_contact_method' },
+        { label: 'Summary', key: 'raw_summary' },
+      ];
+      const html = fields.map(f => {
+        const val = d[f.key];
+        if (!val || val === 'Not yet documented.') return '';
+        return `<div class="panel-section"><label>${f.label}</label><p>${escHtml(val)}</p></div>`;
+      }).join('');
+      document.getElementById('dossier-content').innerHTML = html || '<p style="color:var(--text-dim);font-size:0.85rem;">No details on file yet.</p>';
+    } catch (e) {
+      document.getElementById('dossier-content').innerHTML = `<p style="color:var(--error);">Error: ${e.message}</p>`;
+    }
+  }
+
+  // ---- 411: standalone fetch function with click-to-expand per Kin ----
+  async function loadFour11(kfRow) {
+    document.getElementById('four11-content').innerHTML = '<p style="color:var(--text-dim);font-size:0.85rem;">Loading...</p>';
+    try {
+      const kinData = await baserowGet(T_KIN, `&filter__kinfolk_id__equal=${kfRow.id}`);
+      const kin = kinData.results || [];
+
+      if (!kin.length) {
+        document.getElementById('four11-content').innerHTML = '<p style="color:var(--text-dim);font-size:0.85rem;">No Kin found for this household.</p>';
+        return;
+      }
+
+      // Fetch all 411 rows for these kin in parallel
+      const four11Rows = await Promise.all(kin.map(k =>
+        baserowGet(T_411, `&filter__kin_id__equal=${k.id}`)
+          .then(d => (d.results || [])[0] || {})
+          .catch(() => ({}))
+      ));
+
+      document.getElementById('four11-content').innerHTML = kin.map((k, i) => {
+        const f = four11Rows[i];
+        const parts = [];
+        if (f.personality && f.personality !== 'Not yet documented.') parts.push(`<p><strong>Personality:</strong> ${escHtml(f.personality)}</p>`);
+        if (f.quirks_and_preferences && f.quirks_and_preferences !== 'Not yet documented.') parts.push(`<p><strong>Quirks:</strong> ${escHtml(f.quirks_and_preferences)}</p>`);
+        if (f.medical_notes && f.medical_notes !== 'Not yet documented.') parts.push(`<p><strong>Medical:</strong> ${escHtml(f.medical_notes)}</p>`);
+        if (f.dietary_details && f.dietary_details !== 'Not yet documented.') parts.push(`<p><strong>Diet:</strong> ${escHtml(f.dietary_details)}</p>`);
+        const detailHtml = parts.length
+          ? parts.join('')
+          : '<p style="color:var(--text-dim);font-size:0.85rem;">No 411 data yet for this Kin.</p>';
+
+        return `<div class="kin-card" style="cursor:pointer;" onclick="toggleKinDetail('kd-${i}',this)">
+          <div class="kin-name">${escHtml(k.Name || k.name || '(unnamed)')} <span class="kin-toggle" style="font-size:0.75rem;float:right;">▼</span></div>
+          <div class="kin-meta">${escHtml(k.species || '')}${f.breed ? ' · ' + escHtml(f.breed) : ''}</div>
+          <div id="kd-${i}" style="display:none;margin-top:0.5rem;">${detailHtml}</div>
+        </div>`;
+      }).join('');
+
+    } catch (e) {
+      document.getElementById('four11-content').innerHTML = `<p style="color:var(--error);">Error: ${e.message}</p>`;
+    }
+  }
+
+  function toggleKinDetail(id, card) {
+    var detail = document.getElementById(id);
+    var arrow = card.querySelector('.kin-toggle');
+    if (detail.style.display === 'none') {
+      detail.style.display = 'block';
+      if (arrow) arrow.textContent = '▲';
+    } else {
+      detail.style.display = 'none';
+      if (arrow) arrow.textContent = '▼';
+    }
+  }
+
+  // ---- Dossier button: manual refresh ----
+  document.getElementById('btn-dossier').addEventListener('click', function() {
+    const recipientName = document.getElementById('recipient').value;
+    const kfRow = state.kinfolk.find(k => k['Display Name'] === recipientName);
+    if (!kfRow) return;
+    togglePanels(true);
+    loadDossier(kfRow);
+  });
+
+  // ---- 411 button: manual refresh ----
+  document.getElementById('btn-411').addEventListener('click', function() {
+    const recipientName = document.getElementById('recipient').value;
+    const kfRow = state.kinfolk.find(k => k['Display Name'] === recipientName);
+    if (!kfRow) return;
+    togglePanels(true);
+    loadFour11(kfRow);
+  });
+
+  function togglePanels(show) {
+    document.getElementById('profile-panels').classList.toggle('visible', show);
+  }
+
+  function hidePanels() {
+    document.getElementById('profile-panels').classList.remove('visible');
+  }
+
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>');
+  }
+
+  // Init
+  loadKinfolk();
+</script>
+</body>
+</html>

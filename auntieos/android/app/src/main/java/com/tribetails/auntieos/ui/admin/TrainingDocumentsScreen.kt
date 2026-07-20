@@ -1,0 +1,643 @@
+package com.tribetails.auntieos.ui.admin
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.composables.icons.lucide.BookOpen
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Search
+import com.composables.icons.lucide.TriangleAlert
+import com.tribetails.auntieos.data.model.TrainingDocument
+import com.tribetails.auntieos.ui.components.AuntieBanner
+import com.tribetails.auntieos.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.ui.components.AuntieChip
+import com.tribetails.auntieos.ui.components.AuntieDashedAddButton
+import com.tribetails.auntieos.ui.components.AuntieDialog
+import com.tribetails.auntieos.ui.components.AuntieDropdownField
+import com.tribetails.auntieos.ui.components.AuntieEntityRow
+import com.tribetails.auntieos.ui.components.AuntieField
+import com.tribetails.auntieos.ui.components.AuntieFieldLabel
+import com.tribetails.auntieos.ui.components.AuntieIconTile
+import com.tribetails.auntieos.ui.components.AuntiePullRefresh
+import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
+import com.tribetails.auntieos.ui.components.AuntieStatusPill
+import com.tribetails.auntieos.ui.components.AuntieStatusTone
+import com.tribetails.auntieos.ui.components.DenPanel
+import com.tribetails.auntieos.ui.components.DenScreenHeading
+import com.tribetails.auntieos.ui.components.EmptyHint
+import com.tribetails.auntieos.ui.components.GhostButton
+import com.tribetails.auntieos.ui.components.PrimaryButton
+import com.tribetails.auntieos.ui.components.StatCard
+import com.tribetails.auntieos.ui.theme.AuntieTheme
+
+// ── feature flags (ship dark) ────────────────────────────────────────────────
+// Mirrors the redesigned web Tribal Intel screen, which ships READ-ONLY.
+// Anything that would write, or that is not driven by the AdminDataViewModel's
+// loaded list, ships dark behind a local flag with a fail-loud Not-wired banner
+// so it can never pretend to persist. Flip these on centrally once the matching
+// VM hook is exercised by the redesign.
+
+// auntieos.trainingDocs.create. The "Add intel" trigger + Add/Edit form. Now LIVE
+// (spec 23): backed by the createTrainingDocument / updateTrainingDocument /
+// deleteTrainingDocument admin callables, with attachments via the TRIBAL_INTEL
+// media pipeline and a real Kinfolk/Kin target picker. Matches the web parity flip.
+private const val FF_TRAINING_DOC_CREATE = true
+
+/**
+ * Pure client-side comm-type narrowing: when a comm type is selected, keep only
+ * docs with that exact communicationType; a null selection is a no-op. In-memory
+ * only on the loaded list. Mirrors the web TrainingDocumentsScreen filter.
+ * Unit-tested.
+ */
+internal fun trainingDocsCommTypeFilter(
+    docs: List<TrainingDocument>,
+    selected: String?,
+): List<TrainingDocument> =
+    if (selected == null) docs else docs.filter { it.communicationType == selected }
+
+@Composable
+fun TrainingDocumentsScreen(
+    viewModel: AdminDataViewModel = viewModel(),
+    onBack: () -> Unit,
+) {
+    val trainingDocs by viewModel.trainingDocuments.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+    val error by viewModel.error.collectAsState()
+    val queuedMessage by viewModel.trainingDocQueuedMessage.collectAsState()
+    val c = AuntieTheme.colors
+
+    var searchQuery by remember { mutableStateOf("") }
+    // Add/Edit form visibility. Gated behind FF_TRAINING_DOC_CREATE.
+    var showAddForm by remember { mutableStateOf(false) }
+    // The doc currently being edited (null = creating a new entry).
+    var editingDoc by remember { mutableStateOf<TrainingDocument?>(null) }
+    // Local Comm. Type chip selection (always on). Single-select, in-memory only.
+    var commTypeFilter by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        viewModel.loadTrainingDocuments()
+        viewModel.loadKinfolkDirectory()
+    }
+
+    AuntieScreenScaffold(
+        title = "Tribal Intel",
+        onBack = onBack,
+    ) {
+        AuntiePullRefresh(
+            isRefreshing = isLoading,
+            onRefresh = { viewModel.loadTrainingDocuments() },
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = AuntieTheme.dims.space4),
+                verticalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space4),
+                contentPadding = PaddingValues(vertical = AuntieTheme.dims.space4),
+            ) {
+                item {
+                    DenScreenHeading(
+                        // Renamed "Tribal Intel" (LOCKED Decision 3). TODO(auntie copy):
+                        // final subtitle wording is author-owned; the name is decided.
+                        kicker = "The Den · Tribal Intel",
+                        title = "Tribal",
+                        accentTail = "Intel.",
+                        subtitle = "Guides and educational resources for care delivery",
+                        trailing = {
+                            if (FF_TRAINING_DOC_CREATE) {
+                                AuntieDashedAddButton(
+                                    text = "Add intel",
+                                    onClick = {
+                                        editingDoc = null
+                                        viewModel.resetTrainingDocDraft()
+                                        showAddForm = true
+                                    },
+                                    leadingIcon = Lucide.BookOpen,
+                                )
+                            }
+                        },
+                    )
+                }
+
+                // Honest queued-for-reconcile confirmation after a successful save.
+                queuedMessage?.let { msg ->
+                    item {
+                        AuntieBanner(
+                            tone = AuntieBannerTone.Suggestion,
+                            title = "Queued for reconcile",
+                            icon = Lucide.BookOpen,
+                            pillLabel = "QUEUED",
+                        ) {
+                            Text(text = msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        }
+                    }
+                }
+
+                // Add/Edit form panel. Only reachable while FF_TRAINING_DOC_CREATE is on.
+                if (FF_TRAINING_DOC_CREATE && showAddForm) {
+                    item {
+                        AddDocumentForm(
+                            viewModel = viewModel,
+                            editingDoc = editingDoc,
+                            onCancel = { showAddForm = false; viewModel.resetTrainingDocDraft() },
+                            onSaved = { showAddForm = false },
+                        )
+                    }
+                }
+
+                // Surface a load / permission error loudly before anything else.
+                error?.let { msg ->
+                    item {
+                        AuntieBanner(
+                            tone = AuntieBannerTone.Error,
+                            title = "Couldn't load training documents",
+                            icon = Lucide.TriangleAlert,
+                        ) {
+                            Text(
+                                text = msg,
+                                style = AuntieTheme.typography.bodySmall,
+                                color = c.textDim,
+                            )
+                        }
+                    }
+                }
+
+                if (trainingDocs.isNotEmpty()) {
+                    item { SummaryRow(trainingDocs) }
+
+                    item {
+                        DenPanel(
+                            title = "Document library",
+                            subtitle = "Search across titles, content, and comm. type.",
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            AuntieField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                placeholder = "Search documents...",
+                                leading = { Icon(Lucide.Search, contentDescription = null) },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+
+                            // Comm. Type quick filters (always on): selection narrows the
+                            // displayed list locally over the loaded docs.
+                            val commTypeOptions = remember(trainingDocs) {
+                                trainingDocs.map { it.communicationType }
+                                    .filter { it.isNotBlank() }
+                                    .distinct()
+                            }
+                            if (commTypeOptions.isNotEmpty()) {
+                                Spacer(Modifier.height(AuntieTheme.dims.space3))
+                                Text(
+                                    text = "FILTER BY COMM. TYPE",
+                                    style = AuntieTheme.typography.mono,
+                                    color = c.primary,
+                                )
+                                Spacer(Modifier.height(AuntieTheme.dims.space2))
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2),
+                                ) {
+                                    commTypeOptions.forEach { opt ->
+                                        AuntieChip(
+                                            selected = commTypeFilter == opt,
+                                            onClick = {
+                                                commTypeFilter = if (commTypeFilter == opt) null else opt
+                                            },
+                                            label = opt,
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.height(AuntieTheme.dims.space4))
+
+                            // Local in-memory filter: free-text search across the loaded
+                            // list, then the optional comm-type narrowing (only when the
+                            // filter chips are live).
+                            val docs = trainingDocs
+                                // Drop content-less junk docs (leftover all-null import/seed
+                                // rows): would render as "Untitled Document" and inflate totals.
+                                .filter { it.title.isNotBlank() || it.content.isNotBlank() }
+                                .filter { doc ->
+                                    searchQuery.isBlank() ||
+                                        doc.title.contains(searchQuery, ignoreCase = true) ||
+                                        doc.content.contains(searchQuery, ignoreCase = true) ||
+                                        doc.communicationType.contains(searchQuery, ignoreCase = true)
+                                }
+                                .let { result -> trainingDocsCommTypeFilter(result, commTypeFilter) }
+
+                            if (docs.isEmpty()) {
+                                if (searchQuery.isBlank()) {
+                                    EmptyHint("No documents match the current filter.")
+                                } else {
+                                    EmptyHint("No results for \"$searchQuery\".")
+                                }
+                            } else {
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2),
+                                ) {
+                                    docs.forEachIndexed { i, doc ->
+                                        DocRow(
+                                            doc = doc,
+                                            showDivider = i < docs.lastIndex,
+                                            canManage = FF_TRAINING_DOC_CREATE,
+                                            onEdit = {
+                                                editingDoc = doc
+                                                viewModel.setTrainingDocAttachments(doc.attachments)
+                                                viewModel.loadKinForSelectedKinfolk(doc.targetKinfolkId.ifBlank { doc.kinfolkRef })
+                                                showAddForm = true
+                                            },
+                                            onDelete = { viewModel.deleteTrainingDocument(doc.id) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if (!isLoading) {
+                    item {
+                        DenPanel(
+                            title = "No Tribal Intel yet",
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            EmptyHint("Training materials and guides will appear here once uploaded.")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SummaryRow(docs: List<TrainingDocument>) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space3),
+    ) {
+        StatCard(
+            label = "Total",
+            value = "${docs.size}",
+            trend = "documents on file",
+            tone = AuntieStatusTone.Orange,
+            feature = true,
+            modifier = Modifier.weight(1f),
+        )
+        StatCard(
+            label = "Comm. types",
+            value = "${docs.map { it.communicationType }.filter { it.isNotBlank() }.distinct().size}",
+            trend = "distinct categories",
+            tone = AuntieStatusTone.Teal,
+            modifier = Modifier.weight(1f),
+        )
+        StatCard(
+            label = "With content",
+            value = "${docs.count { it.content.isNotBlank() }}",
+            trend = "have a body",
+            tone = AuntieStatusTone.Purple,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun DocRow(
+    doc: TrainingDocument,
+    showDivider: Boolean,
+    canManage: Boolean,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val c = AuntieTheme.colors
+
+    Column {
+        AuntieEntityRow(
+            title = doc.title.ifBlank { "Untitled Document" },
+            subtitle = doc.uploadedAt.ifBlank { "-" },
+            showDivider = false,
+            leading = {
+                AuntieIconTile(icon = Lucide.BookOpen, tone = AuntieStatusTone.Orange)
+            },
+            trailing = {
+                if (doc.communicationType.isNotBlank()) {
+                    AuntieStatusPill(
+                        label = doc.communicationType,
+                        tone = AuntieStatusTone.Orange,
+                        mono = true,
+                    )
+                }
+            },
+        )
+
+        if (doc.content.isNotBlank() || doc.notes.isNotBlank() || doc.kinfolkRef.isNotBlank()) {
+            Column(
+                modifier = Modifier.padding(
+                    start = AuntieTheme.dims.space3,
+                    end = AuntieTheme.dims.space3,
+                    bottom = AuntieTheme.dims.space3,
+                ),
+                verticalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2),
+            ) {
+                if (doc.content.isNotBlank()) {
+                    val preview = if (!expanded && doc.content.length > 200) {
+                        doc.content.take(200) + "..."
+                    } else {
+                        doc.content
+                    }
+                    Text(
+                        text = preview,
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textPrimary.copy(alpha = 0.82f),
+                    )
+                    if (doc.content.length > 200) {
+                        Text(
+                            text = if (expanded) "Show Less" else "Show More",
+                            style = AuntieTheme.typography.labelMedium,
+                            color = c.primary,
+                            modifier = Modifier.clickable { expanded = !expanded },
+                        )
+                    }
+                }
+                if (doc.notes.isNotBlank()) {
+                    Text(
+                        text = "Notes: ${doc.notes}",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                }
+                if (doc.kinfolkRef.isNotBlank()) {
+                    Text(
+                        text = "Related to: ${doc.kinfolkRef}",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.primary.copy(alpha = 0.85f),
+                    )
+                }
+                if (doc.attachments.isNotEmpty()) {
+                    Text(
+                        text = "Attachments: ${doc.attachments.joinToString { it.fileName.ifBlank { "file" } }}",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                }
+                if (doc.reconcileStatus.isNotBlank()) {
+                    AuntieStatusPill(
+                        label = "reconcile: ${doc.reconcileStatus}",
+                        tone = if (doc.reconcileStatus == "applied") AuntieStatusTone.Teal else AuntieStatusTone.Orange,
+                        mono = true,
+                    )
+                    if (doc.reconcileNotes.isNotBlank()) {
+                        Text(
+                            text = doc.reconcileNotes,
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textFaint,
+                        )
+                    }
+                }
+                if (canManage && doc.id.isNotBlank()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space3, Alignment.End),
+                    ) {
+                        GhostButton(label = "Edit", onClick = onEdit)
+                        GhostButton(label = "Delete", onClick = { confirmDelete = true })
+                    }
+                }
+            }
+        }
+    }
+
+    AuntieDialog(
+        visible = confirmDelete,
+        title = "Delete this Tribal Intel entry?",
+        onDismiss = { confirmDelete = false },
+        footer = {
+            GhostButton(label = "Cancel", onClick = { confirmDelete = false })
+            PrimaryButton(label = "Delete", onClick = { confirmDelete = false; onDelete() })
+        },
+    ) {
+        Text(
+            text = "This removes the source note. It does NOT unmerge any text the reconcile " +
+                "pipeline has already folded into the dossier or 411. Those summaries keep prior " +
+                "content until they are regenerated.",
+            style = AuntieTheme.typography.bodySmall,
+            color = AuntieTheme.colors.textDim,
+        )
+    }
+}
+
+/**
+ * Add/Edit form for a Tribal Intel entry (spec 23). Wired to [AdminDataViewModel]:
+ * Auntie types free notes, attaches Cloudinary files (TRIBAL_INTEL pipeline), and
+ * targets a Kinfolk (household) or single Kin (pet) via real directory pickers.
+ * Save routes through the create/update admin callable and the entry is queued for
+ * the nightly reconcile pipeline. The form never claims an instant dossier update.
+ */
+@Composable
+private fun AddDocumentForm(
+    viewModel: AdminDataViewModel,
+    editingDoc: TrainingDocument?,
+    onCancel: () -> Unit,
+    onSaved: () -> Unit,
+) {
+    val context = LocalContext.current
+    val kinfolkDirectory by viewModel.kinfolkDirectory.collectAsState()
+    val kinForSelected by viewModel.kinForSelectedKinfolk.collectAsState()
+    val attachments by viewModel.trainingDocAttachments.collectAsState()
+    val isUploading by viewModel.trainingDocUploading.collectAsState()
+    val isSaving by viewModel.trainingDocSaving.collectAsState()
+    val error by viewModel.error.collectAsState()
+
+    var title by remember(editingDoc) { mutableStateOf(editingDoc?.title ?: "") }
+    var content by remember(editingDoc) { mutableStateOf(editingDoc?.content ?: "") }
+    var notes by remember(editingDoc) { mutableStateOf(editingDoc?.notes ?: "") }
+    var targetType by remember(editingDoc) { mutableStateOf(editingDoc?.targetType?.ifBlank { "KINFOLK" } ?: "KINFOLK") }
+    var selectedKinfolkId by remember(editingDoc) {
+        mutableStateOf(editingDoc?.let { it.targetKinfolkId.ifBlank { it.kinfolkRef } } ?: "")
+    }
+    var selectedKinId by remember(editingDoc) { mutableStateOf(editingDoc?.targetKinId ?: "") }
+
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri -> if (uri != null) viewModel.uploadTribalIntelAttachment(context, uri) }
+
+    val hasContent = title.isNotBlank() || content.isNotBlank() || attachments.isNotEmpty()
+    val hasTarget = selectedKinfolkId.isNotBlank() && (targetType != "KIN" || selectedKinId.isNotBlank())
+    val canSave = hasContent && hasTarget && !isSaving && !isUploading
+
+    DenPanel(
+        title = if (editingDoc == null) "New Tribal Intel" else "Edit Tribal Intel",
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = "Saved intel is queued for the next reconcile pass, then folded into the " +
+                "targeted client's dossier and the pet's 411. Attachments are cited as provenance " +
+                "only (the AI does not read image contents).",
+            style = AuntieTheme.typography.bodySmall,
+            color = AuntieTheme.colors.textDim,
+        )
+
+        error?.let { msg ->
+            Spacer(Modifier.height(AuntieTheme.dims.space3))
+            AuntieBanner(
+                tone = AuntieBannerTone.Error,
+                title = "Could not save",
+                icon = Lucide.TriangleAlert,
+            ) {
+                Text(text = msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+            }
+        }
+
+        Spacer(Modifier.height(AuntieTheme.dims.space4))
+
+        AuntieFieldLabel(text = "Title")
+        AuntieField(value = title, onValueChange = { title = it }, placeholder = "Short label", modifier = Modifier.fillMaxWidth())
+
+        Spacer(Modifier.height(AuntieTheme.dims.space4))
+
+        AuntieFieldLabel(text = "Intel")
+        AuntieField(
+            value = content,
+            onValueChange = { content = it },
+            placeholder = "What should the AI know about this client or pet?",
+            singleLine = false,
+            minLines = 4,
+            maxLines = 12,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Spacer(Modifier.height(AuntieTheme.dims.space4))
+
+        AuntieFieldLabel(text = "Notes", optionalNote = "optional")
+        AuntieField(value = notes, onValueChange = { notes = it }, placeholder = "Internal notes", modifier = Modifier.fillMaxWidth())
+
+        Spacer(Modifier.height(AuntieTheme.dims.space5))
+
+        // ---- Target picker ----
+        Text(text = "TARGET", style = AuntieTheme.typography.mono, color = AuntieTheme.colors.primary)
+        Spacer(Modifier.height(AuntieTheme.dims.space2))
+        Row(horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2)) {
+            AuntieChip(
+                selected = targetType == "KINFOLK",
+                onClick = { targetType = "KINFOLK"; selectedKinId = "" },
+                label = "Whole household",
+            )
+            AuntieChip(
+                selected = targetType == "KIN",
+                onClick = { targetType = "KIN" },
+                label = "Single pet",
+            )
+        }
+
+        Spacer(Modifier.height(AuntieTheme.dims.space3))
+
+        AuntieDropdownField(
+            label = "Kinfolk (household)",
+            value = kinfolkDirectory.firstOrNull { it.id == selectedKinfolkId },
+            options = kinfolkDirectory,
+            onSelect = { kf ->
+                selectedKinfolkId = kf.id
+                selectedKinId = ""
+                viewModel.loadKinForSelectedKinfolk(kf.id)
+            },
+            displayText = { "${it.firstName} ${it.lastName}".trim().ifBlank { it.id } },
+            placeholder = "Select a kinfolk...",
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        if (targetType == "KIN") {
+            Spacer(Modifier.height(AuntieTheme.dims.space3))
+            AuntieDropdownField(
+                label = "Pet",
+                value = kinForSelected.firstOrNull { it.id == selectedKinId },
+                options = kinForSelected,
+                onSelect = { selectedKinId = it.id },
+                displayText = { it.name.ifBlank { it.id } },
+                placeholder = "Select a pet...",
+                enabled = selectedKinfolkId.isNotBlank(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        Spacer(Modifier.height(AuntieTheme.dims.space5))
+
+        // ---- Attachments ----
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "ATTACHMENTS",
+                style = AuntieTheme.typography.mono,
+                color = AuntieTheme.colors.primary,
+                modifier = Modifier.weight(1f),
+            )
+            GhostButton(
+                label = if (isUploading) "Uploading..." else "Attach file",
+                onClick = { if (!isUploading) filePicker.launch("*/*") },
+            )
+        }
+        if (attachments.isNotEmpty()) {
+            Spacer(Modifier.height(AuntieTheme.dims.space2))
+            Column(verticalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2)) {
+                attachments.forEach { att ->
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = att.fileName.ifBlank { att.cloudinaryPublicId },
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.textPrimary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        GhostButton(label = "Remove", onClick = { viewModel.removeTrainingDocAttachment(att.cloudinaryPublicId) })
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(AuntieTheme.dims.space5))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space3, Alignment.End),
+        ) {
+            GhostButton(label = "Cancel", onClick = onCancel)
+            PrimaryButton(
+                label = if (isSaving) "Saving..." else "Save",
+                onClick = {
+                    val kinId = if (targetType == "KIN") selectedKinId else null
+                    if (editingDoc == null) {
+                        viewModel.createTrainingDocument(title, content, notes, targetType, selectedKinfolkId, kinId, attachments) { err ->
+                            if (err == null) onSaved()
+                        }
+                    } else {
+                        viewModel.updateTrainingDocument(editingDoc.id, title, content, notes, targetType, selectedKinfolkId, kinId, attachments) { err ->
+                            if (err == null) onSaved()
+                        }
+                    }
+                },
+                enabled = canSave,
+            )
+        }
+    }
+}

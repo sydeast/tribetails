@@ -1,0 +1,9 @@
+Subject: New Note: I have received your message regarding {{kinName}}
+
+Hello. I just received the note you left for me on {{kinName}}'s booking. I shall take care of those specifics during my visit.
+
+View details here: []
+
+With care, Auntie
+
+Tribe Tails Pet Care..Your Kin’s Favorite Auntie

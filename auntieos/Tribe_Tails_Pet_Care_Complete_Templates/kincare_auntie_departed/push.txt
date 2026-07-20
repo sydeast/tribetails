@@ -1,0 +1,1 @@
+Status: I have finished up my visit with {{kinName}}. Tap to see details.
