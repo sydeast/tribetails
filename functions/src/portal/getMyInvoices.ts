@@ -37,11 +37,11 @@ interface InvoiceDto {
   paymentsHistory: string | null;
   address: string | null;
   viewed: boolean;
-  // Credit-specific (only meaningful when status === 'credit')
+  // Credit-specific (only meaningful when status === 'credit').
+  // Account balance is the only redemption target: credits are NOT refundable.
   creditAmountCents: number | null;
-  creditTarget: 'accountBalance' | 'originalPaymentMethod' | null;
+  creditTarget: 'accountBalance' | null;
   creditRedeemedAtMs: number | null;
-  originalPaymentIntentId: string | null;
   /**
    * Per-visit line items resolved from the invoice's `sessionIds` (AuntieOS
    * `kin_care_sessions` docs). OPTIONAL: absent when the invoice carries no
@@ -71,7 +71,7 @@ interface GetMyInvoicesResult {
  * Buckets:
  *   open   , payable now (also includes draft)
  *   paid   , fully settled
- *   credits, refunds awaiting redemption (Save to Account Balance OR Return to OPM)
+ *   credits, awaiting redemption to account balance (credits are NOT refundable)
  *
  * Account balance is a family-scoped flat field at `families/{kinfolkId}.accountBalanceCents`.
  */
@@ -103,7 +103,15 @@ export async function getMyInvoicesHandler(
     const totalPresent = data['total'] != null;
     const amountDue = numericFrom(data['amountDue']);
     const total = numericFrom(data['total']);
-    const status: Status = resolveStatus(data['invoiceStatus'], amountDuePresent, totalPresent, amountDue, total);
+    // `status` is canonical (backfilled across every real invoice on 2026-07-20);
+    // `invoiceStatus` is the legacy spelling the sandbox seed still writes.
+    const status: Status = resolveStatus(
+      data['status'] ?? data['invoiceStatus'],
+      amountDuePresent,
+      totalPresent,
+      amountDue,
+      total,
+    );
     const isPaid = status === 'paid';
     const isCredit = status === 'credit';
     return {
@@ -123,13 +131,8 @@ export async function getMyInvoicesHandler(
       address: stringOrNull(data['address']),
       viewed: boolFrom(data['viewed']),
       creditAmountCents: isCredit ? Math.round(Math.abs(amountDue !== 0 ? amountDue : total) * 100) : null,
-      creditTarget: isCredit
-        ? (data['creditTarget'] === 'accountBalance' || data['creditTarget'] === 'originalPaymentMethod'
-            ? (data['creditTarget'] as 'accountBalance' | 'originalPaymentMethod')
-            : null)
-        : null,
+      creditTarget: isCredit && data['creditTarget'] === 'accountBalance' ? 'accountBalance' : null,
       creditRedeemedAtMs: isCredit ? tsMillis(data['creditRedeemedAt']) : null,
-      originalPaymentIntentId: stringOrNull(data['originalPaymentIntentId']),
     };
   });
 

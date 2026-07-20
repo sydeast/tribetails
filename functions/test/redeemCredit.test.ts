@@ -227,20 +227,19 @@ describe('redeemCreditHandler', () => {
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
-        'invoices/inv-c1': { kinfolkId: '3', amountDue: -25.5, invoiceStatus: 'credit' },
+        'invoices/inv-c1': { kinfolkId: '3', amountDue: -25.5, status: 'credit' },
         'families/3': { accountBalanceCents: 1000 },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { redeemCreditHandler } = await import('../src/portal/redeemCredit');
     const res = await redeemCreditHandler({
-      data: { invoiceId: 'inv-c1', target: 'accountBalance' },
+      data: { invoiceId: 'inv-c1' },
       auth: { uid: 'u1' },
     } as any);
     expect(res.ok).toBe(true);
     expect(res.target).toBe('accountBalance');
     expect(res.redeemedAmountCents).toBe(2550);
-    expect(res.refundId).toBeNull();
     expect(res.newAccountBalanceCents).toBe(3550); // 1000 + 2550
 
     const familyWrite = ctx.writes.find((w) => w.path === 'families/3');
@@ -257,59 +256,62 @@ describe('redeemCreditHandler', () => {
     expect(invoiceWrite!.data.creditRedeemedByUid).toBe('u1');
   });
 
-  it('originalPaymentMethod requires originalPaymentIntentId', async () => {
-    const ctx = buildDbMock({
-      docs: {
-        'clients/u1': { kinfolkIds: ['3'] },
-        'invoices/inv-c2': { kinfolkId: '3', amountDue: -10 /* no original PI */ },
-      },
-    });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    const { redeemCreditHandler } = await import('../src/portal/redeemCredit');
-    await expect(
-      redeemCreditHandler({
-        data: { invoiceId: 'inv-c2', target: 'originalPaymentMethod' },
-        auth: { uid: 'u1' },
-      } as any),
-    ).rejects.toMatchObject({ code: 'failed-precondition' });
-  });
-
-  it('originalPaymentMethod calls Stripe refund and stamps invoice', async () => {
+  // CREDITS ARE NOT REFUNDABLE (operator ruling, 2026-07-20). The three tests
+  // that used to live here covered the `originalPaymentMethod` target: that it
+  // required an originalPaymentIntentId, that it called Stripe refunds.create,
+  // and that a failed refund released the claim. That whole path is gone, so the
+  // behavior to pin now is that it CANNOT come back through the front door.
+  it('REFUSES a refund-to-card request instead of silently redeeming to balance', async () => {
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
         'invoices/inv-c3': {
           kinfolkId: '3',
           amountDue: -100,
+          status: 'credit',
           originalPaymentIntentId: 'pi_test_123',
         },
+        'families/3': { accountBalanceCents: 0 },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
-    mocks.stripeMock.refunds.create.mockResolvedValueOnce({ id: 're_test_456' });
+    const { redeemCreditHandler } = await import('../src/portal/redeemCredit');
+
+    // An old client still asking for a card refund must FAIL LOUD at validation,
+    // not quietly get an account-balance redemption it did not ask for.
+    await expect(
+      redeemCreditHandler({
+        data: { invoiceId: 'inv-c3', target: 'originalPaymentMethod' },
+        auth: { uid: 'u1' },
+      } as any),
+    ).rejects.toThrow();
+
+    // And no money moved on the way out.
+    expect(mocks.stripeMock.refunds.create).not.toHaveBeenCalled();
+    expect(ctx.writes.find((w) => w.path === 'families/3')).toBeUndefined();
+    expect(ctx.writes.find((w) => w.path === 'invoices/inv-c3')).toBeUndefined();
+  });
+
+  it('never calls Stripe on a successful redemption', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'invoices/inv-c4': { kinfolkId: '3', amountDue: -100, status: 'credit' },
+        'families/3': { accountBalanceCents: 0 },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
     const { redeemCreditHandler } = await import('../src/portal/redeemCredit');
     const res = await redeemCreditHandler({
-      data: { invoiceId: 'inv-c3', target: 'originalPaymentMethod' },
+      data: { invoiceId: 'inv-c4' },
       auth: { uid: 'u1' },
     } as any);
-    expect(res.refundId).toBe('re_test_456');
-    expect(res.target).toBe('originalPaymentMethod');
-    expect(res.newAccountBalanceCents).toBeNull();
-    // Stripe refund carries the idempotency key so a retry cannot double-refund.
-    expect(mocks.stripeMock.refunds.create).toHaveBeenCalledWith(
-      { payment_intent: 'pi_test_123', amount: 10_000 },
-      { idempotencyKey: 'credit-inv-c3' },
-    );
-    // Invoice stamped in the claim tx (creditRefundId null), then filled after Stripe.
-    const stampWrite = ctx.writes.find(
-      (w) => w.path === 'invoices/inv-c3' && w.data.creditRedeemedAt === '__SERVER_TS__',
-    );
-    expect(stampWrite).toBeDefined();
-    expect(stampWrite!.data.creditRedeemedByUid).toBe('u1');
-    const refundWrite = ctx.writes.find(
-      (w) => w.path === 'invoices/inv-c3' && w.data.creditRefundId === 're_test_456',
-    );
-    expect(refundWrite).toBeDefined();
+    expect(res.newAccountBalanceCents).toBe(10_000);
+    expect(mocks.stripeMock.refunds.create).not.toHaveBeenCalled();
+    // The invoice carries no refund bookkeeping any more.
+    const invoiceWrite = ctx.writes.find((w) => w.path === 'invoices/inv-c4');
+    expect(invoiceWrite!.data.creditTarget).toBe('accountBalance');
+    expect(invoiceWrite!.data).not.toHaveProperty('creditRefundId');
   });
 
   it('rejects zero-amount credits', async () => {
@@ -329,46 +331,31 @@ describe('redeemCreditHandler', () => {
     ).rejects.toMatchObject({ code: 'failed-precondition' });
   });
 
-  it('Stripe refund failure RELEASES the claim (creditRedeemedAt stamped then cleared) so a retry is possible', async () => {
+  it('claims exactly once, with no post-claim release path to go wrong', async () => {
+    // This replaces the old "Stripe refund failure RELEASES the claim" test. That
+    // compensating rollback existed only because the Stripe refund was an
+    // external side effect AFTER the claim. With refunds gone, the claim and the
+    // balance apply commit together in one transaction and nothing follows them,
+    // so there is no window in which a claim can be left stranded.
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
-        'invoices/inv-c4': {
-          kinfolkId: '3',
-          amountDue: -100,
-          originalPaymentIntentId: 'pi_fail_999',
-        },
+        'invoices/inv-c5': { kinfolkId: '3', amountDue: -100, status: 'credit' },
+        'families/3': { accountBalanceCents: 0 },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
-    mocks.stripeMock.refunds.create.mockRejectedValueOnce(new Error('card_declined'));
     const { redeemCreditHandler } = await import('../src/portal/redeemCredit');
-    await expect(
-      redeemCreditHandler({
-        data: { invoiceId: 'inv-c4', target: 'originalPaymentMethod' },
-        auth: { uid: 'u1' },
-      } as any),
-    ).rejects.toMatchObject({ code: 'unavailable', message: 'Refund failed: card_declined' });
+    await redeemCreditHandler({ data: { invoiceId: 'inv-c5' }, auth: { uid: 'u1' } } as any);
 
-    // Idempotency key still present on the attempted refund.
-    expect(mocks.stripeMock.refunds.create).toHaveBeenCalledWith(
-      { payment_intent: 'pi_fail_999', amount: 10_000 },
-      { idempotencyKey: 'credit-inv-c4' },
-    );
-
-    const invoiceWrites = ctx.writes.filter((w) => w.path === 'invoices/inv-c4');
-    // First the claim stamp (creditRedeemedAt set)...
-    const stampWrite = invoiceWrites.find((w) => w.data.creditRedeemedAt === '__SERVER_TS__');
-    expect(stampWrite).toBeDefined();
-    // ...then a release write resetting creditRedeemedAt back to null.
-    const releaseWrite = invoiceWrites.find(
-      (w) => 'creditRedeemedAt' in w.data && w.data.creditRedeemedAt === null,
-    );
-    expect(releaseWrite).toBeDefined();
-    expect(releaseWrite!.data.creditTarget).toBeNull();
-    expect(releaseWrite!.data.creditAmountCents).toBeNull();
-    // Order: stamp recorded before release.
-    expect(invoiceWrites.indexOf(stampWrite!)).toBeLessThan(invoiceWrites.indexOf(releaseWrite!));
+    const invoiceWrites = ctx.writes.filter((w) => w.path === 'invoices/inv-c5');
+    // Exactly one invoice write: the claim. No follow-up, no release.
+    expect(invoiceWrites).toHaveLength(1);
+    expect(invoiceWrites[0]!.data.creditRedeemedAt).toBe('__SERVER_TS__');
+    // Nothing ever clears the stamp back to null any more.
+    expect(
+      invoiceWrites.find((w) => 'creditRedeemedAt' in w.data && w.data.creditRedeemedAt === null),
+    ).toBeUndefined();
   });
 });
 

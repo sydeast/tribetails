@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyInvoices, payInvoice, redeemCredit } from '../api/invoicesApi';
-import type { CreditTarget, InvoiceDto } from '../api/invoicesApi';
+import type { InvoiceDto } from '../api/invoicesApi';
 import { calTileFor, creditTargetLabel, formatCentsUsd, formatUsd, invoiceStatusInfo, shortDateLabel } from '../lib/invoiceFormat';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
@@ -31,7 +31,7 @@ export function Invoices() {
   });
 
   const redeem = useMutation({
-    mutationFn: (vars: { invoiceId: string; target: CreditTarget }) => redeemCredit(vars.invoiceId, vars.target, kinfolkId),
+    mutationFn: (vars: { invoiceId: string }) => redeemCredit(vars.invoiceId, kinfolkId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['myInvoices', kinfolkId] });
     },
@@ -147,7 +147,7 @@ export function Invoices() {
                     invoice={inv}
                     divider={i > 0}
                     redeeming={redeem.isPending && redeem.variables?.invoiceId === inv.id}
-                    onRedeem={(target) => redeem.mutate({ invoiceId: inv.id, target })}
+                    onRedeem={() => redeem.mutate({ invoiceId: inv.id })}
                   />
                 ))}
               </section>
@@ -248,32 +248,30 @@ function PaidRow(props: { invoice: InvoiceDto; divider: boolean }) {
   );
 }
 
-function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeeming: boolean; onRedeem: (target: CreditTarget) => void }) {
+function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeeming: boolean; onRedeem: () => void }) {
   const { invoice: inv, redeeming, onRedeem } = props;
   const redeemed = inv.creditRedeemedAtMs !== null;
   const cents = inv.creditAmountCents ?? 0;
-  const hasOriginalPi = !!inv.originalPaymentIntentId;
 
   return (
     <div className="crow" style={props.divider ? { marginTop: 8 } : undefined}>
       <div className="ci">{'\u{1F3C6}'}</div>
       <div className="cmeta">
         <b>{invoiceTitle(inv)}</b>
-        <small>Invoice #{inv.id}. {redeemed ? 'Applied automatically to your next invoice.' : 'Choose how to use this credit.'}</small>
+        <small>
+          Invoice #{inv.id}.{' '}
+          {redeemed ? 'Applied automatically to your next invoice.' : 'Save this to your account balance.'}
+        </small>
         {redeemed && (
-          <span className={`savedline ${inv.creditTarget === 'originalPaymentMethod' ? 'muted' : ''}`}>
+          <span className="savedline">
             {'✓'} {creditTargetLabel(inv.creditTarget)}
           </span>
         )}
         {!redeemed && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
-            <button className="btn grad block" onClick={() => onRedeem('accountBalance')} disabled={redeeming}>
+            <button className="btn grad block" onClick={() => onRedeem()} disabled={redeeming}>
               {redeeming ? 'Working…' : 'Save to Account Balance'}
             </button>
-            <button className="btn ghost block" onClick={() => onRedeem('originalPaymentMethod')} disabled={redeeming || !hasOriginalPi}>
-              Return to Original Payment Method
-            </button>
-            {!hasOriginalPi && <p className="sub">Original card not on file — only Account Balance is available.</p>}
           </div>
         )}
       </div>

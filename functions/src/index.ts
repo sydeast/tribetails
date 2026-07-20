@@ -86,7 +86,15 @@ export { markInvoicePaid } from './admin/markInvoicePaid';
 export { reviewAndSendDraftInvoice } from './admin/reviewAndSendDraftInvoice';
 export { setKinfolkClaim } from './admin/setKinfolkClaim';
 export { revokeKinfolkClaim } from './admin/revokeKinfolkClaim';
-export { signCloudinaryUpload } from './admin/signCloudinaryUpload';
+// `signCloudinaryUpload` is deliberately NOT exported here. AuntieOS owns that
+// function name in the shared `auntieos-ttpc` project (web/functions/index.js,
+// behind the `/api/cloudinary/sign-upload` hosting rewrite in web/firebase.json).
+// MyTribe once exported its own implementation under the same name, so whichever
+// codebase deployed last won. MyTribe's version folded `allowed_formats` into the
+// signature base, which no AuntieOS client sends, so every upload it signed came
+// back "Invalid Signature" (Sentry AUNTIEOS-ADMIN-1D, verified bit-exactly).
+// Portal uploads use `signKinPhotoUpload` / `signKinfolkAvatar`, which keep
+// sharing `lib/cloudinary.ts`.
 export { dispatchVisitNotification } from './admin/dispatchVisitNotification';
 export { scheduleMarketingBlast } from './admin/scheduleMarketingBlast';
 export { addInternalBookingNote } from './admin/addInternalBookingNote';

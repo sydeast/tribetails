@@ -282,7 +282,14 @@ export interface InvoiceDoc {
   _id: string;
   kinfolkId: string;
   kinfolkName: string;
-  invoiceStatus: InvoiceStatus;
+  /**
+   * Canonical status field. Named `status` to match all 14 real invoices, which
+   * were backfilled to real statuses on 2026-07-20 (they previously held a
+   * meaningless "Yes"/"No" from the original import). The old `invoiceStatus`
+   * spelling is still READ as a fallback by getMyInvoices and redeemCredit, but
+   * nothing writes it any more.
+   */
+  status: InvoiceStatus;
   total: number;
   amountDue: number;
   date: string;
@@ -291,7 +298,12 @@ export interface InvoiceDoc {
   /** Join to flat kin_care_sessions (lineItems join being added portal-side). */
   sessionIds: string[];
   paymentsHistory: string | null;
-  viewed: boolean;
+  /**
+   * "Yes" | "No", NOT a boolean. Every real invoice stores this as a string and
+   * both AuntieOS Kotlin models decode it as one, so a boolean here throws in
+   * CustomClassMapper and takes the entire toObjects(Invoice) batch with it.
+   */
+  viewed: 'Yes' | 'No';
   creditTarget: 'accountBalance' | 'originalPaymentMethod' | null;
   creditRedeemedAt: string | null;
   isTestData: true;
@@ -671,7 +683,7 @@ export function buildSandboxPayload(now: Date = new Date(), uid: string = TEST_A
       _id: `${TEST_TRIBE_ID}-invoice-open`,
       kinfolkId: TEST_TRIBE_ID,
       kinfolkName,
-      invoiceStatus: 'open',
+      status: 'open',
       total: 4500,
       amountDue: 4500,
       date: isoDate(p1End),
@@ -679,7 +691,7 @@ export function buildSandboxPayload(now: Date = new Date(), uid: string = TEST_A
       lineItems: [{ label: '60-Minute Drop-In', amount: 4500 }],
       sessionIds: [visitId(3)],
       paymentsHistory: null,
-      viewed: false,
+      viewed: 'No',
       creditTarget: null,
       creditRedeemedAt: null,
       isTestData: true,
@@ -688,7 +700,7 @@ export function buildSandboxPayload(now: Date = new Date(), uid: string = TEST_A
       _id: `${TEST_TRIBE_ID}-invoice-paid`,
       kinfolkId: TEST_TRIBE_ID,
       kinfolkName,
-      invoiceStatus: 'paid',
+      status: 'paid',
       total: 6000,
       amountDue: 0,
       date: isoDate(p3End),
@@ -696,7 +708,7 @@ export function buildSandboxPayload(now: Date = new Date(), uid: string = TEST_A
       lineItems: [{ label: '60-Minute Drop-In', amount: 6000 }],
       sessionIds: [visitId(5)],
       paymentsHistory: `${isoDate(dayAt(now, -18, 0))}: 6000 paid, card ending 4242`,
-      viewed: true,
+      viewed: 'Yes',
       creditTarget: null,
       creditRedeemedAt: null,
       isTestData: true,
@@ -705,7 +717,7 @@ export function buildSandboxPayload(now: Date = new Date(), uid: string = TEST_A
       _id: `${TEST_TRIBE_ID}-invoice-credit`,
       kinfolkId: TEST_TRIBE_ID,
       kinfolkName,
-      invoiceStatus: 'credit',
+      status: 'credit',
       total: -2000,
       amountDue: -2000,
       date: isoDate(p2End),
@@ -713,7 +725,7 @@ export function buildSandboxPayload(now: Date = new Date(), uid: string = TEST_A
       lineItems: [{ label: 'Credit for cancelled visit', amount: -2000 }],
       sessionIds: [visitId(4)],
       paymentsHistory: null,
-      viewed: false,
+      viewed: 'No',
       creditTarget: 'accountBalance',
       creditRedeemedAt: null,
       isTestData: true,

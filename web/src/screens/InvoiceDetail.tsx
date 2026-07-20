@@ -1,8 +1,6 @@
-import { useState } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyInvoicePdf, getMyInvoices, payInvoice, redeemCredit } from '../api/invoicesApi';
-import type { CreditTarget } from '../api/invoicesApi';
 import { getBusinessContact } from '../api/portal';
 import { creditTargetLabel, formatCentsUsd, formatUsd, invoiceStatusInfo, longDateLabel } from '../lib/invoiceFormat';
 import { useSignOut } from '../lib/auth';
@@ -22,7 +20,6 @@ export function InvoiceDetail() {
   const queryClient = useQueryClient();
   const { invoiceId } = useParams({ from: '/invoices/$invoiceId' });
   const kinfolkId = getActiveKinfolkId();
-  const [creditChoice, setCreditChoice] = useState<CreditTarget>('accountBalance');
 
   const invoices = useQuery({ queryKey: ['myInvoices', kinfolkId], queryFn: () => getMyInvoices(kinfolkId) });
   const business = useQuery({ queryKey: ['businessContact'], queryFn: () => getBusinessContact() });
@@ -43,7 +40,7 @@ export function InvoiceDetail() {
   });
 
   const redeem = useMutation({
-    mutationFn: (target: CreditTarget) => redeemCredit(invoiceId, target, kinfolkId),
+    mutationFn: () => redeemCredit(invoiceId, kinfolkId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['myInvoices', kinfolkId] });
     },
@@ -99,7 +96,6 @@ export function InvoiceDetail() {
   const redeemed = inv.creditRedeemedAtMs !== null;
   const paidAmount = Math.max(0, inv.total - inv.amountDue);
   const payable = !isCredit && inv.status !== 'cancelled' && !inv.isPaid && inv.amountDue > 0;
-  const hasOriginalPi = !!inv.originalPaymentIntentId;
 
   return (
     <>
@@ -272,32 +268,12 @@ export function InvoiceDetail() {
               <section className="glass card credit-grad d3">
                 <div className="ckick">Available Credit</div>
                 <div className="camt">{formatCentsUsd(inv.creditAmountCents ?? 0)}</div>
-                <div className="cnote">Choose how you would like to use this credit on Invoice {inv.id}.</div>
-
-                <div className="credit-opts">
-                  <button type="button" className={`copt ${creditChoice === 'accountBalance' ? 'is-on' : ''}`} onClick={() => setCreditChoice('accountBalance')}>
-                    <span className="cdot">{creditChoice === 'accountBalance' ? '✓' : ''}</span>
-                    <span className="ctxt">
-                      <b>Save to Account Balance</b>
-                      <small>Hold the credit for a future invoice</small>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`copt ${creditChoice === 'originalPaymentMethod' ? 'is-on' : ''}`}
-                    onClick={() => hasOriginalPi && setCreditChoice('originalPaymentMethod')}
-                    disabled={!hasOriginalPi}
-                  >
-                    <span className="cdot">{creditChoice === 'originalPaymentMethod' ? '✓' : ''}</span>
-                    <span className="ctxt">
-                      <b>Return to Original Payment Method</b>
-                      <small>{hasOriginalPi ? 'Refund to your original card' : 'Original card not on file'}</small>
-                    </span>
-                  </button>
+                <div className="cnote">
+                  This credit goes to your account balance and comes off your next invoice.
                 </div>
 
-                <button type="button" className="btn credit-btn" onClick={() => redeem.mutate(creditChoice)} disabled={redeem.isPending}>
-                  {redeem.isPending ? 'Working…' : 'Redeem Credit'}
+                <button type="button" className="btn credit-btn" onClick={() => redeem.mutate()} disabled={redeem.isPending}>
+                  {redeem.isPending ? 'Working…' : 'Save to Account Balance'}
                 </button>
                 {redeem.isError && (
                   <p className="cnote" style={{ marginTop: 10 }}>
