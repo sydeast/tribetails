@@ -25,6 +25,14 @@ import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kin411
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.FormSchema
+// Tags (2026-07-19): the vocabulary lives on business_settings, so the scope ->
+// field mapping is shared with the Den's Tags editor rather than duplicated.
+import com.tribetails.auntieos.data.model.TagDef
+import com.tribetails.auntieos.data.model.TagScope
+import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.ui.admin.settingsWithTagVocab
+import com.tribetails.auntieos.ui.admin.tagVocabFor
+import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
@@ -128,6 +136,26 @@ fun KinfolkProfileScreen(
                                 )
                             }
                         }
+                    }
+                }
+                // Household tags: the managed vocabulary, replacing the comma-joined
+                // string this profile used to show. Each add and remove saves on the
+                // spot; a failed save reverts the chip AND says so.
+                item {
+                    key(kinfolk.id) {
+                        val tagRepository = remember { AuntieOSApp.instance.repository }
+                        ProfileTagsSection(
+                            scope = TagScope.HOUSEHOLD,
+                            initialTags = kinfolk.tagNames(),
+                            onSaveTags = { next ->
+                                tagRepository.updateKinfolk(kinfolkWithTags(kinfolk, next)).getOrThrow()
+                            },
+                            loadVocab = { loadTagVocab(tagRepository, TagScope.HOUSEHOLD) },
+                            onSaveVocab = { defs ->
+                                saveTagVocab(tagRepository, TagScope.HOUSEHOLD, defs)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
                 item {
@@ -422,9 +450,9 @@ private fun ContactInfoCard(kinfolk: Kinfolk) {
                 ProfileField("Outstanding Balance", "$${kinfolk.outstandingBalance}")
             }
 
-            if (kinfolk.tags.isNotEmpty()) {
-                ProfileField("Tags", kinfolk.tags.joinToString(", "))
-            }
+            // Tags moved OUT of this card and onto their own panel below: they are
+            // now a managed vocabulary with colors, icons, and inline editing, not
+            // a comma-joined string squeezed into a read-only row.
         }
     }
 }
@@ -742,3 +770,51 @@ private fun ContactOverrideBanner(override: ContactOverride, defaultMethod: Stri
         }
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tags wiring (2026-07-19 Tags port)
+//
+// The directory screens hand ProfileTagsSection plain suspend lambdas rather
+// than a repository, so the panel itself stays Firebase-free. These are the
+// three the household and pet panels share. They live here because the profile
+// and both edit screens sit in this package and would otherwise each grow their
+// own copy.
+//
+// Every one throws on failure. ProfileTagsSection turns a throw into a revert
+// plus a visible banner, so swallowing here would silently tell the operator a
+// tag saved when it never left the device.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Read a scope's vocabulary off `business_settings` for autocomplete + chip resolution. */
+internal suspend fun loadTagVocab(
+    repository: AuntieRepository,
+    scope: TagScope,
+): List<TagDef> = tagVocabFor(repository.getBusinessSettings().getOrThrow(), scope)
+
+/**
+ * Persist a vocabulary grown by an inline promotion on a profile.
+ *
+ * React patches the single key it changed. Android saves settings as an object,
+ * so this re-reads first and writes the merged result: the repository's write is
+ * a SetOptions.merge, and re-reading keeps a household promotion from carrying a
+ * stale copy of the pet list (or the reverse) back over a concurrent edit.
+ */
+internal suspend fun saveTagVocab(
+    repository: AuntieRepository,
+    scope: TagScope,
+    defs: List<TagDef>,
+) {
+    val current = repository.getBusinessSettings().getOrThrow()
+    repository.saveBusinessSettings(settingsWithTagVocab(current, scope, defs)).getOrThrow()
+}
+
+/**
+ * The kinfolk to write when its tag assignments change.
+ *
+ * Android saves the WHOLE object, so the copy has to start from the loaded doc
+ * or every field the form did not touch is wiped. An empty list is a real value
+ * here: taking the last tag off has to clear the field, not leave the old one.
+ * Pure; tested.
+ */
+internal fun kinfolkWithTags(kinfolk: Kinfolk, tags: List<String>): Kinfolk =
+    kinfolk.copy(tags = tags)

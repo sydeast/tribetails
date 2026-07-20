@@ -14,6 +14,90 @@ data class BaserowFile(
     @get:PropertyName("is_image") @set:PropertyName("is_image") var isImage: Boolean = false
 )
 
+// --- Tags (2026-07-19 Tags port) ---
+//
+// The tag vocabularies live on `business_settings/business_settings`
+// (householdTags / petTags); an ASSIGNMENT on a profile is just the tag NAME, a
+// flat string list under `tags` on kinfolk/{id} and kin/{id}. A name is resolved
+// back to its color/icon against the relevant vocabulary at render time, so a
+// name with no matching vocab entry renders a neutral chip rather than an error.
+// Wire shapes are byte-identical to the React admin (auntieos-admin
+// src/lib/tags/model.ts + src/api/settings.ts), which is the authoring surface.
+
+/**
+ * A tag palette entry as persisted: the stable [token] plus the [css] paint
+ * string React uses (e.g. "var(--color-accent)").
+ *
+ * Kotlin has no CSS variables and paints a chip from its own brand palette by
+ * [token], but it MUST carry [css] back to Firestore unchanged. React paints
+ * from `color.css` directly, so dropping it (or substituting a hex) leaves the
+ * admin unable to render its own chips.
+ */
+@Keep
+data class TagColor(
+    var token: String = "",
+    var css: String = "",
+)
+
+/**
+ * A tag vocabulary entry. [name] is the key assignments reference; [icon] is a
+ * plain emoji string where "" means no icon, never null (React drops any row
+ * whose icon is not a string, so a null would silently vanish there).
+ */
+@Keep
+data class TagDef(
+    var name: String = "",
+    var color: TagColor = TagColor(),
+    var icon: String = "",
+)
+
+/**
+ * Decode a raw `householdTags`/`petTags` array into clean [TagDef]s, keeping
+ * only well-formed `{ name, color: { token, css }, icon }` rows and dropping
+ * anything malformed (a hand-edited doc, a half-written row, a legacy shape).
+ * Never throws: a bad vocabulary must never take down the whole settings read.
+ * Drop rules are a one-for-one port of decodeTagDefs in
+ * auntieos-admin src/api/settings.ts, including keeping [TagDef.name] untrimmed.
+ */
+fun decodeTagDefs(raw: Any?): List<TagDef> {
+    val rows = raw as? List<*> ?: return emptyList()
+    val out = ArrayList<TagDef>(rows.size)
+    for (row in rows) {
+        val r = row as? Map<*, *> ?: continue
+        val name = r["name"] as? String ?: continue
+        if (name.trim().isEmpty()) continue
+        val icon = r["icon"] as? String ?: continue
+        val color = r["color"] as? Map<*, *> ?: continue
+        val token = color["token"] as? String ?: continue
+        val css = color["css"] as? String ?: continue
+        out.add(TagDef(name = name, color = TagColor(token = token, css = css), icon = icon))
+    }
+    return out
+}
+
+/**
+ * Encode a vocabulary back to the Firestore wire shape. [TagColor.css] goes out
+ * exactly as it came in (Kotlin never invents or rewrites a css value), so a
+ * save from android leaves the React admin painting the same chips.
+ */
+fun encodeTagDefs(defs: List<TagDef>): List<Map<String, Any>> = defs.map { def ->
+    mapOf(
+        "name" to def.name,
+        "color" to mapOf("token" to def.color.token, "css" to def.color.css),
+        "icon" to def.icon,
+    )
+}
+
+/**
+ * Decode a profile's `tags` field: keep only the String entries, drop everything
+ * else, default empty. Mirrors kinfolkProfile.ts / kinView.ts. Deliberately
+ * permissive on the raw type: a single Boolean inside the array would otherwise
+ * fail CustomClassMapper's String conversion and blank the ENTIRE query, not
+ * just the one doc.
+ */
+fun decodeTagNames(raw: Any?): List<String> =
+    (raw as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+
 // --- Primary CRM Models (Spec-Complete) ---
 
 @Keep
@@ -26,8 +110,21 @@ data class Kinfolk(
     var profilePictureUrl: String = "",
     var status: String = "active", // active, inactive, prospect, archived
     var outstandingBalance: String = "0.00",
-    var tags: List<String> = emptyList(),
-    
+    // Round-trip-only: updateKinfolk does `.set(kinfolk)`, so a missing field is
+    // destroyed on save. Live on 8 of 12 kinfolk. Held raw for the same reason as
+    // Kin.updatedAt, even though kinfolk currently stores it as a String and kin
+    // stores it as a Timestamp; read via updatedAtIso().
+    var updatedAt: Any? = null,
+    // Household tag assignments: a flat list of tag NAMES resolved against
+    // BusinessSettings.householdTagDefs() at render time. Held raw (Class A
+    // pattern, same as KinCareSession.createdAt) because the field is absent on
+    // every doc predating the Tags feature and is written by the React admin: a
+    // typed `List<String>` would throw on a stored null (non-null setter
+    // intrinsic) and on a Boolean element (String conversion), either of which
+    // blanks the whole kinfolk query. Read via [tagNames]; write via
+    // `copy(tags = listOf(...))`, which still type-checks.
+    var tags: Any? = null,
+
     // Contact & Identity
     var secondaryPhone: String = "",
     var secondaryEmail: String = "",
@@ -83,6 +180,9 @@ data class Kinfolk(
 ) {
     val displayName: String get() = "$firstName $lastName".trim().ifBlank { "Unnamed Kinfolk" }
     val isArchived: Boolean get() = status.equals("archived", ignoreCase = true)
+
+    /** The assigned household tag NAMES, junk entries dropped. Never throws. */
+    fun tagNames(): List<String> = decodeTagNames(tags)
 }
 
 /**
@@ -138,6 +238,14 @@ data class Kin(
     var status: String = "active",
     var profilePictureUrl: String = "",   // Kin (pet) photo; parity with web Kin.profilePictureUrl
 
+    // Round-trip-only. updateKin does `.set(kin)`, a whole-document overwrite, so
+    // a field missing from this model is DESTROYED on every android save.
+    // familyKinPath is set on 24 of 24 live kin; updatedAt on 23, as a Firestore
+    // Timestamp, so it is held raw and read via updatedAtIso() (same pattern as
+    // KinCareSession.updatedAt) rather than typed String.
+    var familyKinPath: String = "",
+    var updatedAt: Any? = null,
+
     // Extended fields from migration data
     var colorMarkings: String = "",
     var spayedNeutered: Boolean = false,
@@ -156,8 +264,19 @@ data class Kin(
     // Structured per-kin values for dynamic KIN form_schemas (appliesTo=KIN), e.g. the
     // precare checklist (spec 06 item 5 / 1C). Keyed by FormSchemaField.key. Supersedes
     // the free-text [checklist] blob, which is kept read-only (no data loss).
-    var formValues: Map<String, String> = emptyMap()
-)
+    var formValues: Map<String, String> = emptyMap(),
+    // Pet tag assignments: a flat list of tag NAMES resolved against
+    // BusinessSettings.petTagDefs() at render time. MANDATORY, not cosmetic:
+    // AuntieRepository.updateKin writes the WHOLE object with .set(kin), so
+    // without this field every android kin save wiped the `tags` the React admin
+    // had written. Held raw for the same reason as Kinfolk.tags above (absent on
+    // legacy docs, and one bad element must not blank the whole kin query).
+    // Read via [tagNames]; write via `copy(tags = listOf(...))`.
+    var tags: Any? = null,
+) {
+    /** The assigned pet tag NAMES, junk entries dropped. Never throws. */
+    fun tagNames(): List<String> = decodeTagNames(tags)
+}
 
 @Keep
 data class Kin411(
@@ -266,7 +385,9 @@ data class VisitLog(
     var journalId: String = "",
     var submitted: String = "",
     var serviceType: String = "",
-    var arrival: String = "",
+    // Nullable: 8 of the 83 live visit_logs store arrival as null (Class B decode
+    // crash - one null blanks the whole toObjects(VisitLog) batch).
+    var arrival: String? = "",
     var departure: String = "",
     var kinfolkId: String = "",
     var auntieNotes: String = "",
@@ -399,6 +520,12 @@ fun KinCareSession.createdAtIso(): String = firestoreInstantToIso(createdAt)
 
 /** ISO-8601 view of [KinCareSession.updatedAt] (Timestamp OR String OR null). */
 fun KinCareSession.updatedAtIso(): String = firestoreInstantToIso(updatedAt)
+
+/** ISO-8601 view of [Kin.updatedAt] (Timestamp on every live kin, but String-tolerant). */
+fun Kin.updatedAtIso(): String = firestoreInstantToIso(updatedAt)
+
+/** ISO-8601 view of [Kinfolk.updatedAt] (String on live kinfolk, but Timestamp-tolerant). */
+fun Kinfolk.updatedAtIso(): String = firestoreInstantToIso(updatedAt)
 
 // KinCareReport (a "KinTale") - visit recap sent to the kinfolk after a session.
 // One session can have many KinTales (multi-day visits, midway updates).

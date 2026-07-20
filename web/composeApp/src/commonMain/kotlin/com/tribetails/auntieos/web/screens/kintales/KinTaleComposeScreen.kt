@@ -57,7 +57,6 @@ import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.FormSchema
 import com.tribetails.auntieos.web.data.appliesToSchemaIds
 import com.tribetails.auntieos.web.data.Kin
-import com.tribetails.auntieos.web.data.KinTaleConditionEngine
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.KinCareSession
@@ -523,9 +522,9 @@ private fun KinTaleComposerBody(
                         // kin satisfies (e.g. "Litter box scooped" for cats, "Meds
                         // given" for kin with medication notes). Matches the Android
                         // engine so the composer offers the same items either platform.
-                        val itemsForKin = perPetItems.filter {
-                            KinTaleConditionEngine.isChecklistItemVisible(it, session, listOf(kin))
-                        }
+                        // The household goes in too: without it the KINFOLK_ATTRIBUTE
+                        // and KINFOLK_TAG rules fail open and every item shows.
+                        val itemsForKin = visiblePerPetItems(perPetItems, session, kin, kinfolk)
                         if (itemsForKin.isNotEmpty()) {
                             MomentsBlock(
                                 label = "How was ${kin.name.ifBlank { "this kin" }} today?",
@@ -544,12 +543,16 @@ private fun KinTaleComposerBody(
                 }
 
                 // ---- Moments · per-visit checklist ----
-                val perVisitItems = template.checklistItems
-                    .filter { it.scope.equals("PER_VISIT", ignoreCase = true) }
-                    .sortedBy { it.order }
-                    // Drop per-visit items whose conditions this visit doesn't meet
-                    // (e.g. a service-type rule). Same engine as the per-pet items.
-                    .filter { KinTaleConditionEngine.isChecklistItemVisible(it, session, kinList) }
+                // Drop per-visit items whose conditions this visit doesn't meet (e.g. a
+                // service-type or household-tag rule). Same engine as the per-pet items.
+                val perVisitItems = visiblePerVisitItems(
+                    template.checklistItems
+                        .filter { it.scope.equals("PER_VISIT", ignoreCase = true) }
+                        .sortedBy { it.order },
+                    session,
+                    kinList,
+                    kinfolk,
+                )
                 if (template.checklistEnabled && perVisitItems.isNotEmpty()) {
                     MomentsBlock(
                         label = "Overall visit checklist",

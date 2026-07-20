@@ -5,11 +5,11 @@
 # ---- General Kotlin attributes ----
 -keepattributes Exceptions, InnerClasses, Signature, Deprecated, *Annotation*, EnclosingMethod
 
-# ---- Data models (Gson reflection — field names must survive shrinking) ----
+# ---- Data models (Gson reflection: field names must survive shrinking) ----
 -keep class com.tribetails.auntieos.data.model.** { *; }
 -keepclassmembers class com.tribetails.auntieos.data.model.** { *; }
 
-# ---- Admin data models (Firestore toObject() reflection — the no-arg
+# ---- Admin data models (Firestore toObject() reflection: the no-arg
 #      constructor + field setters must survive R8, else "Class d6 does not
 #      define a no-argument constructor" at runtime; ActivityLogEntry,
 #      NotificationEntry live here, outside data.model). Every Firebase-decoded
@@ -17,6 +17,15 @@
 #      never regresses on a package move. ----
 -keep class com.tribetails.auntieos.data.admin.** { *; }
 -keepclassmembers class com.tribetails.auntieos.data.admin.** { *; }
+
+# ---- Tag vocabulary models (2026-07-19 Tags port). TagDef/TagColor are decoded
+#      by hand from the raw business_settings arrays (see decodeTagDefs) rather
+#      than by toObject(), but they are still reflected over by Gson and are
+#      re-encoded field-by-field on save, so their names must survive shrinking.
+#      Covered by the data.model.** wildcard above; named explicitly so a future
+#      package move cannot silently drop them. ----
+-keep class com.tribetails.auntieos.data.model.TagDef { *; }
+-keep class com.tribetails.auntieos.data.model.TagColor { *; }
 
 # ---- Belt-and-suspenders: any class annotated @Keep keeps its no-arg ctor + members ----
 -keep @androidx.annotation.Keep class * { *; }

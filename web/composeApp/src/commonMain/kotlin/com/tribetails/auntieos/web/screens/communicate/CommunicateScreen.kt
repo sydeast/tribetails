@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -63,6 +65,7 @@ import com.tribetails.auntieos.web.data.Kin411
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.KinTaleTemplate
 import com.tribetails.auntieos.web.data.N8nClient
+import com.tribetails.auntieos.web.data.TagDef
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.screens.invoices.humanizeDate
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -79,6 +82,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieSearchField
 import com.tribetails.auntieos.web.ui.components.AuntieSpinner
 import com.tribetails.auntieos.web.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
+import com.tribetails.auntieos.web.ui.components.TagChip
 import com.tribetails.auntieos.web.ui.components.DenPanel
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.DenScreenHeading
@@ -653,9 +657,21 @@ private fun BroadcastForm(
     // Ad-hoc criteria builder.
     var kind by remember { mutableStateOf(SegmentKind.All) }
     var statusesText by remember { mutableStateOf("") }
-    var tagsText by remember { mutableStateOf("") }
+    var selectedTags by remember { mutableStateOf<List<String>>(emptyList()) }
+    var tagQuery by remember { mutableStateOf("") }
     var tagMatch by remember { mutableStateOf(TagMatch.Any) }
     var newSegmentName by remember { mutableStateOf("") }
+
+    // The household tag vocabulary the "By tag" audience picks from. HOUSEHOLD
+    // ONLY, on purpose: the server criteria schema has no pet-tag kind and the
+    // resolver reads `kinfolk.tags` (audienceCriteria.ts), so a pet tag offered
+    // here would build an audience the server quietly ignores.
+    val settingsState by remember(firestore) { firestore.businessSettingsStream() }
+        .collectAsState(initial = FirestoreResult.Loading)
+    val householdVocab: List<TagDef> =
+        (settingsState as? FirestoreResult.Data)?.value?.householdTags ?: emptyList()
+    val vocabLoaded = settingsState is FirestoreResult.Data
+    val vocabError = (settingsState as? FirestoreResult.Error)?.message
 
     val channels = remember { mutableStateListOf(BroadcastChannel.InApp) }
     var subject by remember { mutableStateOf("") }
@@ -669,9 +685,20 @@ private fun BroadcastForm(
     fun adhocCriteria(): BroadcastCriteria = BroadcastCriteria(
         kind = kind,
         statuses = statusesText.split(',').map { it.trim() }.filter { it.isNotEmpty() },
-        tags = tagsText.split(',').map { it.trim() }.filter { it.isNotEmpty() },
+        // Already normalized and deduped by the picker, and carrying the
+        // vocabulary's casing, which is what the server compares against.
+        tags = selectedTags,
         tagMatch = tagMatch,
     )
+
+    /**
+     * The one tag problem that genuinely stops a send: over the server's cap the
+     * whole call is rejected, so blocking here with readable copy beats letting
+     * Zod answer. Only applies to an ad-hoc tag audience; a saved segment was
+     * validated when it was saved.
+     */
+    fun tagCapProblem(): String? =
+        if (selectedSegmentId == null && kind == SegmentKind.Tags) broadcastTagCapProblem(selectedTags) else null
 
     fun loadSegments() {
         scope.launch {
@@ -687,7 +714,7 @@ private fun BroadcastForm(
 
     fun saveSegment() {
         val criteria = adhocCriteria()
-        val blocker = segmentSaveBlocker(newSegmentName, criteria)
+        val blocker = tagCapProblem() ?: segmentSaveBlocker(newSegmentName, criteria)
         if (blocker != null) { onToast(blocker, ToastKind.Error); return }
         savingSegment = true
         scope.launch {
@@ -721,8 +748,8 @@ private fun BroadcastForm(
         errorText = null
         val criteria = if (selectedSegmentId == null) adhocCriteria() else null
         val effectiveCriteria = criteria ?: segments.firstOrNull { it.id == selectedSegmentId }?.criteria ?: BroadcastCriteria()
-        val blocker = broadcastBlocker(channels.toSet(), effectiveCriteria, subject, body)
-        if (blocker != null) { onToast(blocker, ToastKind.Error); return }
+        val blocker = tagCapProblem() ?: broadcastBlocker(channels.toSet(), effectiveCriteria, subject, body)
+        if (blocker != null) { errorText = blocker; onToast(blocker, ToastKind.Error); return }
         sending = true
         scope.launch {
             when (val r = firestore.broadcastMessage(
@@ -795,13 +822,111 @@ private fun BroadcastForm(
                 )
             }
             if (kind == SegmentKind.Tags) {
-                BottomBorderField(
-                    value = tagsText,
-                    onValueChange = { tagsText = it },
-                    label = "Tags",
-                    placeholder = "vip, monthly",
+                FieldLabel("Household tags")
+                Text(
+                    text = "A broadcast matches tags on the household, not tags on individual pets.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                )
+
+                vocabError?.let { msg ->
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Error,
+                        title = "Your tag list did not load",
+                        icon = Lucide.TriangleAlert,
+                    ) {
+                        Text(
+                            text = "$msg. You can still type a tag name, but spell it exactly as it appears on the household.",
+                            style = AuntieTheme.typography.bodyMedium,
+                            color = c.textDim,
+                        )
+                    }
+                }
+
+                // The chosen tags, painted from the vocabulary entry so the chip
+                // here reads the same as the chip on the profile.
+                if (selectedTags.isNotEmpty()) {
+                    TagChipFlow {
+                        selectedTags.forEach { name ->
+                            TagChip(
+                                name = name,
+                                vocab = householdVocab,
+                                onRemove = { selectedTags = removeBroadcastTag(selectedTags, name) },
+                            )
+                        }
+                    }
+                }
+
+                AuntieSearchField(
+                    value = tagQuery,
+                    onValueChange = { tagQuery = it },
+                    placeholder = "Type or pick a household tag",
+                    leadingIcon = Lucide.Search,
+                    onClear = { tagQuery = "" },
+                    // Enter takes what was typed, so a free-form tag that predates
+                    // the vocabulary is still reachable.
+                    onSubmit = {
+                        selectedTags = addBroadcastTag(selectedTags, tagQuery, householdVocab)
+                        tagQuery = ""
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
+
+                val suggestions = broadcastTagSuggestions(tagQuery, householdVocab, selectedTags)
+                when {
+                    !vocabLoaded && vocabError == null ->
+                        Text("Loading your tag list…", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    householdVocab.isEmpty() ->
+                        Text(
+                            text = "No household tags yet. Add some in Settings, Tags, or type one here to use it anyway.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    suggestions.isEmpty() && tagQuery.isNotBlank() ->
+                        Text(
+                            text = "Nothing in your list matches \"${tagQuery.trim()}\". Press enter to use it anyway.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    suggestions.isEmpty() ->
+                        Text(
+                            text = "Every household tag is already on this audience.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    // TagChip is a read-only pill (its only affordance is remove),
+                    // so a suggestion gets its tap target from the wrapper.
+                    else -> TagChipFlow {
+                        suggestions.forEach { def ->
+                            Box(
+                                modifier = Modifier.clickable {
+                                    selectedTags = addBroadcastTag(selectedTags, def.name, householdVocab)
+                                    tagQuery = ""
+                                },
+                            ) {
+                                TagChip(name = def.name, vocab = householdVocab)
+                            }
+                        }
+                    }
+                }
+
+                // Fail loud on both counts: a tag nobody carries would report a
+                // clean zero, and going over the cap is a whole-call rejection.
+                broadcastTagVocabWarning(selectedTags, householdVocab, vocabLoaded)?.let { warn ->
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Warning,
+                        title = "Check these tag names",
+                        icon = Lucide.TriangleAlert,
+                    ) {
+                        Text(text = warn, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                    }
+                }
+                broadcastTagCapProblem(selectedTags)?.let { problem ->
+                    AuntieBanner(tone = AuntieBannerTone.Error, title = "Too many tags", icon = Lucide.Ban) {
+                        Text(text = problem, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                    }
+                }
+
                 SegmentedPicker(
                     options = TagMatch.values().toList(),
                     selected = tagMatch,
@@ -886,6 +1011,17 @@ private fun FieldLabel(text: String) {
         style = AuntieTheme.typography.mono.copy(fontSize = 11.sp, letterSpacing = 1.2.sp),
         color = AuntieTheme.colors.textDim,
     )
+}
+
+/** Wrapping row of tag chips, so a long vocabulary never pushes the form sideways. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TagChipFlow(content: @Composable () -> Unit) {
+    val dims = AuntieTheme.dims
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(dims.space2),
+        verticalArrangement = Arrangement.spacedBy(dims.space2),
+    ) { content() }
 }
 
 /** "from template" source chip shown above the draft once a template is pulled. */

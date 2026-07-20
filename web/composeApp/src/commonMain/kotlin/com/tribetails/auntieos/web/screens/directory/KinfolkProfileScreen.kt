@@ -75,7 +75,9 @@ import com.tribetails.auntieos.web.ui.components.AuntieKeyValueRow
 import com.tribetails.auntieos.web.ui.components.AuntieNoteCallout
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
+import com.tribetails.auntieos.web.ui.components.ProfileTagsSection
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
+import com.tribetails.auntieos.web.ui.components.TagScope
 import com.tribetails.auntieos.web.ui.components.SectionHeader
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.util.householdLabel
@@ -224,6 +226,19 @@ fun KinfolkProfileScreen(
         // #14: two columns on wide screens so the panels stop spanning full width with
         // empty space (operator: "boring, too many gaps"). One column on narrow.
         val leftCol: @Composable () -> Unit = {
+            // ---- Tags (household) ----
+            // The names live on this kinfolk doc as a flat `tags` list; the color and
+            // emoji come from the `householdTags` vocabulary in business_settings,
+            // resolved at render time. Saving goes through updateKinfolkTags, which
+            // takes the LOADED record so the whole-document write round-trips every
+            // other field instead of wiping it.
+            ProfileTagsSection(
+                scope = TagScope.HOUSEHOLD,
+                initialTags = kinfolk.tags,
+                client = client,
+                onSaveTags = { next -> client.updateKinfolkTags(kinfolk, next) },
+            )
+            Spacer(Modifier.height(18.dp))
             // ---- Identity & contact ----
             Panel(
                 title = "Contact",

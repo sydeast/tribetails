@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -74,6 +76,7 @@ import com.composables.icons.lucide.AtSign
 import com.composables.icons.lucide.ShieldCheck
 import com.composables.icons.lucide.Smartphone
 import com.composables.icons.lucide.Stethoscope
+import com.composables.icons.lucide.Tag
 import com.composables.icons.lucide.Webhook
 import com.tribetails.auntieos.data.model.TrackingAccuracy
 import com.tribetails.auntieos.ui.NavigationSettingsPanel
@@ -115,6 +118,25 @@ import com.tribetails.auntieos.data.model.withStreamLockedEnabled
 import com.tribetails.auntieos.data.model.NotificationMatrix
 import com.tribetails.auntieos.data.model.VetClinic
 import com.tribetails.auntieos.data.model.NotificationOverride
+// Tags (2026-07-19): the vocabulary panel edits business_settings through the
+// same pure helpers the profile assign fields use, so the two surfaces cannot
+// disagree on the name shape, the caps, or the error copy.
+import com.tribetails.auntieos.data.model.BusinessSettings
+import com.tribetails.auntieos.data.model.DEFAULT_TAG_COLOR
+import com.tribetails.auntieos.data.model.TAG_PALETTE
+import com.tribetails.auntieos.data.model.TagColor
+import com.tribetails.auntieos.data.model.TagDef
+import com.tribetails.auntieos.data.model.TagScope
+import com.tribetails.auntieos.data.model.addTag
+import com.tribetails.auntieos.data.model.editTag
+import com.tribetails.auntieos.data.model.normalizeTagName
+import com.tribetails.auntieos.data.model.removeTag
+import com.tribetails.auntieos.data.model.withHouseholdTagDefs
+import com.tribetails.auntieos.data.model.withPetTagDefs
+import com.tribetails.auntieos.ui.components.AuntieChip
+import com.tribetails.auntieos.ui.components.TagChip
+import com.tribetails.auntieos.ui.components.color
+import com.tribetails.auntieos.ui.components.tagToneRole
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
 
@@ -346,6 +368,16 @@ fun AdminSettingsScreen(
                 Spacer(Modifier.height(dims.space5))
 
                 IntegrationsPanel(uiState.integrationsHealth)
+                Spacer(Modifier.height(dims.space5))
+
+                // Tags: the two vocabularies (household + pet) the Den offers on a
+                // profile. Sits beside the vet bank because both are shared banks
+                // the directory picks from rather than per-household settings.
+                TagVocabularyPanel(
+                    settings = uiState.businessSettings,
+                    isLoading = uiState.isLoading,
+                    onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                )
                 Spacer(Modifier.height(dims.space5))
 
                 VetClinicsPanel()
@@ -1887,6 +1919,329 @@ internal fun specialHoursAddEnabled(date: String, hours: String): Boolean =
 // data. The migration was a one-time April task; its bundled asset also put real
 // client dossiers inside every APK. Owner ruling 2026-07-16: remove all three. The
 // real data is preserved as an untracked backup, not shipped.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tags (2026-07-19 Tags port), the two vocabularies the Den puts on households
+// and pets. Ported from the React admin's TagsEditor screen
+// (auntieos-admin src/screens/TagsEditor.tsx); this is the Den's authoring
+// surface for the same two business_settings fields, so the caps, the palette,
+// the emoji set, and the error copy are pinned to React's, not re-invented.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Accessible swatch labels, matching React's COLOR_LABELS. Unknown token -> the raw token. */
+private val TAG_COLOR_LABELS: Map<String, String> = mapOf(
+    "teal" to "Teal",
+    "orange" to "Orange",
+    "pink" to "Pink",
+    "purple" to "Purple",
+    "coral" to "Coral",
+    "gold" to "Gold",
+    "green" to "Green",
+)
+
+/** Label for a palette swatch. Falls back to the raw token so a new token still reads. Pure; tested. */
+internal fun tagColorLabel(token: String): String = TAG_COLOR_LABELS[token] ?: token
+
+/**
+ * A small curated emoji set (no picker dependency); the field beside it takes any
+ * other emoji the operator types or pastes. Same fourteen, same order, as React.
+ */
+internal val CURATED_TAG_EMOJI: List<String> =
+    listOf("⭐", "🐾", "❤️", "🔥", "🦴", "🏠", "🚩", "💊", "🍗", "⚠️", "✅", "💤", "🌙", "📌")
+
+/** The custom-emoji field cap, matching React's maxLength. Pure; tested. */
+internal const val MAX_TAG_EMOJI_LENGTH: Int = 8
+
+/** Clamp a typed icon to the emoji field's cap. Pure; tested. */
+internal fun clampTagEmoji(raw: String): String = raw.take(MAX_TAG_EMOJI_LENGTH)
+
+/** The vocabulary for a scope, decoded through the drop rules. Never throws. Pure; tested. */
+internal fun tagVocabFor(settings: BusinessSettings, scope: TagScope): List<TagDef> = when (scope) {
+    TagScope.HOUSEHOLD -> settings.householdTagDefs()
+    TagScope.PET -> settings.petTagDefs()
+}
+
+/**
+ * Put a vocabulary back on the settings for one scope, leaving the other scope's
+ * list untouched. The color `css` string goes out exactly as it came in: React
+ * paints its chips from that string, so rewriting it would blank the React admin.
+ * Pure; tested.
+ */
+internal fun settingsWithTagVocab(
+    settings: BusinessSettings,
+    scope: TagScope,
+    defs: List<TagDef>,
+): BusinessSettings = when (scope) {
+    TagScope.HOUSEHOLD -> settings.withHouseholdTagDefs(defs)
+    TagScope.PET -> settings.withPetTagDefs(defs)
+}
+
+/**
+ * The reason [name] cannot be added to [vocab], or null when it can. Runs the
+ * add for real and reports its message rather than re-deriving the rules, so the
+ * Den can never drift from [addTag] on the checks OR on the user-facing copy.
+ * Pure; tested.
+ */
+internal fun tagVocabAddError(vocab: List<TagDef>, name: String): String? =
+    runCatching { addTag(vocab, TagDef(name = name, color = DEFAULT_TAG_COLOR, icon = "")) }
+        .exceptionOrNull()
+        ?.message
+
+/** The Add button lights only for a non-blank normalized name. Pure; tested. */
+internal fun tagVocabAddEnabled(name: String): Boolean = normalizeTagName(name) != ""
+
+/** True when the draft vocabulary differs from what was loaded (name, color, or order). Pure; tested. */
+internal fun tagVocabDirty(baseline: List<TagDef>, draft: List<TagDef>): Boolean = baseline != draft
+
+/** Empty-state copy for a vocabulary, e.g. "No household tags yet. Add one below." Pure; tested. */
+internal fun emptyTagVocabHint(scopeNoun: String): String = "No $scopeNoun tags yet. Add one below."
+
+/**
+ * The seven palette swatches. Selection is by TOKEN, which is exact and
+ * case-sensitive, unlike a name. Painting goes through the shared [tagToneRole],
+ * the same resolver the chips use, so the swatch an operator picks here and the
+ * chip it produces on a profile can never drift apart. The stored `css` string is
+ * a CSS variable reference React paints with: it is round-tripped, never parsed.
+ */
+@Composable
+private fun TagColorPicker(value: TagColor, enabled: Boolean, onChange: (TagColor) -> Unit) {
+    val c = AuntieTheme.colors
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TAG_PALETTE.forEach { swatch ->
+            val selected = swatch.token == value.token
+            val tone = tagToneRole(swatch.token).color(c)
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(tone)
+                    .border(
+                        width = if (selected) 2.dp else 1.dp,
+                        color = if (selected) c.textPrimary else c.border,
+                        shape = CircleShape,
+                    )
+                    .clickable(enabled = enabled) { onChange(swatch) },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (selected) {
+                    Icon(
+                        Lucide.Check,
+                        contentDescription = tagColorLabel(swatch.token),
+                        tint = c.background,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The curated emoji row plus a free-text field for anything else. "None" sets the
+ * icon to "" (a real value meaning no icon), never null: React drops any row
+ * whose icon is not a string, so a null here would make the row vanish there.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TagEmojiPicker(value: String, enabled: Boolean, onChange: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            AuntieChip(
+                selected = value == "",
+                onClick = { if (enabled) onChange("") },
+                label = "None",
+            )
+            CURATED_TAG_EMOJI.forEach { emoji ->
+                AuntieChip(
+                    selected = value == emoji,
+                    onClick = { if (enabled) onChange(emoji) },
+                    label = emoji,
+                )
+            }
+        }
+        AuntieField(
+            value = value,
+            onValueChange = { onChange(clampTagEmoji(it)) },
+            label = "Custom emoji",
+            placeholder = "or type one",
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/**
+ * One vocabulary (household or pet): the existing rows with their color/emoji
+ * controls and a Remove, plus the add form. Every edit goes through the pure
+ * helpers in TagModels.kt, so a name is normalized once and duplicates are caught
+ * case-insensitively ("vip" never lands beside "VIP").
+ */
+@Composable
+private fun TagVocabSection(
+    title: String,
+    subtitle: String,
+    scopeNoun: String,
+    tags: List<TagDef>,
+    enabled: Boolean,
+    onChange: (List<TagDef>) -> Unit,
+) {
+    val c = AuntieTheme.colors
+    var newName by remember { mutableStateOf("") }
+    var newColor by remember { mutableStateOf(DEFAULT_TAG_COLOR) }
+    var newIcon by remember { mutableStateOf("") }
+    var addError by remember { mutableStateOf<String?>(null) }
+
+    DenPanel(
+        title = title,
+        subtitle = subtitle,
+        trailing = { AuntieIconTile(icon = Lucide.Tag, tone = AuntieStatusTone.Orange, size = 40.dp) },
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (tags.isEmpty()) {
+                EmptyHint(emptyTagVocabHint(scopeNoun))
+            } else {
+                tags.forEach { def ->
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            // The chip resolved against this very vocabulary, so the
+                            // operator sees exactly what a profile will show.
+                            TagChip(name = def.name, vocab = tags)
+                            GhostButton(
+                                label = "Remove",
+                                enabled = enabled,
+                                onClick = { onChange(removeTag(tags, def.name)) },
+                            )
+                        }
+                        TagColorPicker(
+                            value = def.color,
+                            enabled = enabled,
+                            onChange = { onChange(editTag(tags, def.name, color = it)) },
+                        )
+                        TagEmojiPicker(
+                            value = def.icon,
+                            enabled = enabled,
+                            onChange = { onChange(editTag(tags, def.name, icon = it)) },
+                        )
+                    }
+                }
+            }
+
+            // Fail loud: the add rules are user-facing copy, shown verbatim.
+            addError?.let { msg ->
+                AuntieBanner(
+                    tone = AuntieBannerTone.Error,
+                    title = "Couldn't add tag",
+                    onDismiss = { addError = null },
+                ) {
+                    Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                }
+            }
+
+            AuntieField(
+                value = newName,
+                onValueChange = { newName = it },
+                label = "New $scopeNoun tag name",
+                placeholder = "e.g. VIP",
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            TagColorPicker(value = newColor, enabled = enabled, onChange = { newColor = it })
+            TagEmojiPicker(value = newIcon, enabled = enabled, onChange = { newIcon = it })
+            PrimaryButton(
+                label = "Add tag",
+                enabled = enabled && tagVocabAddEnabled(newName),
+                onClick = {
+                    val why = tagVocabAddError(tags, newName)
+                    if (why != null) {
+                        addError = why
+                    } else {
+                        onChange(addTag(tags, TagDef(name = newName, color = newColor, icon = newIcon)))
+                        newName = ""
+                        newColor = DEFAULT_TAG_COLOR
+                        newIcon = ""
+                        addError = null
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+/**
+ * The Den's Tags vocabulary editor: both vocabularies, edited locally and saved
+ * together. React's editor sends `{ householdTags, petTags }` in one write, so
+ * this does the same through a single [BusinessSettings] save; the two lists are
+ * only written independently from a profile's inline promotion, not here.
+ *
+ * Removing a tag here only takes it off the suggestion list. A household or pet
+ * already carrying that name keeps it and renders a neutral chip, which is the
+ * whole reason an assignment stores the NAME and not a copy of the definition.
+ */
+@Composable
+private fun TagVocabularyPanel(
+    settings: BusinessSettings,
+    isLoading: Boolean,
+    onSettingsChange: (BusinessSettings) -> Unit,
+) {
+    val c = AuntieTheme.colors
+    val baselineHousehold = remember(settings) { tagVocabFor(settings, TagScope.HOUSEHOLD) }
+    val baselinePet = remember(settings) { tagVocabFor(settings, TagScope.PET) }
+    // Re-seeded whenever a load or a save lands a new vocabulary on the settings.
+    var household by remember(baselineHousehold) { mutableStateOf(baselineHousehold) }
+    var pet by remember(baselinePet) { mutableStateOf(baselinePet) }
+    val dirty = tagVocabDirty(baselineHousehold, household) || tagVocabDirty(baselinePet, pet)
+
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        AuntieBanner(tone = AuntieBannerTone.Info, dashed = true, pillLabel = "Heads up") {
+            Text(
+                "Removing a tag here just takes it off the suggestion list. Households or pets already carrying that tag keep it, shown plainly until you re-add it or take it off each one.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+        }
+
+        TagVocabSection(
+            title = "Household tags",
+            subtitle = "Label a household (a kinfolk), e.g. VIP or Slow pay. Used by broadcasts and KinTale rules.",
+            scopeNoun = "household",
+            tags = household,
+            enabled = !isLoading,
+            onChange = { household = it },
+        )
+
+        TagVocabSection(
+            title = "Pet tags",
+            subtitle = "Label a pet (a kin), e.g. Reactive or On meds.",
+            scopeNoun = "pet",
+            tags = pet,
+            enabled = !isLoading,
+            onChange = { pet = it },
+        )
+
+        PrimaryButton(
+            label = "Save tags",
+            enabled = dirty && !isLoading,
+            onClick = {
+                onSettingsChange(
+                    settingsWithTagVocab(
+                        settingsWithTagVocab(settings, TagScope.HOUSEHOLD, household),
+                        TagScope.PET,
+                        pet,
+                    )
+                )
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Vet clinics (spec 29 item 8), shared vet_clinics catalog manager. Mirrors web.

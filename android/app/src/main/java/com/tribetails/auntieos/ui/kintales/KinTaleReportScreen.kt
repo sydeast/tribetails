@@ -53,6 +53,8 @@ import com.tribetails.auntieos.data.model.ChecklistScope
 import com.tribetails.auntieos.data.model.GpsPoint
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareReport
+import com.tribetails.auntieos.data.model.KinCareSession
+import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.MediaFile
 import com.tribetails.auntieos.data.model.MoodOption
 import com.tribetails.auntieos.data.model.ReportStatus
@@ -588,6 +590,42 @@ internal fun KinHeadingText(kin: Kin) {
     )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Checklist visibility seams: the two places this screen asks the engine what to
+// show. Pure, so they are unit-tested without a Compose runtime
+// ([KinTaleConditionEditorHelpersTest]), and mirrored in the commonMain
+// KinTaleConditionEditorHelpers.kt that serves web and desktop.
+//
+// [kinfolk] has NO default value on either seam, on purpose. The engine fails
+// OPEN on data it cannot resolve, so a call site that omits the household turns
+// every KINFOLK_ATTRIBUTE / KINFOLK_TAG rule into "always show" with no error at
+// all: the exact silent-wrong-answer bug I7 exists to close. Forcing the argument
+// at every call site makes that omission a compile error rather than a live bug.
+// [KinTaleEngineCallSiteTest] scans the sources to keep it that way.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The per-pet checklist items [kin] actually qualifies for in this visit. */
+internal fun applicablePerPetItems(
+    items: List<ChecklistItem>,
+    session: KinCareSession,
+    kinList: List<Kin>,
+    kin: Kin,
+    kinfolk: Kinfolk?,
+): List<ChecklistItem> = items.filter { item ->
+    KinTaleTemplateEngine.applicableKinForChecklistItem(item, session, kinList, kinfolk)
+        .any { it.id == kin.id }
+}
+
+/** The per-visit checklist items this visit qualifies for. */
+internal fun visiblePerVisitItems(
+    items: List<ChecklistItem>,
+    session: KinCareSession,
+    kinList: List<Kin>,
+    kinfolk: Kinfolk?,
+): List<ChecklistItem> = items.filter {
+    KinTaleTemplateEngine.isChecklistItemVisible(it, session, kinList, kinfolk)
+}
+
 /**
  * Per-kin (PER_PET) and overall (PER_VISIT) checklist, driven by the live
  * template + the real fieldResponses map via the ViewModel. Per-kin headings use
@@ -608,10 +646,7 @@ private fun ChecklistSection(
 
     if (perPet.isNotEmpty()) {
         kinList.forEach { kin ->
-            val applicableItems = perPet.filter { item ->
-                KinTaleTemplateEngine.applicableKinForChecklistItem(item, session, kinList)
-                    .any { it.id == kin.id }
-            }
+            val applicableItems = applicablePerPetItems(perPet, session, kinList, kin, state.kinfolk)
             if (applicableItems.isNotEmpty()) {
                 DenPanel(title = "Checklist") {
                     Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
@@ -655,9 +690,7 @@ private fun ChecklistSection(
         }
     }
 
-    val visiblePerVisit = perVisit.filter {
-        KinTaleTemplateEngine.isChecklistItemVisible(it, session, kinList)
-    }
+    val visiblePerVisit = visiblePerVisitItems(perVisit, session, kinList, state.kinfolk)
     if (visiblePerVisit.isNotEmpty()) {
         DenPanel(title = "Overall visit checklist") {
             Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {

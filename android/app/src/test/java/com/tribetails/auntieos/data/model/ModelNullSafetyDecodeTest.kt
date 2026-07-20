@@ -60,6 +60,15 @@ class ModelNullSafetyDecodeTest {
         setVia(k, "setPottyRoutine", String::class.java, null)
     }
 
+    @Test fun `VisitLog accepts null arrival`() {
+        // 8 of the 83 live visit_logs store arrival as null. getVisitLogs()
+        // decodes the whole collection with toObjects(VisitLog), so a single
+        // null blanked every visit log on the screen.
+        val v = VisitLog(arrival = null)
+        assertEquals(null, v.arrival)
+        setVia(v, "setArrival", String::class.java, null)
+    }
+
     @Test fun `Invoice accepts null paymentsHistory`() {
         val i = Invoice(paymentsHistory = null)
         assertEquals(null, i.paymentsHistory)
@@ -130,5 +139,85 @@ class ModelNullSafetyDecodeTest {
     @Test fun `MediaEntityType fromWire is case-insensitive and null-safe`() {
         assertEquals(MediaEntityType.USER, MediaEntityType.fromWire("user"))
         assertEquals(MediaEntityType.KIN, MediaEntityType.fromWire(null))
+    }
+
+    // ── Class A applied to tags: absent / null / wrong-typed `tags` ───────────
+    // `tags` is written by the React admin (kin/{id}.tags, kinfolk/{id}.tags) and
+    // is absent on every doc predating it. A typed `List<String>` field would take
+    // the whole kin or kinfolk query down twice over: the setter's non-null
+    // intrinsic on a stored null, and CustomClassMapper's String conversion on a
+    // Boolean element. Raw `Any?` + [tagNames] cannot do either.
+
+    @Test fun `Kinfolk tags is empty when the field is absent`() {
+        assertEquals(emptyList<String>(), Kinfolk().tagNames())
+    }
+
+    @Test fun `Kinfolk tags setter tolerates null`() {
+        val k = Kinfolk(tags = listOf("VIP"))
+        assertEquals(listOf("VIP"), k.tagNames())
+        setVia(k, "setTags", Any::class.java, null)
+        assertEquals(emptyList<String>(), k.tagNames())
+    }
+
+    @Test fun `Kinfolk tags drops non-String entries instead of failing the query`() {
+        val k = Kinfolk()
+        setVia(k, "setTags", Any::class.java, listOf("VIP", true, 7, null, "Monthly"))
+        assertEquals(listOf("VIP", "Monthly"), k.tagNames())
+    }
+
+    @Test fun `Kinfolk tags tolerates a non-list value`() {
+        val k = Kinfolk()
+        setVia(k, "setTags", Any::class.java, "VIP")
+        assertEquals(emptyList<String>(), k.tagNames())
+    }
+
+    @Test fun `Kin tags is empty when the field is absent`() {
+        assertEquals(emptyList<String>(), Kin().tagNames())
+    }
+
+    @Test fun `Kin tags setter tolerates null`() {
+        val k = Kin(tags = listOf("Reactive"))
+        assertEquals(listOf("Reactive"), k.tagNames())
+        setVia(k, "setTags", Any::class.java, null)
+        assertEquals(emptyList<String>(), k.tagNames())
+    }
+
+    @Test fun `Kin tags drops non-String entries instead of failing the query`() {
+        val k = Kin()
+        setVia(k, "setTags", Any::class.java, listOf("Reactive", false, "On meds"))
+        assertEquals(listOf("Reactive", "On meds"), k.tagNames())
+    }
+
+    @Test fun `Kin tags tolerates a non-list value`() {
+        val k = Kin()
+        setVia(k, "setTags", Any::class.java, 42)
+        assertEquals(emptyList<String>(), k.tagNames())
+    }
+
+    // ── Tag vocabularies on the business_settings doc ────────────────────────
+
+    @Test fun `BusinessSettings tag vocabularies are empty when the fields are absent`() {
+        assertEquals(emptyList<TagDef>(), BusinessSettings().householdTagDefs())
+        assertEquals(emptyList<TagDef>(), BusinessSettings().petTagDefs())
+    }
+
+    @Test fun `BusinessSettings tag vocabulary setters tolerate null and junk`() {
+        val s = BusinessSettings()
+        setVia(s, "setHouseholdTags", Any::class.java, null)
+        setVia(s, "setPetTags", Any::class.java, "not a list")
+        assertEquals(emptyList<TagDef>(), s.householdTagDefs())
+        assertEquals(emptyList<TagDef>(), s.petTagDefs())
+    }
+
+    @Test fun `BusinessSettings keeps the good vocabulary rows and drops the bad ones`() {
+        val s = BusinessSettings()
+        setVia(
+            s, "setHouseholdTags", Any::class.java,
+            listOf(
+                mapOf("name" to "VIP", "color" to mapOf("token" to "teal", "css" to "var(--color-accent)"), "icon" to ""),
+                mapOf("name" to "Broken", "color" to "teal", "icon" to ""),
+            )
+        )
+        assertEquals(listOf("VIP"), s.householdTagDefs().map { it.name })
     }
 }

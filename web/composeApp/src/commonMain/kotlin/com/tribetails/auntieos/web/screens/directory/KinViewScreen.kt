@@ -23,16 +23,22 @@ import com.tribetails.auntieos.web.ui.components.AuntieKeyValueRow
 import com.tribetails.auntieos.web.ui.components.DenPanel
 import com.tribetails.auntieos.web.ui.components.EmptyHint
 import com.tribetails.auntieos.web.ui.components.GhostButton
+import com.tribetails.auntieos.web.ui.components.ProfileTagsSection
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
+import com.tribetails.auntieos.web.ui.components.TagScope
 
 /**
  * B4: read-only view of a Kin (pet).
  *
  * Operator complaint: tapping a Kin card on the kinfolk profile dropped straight
- * into the EDIT form with no way to just VIEW. This is that view — a clean
+ * into the EDIT form with no way to just VIEW. This is that view: a clean
  * read-only render of the pet's fields with an explicit "Edit" button that routes
  * to [KinEditScreen]. Loads the same way the editor does (kinStream → find by id).
+ *
+ * The one editable thing here is the Tags panel, matching the React admin. Tags
+ * are a labelling gesture, not a form field, so they save the moment you add or
+ * remove one rather than waiting for a trip through the editor.
  */
 @Composable
 fun KinViewScreen(
@@ -86,6 +92,19 @@ fun KinViewScreen(
                             }
                         }
                     }
+
+                    // ---- Tags (pet) ----
+                    // Names live on this kin doc as a flat `tags` list; the color and
+                    // emoji come from the `petTags` vocabulary in business_settings,
+                    // resolved at render time. Saving goes through updateKinTags, which
+                    // takes the LOADED record so the whole-document write round-trips
+                    // every other field instead of wiping it.
+                    ProfileTagsSection(
+                        scope = TagScope.PET,
+                        initialTags = kin.tags,
+                        client = client,
+                        onSaveTags = { next -> client.updateKinTags(kin, next) },
+                    )
 
                     DenPanel(title = "Basics") {
                         ViewRow("Species", kin.species)

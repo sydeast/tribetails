@@ -50,6 +50,10 @@ data class ChecklistItem(
     var text: String = "",                     // user-visible label ("Peed", "Fed")
     var scope: String = ChecklistScope.PER_PET.name,
     var showWhenUnchecked: Boolean = false,    // include unchecked items in the kinfolk-facing report
+    // Must be ticked before the KinTale can be sent. Defaults false so pre-existing
+    // docs decode unchanged. Android writes the WHOLE template back, so while this
+    // was missing (React and commonMain both had it) every android edit stripped it.
+    var required: Boolean = false,
     var order: Int = 0,
     var conditions: List<FieldCondition> = emptyList()  // power feature; editor TBD
 )
@@ -93,13 +97,22 @@ data class FieldCondition(
     var source: String = ConditionSource.KIN_SPECIES.name,
     var op: String = ConditionOp.EQUALS.name,
     var value: String = "",
-    var attributeKey: String = ""
+    var attributeKey: String = ""  // which attribute, when source is KIN_ATTRIBUTE or KINFOLK_ATTRIBUTE
 )
 
+// FieldCondition.source / .op are stored as plain Strings, so the CONSTANT NAME
+// here IS the Firestore wire format and must match the React admin exactly
+// (auntieos-admin/src/lib/kinTale/model.ts). An unknown value is not fatal: the
+// engine fails open (treats the condition as "always visible") for forward
+// compatibility with a newer app.
 enum class ConditionSource {
     KIN_SPECIES,
     KIN_ATTRIBUTE,
-    SERVICE_TYPE
+    SERVICE_TYPE,
+    /** I7: evaluates against the KINFOLK (household) the visit belongs to. */
+    KINFOLK_ATTRIBUTE,
+    /** I7: evaluates against the household's `tags` string list. */
+    KINFOLK_TAG
 }
 
 enum class ConditionOp {

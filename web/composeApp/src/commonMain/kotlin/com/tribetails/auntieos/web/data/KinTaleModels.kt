@@ -61,10 +61,36 @@ data class FieldCondition(
     val source: String = ConditionSource.KIN_SPECIES.name,
     val op: String = ConditionOp.EQUALS.name,
     val value: String = "",
-    val attributeKey: String = "",          // which kin attribute, when source == KIN_ATTRIBUTE
+    // which attribute, when source == KIN_ATTRIBUTE or KINFOLK_ATTRIBUTE
+    val attributeKey: String = "",
 )
 
-enum class ConditionSource { KIN_SPECIES, KIN_ATTRIBUTE, SERVICE_TYPE }
+/**
+ * What a [FieldCondition] evaluates against. Stored as the CONSTANT NAME (see
+ * [FieldCondition.source]), so these identifiers ARE the wire format: they must
+ * stay byte-identical to the React admin (src/lib/kinTale/model.ts) and the
+ * Android ConditionSource, or a condition authored on one platform stops parsing
+ * on another.
+ *
+ * Declaration order mirrors the React parse whitelist and is the order the
+ * condition editor offers, so it is load-bearing.
+ */
+enum class ConditionSource {
+    KIN_SPECIES,
+    KIN_ATTRIBUTE,
+    SERVICE_TYPE,
+
+    /**
+     * Evaluates against the kinfolk (household) the visit belongs to, not the pet.
+     * Authored in the React admin since I7. Before it existed here it parsed as an
+     * unknown source and hit the engine's fail-open branch, so every condition on
+     * it silently evaluated true on web and desktop.
+     */
+    KINFOLK_ATTRIBUTE,
+
+    /** Evaluates against the household's `tags` string list. Same I7 history as above. */
+    KINFOLK_TAG,
+}
 
 enum class ConditionOp { EQUALS, NOT_EQUALS, CONTAINS, EXISTS }
 

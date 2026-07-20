@@ -2,10 +2,18 @@ package com.tribetails.auntieos.web.data
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -25,9 +33,9 @@ import kotlinx.serialization.json.jsonPrimitive
  * [platformXxxStream] expect function - wasmJs binds to the Firebase Web SDK via
  * `window.__fb` (see [data/FirestoreInterop.wasmJs.kt] and [resources/index.html]).
  *
- * The Baserow→Firestore migration is incomplete and has failed multiple times,
- * so collections may be empty or sparse - every screen that reads these flows
- * MUST handle the empty case explicitly.
+ * Baserow is retired, but the migration it fed left collections sparse, so every
+ * screen that reads these flows MUST still handle the empty case explicitly.
+ * Firestore is the only source of truth now; do not add Baserow-shaped fields.
  */
 class FirestoreClient {
     /**
@@ -574,6 +582,30 @@ class FirestoreClient {
     suspend fun updateKin(k: Kin):           WriteResult<Unit>   = platformUpdateKin(k)
     suspend fun archiveKin(id: String):      WriteResult<Unit>   = platformArchiveKin(id)
 
+    // ---- Tag assignment writes (kin + kinfolk) ----
+    // Ports updateKinTags / updateKinfolkTags from the React admin
+    // (api/directoryWrite.ts:237-255). Semantics kept identical: a whole-list
+    // replace of tag NAMES, so clearing the last tag genuinely empties the field.
+    //
+    // TRANSPORT DIFFERENCE, deliberate: React patches only `{ tags, updatedAt }`.
+    // This tree has no per-field patch seam for `kin` / `kinfolk`, so the write goes
+    // through the existing whole-document [updateKin] / [updateKinfolk]. That is safe
+    // only because `tags` now lives on both models; pass the record you LOADED, and
+    // every other field round-trips instead of being wiped. Fail-loud: a rejected
+    // write propagates to the caller as WriteResult.Err.
+
+    /** Replaces a pet's tag NAME list. [kin] must be the loaded record, not a fresh one. */
+    suspend fun updateKinTags(kin: Kin, tags: List<String>): WriteResult<Unit> {
+        require(kin._id.isNotBlank()) { "updateKinTags requires a kin id" }
+        return updateKin(kin.copy(tags = tags))
+    }
+
+    /** Replaces a household's tag NAME list. [kinfolk] must be the loaded record. */
+    suspend fun updateKinfolkTags(kinfolk: Kinfolk, tags: List<String>): WriteResult<Unit> {
+        require(kinfolk._id.isNotBlank()) { "updateKinfolkTags requires a kinfolk id" }
+        return updateKinfolk(kinfolk.copy(tags = tags))
+    }
+
     /**
      * Patches a single Kin Care session document with the given string-valued
      * fields. Used by the Auntie Time row buttons to flip status + drop the
@@ -1095,6 +1127,25 @@ class FirestoreClient {
     // ---- Business settings ----
     fun businessSettingsStream(): Flow<FirestoreResult<BusinessSettings>> = platformBusinessSettingsStream()
     suspend fun saveBusinessSettings(settings: BusinessSettings): WriteResult<Unit> = platformSaveBusinessSettings(settings)
+
+    // ---- Tag vocabulary writes ----
+    // React sends one key at a time from a profile panel (`{ householdTags }` OR
+    // `{ petTags }`) and both at once from the Tags settings editor. This tree's save
+    // seam takes the whole settings model and merges, so the two helpers below take
+    // the settings you LOADED and swap a single vocabulary, leaving the other list and
+    // every unrelated setting untouched.
+
+    /** Persists the household tag vocabulary (the one that labels `kinfolk` docs). */
+    suspend fun saveHouseholdTagVocabulary(
+        settings: BusinessSettings,
+        vocab: List<TagDef>,
+    ): WriteResult<Unit> = saveBusinessSettings(settings.copy(householdTags = vocab))
+
+    /** Persists the pet tag vocabulary (the one that labels `kin` docs). */
+    suspend fun savePetTagVocabulary(
+        settings: BusinessSettings,
+        vocab: List<TagDef>,
+    ): WriteResult<Unit> = saveBusinessSettings(settings.copy(petTags = vocab))
 
     // ---- Booking writes ----
     fun bookingRequestsStream(): Flow<FirestoreResult<List<KinCareSession>>> {
@@ -2206,6 +2257,82 @@ data class CommsRecap(
     val sourceCount: Int,
 )
 
+// ---------- Tags (wire decode) ----------
+// [TagDef] / [TagColor] themselves live in TagModels.kt alongside the pure tag
+// helpers. What lives here is the DEFENSIVE decode of the two places tags touch
+// Firestore: the flat `tags` name list on a kinfolk / kin doc, and the two
+// vocabularies on the business_settings doc.
+
+/** Reads a JSON value as a String, or null when it is absent, null, or not a string. */
+private fun JsonElement?.tagStringOrNull(): String? =
+    (this as? JsonPrimitive)?.takeIf { it.isString }?.content
+
+/**
+ * Decodes a Firestore `string[]` field defensively: keeps only String entries and
+ * yields an empty list for a missing field, an explicit null, or a non-array value.
+ * Mirrors the React admin's `arr()` guard (api/kinView.ts:67-72,
+ * api/kinfolkProfile.ts:65-66), which drops malformed rows rather than failing.
+ *
+ * This has to be a serializer rather than just a Kotlin default. Only the wasm read
+ * path sets `coerceInputValues`; the desktop codec (JvmFirestoreRest.codec) does not,
+ * so an explicit null on a plain `List<String>` throws there and the defensive
+ * collection decode drops the WHOLE document. A single Boolean inside the array does
+ * the same on every platform. Both are the deserialization crash cluster fixed on
+ * android on 2026-07-19; do not reintroduce it here.
+ */
+object TolerantStringListSerializer : KSerializer<List<String>> {
+    private val delegate = ListSerializer(String.serializer())
+    override val descriptor: SerialDescriptor = delegate.descriptor
+
+    override fun deserialize(decoder: Decoder): List<String> {
+        val jsonDecoder = decoder as? JsonDecoder
+            ?: return runCatching { delegate.deserialize(decoder) }.getOrDefault(emptyList())
+        val array = jsonDecoder.decodeJsonElement() as? JsonArray ?: return emptyList()
+        return array.mapNotNull { it.tagStringOrNull() }
+    }
+
+    override fun serialize(encoder: Encoder, value: List<String>) {
+        delegate.serialize(encoder, value)
+    }
+}
+
+/**
+ * Decodes a `householdTags` / `petTags` vocabulary, keeping only well-formed
+ * `{ name, color: { token, css }, icon }` rows. Reproduces `decodeTagDefs`
+ * (React api/settings.ts:241-255) drop for drop: skip a row that is not an object,
+ * whose `name` is not a string or trims to "", whose `icon` is not a string, whose
+ * `color` is not an object, or whose `color.token` / `color.css` is not a string.
+ * A kept row's `name` is stored UNTRIMMED, exactly as written (:252): the trim is
+ * only used to decide whether the row is blank.
+ *
+ * Never throws. A hand-edited or half-written vocabulary must not take down the
+ * whole business_settings read.
+ */
+object TolerantTagDefListSerializer : KSerializer<List<TagDef>> {
+    private val delegate = ListSerializer(TagDef.serializer())
+    override val descriptor: SerialDescriptor = delegate.descriptor
+
+    override fun deserialize(decoder: Decoder): List<TagDef> {
+        val jsonDecoder = decoder as? JsonDecoder
+            ?: return runCatching { delegate.deserialize(decoder) }.getOrDefault(emptyList())
+        val array = jsonDecoder.decodeJsonElement() as? JsonArray ?: return emptyList()
+        return array.mapNotNull { row ->
+            val obj = row as? JsonObject ?: return@mapNotNull null
+            val name = obj["name"].tagStringOrNull() ?: return@mapNotNull null
+            if (name.trim().isEmpty()) return@mapNotNull null
+            val icon = obj["icon"].tagStringOrNull() ?: return@mapNotNull null
+            val color = obj["color"] as? JsonObject ?: return@mapNotNull null
+            val token = color["token"].tagStringOrNull() ?: return@mapNotNull null
+            val css = color["css"].tagStringOrNull() ?: return@mapNotNull null
+            TagDef(name = name, color = TagColor(token = token, css = css), icon = icon)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: List<TagDef>) {
+        delegate.serialize(encoder, value)
+    }
+}
+
 // ---------- Models ----------
 // Field names mirror what the AuntieOS Android app writes to Firestore
 // (see android/.../data/model/Models.kt). _id is the Firestore document id.
@@ -2220,7 +2347,24 @@ data class Kinfolk(
     val profilePictureUrl: String = "",
     val status: String = "active",
     val outstandingBalance: String = "0.00",
+    /**
+     * Household tag NAMES, resolved against `business_settings.householdTags` at
+     * render time. Flat `string[]`, no color and no icon: the vocabulary owns those.
+     * Decoded through [TolerantStringListSerializer] because updateKinfolk re-writes
+     * the whole document, so a legacy or malformed value must degrade to "no tags"
+     * rather than drop the kinfolk out of the directory.
+     */
+    @Serializable(with = TolerantStringListSerializer::class)
     val tags: List<String> = emptyList(),
+
+    /**
+     * Round-trip-only, same rule as [tags]: updateKinfolk re-writes the whole
+     * document, so a field missing here is destroyed on save. Live on 8 of 12
+     * kinfolk, stored as a String (unlike `kin.updatedAt`, which is a Timestamp)
+     * so the serializer accepts either spelling.
+     */
+    @Serializable(with = FirestoreInstantStringSerializer::class)
+    val updatedAt: String = "",
 
     // Contact & Identity
     val secondaryPhone: String = "",
@@ -2529,6 +2673,37 @@ data class Kin(
     val weight: String = "",
     val status: String = "active",
     val profilePictureUrl: String = "",   // Kin (pet) photo; parity with android Kin.profilePictureUrl
+
+    /**
+     * Pet tag NAMES, resolved against `business_settings.petTags` at render time.
+     * MANDATORY on this model, not optional: [FirestoreClient.updateKin] re-writes the
+     * whole document, so before this field existed every Kotlin save of a pet silently
+     * wiped a tag list the React admin had written. See [TolerantStringListSerializer].
+     */
+    @Serializable(with = TolerantStringListSerializer::class)
+    val tags: List<String> = emptyList(),
+
+    /**
+     * Round-trip-only fields, MANDATORY for the same reason as [tags]:
+     * [FirestoreClient.updateKin] re-writes the whole document, so any field
+     * absent from this model is DESTROYED on every Kotlin save.
+     *
+     * Both are live: `familyKinPath` is set on 24 of 24 kin and `updatedAt` on 23
+     * (as a Firestore Timestamp, hence the serializer). Neither is read by this
+     * tree; they exist so a desktop save preserves what the React admin and the
+     * backfill scripts wrote.
+     *
+     * ABSENT ON PURPOSE: `photos`. It is a Baserow-era field and Baserow is
+     * retired. Across the live database every Baserow-shaped media field is
+     * empty or absent (kin.photos empty on 1 of 24, the_411.gallery empty on 8
+     * of 23, kinfolk.media absent entirely) - there is not one non-empty
+     * instance. Real media lives in the `media_files` collection. Do NOT port
+     * `BaserowFile` here to "fix" the round-trip: it would add a dead type to
+     * carry a field nothing writes.
+     */
+    val familyKinPath: String = "",
+    @Serializable(with = FirestoreInstantStringSerializer::class)
+    val updatedAt: String = "",
 
     // Extended care fields (mirror Android model)
     val colorMarkings: String = "",
@@ -2925,6 +3100,18 @@ data class BusinessSettings(
     val brandTagline: String = "",     // nav-rail tagline; blank -> "Tribe Tails Care"
     val homeGreeting: String = "",     // Home heading salutation; blank -> time-aware greetingForHour()
     val homeAccentTail: String = "",   // Home heading accent word; blank -> "Auntie."
+
+    // ---- Tag vocabularies (2026-07-19) ----
+    // The two lists the operator manages in the Tags settings panel: [householdTags]
+    // label `kinfolk` docs (e.g. "VIP"), [petTags] label `kin` docs (e.g. "Reactive").
+    // A profile stores only tag NAMES, so these are the single source of truth for a
+    // tag's color and icon. Both default to empty; a legacy doc carrying neither field,
+    // or carrying malformed rows, decodes to a clean list rather than throwing
+    // (see [TolerantTagDefListSerializer]).
+    @Serializable(with = TolerantTagDefListSerializer::class)
+    val householdTags: List<TagDef> = emptyList(),
+    @Serializable(with = TolerantTagDefListSerializer::class)
+    val petTags: List<TagDef> = emptyList(),
 
     // ---- MyTribe client-portal config (shared wire contract) ----
     // Drives the MyTribe kinfolk portal (chrome, home layout, banner, chat).
