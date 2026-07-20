@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "auntieos-admin",
+    "site": "auntieos-ttpc",
     "public": "dist",
     "ignore": [
       "firebase.json",
@@ -14,7 +14,7 @@
       },
       {
         "source": "/api/generate",
-        "function": "generate"
+        "function": "generateAuntieCopy"
       },
       {
         "source": "/api/send-message",

@@ -55,7 +55,13 @@ function financeNumber(v: number): number {
  * the label; only then do we read amountDue/total to place an unlabeled row.
  */
 export function invoiceState(row: InvoiceStateInput): InvoiceState {
-  const status = row.status.trim().toLowerCase();
+  // Defensive on purpose: a doc predating the `status` field, or carrying only
+  // the legacy `invoiceStatus` spelling, has no status at all. Reading it blind
+  // threw "Cannot read properties of undefined" and the error boundary blanked
+  // the WHOLE invoices page over ONE bad row. An unlabeled row still classifies
+  // correctly from the money fields below, which is what this precedence order
+  // was built for.
+  const status = (row.status ?? '').trim().toLowerCase();
   const amountDue = financeNumber(row.amountDue);
   const total = financeNumber(row.total);
 

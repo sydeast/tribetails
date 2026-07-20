@@ -1,4 +1,5 @@
 import type { Timestamp } from 'firebase/firestore';
+import { str } from './coerce';
 
 /**
  * Pure booking classification + display helpers, kept out of the screen so the
@@ -41,7 +42,9 @@ export interface BookingStateInput {
 const CANCELLED_STATUSES = new Set(['CANCELLED', 'CANCELED', 'REJECTED']);
 
 export function bookingState(row: BookingStateInput): BookingState {
-  const status = row.status.trim().toUpperCase();
+  // str(): a real kin_care_sessions doc can lack `status` entirely. Reading it
+  // blind blanked the whole Bookings page via the error boundary (2026-07-20).
+  const status = str(row.status).trim().toUpperCase();
   if (status === 'DRAFT') return 'draft';
   if (status === 'PENDING') return 'pending';
   if (status === 'SCHEDULED') return 'scheduled';
@@ -155,7 +158,7 @@ export interface BookingWhenInput {
  * one.
  */
 export function bookingWhen(row: BookingWhenInput): string {
-  const raw = row.startTime.trim() || row.completedAt.trim() || row.departedAt.trim();
+  const raw = str(row.startTime).trim() || str(row.completedAt).trim() || str(row.departedAt).trim();
   if (raw !== '') {
     const parsed = parseFlexibleDate(raw);
     return parsed ? formatLocalDateTime(parsed) : raw;

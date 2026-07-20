@@ -254,12 +254,18 @@ interface BookingRowProps {
 function BookingRow({ view, onSelectBooking }: BookingRowProps) {
   const { entry, state } = view;
   const info = bookingStateInfo(state);
-  const displayName = entry.kinfolkName.trim() !== '' ? entry.kinfolkName : 'Unnamed Kinfolk';
+  // `?? ''` on every field read, matching sessionFormat.ts's convention.
+  // BookingEntry is a CAST over raw Firestore data, not a validation of it, and
+  // a real kin_care_sessions doc can be missing any of these. Reading one blind
+  // threw and the error boundary blanked the WHOLE Bookings page (2026-07-20).
+  const kinfolkName = entry.kinfolkName ?? '';
+  const displayName = kinfolkName.trim() !== '' ? kinfolkName : 'Unnamed Kinfolk';
   // Recomputed per row per render (not memoized): each is a handful of cheap
   // string ops, not worth the hook bookkeeping at list scale.
   const when = bookingWhen(entry);
-  const notePreview = entry.kinfolkNotes.trim() !== '' ? entry.kinfolkNotes : entry.notes;
-  const serviceLabel = entry.serviceType.trim() !== '' ? entry.serviceType : 'Visit';
+  const kinfolkNotes = entry.kinfolkNotes ?? '';
+  const notePreview = kinfolkNotes.trim() !== '' ? kinfolkNotes : (entry.notes ?? '');
+  const serviceLabel = (entry.serviceType ?? '').trim() !== '' ? entry.serviceType : 'Visit';
 
   const body = (
     <>
