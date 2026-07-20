@@ -21,12 +21,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.tribetails.auntieos.AuntieOSApp
+import com.tribetails.auntieos.data.model.TagDef
+import com.tribetails.auntieos.data.model.TagScope
+import com.tribetails.auntieos.data.model.addAssigned
+import com.tribetails.auntieos.data.model.normalizeTagName
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import com.tribetails.auntieos.util.emailOkOrBlank
 import com.tribetails.auntieos.util.isValidPhone
 import com.tribetails.auntieos.util.phoneOkOrBlank
+import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 
 @Composable
 fun EditKinfolkScreen(
@@ -48,6 +55,50 @@ fun EditKinfolkScreen(
     val photoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri -> if (uri != null) viewModel.uploadKinfolkPhoto(context, uri) }
+
+    // Tags (2026-07-19): the household vocabulary that backs the assign field
+    // below. Loaded here rather than in the ViewModel so the field can ship
+    // without widening the DirectoryViewModel contract; a load failure leaves the
+    // field usable (free-form names still assign) but SAYS the suggestions are
+    // missing, because an empty list and "no tags defined yet" look identical.
+    val tagRepository = remember { AuntieOSApp.instance.repository }
+    val tagScope = rememberCoroutineScope()
+    var householdVocab by remember { mutableStateOf(emptyList<TagDef>()) }
+    var vocabError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        try {
+            householdVocab = loadTagVocab(tagRepository, TagScope.HOUSEHOLD)
+            vocabError = null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            vocabError = tagVocabLoadErrorMessage(failure)
+        }
+    }
+
+    // Promote a typed name into the managed vocabulary so it becomes a reusable
+    // suggestion. A name already in the list is the one intentional no-op (the
+    // assignment itself is handled by the field's own onChange); a failed WRITE
+    // reverts the list and surfaces the reason.
+    fun promoteHouseholdTag(name: String) {
+        val next = promoteTagToVocab(householdVocab, name) ?: return
+        val previous = householdVocab
+        householdVocab = next
+        tagScope.launch {
+            val failure = try {
+                saveTagVocab(tagRepository, TagScope.HOUSEHOLD, next)
+                null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failed: Throwable) {
+                failed
+            }
+            val outcome = tagVocabOutcome(previous = previous, attempted = next, error = failure)
+            householdVocab = outcome.vocab
+            vocabError = outcome.error ?: vocabError
+        }
+    }
 
     LaunchedEffect(kinfolkId) {
         viewModel.loadKinfolkForEdit(kinfolkId)
@@ -168,22 +219,39 @@ fun EditKinfolkScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             )
 
-                            Row(
+                            AuntieField(
+                                value = state.outstandingBalance,
+                                onValueChange = viewModel::updateEditOutstandingBalance,
+                                label = "Outstanding Balance",
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                AuntieField(
-                                    value = state.outstandingBalance,
-                                    onValueChange = viewModel::updateEditOutstandingBalance,
-                                    label = "Outstanding Balance",
-                                    modifier = Modifier.weight(1f),
-                                )
-                                AuntieField(
-                                    value = state.tags,
-                                    onValueChange = viewModel::updateEditTags,
-                                    label = "Tags (comma-separated)",
-                                    modifier = Modifier.weight(1f),
-                                )
+                            )
+
+                            // Household tags, vocabulary-backed. Replaces the raw
+                            // "Tags (comma-separated)" box: the operator now picks
+                            // from the managed list (or promotes a new name into it)
+                            // instead of remembering how they spelled it last time.
+                            // The form still holds a CSV string, so the field reads
+                            // and writes through the bridge helpers below.
+                            AuntieFieldLabel(text = "HOUSEHOLD TAGS")
+                            TagAssignField(
+                                value = editTagsFromField(state.tags),
+                                vocab = householdVocab,
+                                onChange = { next -> viewModel.updateEditTags(editTagsToField(next)) },
+                                onCreateVocab = { name -> promoteHouseholdTag(name) },
+                                inputLabel = "Add a household tag",
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            vocabError?.let { message ->
+                                AuntieBanner(
+                                    tone = AuntieBannerTone.Warning,
+                                    title = "Tag suggestions unavailable",
+                                ) {
+                                    Text(
+                                        message,
+                                        style = AuntieTheme.typography.bodySmall,
+                                        color = AuntieTheme.colors.textDim,
+                                    )
+                                }
                             }
 
                             // Prospect-aware segmented status picker
@@ -647,3 +715,35 @@ private fun AddressAutofillField(
         }
     }
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// The edit form's tag bridge (2026-07-19 Tags port)
+//
+// [EditKinfolkUiState.tags] is still a comma-separated String and
+// DirectoryViewModel still splits it on save, so the vocabulary-backed field
+// reads and writes through that shape rather than the form growing a second
+// source of truth. These two are inverses for any name without a comma.
+//
+// The right end state is EditKinfolkUiState holding a List<String> (which also
+// removes the comma caveat below). That is a DirectoryViewModel change, not a
+// screen one.
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * The form's CSV as the name list the assign field shows: split on commas, trim,
+ * drop blanks, and dedupe case-insensitively through [addAssigned].
+ *
+ * The dedupe matters for legacy values. The old editor was raw text and could
+ * hold "vip, VIP"; the vocabulary treats those as ONE tag, so the field shows the
+ * first spelling rather than two chips that mean the same thing. Pure; tested.
+ */
+internal fun editTagsFromField(csv: String): List<String> =
+    csv.split(",").fold(emptyList<String>()) { acc, raw -> addAssigned(acc, raw) }
+/**
+ * The name list back as the CSV the form and the ViewModel expect.
+ *
+ * A comma inside a name cannot survive a CSV round-trip, so it becomes a space
+ * here: that keeps ONE tag and shows the operator the result in the chip
+ * straight away, instead of quietly turning into two tags at save time. Pure;
+ * tested.
+ */
+internal fun editTagsToField(names: List<String>): String =
+    names.joinToString(", ") { normalizeTagName(it.replace(',', ' ')) }

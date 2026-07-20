@@ -48,7 +48,6 @@ import com.tribetails.auntieos.web.data.ChecklistBankItem
 import com.tribetails.auntieos.web.data.ChecklistItem
 import com.tribetails.auntieos.web.data.bankItemsNotInChecklist
 import com.tribetails.auntieos.web.data.checklistItemFromBank
-import com.tribetails.auntieos.web.data.ConditionAttribute
 import com.tribetails.auntieos.web.data.ConditionOp
 import com.tribetails.auntieos.web.data.ConditionSource
 import com.tribetails.auntieos.web.data.DefaultKinTaleTemplate
@@ -57,13 +56,15 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.KinTaleTemplate
 import com.tribetails.auntieos.web.data.MoodOption
+import com.tribetails.auntieos.web.data.TagDef
 import com.tribetails.auntieos.web.data.WriteResult
-import com.tribetails.auntieos.web.data.conditionAttributeCatalog
 import com.tribetails.auntieos.web.data.conditionSummary
 import com.tribetails.auntieos.web.data.conditionUsesAttributeKey
 import com.tribetails.auntieos.web.data.conditionUsesValueInput
 import com.tribetails.auntieos.web.ui.components.AuntieSelectField
 import com.tribetails.auntieos.web.theme.AuntieTheme
+import com.tribetails.auntieos.web.ui.components.AuntieBanner
+import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.AuntieChip
 import com.tribetails.auntieos.web.ui.components.AuntieChipTone
 import com.tribetails.auntieos.web.ui.components.AuntieDashedAddButton
@@ -105,6 +106,13 @@ import kotlinx.coroutines.launch
 fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
     val client = remember { FirestoreClient() }
     val templatesRes by remember { client.templatesStream() }.collectAsState(initial = FirestoreResult.Loading)
+
+    // I7: the household tag vocabulary backs the KINFOLK_TAG condition picker, so
+    // a rule can only target a tag the operator actually manages. Read-only here;
+    // the vocabulary itself is edited in the Tags settings panel.
+    val settingsRes by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val householdTags: List<TagDef> = (settingsRes as? FirestoreResult.Data)?.value?.householdTags.orEmpty()
+    val tagVocabError: String? = (settingsRes as? FirestoreResult.Error)?.message
 
     var selectedId by remember { mutableStateOf<String?>(null) }
     var draft by remember { mutableStateOf<KinTaleTemplate?>(null) }
@@ -334,9 +342,26 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
 
         // ---- Checklist items ----
         if (current.checklistEnabled) {
+            // Fail loud: without the vocabulary the tag picker cannot be trusted, so
+            // say so and let the condition row fall back to free text rather than
+            // showing an empty picker that looks like "you have no tags".
+            if (tagVocabError != null) {
+                AuntieBanner(
+                    tone = AuntieBannerTone.Error,
+                    title = "Couldn't load your household tags",
+                    modifier = Modifier.padding(bottom = 12.dp),
+                ) {
+                    Text(
+                        "$tagVocabError. Household tag conditions fall back to a typed tag name.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.textDim,
+                    )
+                }
+            }
             ChecklistEditor(
                 items = current.checklistItems,
                 bank = bank,
+                householdTags = householdTags,
                 onUpdate = { newItems ->
                     draft = current.copy(checklistItems = newItems); dirty = true
                 },
@@ -494,6 +519,7 @@ private fun TemplatePicker(
 private fun ChecklistEditor(
     items: List<ChecklistItem>,
     bank: List<ChecklistBankItem>,
+    householdTags: List<TagDef>,
     onUpdate: (List<ChecklistItem>) -> Unit,
     onSaveToBank: (String, String) -> Unit,
 ) {
@@ -510,6 +536,7 @@ private fun ChecklistEditor(
             ChecklistItemRow(
                 item = item,
                 allItems = items,
+                householdTags = householdTags,
                 onUpdate = onUpdate,
                 onSaveToBank = onSaveToBank,
             )
@@ -543,6 +570,7 @@ private fun ChecklistEditor(
             ChecklistItemRow(
                 item = item,
                 allItems = items,
+                householdTags = householdTags,
                 onUpdate = onUpdate,
                 onSaveToBank = onSaveToBank,
             )
@@ -611,6 +639,7 @@ private fun BankAddRow(
 private fun ChecklistItemRow(
     item: ChecklistItem,
     allItems: List<ChecklistItem>,
+    householdTags: List<TagDef>,
     onUpdate: (List<ChecklistItem>) -> Unit,
     onSaveToBank: (String, String) -> Unit,
 ) {
@@ -689,7 +718,12 @@ private fun ChecklistItemRow(
         // Conditional visibility editor. An item with no conditions is always
         // shown; conditions narrow it to matching pets / services. The same engine
         // (KinTaleConditionEngine) evaluates these in the composer + on Android.
-        ConditionsEditor(item = item, allItems = allItems, onUpdate = onUpdate)
+        ConditionsEditor(
+            item = item,
+            allItems = allItems,
+            householdTags = householdTags,
+            onUpdate = onUpdate,
+        )
     }
 }
 
@@ -703,6 +737,7 @@ private fun ChecklistItemRow(
 private fun ConditionsEditor(
     item: ChecklistItem,
     allItems: List<ChecklistItem>,
+    householdTags: List<TagDef>,
     onUpdate: (List<ChecklistItem>) -> Unit,
 ) {
     val c = AuntieTheme.colors
@@ -721,7 +756,7 @@ private fun ConditionsEditor(
         )
         if (item.conditions.isEmpty()) {
             Text(
-                text = "Always shown. Add a condition to show this item only for certain pets or services.",
+                text = "Always shown. Add a condition to show this item only for certain pets, services, or households.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -729,6 +764,7 @@ private fun ConditionsEditor(
             item.conditions.forEachIndexed { idx, cond ->
                 ConditionRow(
                     condition = cond,
+                    householdTags = householdTags,
                     onChange = { updated ->
                         setConditions(item.conditions.mapIndexed { i, existing -> if (i == idx) updated else existing })
                     },
@@ -752,15 +788,23 @@ private fun ConditionsEditor(
     }
 }
 
+/**
+ * One condition row: When (source) / Is (op), then the input the pair calls for.
+ *
+ * The pickers are keyed on the raw wire STRINGS, not the Kotlin enums, so a
+ * source or op this build does not model (authored by a newer app) stays selected
+ * and labelled "(unrecognised)" instead of being silently snapped to KIN_SPECIES
+ * and rewritten on the next save. All the picking logic lives in
+ * KinTaleConditionEditorHelpers.kt; this is the render shell.
+ */
 @Composable
 private fun ConditionRow(
     condition: FieldCondition,
+    householdTags: List<TagDef>,
     onChange: (FieldCondition) -> Unit,
     onRemove: () -> Unit,
 ) {
     val c = AuntieTheme.colors
-    val sources = ConditionSource.entries.toList()
-    val ops = ConditionOp.entries.toList()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -774,25 +818,21 @@ private fun ConditionRow(
             Box(modifier = Modifier.weight(1f)) {
                 AuntieSelectField(
                     label = "When",
-                    options = sources,
-                    selected = sources.firstOrNull { it.name == condition.source } ?: ConditionSource.KIN_SPECIES,
-                    onSelect = { src ->
-                        // Switching to a kin attribute? default to the first catalog
-                        // entry so the rule is valid immediately (no blank attribute).
-                        val attr = if (src == ConditionSource.KIN_ATTRIBUTE && condition.attributeKey.isBlank())
-                            conditionAttributeCatalog.first().key else condition.attributeKey
-                        onChange(condition.copy(source = src.name, attributeKey = attr))
-                    },
-                    optionLabel = ::sourceLabel,
+                    options = conditionSourceChoices(condition.source),
+                    selected = condition.source,
+                    // Re-seeds the attribute key when the new source needs one, so
+                    // the rule is never left pointing at a field that source cannot read.
+                    onSelect = { src -> onChange(changeConditionSource(condition, src)) },
+                    optionLabel = ::conditionSourceLabel,
                 )
             }
             Box(modifier = Modifier.weight(1f)) {
                 AuntieSelectField(
                     label = "Is",
-                    options = ops,
-                    selected = ops.firstOrNull { it.name == condition.op } ?: ConditionOp.EQUALS,
-                    onSelect = { onChange(condition.copy(op = it.name)) },
-                    optionLabel = ::opLabel,
+                    options = conditionOpChoices(condition.op),
+                    selected = condition.op,
+                    onSelect = { onChange(condition.copy(op = it)) },
+                    optionLabel = ::conditionOpLabel,
                 )
             }
             AuntieIconButton(
@@ -803,23 +843,54 @@ private fun ConditionRow(
                 onClick = onRemove,
             )
         }
+        // KIN_ATTRIBUTE and KINFOLK_ATTRIBUTE each draw from their own catalog.
         if (conditionUsesAttributeKey(condition.source)) {
             AuntieSelectField(
-                label = "Attribute",
-                options = conditionAttributeCatalog,
-                selected = conditionAttributeCatalog.firstOrNull { it.key == condition.attributeKey }
-                    ?: conditionAttributeCatalog.first(),
-                onSelect = { onChange(condition.copy(attributeKey = it.key)) },
-                optionLabel = ConditionAttribute::label,
+                label = if (condition.source == ConditionSource.KINFOLK_ATTRIBUTE.name) "Household field" else "Attribute",
+                options = attributeKeyChoices(condition.source, condition.attributeKey),
+                selected = condition.attributeKey,
+                onSelect = { onChange(condition.copy(attributeKey = it)) },
+                optionLabel = { attributeKeyLabel(condition.source, it) },
             )
         }
         if (conditionUsesValueInput(condition.op)) {
-            BottomBorderField(
-                label = "Value",
-                value = condition.value,
-                onValueChange = { onChange(condition.copy(value = it)) },
-                placeholder = valuePlaceholder(condition.source),
-            )
+            val tagOptions = if (conditionUsesTagPicker(condition.source)) {
+                tagPickerOptions(householdTags, condition.value)
+            } else {
+                emptyList()
+            }
+            when {
+                // A tag rule picks from the operator's own vocabulary, so it cannot
+                // target a tag no household will ever carry.
+                conditionUsesTagPicker(condition.source) && tagOptions.isNotEmpty() -> AuntieSelectField(
+                    label = "Tag",
+                    options = tagOptions,
+                    selected = condition.value.ifBlank { tagOptions.first() },
+                    onSelect = { onChange(condition.copy(value = it)) },
+                    optionLabel = { tagOptionLabel(it, householdTags) },
+                )
+                // Empty vocabulary: say so rather than render a picker with nothing
+                // in it, and leave the field usable so the rule can still be written.
+                conditionUsesTagPicker(condition.source) -> {
+                    Text(
+                        text = "No household tags yet. Add them in Settings, or type one below.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                    BottomBorderField(
+                        label = "Tag",
+                        value = condition.value,
+                        onValueChange = { onChange(condition.copy(value = it)) },
+                        placeholder = conditionValuePlaceholder(condition.source),
+                    )
+                }
+                else -> BottomBorderField(
+                    label = "Value",
+                    value = condition.value,
+                    onValueChange = { onChange(condition.copy(value = it)) },
+                    placeholder = conditionValuePlaceholder(condition.source),
+                )
+            }
         }
         Text(
             text = conditionSummary(condition),
@@ -827,25 +898,6 @@ private fun ConditionRow(
             color = c.accent,
         )
     }
-}
-
-private fun sourceLabel(s: ConditionSource): String = when (s) {
-    ConditionSource.KIN_SPECIES   -> "Pet species"
-    ConditionSource.KIN_ATTRIBUTE -> "Pet attribute"
-    ConditionSource.SERVICE_TYPE  -> "Service type"
-}
-
-private fun opLabel(o: ConditionOp): String = when (o) {
-    ConditionOp.EQUALS     -> "is"
-    ConditionOp.NOT_EQUALS -> "is not"
-    ConditionOp.CONTAINS   -> "contains"
-    ConditionOp.EXISTS     -> "is set"
-}
-
-private fun valuePlaceholder(source: String): String = when (source) {
-    ConditionSource.KIN_SPECIES.name  -> "e.g. Cat"
-    ConditionSource.SERVICE_TYPE.name -> "e.g. walk"
-    else                              -> "Value to match"
 }
 
 @Composable

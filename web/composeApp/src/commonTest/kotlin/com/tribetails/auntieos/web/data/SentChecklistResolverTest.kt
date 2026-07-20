@@ -41,6 +41,61 @@ class SentChecklistResolverTest {
             fieldResponses = responses.associateBy { responseKey(it.fieldKey, it.kinId) },
         )
 
+    // ── I7 household conditions on the SENT report ───────────────────────────
+    // The resolver never passed a Kinfolk, so KINFOLK_* conditions evaluated
+    // against a null household: KINFOLK_ATTRIBUTE read "" and KINFOLK_TAG read an
+    // empty list. An EQUALS rule therefore never matched and the checked item was
+    // silently HIDDEN from the sent report, which is the bug the I7 port existed
+    // to fix on web and desktop.
+
+    private val vipTemplate = KinTaleTemplate(
+        checklistItems = listOf(
+            ChecklistItem(
+                key = "vip_note", text = "VIP welcome note", scope = "PER_PET", order = 0,
+                conditions = listOf(FieldCondition(source = "KINFOLK_TAG", op = "CONTAINS", value = "VIP")),
+            ),
+            ChecklistItem(
+                key = "gate", text = "Gate code used", scope = "PER_VISIT", order = 0,
+                conditions = listOf(
+                    // gateCode is a catalogued household attribute. An UNcatalogued
+                    // key would read blank on purpose, so it would not prove the
+                    // household was threaded through at all.
+                    FieldCondition(source = "KINFOLK_ATTRIBUTE", op = "EQUALS", value = "1234", attributeKey = "gateCode"),
+                ),
+            ),
+        ),
+    )
+
+    @Test
+    fun kinfolkTagCondition_isHonoredWhenHouseholdSupplied() {
+        val household = Kinfolk(_id = "hh1", tags = listOf("VIP"))
+        val r = resolveSentChecklist(vipTemplate, report(checked("vip_note", "dog1")), kinById, household)
+        assertEquals(listOf("VIP welcome note"), r.perKin.flatMap { it.items }.map { it.label })
+    }
+
+    @Test
+    fun kinfolkTagCondition_hidesItemWhenHouseholdLacksTag() {
+        val household = Kinfolk(_id = "hh1", tags = listOf("Standard"))
+        val r = resolveSentChecklist(vipTemplate, report(checked("vip_note", "dog1")), kinById, household)
+        assertTrue(r.perKin.isEmpty(), "non-VIP household must not render the VIP item")
+    }
+
+    @Test
+    fun kinfolkAttributeCondition_isHonoredOnPerVisitItems() {
+        val household = Kinfolk(_id = "hh1", gateCode = "1234")
+        val r = resolveSentChecklist(vipTemplate, report(checked("gate", "")), kinById, household)
+        assertEquals(listOf("Gate code used"), r.perVisit.map { it.label })
+    }
+
+    @Test
+    fun kinfolkAttributeCondition_hidesItemWhenHouseholdIsUnresolved() {
+        // The regression this whole block exists for: with no household the
+        // attribute reads blank, EQUALS never matches, and a checked item
+        // silently vanishes from the sent report.
+        val r = resolveSentChecklist(vipTemplate, report(checked("gate", "")), kinById, kinfolk = null)
+        assertTrue(r.perVisit.isEmpty(), "unresolved household cannot satisfy an EQUALS rule")
+    }
+
     @Test
     fun customTemplateKey_checked_appearsWithRealLabel() {
         // "walk" is not in the built-in default template; the old code dropped it.

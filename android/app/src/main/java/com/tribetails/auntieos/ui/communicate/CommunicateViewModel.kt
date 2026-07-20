@@ -106,8 +106,18 @@ data class CommunicateUiState(
     val selectedSegmentId: String? = null, // null = ad-hoc criteria
     val bcKind: SegmentKind = SegmentKind.All,
     val bcStatusesText: String = "",
-    val bcTagsText: String = "",
+    // "By tag" audience: names chosen from the household tag vocabulary, already
+    // carrying the vocabulary's casing because the server compares tag strings
+    // exactly (audienceCriteria.ts). [bcTagQuery] is the autocomplete input.
+    val bcSelectedTags: List<String> = emptyList(),
+    val bcTagQuery: String = "",
     val bcTagMatch: TagMatch = TagMatch.Any,
+    // The household tag vocabulary (business_settings.householdTags). HOUSEHOLD
+    // ONLY: the criteria schema has no pet-tag kind, so a pet tag offered here
+    // would build an audience the server ignores.
+    val householdTagVocab: List<TagDef> = emptyList(),
+    val tagVocabLoaded: Boolean = false,
+    val tagVocabError: String? = null,
     val bcNewSegmentName: String = "",
     val bcChannels: Set<BroadcastChannel> = setOf(BroadcastChannel.InApp),
     val bcSubject: String = "",
@@ -495,15 +505,82 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
     private fun adhocCriteria(s: CommunicateUiState = _uiState.value): BroadcastCriteria = BroadcastCriteria(
         kind = s.bcKind,
         statuses = s.bcStatusesText.split(',').map { it.trim() }.filter { it.isNotEmpty() },
-        tags = s.bcTagsText.split(',').map { it.trim() }.filter { it.isNotEmpty() },
+        // Already normalized and deduped by the picker, and carrying the
+        // vocabulary's casing, which is what the server compares against.
+        tags = s.bcSelectedTags,
         tagMatch = s.bcTagMatch,
     )
+
+    /**
+     * The one tag problem that genuinely stops a send: over the server's cap the
+     * whole call is rejected, so blocking here with readable copy beats letting
+     * Zod answer. Only applies to an ad-hoc tag audience; a saved segment was
+     * validated when it was saved.
+     */
+    private fun tagCapProblem(s: CommunicateUiState): String? =
+        if (s.selectedSegmentId == null && s.bcKind == SegmentKind.Tags) {
+            broadcastTagCapProblem(s.bcSelectedTags)
+        } else {
+            null
+        }
 
     fun selectSegment(id: String?) { _uiState.value = _uiState.value.copy(selectedSegmentId = id, broadcastError = null) }
     fun setBcKind(kind: SegmentKind) { _uiState.value = _uiState.value.copy(bcKind = kind) }
     fun setBcStatuses(text: String) { _uiState.value = _uiState.value.copy(bcStatusesText = text) }
-    fun setBcTags(text: String) { _uiState.value = _uiState.value.copy(bcTagsText = text) }
     fun setBcTagMatch(m: TagMatch) { _uiState.value = _uiState.value.copy(bcTagMatch = m) }
+
+    // ── "By tag" audience picker ──────────────────────────────────────────────
+
+    fun setBcTagQuery(q: String) { _uiState.value = _uiState.value.copy(bcTagQuery = q) }
+
+    /**
+     * Add a tag to the audience and clear the query. Takes the vocabulary's
+     * casing when the name matches an entry, because the server matches tag
+     * strings exactly. A blank name and a case-insensitive duplicate are no-ops.
+     */
+    fun addBcTag(name: String) {
+        val s = _uiState.value
+        _uiState.value = s.copy(
+            bcSelectedTags = addBroadcastTag(s.bcSelectedTags, name, s.householdTagVocab),
+            bcTagQuery = "",
+            broadcastError = null,
+        )
+    }
+
+    /** Drop a tag from the audience (case-insensitive), preserving order. */
+    fun removeBcTag(name: String) {
+        val s = _uiState.value
+        _uiState.value = s.copy(bcSelectedTags = removeBroadcastTag(s.bcSelectedTags, name), broadcastError = null)
+    }
+
+    /**
+     * Load the household tag vocabulary the picker chooses from. Screen-driven
+     * (a LaunchedEffect in the Broadcast section), not init, so a screen that
+     * never opens Broadcast does not pay for the read.
+     *
+     * A failed read is surfaced, never swallowed: the field stays usable so the
+     * operator can still type a name, and the banner says why the list is empty
+     * rather than implying there are no tags.
+     */
+    fun loadHouseholdTagVocab() {
+        viewModelScope.launch {
+            repo.getBusinessSettings()
+                .onSuccess { settings ->
+                    _uiState.value = _uiState.value.copy(
+                        householdTagVocab = settings.householdTagDefs(),
+                        tagVocabLoaded = true,
+                        tagVocabError = null,
+                    )
+                }
+                .onFailure { e ->
+                    AuntieLog.e("loadHouseholdTagVocab failed", e)
+                    _uiState.value = _uiState.value.copy(
+                        tagVocabLoaded = false,
+                        tagVocabError = e.message ?: "Could not load your tag list",
+                    )
+                }
+        }
+    }
     fun setBcNewSegmentName(name: String) { _uiState.value = _uiState.value.copy(bcNewSegmentName = name) }
     fun setBcSubject(s: String) { _uiState.value = _uiState.value.copy(bcSubject = s, broadcastError = null) }
     fun setBcBody(b: String) { _uiState.value = _uiState.value.copy(bcBody = b, broadcastError = null) }
@@ -537,7 +614,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
     fun saveSegment() {
         val s = _uiState.value
         val criteria = adhocCriteria(s)
-        val problem = segmentSaveBlocker(s.bcNewSegmentName, criteria)
+        val problem = tagCapProblem(s) ?: segmentSaveBlocker(s.bcNewSegmentName, criteria)
         if (problem != null) { _uiState.value = s.copy(broadcastError = problem); return }
         if (s.isSavingSegment) return
         _uiState.value = s.copy(isSavingSegment = true, broadcastError = null)
@@ -581,7 +658,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         val s = _uiState.value
         val criteria = if (s.selectedSegmentId == null) adhocCriteria(s) else null
         val effective = criteria ?: s.segments.firstOrNull { it.id == s.selectedSegmentId }?.criteria ?: BroadcastCriteria()
-        val problem = broadcastBlocker(s.bcChannels, effective, s.bcSubject, s.bcBody)
+        val problem = tagCapProblem(s) ?: broadcastBlocker(s.bcChannels, effective, s.bcSubject, s.bcBody)
         if (problem != null) { _uiState.value = s.copy(broadcastError = problem); return }
         if (s.isBroadcasting) return
         _uiState.value = s.copy(isBroadcasting = true, broadcastError = null, broadcastResult = null)

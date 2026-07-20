@@ -228,16 +228,42 @@ data class BusinessSettings(
     var cashappHandle: String = "",
     // --- Weather area (W16/W17) ---
     // Service-AREA place name (city / metro / ZIP) the Home weather widgets forecast for.
-    // NOT the street address — operator picks coverage area (e.g. "Austin, TX"). Blank ->
+    // NOT the street address: operator picks coverage area (e.g. "Austin, TX"). Blank ->
     // widgets show a fail-loud "set your weather area" prompt. Parity with web.
     var weatherLocation: String = "",
+    // --- Tag vocabularies (2026-07-19 Tags port) ---
+    // The two operator-managed vocabularies: householdTags label `kinfolk` docs,
+    // petTags label `kin` docs. Each is an array of
+    // `{ name, color: { token, css }, icon }` maps on the wire, authored in the
+    // React admin's Tags panel. Held raw (Class A pattern) so a legacy doc that
+    // omits them, a stored null, or a single half-written row can never take
+    // down the whole settings read the way a typed `List<TagDef>` setter would.
+    // Read through [householdTagDefs] / [petTagDefs], which port React's
+    // decodeTagDefs drop rules; write through [withHouseholdTagDefs] /
+    // [withPetTagDefs] so the color `css` string round-trips unchanged.
+    var householdTags: Any? = null,
+    var petTags: Any? = null,
     var updatedAt: String = "",
     var updatedBy: String = "" // Admin user who made the change
 ) {
     /** Typed view of the [defaultBookingMode] wire string. Unknown strings fall back to SPECIFIC_TIME. */
     val defaultBookingModeEnum: BookingMode
         get() = runCatching { BookingMode.valueOf(defaultBookingMode) }.getOrDefault(BookingMode.SPECIFIC_TIME)
+
+    /** The household tag vocabulary, malformed rows dropped. Never throws. */
+    fun householdTagDefs(): List<TagDef> = decodeTagDefs(householdTags)
+
+    /** The pet tag vocabulary, malformed rows dropped. Never throws. */
+    fun petTagDefs(): List<TagDef> = decodeTagDefs(petTags)
 }
+
+/** Copy [BusinessSettings] replacing the household tag vocabulary. */
+fun BusinessSettings.withHouseholdTagDefs(defs: List<TagDef>): BusinessSettings =
+    this.copy(householdTags = encodeTagDefs(defs))
+
+/** Copy [BusinessSettings] replacing the pet tag vocabulary. */
+fun BusinessSettings.withPetTagDefs(defs: List<TagDef>): BusinessSettings =
+    this.copy(petTags = encodeTagDefs(defs))
 
 /** Copy [BusinessSettings] setting [defaultBookingMode] from a typed [BookingMode]. */
 fun BusinessSettings.withBookingMode(mode: BookingMode): BusinessSettings =
