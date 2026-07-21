@@ -25,6 +25,7 @@ jobs:
       kotlin: ${{ steps.filter.outputs.kotlin }}
       android: ${{ steps.filter.outputs.android }}
       mytribe: ${{ steps.filter.outputs.mytribe }}
+      portal: ${{ steps.filter.outputs.portal }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -50,6 +51,9 @@ jobs:
               - 'auntieos-admin/android/**'
             mytribe:
               - 'mytribe/functions/**'
+            portal:
+              - 'mytribe/web/**'
+              - '.github/workflows/ci.yml'
 
   admin:
     name: React admin
@@ -113,6 +117,27 @@ jobs:
           cache-dependency-path: mytribe/functions/package-lock.json
       - run: npm ci
       - run: npm test
+
+  portal:
+    name: Kinfolk portal
+    needs: changes
+    if: needs.changes.outputs.portal == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mytribe/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mytribe/web/package-lock.json
+      - run: npm ci
+      - name: Tests
+        run: npm test
+      - name: Production build
+        run: npm run build
 
   kotlin:
     name: Shared + desktop (jvm)
