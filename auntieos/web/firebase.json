@@ -1,6 +1,7 @@
 {
   "hosting": {
-    "site": "auntieos-ttpc",
+    "_comment": "auntieos-ttpc (= auntie.tribetails.com) now serves the REACT app, deployed from the auntieos-admin repo. This Compose wasm build deploys to the auntieos-admin site instead, so a wasm deploy can never overwrite the live React app. Desktop JVM is unaffected: it shares commonMain and ships as a local app, not via hosting.",
+    "site": "auntieos-admin",
     "public": "composeApp/build/dist/wasmJs/productionExecutable",
     "ignore": ["firebase.json", "**/.*"],
     "rewrites": [

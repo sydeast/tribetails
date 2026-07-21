@@ -5,6 +5,9 @@
 .env.local
 .env.*
 !.env.example
+# Exception to the exception: this template is kept filled in with the real
+# personal number for local use, so it stays on disk and out of git.
+twilio-service/.env.example
 web/visual/.env
 .mcp.json
 
@@ -152,3 +155,7 @@ docs/punchlists/PUNCHLIST_2026-06-23-A8-testing.md
 
 # Android one-time migration: real client data dumps + ingest scripts
 android/migration/
+
+# JVM heap dumps. A 754MB one was committed once and blocked the GitHub
+# push; it must never enter history again.
+*.hprof

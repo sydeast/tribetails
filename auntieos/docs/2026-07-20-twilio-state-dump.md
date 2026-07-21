@@ -61,7 +61,7 @@ signature-verified inbound handler in MyTribe, has therefore never been invoked
 once. Consistent with that: all 18 messages in the account are `outbound-api`.
 Zero inbound, ever.
 
-<TWILIO_PERSONAL_NUMBER> is `TWILIO_PERSONAL_NUMBER` and is excluded from product use by
+The personal number is `TWILIO_PERSONAL_NUMBER` and is excluded from product use by
 standing policy. It also cannot become a WhatsApp sender, because it is already
 on personal WhatsApp.
 
