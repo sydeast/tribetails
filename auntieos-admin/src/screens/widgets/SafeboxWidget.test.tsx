@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { Async } from '../../lib/async';
 import type { SessionEntry } from '../../api/sessions';
 import { mergeKinfolkProfile } from '../../api/kinfolkProfile';
@@ -47,9 +48,48 @@ describe('SafeboxWidget', () => {
     );
     render(<SafeboxWidget />);
 
-    expect(await screen.findByText('4417')).toBeInTheDocument();
+    expect(await screen.findByText('Gate / door code')).toBeInTheDocument();
     expect(screen.getByText('Side door')).toBeInTheDocument();
-    expect(screen.getByText('Gate / door code')).toBeInTheDocument();
+  });
+
+  it('masks the gate code and the wifi password until the operator reveals them', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [sess()] });
+    getKinfolkProfile.mockResolvedValue(
+      mergeKinfolkProfile('k1', { gateCode: '4417', wifiPassword: 'hunter2', entryNotes: 'Side door' }),
+    );
+    const { container } = render(<SafeboxWidget />);
+    await screen.findByText('Gate / door code');
+
+    // The dashboard renders with no household opened, so neither secret may be
+    // on screen before a deliberate reveal.
+    expect(container.textContent).not.toContain('4417');
+    expect(container.textContent).not.toContain('hunter2');
+
+    await userEvent.click(screen.getByRole('button', { name: /show gate \/ door code/i }));
+    expect(screen.getByText('4417')).toBeInTheDocument();
+    // Revealing one secret must not reveal the other.
+    expect(container.textContent).not.toContain('hunter2');
+
+    await userEvent.click(screen.getByRole('button', { name: /show wifi password/i }));
+    expect(screen.getByText('hunter2')).toBeInTheDocument();
+  });
+
+  it('leaves the low-sensitivity access notes readable at a glance (no toggle)', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [sess()] });
+    getKinfolkProfile.mockResolvedValue(
+      mergeKinfolkProfile('k1', {
+        serviceAddress: '12 Oak St',
+        parkingInstructions: 'Driveway',
+        // Not the household name, which the widget header already renders.
+        wifiName: 'Oakhouse-5G',
+      }),
+    );
+    render(<SafeboxWidget />);
+
+    expect(await screen.findByText('12 Oak St')).toBeInTheDocument();
+    expect(screen.getByText('Driveway')).toBeInTheDocument();
+    expect(screen.getByText('Oakhouse-5G')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^show /i })).toBeNull();
   });
 
   it('says so when the next household has no access notes on file', async () => {

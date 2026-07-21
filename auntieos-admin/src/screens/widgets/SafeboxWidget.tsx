@@ -7,6 +7,7 @@ import { nextUpcomingSession, safeboxAccessLines } from '../../lib/dashboardInsi
 import { sessionHousehold, sessionWindow } from '../../lib/sessionFormat';
 import { DenPanel, ServicePill, EmptyHint } from '../../components/DenScreenKit';
 import { AsyncRegion } from '../../components/AsyncRegion';
+import { MaskedValue } from '../../components/MaskedValue';
 import './widgets.css';
 
 /**
@@ -93,7 +94,11 @@ function SafeboxAccess({ kinfolkId }: SafeboxAccessProps) {
                     line.mono ? 'safebox__fact-value safebox__fact-value--mono' : 'safebox__fact-value'
                   }
                 >
-                  {line.value}
+                  {line.secret === true ? (
+                    <MaskedValue value={line.value} field={line.label.toLowerCase()} />
+                  ) : (
+                    line.value
+                  )}
                 </dd>
               </div>
             ))}

@@ -76,6 +76,13 @@ export interface GenerateDraftArgs {
   max_length?: string;
   /** On regenerate: the previous draft's opening, so the model does not repeat it. */
   avoid_opening?: string;
+  /**
+   * Ask for a title alongside the body. Opt-in, not inferred from
+   * `communication_type`: the second model call is only worth paying for when
+   * the caller has somewhere to put the result. The KinTale composer sets it;
+   * Communicate does not.
+   */
+  want_title?: boolean;
 }
 
 /**
@@ -87,6 +94,12 @@ export interface GenerateDraftArgs {
  */
 export interface GenerateDraftResult {
   generated_copy: string;
+  /**
+   * Blank unless `want_title` was set, and also blank when the title call
+   * failed (the backend swallows that failure so a title problem never costs
+   * the operator the body). Blank means "write your own", never an error.
+   */
+  generated_title: string;
   communication_type: string;
   kinfolk_name: string | null;
   kinfolk_id: string | null;
@@ -178,6 +191,7 @@ export async function generateDraft(args: GenerateDraftArgs): Promise<GenerateDr
   const warningsRaw = body?.['warnings'];
   return {
     generated_copy: generatedCopy,
+    generated_title: stringField(body, 'generated_title') ?? '',
     communication_type: stringField(body, 'communication_type') ?? args.communication_type,
     kinfolk_name: stringField(body, 'kinfolk_name'),
     kinfolk_id: stringField(body, 'kinfolk_id'),

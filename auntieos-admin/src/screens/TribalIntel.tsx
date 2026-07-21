@@ -38,7 +38,9 @@ interface TribalIntelProps {
  * Admin Tribal Intel list ("The Den · Tribal Intel", nav slug `tribal-intel`,
  * `NavEntry.dest` `trainingDocs` per `lib/nav.ts`). Streams the flat
  * `training_documents` collection through the bounded, server-ordered
- * listener (TRIBAL_INTEL_QUERY: createdAt desc, capped 200), then
+ * listener (TRIBAL_INTEL_QUERY: uploadedAt desc, capped 200, the one time
+ * field every writer of this collection stamps: see that spec for the
+ * writer-by-writer evidence), then
  * classifies every row's `reconcileStatus` through the enumerated
  * `reconcileState` (never by negation: see `lib/tribalIntelFormat.ts` for
  * the AO-12-style rationale) for the reconcile-status chip, and offers a

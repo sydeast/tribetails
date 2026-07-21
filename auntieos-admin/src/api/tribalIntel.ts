@@ -88,23 +88,89 @@ export interface TribalIntelEntry {
   attachments?: TribalIntelAttachment[] | undefined;
   reconcileStatus?: string | undefined;
   reconcileNotes?: string | undefined;
-  /** Free-text ISO instant, client-stamped at creation only: see `lib/tribalIntelFormat.ts#tribalIntelWhen`. */
+  /**
+   * Free-text ISO instant, client-stamped at creation only: see
+   * `lib/tribalIntelFormat.ts#tribalIntelWhen`. THE QUERY'S SORT KEY, because
+   * it is the one time field EVERY writer of this collection sets (see
+   * `TRIBAL_INTEL_QUERY` below for the writer-by-writer evidence), and it is
+   * also the field the row itself displays, so the list order matches the
+   * dates the operator can actually see.
+   */
   uploadedAt?: string | undefined;
-  /** Real Firestore Timestamp (`FieldValue.serverTimestamp()`), stamped ONCE at creation (an edit re-stamps updatedAt only, never this): the query's sort key, so ordering is stable creation order. */
+  /**
+   * Real Firestore Timestamp (`FieldValue.serverTimestamp()`), stamped ONCE at
+   * creation (an edit re-stamps updatedAt only, never this). Modeled because
+   * `createTrainingDocument.ts` writes it, but NOT the sort key: it is absent
+   * entirely on every doc written by any other writer. Kept optional-and-
+   * nullable for the same reason as `invoices.createdAt`: a serverTimestamp()
+   * reads back null on the local echo before the write round-trips.
+   */
   createdAt?: Timestamp | null | undefined;
 }
 
 /**
  * The bounded, server-ordered `training_documents` listener. Ordered by
- * `createdAt` descending, capped at 200 (the KinTales/Invoices convention:
- * this is a similarly-scaled flat collection, and `createdAt` is a real
- * `FieldValue.serverTimestamp()` stamped ONCE at create (an edit re-stamps
- * updatedAt only, never createdAt), so ordering by it is stable creation order:
- * an edited row keeps its place rather than jumping to the top.
+ * `uploadedAt` descending, capped at 200 (the KinTales/Invoices cap convention
+ * for a similarly-scaled flat collection; the SORT FIELD deliberately follows
+ * `GALLERY_QUERY`/`MEDIA_QUERY` instead, which order `media_files` by the same
+ * client-ISO `uploadedAt` string for the same reason).
  *
- * KNOWN TRADEOFF: Firestore `orderBy('createdAt')` DROPS any doc missing the
- * field, so a pre-createdAt legacy doc would silently vanish from this list.
- * Flagged for operator prod-verification; backfill rather than weaken the sort.
+ * SORT KEY CHANGED FROM `createdAt` TO `uploadedAt`, and that is a data-loss
+ * fix, not a preference. Firestore `orderBy(f)` DROPS every doc missing `f`
+ * outright, so the sort field silently defines which rows exist. Auditing every
+ * writer of this collection, in both trees:
+ *  - `MyTribe/functions/src/admin/createTrainingDocument.ts` (the spec-23
+ *    server-bound create, and the ONLY production creator): stamps BOTH
+ *    `uploadedAt: new Date().toISOString()` and
+ *    `createdAt: FieldValue.serverTimestamp()`. Visible under either sort.
+ *  - `AuntieOS/android/migration/scripts/import_to_firestore.py` (the historical
+ *    NDJSON bulk import that created the pre-spec-23 rows): writes each record's
+ *    `data` verbatim. The real exported payload
+ *    (`android/migration/data/training_documents.ndjson`, corroborated by
+ *    `migration/scripts/inventory_report.json`, which reports
+ *    `training_documents` total 2) carries the keys `title`, `content`,
+ *    `communicationType`, `kinfolkRef`, `notes`, `uploadedAt` and NO `createdAt`
+ *    at all. Under the old sort those rows could never appear.
+ *  - `AuntieOS/web/visual/seed-emulator.mjs:142,146` (the Playwright/visual
+ *    harness seed): stamps `uploadedAt` only, no `createdAt`, so the old sort
+ *    rendered this screen empty in the harness too.
+ *  - `MyTribe/functions/src/admin/updateTrainingDocument.ts` and the nightly
+ *    `AuntieOS/web/functions-python/reconcile_comms.py`: MERGE writes that touch
+ *    `updatedAt`/`reconcileStatus` only. Neither adds nor removes either sort
+ *    field, so neither can rescue a doc that lacks one.
+ *  - Android's `AuntieRepository.createTrainingDocument`/`updateTrainingDocument`
+ *    (:1760/:1789) both route through the callables above rather than writing
+ *    the Kotlin model, so the model's missing `createdAt` (`Models.kt:398`
+ *    declares `uploadedAt` and no `createdAt`) never strips the field off a doc.
+ * So: every writer stamps `uploadedAt`; only the newest one stamps `createdAt`.
+ * The old sort hid every pre-spec-23 row. Same shape as the invoices defect that
+ * returned 0 of 18 live docs.
+ *
+ * This is the SAFEST option available without querying live Firestore, which
+ * this port cannot do. The exact live count of pre-spec-23 rows is therefore
+ * unknown (the migration inventory says 2 at import time, and nothing since can
+ * have removed `createdAt` from a doc that had it). But the direction is not in
+ * doubt: `uploadedAt` is a superset of `createdAt` across every writer, so this
+ * sort drops strictly fewer rows and can drop none that the old one showed. No
+ * backfill is written here and no live data is touched.
+ *
+ * KNOWN TRADEOFFS (accepted and documented, the `SESSIONS_QUERY` convention,
+ * never silently swallowed):
+ *  - Lexical string sort, not an instant comparison. Unlike `kin_care_sessions`
+ *    this field has no mixed-offset problem: the callable always writes
+ *    `toISOString()`, which is always UTC `...Z`. The emulator seed writes
+ *    date-only text ("2026-05-10"), which sorts as that day's midnight (a
+ *    shorter string sorts before any longer one sharing its prefix), so it
+ *    never reorders across days. A detail view should still parse to instants
+ *    before ordering.
+ *  - `orderBy('uploadedAt')` DROPS a doc missing `uploadedAt` just as surely.
+ *    No known writer omits it, and the migrated rows carry the key explicitly
+ *    (Firestore treats a present-but-null field as present, sorting nulls
+ *    lowest, so they land at the tail of this desc page rather than vanishing).
+ *    Flagged for operator prod-verification; backfill rather than weaken the sort.
+ *  - Ordering by upload instant rather than server-observed create instant. Both
+ *    are stamped once and never re-stamped on edit, so ordering stays stable
+ *    either way: an edited row keeps its place instead of jumping to the top.
  *
  * DELIBERATE IMPROVEMENT over the wasm reference, not a faithfully-ported
  * behavior: `FirestoreInterop.*.kt`'s `platformTrainingDocsStream()` is a
@@ -121,6 +187,6 @@ export interface TribalIntelEntry {
  */
 export const TRIBAL_INTEL_QUERY: CollectionSpec = {
   path: 'training_documents',
-  order: ['createdAt', 'desc'],
+  order: ['uploadedAt', 'desc'],
   max: 200,
 };

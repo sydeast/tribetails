@@ -63,6 +63,18 @@ export interface KinTaleDraft {
   /** Same caveat. */
   arrivedAt: string;
   title: string;
+  /**
+   * True when Auntie's generator wrote this title and the operator has not
+   * replaced it. Mirrors the field MyTribe's backfill stamps
+   * (`aiBatchPollCron.ts` writes `titleGeneratedByAi: true`), so a title's
+   * provenance reads the same whether it was written live at compose time or
+   * filled in later by the cron.
+   *
+   * The generator sets it ONLY over a blank title, and any keystroke in the
+   * headline field clears it back to false. An operator's own words are never
+   * labelled as the machine's.
+   */
+  titleGeneratedByAi: boolean;
   bodyCopy: string;
   mediaFileIds: string[];
 }
@@ -108,6 +120,7 @@ export async function saveKinTaleDraft(draft: KinTaleDraft): Promise<string | nu
     visitDate: draft.visitDate,
     arrivedAt: draft.arrivedAt,
     title: draft.title,
+    titleGeneratedByAi: draft.titleGeneratedByAi,
     bodyCopy: draft.bodyCopy,
     mediaFileIds: draft.mediaFileIds,
   };

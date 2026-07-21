@@ -1,0 +1,7 @@
+/* GhostButton owns the control's own look. This is only about where it sits:
+   aligned to the end of the field it drafts for, so it reads as belonging to
+   that box rather than to the form as a whole. */
+.generate-button {
+  align-self: flex-end;
+  margin-top: var(--space-2);
+}

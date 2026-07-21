@@ -96,3 +96,45 @@ describe('KinEdit', () => {
     expect(onCancel).toHaveBeenCalled();
   });
 });
+/**
+ * Fix-backlog 5.4 (AuntieOS_Fix_Backlog_2026-06-02.md:90): "Remove vet info box
+ * from the pet (Kin). Vets attach to the Kinfolk (owner), not the Kin. Stop
+ * adding an add/edit vet info box to the pet profile. It may be shown READ-ONLY
+ * on the Kin, but never as an entry box there." Android has complied since
+ * DirectoryViewModel.kt:1067; React's editor had not.
+ */
+describe('KinEdit vet rule (fix-backlog 5.4: vets attach to the Kinfolk)', () => {
+  it('offers no vet entry box on the pet, while still rendering the other Health fields', async () => {
+    getKin.mockResolvedValue(kin({ vetInfo: 'Oak Hill Animal Clinic, (512) 555-0100' }));
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByText('Name');
+    // The Health panel is still here, so this asserts a removed FIELD, not a
+    // removed panel (which would pass for the wrong reason).
+    expect(screen.getByText('Health')).toBeInTheDocument();
+    expect(screen.getByText('Vaccinations')).toBeInTheDocument();
+    expect(screen.getByText('Medication / health notes')).toBeInTheDocument();
+    expect(screen.queryByText('Vet info')).not.toBeInTheDocument();
+    // Nothing anywhere on the editor is seeded with the stored vet value, so it
+    // cannot be typed into some other input either.
+    const inputs = [
+      ...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea'),
+    ];
+    expect(inputs.some((el) => el.value.includes('Oak Hill Animal Clinic'))).toBe(false);
+  });
+  it('never sends vetInfo in the save patch, so the stored household vet is left alone', async () => {
+    getKin.mockResolvedValue(kin({ vetInfo: 'Oak Hill Animal Clinic, (512) 555-0100' }));
+    updateKin.mockResolvedValue(undefined);
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByText('Name');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
+    const [, patch] = updateKin.mock.calls[0]!;
+    // `updateKin` patches through `updateDoc`, a field-level MERGE, so an absent
+    // key preserves the stored value. Present-but-blank would ERASE it, which is
+    // why this asserts the key is missing rather than merely falsy.
+    expect('vetInfo' in patch).toBe(false);
+    // The rest of the Health panel still saves normally.
+    expect('vaccinations' in patch).toBe(true);
+    expect('medicationHealthNotes' in patch).toBe(true);
+  });
+});

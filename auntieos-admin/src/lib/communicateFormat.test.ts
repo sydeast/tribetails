@@ -102,6 +102,7 @@ describe('sendChannelOf / channelLabel (positive enumeration, unknown bucket, no
   it('matches the two real channels sendExternalMessage ever writes', () => {
     expect(sendChannelOf('email')).toBe('email');
     expect(sendChannelOf('sms')).toBe('sms');
+    expect(sendChannelOf('push')).toBe('push');
   });
 
   it('is case-insensitive and trims whitespace, mirroring sessionState/threadSender', () => {
@@ -111,16 +112,21 @@ describe('sendChannelOf / channelLabel (positive enumeration, unknown bucket, no
 
   it('an unrecognized or blank channel is honestly "unknown", never silently folded into email or sms', () => {
     expect(sendChannelOf('')).toBe('unknown');
-    expect(sendChannelOf('push')).toBe('unknown');
+    // 'push' used to live here, back when the compose UI shipped only email and
+    // sms. It is a first-class broadcast channel now (the backend always sent
+    // it; the admin just could not ask for it), so the unknown bucket needs a
+    // genuinely unrecognized value to prove it still catches one.
+    expect(sendChannelOf('carrier_pigeon')).toBe('unknown');
   });
 
   it('channelLabel maps each channel to its display label', () => {
     expect(channelLabel('email')).toBe('Email');
     expect(channelLabel('sms')).toBe('Text');
+    expect(channelLabel('push')).toBe('Push');
   });
 
   it('channelLabel falls back to the raw value for an unknown non-blank channel, and "Send" for blank', () => {
-    expect(channelLabel('push')).toBe('push');
+    expect(channelLabel('carrier_pigeon')).toBe('carrier_pigeon');
     expect(channelLabel('')).toBe('Send');
   });
 });

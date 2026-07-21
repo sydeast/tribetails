@@ -1,39 +1,101 @@
 #!/usr/bin/env bash
-# AuntieOS-admin pre-commit gate (added 2026-07-16 with the repo).
-# Blocks real credentials from entering history, scanning the STAGED index
-# (git grep --cached), never the working tree. Mirrors the credentials-by-
-# content gate in the AuntieOS tree's .githooks/pre-commit. bash 3.2 safe.
+# AuntieOS pre-commit gate.
 #
-#   - service-account JSON private keys (by content, not filename)
-#   - provider secret keys (sk-ant-, sk_live_) and PEM private keys
+# WHY A HOOK AND NOT GITHUB ACTIONS
+# This repo is local-only (no remote, owner ruling: hosting comes after key
+# rotation). A .github/workflows file would never run. MyTribe already has that
+# exact dead file: functions-ci.yml exists, MyTribe/.git does not, so it has
+# never executed once. A hook is the only gate that actually fires here.
 #
-# The Firebase Web API key (AIzaSy...) is PUBLIC by design (ships in every web
-# bundle; protected by Firestore rules + App Check) and is intentionally NOT
-# flagged. Client PII in fixtures is handled by the two-bucket rule + a manual
-# `git grep --cached` name/email/phone sweep before commit, per the scrub map.
+# Enabled by:  git config core.hooksPath .githooks
+# Bypass once: git commit --no-verify   (say why in the commit message)
 #
-# The gate's own meta files (.gitignore, this hook) quote these patterns as
-# examples, so they are excluded via pathspec to avoid self-matching.
-#
-# Bypass for a known-safe commit: git commit --no-verify
-set -euo pipefail
+# Fast by design (~1s). Gradle suites are too slow for a commit gate; run them
+# before pushing work you care about.
 
-red() { printf '\033[31m%s\033[0m\n' "$1"; }
-fail=0
-EXCLUDE=(-- . ':!.gitignore' ':!.githooks/')
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 1
+FAIL=0
 
-# service-account private keys
-if git grep --cached -lIE '"type"[[:space:]]*:[[:space:]]*"service_account"' "${EXCLUDE[@]}" 2>/dev/null | grep -q .; then
-  red "BLOCKED: a staged file contains a service_account JSON key."; fail=1
+red()  { printf '\033[31m%s\033[0m\n' "$1"; }
+grn()  { printf '\033[32m%s\033[0m\n' "$1"; }
+
+staged() { git diff --cached --name-only --diff-filter=ACM; }
+
+# ---------------------------------------------------------------------------
+# 1. Secrets, by CONTENT not filename.
+# ---------------------------------------------------------------------------
+# Filename patterns are NOT sufficient in this tree. Proven 2026-07-15:
+# "android/Scratch Folder/fcmChannelFirebase.json" is a real service_account
+# private key for auntieos-ttpc and matches none of *serviceAccount*,
+# *service-account*, *adminsdk*. It was caught only by scanning content.
+# Match real key MATERIAL, not documentation. A real service-account JSON has a
+# "private_key": "-----BEGIN..." field; prose that merely mentions the phrase
+# "type: service_account" or "BEGIN PRIVATE KEY" (e.g. this .gitignore's own
+# detection comment, or a code-review write-up) does not. Requiring the quoted
+# private_key value or a full key token avoids those false positives.
+# sk_live_ (Stripe) folded in from the admin repo's hook during the 07-21 merge.
+SECRET_RE='"private_key"[[:space:]]*:[[:space:]]*"-----BEGIN|-----BEGIN [A-Z ]*PRIVATE KEY-----[A-Za-z0-9+/=]|sk-ant-[A-Za-z0-9_-]{40,}|SG\.[A-Za-z0-9_-]{30,}|sk_live_[A-Za-z0-9]{10,}'
+
+HITS=""
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  # This hook's own source contains the detection patterns; scanning it would
+  # always self-match. Skip it (and the .gitignore, whose comment documents the
+  # content-scan command).
+  case "$f" in .githooks/pre-commit|.gitignore) continue ;; esac
+  if grep -qIE "$SECRET_RE" "$f" 2>/dev/null; then
+    HITS="$HITS  $f"$'\n'
+  fi
+done < <(staged)
+
+if [ -n "$HITS" ]; then
+  red "BLOCKED: staged file(s) contain what looks like a live credential:"
+  printf '%s' "$HITS"
+  echo "  A service-account key, private key block, Anthropic key or SendGrid key."
+  echo "  Add the path to .gitignore. Do NOT commit and clean up later:"
+  echo "  once it is in history, the key must be ROTATED, not just removed."
+  FAIL=1
+else
+  grn "ok: no credentials in staged content"
 fi
 
-# provider secret keys + PEM private keys (NOT the public AIza Firebase key)
-if git grep --cached -nIE '(sk-ant-[A-Za-z0-9_-]{10}|sk_live_[A-Za-z0-9]{10}|-----BEGIN( RSA| EC)? PRIVATE KEY-----)' "${EXCLUDE[@]}" 2>/dev/null | grep -q .; then
-  red "BLOCKED: a staged file contains a provider secret / private key."; fail=1
+# ---------------------------------------------------------------------------
+# 2. firestore.rules mirror must match MyTribe (the source of truth).
+# ---------------------------------------------------------------------------
+# Both trees declare firestore.rules on the SAME project (auntieos-ttpc), so a
+# deploy from either overwrites live rules. This mirror drifted 06-22 -> 07-13
+# and would have reverted the portal's scoped kinfolk read.
+MYTRIBE_ROOT="${MYTRIBE_ROOT:-/Users/sydeast/Projects/testai/CascadeProjects/MyTribe}"
+SRC="$MYTRIBE_ROOT/firestore.rules"
+MIRROR="web/firestore.rules"
+
+if staged | grep -qx "$MIRROR"; then
+  if [ ! -f "$SRC" ]; then
+    red "WARN: MyTribe tree not found at $SRC"
+    echo "  Rules-drift is UNCHECKED for this commit. Set MYTRIBE_ROOT to enable."
+  elif ! diff -q "$MIRROR" "$SRC" >/dev/null 2>&1; then
+    red "BLOCKED: $MIRROR has DRIFTED from the source of truth."
+    echo "  Edit MyTribe/firestore.rules, then: cp $SRC $MIRROR"
+    FAIL=1
+  else
+    grn "ok: firestore.rules mirror matches MyTribe"
+  fi
 fi
 
-if [ "$fail" -ne 0 ]; then
-  red "Pre-commit gate failed. Fix the above, or 'git commit --no-verify' if verified safe."
-  exit 1
+# ---------------------------------------------------------------------------
+# 3. web/functions unit tests, when that code is touched.
+# ---------------------------------------------------------------------------
+if staged | grep -q '^web/functions/'; then
+  if (cd web/functions && npm test >/dev/null 2>&1); then
+    grn "ok: web/functions tests pass"
+  else
+    red "BLOCKED: web/functions tests FAIL."
+    echo "  Run: cd web/functions && npm test"
+    FAIL=1
+  fi
 fi
+
+[ "$FAIL" -eq 0 ] || { echo; red "pre-commit FAILED. Fix the above, or --no-verify with a reason."; exit 1; }
 exit 0

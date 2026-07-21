@@ -1,18 +1,33 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { ToastProvider } from '../components/Toast';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type KinTaleEntry } from '../api/kinTales';
 import { type SessionEntry } from '../api/sessions';
 import { type KinTaleDraft } from '../api/kinTalesWrite';
 
+/**
+ * The composer raises a toast on save and on generate, and useToast throws
+ * outside its provider on purpose (a swallowed confirmation is indistinguishable
+ * from a save that never happened). Rendering the real provider here keeps these
+ * tests exercising the tree the app actually mounts.
+ */
+function render(ui: React.ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
 const { saveKinTaleDraft, sendKinTale } = vi.hoisted(() => ({
   saveKinTaleDraft: vi.fn(),
   sendKinTale: vi.fn(),
+}));
+const { generateDraft } = vi.hoisted(() => ({ generateDraft: vi.fn() }));
+vi.mock('../api/communicateGenerate', async (orig) => ({
+  ...(await orig<typeof import('../api/communicateGenerate')>()),
+  generateDraft,
 }));
 vi.mock('../api/kinTalesWrite', async (orig) => ({
   ...(await orig<typeof import('../api/kinTalesWrite')>()),
@@ -40,6 +55,7 @@ function report(over: Partial<KinTaleEntry> = {}): KinTaleEntry {
     visitDate: '2026-07-16T14:00:00.000Z',
     arrivedAt: '2026-07-16T14:05:00.000Z',
     title: '',
+    titleGeneratedByAi: false,
     bodyCopy: 'Biscuit had a wonderful time at the park today.',
     mediaFileIds: [],
     status: 'DRAFT',
@@ -120,6 +136,7 @@ describe('scaffoldKinTaleDraft / draftFromKinTaleEntry (pure)', () => {
       visitDate: '2026-07-16T14:00:00.000Z',
       arrivedAt: '2026-07-16T14:05:00.000Z',
       title: '',
+      titleGeneratedByAi: false,
       bodyCopy: '',
       mediaFileIds: [],
     });
@@ -293,5 +310,72 @@ describe('KinTaleCompose: Close', () => {
     render(<KinTaleCompose onClose={onClose} />);
     await user.click(screen.getByRole('button', { name: /^close$/i }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Ask Auntie: the generated title must never clobber the operator', () => {
+  const GENERATED = {
+    generated_copy: 'Nova met me at the door.',
+    generated_title: 'Nova Meets the Door',
+    communication_type: 'visit_report',
+    kinfolk_name: 'Dana',
+    kinfolk_id: 'kf1',
+    draft_id: 'd1',
+    model: 'claude-sonnet-4-5',
+    draftWriteFailed: false,
+    warnings: [],
+  };
+  beforeEach(() => {
+    generateDraft.mockReset();
+    generateDraft.mockResolvedValue(GENERATED);
+  });
+  it('fills a BLANK headline and labels it as written by Auntie', async () => {
+    const user = userEvent.setup();
+    mockStreams({ reports: { status: 'ready', data: [report({ title: '' })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /ask auntie/i }));
+    expect(await screen.findByDisplayValue('Nova Meets the Door')).toBeInTheDocument();
+    expect(screen.getByText(/auntie wrote this headline/i)).toBeInTheDocument();
+  });
+  // THE rule. A headline the operator typed is theirs.
+  it('leaves a headline the operator already typed completely alone', async () => {
+    const user = userEvent.setup();
+    mockStreams({ reports: { status: 'ready', data: [report({ title: 'My own headline' })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /ask auntie/i }));
+    // Body replaced, headline untouched.
+    expect(await screen.findByDisplayValue('Nova met me at the door.')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('My own headline')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Nova Meets the Door')).not.toBeInTheDocument();
+    expect(screen.queryByText(/auntie wrote this headline/i)).not.toBeInTheDocument();
+  });
+  it('drops the Auntie label as soon as the operator types over it', async () => {
+    const user = userEvent.setup();
+    mockStreams({ reports: { status: 'ready', data: [report({ title: '' })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /ask auntie/i }));
+    expect(await screen.findByText(/auntie wrote this headline/i)).toBeInTheDocument();
+    await user.type(screen.getByDisplayValue('Nova Meets the Door'), '!');
+    expect(screen.queryByText(/auntie wrote this headline/i)).not.toBeInTheDocument();
+  });
+  // The copy is in hand; the draft ROW failing to persist is a separate fact and
+  // it belongs on a persistent surface, never a toast that dismisses itself.
+  it('keeps a failed draft write on a persistent banner, not a toast', async () => {
+    generateDraft.mockResolvedValue({ ...GENERATED, draftWriteFailed: true });
+    const user = userEvent.setup();
+    mockStreams({ reports: { status: 'ready', data: [report({ title: '' })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /ask auntie/i }));
+    expect(await screen.findByText(/did not save/i)).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+  it('surfaces a generate failure on a banner and keeps the draft as it was', async () => {
+    generateDraft.mockRejectedValue(new Error('generate_rate_limit_exceeded'));
+    const user = userEvent.setup();
+    mockStreams({ reports: { status: 'ready', data: [report({ title: 'Mine' })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /ask auntie/i }));
+    expect(await screen.findByText('generate_rate_limit_exceeded')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Mine')).toBeInTheDocument();
   });
 });

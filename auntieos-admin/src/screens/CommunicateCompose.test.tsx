@@ -197,3 +197,51 @@ describe('CommunicateCompose screen', () => {
     expect(screen.getByLabelText(/subject/i)).toHaveValue('');
   });
 });
+
+describe('push channel', () => {
+  it('sends push alongside the other channels when toggled on', async () => {
+    sendBroadcast.mockResolvedValue(resultOf());
+    render(<CommunicateCompose onClose={() => {}} />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
+    await userEvent.click(screen.getByRole('switch', { name: /send by push notification/i }));
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+    await waitFor(() =>
+      expect(sendBroadcast).toHaveBeenCalledWith({
+        criteria: { kind: 'all' },
+        channels: ['email', 'push'],
+        subject: 'Big news',
+        body: 'Hello kinfolk',
+      }),
+    );
+  });
+  it('allows push as the only channel', async () => {
+    sendBroadcast.mockResolvedValue(resultOf());
+    render(<CommunicateCompose onClose={() => {}} />);
+    await fillMinimalForm();
+    await userEvent.click(screen.getByRole('switch', { name: /send by email/i }));
+    await userEvent.click(screen.getByRole('switch', { name: /send by push notification/i }));
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+    await waitFor(() =>
+      expect(sendBroadcast).toHaveBeenCalledWith(expect.objectContaining({ channels: ['push'] })),
+    );
+  });
+  // The server does not require a subject for push, it falls back to
+  // "Tribe Tails" as the title. The UI must not invent a stricter rule.
+  it('does not require a subject for a push-only broadcast', async () => {
+    sendBroadcast.mockResolvedValue(resultOf());
+    render(<CommunicateCompose onClose={() => {}} />);
+    await fillMinimalForm();
+    await userEvent.click(screen.getByRole('switch', { name: /send by email/i }));
+    await userEvent.click(screen.getByRole('switch', { name: /send by push notification/i }));
+    expect(screen.getByRole('button', { name: /review broadcast/i })).toBeEnabled();
+    expect(screen.getByText(/push will show "Tribe Tails"/i)).toBeInTheDocument();
+  });
+  it('warns that Kinfolk without a registered device are skipped', async () => {
+    render(<CommunicateCompose onClose={() => {}} />);
+    await userEvent.click(screen.getByRole('switch', { name: /send by push notification/i }));
+    expect(screen.getByText(/without a registered device is skipped/i)).toBeInTheDocument();
+  });
+});

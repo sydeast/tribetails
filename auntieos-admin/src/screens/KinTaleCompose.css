@@ -147,3 +147,22 @@
   font-weight: var(--type-title-md-weight);
   color: var(--color-text-primary);
 }
+/* Inline validation, beside the field it belongs to. role="alert" on the element
+   itself, so a screen reader hears the problem without hunting for it. */
+.kintale-compose__error {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--color-error);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+/* Provenance note under a headline Auntie wrote. Quieter than an error: it is
+   information, not a problem, and it disappears the moment the operator types.
+   Its own class, NOT __hint, which is already the loading-text style. */
+.kintale-compose__provenance {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--color-text-faint);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}

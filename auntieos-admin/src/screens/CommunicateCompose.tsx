@@ -75,6 +75,7 @@ export function CommunicateCompose({ onClose }: CommunicateComposeProps) {
   const [tagMatch, setTagMatch] = useState<'any' | 'all'>('any');
   const [emailOn, setEmailOn] = useState(true);
   const [smsOn, setSmsOn] = useState(false);
+  const [pushOn, setPushOn] = useState(false);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
 
@@ -86,14 +87,24 @@ export function CommunicateCompose({ onClose }: CommunicateComposeProps) {
   const legendId = useId();
 
   const criteria = buildCriteria(audienceKind, statusesRaw, tagsRaw, tagMatch);
-  const channels: BroadcastChannel[] = [...(emailOn ? (['email'] as const) : []), ...(smsOn ? (['sms'] as const) : [])];
+  const channels: BroadcastChannel[] = [
+    ...(emailOn ? (['email'] as const) : []),
+    ...(smsOn ? (['sms'] as const) : []),
+    ...(pushOn ? (['push'] as const) : []),
+  ];
   const trimmedSubject = subject.trim();
   const trimmedBody = body.trim();
 
   // Mirrors broadcastMessage's zod Args exactly (superRefine, lines 64-79):
   // a segmentId or criteria (this screen always supplies criteria), at least
   // one channel, subject required when email is selected, body required.
+  //
+  // Push deliberately does NOT make the subject required, because the backend
+  // does not either: it falls back to "Tribe Tails" as the notification title
+  // (broadcastMessage.ts:264). Adding a rule the server does not enforce would
+  // block a send the server would happily accept, so this is a hint instead.
   const subjectRequired = channels.includes('email');
+  const subjectIsPushTitle = pushOn && trimmedSubject.length === 0;
   const formErrors: string[] = [];
   if (!criteria) formErrors.push('Pick an audience (or fill in the status/tags you chose).');
   if (channels.length === 0) formErrors.push('Pick at least one channel.');
@@ -261,12 +272,27 @@ export function CommunicateCompose({ onClose }: CommunicateComposeProps) {
                   <span className="compose__toggle-caption">Text (SMS)</span>
                   <Toggle checked={smsOn} onChange={setSmsOn} disabled={sending} label="Send by text (SMS)" />
                 </li>
+                <li className="compose__toggle-row">
+                  <span className="compose__toggle-caption">Push</span>
+                  <Toggle checked={pushOn} onChange={setPushOn} disabled={sending} label="Send by push notification" />
+                </li>
               </ul>
+              {pushOn && (
+                <p className="compose__hint">
+                  Push reaches Kinfolk who have the app installed and notifications on. Anyone without a
+                  registered device is skipped, and the send report says how many.
+                </p>
+              )}
             </fieldset>
 
             <label className="compose__field">
               <span className="compose__field-label">
-                Subject{subjectRequired ? ' (required for email)' : ' (optional)'}
+                Subject
+                {subjectRequired
+                  ? ' (required for email)'
+                  : subjectIsPushTitle
+                    ? ' (optional, push will show "Tribe Tails")'
+                    : ' (optional)'}
               </span>
               <input
                 type="text"

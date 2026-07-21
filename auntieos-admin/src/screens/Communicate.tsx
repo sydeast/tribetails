@@ -29,10 +29,10 @@ import './Communicate.css';
  * The Den filter tabs. Every predicate is a POSITIVE membership test against
  * `sendChannelOf`'s enumerated `SendChannel` (the Inbox.tsx / Sessions.tsx /
  * Invoices.tsx / AO-12 convention), never a negation of the other channels.
- * `unknown` rows (a channel neither 'email' nor 'sms') stay visible under
- * All, honestly, rather than being force-fit into one of the two named tabs.
+ * `unknown` rows (a channel none of 'email', 'sms', 'push') stay visible under
+ * All, honestly, rather than being force-fit into one of the named tabs.
  */
-type FilterKey = 'all' | 'email' | 'sms';
+type FilterKey = 'all' | 'email' | 'sms' | 'push';
 
 interface FilterDef {
   key: FilterKey;
@@ -44,6 +44,7 @@ const FILTERS: readonly FilterDef[] = [
   { key: 'all', label: 'All', test: () => true },
   { key: 'email', label: 'Email', test: (c) => c === 'email' },
   { key: 'sms', label: 'Text', test: (c) => c === 'sms' },
+  { key: 'push', label: 'Push', test: (c) => c === 'push' },
 ];
 
 /**

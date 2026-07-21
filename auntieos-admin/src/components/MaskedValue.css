@@ -1,0 +1,54 @@
+/**
+ * MaskedValue. The mask and the revealed secret share the mono family so the row
+ * does not jump width class when it flips, and the toggle stays a quiet text
+ * control (it sits inside dense fact lists, so it must not out-shout the value).
+ * All colors come from role tokens; no literals here.
+ */
+
+.masked-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.masked-value__mask {
+  font-family: var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--color-text-faint);
+  user-select: none;
+}
+
+.masked-value__secret {
+  font-family: var(--font-mono);
+  color: inherit;
+  word-break: break-word;
+}
+
+.masked-value__toggle {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.masked-value__toggle:hover {
+  text-decoration: underline;
+}
+
+.masked-value__toggle:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-tight);
+}
+
+/* No secret on file: the same quiet "Not set" the other Den fact rows use. */
+.masked-value__unset {
+  color: var(--color-text-faint);
+}

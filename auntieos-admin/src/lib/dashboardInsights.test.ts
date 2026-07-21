@@ -166,6 +166,26 @@ describe('safeboxAccessLines', () => {
   it('is empty for a household with no access notes', () => {
     expect(safeboxAccessLines(mergeKinfolkProfile('k1', {}))).toEqual([]);
   });
+
+  it('flags ONLY the codes as secret, so the widget masks them and nothing else', () => {
+    const lines = safeboxAccessLines(
+      mergeKinfolkProfile('k1', {
+        serviceAddress: '12 Oak St',
+        gateCode: '4417',
+        entryNotes: 'Side door',
+        parkingInstructions: 'Driveway',
+        wifiName: 'Rivera',
+        wifiPassword: 'hunter2',
+      }),
+    );
+    expect(lines.filter((l) => l.secret === true).map((l) => l.label)).toEqual([
+      'Gate / door code',
+      'WiFi password',
+    ]);
+    // Address/parking/network name are needed at a glance and stay in the clear.
+    expect(lines.find((l) => l.label === 'Address')?.secret).toBeUndefined();
+    expect(lines.find((l) => l.label === 'WiFi network')?.secret).toBeUndefined();
+  });
 });
 
 // ── AO-37 careFlags ─────────────────────────────────────────────────────────

@@ -51,6 +51,8 @@ describe('generateDraft', () => {
     fetchMock.mockResolvedValue(
       jsonResponse(200, {
         generated_copy: 'Nova had the best day at the park today.',
+        // Blank because this call did not set want_title.
+        generated_title: '',
         communication_type: 'email',
         kinfolk_name: 'Dana Halbrook',
         kinfolk_id: 'kf1',
@@ -76,6 +78,8 @@ describe('generateDraft', () => {
     );
     expect(result).toEqual({
       generated_copy: 'Nova had the best day at the park today.',
+      // Blank because this call did not set want_title.
+      generated_title: '',
       communication_type: 'email',
       kinfolk_name: 'Dana Halbrook',
       kinfolk_id: 'kf1',

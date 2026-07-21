@@ -17,6 +17,7 @@ import './styles/screens.css';
 
 import './lib/firebase'; // initialize Firebase before anything touches auth
 import { router } from './router';
+import { ToastProvider } from './components/Toast';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -27,7 +28,11 @@ const queryClient = new QueryClient({
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      {/* Above the router on purpose: a save confirmed on one screen still
+          confirms after it navigates to another. */}
+      <ToastProvider>
+        <RouterProvider router={router} />
+      </ToastProvider>
     </QueryClientProvider>
   </React.StrictMode>,
 );
