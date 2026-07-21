@@ -731,7 +731,7 @@ private fun BreedField(
             Spacer(Modifier.height(8.dp))
             if (value.isBlank() && catalog.size > options.size) {
                 Text(
-                    "Showing ${options.size} of ${catalog.size} — type to filter",
+                    "Showing ${options.size} of ${catalog.size}, type to filter",
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )

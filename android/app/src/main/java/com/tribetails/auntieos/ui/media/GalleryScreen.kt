@@ -304,7 +304,7 @@ private fun MediaViewerDialog(
             }
             if (media.fileType == MediaType.VIDEO) {
                 Text(
-                    "Video preview — open the source to play.",
+                    "Video preview. Open the source to play.",
                     style = AuntieTheme.typography.labelSmall,
                     color = c.textDim,
                 )

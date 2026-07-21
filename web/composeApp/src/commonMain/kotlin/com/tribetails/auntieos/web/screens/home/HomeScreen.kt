@@ -479,7 +479,7 @@ fun HomeScreen(
                             }
                             DashKey.GATEKEEPER -> DenPanel(
                                 title = "Gatekeeper",
-                                subtitle = "Households going longest without a visit — close the gaps.",
+                                subtitle = "Households going longest without a visit. Close the gaps.",
                                 modifier = Modifier.fillMaxWidth(),
                                 hoverLift = true,
                             ) {
