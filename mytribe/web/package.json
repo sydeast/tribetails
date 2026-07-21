@@ -14,6 +14,7 @@
     "@fontsource/bricolage-grotesque": "^5.2.5",
     "@fontsource/dm-mono": "^5.2.5",
     "@fontsource/young-serif": "^5.2.5",
+    "@sentry/react": "^10.67.0",
     "@tanstack/react-query": "^5.62.0",
     "@tanstack/react-router": "^1.95.0",
     "@tiptap/core": "^3.27.4",
