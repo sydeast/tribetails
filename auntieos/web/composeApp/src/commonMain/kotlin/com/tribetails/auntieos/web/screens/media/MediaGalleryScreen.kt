@@ -403,7 +403,7 @@ private fun MediaViewerDialog(
             )
             if (item.fileType.equals("VIDEO", ignoreCase = true)) {
                 Text(
-                    text = "Video still frame — open the file to play.",
+                    text = "Video still frame. Open the file to play.",
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )

@@ -33,7 +33,7 @@ enum class AuntieThemePreset(
     DEFAULT("default", "Default", "Cream + Navy with the Orange brand primary."),
     MIDNIGHT("midnight", "Midnight", "Dark base, vibrant Orange + Pink accents.", forcesDark = true),
     CLEAR("clear", "Clear", "High-contrast white + Navy for accessibility."),
-    SUNSET("sunset", "Sunset", "Warm gradient leanings — Orange to Pink."),
+    SUNSET("sunset", "Sunset", "Warm gradient leanings, Orange to Pink."),
     DUO("duo", "Duotone", "Navy + Orange two-tone, minimal third hue."),
     CALM("calm", "Calm", "Minimalist neutral with a single Teal accent."),
     HEARTH("hearth", "Hearth", "Warm beige + Orange with an earthy Teal."),
