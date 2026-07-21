@@ -36,7 +36,13 @@ staged() { git diff --cached --name-only --diff-filter=ACM; }
 # detection comment, or a code-review write-up) does not. Requiring the quoted
 # private_key value or a full key token avoids those false positives.
 # sk_live_ (Stripe) folded in from the admin repo's hook during the 07-21 merge.
-SECRET_RE='"private_key"[[:space:]]*:[[:space:]]*"-----BEGIN|-----BEGIN [A-Z ]*PRIVATE KEY-----[A-Za-z0-9+/=]|sk-ant-[A-Za-z0-9_-]{40,}|SG\.[A-Za-z0-9_-]{30,}|sk_live_[A-Za-z0-9]{10,}'
+#
+# `sk\.eyJ` (Mapbox SECRET token) added 2026-07-21 after a real one was found
+# committed in android/gradle.properties.example. A file called ".example" is
+# exactly where this hides: it reads as a template, so nobody looks twice, and
+# the previous pattern list did not cover Mapbox's format. Public `pk.` tokens
+# are NOT matched on purpose, they are designed to ship in clients.
+SECRET_RE='"private_key"[[:space:]]*:[[:space:]]*"-----BEGIN|-----BEGIN [A-Z ]*PRIVATE KEY-----[A-Za-z0-9+/=]|sk-ant-[A-Za-z0-9_-]{40,}|SG\.[A-Za-z0-9_-]{30,}|sk_live_[A-Za-z0-9]{10,}|sk\.eyJ[A-Za-z0-9._-]{20,}'
 
 HITS=""
 while IFS= read -r f; do
@@ -53,7 +59,8 @@ done < <(staged)
 if [ -n "$HITS" ]; then
   red "BLOCKED: staged file(s) contain what looks like a live credential:"
   printf '%s' "$HITS"
-  echo "  A service-account key, private key block, Anthropic key or SendGrid key."
+  echo "  A service-account key, private key block, or an Anthropic, SendGrid,"
+  echo "  Stripe live, or Mapbox SECRET (sk.) token."
   echo "  Add the path to .gitignore. Do NOT commit and clean up later:"
   echo "  once it is in history, the key must be ROTATED, not just removed."
   FAIL=1
