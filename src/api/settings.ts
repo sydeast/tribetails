@@ -1,5 +1,6 @@
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { arr } from '../lib/coerce';
 import type { TagDef } from '../lib/tags/model';
 
 /**
@@ -30,12 +31,22 @@ import type { TagDef } from '../lib/tags/model';
 
 export const BUSINESS_SETTINGS_DOC_ID = 'business_settings';
 
-/** Mirrors `TimeBlockDefinition` (FirestoreClient.kt); wire key for active is `active`. */
+/**
+ * Mirrors `TimeBlockDefinition` (FirestoreClient.kt); wire key for active is `active`.
+ *
+ * Every string here is OPTIONAL because this interface is a CAST over a raw
+ * Firestore array element, never a validation of one. `mergeBusinessSettings`
+ * checks that `timeBlocks` IS an array, but nothing inspects the rows inside
+ * it, so a hand-edited or legacy block carrying only `{ id }` types as a
+ * complete `TimeBlockDefinition` and then throws on the first `.trim()` — the
+ * blank-page failure mode `lib/coerce.ts` documents. Marking them optional is
+ * what makes a reader write the guard.
+ */
 export interface TimeBlockDefinition {
-  id: string;
-  label: string;
-  startTime: string;
-  endTime: string;
+  id?: string | undefined;
+  label?: string | undefined;
+  startTime?: string | undefined;
+  endTime?: string | undefined;
   active: boolean;
 }
 
@@ -48,9 +59,13 @@ export interface PortalBanner {
   id: string;
 }
 
-/** Mirrors `HomeSectionCfg`. */
+/**
+ * Mirrors `HomeSectionCfg`. `id` is optional for the same reason as
+ * `TimeBlockDefinition` above: `mergePortalHome` validates that `sections` is
+ * an array, but never the rows within it, so this is a cast over raw data.
+ */
 export interface HomeSectionCfg {
-  id: string;
+  id?: string | undefined;
   enabled: boolean;
   limit: number;
 }
@@ -81,8 +96,23 @@ export interface MyTribePortalConfig {
 
 /**
  * Mirrors `BusinessSettings` (FirestoreClient.kt, lines 2445-2560) field for
- * field. Every field is read defensively (`??`/merge with defaults below), so a
- * partial or legacy doc never produces `undefined` here.
+ * field.
+ *
+ * These fields are deliberately NOT optional, unlike the `*Entry`/`*Row`
+ * interfaces elsewhere in `api/`: this is the OUTPUT of
+ * `mergeBusinessSettings`, which really does check and default every key, so
+ * the non-optional promise is one this module keeps rather than a cast over
+ * raw document data. Downstream editors (`screens/settings/*Editor.tsx`) rely
+ * on that guarantee to spread and iterate these values directly.
+ *
+ * The guarantee only holds because the merge below TYPE-checks each key
+ * (`pickString`/`pickList`/`pickMap`) instead of casting it. The old
+ * `(r.x as string) ?? d.x` form caught an absent key but waved a
+ * wrong-typed one straight through — a legacy number, or `updatedAt` written
+ * as a Firestore `Timestamp` rather than an ISO string — which then threw on
+ * the first `.trim()` and blanked the whole screen (see `lib/coerce.ts`).
+ * Element shapes the merge does not descend into (`TimeBlockDefinition`,
+ * `HomeSectionCfg`) stay optional, because for those it IS still a cast.
  */
 export interface BusinessSettings {
   _id: string;
@@ -257,13 +287,39 @@ function decodeTagDefs(raw: unknown): TagDef[] {
 /** A raw Firestore doc body: unknown shape, since a hand-edited or legacy doc can be missing/malformed any field. */
 type RawSettings = Record<string, unknown>;
 
+/**
+ * The three type-checked readers the merge uses in place of `as X`. Each takes
+ * the SHIPPED default rather than a bare `''`/`[]`, so a doc missing (or
+ * mistyping) `timeZone` still reads 'America/New_York' and `etaMinuteOptions`
+ * still reads the seven-option list, exactly as before. `lib/coerce.ts`'s
+ * `str`/`arr` are the same idea for the always-empty case; these carry a
+ * default because several settings fields genuinely ship with one.
+ *
+ * Numbers are absent on purpose, matching `lib/coerce.ts`: nothing here should
+ * learn to invent a numeric fact a document never stated.
+ */
+function pickString(raw: unknown, fallback: string): string {
+  return typeof raw === 'string' ? raw : fallback;
+}
+
+function pickList<T>(raw: unknown, fallback: T[]): T[] {
+  return Array.isArray(raw) ? (raw as T[]) : fallback;
+}
+
+function pickMap(raw: unknown, fallback: Record<string, string>): Record<string, string> {
+  // Arrays are objects too, and `Object.entries` on one yields index keys —
+  // nonsense for a day-name or service-type map, so they fall back instead.
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return fallback;
+  return raw as Record<string, string>;
+}
+
 function mergePortalChat(raw: unknown): PortalChat {
   const r = (raw ?? {}) as Partial<PortalChat>;
   return {
     enabled: r.enabled ?? DEFAULT_PORTAL_CHAT.enabled,
-    awayMessage: r.awayMessage ?? DEFAULT_PORTAL_CHAT.awayMessage,
+    awayMessage: pickString(r.awayMessage, DEFAULT_PORTAL_CHAT.awayMessage),
     hoursEnabled: r.hoursEnabled ?? DEFAULT_PORTAL_CHAT.hoursEnabled,
-    hours: r.hours ?? DEFAULT_PORTAL_CHAT.hours,
+    hours: pickMap(r.hours, DEFAULT_PORTAL_CHAT.hours),
     maxMessageLength: r.maxMessageLength ?? DEFAULT_PORTAL_CHAT.maxMessageLength,
     rateLimitPerHour: r.rateLimitPerHour ?? DEFAULT_PORTAL_CHAT.rateLimitPerHour,
   };
@@ -273,23 +329,25 @@ function mergePortalBanner(raw: unknown): PortalBanner {
   const r = (raw ?? {}) as Partial<PortalBanner>;
   return {
     enabled: r.enabled ?? DEFAULT_PORTAL_BANNER.enabled,
-    message: r.message ?? DEFAULT_PORTAL_BANNER.message,
-    tone: r.tone ?? DEFAULT_PORTAL_BANNER.tone,
-    dismissMode: r.dismissMode ?? DEFAULT_PORTAL_BANNER.dismissMode,
-    id: r.id ?? DEFAULT_PORTAL_BANNER.id,
+    message: pickString(r.message, DEFAULT_PORTAL_BANNER.message),
+    tone: pickString(r.tone, DEFAULT_PORTAL_BANNER.tone),
+    dismissMode: pickString(r.dismissMode, DEFAULT_PORTAL_BANNER.dismissMode),
+    id: pickString(r.id, DEFAULT_PORTAL_BANNER.id),
   };
 }
 
 function mergePortalHome(raw: unknown): PortalHome {
   const r = (raw ?? {}) as Partial<PortalHome>;
-  return { sections: r.sections ?? DEFAULT_PORTAL_HOME.sections };
+  // Only the LIST is validated here; the rows inside it stay a cast, which is
+  // why `HomeSectionCfg.id` is optional.
+  return { sections: pickList<HomeSectionCfg>(r.sections, DEFAULT_PORTAL_HOME.sections) };
 }
 
 function mergeMyTribePortal(raw: unknown): MyTribePortalConfig {
   const r = (raw ?? {}) as Partial<MyTribePortalConfig>;
   return {
-    logoUrl: r.logoUrl ?? DEFAULT_MYTRIBE_PORTAL.logoUrl,
-    themeId: r.themeId ?? DEFAULT_MYTRIBE_PORTAL.themeId,
+    logoUrl: pickString(r.logoUrl, DEFAULT_MYTRIBE_PORTAL.logoUrl),
+    themeId: pickString(r.themeId, DEFAULT_MYTRIBE_PORTAL.themeId),
     banner: mergePortalBanner(r.banner),
     home: mergePortalHome(r.home),
     chat: mergePortalChat(r.chat),
@@ -306,27 +364,30 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
   const r = raw ?? {};
   const d = DEFAULT_BUSINESS_SETTINGS;
   return {
-    _id: (r._id as string) ?? d._id,
-    businessName: (r.businessName as string) ?? d.businessName,
-    businessEmail: (r.businessEmail as string) ?? d.businessEmail,
-    businessPhone: (r.businessPhone as string) ?? d.businessPhone,
-    businessAddress: (r.businessAddress as string) ?? d.businessAddress,
-    timeZone: (r.timeZone as string) ?? d.timeZone,
-    serviceRates: (r.serviceRates as Record<string, string>) ?? d.serviceRates,
-    businessHours: (r.businessHours as Record<string, string>) ?? d.businessHours,
-    venmoHandle: (r.venmoHandle as string) ?? d.venmoHandle,
-    paypalHandle: (r.paypalHandle as string) ?? d.paypalHandle,
-    cashappHandle: (r.cashappHandle as string) ?? d.cashappHandle,
-    weatherLocation: (r.weatherLocation as string) ?? d.weatherLocation,
+    _id: pickString(r._id, d._id),
+    businessName: pickString(r.businessName, d.businessName),
+    businessEmail: pickString(r.businessEmail, d.businessEmail),
+    businessPhone: pickString(r.businessPhone, d.businessPhone),
+    businessAddress: pickString(r.businessAddress, d.businessAddress),
+    timeZone: pickString(r.timeZone, d.timeZone),
+    serviceRates: pickMap(r.serviceRates, d.serviceRates),
+    businessHours: pickMap(r.businessHours, d.businessHours),
+    venmoHandle: pickString(r.venmoHandle, d.venmoHandle),
+    paypalHandle: pickString(r.paypalHandle, d.paypalHandle),
+    cashappHandle: pickString(r.cashappHandle, d.cashappHandle),
+    weatherLocation: pickString(r.weatherLocation, d.weatherLocation),
     notificationEmail: (r.notificationEmail as boolean) ?? d.notificationEmail,
     notificationSms: (r.notificationSms as boolean) ?? d.notificationSms,
     notificationPush: (r.notificationPush as boolean) ?? d.notificationPush,
-    observedUsHolidays: (r.observedUsHolidays as string[]) ?? d.observedUsHolidays,
-    companyHolidays: (r.companyHolidays as string[]) ?? d.companyHolidays,
-    specialHours: (r.specialHours as string[]) ?? d.specialHours,
+    // `arr` (default `[]`) rather than `pickList`, because these three ship
+    // empty: a non-array here reads as "nothing configured", not as a crash in
+    // TimeOffEditor's `[...data.companyHolidays]` spread.
+    observedUsHolidays: arr<string>(r.observedUsHolidays),
+    companyHolidays: arr<string>(r.companyHolidays),
+    specialHours: arr<string>(r.specialHours),
     observeUsHolidays: (r.observeUsHolidays as boolean) ?? d.observeUsHolidays,
-    defaultBookingMode: (r.defaultBookingMode as string) ?? d.defaultBookingMode,
-    defaultCalendarView: (r.defaultCalendarView as string) ?? d.defaultCalendarView,
+    defaultBookingMode: pickString(r.defaultBookingMode, d.defaultBookingMode),
+    defaultCalendarView: pickString(r.defaultCalendarView, d.defaultCalendarView),
     allowTimeBlockBooking: (r.allowTimeBlockBooking as boolean) ?? d.allowTimeBlockBooking,
     allowSpecificTimeBooking: (r.allowSpecificTimeBooking as boolean) ?? d.allowSpecificTimeBooking,
     enableConflictDetection: (r.enableConflictDetection as boolean) ?? d.enableConflictDetection,
@@ -334,7 +395,7 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
     defaultTimeBlockDurationHours:
       (r.defaultTimeBlockDurationHours as number) ?? d.defaultTimeBlockDurationHours,
     travelBufferMinutes: (r.travelBufferMinutes as number) ?? d.travelBufferMinutes,
-    timeBlocks: (r.timeBlocks as TimeBlockDefinition[]) ?? d.timeBlocks,
+    timeBlocks: pickList<TimeBlockDefinition>(r.timeBlocks, d.timeBlocks),
     enableGPSTrackingForAllVisits:
       (r.enableGPSTrackingForAllVisits as boolean) ?? d.enableGPSTrackingForAllVisits,
     enablePhotoLocationTagging:
@@ -343,26 +404,30 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
       (r.requireArrivalDepartureVerification as boolean) ?? d.requireArrivalDepartureVerification,
     autoStartTrackingOnVisitStart:
       (r.autoStartTrackingOnVisitStart as boolean) ?? d.autoStartTrackingOnVisitStart,
-    trackingAccuracy: (r.trackingAccuracy as string) ?? d.trackingAccuracy,
+    trackingAccuracy: pickString(r.trackingAccuracy, d.trackingAccuracy),
     saveRoutesForDays: (r.saveRoutesForDays as number) ?? d.saveRoutesForDays,
     allowClientLocationSharing: (r.allowClientLocationSharing as boolean) ?? d.allowClientLocationSharing,
     defaultEtaMinutes: (r.defaultEtaMinutes as number) ?? d.defaultEtaMinutes,
-    etaMinuteOptions: (r.etaMinuteOptions as number[]) ?? d.etaMinuteOptions,
+    etaMinuteOptions: pickList<number>(r.etaMinuteOptions, d.etaMinuteOptions),
     draftRetentionDays: (r.draftRetentionDays as number) ?? d.draftRetentionDays,
-    draftRetentionOptions: (r.draftRetentionOptions as number[]) ?? d.draftRetentionOptions,
-    calendarSyncId: (r.calendarSyncId as string) ?? d.calendarSyncId,
+    draftRetentionOptions: pickList<number>(r.draftRetentionOptions, d.draftRetentionOptions),
+    calendarSyncId: pickString(r.calendarSyncId, d.calendarSyncId),
     autoConfirmRepeatKinfolk: (r.autoConfirmRepeatKinfolk as boolean) ?? d.autoConfirmRepeatKinfolk,
     snapRescheduleTo15Min: (r.snapRescheduleTo15Min as boolean) ?? d.snapRescheduleTo15Min,
-    logoUrl: (r.logoUrl as string) ?? d.logoUrl,
-    brandWordmark: (r.brandWordmark as string) ?? d.brandWordmark,
-    brandTagline: (r.brandTagline as string) ?? d.brandTagline,
-    homeGreeting: (r.homeGreeting as string) ?? d.homeGreeting,
-    homeAccentTail: (r.homeAccentTail as string) ?? d.homeAccentTail,
+    logoUrl: pickString(r.logoUrl, d.logoUrl),
+    brandWordmark: pickString(r.brandWordmark, d.brandWordmark),
+    brandTagline: pickString(r.brandTagline, d.brandTagline),
+    homeGreeting: pickString(r.homeGreeting, d.homeGreeting),
+    homeAccentTail: pickString(r.homeAccentTail, d.homeAccentTail),
     householdTags: decodeTagDefs(r.householdTags),
     petTags: decodeTagDefs(r.petTags),
     mytribePortal: mergeMyTribePortal(r.mytribePortal),
-    updatedAt: (r.updatedAt as string) ?? d.updatedAt,
-    updatedBy: (r.updatedBy as string) ?? d.updatedBy,
+    // `updatedAt` is the likeliest mistyped field on this doc: a client that
+    // stamped it with `serverTimestamp()` leaves a Firestore `Timestamp`, not
+    // the ISO string this contract expects. That now reads as blank, which
+    // `lastSavedLabel` already renders as "Never saved yet".
+    updatedAt: pickString(r.updatedAt, d.updatedAt),
+    updatedBy: pickString(r.updatedBy, d.updatedBy),
   };
 }
 

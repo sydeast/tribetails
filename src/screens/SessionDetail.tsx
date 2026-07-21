@@ -10,6 +10,7 @@ import {
   sessionDayLabel,
   localDateIso,
 } from '../lib/sessionFormat';
+import { str, arr } from '../lib/coerce';
 import { DenScreenHeading, DenPanel, ServicePill, EmptyHint } from '../components/DenScreenKit';
 import { GhostButton } from '../components/Buttons';
 import './SessionDetail.css';
@@ -83,7 +84,7 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
     <div className="screen">
       <DenScreenHeading
         kicker="The Den · Auntie Time"
-        title={entry !== null ? sessionHousehold(entry.kinfolkName) : 'Kin Care session'}
+        title={entry !== null ? sessionHousehold(str(entry.kinfolkName)) : 'Kin Care session'}
         subtitle="Kin Care session detail."
         trailing={<GhostButton label="Back to Auntie Time" onClick={onBack} />}
       />
@@ -97,18 +98,25 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
         </DenPanel>
       ) : (
         (() => {
-          const state = sessionState(entry.status);
+          // Every field is read through `str()`/`arr()`: `SessionEntry` is a cast
+          // over raw Firestore data, not a validation of it (see api/sessions.ts),
+          // so a doc can genuinely lack any of these. An absent field reads as
+          // blank, which the sections below already hide (`Fact`/`any`) and the
+          // helpers already classify honestly ('unknown', 'Undated'), rather than
+          // throwing and blanking the view.
+          const status = str(entry.status);
+          const state = sessionState(status);
           const info = sessionStateInfo(state);
-          const serviceType = entry.serviceType ?? '';
-          const notes = (entry.notes ?? '').trim();
-          const kinCount = (entry.kinIds ?? []).length;
+          const serviceType = str(entry.serviceType);
+          const notes = str(entry.notes).trim();
+          const kinCount = arr<string>(entry.kinIds).length;
 
-          const startKey = sessionDayKey(entry.startTime);
+          const startKey = sessionDayKey(str(entry.startTime));
           const dayLabel = startKey === 'Undated' ? '' : sessionDayLabel(startKey, todayIso);
-          const scheduled = sessionWindow(entry.startTime, entry.endTime);
+          const scheduled = sessionWindow(str(entry.startTime), str(entry.endTime));
           const scheduledValue = scheduled === 'Time TBD' ? '' : scheduled;
-          const clockedIn = localMoment(entry.arrivedAt, todayIso);
-          const clockedOut = localMoment(entry.completedAt, todayIso);
+          const clockedIn = localMoment(str(entry.arrivedAt), todayIso);
+          const clockedOut = localMoment(str(entry.completedAt), todayIso);
 
           return (
             <>
@@ -122,7 +130,7 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
                   </div>
                   {state === 'unknown' && (
                     <p className="sdetail__hint">
-                      This session&rsquo;s status (&ldquo;{entry.status}&rdquo;) isn&rsquo;t recognized, so
+                      This session&rsquo;s status (&ldquo;{status}&rdquo;) isn&rsquo;t recognized, so
                       it is shown as UNKNOWN rather than guessed into a state.
                     </p>
                   )}

@@ -100,13 +100,13 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
   });
 
   const sentCount = asyncScalar(rows, (data) =>
-    data.filter((e) => kinTaleState(e.status) === 'sent').length,
+    data.filter((e) => kinTaleState(e.status ?? '') === 'sent').length,
   );
   const draftCount = asyncScalar(rows, (data) =>
-    data.filter((e) => kinTaleState(e.status) === 'draft').length,
+    data.filter((e) => kinTaleState(e.status ?? '') === 'draft').length,
   );
   const failedCount = asyncScalar(rows, (data) =>
-    data.filter((e) => kinTaleState(e.status) === 'failed').length,
+    data.filter((e) => kinTaleState(e.status ?? '') === 'failed').length,
   );
 
   return (
@@ -146,7 +146,7 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
             // `filter` only ever holds a key set via setFilter(f.key) from
             // that same array (Sessions.tsx's identical .find()! comment).
             const activeFilter = FILTERS.find((f) => f.key === filter)!;
-            const visible = data.filter((e) => activeFilter.test(kinTaleState(e.status)));
+            const visible = data.filter((e) => activeFilter.test(kinTaleState(e.status ?? '')));
 
             return (
               <>
@@ -190,11 +190,16 @@ interface KinTaleRowProps {
 }
 
 function KinTaleRow({ entry, onSelect }: KinTaleRowProps) {
-  const state = kinTaleState(entry.status);
+  const state = kinTaleState(entry.status ?? '');
   const info = kinTaleStateInfo(state);
-  const household = kinTaleHousehold(entry.kinfolkName);
-  const headline = kinTaleHeadline(entry.title, entry.bodyCopy);
-  const when = kinTaleWhen(entry);
+  const household = kinTaleHousehold(entry.kinfolkName ?? '');
+  const headline = kinTaleHeadline(entry.title ?? '', entry.bodyCopy ?? '');
+  const when = kinTaleWhen({
+    visitDate: entry.visitDate ?? '',
+    arrivedAt: entry.arrivedAt ?? '',
+    sentAt: entry.sentAt ?? '',
+    createdAt: entry.createdAt ?? '',
+  });
   // Every read below is defaulted. KinTaleEntry is a CAST over raw Firestore
   // data, not a validation of it: a real kin_care_reports doc can be missing any
   // of these, and reading one blind blanked the WHOLE KinTales page through the

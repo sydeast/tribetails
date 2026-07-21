@@ -1,5 +1,6 @@
 import type { Timestamp } from 'firebase/firestore';
 import { formatWhen, type FsTime } from './time';
+import { str } from './coerce';
 
 /**
  * Pure Tribal Intel ("The Den · Tribal Intel", nav slug `tribal-intel`) list
@@ -97,9 +98,14 @@ export function attachmentCountLabel(count: number): string | null {
 
 // ── comm. type distinct list + filtering ─────────────────────────────────
 
-/** The subset `distinctCommTypes` needs from a row: a `Pick`, not the full entry. */
+/**
+ * The subset `distinctCommTypes` needs from a row: a `Pick`, not the full
+ * entry. Optional to match `TribalIntelEntry`, which is a cast over raw
+ * Firestore data rather than a validation of it: a doc with no
+ * `communicationType` key must classify as blank, never throw on `.trim()`.
+ */
 export interface CommTypeInput {
-  communicationType: string;
+  communicationType?: string | undefined;
 }
 
 /**
@@ -112,7 +118,7 @@ export function distinctCommTypes<T extends CommTypeInput>(docs: readonly T[]): 
   const seen = new Set<string>();
   const out: string[] = [];
   for (const d of docs) {
-    const t = d.communicationType.trim();
+    const t = str(d.communicationType).trim();
     if (t === '' || seen.has(t)) continue;
     seen.add(t);
     out.push(t);
@@ -123,16 +129,20 @@ export function distinctCommTypes<T extends CommTypeInput>(docs: readonly T[]): 
 /** Keeps only rows whose `communicationType` exactly matches `selected`. `null` (the "All" tab) is a no-op. */
 export function filterByCommType<T extends CommTypeInput>(docs: readonly T[], selected: string | null): T[] {
   if (selected === null) return [...docs];
-  return docs.filter((d) => d.communicationType === selected);
+  return docs.filter((d) => str(d.communicationType) === selected);
 }
 
 // ── free-text search ──────────────────────────────────────────────────────
 
-/** The subset `filterTribalIntel` searches: a `Pick`, not the full entry. */
+/**
+ * The subset `filterTribalIntel` searches: a `Pick`, not the full entry.
+ * Optional for the same reason as `CommTypeInput`: an absent field is simply
+ * not searchable text, and must not throw mid-keystroke and blank the screen.
+ */
 export interface SearchableTribalIntelInput {
-  title: string;
-  content: string;
-  communicationType: string;
+  title?: string | undefined;
+  content?: string | undefined;
+  communicationType?: string | undefined;
 }
 
 /**
@@ -149,9 +159,9 @@ export function filterTribalIntel<T extends SearchableTribalIntelInput>(
   if (q === '') return [...docs];
   return docs.filter(
     (d) =>
-      d.title.toLowerCase().includes(q) ||
-      d.content.toLowerCase().includes(q) ||
-      d.communicationType.toLowerCase().includes(q),
+      str(d.title).toLowerCase().includes(q) ||
+      str(d.content).toLowerCase().includes(q) ||
+      str(d.communicationType).toLowerCase().includes(q),
   );
 }
 

@@ -11,14 +11,25 @@ import { call } from '../lib/fns';
  * the headline count and the visible rows can never disagree.
  */
 
-/** One `supplies/{id}` row as returned by `listSupplies`. */
+/**
+ * One `supplies/{id}` row as returned by `listSupplies`.
+ *
+ * `name` and `unit` are OPTIONAL because this interface is a cast over raw
+ * Firestore document data, not a validation of it: nothing guarantees a doc
+ * carries either key, and a non-null declaration let a string method throw on
+ * undefined, which React's error boundary escalates from one bad row into a
+ * blank dashboard. Default at the point of use (`?? ''` or `lib/coerce.ts#str`).
+ *
+ * `onHand` and `par` stay plain numbers: the "low" rule is `onHand <= par`, and
+ * defaulting either to 0 would invent a stock level the document never stated.
+ */
 export interface SupplyRow {
   _id: string;
-  name: string;
+  name?: string | undefined;
   onHand: number;
   /** Reorder threshold: at or below this, the supply is "low". */
   par: number;
-  unit: string;
+  unit?: string | undefined;
 }
 
 /** The `listSupplies` response: the rows plus the server-computed low count. */

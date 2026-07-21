@@ -27,23 +27,37 @@ import { type CollectionSpec } from '../lib/firestore';
  * lightbox overlay, out of scope for a LIST/GRID port).
  */
 
+/**
+ * WHY EVERY DOCUMENT FIELD IS OPTIONAL: this interface is a CAST over raw
+ * Firestore data (`useCollection`'s `{ ...d.data(), _id: d.id } as T`), not a
+ * validation of it. Declaring `fileType: string` does not make the key exist;
+ * `media_files` is written client-side with no schema enforcement, and a live
+ * sandbox doc sampled 2026-07-20 (`test-kinfolk-001-media-1`) carries only
+ * `_id`/`kinfolkId`/`kinId`/`storageUrl`/`uploadedAt`/`isProfilePhoto` — no
+ * `fileType`, `description`, `originalFileName`, `thumbnailUrl` or `uploadedBy`
+ * at all. Reading one of those blind and calling `.trim()` throws, and React's
+ * error boundary turns that single row into a BLANK GALLERY PAGE. Optional here
+ * forces every reader to default at the point of use (`?? ''`, or `str()` from
+ * `lib/coerce`). `_id` stays required: `useCollection` always sets it.
+ * `durationSeconds` stays a required number on purpose — see its comment below.
+ */
 export interface MediaFile {
   _id: string;
   /** Household this media belongs to. Blank on a doc predating the association, or on operator-scoped media (see MediaModels.kt's kinfolkId comment). */
-  kinfolkId: string;
+  kinfolkId?: string | undefined;
   /** "IMAGE" | "VIDEO" | "DOCUMENT" | "AUDIO" free text: go through `lib/mediaFormat.ts`'s `mediaKindOf`, never switch on this directly (same discipline as InvoiceEntry.status). */
-  fileType: string;
+  fileType?: string | undefined;
   /** Cloudinary delivery URL for the original asset. */
-  storageUrl: string;
+  storageUrl?: string | undefined;
   /** Cloudinary thumbnail URL (a still frame for video). Preferred preview source when present. */
-  thumbnailUrl: string;
+  thumbnailUrl?: string | undefined;
   /** Client-set ISO-8601 instant string, NOT a Firestore Timestamp: confirmed against both writers (`java.time.Instant.now().toString()` on Android, `nowIso` on wasm). No real server timestamp exists on this collection to fall back on. */
-  uploadedAt: string;
+  uploadedAt?: string | undefined;
   /** Free-text uploader label. A placeholder "auntie" value is dropped by `mediaMetaLine`, never shown as a real author (mirrors the wasm's own `mediaMetaLine`). */
-  uploadedBy: string;
+  uploadedBy?: string | undefined;
   /** Operator-entered caption. Falls back to `originalFileName` when blank: never left empty (see `mediaCaption`). */
-  description: string;
-  originalFileName: string;
+  description?: string | undefined;
+  originalFileName?: string | undefined;
   /** True for the household's designated profile photo (spec 28 item 2). */
   isProfilePhoto: boolean;
   /** Video-only. 0/absent on every other type: `mediaDurationLabel` treats <=0 as "no duration to show", never fabricating "0:00". */

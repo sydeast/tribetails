@@ -143,11 +143,17 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
   // does not cross a function boundary (TS's own rule, `const` or not), so the
   // closures reference this alias rather than the narrowed-only `entry`.
   const booking = entry;
-  const state = bookingState({ status: booking.status });
+  // Every field defaulted AT THE READ. BookingEntry's fields are optional
+  // because the documents really are missing them (`serviceType` is absent on
+  // 76 of the 99 live sessions); tsc enforces this now rather than letting it
+  // become a white screen.
+  const state = bookingState({ status: booking.status ?? '' });
   const info = bookingStateInfo(state);
-  const displayName = booking.kinfolkName.trim() !== '' ? booking.kinfolkName : 'Unnamed Kinfolk';
+  const kinfolkName = booking.kinfolkName ?? '';
+  const displayName = kinfolkName.trim() !== '' ? kinfolkName : 'Unnamed Kinfolk';
   const when = bookingWhen(booking);
-  const noteText = booking.kinfolkNotes.trim() !== '' ? booking.kinfolkNotes : booking.notes;
+  const kinfolkNotes = booking.kinfolkNotes ?? '';
+  const noteText = kinfolkNotes.trim() !== '' ? kinfolkNotes : (booking.notes ?? '');
   const actions = actionsFor(state);
   const canReschedule = state === 'scheduled';
 
@@ -168,7 +174,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
 
   function openReschedule() {
     setError(null);
-    setStartTime(toDatetimeLocal(booking.startTime));
+    setStartTime(toDatetimeLocal(booking.startTime ?? ''));
     setEndTime('');
     setMode({ kind: 'reschedule' });
   }
@@ -307,7 +313,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
       <dl className="booking-actions__meta">
         <div>
           <dt>Service</dt>
-          <dd>{booking.serviceType.trim() !== '' ? booking.serviceType : 'Visit'}</dd>
+          <dd>{(booking.serviceType ?? '').trim() !== '' ? booking.serviceType : 'Visit'}</dd>
         </div>
         <div>
           <dt>When</dt>

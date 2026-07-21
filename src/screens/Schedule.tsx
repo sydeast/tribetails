@@ -22,6 +22,7 @@ import {
   sessionDayLabel,
 } from '../lib/sessionFormat';
 import { useCollection } from '../lib/firestore';
+import { str } from '../lib/coerce';
 import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint } from '../components/DenScreenKit';
@@ -149,7 +150,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
             const byDay = sessionsByLocalDay(sessions);
             const busyByDate = busyState.status === 'ready' ? groupBlockedSlotsByDate(busyState.data) : new Map<string, BusySlotEntry[]>();
             const legend = distinctServiceTypes(sessions);
-            const selectedSessions = (byDay.get(selected) ?? []).slice().sort((a, b) => a.startTime.localeCompare(b.startTime));
+            const selectedSessions = (byDay.get(selected) ?? []).slice().sort((a, b) => str(a.startTime).localeCompare(str(b.startTime)));
             const selectedBusy = busyByDate.get(selected) ?? [];
 
             return (
@@ -375,16 +376,21 @@ interface AgendaRowProps {
 }
 
 function AgendaRow({ entry, onSelect }: AgendaRowProps) {
-  const state = sessionState(entry.status);
+  // str() on every field read: `ScheduleSessionEntry` is a cast over the raw
+  // `kin_care_sessions` doc, and the absent-field fallbacks these helpers
+  // already carry ('unknown', 'Unnamed Kinfolk', 'Time TBD', 'visit') only get
+  // a chance to run if the undefined reaches them as '' instead of throwing.
+  // `serviceType` is genuinely absent on 76 of the 99 live sessions.
+  const state = sessionState(str(entry.status));
   const info = sessionStateInfo(state);
-  const household = sessionHousehold(entry.kinfolkName);
+  const household = sessionHousehold(str(entry.kinfolkName));
 
   const body = (
     <>
-      <span className="schedule__row-when">{sessionWindow(entry.startTime, entry.endTime)}</span>
+      <span className="schedule__row-when">{sessionWindow(str(entry.startTime), str(entry.endTime))}</span>
       <span className="schedule__row-who">
         <span className="schedule__row-name">{household}</span>
-        <ServicePill serviceType={entry.serviceType} />
+        <ServicePill serviceType={str(entry.serviceType)} />
       </span>
       <span className={`schedule__chip schedule__chip--${info.cssClass}`}>{info.chipLabel}</span>
     </>

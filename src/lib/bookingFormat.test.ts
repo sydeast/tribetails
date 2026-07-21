@@ -85,6 +85,40 @@ describe('parseFlexibleDate', () => {
     expect(parseFlexibleDate('   ')).toBeNull();
     expect(parseFlexibleDate('not a date')).toBeNull();
   });
+
+  // THE LIVE FORMAT. 83 of 92 kin_care_reports and 14 kin_care_session date
+  // strings are written this way, and `new Date()` rejects ALL of them, because
+  // the meridiem is lowercase and unspaced ("2:02pm", not "2:02 PM"). Every one
+  // of those rows rendered "Date TBD" while the data was sitting right there.
+  describe('the human-written format the migration actually produced', () => {
+    it.each([
+      'September 3, 2025 2:02pm',
+      'April 3, 2026 11:26pm',
+      'March 31, 2026 10:16am',
+      'August 6, 2025 6:38pm',
+    ])('parses %s', (raw) => {
+      expect(parseFlexibleDate(raw)).not.toBeNull();
+    });
+
+    it('reads the meridiem correctly rather than just accepting the string', () => {
+      expect(parseFlexibleDate('September 3, 2025 2:02pm')?.getHours()).toBe(14);
+      expect(parseFlexibleDate('March 31, 2026 10:16am')?.getHours()).toBe(10);
+      // 12am is midnight and 12pm is noon; the classic off-by-twelve.
+      expect(parseFlexibleDate('March 31, 2026 12:00am')?.getHours()).toBe(0);
+      expect(parseFlexibleDate('March 31, 2026 12:00pm')?.getHours()).toBe(12);
+    });
+
+    it('tolerates spacing and punctuation variants', () => {
+      expect(parseFlexibleDate('September 3, 2025 2:02 PM')?.getHours()).toBe(14);
+      expect(parseFlexibleDate('September 3, 2025 2:02 p.m.')?.getHours()).toBe(14);
+    });
+
+    it('still refuses a bare time with no date, rather than inventing today', () => {
+      // `departedAt: "6pm"` exists in kin_care_sessions. A date is NOT knowable
+      // from it, and guessing one would fabricate history on a care record.
+      expect(parseFlexibleDate('6pm')).toBeNull();
+    });
+  });
 });
 
 describe('formatLocalDateTime', () => {

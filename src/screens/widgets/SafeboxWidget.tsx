@@ -44,11 +44,13 @@ export function SafeboxWidget() {
           return (
             <div className="dash-widget">
               <div className="safebox__head">
-                <span className="safebox__who">{sessionHousehold(next.kinfolkName)}</span>
-                <ServicePill serviceType={next.serviceType} />
-                <span className="safebox__when">{sessionWindow(next.startTime, next.endTime)}</span>
+                <span className="safebox__who">{sessionHousehold(next.kinfolkName ?? '')}</span>
+                <ServicePill serviceType={next.serviceType ?? ''} />
+                <span className="safebox__when">
+                  {sessionWindow(next.startTime ?? '', next.endTime ?? '')}
+                </span>
               </div>
-              <SafeboxAccess kinfolkId={next.kinfolkId} />
+              <SafeboxAccess kinfolkId={next.kinfolkId ?? ''} />
             </div>
           );
         }}

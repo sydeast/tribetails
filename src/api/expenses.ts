@@ -18,15 +18,28 @@ export type ExpenseKind = 'gas' | 'parking' | 'supplies' | 'other';
 
 export const EXPENSE_KINDS: readonly ExpenseKind[] = ['gas', 'parking', 'supplies', 'other'];
 
-/** One `expenses/{id}` row as returned by `listExpenses`. */
+/**
+ * One `expenses/{id}` row as returned by `listExpenses`.
+ *
+ * The string fields are OPTIONAL because this interface is a cast over raw
+ * Firestore document data, not a validation of it: the callable hands back
+ * whatever the doc holds, and a legacy or seeded row simply has no `note` or no
+ * `occurredAt` key. Declaring them non-null let `.trim()` throw on undefined,
+ * which React's error boundary turns into a blank page over one bad row (the
+ * same failure that took down Invoices and Bookings on 2026-07-20). Default at
+ * the point of use instead, via `?? ''` or `lib/coerce.ts#str`.
+ *
+ * `amountCents` stays a plain number on purpose: defaulting an absent amount to
+ * 0 would assert a financial fact the document never made.
+ */
 export interface ExpenseRow {
   _id: string;
   /** One of ExpenseKind; free-text on the source doc, so typed loosely. */
-  kind: string;
+  kind?: string | undefined;
   amountCents: number;
-  note: string;
+  note?: string | undefined;
   /** Free-text ISO instant string, not a Timestamp. */
-  occurredAt: string;
+  occurredAt?: string | undefined;
 }
 
 /**

@@ -167,7 +167,11 @@ export function filterGalleryMedia<T extends GalleryRow>(all: T[], filter: Galle
       (filter.kinfolkId === null || str(m.kinfolkId).trim() === filter.kinfolkId.trim()) &&
       (filter.fileType === null ||
         str(m.fileType).trim().toUpperCase() === filter.fileType.trim().toUpperCase()) &&
-      (filter.monthPrefix === null || mediaLocalMonth(m.uploadedAt) === filter.monthPrefix),
+      // str(): `uploadedAt` is optional on MediaFile because a real doc can omit
+      // it (see api/gallery.ts). An absent instant reads as blank, which
+      // `mediaLocalMonth` already maps to null, so the row simply matches no
+      // month bucket rather than throwing partway through the filter.
+      (filter.monthPrefix === null || mediaLocalMonth(str(m.uploadedAt)) === filter.monthPrefix),
   );
 }
 
@@ -180,7 +184,7 @@ function cmp(a: string, b: string): number {
 export function galleryMonths(all: GalleryRow[]): string[] {
   const set = new Set<string>();
   for (const m of all) {
-    const prefix = mediaLocalMonth(m.uploadedAt);
+    const prefix = mediaLocalMonth(str(m.uploadedAt));
     if (prefix) set.add(prefix);
   }
   return [...set].sort((a, b) => cmp(b, a));

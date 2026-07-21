@@ -7,10 +7,13 @@
   box-sizing: border-box;
 }
 
+/* min-height, NOT height. A hard `height: 100%` pins the app to exactly one
+   viewport, and anything taller is then clipped by #root's overflow rather than
+   scrolled (2026-07-20: every screen was unreadable below the fold). */
 html,
 body,
 #root {
-  height: 100%;
+  min-height: 100%;
   margin: 0;
 }
 
@@ -25,7 +28,11 @@ body {
 #root {
   position: relative;
   isolation: isolate;
-  overflow: hidden;
+  /* NO `overflow: hidden` here. It was clipping every screen at one viewport
+     height, so half of Schedule / Bookings / Directory sat below the fold with
+     no way to scroll to it. It was only ever there to contain the decorative
+     orbs, and those are `position: fixed` (below), so they are already out of
+     document flow and cannot extend the scroll area. */
 }
 
 /* The two drifting Den orbs behind every screen. Purely decorative; the RootLayout

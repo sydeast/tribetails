@@ -113,11 +113,31 @@ interface KinTaleDetailBodyProps {
 type DetailBanner = { tone: 'error' | 'success'; text: string };
 
 function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
-  const state = kinTaleState(entry.status);
+  // Every read off `entry` is defaulted. KinTaleEntry is a CAST over raw
+  // Firestore data, not a validation of it: `title` is absent on 89 of the 92
+  // live kin_care_reports, and reading one blind throws through React's error
+  // boundary and blanks the whole detail screen over a single legacy row
+  // (2026-07-20). Same treatment KinTales.tsx already applies to its own rows.
+  const state = kinTaleState(entry.status ?? '');
   const info = kinTaleStateInfo(state);
-  const household = kinTaleHousehold(entry.kinfolkName);
-  const when = kinTaleWhen(entry);
-  const channel = entry.sentVia.trim() !== '' ? sentViaLabel(entry.sentVia) : null;
+  const household = kinTaleHousehold(entry.kinfolkName ?? '');
+  // kinTaleWhen takes all four date fields as required strings; hand it a
+  // fully-defaulted view rather than the raw entry.
+  const when = kinTaleWhen({
+    visitDate: entry.visitDate ?? '',
+    arrivedAt: entry.arrivedAt ?? '',
+    sentAt: entry.sentAt ?? '',
+    createdAt: entry.createdAt ?? '',
+  });
+  const serviceType = entry.serviceType ?? '';
+  const authorDisplayName = entry.authorDisplayName ?? '';
+  const title = entry.title ?? '';
+  const bodyCopy = entry.bodyCopy ?? '';
+  const kinIds = entry.kinIds ?? [];
+  const sentVia = entry.sentVia ?? '';
+  // Only a dispatched row carries a real channel; a draft's blank sentVia would
+  // otherwise read as sentViaLabel's misleading "imported" default.
+  const channel = sentVia.trim() !== '' ? sentViaLabel(sentVia) : null;
 
   // ── comments ─────────────────────────────────────────────────────────
   const [comments, setComments] = useState<Async<KinTaleComment[]>>({ status: 'loading' });
@@ -215,7 +235,8 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
 
   // ── media ────────────────────────────────────────────────────────────
   const [media, setMedia] = useState<Async<KinTaleMediaItem[]>>({ status: 'loading' });
-  const mediaCount = entry.mediaFileIds.length;
+  const mediaCount = (entry.mediaFileIds ?? []).length;
+  const kinfolkId = entry.kinfolkId ?? '';
 
   const loadMedia = useCallback(() => {
     // A report with no mediaFileIds genuinely has no photos, a known fact
@@ -227,7 +248,7 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
     }
     let live = true;
     setMedia({ status: 'loading' });
-    getMyKinTaleMedia(entry._id, entry.kinfolkId)
+    getMyKinTaleMedia(entry._id, kinfolkId)
       .then((data) => live && setMedia({ status: 'ready', data }))
       .catch(
         (err: unknown) =>
@@ -241,7 +262,7 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
     return () => {
       live = false;
     };
-  }, [entry._id, entry.kinfolkId, mediaCount]);
+  }, [entry._id, kinfolkId, mediaCount]);
   useEffect(() => loadMedia(), [loadMedia]);
 
   return (
@@ -253,17 +274,17 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
       >
         <div className="kintale-detail__tale-head">
           <span className="kintale-detail__household">{household}</span>
-          {entry.serviceType.trim() !== '' ? <ServicePill serviceType={entry.serviceType} /> : null}
+          {serviceType.trim() !== '' ? <ServicePill serviceType={serviceType} /> : null}
           <span className={`kintale-detail__chip kintale-detail__chip--${info.cssClass}`}>{info.chipLabel}</span>
         </div>
-        {(entry.authorDisplayName.trim() !== '' || channel) && (
+        {(authorDisplayName.trim() !== '' || channel) && (
           <p className="kintale-detail__meta-line">
-            {entry.authorDisplayName.trim() !== '' ? `by ${entry.authorDisplayName}` : null}
+            {authorDisplayName.trim() !== '' ? `by ${authorDisplayName}` : null}
             {channel ? ` · sent via ${channel}` : null}
           </p>
         )}
-        {entry.title.trim() !== '' && <h2 className="kintale-detail__title">{entry.title}</h2>}
-        <p className="kintale-detail__body">{entry.bodyCopy.trim() !== '' ? entry.bodyCopy : '(empty body)'}</p>
+        {title.trim() !== '' && <h2 className="kintale-detail__title">{title}</h2>}
+        <p className="kintale-detail__body">{bodyCopy.trim() !== '' ? bodyCopy : '(empty body)'}</p>
       </DenPanel>
 
       <DenPanel title="Who this covers" subtitle="Household, session, and kin this recap belongs to.">
@@ -279,7 +300,7 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
             </dd>
           </div>
         </dl>
-        {entry.kinIds.length > 0 ? (
+        {kinIds.length > 0 ? (
           <AsyncRegion
             state={kin}
             what="kin"
@@ -289,14 +310,20 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
           >
             {(kinData) => (
               <ul className="kintale-detail__kin-list">
-                {entry.kinIds.map((kinId) => {
+                {kinIds.map((kinId) => {
                   const found = kinData.find((k) => k._id === kinId);
+                  // `Kin` is the same kind of cast over raw document data as
+                  // KinTaleEntry: a resolved kin doc can still be missing
+                  // name/species, which must degrade to the existing
+                  // 'Unnamed kin' / no-species rendering, never throw.
+                  const foundName = found?.name ?? '';
+                  const foundSpecies = found?.species ?? '';
                   return (
                     <li key={kinId} className="kintale-detail__kin-chip">
                       {found ? (
                         <>
-                          {found.name.trim() !== '' ? found.name : 'Unnamed kin'}
-                          {found.species.trim() !== '' ? ` (${found.species})` : ''}
+                          {foundName.trim() !== '' ? foundName : 'Unnamed kin'}
+                          {foundSpecies.trim() !== '' ? ` (${foundSpecies})` : ''}
                         </>
                       ) : (
                         <code>{kinId}</code>

@@ -20,12 +20,21 @@ import type { Timestamp } from 'firebase/firestore';
  * `readAt` is cleared with `FieldValue.delete()` on unread (not blanked to
  * `''` as the wasm model's string field is), so on the wire it is simply
  * ABSENT, hence optional here rather than a blank-string sentinel.
+ *
+ * EVERY document-sourced field below is optional, including ones dispatcher.ts
+ * always writes today. This interface is a CAST over raw Firestore data, not a
+ * validation of it: nothing checks a document actually has `channels` before
+ * TypeScript promises `string[]`, and `.length` on an absent field throws,
+ * which React's error boundary turns into a blank Notifications page over one
+ * legacy or hand-seeded row. Read them through `str`/`arr` (lib/coerce) or a
+ * `??`/`||` fallback at the point of use. `_id` stays required, `useCollection`
+ * sets it from the document id, so it is never absent.
  */
 export interface NotificationEntry {
   _id: string;
-  key: string; // catalog key, e.g. 'kincare.booking.confirm'
-  category: string;
-  recipientUid: string;
+  key?: string | undefined; // catalog key, e.g. 'kincare.booking.confirm'
+  category?: string | undefined;
+  recipientUid?: string | undefined;
   actorUid?: string | null;
   // AO-28: human-renderable content written by dispatcher.ts (title = catalog
   // `label`, description = catalog `description`) + the resolved actor identity.
@@ -35,13 +44,13 @@ export interface NotificationEntry {
   description?: string;
   actorName?: string | null;
   actorPhotoUrl?: string | null;
-  status: string; // pending | dispatched
-  mode: string; // trigger | debounced | batched | scheduled
-  channels: string[];
-  createdAt: Timestamp | null;
+  status?: string | undefined; // pending | dispatched
+  mode?: string | undefined; // trigger | debounced | batched | scheduled
+  channels?: string[] | undefined;
+  createdAt?: Timestamp | null | undefined;
   readAt?: Timestamp;
-  targetType: string; // '' | 'booking' | 'invoice' | 'kintale' | 'kinfolk'
-  targetId: string;
+  targetType?: string | undefined; // '' | 'booking' | 'invoice' | 'kintale' | 'kinfolk'
+  targetId?: string | undefined;
   archivedAt?: Timestamp;
 }
 
