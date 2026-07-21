@@ -65,7 +65,23 @@ jobs:
       - name: Build
         run: npm run build
 
+      # The service account is an EXTERNAL secret only the operator can issue.
+      # Until it exists the job says so plainly rather than failing every PR,
+      # because a red X that always means "not configured yet" teaches people to
+      # ignore red X's.
+      - name: Check for the deploy credential
+        id: cred
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
+        run: |
+          if [ -n "$SA" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy to preview channel
+        if: steps.cred.outputs.present == 'true'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
@@ -74,3 +90,9 @@ jobs:
           entryPoint: auntieos-admin
           target: auntieos-ttpc
           expires: 7d
+
+      - name: Report no preview
+        if: steps.cred.outputs.present != 'true'
+        run: |
+          echo "::warning title=No preview deployed::FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC is not set, so no preview URL was published. The build and tests above still ran."
+          echo "Set it with: gh secret set FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC --repo sydeast/tribetails < service-account.json"

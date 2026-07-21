@@ -155,4 +155,31 @@ jobs:
       # release.
       - name: Write local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
-      - run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      # The Mapbox SDK comes from Mapbox's private Maven repo, which needs a
+      # downloads token. That is an EXTERNAL secret only the operator can issue,
+      # so the job reports honestly instead of failing every PR until it exists.
+      # A green "skipped" here means android was NOT tested, which is why it says
+      # so loudly rather than quietly passing.
+      - name: Check for Mapbox token
+        id: mapbox
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: |
+          if [ -n "$MAPBOX_DOWNLOADS_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Android unit tests
+        if: steps.mapbox.outputs.present == 'true'
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Report skipped
+        if: steps.mapbox.outputs.present != 'true'
+        run: |
+          echo "::warning title=Android tests skipped::MAPBOX_DOWNLOADS_TOKEN is not set, so the Mapbox SDK cannot be resolved and the android suite did NOT run."
+          echo "Set it with: gh secret set MAPBOX_DOWNLOADS_TOKEN --repo sydeast/tribetails"
