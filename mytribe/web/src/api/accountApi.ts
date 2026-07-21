@@ -165,7 +165,7 @@ export const AVATAR_ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp
 
 /** Returns a user-facing problem description, or null when the file is acceptable. */
 export function validateAvatarFile(file: { size: number; type: string }): string | null {
-  if (file.size === 0) return 'That file looks empty — pick a different photo.';
+  if (file.size === 0) return 'That file looks empty. Pick a different photo.';
   if (file.size > AVATAR_MAX_BYTES) return 'Photos need to be 2MB or smaller.';
   if (!AVATAR_ALLOWED_MIME_TYPES.includes(file.type.toLowerCase())) return 'Use a JPG, PNG, WebP, or GIF image.';
   return null;

@@ -49,7 +49,7 @@ fun NoTribesOnboarding(onMessageAuntie: () -> Unit = {}) {
                 )
                 Spacer(Modifier.height(KinfolkSpacing.xs))
                 Text(
-                    text = "We're so glad you're here. Your Auntie is putting the final touches on your Tribe — once you're set up, this is where you'll find live visits, KinTales, schedules, and everything that keeps your Kin happy.",
+                    text = "We're so glad you're here. Your Auntie is putting the final touches on your Tribe. Once you're set up, this is where you'll find live visits, KinTales, schedules, and everything that keeps your Kin happy.",
                     style = type.sansBody,
                     textAlign = TextAlign.Center,
                 )

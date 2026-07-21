@@ -204,7 +204,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
         ) : media.isError ? (
           <p className="sub">Couldn&rsquo;t load photos.</p>
         ) : (media.data?.media.length ?? 0) === 0 ? (
-          <p className="sub">Photos no longer available — they may have expired.</p>
+          <p className="sub">Photos no longer available. They may have expired.</p>
         ) : (
           <div className="grid">
             {media.data!.media.map((m, i) => (

@@ -241,7 +241,7 @@ fun ClaimInviteScreen(
                                     } catch (t: Throwable) {
                                         if (!signInMode && isEmailAlreadyInUse(t.message)) {
                                             signInMode = true
-                                            actionError = "You already have an account — enter your password to sign in."
+                                            actionError = "You already have an account. Enter your password to sign in."
                                         } else {
                                             actionError = t.message ?: "Could not continue. Try again."
                                         }

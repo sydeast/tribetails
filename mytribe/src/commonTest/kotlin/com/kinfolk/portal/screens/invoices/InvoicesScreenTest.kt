@@ -130,7 +130,7 @@ class InvoicesScreenTest {
             InvoicesScreen("The Foster", "3", PortalApi(fake))
         }
         waitForIdle()
-        onNodeWithText("Original card not on file — only Account Balance is available.").assertIsDisplayed()
+        onNodeWithText("Original card not on file. Only Account Balance is available.").assertIsDisplayed()
     }
 
     @Test

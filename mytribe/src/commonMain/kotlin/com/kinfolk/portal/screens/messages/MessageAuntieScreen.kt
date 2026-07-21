@@ -119,7 +119,7 @@ fun MessageAuntieScreen(
                     Text("Outside messaging hours", style = type.sansMeta, color = KinfolkBrand.KinfolkOrange)
                     Text(
                         text = chat.awayMessage.ifBlank {
-                            "We're outside messaging hours. You can still write — your Auntie will reply when she's back."
+                            "We're outside messaging hours. You can still write. Your Auntie will reply when she's back."
                         },
                         style = type.sansBody,
                     )

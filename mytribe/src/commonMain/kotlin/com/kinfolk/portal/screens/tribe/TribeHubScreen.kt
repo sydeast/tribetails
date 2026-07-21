@@ -99,7 +99,7 @@ fun TribeHubScreen(
             when {
                 kinFailed -> Text("Couldn't load your Kin right now.", style = type.sansBody.copy(color = KinfolkBrand.NavyMuted))
                 kin == null -> Box(Modifier.fillMaxWidth().padding(KinfolkSpacing.m), contentAlignment = Alignment.Center) { KinSpinner() }
-                kin!!.isEmpty() -> Text("No Kin yet — add your pets from Manage.", style = type.sansBody.copy(color = KinfolkBrand.NavyMuted))
+                kin!!.isEmpty() -> Text("No Kin yet. Add your pets from Manage.", style = type.sansBody.copy(color = KinfolkBrand.NavyMuted))
                 else -> LazyRow(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.m)) {
                     items(kin!!) { k -> KinTile(k, onOpenKinDetail) }
                 }
@@ -145,7 +145,7 @@ fun TribeHubScreen(
                     p.profile.customFields.firstOrNull { it.key == "vetClinicName" && it.value.isNotBlank() }?.let { add("Vet: ${it.value}") }
                 }
                 if (facts.isEmpty()) {
-                    Text("No home details yet — add gate codes, key location, and your vet.", style = type.sansBody.copy(color = KinfolkBrand.NavyMuted))
+                    Text("No home details yet. Add gate codes, key location, and your vet.", style = type.sansBody.copy(color = KinfolkBrand.NavyMuted))
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
                         facts.forEach { Text("• $it", style = type.sansBody) }

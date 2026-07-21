@@ -261,7 +261,7 @@ private fun KinTaleCard(
                 IconButton(onClick = { showShareModal = true }) {
                     Icon(
                         imageVector = Icons.Outlined.IosShare,
-                        contentDescription = if (tale.shared) "Share — already shared" else "Share",
+                        contentDescription = if (tale.shared) "Share (already shared)" else "Share",
                         tint = if (tale.shared) KinfolkBrand.KinTeal else KinfolkBrand.NavyMuted,
                     )
                 }
@@ -296,7 +296,7 @@ private fun KinTaleCard(
                             contentAlignment = Alignment.CenterStart,
                         ) { KinSpinner(size = 20.dp) }
                         media!!.isEmpty() -> Text(
-                            text = "Photos no longer available — they may have expired.",
+                            text = "Photos no longer available. They may have expired.",
                             style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
                         )
                         else -> Row(

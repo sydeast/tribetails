@@ -96,7 +96,7 @@ function uploadToCloudinary(
       onProgress(e.lengthComputable ? Math.round((e.loaded / e.total) * 100) : null);
     };
 
-    xhr.onerror = () => reject(new Error('Network error — check your connection and try again.'));
+    xhr.onerror = () => reject(new Error('Network error. Check your connection and try again.'));
 
     xhr.onload = () => {
       type CloudinaryResponseBody = { secure_url?: string; error?: { message?: string } };

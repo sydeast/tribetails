@@ -80,7 +80,7 @@ export function TribeHub() {
             {kin.isLoading ? (
               <p className="sub">Loading your kin…</p>
             ) : roster.length === 0 ? (
-              <p className="sub">No Kin yet — add your pets from Manage.</p>
+              <p className="sub">No Kin yet. Add your pets from Manage.</p>
             ) : (
               roster.map((k, i) => (
                 <Link className={`kinrow ${KIN_VARIANTS[i % KIN_VARIANTS.length]}`} to="/kin/$kinId" params={{ kinId: k.id }} key={k.id}>
@@ -146,7 +146,7 @@ export function TribeHub() {
             ) : profile.isError ? (
               <p className="sub">Home details unavailable right now.</p>
             ) : homeFacts.length === 0 ? (
-              <p className="sub">No home details yet — add gate codes, key location, and your vet.</p>
+              <p className="sub">No home details yet. Add gate codes, key location, and your vet.</p>
             ) : (
               <ul className="homefacts">
                 {homeFacts.map((f) => (

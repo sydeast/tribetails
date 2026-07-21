@@ -113,7 +113,7 @@ fun NotificationSettingsScreen(
             }
             is CatalogState.Failure -> {
                 dynamicCategories = null
-                catalogWarning = "Showing cached preference menu — ${s.message}"
+                catalogWarning = "Showing cached preference menu. ${s.message}"
             }
             CatalogState.Loading -> { /* impossible: load() returns terminal state */ }
         }

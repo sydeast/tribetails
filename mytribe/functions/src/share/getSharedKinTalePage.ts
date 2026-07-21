@@ -412,7 +412,7 @@ function renderPasscodeGatePage(opts: { wrongPasscode: boolean }): string {
         </div>
       </div>
     </section>`;
-  return renderDocument({ title: 'Passcode required — MyTribe', metaTags: genericMetaTags(), bodyHtml });
+  return renderDocument({ title: 'Passcode required | MyTribe', metaTags: genericMetaTags(), bodyHtml });
 }
 
 // ── NotFound / Expired / Revoked ─────────────────────────────────────────

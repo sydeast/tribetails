@@ -400,7 +400,7 @@ private fun CreditEntry(
             )
             if (invoice.originalPaymentIntentId.isNullOrBlank()) {
                 Text(
-                    "Original card not on file — only Account Balance is available.",
+                    "Original card not on file. Only Account Balance is available.",
                     style = type.sansMeta,
                 )
             }

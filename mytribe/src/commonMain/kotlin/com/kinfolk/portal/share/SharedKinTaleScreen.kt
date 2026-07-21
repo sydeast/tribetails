@@ -359,7 +359,7 @@ private fun GuestCommentForm(shareToken: String, taleId: String, fetcher: ShareL
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(
-                "Protected by reCAPTCHA. Your email is hashed server-side — never stored in plain text.",
+                "Protected by reCAPTCHA. Your email is hashed server-side, never stored in plain text.",
                 style = type.sansMeta.copy(color = c.navyMuted),
             )
         }
