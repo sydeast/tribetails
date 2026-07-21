@@ -1,5 +1,20 @@
 {
   "projects": {
     "default": "auntieos-ttpc"
+  },
+  "targets": {
+    "auntieos-ttpc": {
+      "hosting": {
+        "app": [
+          "auntieos-ttpc"
+        ],
+        "sotu": [
+          "auntieos"
+        ],
+        "legacy-wasm": [
+          "auntieos-admin"
+        ]
+      }
+    }
   }
 }

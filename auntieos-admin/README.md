@@ -56,6 +56,37 @@ Do not pipe gradle to `tail`. It masks the exit code, and a failing build then
 reports success. `scripts/loud-build.sh` preserves the code and prints a
 heartbeat.
 
+## Deploying, and why the site names read backwards
+
+Deploy by TARGET, never by site id:
+
+```
+firebase deploy --only hosting:app          # the React admin (auntie.tribetails.com)
+firebase deploy --only hosting:sotu         # the SOTU status page
+firebase deploy --only hosting:legacy-wasm  # the superseded wasm build
+firebase deploy --only functions:default:<name>
+```
+
+The targets exist because the Firebase site ids do not mean what they say. All
+four sites live on one project, `auntieos-ttpc`:
+
+| Site id | Actually serves |
+|---|---|
+| `auntieos` | the SOTU status page, NOT this app |
+| `auntieos-ttpc` | the AuntieOS admin, this app |
+| `auntieos-admin` | the superseded wasm build, NOT this app |
+| `kinfolk-portal` | MyTribe |
+
+So `auntieos` is not AuntieOS and `auntieos-admin` is not the admin. Firebase
+Hosting site ids cannot be renamed: fixing the names for real means creating new
+sites, deleting the old ones (deleted ids are reserved for a while, so it can
+simply be refused), and re-pointing `auntie.tribetails.com`, which is DNS plus
+SSL re-provisioning with a downtime window. Targets buy the readable names for
+none of that risk.
+
+Deploy commands and CI both use targets, so nobody has to hold the mapping in
+their head. If you find yourself typing a raw site id, that is the bug.
+
 ## Visual regression
 
 ```

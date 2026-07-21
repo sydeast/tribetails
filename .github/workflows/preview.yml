@@ -88,7 +88,11 @@ jobs:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
           projectId: auntieos-ttpc
           entryPoint: auntieos-admin
-          target: auntieos-ttpc
+          # The hosting TARGET, not the site id. "app" resolves to the
+          # auntieos-ttpc site via auntieos-admin/.firebaserc. Naming the target
+          # is the point: the site called "auntieos" is the SOTU status page, not
+          # this app, so site ids read backwards to anyone who has not been told.
+          target: app
           expires: 7d
 
       - name: Report no preview
