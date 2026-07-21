@@ -1,0 +1,158 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ['**']
+  workflow_dispatch:
+
+# A second push to the same PR cancels the first run rather than queueing it.
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      admin: ${{ steps.filter.outputs.admin }}
+      functions: ${{ steps.filter.outputs.functions }}
+      kotlin: ${{ steps.filter.outputs.kotlin }}
+      android: ${{ steps.filter.outputs.android }}
+      mytribe: ${{ steps.filter.outputs.mytribe }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            admin:
+              - 'auntieos-admin/src/**'
+              - 'auntieos-admin/package.json'
+              - 'auntieos-admin/package-lock.json'
+              - 'auntieos-admin/tsconfig.json'
+              - 'auntieos-admin/vite.config.ts'
+              - 'auntieos-admin/vitest.config.ts'
+              - '.github/workflows/ci.yml'
+            functions:
+              - 'auntieos-admin/web/functions/**'
+              - '.github/workflows/ci.yml'
+            kotlin:
+              - 'auntieos-admin/web/composeApp/**'
+              - 'auntieos-admin/web/*.gradle.kts'
+              - 'auntieos-admin/web/gradle/**'
+            android:
+              - 'auntieos-admin/android/**'
+            mytribe:
+              - 'mytribe/functions/**'
+
+  admin:
+    name: React admin
+    needs: changes
+    if: needs.changes.outputs.admin == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: auntieos-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: auntieos-admin/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Tests
+        run: npm test
+      - name: Production build
+        run: npm run build
+
+  functions:
+    name: AuntieOS functions
+    needs: changes
+    if: needs.changes.outputs.functions == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: auntieos-admin/web/functions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      # The generate tests read the brand-voice corpus from web/functions/voice/,
+      # which is gitignored on purpose (it carries per-client material). Those
+      # specific tests are skipped in CI rather than shipping the corpus to a
+      # runner. Everything else, including the whole rate limiter and the rules
+      # mirror, runs normally.
+      - name: Tests
+        run: npm test
+
+  mytribe-functions:
+    name: MyTribe functions
+    needs: changes
+    if: needs.changes.outputs.mytribe == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mytribe/functions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mytribe/functions/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  kotlin:
+    name: Shared + desktop (jvm)
+    needs: changes
+    if: needs.changes.outputs.kotlin == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: auntieos-admin/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      # NOTE: jvmTest rewrites tracked golden PNGs under visual/desktop/. That is
+      # harmless on a runner (the checkout is thrown away) but it is the reason
+      # this job must never commit or push anything.
+      - run: ./gradlew :composeApp:jvmTest --no-daemon
+
+  android:
+    name: Android unit tests
+    needs: changes
+    if: needs.changes.outputs.android == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: auntieos-admin/android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      # local.properties is gitignored (it holds the keystore and SDK paths), so
+      # CI writes the one line the SDK needs. Release signing is NOT available
+      # here, which is why this runs the debug unit tests and never assembles a
+      # release.
+      - name: Write local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+      - run: ./gradlew :app:testDebugUnitTest --no-daemon

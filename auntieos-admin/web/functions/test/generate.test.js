@@ -8,7 +8,20 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 const gen = require('../generate.js');
+// The brand-voice corpus (web/functions/voice/) is gitignored on purpose: it
+// carries per-client material and must not reach a CI runner. Every test that
+// builds a real prompt needs it, so those blocks SKIP when it is absent rather
+// than failing and training everyone to ignore a red suite. Locally the corpus
+// is present and they all run, which is where they earn their keep.
+const VOICE_PRESENT = fs.existsSync(
+  path.join(__dirname, '..', 'voice', '01_Voice_Bible.md'),
+);
+const needsVoice = VOICE_PRESENT
+  ? {}
+  : { skip: 'brand-voice corpus not present (gitignored; expected on CI)' };
 
 // ---- tiny in-memory Firestore double -------------------------------------
 // Supports: collection(name).get(), .doc(id).get(), .doc().set(),
@@ -90,7 +103,7 @@ function fakeAnthropic(text, { fail = false } = {}) {
 
 const VALID = { communication_type: 'visit_report', recipient: 'Dana', raw_notes: 'fed Nova and Otis, cleaned boxes' };
 
-describe('voice source', () => {
+describe('voice source', needsVoice, () => {
   it('loads the Voice Bible + exemplars, not the v1 rules', () => {
     const src = gen.loadVoiceSource();
     assert.ok(src.includes('NO formula'));
@@ -100,7 +113,7 @@ describe('voice source', () => {
   });
 });
 
-describe('system prompt', () => {
+describe('system prompt', needsVoice, () => {
   it('embeds framing + voice and marks the block cacheable', () => {
     const blocks = gen.buildSystemPrompt(gen.loadVoiceSource());
     assert.strictEqual(blocks.length, 1);
@@ -402,7 +415,7 @@ describe('buildUserMessage without a Kinfolk', () => {
   });
 });
 
-describe('runGenerate', () => {
+describe('runGenerate', needsVoice, () => {
   it('generates a recipient-less blog post end to end (was a hard 400)', async () => {
     const db = fullDb();
     const out = await gen.runGenerate(

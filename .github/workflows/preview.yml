@@ -1,0 +1,76 @@
+name: PR preview
+
+# Deploys the React admin to a Firebase Hosting PREVIEW CHANNEL and comments the
+# URL on the pull request, so a change can be looked at before it merges.
+#
+# Why Firebase preview channels and not Vercel: the app depends on Hosting
+# rewrites that map /api/generate, /api/send-message and
+# /api/cloudinary/sign-upload onto Cloud Functions (auntieos-admin/firebase.json).
+# A Vercel preview would not carry those rewrites, so Ask Auntie, broadcast send
+# and media upload would all be broken in every preview, which is exactly the
+# kind of change most worth previewing. A preview channel is the same platform
+# as production, so what you look at behaves like the real thing.
+#
+# The channel is per pull request and expires on its own, so old previews do not
+# pile up against the site's channel limit.
+
+on:
+  pull_request:
+    branches: ['**']
+    paths:
+      - 'auntieos-admin/src/**'
+      - 'auntieos-admin/index.html'
+      - 'auntieos-admin/package.json'
+      - 'auntieos-admin/package-lock.json'
+      - 'auntieos-admin/vite.config.ts'
+      - 'auntieos-admin/firebase.json'
+      - '.github/workflows/preview.yml'
+
+concurrency:
+  group: preview-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Deploy preview channel
+    runs-on: ubuntu-latest
+    # `pull_request` (not pull_request_target) on purpose: a fork PR then runs
+    # WITHOUT access to the service account, so untrusted code can never reach
+    # the deploy credential. Same-repo branches get the secret and deploy.
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+    defaults:
+      run:
+        working-directory: auntieos-admin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: auntieos-admin/package-lock.json
+
+      - run: npm ci
+
+      # Do not preview something that does not compile or whose tests fail.
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to preview channel
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
+          projectId: auntieos-ttpc
+          entryPoint: auntieos-admin
+          target: auntieos-ttpc
+          expires: 7d
