@@ -25,29 +25,37 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// Machine-local sibling repo. Override with MYTRIBE_ROOT if the tree moves.
-const MYTRIBE_ROOT =
-  process.env.MYTRIBE_ROOT || '/Users/sydeast/Projects/testai/CascadeProjects/MyTribe';
+// MyTribe lives IN this repo now (monorepo prefix `mytribe/`), so the source of
+// truth is a relative path that always resolves, including on CI.
+//
+// It used to point at a machine-local sibling checkout. When that tree was
+// archived on 2026-07-21 this test did not fail, it SKIPPED, reporting
+// "Rules-drift is UNCHECKED" into a green run. A guard that quietly stops
+// guarding is worse than no guard, because the green suite says otherwise.
+const MONOREPO_SOURCE = path.resolve(__dirname, '..', '..', '..', '..', 'mytribe', 'firestore.rules');
+
+// Escape hatch for a checkout where the prefix genuinely is not present.
+const SOURCE = process.env.MYTRIBE_ROOT
+  ? path.join(process.env.MYTRIBE_ROOT, 'firestore.rules')
+  : MONOREPO_SOURCE;
 
 const MIRROR = path.resolve(__dirname, '..', '..', 'firestore.rules');
-const SOURCE = path.join(MYTRIBE_ROOT, 'firestore.rules');
 
 describe('firestore.rules mirror (shared project auntieos-ttpc)', () => {
   it('the AuntieOS mirror exists', () => {
     assert.ok(fs.existsSync(MIRROR), `missing mirror: ${MIRROR}`);
   });
 
-  it('is byte-identical to MyTribe/firestore.rules (the source of truth)', (t) => {
-    if (!fs.existsSync(SOURCE)) {
-      // Not a failure: the MyTribe tree is a separate repo and may not be
-      // checked out here (e.g. CI). Skipping loudly beats failing spuriously,
-      // and beats passing silently.
-      t.skip(
-        `MyTribe tree not found at ${SOURCE}. Rules-drift is UNCHECKED in this ` +
-          `run. Set MYTRIBE_ROOT to enable.`,
-      );
-      return;
-    }
+  it('is byte-identical to MyTribe/firestore.rules (the source of truth)', () => {
+    // FAILS rather than skips when the source is missing. Both trees are in this
+    // repo, so an absent source means the checkout is broken or the layout moved,
+    // and either way the drift guard is not running. That must be loud.
+    assert.ok(
+      fs.existsSync(SOURCE),
+      `rules source not found at ${SOURCE}. The drift guard cannot run, so this ` +
+        `fails instead of skipping. If the layout moved, fix the path here; to ` +
+        `point at a checkout elsewhere, set MYTRIBE_ROOT.`,
+    );
 
     const mirror = fs.readFileSync(MIRROR, 'utf8');
     const source = fs.readFileSync(SOURCE, 'utf8');
