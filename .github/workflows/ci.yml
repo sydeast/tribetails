@@ -27,6 +27,7 @@ jobs:
       mytribe: ${{ steps.filter.outputs.mytribe }}
       portal: ${{ steps.filter.outputs.portal }}
       mytribeGradle: ${{ steps.filter.outputs.mytribeGradle }}
+      scripts: ${{ steps.filter.outputs.scripts }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -60,6 +61,9 @@ jobs:
               - 'mytribe/settings.gradle.kts'
               - 'mytribe/src/**'
               - 'mytribe/gradle/**'
+              - '.github/workflows/ci.yml'
+            scripts:
+              - 'scripts/**'
               - '.github/workflows/ci.yml'
 
   admin:
@@ -147,6 +151,20 @@ jobs:
       - name: Production build
         run: npm run build
 
+  deploy-guard:
+    name: Deploy guard
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the deploy-guard test if present
+        run: |
+          if [ -f scripts/safe-deploy.test.sh ]; then
+            bash scripts/safe-deploy.test.sh
+          else
+            echo "scripts/safe-deploy.test.sh not present yet, skipping."
+          fi
   mytribe-gradle:
     name: Portal shared (jvm)
     needs: changes
