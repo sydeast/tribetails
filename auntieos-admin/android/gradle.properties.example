@@ -15,10 +15,19 @@
 #
 # The RUNTIME token is a different, PUBLIC one (MAPBOX_ACCESS_TOKEN) and never
 # belongs in this file. Today it is used server-side by the Cloud Functions for
-# search, geocoding and route optimization. It will also be used in the BROWSER
-# once the live KinCare tracking map ships to kinfolk, so restrict it by URL
-# (kinfolk.tribetails.com, auntie.tribetails.com, localhost, and *.web.app for
-# Firebase preview channels) rather than leaving it unbound.
+# search, geocoding and route optimization. It reaches the BROWSER once the live
+# KinCare tracking map ships to kinfolk, so it should carry URL restrictions:
+#
+#   kinfolk.tribetails.com
+#   auntie.tribetails.com
+#   localhost
+#
+# Mapbox URL restrictions do NOT support wildcards, and they cannot be applied to
+# an account's DEFAULT public token, so this has to be a purpose-made token with
+# each origin listed exactly (100 max). Firebase preview channel URLs are
+# generated per channel, so they cannot be pre-registered and the live map will
+# not render in a preview. That is the accepted tradeoff; the KinTale route map
+# avoids it entirely by being rendered server-side to a PNG.
 MAPBOX_DOWNLOADS_TOKEN=sk.REPLACE_ME
 
 
