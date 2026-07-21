@@ -16,17 +16,28 @@ import { type CollectionSpec } from '../lib/firestore';
  * missing fields as absent: `lib/dashboardInsights.ts#careFlags` reads
  * `reactive` as `=== true` and the two note fields with a blank fallback,
  * never trusting them to be present.
+ *
+ * Which is why EVERY document field below is optional. This interface is a CAST
+ * over raw Firestore data, not a validation of it (contrast `api/kinView.ts`,
+ * which runs `mergeKinDetail` and so can honestly promise non-optional fields).
+ * Declaring `name: string` for a `kin` doc that has no `name` is a lie tsc will
+ * happily typecheck, and the first `.trim()` on it throws inside render, which
+ * React's error boundary turns into a BLANK PAGE over one legacy row. Marking
+ * them optional forces each read to default at the point of use (`lib/coerce.ts`).
+ * `_id` stays required: `useCollection` always sets it from the doc id.
  */
 export interface KinCareRow {
   _id: string;
-  kinfolkId: string;
-  name: string;
+  /** Owning household doc id. May be absent on a legacy/partial mirror doc. */
+  kinfolkId?: string | undefined;
+  /** The pet's name. May be absent; consumers fall back to a blank name. */
+  name?: string | undefined;
   /** True when the pet is flagged reactive. May be absent on a legacy doc. */
-  reactive?: boolean;
+  reactive?: boolean | undefined;
   /** Free-text health/medication notes. May be absent/blank. */
-  medicationHealthNotes?: string;
+  medicationHealthNotes?: string | undefined;
   /** Free-text feeding brand. May be absent/blank. */
-  feedingBrand?: string;
+  feedingBrand?: string | undefined;
 }
 
 /**

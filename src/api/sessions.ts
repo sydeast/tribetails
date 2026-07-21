@@ -38,34 +38,46 @@ import { type CollectionSpec } from '../lib/firestore';
  * "subset type, not a blind mirror" convention), `kinIds`/`gpsSummary`/
  * `formValues`/etc. belong to the not-yet-built detail/edit screen, not this
  * list.
+ *
+ * EVERY DOCUMENT FIELD IS OPTIONAL, and that is not pessimism, it is the shape
+ * of the data. This interface is a CAST over whatever `useCollection` hands back
+ * from Firestore, never a validation of it: nothing checks a doc against it at
+ * runtime, so declaring `status: string` only promises a key the document may
+ * simply not have. Verified live on 2026-07-20: `serviceType` is absent on 76 of
+ * 99 `kin_care_sessions` docs. Under the old non-optional types tsc raised no
+ * objection to `entry.status.trim()`, which then threw on those rows and let
+ * React's error boundary blank the ENTIRE screen over one legacy doc. Optional
+ * here forces every read site to state its fallback, so a missing field costs
+ * that one field, not the page. `_id` stays required: `useCollection` always
+ * sets it from the doc id, so it is the one field not read off the document.
  */
 export interface SessionEntry {
   _id: string;
-  kinfolkId: string;
-  kinfolkName: string;
+  kinfolkId?: string | undefined;
+  kinfolkName?: string | undefined;
   /**
    * Pets/kin this visit covers (`KinCareSession.kinIds`, `FirestoreClient.kt:1932`).
    * The list itself never reads it; it exists here for the not-yet-built compose
    * screen (`KinTaleCompose.tsx`), which needs it to scaffold a new KinTale draft's
    * own `kinIds`, mirroring the wasm's `scaffoldReport(session, template)`.
    */
-  kinIds: string[];
-  serviceType: string;
+  kinIds?: string[] | undefined;
+  serviceType?: string | undefined;
   /** Free-text ISO instant string, not a Timestamp, see `lib/sessionFormat.ts#sessionTimeOf`. */
-  startTime: string;
+  startTime?: string | undefined;
   /**
    * Free-text ISO instant, same caveat as `startTime`. Needed by the not-yet-built
    * compose screen (`KinTaleCompose.tsx`) to seed a new KinTale draft's `arrivedAt`,
    * mirroring the wasm's `scaffoldReport`. Blank until the visit is ARRIVED.
    */
-  arrivedAt: string;
+  arrivedAt?: string | undefined;
   /** Same caveat as `startTime`. */
-  endTime: string;
+  endTime?: string | undefined;
   /** Free-text; SCHEDULED/ON_MY_WAY/ARRIVED/DEPARTED/COMPLETED/CANCELLED are the only codes any writer sets, see `lib/sessionFormat.ts#sessionState`. */
-  status: string;
+  status?: string | undefined;
   /** '' until COMPLETED; stamped by the admin's `patchKinCare` write. Same free-text caveat as `startTime`. */
-  completedAt: string;
-  notes: string;
+  completedAt?: string | undefined;
+  notes?: string | undefined;
 }
 
 /**

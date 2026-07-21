@@ -43,7 +43,7 @@ export function CareFlagsWidget() {
     const kinById = new Map<string, KinCareInfo>();
     for (const k of kin.data) {
       kinById.set(k._id, {
-        name: k.name,
+        name: k.name ?? '',
         reactive: k.reactive === true,
         medicationHealthNotes: k.medicationHealthNotes ?? '',
         feedingBrand: k.feedingBrand ?? '',

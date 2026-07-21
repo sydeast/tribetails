@@ -1,4 +1,5 @@
 import { sessionDayKey, sessionDayLabel, groupSessionsByDay, localDateIso } from './sessionFormat';
+import { str } from './coerce';
 
 /**
  * Pure Schedule ("The Den · Schedule", `lib/nav.ts` slug `schedule`)
@@ -187,7 +188,7 @@ export function shiftRange(iso: string, view: ScheduleViewMode, direction: 1 | -
  * `groupSessionsByDay`'s already-chronologically-sorted-per-day output rather
  * than re-sorting here.
  */
-export function sessionsByLocalDay<T extends { startTime: string }>(rows: T[]): Map<string, T[]> {
+export function sessionsByLocalDay<T extends { startTime?: string | undefined }>(rows: T[]): Map<string, T[]> {
   return new Map(groupSessionsByDay(rows).map((g) => [g.dayKeyValue, g.rows]));
 }
 
@@ -212,16 +213,22 @@ export { sessionDayKey, sessionDayLabel, localDateIso };
  */
 export type BusySlotKind = 'blocked' | 'unknown';
 
-export function busySlotKind(slotType: string): BusySlotKind {
-  return (slotType ?? '').trim().toUpperCase() === 'BLOCKED' ? 'blocked' : 'unknown';
+export function busySlotKind(slotType: string | undefined): BusySlotKind {
+  return str(slotType).trim().toUpperCase() === 'BLOCKED' ? 'blocked' : 'unknown';
 }
 
-/** Minimal shape this module needs from a `booking_time_slots` doc. */
+/**
+ * Minimal shape this module needs from a `booking_time_slots` doc. Every field
+ * is optional for the same reason `BusySlotEntry`'s are (see `api/schedule.ts`):
+ * the caller's type is a cast over raw Firestore data, so a doc genuinely
+ * missing `slotType` or `startTime` must reach these helpers as `undefined`
+ * rather than being typed into existence and blowing up mid-render.
+ */
 export interface BusySlotLike {
-  date: string;
-  startTime: string;
-  endTime: string;
-  slotType: string;
+  date?: string | undefined;
+  startTime?: string | undefined;
+  endTime?: string | undefined;
+  slotType?: string | undefined;
 }
 
 /**
@@ -250,12 +257,15 @@ export function groupBlockedSlotsByDate<T extends BusySlotLike>(slots: T[]): Map
   const map = new Map<string, T[]>();
   for (const slot of slots) {
     if (busySlotKind(slot.slotType) !== 'blocked') continue;
-    if (slot.date.trim() === '') continue;
-    const existing = map.get(slot.date);
+    const dateKey = str(slot.date);
+    // A slot with no usable `date` has no day to hang off in the calendar at
+    // all, so it is dropped rather than grouped under a fabricated key.
+    if (dateKey.trim() === '') continue;
+    const existing = map.get(dateKey);
     if (existing) existing.push(slot);
-    else map.set(slot.date, [slot]);
+    else map.set(dateKey, [slot]);
   }
-  for (const rows of map.values()) rows.sort((a, b) => a.startTime.localeCompare(b.startTime));
+  for (const rows of map.values()) rows.sort((a, b) => str(a.startTime).localeCompare(str(b.startTime)));
   return map;
 }
 
@@ -267,9 +277,10 @@ export function isValidHHmm(hhmm: string): boolean {
 }
 
 /** "14:30" → "2:30 PM", or `null` when unparseable (never a fabricated time). */
-export function formatHHmm12h(hhmm: string): string | null {
-  if (!isValidHHmm(hhmm)) return null;
-  const [hStr, mStr] = hhmm.split(':');
+export function formatHHmm12h(hhmm: string | undefined): string | null {
+  const raw = str(hhmm);
+  if (!isValidHHmm(raw)) return null;
+  const [hStr, mStr] = raw.split(':');
   const hour = Number(hStr);
   const minute = mStr ?? '00';
   const ampm = hour >= 12 ? 'PM' : 'AM';
@@ -282,7 +293,7 @@ export function formatHHmm12h(hhmm: string): string | null {
  * consistency: "Time TBD" only when BOTH ends are unparseable, one valid end
  * shows on its own rather than collapsing the whole row to "TBD".
  */
-export function busyWindowLabel(startHHmm: string, endHHmm: string): string {
+export function busyWindowLabel(startHHmm: string | undefined, endHHmm: string | undefined): string {
   const start = formatHHmm12h(startHHmm);
   const end = formatHHmm12h(endHHmm);
   if (!start && !end) return 'Time TBD';
@@ -304,10 +315,13 @@ export function busyWindowLabel(startHHmm: string, endHHmm: string): string {
  * the types that actually appear is an honest, if less rich, substitute:
  * flagged in the port report, not silently dropped.
  */
-export function distinctServiceTypes<T extends { serviceType: string }>(rows: T[]): string[] {
+export function distinctServiceTypes<T extends { serviceType?: string | undefined }>(rows: T[]): string[] {
   const set = new Set<string>();
   for (const row of rows) {
-    const type = row.serviceType.trim();
+    // str(): `serviceType` is ABSENT on 76 of the 99 live kin_care_sessions.
+    // Reading it blind crashed the whole Schedule page for the operator, while
+    // the sandbox's handful of sessions all happened to have it (2026-07-20).
+    const type = str(row.serviceType).trim();
     if (type !== '') set.add(type);
   }
   return Array.from(set).sort((a, b) => a.localeCompare(b));

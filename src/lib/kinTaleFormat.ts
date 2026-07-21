@@ -1,5 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
 import { dayKey, formatWhen, type FsTime } from './time';
+import { str } from './coerce';
+import { parseFlexibleDate } from './bookingFormat';
 
 /**
  * Pure KinTales ("the recap that goes home to a Kinfolk after care") list
@@ -42,10 +44,15 @@ import { dayKey, formatWhen, type FsTime } from './time';
  * never fabricate a date" contract `sessionFormat.ts#sessionTimeOf` uses.
  */
 export function kinTaleTimeOf(iso: string): FsTime {
-  const trimmed = iso.trim();
+  const trimmed = str(iso).trim();
   if (trimmed === '') return null;
-  const d = new Date(trimmed);
-  if (Number.isNaN(d.getTime())) return null;
+  // parseFlexibleDate, NOT a bare `new Date()`. These fields are free text and
+  // 83 of the 92 live reports store "September 3, 2025 2:02pm", which
+  // `new Date()` rejects, so every one of them rendered "Date TBD" with the
+  // real date sitting in the document. Shared with Bookings, which had the same
+  // latent bug on 14 session timestamps.
+  const d = parseFlexibleDate(trimmed);
+  if (d === null) return null;
   return { toDate: () => d } as unknown as Timestamp;
 }
 
@@ -83,7 +90,7 @@ export function kinTaleWhen(entry: KinTaleWhenInput): string {
 
 /** "Unnamed Kinfolk" fallback, matching `sessionFormat.ts#sessionHousehold` / `directory.ts#kinfolkDisplayName`'s convention, a report can be blank here (the orphan-migration rows `KinTaleLogsScreen.kt`'s `OrphanRow` triages are the extreme case, but any ad-hoc write can leave it blank). */
 export function kinTaleHousehold(kinfolkName: string): string {
-  const name = kinfolkName.trim();
+  const name = str(kinfolkName).trim();
   return name === '' ? 'Unnamed Kinfolk' : name;
 }
 
@@ -96,7 +103,7 @@ export function kinTaleHousehold(kinfolkName: string): string {
  * an honest label, not a blank space a screen reader would skip past.
  */
 export function bodyPreview(body: string): string {
-  const cleaned = body.replace(/\s+/g, ' ').trim();
+  const cleaned = str(body).replace(/\s+/g, ' ').trim();
   if (cleaned === '') return '(empty body)';
   return cleaned.length <= 80 ? cleaned : `${cleaned.slice(0, 80)}…`;
 }
@@ -109,7 +116,11 @@ export function bodyPreview(body: string): string {
  * it, always from real doc text, never a fabricated summary.
  */
 export function kinTaleHeadline(title: string, body: string): string {
-  const trimmedTitle = title.trim();
+  // str(): `title` is ABSENT on 89 of the 92 live kin_care_reports. The `string`
+  // annotation is a cast over raw Firestore data, not a guarantee, and reading
+  // it blind would blank the whole KinTales page for the operator (the sandbox's
+  // 3 seeded reports all happen to have a title, which is why it looked fine).
+  const trimmedTitle = str(title).trim();
   return trimmedTitle !== '' ? trimmedTitle : bodyPreview(body);
 }
 
@@ -124,7 +135,7 @@ export function kinTaleHeadline(title: string, body: string): string {
  * through lower-cased.
  */
 export function sentViaLabel(sentVia: string): string {
-  const trimmed = sentVia.trim();
+  const trimmed = str(sentVia).trim();
   if (trimmed === '') return 'imported';
   if (trimmed.startsWith('legacy_')) return 'imported';
   return trimmed.toLowerCase();
@@ -151,7 +162,7 @@ export type KinTaleState = 'draft' | 'sent' | 'failed' | 'unknown';
 
 /** Classifies one report's free-text `status`, case-insensitively (mirrors the wasm's own `.uppercase()` compares in `bucketFor`/`statusTone`). */
 export function kinTaleState(status: string): KinTaleState {
-  switch (status.trim().toUpperCase()) {
+  switch (str(status).trim().toUpperCase()) {
     case 'DRAFT':
       return 'draft';
     case 'SENT':

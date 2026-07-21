@@ -113,7 +113,7 @@ function evaluate(c: FieldCondition, ctx: ConditionContext): boolean {
 function actualFor(source: ConditionSource, c: FieldCondition, ctx: ConditionContext): string {
   switch (source) {
     case ConditionSource.SERVICE_TYPE:
-      return ctx.session.serviceType;
+      return ctx.session.serviceType ?? '';
     case ConditionSource.KIN_SPECIES:
       return ctx.kin?.species ?? '';
     case ConditionSource.KIN_ATTRIBUTE:

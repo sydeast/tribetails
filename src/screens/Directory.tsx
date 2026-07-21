@@ -16,6 +16,7 @@ import {
   type SortOption,
 } from '../api/directory';
 import { useCollection } from '../lib/firestore';
+import { str } from '../lib/coerce';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -118,13 +119,13 @@ function KinfolkCard({ kf, kin, kinPending, onClick }: KinfolkCardProps) {
               {shown.map((k) => (
                 <span key={k._id} className="directory__pet-chip">
                   <Avatar
-                    label={k.name}
+                    label={str(k.name)}
                     glyph={<PawGlyph />}
                     size={22}
                     ring={false}
-                    gradientSeed={k._id !== '' ? k._id : k.name}
+                    gradientSeed={k._id !== '' ? k._id : str(k.name)}
                   />
-                  <span className="directory__pet-chip-label">{k.name}</span>
+                  <span className="directory__pet-chip-label">{str(k.name)}</span>
                 </span>
               ))}
               {overflow > 0 && (
@@ -138,12 +139,20 @@ function KinfolkCard({ kf, kin, kinPending, onClick }: KinfolkCardProps) {
 
         <span className="directory__card-footer">
           <span className="directory__card-contact">
-            {kf.phoneNumber !== '' && (
-              <span className="directory__card-contact-item">{kf.phoneNumber}</span>
+            {/*
+              str() before the !== '' test: an ABSENT phone/email is `undefined`,
+              which passes `!== ''` and would render the literal "undefined" as
+              a contact line. The empty-string default keeps the row hidden,
+              exactly as it was for a doc with a blank field.
+            */}
+            {str(kf.phoneNumber) !== '' && (
+              <span className="directory__card-contact-item">{str(kf.phoneNumber)}</span>
             )}
-            {kf.email !== '' && <span className="directory__card-contact-item">{kf.email}</span>}
+            {str(kf.email) !== '' && (
+              <span className="directory__card-contact-item">{str(kf.email)}</span>
+            )}
           </span>
-          <StatusPill status={kf.status} />
+          <StatusPill status={str(kf.status)} />
         </span>
     </>
   );
@@ -171,7 +180,10 @@ interface KinCardProps {
 
 /** Kin (pet) card for the Kin tab. Mirrors KinfolkCard's frame, no pet-chip row. */
 function KinCard({ kin, onClick }: KinCardProps) {
-  const detail = [kin.species, kin.breed, kin.age !== '' ? `${kin.age} yrs` : '']
+  // str() on every part: an absent species/breed/age is `undefined`, which
+  // survives the `!== ''` filter and would join as "undefined · undefined".
+  const age = str(kin.age);
+  const detail = [str(kin.species), str(kin.breed), age !== '' ? `${age} yrs` : '']
     .filter((s) => s !== '')
     .join(' · ');
 
@@ -179,24 +191,26 @@ function KinCard({ kin, onClick }: KinCardProps) {
     <>
         <span className="directory__card-head">
           <Avatar
-            label={kin.name}
+            label={str(kin.name)}
             imageUrl={kin.profilePictureUrl}
             glyph={<PawGlyph />}
             size={50}
             shape="rounded"
-            gradientSeed={kin._id !== '' ? kin._id : kin.name}
+            gradientSeed={kin._id !== '' ? kin._id : str(kin.name)}
           />
           <span className="directory__card-heading">
-            <span className="directory__card-name">{kin.name}</span>
+            <span className="directory__card-name">{str(kin.name)}</span>
             {detail !== '' && <span className="directory__card-sub">{detail}</span>}
           </span>
         </span>
 
         <span className="directory__card-footer">
           <span className="directory__card-contact">
-            {kin.sex !== '' && <span className="directory__card-contact-item">{kin.sex}</span>}
+            {str(kin.sex) !== '' && (
+              <span className="directory__card-contact-item">{str(kin.sex)}</span>
+            )}
           </span>
-          <StatusPill status={kin.status} />
+          <StatusPill status={str(kin.status)} />
         </span>
     </>
   );
@@ -462,7 +476,9 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
                   <KinCard
                     key={k._id}
                     kin={k}
-                    onClick={() => (onSelectKin ? onSelectKin(k._id) : setOpenKinId({ id: k._id, name: k.name }))}
+                    onClick={() =>
+                      onSelectKin ? onSelectKin(k._id) : setOpenKinId({ id: k._id, name: str(k.name) })
+                    }
                   />
                 ))}
               </ul>

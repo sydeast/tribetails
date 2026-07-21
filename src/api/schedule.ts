@@ -48,17 +48,29 @@ export const SCHEDULE_SESSIONS_QUERY: CollectionSpec = {
  * (the Directory.ts "subset type, not a blind mirror" convention). `source`/
  * `notes`/`externalEventId`/etc. belong to the not-yet-built
  * create/block-time-edit surface, not this list.
+ *
+ * EVERY DOCUMENT FIELD IS OPTIONAL, and that is not pedantry: this interface is
+ * a CAST over whatever `useCollection` hands back, never a validation of it.
+ * Firestore has no schema, `firestore.rules` enforces no field on this
+ * collection, and a doc written before a field existed simply does not have it.
+ * Declaring `slotType: string` for a doc with no `slotType` is a lie TypeScript
+ * cannot catch, and the first `.trim()` on it throws inside render, which
+ * React's error boundary turns into a BLANK Schedule page over one bad row
+ * (this is exactly how `serviceType` took the screen down on 2026-07-20).
+ * `_id` stays required: `useCollection` sets it from the doc id itself, so it
+ * is the one key that is genuinely always there. Read every other field
+ * through `str()`/`?? ''` at the point of use.
  */
 export interface BusySlotEntry {
   _id: string;
   /** `YYYY-MM-DD`. NOT guaranteed to be in the viewer's own local zone, see `lib/scheduleFormat.ts`'s doc on `groupBlockedSlotsByDate`. */
-  date: string;
+  date?: string | undefined;
   /** `HH:mm`, 24h. Same zone caveat as `date`. */
-  startTime: string;
+  startTime?: string | undefined;
   /** Same zone caveat as `date`. */
-  endTime: string;
+  endTime?: string | undefined;
   /** Free-text; only `'BLOCKED'` is written by any real writer today, see `lib/scheduleFormat.ts#busySlotKind`. */
-  slotType: string;
+  slotType?: string | undefined;
 }
 
 /**

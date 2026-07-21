@@ -77,36 +77,45 @@ export function kinTaleSendLabel(recipient: string): string {
   return recipient.trim() === '' ? 'Send KinTale' : `Send to ${recipient}`;
 }
 
-/** Scaffold a blank new draft off the session it will belong to. Mirrors the wasm's `scaffoldReport`. */
+/**
+ * Scaffold a blank new draft off the session it will belong to. Mirrors the
+ * wasm's `scaffoldReport`.
+ *
+ * Every read is defaulted because `SessionEntry` is a CAST over raw Firestore
+ * data, not a validation of it: `serviceType` is absent on 76 of the 99 live
+ * `kin_care_sessions`. An undefined leaking into `KinTaleDraft` here would not
+ * just blank the compose screen, it would be WRITTEN BACK to the report doc by
+ * `saveKinTaleDraft`, so the default has to happen at the read.
+ */
 export function scaffoldKinTaleDraft(session: SessionEntry): KinTaleDraft {
   return {
     sessionId: session._id,
-    kinfolkId: session.kinfolkId,
-    kinfolkName: session.kinfolkName,
-    kinIds: session.kinIds,
-    serviceType: session.serviceType,
-    visitDate: session.startTime,
-    arrivedAt: session.arrivedAt,
+    kinfolkId: session.kinfolkId ?? '',
+    kinfolkName: session.kinfolkName ?? '',
+    kinIds: session.kinIds ?? [],
+    serviceType: session.serviceType ?? '',
+    visitDate: session.startTime ?? '',
+    arrivedAt: session.arrivedAt ?? '',
     title: '',
     bodyCopy: '',
     mediaFileIds: [],
   };
 }
 
-/** Rehydrate an editable draft off an already-streamed `KinTaleEntry` row. */
+/** Rehydrate an editable draft off an already-streamed `KinTaleEntry` row. Defaulted for the same reason as `scaffoldKinTaleDraft` above. */
 export function draftFromKinTaleEntry(report: KinTaleEntry): KinTaleDraft {
   return {
     _id: report._id,
-    sessionId: report.sessionId,
-    kinfolkId: report.kinfolkId,
-    kinfolkName: report.kinfolkName,
-    kinIds: report.kinIds,
-    serviceType: report.serviceType,
-    visitDate: report.visitDate,
-    arrivedAt: report.arrivedAt,
-    title: report.title,
-    bodyCopy: report.bodyCopy,
-    mediaFileIds: report.mediaFileIds,
+    sessionId: report.sessionId ?? '',
+    kinfolkId: report.kinfolkId ?? '',
+    kinfolkName: report.kinfolkName ?? '',
+    kinIds: report.kinIds ?? [],
+    serviceType: report.serviceType ?? '',
+    visitDate: report.visitDate ?? '',
+    arrivedAt: report.arrivedAt ?? '',
+    title: report.title ?? '',
+    bodyCopy: report.bodyCopy ?? '',
+    mediaFileIds: report.mediaFileIds ?? [],
   };
 }
 
@@ -303,18 +312,21 @@ function SessionPicker({ sessions, onPick }: SessionPickerProps) {
       <AsyncRegion
         state={sessions}
         what="Kin Care sessions"
-        isEmpty={(data) => data.filter((s) => isKinTaleEligibleSession(s.status)).length === 0}
+        // A session doc with no `status` at all classifies as 'unknown', which is
+        // not DEPARTED/COMPLETED, so it stays out of the picker, the same answer
+        // the non-defaulted read gave before it could throw.
+        isEmpty={(data) => data.filter((s) => isKinTaleEligibleSession(s.status ?? '')).length === 0}
         empty={<EmptyHint>No departed or completed sessions yet.</EmptyHint>}
       >
         {(data) => {
-          const eligible = data.filter((s) => isKinTaleEligibleSession(s.status));
+          const eligible = data.filter((s) => isKinTaleEligibleSession(s.status ?? ''));
           return (
             <ul className="kintale-compose__picker-list">
               {eligible.map((s) => (
                 <li key={s._id} className="kintale-compose__picker-row">
                   <button type="button" className="kintale-compose__picker-button" onClick={() => onPick(s._id)}>
                     <span className="kintale-compose__picker-name">{s.kinfolkName || 'Unnamed Kinfolk'}</span>
-                    <ServicePill serviceType={s.serviceType} />
+                    <ServicePill serviceType={s.serviceType ?? ''} />
                   </button>
                 </li>
               ))}

@@ -1,4 +1,5 @@
 import { type CollectionSpec } from '../lib/firestore';
+import { str } from '../lib/coerce';
 import type { Timestamp } from 'firebase/firestore';
 
 /**
@@ -21,14 +22,24 @@ import type { Timestamp } from 'firebase/firestore';
 
 // ── Kinfolk (household) ──────────────────────────────────────────────────────
 
+/**
+ * Every field below is optional because this interface is a CAST over raw
+ * Firestore document data, not a validation of it: `useCollection` hands back
+ * whatever the doc happens to hold, and a legacy or seeded `kinfolk` doc is
+ * free to omit any of these keys. Declaring them non-optional made TypeScript
+ * promise a `string` that isn't there, and the first `.trim()`/`.toLowerCase()`
+ * threw, which React's error boundary turns into a BLANK SCREEN over one row
+ * (see lib/coerce.ts for the live 2026-07-20 cases). `_id` stays required,
+ * useCollection always sets it itself.
+ */
 export interface Kinfolk {
   _id: string;
-  firstName: string;
-  lastName: string;
-  phoneNumber: string;
-  email: string;
-  profilePictureUrl: string;
-  status: string; // active | inactive | archived
+  firstName?: string | undefined;
+  lastName?: string | undefined;
+  phoneNumber?: string | undefined;
+  email?: string | undefined;
+  profilePictureUrl?: string | undefined;
+  status?: string | undefined; // active | inactive | archived
   /**
    * Admin-entered ISO date, "Admin & Relationship" section. The ONLY recency
    * signal the `kinfolk` collection carries, no `createdAt`/`updatedAt` field
@@ -43,12 +54,14 @@ export interface Kinfolk {
    * schema grows real timestamps."). Ported verbatim rather than improved on,
    * since it is real operator-entered data, not a fabricated fallback.
    */
-  joinDate: string;
+  joinDate?: string | undefined;
 }
 
 /** Mirrors the Kotlin `Kinfolk.displayName` getter exactly. */
 export function kinfolkDisplayName(kf: Pick<Kinfolk, 'firstName' | 'lastName'>): string {
-  const full = `${kf.firstName} ${kf.lastName}`.trim();
+  // str() on both halves so a doc missing one name never interpolates the
+  // literal "undefined" into the card heading.
+  const full = `${str(kf.firstName)} ${str(kf.lastName)}`.trim();
   return full === '' ? 'Unnamed Kinfolk' : full;
 }
 
@@ -72,7 +85,8 @@ export function householdLabel(lastName: string): string {
  */
 export function kinfolkSurnameSortKey(kf: Pick<Kinfolk, 'firstName' | 'lastName'>): string {
   const dn = kinfolkDisplayName(kf);
-  const key = kf.lastName.trim() !== '' ? `${kf.lastName} ${kf.firstName}` : dn;
+  const lastName = str(kf.lastName);
+  const key = lastName.trim() !== '' ? `${lastName} ${str(kf.firstName)}` : dn;
   return key.trim().toLowerCase();
 }
 
@@ -91,9 +105,9 @@ export function matchesKinfolk(kf: Kinfolk, needle: string): boolean {
   if (needle.trim() === '') return true;
   const n = needle.trim().toLowerCase();
   const byText =
-    kinfolkDisplayName(kf).toLowerCase().includes(n) || kf.email.toLowerCase().includes(n);
+    kinfolkDisplayName(kf).toLowerCase().includes(n) || str(kf.email).toLowerCase().includes(n);
   const digits = digitsOnly(needle);
-  const byPhone = digits !== '' && digitsOnly(kf.phoneNumber).includes(digits);
+  const byPhone = digits !== '' && digitsOnly(str(kf.phoneNumber)).includes(digits);
   return byText || byPhone;
 }
 
@@ -123,16 +137,23 @@ export const KINFOLK_QUERY: CollectionSpec = {
 
 // ── Kin (pet) ────────────────────────────────────────────────────────────────
 
+/**
+ * Same cast-not-validation rule as `Kinfolk` above: the flat `kin` mirror is
+ * written by a trigger over portal-entered data, so `breed`, `age` and `sex`
+ * in particular are routinely absent on real docs. Optional here so the
+ * compiler forces a default at each read instead of promising a `string` the
+ * document never carried. `_id` stays required (useCollection sets it).
+ */
 export interface Kin {
   _id: string;
-  kinfolkId: string;
-  name: string;
-  species: string;
-  breed: string;
-  age: string;
-  sex: string;
-  status: string; // active | inactive | archived
-  profilePictureUrl: string;
+  kinfolkId?: string | undefined;
+  name?: string | undefined;
+  species?: string | undefined;
+  breed?: string | undefined;
+  age?: string | undefined;
+  sex?: string | undefined;
+  status?: string | undefined; // active | inactive | archived
+  profilePictureUrl?: string | undefined;
   /**
    * Firestore Timestamp, stamped `FieldValue.serverTimestamp()` on EVERY write
    * to the flat mirror doc (create, update, and the archive-transition write, 
@@ -165,9 +186,9 @@ export function matchesKin(kin: Kin, needle: string): boolean {
   if (needle.trim() === '') return true;
   const n = needle.trim().toLowerCase();
   return (
-    kin.name.toLowerCase().includes(n) ||
-    kin.species.toLowerCase().includes(n) ||
-    kin.breed.toLowerCase().includes(n)
+    str(kin.name).toLowerCase().includes(n) ||
+    str(kin.species).toLowerCase().includes(n) ||
+    str(kin.breed).toLowerCase().includes(n)
   );
 }
 
@@ -196,9 +217,13 @@ export function activeKinByKinfolk(allKin: Kin[]): Map<string, Kin[]> {
   const map = new Map<string, Kin[]>();
   for (const k of allKin) {
     if (k.status === 'archived') continue;
-    const existing = map.get(k.kinfolkId);
+    // An orphaned kin (no kinfolkId on the doc) groups under '', which no
+    // household _id can equal, so it stays out of every card rather than
+    // attaching itself to an arbitrary household.
+    const key = str(k.kinfolkId);
+    const existing = map.get(key);
     if (existing) existing.push(k);
-    else map.set(k.kinfolkId, [k]);
+    else map.set(key, [k]);
   }
   return map;
 }
@@ -206,10 +231,10 @@ export function activeKinByKinfolk(allKin: Kin[]): Map<string, Kin[]> {
 /** "Biscuit, Gravy & 1 more". Ports `kinSummaryOf` in DirectoryScreen.kt exactly. */
 export function kinSummaryOf(activeKin: Kin[]): string {
   if (activeKin.length === 0) return '';
-  if (activeKin.length === 1) return activeKin[0]?.name ?? '';
+  if (activeKin.length === 1) return str(activeKin[0]?.name);
   const firstTwo = activeKin
     .slice(0, 2)
-    .map((k) => k.name)
+    .map((k) => str(k.name))
     .join(', ');
   return activeKin.length > 2 ? `${firstTwo} & ${activeKin.length - 2} more` : firstTwo;
 }
@@ -220,7 +245,7 @@ export function kinSummaryOf(activeKin: Kin[]): string {
  * `KinfolkCard` subtitle branch in DirectoryScreen.kt.
  */
 export function householdSubtitle(kf: Pick<Kinfolk, 'lastName'>, kin: Kin[]): string {
-  const label = householdLabel(kf.lastName);
+  const label = householdLabel(str(kf.lastName));
   return label !== '' ? label : kinSummaryOf(kin);
 }
 
@@ -306,8 +331,10 @@ export function filterSortKinfolk(rows: Kinfolk[], query: string, sort: SortOpti
     filtered,
     sort,
     (kf) => kinfolkSurnameSortKey(kf),
-    (kf) => kf.joinDate,
-    (kf) => kf.joinDate,
+    // A kinfolk with no joinDate sorts last on both recency axes rather than
+    // being fabricated a date it never had.
+    (kf) => str(kf.joinDate),
+    (kf) => str(kf.joinDate),
   );
 }
 
@@ -322,7 +349,7 @@ export function filterSortKin(rows: Kin[], query: string, sort: SortOption): Kin
   return sortByOption(
     filtered,
     sort,
-    (k) => k.name,
+    (k) => str(k.name),
     () => '',
     (k) => kinUpdatedSortKey(k),
   );

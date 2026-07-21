@@ -9,6 +9,7 @@ import {
 } from '../../api/expenses';
 import { recentExpenses, formatCents } from '../../lib/dashboardInsights';
 import { humanizeDate } from '../../lib/invoiceFormat';
+import { str } from '../../lib/coerce';
 import { DenPanel, EmptyHint, ErrorHint } from '../../components/DenScreenKit';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { PrimaryButton } from '../../components/Buttons';
@@ -68,18 +69,26 @@ export function ExpenseQuickLogWidget() {
                 <EmptyHint>No expenses logged yet.</EmptyHint>
               ) : (
                 <ul className="dash-widget__list">
-                  {recent.map((x: ExpenseRow) => (
-                    <li key={x._id} className="expense-row">
-                      <span className="expense-row__kind">{x.kind}</span>
-                      <span className="expense-row__note">
-                        {x.note.trim() === '' ? '(no note)' : x.note}
-                      </span>
-                      <span className="expense-row__amount">{formatCents(x.amountCents)}</span>
-                      <time className="expense-row__day" dateTime={x.occurredAt}>
-                        {expenseDay(x.occurredAt)}
-                      </time>
-                    </li>
-                  ))}
+                  {recent.map((x: ExpenseRow) => {
+                    // ExpenseRow is a cast over the raw doc, so a legacy row can
+                    // arrive with no `note` / `occurredAt` at all. Read through
+                    // str() so a missing key lands on the SAME fallback a blank
+                    // one already does, instead of throwing and blanking the page.
+                    const note = str(x.note);
+                    const occurredAt = str(x.occurredAt);
+                    return (
+                      <li key={x._id} className="expense-row">
+                        <span className="expense-row__kind">{x.kind}</span>
+                        <span className="expense-row__note">
+                          {note.trim() === '' ? '(no note)' : note}
+                        </span>
+                        <span className="expense-row__amount">{formatCents(x.amountCents)}</span>
+                        <time className="expense-row__day" dateTime={occurredAt}>
+                          {expenseDay(occurredAt)}
+                        </time>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>

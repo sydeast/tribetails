@@ -1,6 +1,7 @@
 import { threadHouseholdName, threadPreviewText } from './inboxFormat';
 import { sessionState, sessionDayKey, sessionHousehold } from './sessionFormat';
 import { isoDatePrefixOrNull } from './invoiceFormat';
+import { str, arr } from './coerce';
 import type { ConversationSummary } from '../api/inbox';
 import type { SessionEntry } from '../api/sessions';
 import type { KinfolkProfile } from '../api/kinfolkProfile';
@@ -81,11 +82,16 @@ export function nextUpcomingSession(
   nowIso: string,
 ): SessionEntry | null {
   let best: SessionEntry | null = null;
+  let bestStart = '';
   for (const s of sessions) {
-    const state = sessionState(s.status);
+    const state = sessionState(str(s.status));
     if (state === 'cancelled' || state === 'completed') continue;
-    if (s.startTime === '' || s.startTime < nowIso) continue;
-    if (best === null || s.startTime < best.startTime) best = s;
+    const start = str(s.startTime);
+    if (start === '' || start < nowIso) continue;
+    if (best === null || start < bestStart) {
+      best = s;
+      bestStart = start;
+    }
   }
   return best;
 }
@@ -200,10 +206,10 @@ export function careFlags(
   };
 
   for (const s of sessions) {
-    if (sessionState(s.status) === 'cancelled') continue;
-    if (sessionDayKey(s.startTime) !== todayIso) continue;
-    const household = sessionHousehold(s.kinfolkName);
-    for (const kinId of s.kinIds) {
+    if (sessionState(str(s.status)) === 'cancelled') continue;
+    if (sessionDayKey(str(s.startTime)) !== todayIso) continue;
+    const household = sessionHousehold(str(s.kinfolkName));
+    for (const kinId of arr<string>(s.kinIds)) {
       const info = kinById.get(kinId);
       if (!info) continue;
       if (info.reactive) push(kinId, info, household, 'reactive', 'Reactive, handle with care');
@@ -245,11 +251,11 @@ export function upcomingExpirations(
 ): ExpRow[] {
   const out: ExpRow[] = [];
   for (const r of rows) {
-    const iso = isoDatePrefixOrNull(r.dateIso);
+    const iso = isoDatePrefixOrNull(str(r.dateIso));
     if (iso === null) continue;
     const daysUntil = wholeDaysBetween(todayIso, iso);
     if (daysUntil < 0 || daysUntil > withinDays) continue;
-    out.push({ label: r.label, dateIso: iso, daysUntil, kind: r.kind });
+    out.push({ label: str(r.label), dateIso: iso, daysUntil, kind: str(r.kind) });
   }
   out.sort((a, b) => (a.dateIso < b.dateIso ? -1 : a.dateIso > b.dateIso ? 1 : 0));
   return out;
@@ -266,7 +272,11 @@ export function upcomingExpirations(
 export function recentExpenses(list: readonly ExpenseRow[], limit = 5): ExpenseRow[] {
   return list
     .slice()
-    .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : a.occurredAt > b.occurredAt ? -1 : 0))
+    .sort((a, b) => {
+      const av = str(a.occurredAt);
+      const bv = str(b.occurredAt);
+      return av < bv ? 1 : av > bv ? -1 : 0;
+    })
     .slice(0, Math.max(0, limit));
 }
 
