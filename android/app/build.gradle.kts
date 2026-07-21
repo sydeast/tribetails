@@ -1,4 +1,32 @@
 import java.util.Properties
+import java.io.ByteArrayOutputStream
+
+/**
+ * Version identity, derived from git so it cannot silently repeat.
+ *
+ * Both helpers FALL BACK rather than failing the build: a source zip with no
+ * .git still has to compile. The fallbacks are deliberately obvious (0 / "nogit")
+ * so an un-versioned artifact is recognisable instead of masquerading as a real
+ * release.
+ */
+fun gitOutput(vararg args: String, fallback: String): String =
+    try {
+        val out = ByteArrayOutputStream()
+        val proc = ProcessBuilder(*args)
+            .directory(rootDir)
+            .redirectErrorStream(true)
+            .start()
+        proc.inputStream.copyTo(out)
+        if (proc.waitFor() == 0) out.toString().trim().ifEmpty { fallback } else fallback
+    } catch (_: Exception) {
+        fallback
+    }
+
+/** Monotonic across a linear history, which is what Android requires of versionCode. */
+fun gitCommitCount(): Int = gitOutput("git", "rev-list", "--count", "HEAD", fallback = "0").toIntOrNull() ?: 0
+
+/** Short SHA, so a tester's screenshot maps to an exact commit. */
+fun gitShortSha(): String = gitOutput("git", "rev-parse", "--short", "HEAD", fallback = "nogit")
 
 plugins {
     alias(libs.plugins.android.application)
@@ -27,8 +55,18 @@ android {
         applicationId = "com.tribetails.auntieos"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        // Derived from git, NOT hardcoded. Three App Distribution releases all
+        // shipped as "0.2.0 (2)" with different code and different release
+        // notes, so testers could not tell them apart and Android did not treat
+        // a new build as an upgrade. A human-incremented number gets forgotten;
+        // the commit count cannot be.
+        //
+        // versionCode must be monotonically increasing for Android to accept an
+        // upgrade, which `git rev-list --count` guarantees on a linear history.
+        // versionName carries the short SHA so a tester's screenshot is
+        // traceable to an exact commit.
+        versionCode = gitCommitCount()
+        versionName = "0.2.0.${gitCommitCount()}-${gitShortSha()}"
 
         // GOOGLE_CALENDAR_ID + GOOGLE_SERVICE_ACCOUNT_EMAIL are now SERVER-ONLY
         // config (slice 8). The Google Calendar busy sync runs in the

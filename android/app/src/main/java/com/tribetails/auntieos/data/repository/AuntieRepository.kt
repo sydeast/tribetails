@@ -4,6 +4,7 @@ import com.tribetails.auntieos.domain.withSandboxScope
 import com.tribetails.auntieos.domain.RecentSend
 import com.tribetails.auntieos.domain.decodeRecentSends
 
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.storage.FirebaseStorage
@@ -284,7 +285,15 @@ class AuntieRepository(
     suspend fun updateKinfolk(kinfolk: Kinfolk): Result<Unit> = runCatching {
         AuntieLog.i("Updating kinfolk id=${kinfolk.id}")
         ensureAuthenticated()
-        firestore.collection("kinfolk").document(kinfolk.id).set(kinfolk).await()
+        // STAMP updatedAt, do not round-trip it. Adding the field to the model
+        // stopped the save from DESTROYING it, but `.set()` would then write back
+        // the value that was read, freezing the timestamp at its old value and
+        // silently lying about when the record last changed. serverTimestamp()
+        // matches what the React admin writes (api/directoryWrite.ts), so both
+        // clients produce a Firestore Timestamp; getCurrentTimestamp() would
+        // write an ISO String and reintroduce type drift on this field.
+        firestore.collection("kinfolk").document(kinfolk.id)
+            .set(kinfolk.copy(updatedAt = FieldValue.serverTimestamp())).await()
         AuntieLog.d("Update successful for kinfolk id=${kinfolk.id}")
         Unit
     }.onFailure { AuntieLog.e("Failed to update kinfolk ${kinfolk.id}", it) }
@@ -408,7 +417,10 @@ class AuntieRepository(
     suspend fun updateKin(kin: Kin): Result<Unit> = runCatching {
         AuntieLog.i("Updating kin: ${kin.id}")
         ensureAuthenticated()
-        firestore.collection("kin").document(kin.id).set(kin).await()
+        // STAMP updatedAt rather than round-tripping the value that was read.
+        // See updateKinfolk for why serverTimestamp() and not getCurrentTimestamp().
+        firestore.collection("kin").document(kin.id)
+            .set(kin.copy(updatedAt = FieldValue.serverTimestamp())).await()
         // Additive FK for the MyTribe pet mirror (onFlatKinWrite). Same fields as
         // createKin; re-stamped on edit in case the pet was reassigned to a
         // kinfolk. Leaves the Kin field writes above untouched.
