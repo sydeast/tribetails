@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { applyTestScope, setTestScope, SCOPED_BY_KINFOLK } from './testScope';
+import {
+  applyTestScope,
+  isSuppressedInTestMode,
+  setTestScope,
+  SCOPED_BY_KINFOLK,
+  SUPPRESSED_IN_TEST_MODE,
+} from './testScope';
 import { type CollectionSpec } from './firestore';
 
 /**
@@ -80,5 +86,55 @@ describe('applyTestScope', () => {
     expect(applyTestScope(applyTestScope(spec)).filters).toEqual([
       ['kinfolkId', '==', 'test-kinfolk-001'],
     ]);
+  });
+});
+
+/**
+ * The other half of the sandbox contract: collections a test admin can never
+ * read AND cannot be scoped into, so the only honest behaviour is an empty
+ * result rather than a red "Missing or insufficient permissions" banner.
+ *
+ * `training_documents` (The Den's Tribal Intel) was in NEITHER set, so a
+ * sandbox operator opening that screen got the raw permission error. It cannot
+ * be scoped into range either way: `web/firestore.rules:633` reads
+ * `allow read: if isAuntie();` with no isTestAdmin branch, so no predicate can
+ * buy a permission the rule never grants, and the doc carries no `kinfolkId`
+ * to scope BY (its household FKs are `targetKinfolkId`/`targetKinId`, and the
+ * pre-spec-23 migrated rows carry neither). MyTribe's own rules suite already
+ * pins the denial: testAdminSandbox.test.ts:238.
+ */
+describe('isSuppressedInTestMode', () => {
+  beforeEach(() => setTestScope(null));
+
+  it('suppresses training_documents for a test admin, so Tribal Intel reads empty and NOT an error', () => {
+    setTestScope('test-kinfolk-001');
+    expect(isSuppressedInTestMode('training_documents')).toBe(true);
+  });
+
+  it('leaves training_documents queryable for the operator, who holds isAuntie', () => {
+    // No suppression without a test claim: the operator must still see real rows.
+    expect(isSuppressedInTestMode('training_documents')).toBe(false);
+  });
+
+  it('is never both suppressed and scoped: the two sets cannot overlap', () => {
+    // A path in both would be queried under a predicate AND expected to resolve
+    // empty, which is incoherent. Suppression means "do not query at all".
+    for (const path of SUPPRESSED_IN_TEST_MODE) {
+      expect(SCOPED_BY_KINFOLK.has(path)).toBe(false);
+    }
+  });
+
+  it('does not suppress a collection a test admin can genuinely read', () => {
+    setTestScope('test-kinfolk-001');
+    expect(isSuppressedInTestMode('invoices')).toBe(false);
+    expect(isSuppressedInTestMode('kinfolk')).toBe(false);
+  });
+
+  it('suppresses exactly the collections rules deny a test admin outright', () => {
+    // Do not diverge without re-auditing firestore.rules: an entry added here
+    // by mistake silently blanks a screen the sandbox is allowed to see.
+    expect([...SUPPRESSED_IN_TEST_MODE].sort()).toEqual(
+      ['activity_log', 'booking_time_slots', 'training_documents'].sort(),
+    );
   });
 });

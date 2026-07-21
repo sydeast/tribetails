@@ -9,6 +9,9 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
 import { Banner } from '../components/Banner';
+import { GenerateButton, type GeneratedDraft } from '../components/GenerateButton';
+import { validateKinTaleDraft, type KinTaleDraftErrors } from '../lib/kinTaleDraftSchema';
+import { useToast } from '../components/Toast';
 import './KinTaleCompose.css';
 
 /**
@@ -97,6 +100,7 @@ export function scaffoldKinTaleDraft(session: SessionEntry): KinTaleDraft {
     visitDate: session.startTime ?? '',
     arrivedAt: session.arrivedAt ?? '',
     title: '',
+    titleGeneratedByAi: false,
     bodyCopy: '',
     mediaFileIds: [],
   };
@@ -114,6 +118,7 @@ export function draftFromKinTaleEntry(report: KinTaleEntry): KinTaleDraft {
     visitDate: report.visitDate ?? '',
     arrivedAt: report.arrivedAt ?? '',
     title: report.title ?? '',
+    titleGeneratedByAi: report.titleGeneratedByAi ?? false,
     bodyCopy: report.bodyCopy ?? '',
     mediaFileIds: report.mediaFileIds ?? [],
   };
@@ -134,6 +139,40 @@ export function KinTaleCompose({ kinTaleId, sessionId, onClose }: KinTaleCompose
   const [isSending, setIsSending] = useState(false);
   const [confirmSend, setConfirmSend] = useState(false);
   const [banner, setBanner] = useState<Banner_ | null>(null);
+  const { showToast } = useToast();
+  /**
+   * Fold a generated draft into the form.
+   *
+   * The body is replaced: asking Auntie to write is asking for a new body, and
+   * the operator asked. The TITLE is only filled when blank, because a headline
+   * the operator typed is theirs and silently overwriting it is the one thing
+   * this button must never do. `titleGeneratedByAi` records which happened, and
+   * any keystroke in the headline field clears it.
+   */
+  function applyGenerated(result: GeneratedDraft) {
+    setDraft((d) => {
+      if (!d) return d;
+      const titleIsBlank = d.title.trim() === '';
+      const takeTitle = titleIsBlank && result.title.trim() !== '';
+      return {
+        ...d,
+        bodyCopy: result.body,
+        title: takeTitle ? result.title : d.title,
+        titleGeneratedByAi: takeTitle ? true : d.titleGeneratedByAi,
+      };
+    });
+    // The copy is in hand either way; the draft ROW failing to persist is a
+    // separate fact and it stays on a persistent surface, not a toast.
+    if (result.draftWriteFailed) {
+      setBanner({
+        tone: 'error',
+        text: 'Auntie wrote the tale, but the draft row did not save. Copy the text somewhere safe before you navigate away.',
+      });
+      return;
+    }
+    setBanner(null);
+    showToast('Auntie drafted a tale. Edit away.');
+  }
 
   // Reset hydration whenever the identity of what we're composing changes
   // (a different kinTaleId/sessionId), so switching targets doesn't leave the
@@ -182,7 +221,8 @@ export function KinTaleCompose({ kinTaleId, sessionId, onClose }: KinTaleCompose
         return;
       }
       if (id !== draft._id) setDraft({ ...draft, _id: id });
-      setBanner({ tone: 'success', text: 'Draft saved.' });
+      setBanner(null);
+      showToast('Draft saved.');
     } catch (err) {
       setIsSaving(false);
       setBanner({ tone: 'error', text: `Couldn't save draft: ${err instanceof Error ? err.message : 'unknown error'}` });
@@ -238,8 +278,12 @@ export function KinTaleCompose({ kinTaleId, sessionId, onClose }: KinTaleCompose
             return draft ? (
               <ComposeForm
                 draft={draft}
-                onTitleChange={(v) => setDraft((d) => (d ? { ...d, title: v } : d))}
+                onTitleChange={(v) =>
+                  setDraft((d) => (d ? { ...d, title: v, titleGeneratedByAi: false } : d))
+                }
                 onBodyChange={(v) => setDraft((d) => (d ? { ...d, bodyCopy: v } : d))}
+                onGenerated={applyGenerated}
+                onGenerateError={(text) => setBanner({ tone: 'error', text })}
                 isSaving={isSaving}
                 isSending={isSending}
                 banner={banner}
@@ -271,8 +315,12 @@ export function KinTaleCompose({ kinTaleId, sessionId, onClose }: KinTaleCompose
             return draft ? (
               <ComposeForm
                 draft={draft}
-                onTitleChange={(v) => setDraft((d) => (d ? { ...d, title: v } : d))}
+                onTitleChange={(v) =>
+                  setDraft((d) => (d ? { ...d, title: v, titleGeneratedByAi: false } : d))
+                }
                 onBodyChange={(v) => setDraft((d) => (d ? { ...d, bodyCopy: v } : d))}
+                onGenerated={applyGenerated}
+                onGenerateError={(text) => setBanner({ tone: 'error', text })}
                 isSaving={isSaving}
                 isSending={isSending}
                 banner={banner}
@@ -344,6 +392,8 @@ interface ComposeFormProps {
   draft: KinTaleDraft;
   onTitleChange: (v: string) => void;
   onBodyChange: (v: string) => void;
+  onGenerated: (result: GeneratedDraft) => void;
+  onGenerateError: (message: string) => void;
   isSaving: boolean;
   isSending: boolean;
   banner: Banner_ | null;
@@ -358,6 +408,8 @@ function ComposeForm({
   draft,
   onTitleChange,
   onBodyChange,
+  onGenerated,
+  onGenerateError,
   isSaving,
   isSending,
   banner,
@@ -369,6 +421,15 @@ function ComposeForm({
 }: ComposeFormProps) {
   const contentReady = hasKinTaleContent(draft);
   const sendLabel = kinTaleSendLabel(draft.kinfolkName);
+  // Validated on every render rather than on submit: the dash rule is about
+  // something the operator is typing right now, and telling them after they hit
+  // Send means retyping a paragraph they already finished.
+  const errors: KinTaleDraftErrors = validateKinTaleDraft({
+    title: draft.title,
+    bodyCopy: draft.bodyCopy,
+    sessionId: draft.sessionId,
+  });
+  const hasErrors = Object.keys(errors).length > 0;
 
   return (
     <>
@@ -400,7 +461,19 @@ function ComposeForm({
             onChange={(e) => onTitleChange(e.target.value)}
             placeholder={`Checking on ${draft.kinfolkName || 'Kinfolk'}`}
             className="kintale-compose__input"
+            aria-invalid={errors.title !== undefined}
+            aria-describedby={errors.title !== undefined ? 'kintale-title-error' : undefined}
           />
+          {errors.title !== undefined && (
+            <span id="kintale-title-error" className="kintale-compose__error" role="alert">
+              {errors.title}
+            </span>
+          )}
+          {draft.titleGeneratedByAi && errors.title === undefined && (
+            <span className="kintale-compose__provenance">
+              Auntie wrote this headline. Type over it to make it yours.
+            </span>
+          )}
         </label>
         <label className="kintale-compose__field">
           <span className="kintale-compose__label">What you&rsquo;d like the kinfolk to know</span>
@@ -410,8 +483,25 @@ function ComposeForm({
             placeholder="Tell the tale. How was the visit?"
             className="kintale-compose__textarea"
             rows={8}
+            aria-invalid={errors.bodyCopy !== undefined}
+            aria-describedby={errors.bodyCopy !== undefined ? 'kintale-body-error' : undefined}
           />
+          {errors.bodyCopy !== undefined && (
+            <span id="kintale-body-error" className="kintale-compose__error" role="alert">
+              {errors.bodyCopy}
+            </span>
+          )}
         </label>
+        <GenerateButton
+          communicationType="visit_report"
+          recipient={draft.kinfolkName}
+          rawNotes={draft.bodyCopy}
+          wantTitle
+          currentBody={draft.bodyCopy}
+          onGenerated={onGenerated}
+          onError={onGenerateError}
+          disabled={isSaving || isSending}
+        />
       </DenPanel>
 
       {!contentReady && !banner && (
@@ -424,7 +514,7 @@ function ComposeForm({
         <PrimaryButton
           label={isSending ? 'Sending…' : sendLabel}
           onClick={onOpenSendConfirm}
-          disabled={!contentReady || isSaving || isSending}
+          disabled={!contentReady || hasErrors || isSaving || isSending}
           busy={isSending}
         />
       </div>

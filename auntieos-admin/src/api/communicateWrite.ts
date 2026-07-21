@@ -11,11 +11,14 @@ import { call } from '../lib/fns';
  * `onCall` at line 333). Sends one admin-authored message to every kinfolk a
  * segment/criteria resolves to, across one or more channels (`inapp` | `email`
  * | `sms` | `push`, `ALL_BROADCAST_CHANNELS` at line 53). This screen ships
- * only `email` and `sms` (the two channels `Communicate.tsx`'s own "Recent"
- * list already reads back via `listRecentSends`/`sendChannelOf`); `inapp` and
- * `push` are real backend capabilities but have no compose UI anywhere yet
- * (wasm or React) and are left for a follow-up rather than bolted on here
- * un-designed.
+ * `email`, `sms`, and `push`. Push sends a real FCM multicast against the
+ * recipient's `fcm_tokens` (broadcastMessage.ts:250-278), counted per RECIPIENT
+ * rather than per device, so a Kinfolk with three phones counts once.
+ *
+ * `inapp` is the one backend channel still without a compose UI. It is not
+ * merely undesigned: it requires a subject (broadcastMessage.ts:76) and writes
+ * a notification doc consumed by the MyTribe portal feed, so it needs the
+ * notification-gate work rather than a fourth toggle.
  *
  * ── PAYLOAD, confirmed field-for-field against the backend's zod `Args`
  * (broadcastMessage.ts lines 56-79) ─────────────────────────────────────────
@@ -101,7 +104,7 @@ export function describeAudience(criteria: BroadcastCriteria): string {
 
 // ── channels this screen ships (see the module doc for why inapp/push wait) ─
 
-export const BROADCAST_CHANNELS = ['email', 'sms'] as const;
+export const BROADCAST_CHANNELS = ['email', 'sms', 'push'] as const;
 export type BroadcastChannel = (typeof BROADCAST_CHANNELS)[number];
 
 // ── send payload / result ───────────────────────────────────────────────────

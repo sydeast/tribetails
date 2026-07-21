@@ -9,6 +9,10 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
 import { GhostButton } from '../components/Buttons';
 import { ProfileTagsSection } from '../components/ProfileTagsSection';
+import { MaskedValue } from '../components/MaskedValue';
+import { PrimaryButton } from '../components/Buttons';
+import { KinfolkEdit } from './KinfolkEdit';
+import { HouseholdData } from './HouseholdData';
 import './KinfolkProfile.css';
 
 interface KinfolkProfileProps {
@@ -20,13 +24,29 @@ interface KinfolkProfileProps {
   onBack: () => void;
 }
 
-/** One label/value line; renders nothing when the value is blank (never "undefined"). */
-function Fact({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+/**
+ * One label/value line; renders nothing when the value is blank (never "undefined").
+ * `secret` routes the value through MaskedValue, so an access code is hidden until
+ * the operator asks for it; the label doubles as the toggle's spoken field name.
+ */
+function Fact({
+  label,
+  value,
+  mono,
+  secret,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  secret?: boolean;
+}) {
   if (value.trim() === '') return null;
   return (
     <div className="kprofile__fact">
       <dt className="kprofile__fact-label">{label}</dt>
-      <dd className={mono ? 'kprofile__fact-value kprofile__fact-value--mono' : 'kprofile__fact-value'}>{value}</dd>
+      <dd className={mono ? 'kprofile__fact-value kprofile__fact-value--mono' : 'kprofile__fact-value'}>
+        {secret === true ? <MaskedValue value={value} field={label.toLowerCase()} /> : value}
+      </dd>
     </div>
   );
 }
@@ -45,7 +65,14 @@ function any(...vals: string[]): boolean {
  * section is omitted rather than shown empty. The household's kin come from the
  * Directory's own KIN_QUERY stream, passed in, so this opens with no second read.
  */
+/**
+ * Sub-views this profile can swap in. Directory owns the Directory/profile
+ * switch the same way, so the editor and the household record stay local state
+ * rather than routes, matching `KinView`'s existing precedent.
+ */
+type ProfileView = 'profile' | 'edit' | 'household';
 export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkProfileProps) {
+  const [view, setView] = useState<ProfileView>('profile');
   const [profile, setProfile] = useState<Async<Profile>>({ status: 'loading' });
 
   const load = useCallback(() => {
@@ -71,14 +98,39 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkP
   }, [kinfolkId]);
 
   useEffect(() => load(), [load]);
-
+  if (view === 'edit') {
+    return (
+      <KinfolkEdit
+        kinfolkId={kinfolkId}
+        kinfolkName={kinfolkName}
+        onDone={() => {
+          setView('profile');
+          // Re-read so the profile shows what was just saved, not the values it
+          // loaded before the edit.
+          load();
+        }}
+        onCancel={() => setView('profile')}
+      />
+    );
+  }
+  if (view === 'household') {
+    return (
+      <HouseholdData kinfolkId={kinfolkId} kinfolkName={kinfolkName} onBack={() => setView('profile')} />
+    );
+  }
   return (
     <div className="screen">
       <DenScreenHeading
         kicker="The Den · Directory"
         title={kinfolkName || kinfolkId}
         subtitle="Household profile."
-        trailing={<GhostButton label="Back to Directory" onClick={onBack} />}
+        trailing={
+          <div className="kinfolk-profile__actions">
+            <GhostButton label="Household data" onClick={() => setView('household')} />
+            <PrimaryButton label="Edit" onClick={() => setView('edit')} />
+            <GhostButton label="Back to Directory" onClick={onBack} />
+          </div>
+        }
       />
 
       <AsyncRegion
@@ -90,10 +142,6 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkP
       >
         {(p) => {
           const name = kinfolkDisplayName(p);
-          const wifi =
-            p.wifiName.trim() === '' && p.wifiPassword.trim() === ''
-              ? ''
-              : `${p.wifiName.trim() || '(unnamed)'}${p.wifiPassword.trim() !== '' ? ' · password on file' : ''}`;
           return (
             <>
               <DenPanel title="Household">
@@ -138,14 +186,22 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkP
                 </dl>
               </DenPanel>
 
-              {any(p.serviceAddress, p.gateCode, p.parkingInstructions, p.entryNotes, wifi) && (
+              {any(p.serviceAddress, p.gateCode, p.parkingInstructions, p.entryNotes, p.wifiName, p.wifiPassword) && (
                 <DenPanel title="Home & access">
                   <dl className="kprofile__facts">
                     <Fact label="Service address" value={p.serviceAddress} />
-                    <Fact label="Gate code" value={p.gateCode} mono />
+                    <Fact label="Gate code" value={p.gateCode} mono secret />
                     <Fact label="Parking" value={p.parkingInstructions} />
                     <Fact label="Entry notes" value={p.entryNotes} />
-                    <Fact label="Wi-Fi" value={wifi} />
+                    {/*
+                      The network name and the password are two rows now. They used to
+                      be one string ending in "password on file", which hid the value
+                      but still announced that a password existed; the row now carries
+                      the real thing behind a toggle, and a household with no password
+                      simply has no password row.
+                    */}
+                    <Fact label="Wi-Fi network" value={p.wifiName} />
+                    <Fact label="Wi-Fi password" value={p.wifiPassword} mono secret />
                   </dl>
                 </DenPanel>
               )}

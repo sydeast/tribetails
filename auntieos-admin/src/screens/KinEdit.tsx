@@ -32,10 +32,33 @@ const CARE_FIELDS = [
   ['trainingCommands', 'Training / commands'],
   ['feedingBrand', 'Food / brand'],
 ] as const;
+/**
+ * NO `vetInfo` ENTRY HERE, and this is a rule, not an oversight. Fix-backlog
+ * item 5.4 (AuntieOS_Fix_Backlog_2026-06-02.md:90): "Remove vet info box from
+ * the pet (Kin). Vets attach to the Kinfolk (owner), not the Kin. Stop adding
+ * an add/edit vet info box to the pet profile. It may be shown READ-ONLY on the
+ * Kin, but never as an entry box there."
+ *
+ * The canonical household vet is `kinfolk.vetClinicName` / `vetClinicPhone` /
+ * `vetClinicAddress`, edited and displayed on the household
+ * (`screens/KinfolkProfile.tsx`). Android already complies, see the matching
+ * note at `DirectoryViewModel.kt:1067` ("vetInfo has no setter: vet is read-only
+ * on the Kin (single-source on Kinfolk, 1D)"); React was the last surface still
+ * offering a second, per-pet place to type a vet, which is how a household ends
+ * up with two disagreeing vets and no rule about which one is true.
+ *
+ * The stored `kin.vetInfo` field is deliberately NOT deleted: `KinView.tsx:182`
+ * renders it read-only and legacy docs still carry real data (HANDOFF_2026-05-28
+ * :152). Dropping it from the write path is safe for that data because
+ * `directoryWrite.ts#updateKin` sends its patch through `updateDoc`, a
+ * field-level MERGE, so a key the patch omits is left untouched rather than
+ * cleared. The whole-object hazard the 2026-07-20 audit describes is real but
+ * belongs to the Kotlin trees (`.set(kin)` / `platformUpdateKin`), and both
+ * carry `vetInfo` on their Kin model, so it round-trips there too.
+ */
 const HEALTH_FIELDS = [
   ['vaccinations', 'Vaccinations'],
   ['medicationHealthNotes', 'Medication / health notes'],
-  ['vetInfo', 'Vet info'],
 ] as const;
 const OWNER_FIELDS = [
   ['ownerEmail', 'Owner email'],
@@ -46,15 +69,22 @@ type FormState = Pick<
   KinDetail,
   | 'name' | 'species' | 'breed' | 'age' | 'sex' | 'weight' | 'colorMarkings'
   | 'spayedNeutered' | 'reactive' | 'staysAs' | 'routine' | 'trainingCommands'
-  | 'feedingBrand' | 'vaccinations' | 'medicationHealthNotes' | 'vetInfo'
+  | 'feedingBrand' | 'vaccinations' | 'medicationHealthNotes'
   | 'officeNotes' | 'ownerEmail' | 'ownerPhone' | 'status'
 >;
 
+/**
+ * `vetInfo` is dropped alongside the never-edited identity fields so it cannot
+ * reach the form state at all, which is what makes the HEALTH_FIELDS rule above
+ * enforceable by the compiler rather than by memory: there is no `form.vetInfo`
+ * for a future field row or patch key to reference.
+ */
 function toForm(k: KinDetail): FormState {
-  const { _id, kinfolkId, profilePictureUrl, ...rest } = k;
+  const { _id, kinfolkId, profilePictureUrl, vetInfo, ...rest } = k;
   void _id;
   void kinfolkId;
   void profilePictureUrl;
+  void vetInfo;
   return rest;
 }
 
@@ -131,7 +161,9 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
         feedingBrand: form.feedingBrand,
         vaccinations: form.vaccinations,
         medicationHealthNotes: form.medicationHealthNotes,
-        vetInfo: form.vetInfo,
+        // No `vetInfo`: see the HEALTH_FIELDS note. `updateKin` patches through
+        // `updateDoc`, a merge, so omitting the key preserves the stored value
+        // for KinView's read-only row instead of blanking it.
         officeNotes: form.officeNotes,
         ownerEmail: form.ownerEmail,
         ownerPhone: form.ownerPhone,

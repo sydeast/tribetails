@@ -27,6 +27,7 @@ function draft(over: Partial<KinTaleDraft> = {}): KinTaleDraft {
     visitDate: '2026-07-16T18:00:00.000Z',
     arrivedAt: '2026-07-16T18:05:00.000Z',
     title: '',
+    titleGeneratedByAi: false,
     bodyCopy: '',
     mediaFileIds: [],
     ...over,

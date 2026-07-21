@@ -1,0 +1,191 @@
+/* Kinfolk household editor. Tokens only, no literal colours or sizes. */
+
+.kfedit__hint {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.kfedit__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-3);
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+
+.kfedit__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.kfedit__field--wide {
+  grid-column: 1 / -1;
+}
+
+.kfedit__label {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.kfedit__input {
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-chip);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font: inherit;
+  width: 100%;
+}
+
+.kfedit__input:disabled {
+  opacity: 0.6;
+}
+
+.kfedit__input[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+
+.kfedit__textarea {
+  resize: vertical;
+}
+
+.kfedit__error {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-error);
+}
+
+/* ── status chips ────────────────────────────────────────────────────────── */
+
+.kfedit__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.kfedit__chip {
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-chip);
+  background: var(--color-surface-2);
+  color: var(--color-text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.kfedit__chip[data-selected='true'] {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  color: var(--color-text-primary);
+}
+
+.kfedit__chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ── secrets ─────────────────────────────────────────────────────────────── */
+
+.kfedit__secret {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-height: 2.5rem;
+}
+
+.kfedit__secret-edit {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--type-label-sm-size);
+  color: var(--color-accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.kfedit__secret-edit:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ── archive confirm ─────────────────────────────────────────────────────── */
+
+.kfedit__confirm {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-3);
+}
+
+/* ── actions ─────────────────────────────────────────────────────────────── */
+
+.kfedit__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.kfedit__actions-right {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ── load skeleton ───────────────────────────────────────────────────────── */
+
+.kfedit__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.kfedit__skeleton-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+}
+
+.kfedit__skeleton-title,
+.kfedit__skeleton-row {
+  display: block;
+  height: 0.75rem;
+  border-radius: var(--radius-chip);
+  background: var(--color-surface-2);
+}
+
+.kfedit__skeleton-title {
+  width: 30%;
+  height: 1rem;
+}
+
+.kfedit__skeleton-row {
+  width: 100%;
+}
+
+/* Honours the operator's motion preference: the shimmer is decoration, and a
+   pulsing page is a real problem for some people. */
+@media (prefers-reduced-motion: no-preference) {
+  .kfedit__skeleton-title,
+  .kfedit__skeleton-row {
+    animation: kfedit-pulse 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes kfedit-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}

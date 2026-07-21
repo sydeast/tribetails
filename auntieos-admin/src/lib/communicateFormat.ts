@@ -79,7 +79,7 @@ export { sessionDayLabel as sendDayLabel, localDateIso };
  * `sessionState` / AO-12 convention: every branch is a positive match against
  * the literal text, never "not the other one, so must be X").
  */
-export type SendChannel = 'email' | 'sms' | 'unknown';
+export type SendChannel = 'email' | 'sms' | 'push' | 'unknown';
 
 export function sendChannelOf(channel: string): SendChannel {
   switch (channel.trim().toLowerCase()) {
@@ -87,6 +87,8 @@ export function sendChannelOf(channel: string): SendChannel {
       return 'email';
     case 'sms':
       return 'sms';
+    case 'push':
+      return 'push';
     default:
       return 'unknown';
   }
@@ -99,6 +101,8 @@ export function channelLabel(channel: string): string {
       return 'Email';
     case 'sms':
       return 'Text';
+    case 'push':
+      return 'Push';
     case 'unknown':
       return channel.trim() === '' ? 'Send' : channel.trim();
   }

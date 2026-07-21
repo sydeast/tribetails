@@ -12,9 +12,11 @@ import {
   initialsOf,
   filterSortKinfolk,
   filterSortKin,
+  KIN_QUERY,
   type Kinfolk,
   type Kin,
 } from './directory';
+import { KIN_CARE_QUERY } from './kinCare';
 
 function fakeTs(iso: string): Timestamp {
   return { toDate: () => new Date(iso) } as unknown as Timestamp;
@@ -219,5 +221,64 @@ describe('filterSortKin', () => {
     const withMissing = [...rows, withoutUpdatedAt as Kin];
     const sorted = filterSortKin(withMissing, '', 'recently_updated');
     expect(sorted[sorted.length - 1]?._id).toBe('d');
+  });
+});
+/**
+ * Regression cover for the 2026-07-21 "invisible Kin" defect: KIN_QUERY and
+ * KIN_CARE_QUERY both ordered the flat `kin` mirror by `updatedAt`, which the
+ * 2026-07-20 live model audit measured on 23 of 24 real docs. Firestore's
+ * `orderBy` EXCLUDES any document missing the sort field, so one live Kin
+ * rendered in neither the Directory Kin tab nor the Care Flags join, silently.
+ *
+ * `survivesOrderBy` models exactly that Firestore rule and nothing else. It is
+ * the whole point of these tests: asserting the literal string `'__name__'`
+ * alone would pass for any typo, whereas running the real exclusion rule over
+ * documents that are each missing a different field proves the chosen key
+ * cannot hide a row.
+ */
+function survivesOrderBy<T extends object>(docs: readonly T[], orderField: string): T[] {
+  // A document id is not a document FIELD; every document has one, so this key
+  // excludes nothing. Any other key is a field, and Firestore returns a doc only
+  // when that field is present on it.
+  if (orderField === '__name__') return [...docs];
+  return docs.filter((d) => orderField in d);
+}
+describe('KIN_QUERY / KIN_CARE_QUERY ordering cannot hide a Kin', () => {
+  // Four real writer shapes for a flat `kin` doc. No single FIELD is present on
+  // all four, which is the finding that ruled out simply moving the sort to a
+  // different field (see the KIN_QUERY doc comment for the writer-by-writer
+  // trace).
+  const fromMirrorTrigger = { _id: 'trigger', updatedAt: 'ts', familyKinPath: 'families/kf1/kin/a' };
+  const fromReactCreateKin = { _id: 'react', updatedAt: 'ts' }; // directoryWrite.ts, no familyKinPath
+  const fromAndroidCreateKin = { _id: 'android', familyKinPath: 'families/kf1/kin/c' }; // no updatedAt stamp
+  const legacyDoc = { _id: 'legacy' }; // the 24th doc: predates both stamps
+  const allWriterShapes = [fromMirrorTrigger, fromReactCreateKin, fromAndroidCreateKin, legacyDoc];
+  it('returns every writer shape, including docs with no updatedAt', () => {
+    const survivors = survivesOrderBy(allWriterShapes, KIN_QUERY.order[0]).map((d) => d._id);
+    expect(survivors).toEqual(['trigger', 'react', 'android', 'legacy']);
+  });
+  it('Care Flags reads the same complete roster, so an all-clear is never a dropped row', () => {
+    const survivors = survivesOrderBy(allWriterShapes, KIN_CARE_QUERY.order[0]).map((d) => d._id);
+    expect(survivors).toEqual(['trigger', 'react', 'android', 'legacy']);
+  });
+  it('the two kin streams order identically, so the Directory and Care Flags rosters cannot drift', () => {
+    expect(KIN_CARE_QUERY.order).toEqual(KIN_QUERY.order);
+    expect(KIN_CARE_QUERY.path).toBe(KIN_QUERY.path);
+  });
+  it('pins the harness itself: a field-name sort key really does drop a doc missing it', () => {
+    // Guards against survivesOrderBy silently degrading to "return everything",
+    // which would make the two tests above pass no matter what order is chosen.
+    expect(survivesOrderBy(allWriterShapes, 'updatedAt').map((d) => d._id)).toEqual([
+      'trigger',
+      'react',
+    ]);
+    expect(survivesOrderBy(allWriterShapes, 'familyKinPath').map((d) => d._id)).toEqual([
+      'trigger',
+      'android',
+    ]);
+  });
+  it('sorts ascending, which keeps the sandbox kinfolkId scope composite-index-free', () => {
+    expect(KIN_QUERY.order[1]).toBe('asc');
+    expect(KIN_CARE_QUERY.order[1]).toBe('asc');
   });
 });

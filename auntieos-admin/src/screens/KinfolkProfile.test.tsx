@@ -21,6 +21,22 @@ vi.mock('../api/directoryWrite', async (orig) => ({
   updateKinfolkTags,
 }));
 
+// The child screens own their own loaders and their own suites (KinfolkEdit 24
+// tests, HouseholdData 20). These are wiring tests: they assert the parent swaps
+// to the right child, not that the child works.
+vi.mock('./KinfolkEdit', () => ({
+  KinfolkEdit: ({ onCancel }: { onCancel: () => void }) => (
+    <div>
+      <p>STUB KinfolkEdit</p>
+      <button type="button" onClick={onCancel}>
+        stub cancel
+      </button>
+    </div>
+  ),
+}));
+vi.mock('./HouseholdData', () => ({
+  HouseholdData: () => <p>STUB HouseholdData</p>,
+}));
 import { KinfolkProfile } from './KinfolkProfile';
 import { mergeKinfolkProfile } from '../api/kinfolkProfile';
 
@@ -104,11 +120,82 @@ describe('KinfolkProfile', () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
+  it('masks the gate code and the Wi-Fi password until the operator reveals them', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ gateCode: '4417', wifiPassword: 'hunter2' }));
+    const { container } = render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />,
+    );
+    await screen.findByText('Home & access');
+
+    expect(container.textContent).not.toContain('4417');
+    expect(container.textContent).not.toContain('hunter2');
+
+    await userEvent.click(screen.getByRole('button', { name: /show gate code/i }));
+    expect(screen.getByText('4417')).toBeInTheDocument();
+    // Revealing one secret must not reveal the other.
+    expect(container.textContent).not.toContain('hunter2');
+
+    await userEvent.click(screen.getByRole('button', { name: /show wi-fi password/i }));
+    expect(screen.getByText('hunter2')).toBeInTheDocument();
+  });
+
+  it('names the Wi-Fi network plainly and drops the old "password on file" hint', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ wifiName: 'Halbrook-5G', wifiPassword: 'hunter2' }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    await screen.findByText('Home & access');
+
+    expect(screen.getByText('Halbrook-5G')).toBeInTheDocument();
+    expect(screen.queryByText(/password on file/i)).toBeNull();
+  });
+
+  it('leaves address, parking and entry notes readable at a glance (no toggle)', async () => {
+    getKinfolkProfile.mockResolvedValue(
+      profile({ serviceAddress: '1 Bark Ave', parkingInstructions: 'Driveway', entryNotes: 'Side door' }),
+    );
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    await screen.findByText('Home & access');
+
+    expect(screen.getByText('1 Bark Ave')).toBeInTheDocument();
+    expect(screen.getByText('Driveway')).toBeInTheDocument();
+    expect(screen.getByText('Side door')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^show /i })).toBeNull();
+  });
+
   it('shows and edits household tags, saving via updateKinfolkTags', async () => {
     getKinfolkProfile.mockResolvedValue(profile({ tags: ['VIP'] }));
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     expect(await screen.findByText('VIP')).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText(/add a household tag/i), 'Slow pay{Enter}');
     await waitFor(() => expect(updateKinfolkTags).toHaveBeenCalledWith('k1', ['VIP', 'Slow pay']));
+  });
+});
+
+
+describe('KinfolkProfile: sub-view wiring', () => {
+  beforeEach(() => getKinfolkProfile.mockResolvedValue(profile()));
+
+  // Both screens are reached from here, not from the rail, following the same
+  // local-state pattern Directory uses to open this profile in the first place.
+  it('swaps in the editor and back again without leaving the profile', async () => {
+    const user = userEvent.setup();
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /^edit$/i }));
+    expect(screen.getByText('STUB KinfolkEdit')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /stub cancel/i }));
+    expect(await screen.findByRole('button', { name: /back to directory/i })).toBeInTheDocument();
+    expect(screen.queryByText('STUB KinfolkEdit')).not.toBeInTheDocument();
+  });
+  it('swaps in the household record', async () => {
+    const user = userEvent.setup();
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /household data/i }));
+    expect(screen.getByText('STUB HouseholdData')).toBeInTheDocument();
+  });
+  it('still returns to the Directory from the profile itself', async () => {
+    const onBack = vi.fn();
+    const user = userEvent.setup();
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={onBack} />);
+    await user.click(await screen.findByRole('button', { name: /back to directory/i }));
+    expect(onBack).toHaveBeenCalled();
   });
 });

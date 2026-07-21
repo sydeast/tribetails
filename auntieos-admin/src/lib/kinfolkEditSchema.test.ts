@@ -1,0 +1,140 @@
+import { describe, it, expect } from 'vitest';
+import {
+  isValidEmail,
+  isValidPhone,
+  phoneOkOrBlank,
+  emailOkOrBlank,
+  validateKinfolkEdit,
+  KINFOLK_STATUS_OPTIONS,
+  KINFOLK_ARCHIVED_STATUS,
+  type KinfolkEditInput,
+} from './kinfolkEditSchema';
+
+function form(over: Partial<KinfolkEditInput> = {}): KinfolkEditInput {
+  return {
+    firstName: 'Jamie',
+    lastName: 'Halbrook',
+    phoneNumber: '(512) 555-1234',
+    email: 'jamie@example.com',
+    status: 'active',
+    joinDate: '2026-01-04',
+    secondaryPhone: '',
+    secondaryEmail: '',
+    serviceAddress: '123 Bark Ave',
+    gateCode: '',
+    parkingInstructions: '',
+    entryNotes: '',
+    wifiName: '',
+    wifiPassword: '',
+    emergencyContactName: 'Rae Halbrook',
+    emergencyContactPhone: '512-555-9090',
+    emergencyContactRelation: '',
+    vetClinicName: '',
+    vetClinicAddress: '',
+    vetClinicPhone: '',
+    ...over,
+  };
+}
+
+describe('isValidPhone', () => {
+  it('accepts 10 digits in any common separator style', () => {
+    expect(isValidPhone('5125551234')).toBe(true);
+    expect(isValidPhone('(512) 555-1234')).toBe(true);
+    expect(isValidPhone('512.555.1234')).toBe(true);
+  });
+
+  it('accepts 11 digits with a leading 1', () => {
+    expect(isValidPhone('+1 512 555 1234')).toBe(true);
+  });
+
+  it('rejects the 9 digit case the Kotlin source calls out, and anything with letters', () => {
+    expect(isValidPhone('719390420')).toBe(false);
+    expect(isValidPhone('512-555-CATS')).toBe(false);
+  });
+
+  it('rejects blank, and 11 digits that do not start with 1', () => {
+    expect(isValidPhone('')).toBe(false);
+    expect(isValidPhone('25125551234')).toBe(false);
+  });
+});
+
+describe('isValidEmail', () => {
+  it('accepts an ordinary address', () => {
+    expect(isValidEmail('jamie@example.com')).toBe(true);
+    expect(isValidEmail('jamie.b+dogs@sub.example.co')).toBe(true);
+  });
+
+  it('rejects a missing domain, a missing tld, and blank', () => {
+    expect(isValidEmail('jamie@')).toBe(false);
+    expect(isValidEmail('jamie@example')).toBe(false);
+    expect(isValidEmail('')).toBe(false);
+  });
+
+  it('rejects an address past the 254 character limit', () => {
+    expect(isValidEmail(`${'a'.repeat(250)}@example.com`)).toBe(false);
+  });
+});
+
+describe('the blank-tolerant variants', () => {
+  it('treat blank as fine but still check a real value', () => {
+    expect(phoneOkOrBlank('')).toBe(true);
+    expect(phoneOkOrBlank('   ')).toBe(true);
+    expect(phoneOkOrBlank('nope')).toBe(false);
+    expect(emailOkOrBlank('')).toBe(true);
+    expect(emailOkOrBlank('nope')).toBe(false);
+  });
+});
+
+describe('validateKinfolkEdit', () => {
+  it('returns an empty map for a complete household', () => {
+    expect(validateKinfolkEdit(form())).toEqual({});
+  });
+
+  it('flags each required field by name', () => {
+    const errors = validateKinfolkEdit(
+      form({ firstName: '  ', lastName: '', serviceAddress: '', emergencyContactName: '' }),
+    );
+    expect(errors.firstName).toMatch(/first name/i);
+    expect(errors.lastName).toMatch(/last name/i);
+    expect(errors.serviceAddress).toMatch(/service address/i);
+    expect(errors.emergencyContactName).toMatch(/emergency contact name/i);
+  });
+
+  it('requires a valid primary phone and a valid emergency phone', () => {
+    const errors = validateKinfolkEdit(form({ phoneNumber: '123', emergencyContactPhone: '' }));
+    expect(errors.phoneNumber).toMatch(/10 digit/i);
+    expect(errors.emergencyContactPhone).toMatch(/required/i);
+  });
+
+  it('lets the optional contact fields be blank but not wrong', () => {
+    expect(validateKinfolkEdit(form({ secondaryPhone: '', secondaryEmail: '', vetClinicPhone: '' }))).toEqual({});
+    const errors = validateKinfolkEdit(
+      form({ secondaryPhone: '123', secondaryEmail: 'nope', vetClinicPhone: 'abc' }),
+    );
+    expect(errors.secondaryPhone).toBeDefined();
+    expect(errors.secondaryEmail).toBeDefined();
+    expect(errors.vetClinicPhone).toBeDefined();
+  });
+
+  it('does not enforce the no-dashes voice rule on household facts', () => {
+    // A real street address or clinic name may carry a dash. This form holds
+    // facts, not copy Auntie speaks, so the KinTale rule deliberately does not
+    // apply here.
+    expect(validateKinfolkEdit(form({ serviceAddress: '123 Bark Ave, Apt 4-B' }))).toEqual({});
+  });
+
+  it('accepts an already-archived household so it can still be loaded and restored', () => {
+    expect(validateKinfolkEdit(form({ status: KINFOLK_ARCHIVED_STATUS }))).toEqual({});
+  });
+
+  it('does not offer archived as a pickable status', () => {
+    // Archiving carries when/why/by-whom, which a bare status flip cannot record.
+    expect(KINFOLK_STATUS_OPTIONS).toEqual(['active', 'prospect', 'inactive']);
+    expect(KINFOLK_STATUS_OPTIONS as readonly string[]).not.toContain(KINFOLK_ARCHIVED_STATUS);
+  });
+
+  it('reports only the first message per field', () => {
+    const errors = validateKinfolkEdit(form({ email: 'nope' }));
+    expect(Object.keys(errors)).toEqual(['email']);
+  });
+});

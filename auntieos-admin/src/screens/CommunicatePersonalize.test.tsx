@@ -41,6 +41,7 @@ function kinfolkRow(over: Partial<Kinfolk>): Kinfolk {
 function draftResult(over: Partial<GenerateDraftResult> = {}): GenerateDraftResult {
   return {
     generated_copy: 'Nova had the best day at the park today.',
+    generated_title: '',
     communication_type: 'email',
     kinfolk_name: 'Dana Halbrook',
     kinfolk_id: 'kf1',

@@ -73,6 +73,8 @@ export interface KinTaleEntry {
   /** Same caveat as `visitDate`. */
   arrivedAt?: string | undefined;
   title?: string | undefined;
+  /** Provenance of `title`: written by Auntie's generator rather than typed. */
+  titleGeneratedByAi?: boolean | undefined;
   bodyCopy?: string | undefined;
   mediaFileIds?: string[] | undefined;
   /** Free-text; defaults `'DRAFT'` on the source doc, see `lib/kinTaleFormat.ts#kinTaleState`. */

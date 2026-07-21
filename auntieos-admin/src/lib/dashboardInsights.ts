@@ -102,25 +102,36 @@ export interface AccessLine {
   value: string;
   /** Render monospaced (a code / password), not prose. */
   mono?: boolean;
+  /**
+   * A household access secret: render it masked behind a reveal toggle, not in
+   * plaintext. Distinct from [mono], which is only typography. This is the
+   * dashboard, so these lines sit on screen with no household even opened.
+   */
+  secret?: boolean;
 }
 
 /**
  * The household's access notes as display lines, blank fields dropped so a
  * partial household never renders an empty "Gate code:" row. Codes/passwords are
- * flagged [mono] so the widget renders them monospaced. Order is arrival order:
- * where you're going, how you get in, then the wifi once inside.
+ * flagged [mono] so the widget renders them monospaced, and [secret] so it masks
+ * them. Order is arrival order: where you're going, how you get in, then the wifi
+ * once inside.
  */
 export function safeboxAccessLines(p: KinfolkProfile): AccessLine[] {
   const lines: AccessLine[] = [];
-  const add = (label: string, value: string, mono = false): void => {
-    if (value.trim() !== '') lines.push(mono ? { label, value, mono: true } : { label, value });
+  const add = (label: string, value: string, mono = false, secret = false): void => {
+    if (value.trim() === '') return;
+    const line: AccessLine = { label, value };
+    if (mono) line.mono = true;
+    if (secret) line.secret = true;
+    lines.push(line);
   };
   add('Address', p.serviceAddress);
-  add('Gate / door code', p.gateCode, true);
+  add('Gate / door code', p.gateCode, true, true);
   add('Entry notes', p.entryNotes);
   add('Parking', p.parkingInstructions);
   add('WiFi network', p.wifiName);
-  add('WiFi password', p.wifiPassword, true);
+  add('WiFi password', p.wifiPassword, true, true);
   return lines;
 }
 

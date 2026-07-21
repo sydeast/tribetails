@@ -122,12 +122,20 @@ export function matchesKinfolk(kf: Kinfolk, needle: string): boolean {
  * always covered by Firestore's automatic single-field index), same
  * reasoning NOTIFICATIONS_QUERY documents.
  *
- * KNOWN TRADEOFF: Firestore `orderBy` excludes any doc MISSING the sort field,
- * so a kinfolk with no `lastName` (or, for KIN_QUERY, a `kin` predating the
- * `updatedAt` mirror stamp) silently drops from the list, chips, and count.
- * Acceptable only if those fields are always present in prod; flagged for
- * operator prod-verification. If a legacy doc lacks the field, BACKFILL it, 
- * do not weaken the sort to a nullable field, which would just move the drop.
+ * KNOWN TRADEOFF, still open on THIS query: Firestore `orderBy` excludes any doc
+ * MISSING the sort field, so a kinfolk with no `lastName` silently drops from
+ * the list, chips, and count. Flagged for operator prod-verification; the
+ * 2026-07-20 model audit profiled `kinfolk.updatedAt` (8 of 12) but never
+ * measured `lastName`, so the real exposure here is unmeasured, not proven zero.
+ *
+ * This comment used to advise "if a legacy doc lacks the field, BACKFILL it".
+ * That advice is now retracted, see the KIN_QUERY doc below: a backfill fixes
+ * the rows that exist and nothing about the next writer that omits the field.
+ * KIN_QUERY was moved off `updatedAt` onto the document id for exactly that
+ * reason. The same remedy is available here and is deliberately NOT applied in
+ * the same change: this query has no measured drop yet, and re-ordering a
+ * screen's live household list on the strength of an unmeasured risk is a
+ * separate call with its own verification.
  */
 export const KINFOLK_QUERY: CollectionSpec = {
   path: 'kinfolk',
@@ -193,17 +201,68 @@ export function matchesKin(kin: Kin, needle: string): boolean {
 }
 
 /**
- * Bounded, server-ordered kin listener (the flat mirror collection). Ordered
- * by `updatedAt` descending, the one real timestamp field on this collection
- * (see the Kin.updatedAt doc above). Capped at 500. No `where` filter is
- * combined with this `orderBy` (archived kin are excluded CLIENT-side via
- * `activeKinByKinfolk` / the Kin-tab filter below, mirroring the wasm's own
- * client-side `it.status != "archived"` filter), so this query needs NO
- * composite Firestore index.
+ * Bounded, server-ordered kin listener (the flat mirror collection). Ordered by
+ * DOCUMENT ID ascending, capped at 500. No `where` filter is combined with this
+ * `orderBy` (archived kin are excluded CLIENT-side via `activeKinByKinfolk` /
+ * the Kin-tab filter below, mirroring the wasm's own client-side
+ * `it.status != "archived"` filter), so this query needs NO composite index.
+ *
+ * WHY DOCUMENT ID AND NOT `updatedAt`. Firestore's `orderBy` silently EXCLUDES
+ * every document missing the sort field, so a sort key doubles as an invisible
+ * `where <field> exists`. This query previously ordered by `updatedAt` desc, and
+ * the 2026-07-20 live model audit measured `updatedAt` on 23 of 24 real `kin`
+ * docs. One live Kin therefore rendered nowhere, not in Directory's Kin tab and
+ * not in the Care Flags join, with no error and no empty state. Same shape that
+ * returned 0 of 18 invoices and 23 of 99 sessions.
+ *
+ * A backfill would clear today's 24th doc without closing the defect: it holds
+ * only until the next writer omits the field, and the writers do not agree on
+ * one. Every writer of a flat `kin` doc, traced across both trees:
+ *
+ *   - MyTribe `triggers/onFamilyKinWrite.ts`, the family -> flat mirror: stamps
+ *     BOTH `updatedAt` and `familyKinPath` on all three branches (create :95,
+ *     archive :128, update :156).
+ *   - MyTribe `triggers/onFlatKinWrite.ts`: writes the FAMILY doc, never a flat
+ *     one. Not a writer of this collection.
+ *   - MyTribe `admin/setMediaProfilePhoto.ts:104`: `updatedAt` only.
+ *   - This repo's `api/directoryWrite.ts` (createKin, updateKin, setKinArchived,
+ *     updateKinTags): `updatedAt` only, never `familyKinPath`.
+ *   - android `AuntieRepository.updateKin`: whole-object `.set()` with
+ *     `updatedAt` explicitly stamped.
+ *   - android `AuntieRepository.createKin`: whole-object `.add(kin)`, so
+ *     `updatedAt` is only ever the Kotlin model default (`Any? = null`); the
+ *     follow-up `stampFamilyKinPath` merge writes the link fields, not a
+ *     timestamp.
+ *
+ * So `familyKinPath` (24 of 24 live today) is NOT the safer key it looks like:
+ * this admin's own `createKin` never writes it, and ordering by it would drop
+ * every React-created pet instead. No field is set by every writer.
+ *
+ * A document id is the one key Firestore guarantees on every document, so this
+ * order cannot hide a row no matter which writer created it. The cost is that
+ * the order carries no meaning, and neither caller needs it to: `filterSortKin`
+ * below re-derives the Kin tab's displayed order (A to Z, Recently Updated) from
+ * whatever page comes back, and `CareFlagsWidget` keys the page into a Map by
+ * `_id`. The stream's order is a PAGING BOUND, not the display order, exactly
+ * as `api/sessions.ts#SESSIONS_QUERY` documents for its own stream. `'__name__'`
+ * is the same document-id sentinel `lib/testScope.ts#DOC_ID_FIELD` uses; the
+ * Firestore SDK resolves it in `orderBy` to the identical field path
+ * `documentId()` produces, so no `lib/firestore.ts` change is needed.
+ *
+ * KNOWN TRADEOFF, accepted rather than hidden: the 500 cap now truncates by
+ * document id instead of keeping the 500 most recently touched. At 24 live kin
+ * that boundary is far off, and an arbitrary cut at 500 is strictly better than
+ * the certain, silent loss of a row at 24. If the roster ever nears the cap,
+ * paginate it, do not reintroduce a sort key a writer can omit. Ascending is
+ * deliberate: an equality filter plus `orderBy` on the document id ascending is
+ * covered by Firestore's automatic single-field index, which keeps the sandbox
+ * scope (`lib/testScope.ts` adds `where('kinfolkId', '==', tribe)` on this path)
+ * composite-index-free. The old `updatedAt` desc ordering did not have that
+ * property.
  */
 export const KIN_QUERY: CollectionSpec = {
   path: 'kin',
-  order: ['updatedAt', 'desc'],
+  order: ['__name__', 'asc'],
   max: 500,
 };
 

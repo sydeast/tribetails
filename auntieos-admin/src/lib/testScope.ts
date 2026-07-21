@@ -67,6 +67,23 @@ export const SUPPRESSED_IN_TEST_MODE: ReadonlySet<string> = new Set([
   // scope. Showing it empty is truer than a red permission error for data that
   // simply does not apply to this account type.
   'activity_log',
+  // Tribal Intel. SUPPRESSED rather than scoped, for two independent reasons,
+  // either of which alone would rule scoping out:
+  //  1. The rule is `allow read: if isAuntie();` with NO isTestAdmin branch
+  //     (web/firestore.rules:633, and MyTribe's identical copy at :632). A test
+  //     admin does not hold isAuntie, so EVERY read of this collection is
+  //     denied no matter what predicate the query carries. No filter can buy a
+  //     permission the rule never grants. MyTribe's own rules suite already
+  //     pins this: `assertFails(fs.doc('training_documents/t1').get())` for a
+  //     test admin, functions/test/rules/testAdminSandbox.test.ts:238.
+  //  2. There is no `kinfolkId` field to scope BY. The doc's household FKs are
+  //     `targetKinfolkId`/`targetKinId` (spec-23 write-tool fields), and the
+  //     pre-spec-23 migrated docs carry neither, so scoping on one would drop
+  //     every legacy row on top of still being denied.
+  // Left unsuppressed, a sandbox operator opening The Den's Tribal Intel got a
+  // raw "Missing or insufficient permissions", which is the exact scary-banner
+  // failure this set exists to convert into an honest empty state.
+  'training_documents',
 ]);
 
 /** True when this collection should resolve to an empty list instead of being

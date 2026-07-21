@@ -42,14 +42,32 @@ export interface KinCareRow {
 
 /**
  * Bounded, server-ordered `kin` listener for the Care Flags join. Same path,
- * order and cap as `api/directory.ts#KIN_QUERY` (ordered by `updatedAt` desc,
- * the one real timestamp field on this collection; capped at 500), just typed
- * to the care fields this widget reads. No `where` filter, so no composite
- * index is needed; the "today only" narrowing happens client-side over the
- * sessions join, not on this stream.
+ * order and cap as `api/directory.ts#KIN_QUERY` (ordered by DOCUMENT ID
+ * ascending, capped at 500), just typed to the care fields this widget reads.
+ * No `where` filter, so no composite index is needed; the "today only"
+ * narrowing happens client-side over the sessions join, not on this stream.
+ *
+ * The order MUST stay identical to KIN_QUERY's, and the full reasoning lives on
+ * that constant: Firestore `orderBy` silently drops every doc missing the sort
+ * field, no field is written by every `kin` writer, and a document id is the
+ * only key guaranteed on every document. This stream previously ordered by
+ * `updatedAt` desc, which the 2026-07-20 model audit measured on 23 of 24 live
+ * `kin` docs.
+ *
+ * That one dropped row matters MORE here than in the Directory list.
+ * `careFlags` (lib/dashboardInsights.ts) joins today's visits against this
+ * roster and skips any kin it cannot resolve (`if (!info) continue`), so a Kin
+ * missing the old sort field produced NO reactive, medication or feeding flag
+ * for a pet on today's schedule. The widget renders that as "No special care
+ * notes for today's roster", a confident all-clear over data the query never
+ * returned. Ordering by document id is what makes the roster complete, so a
+ * missing flag can only ever mean a genuinely unflagged pet.
+ *
+ * Order is irrelevant to this widget's output either way: the page is folded
+ * into a `Map` keyed by `_id` before `careFlags` ever reads it.
  */
 export const KIN_CARE_QUERY: CollectionSpec = {
   path: 'kin',
-  order: ['updatedAt', 'desc'],
+  order: ['__name__', 'asc'],
   max: 500,
 };

@@ -29,17 +29,18 @@ import { db } from '../lib/firebase';
  *
  * ONE DELIBERATE ADDITION beyond a literal port: `createKin` stamps
  * `updatedAt: serverTimestamp()` on the new doc, which neither the wasm's Kin
- * model nor its `jsAddDoc` payload includes. Reason: KIN_QUERY (api/directory.ts)
- * orders the flat `kin` collection by `updatedAt` with NO `where` filter, and
- * Firestore's `orderBy` excludes any doc missing the sort field entirely (the
- * KNOWN TRADEOFF that file already documents). The only writer that normally
- * stamps `updatedAt` on a flat `kin` doc is the `onFamilyKinWrite` trigger's
- * family -> flat mirror, which never fires for a pet created directly here
- * (no `families/{kinfolkId}/kin/{kinId}` doc exists for it, so there is no
- * family-side write to mirror). Skipping the stamp would mean a freshly
- * created kin silently never appears in the Kin tab's own live list, the exact
- * "created but invisible" failure this port refuses to ship. Every other field
- * is copied from the wasm `Kin`/`Kinfolk` write path as-is.
+ * model nor its `jsAddDoc` payload includes. It feeds Directory's "Recently
+ * Updated" client sort (`filterSortKin`), which otherwise has nothing to sort a
+ * newly created Kin by.
+ *
+ * HISTORY, because the original reason here was stronger and is now WRONG:
+ * this stamp used to be a VISIBILITY requirement, because KIN_QUERY ordered by
+ * `updatedAt` and Firestore's `orderBy` drops any doc missing the sort field.
+ * That query was measured hiding a live Kin (23 of 24 docs carried the field),
+ * so KIN_QUERY now orders by document id, the one key every document is
+ * guaranteed to have. Omitting this stamp can therefore no longer make a Kin
+ * invisible, and nothing here should be written as if it could. Every other
+ * field is copied from the wasm `Kin`/`Kinfolk` write path as-is.
  */
 
 // ── Kinfolk (household) ──────────────────────────────────────────────────────
@@ -160,8 +161,10 @@ export async function createKin(input: NewKinInput): Promise<string> {
     sex,
     status: 'active',
     profilePictureUrl: '',
-    // See the file header: stamped here so this pet is not silently invisible
-    // to KIN_QUERY's `orderBy('updatedAt', 'desc')` the instant it is created.
+    // Stamped so Directory's "Recently Updated" sort (`filterSortKin`) can place
+    // this Kin. NOT a visibility requirement any more: KIN_QUERY orders by
+    // document id precisely BECAUSE no writer stamps `updatedAt` on every path,
+    // so a missing value can no longer hide a Kin from the list.
     updatedAt: serverTimestamp(),
   });
   return ref.id;
@@ -177,8 +180,9 @@ export async function createKin(input: NewKinInput): Promise<string> {
  * a trigger mirrors to this flat one) and cannot set most of the rich flat fields
  * this admin shows. The flat `kin` collection is `isAuntie`-writable (the same
  * rule `createKin` above relies on), so the edit is a direct merge, mirroring
- * `createKin`'s direct create. `updatedAt` is re-stamped so KIN_QUERY's
- * `orderBy('updatedAt', 'desc')` surfaces the edit.
+ * `createKin`'s direct create. `updatedAt` is re-stamped to feed Directory's
+ * "Recently Updated" client sort, not to keep the row visible: KIN_QUERY now
+ * orders by document id, so a missing `updatedAt` cannot drop a Kin.
  */
 export interface KinEditPatch {
   name?: string;
@@ -231,8 +235,9 @@ export async function setKinArchived(kinId: string, archived: boolean): Promise<
  * `business_settings`); this is a whole-list replace, not a per-tag merge, so
  * removing the last tag genuinely clears the field. Same direct, rules-backed
  * transport as `updateKin` (the flat `kin` collection is `isAuntie`-writable),
- * with `updatedAt` re-stamped so KIN_QUERY's `orderBy('updatedAt')` surfaces the
- * edit. Fail-loud: a rejected write propagates to the caller.
+ * with `updatedAt` re-stamped to feed Directory's "Recently Updated" client
+ * sort. It is no longer load-bearing for visibility: KIN_QUERY orders by
+ * document id. Fail-loud: a rejected write propagates to the caller.
  */
 export async function updateKinTags(kinId: string, tags: string[]): Promise<void> {
   const id = kinId.trim();

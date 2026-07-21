@@ -1,0 +1,107 @@
+/* Household section editor. Tokens only, per styles/tokens.css. */
+
+.hsection__blurb {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  margin: 0 0 var(--space-4);
+}
+
+.hsection__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.hsection__legend {
+  /* The fieldset is already named by the dialog title; the legend is here for
+     the accessibility tree, not for the eye. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.hsection__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* Addresses, routines, evacuation plans: full width, they are paragraphs. */
+.hsection__field--wide {
+  grid-column: 1 / -1;
+}
+
+.hsection__label {
+  font-size: var(--type-label-sm-size);
+  font-family: var(--type-label-sm-family);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-dim);
+}
+
+.hsection__control {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.hsection__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-hanken);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+}
+
+.hsection__input--area {
+  resize: vertical;
+  line-height: var(--type-body-md-line);
+}
+
+.hsection__input:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.hsection__input[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+
+.hsection__reveal {
+  flex: 0 0 auto;
+  font-family: var(--font-hanken);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  color: var(--color-primary);
+  background: transparent;
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 0 var(--space-3);
+  cursor: pointer;
+}
+
+.hsection__reveal:hover {
+  border-color: var(--color-primary);
+}
+
+.hsection__error {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-error);
+}
+
+@media (max-width: 40rem) {
+  .hsection__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

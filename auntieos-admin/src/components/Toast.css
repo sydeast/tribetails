@@ -1,0 +1,101 @@
+/* Confirmation stack. Bottom-right, above the rail and any open Dialog, so a
+   save confirmed from inside a modal is still visible. */
+.toasts {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 100;
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-end;
+
+  /* The container spans the corner but must not eat clicks where it is empty. */
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+
+  max-width: min(28rem, calc(100vw - var(--space-8)));
+  padding: var(--space-3) var(--space-4);
+
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-left: 3px solid var(--color-success);
+  border-radius: var(--radius-card);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 18%);
+
+  font-family: var(--font-hanken);
+  color: var(--color-text-primary);
+
+  animation: toast-in var(--dur-base) var(--ease-emphasized);
+}
+
+.toast--success {
+  border-left-color: var(--color-success);
+}
+
+.toast--info {
+  border-left-color: var(--color-accent);
+}
+
+.toast__message {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+
+.toast__dismiss {
+  flex-shrink: 0;
+
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: -2px -4px 0 0;
+
+  background: none;
+  border: none;
+  border-radius: var(--radius-tight);
+  cursor: pointer;
+
+  color: var(--color-text-faint);
+  font-size: 0.875rem;
+  line-height: 1;
+}
+
+.toast__dismiss:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+}
+
+.toast__dismiss:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  color: var(--color-text-primary);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* base.css honors reduced motion globally; this is belt and braces for the
+   entrance, which is the only animation this component owns. */
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
