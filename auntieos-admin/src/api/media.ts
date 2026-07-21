@@ -69,14 +69,22 @@ export type { MediaFile };
  *     collectionGroup: media_files
  *     fields: entityId ASC, uploadedAt DESC
  *
- * Checked live via the Firebase MCP `firestore_list_indexes` tool against
- * `auntieos-ttpc`: NO composite index exists for `media_files` today (zero
- * indexes on that collection). Deploying `firestore.indexes.json` with the
- * entry above is an OPERATOR action outside this port's scope: this file does
- * not invent that deployment. Until it exists, this query fails at runtime with
- * `failed-precondition` (Firestore's error surfaces a direct console link to
- * auto-create the missing index, which `AsyncRegion`'s error banner will show
- * verbatim, per this project's fail-loud rule: never a silent empty grid).
+ * DEPLOYED. That index, plus the sandbox variant below, are live on
+ * `auntieos-ttpc` and declared in `mytribe/firestore.indexes.json` (verified
+ * 2026-07-21, 19 composite indexes live). The earlier revision of this comment
+ * said none existed; that was true on 2026-07-20 and is stale now.
+ *
+ * The operator (unscoped) shape uses the 2-field index above. When a TEST ADMIN
+ * is signed in, `applyTestScope` adds `kinfolkId == testTribeId` on top of the
+ * `entityId` equality, so that shape needs a THIRD index and it does not reuse
+ * the 2-field one:
+ *
+ *     collectionGroup: media_files
+ *     fields: entityId ASC, kinfolkId ASC, uploadedAt DESC
+ *
+ * Both must stay. If either is ever dropped, the matching shape fails at runtime
+ * with `failed-precondition`, which surfaces a console link through
+ * `AsyncRegion`'s error banner (fail-loud, never a silent empty grid).
  */
 
 /**
