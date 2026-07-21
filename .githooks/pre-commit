@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# tribetails monorepo pre-commit gate.
+#
+# This is the gate that actually fires now. Work moved into this repo on
+# 2026-07-21, and this repo had NO hooksPath configured, so every commit made
+# here that day bypassed the credential scan, the rules-drift check and the
+# functions tests. The equivalent hook still sits at
+# auntieos-admin/.githooks/pre-commit, but that path only ran when the old
+# standalone repo was the working copy, so it protects nothing today.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+# Bypass once:            git commit --no-verify   (say why in the message)
+#
+# Fast by design (~1s on a docs change). Gradle suites are far too slow for a
+# commit gate; CI runs those on the pull request.
+
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 1
+FAIL=0
+
+red() { printf '\033[31m%s\033[0m\n' "$1"; }
+grn() { printf '\033[32m%s\033[0m\n' "$1"; }
+
+staged() { git diff --cached --name-only --diff-filter=ACM; }
+
+# ---------------------------------------------------------------------------
+# 1. Secrets, by CONTENT not filename.
+# ---------------------------------------------------------------------------
+# Filename patterns are NOT sufficient here, proven twice.
+#   2026-07-15: "android/Scratch Folder/fcmChannelFirebase.json" was a real
+#   service-account private key and matched none of *serviceAccount*,
+#   *service-account*, *adminsdk*. Only a content scan caught it.
+#   2026-07-21: a real Mapbox secret token sat in
+#   android/gradle.properties.example, a file whose name says "placeholder".
+#
+# Match key MATERIAL, not documentation: prose mentioning "service_account" or
+# "BEGIN PRIVATE KEY" (this hook, the .gitignore, a code review) must not trip
+# it, so the pattern requires the quoted private_key value or a full key token.
+#
+# Public Mapbox tokens (pk.) are deliberately NOT matched. They are designed to
+# ship in clients, and flagging them would teach people to pass --no-verify,
+# which is how the next real secret gets through.
+SECRET_RE='"private_key"[[:space:]]*:[[:space:]]*"-----BEGIN|-----BEGIN [A-Z ]*PRIVATE KEY-----[A-Za-z0-9+/=]|sk-ant-[A-Za-z0-9_-]{40,}|SG\.[A-Za-z0-9_-]{30,}|sk_live_[A-Za-z0-9]{10,}|sk\.eyJ[A-Za-z0-9._-]{20,}'
+
+HITS=""
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  # These two quote the detection patterns as examples, so scanning them would
+  # always self-match.
+  case "$f" in
+    .githooks/pre-commit|auntieos-admin/.githooks/pre-commit) continue ;;
+    .gitignore|auntieos-admin/.gitignore) continue ;;
+  esac
+  if grep -qIE "$SECRET_RE" "$f" 2>/dev/null; then
+    HITS="$HITS  $f"$'\n'
+  fi
+done < <(staged)
+
+if [ -n "$HITS" ]; then
+  red "BLOCKED: staged file(s) contain what looks like a live credential:"
+  printf '%s' "$HITS"
+  echo "  A service-account key, private key block, or an Anthropic, SendGrid,"
+  echo "  Stripe live, or Mapbox SECRET (sk.) token."
+  echo "  Add the path to .gitignore. Do NOT commit and clean up later:"
+  echo "  once it is in history the key must be ROTATED, not just removed."
+  FAIL=1
+else
+  grn "ok: no credentials in staged content"
+fi
+
+# ---------------------------------------------------------------------------
+# 2. firestore.rules mirror must match MyTribe, the source of truth.
+# ---------------------------------------------------------------------------
+# Both trees declare rules on the SAME project (auntieos-ttpc), so a deploy from
+# either overwrites the live rules. This mirror drifted 06-22 to 07-13 and would
+# have reverted the portal's scoped kinfolk read.
+#
+# The old hook reached across to a sibling checkout and degraded to a warning
+# when it was absent, which is precisely when drift goes unnoticed. Both files
+# now live in this repo, so the check is a plain in-repo diff that cannot be
+# skipped by a missing path.
+SRC="mytribe/firestore.rules"
+MIRROR="auntieos-admin/web/firestore.rules"
+
+if staged | grep -qxE "$SRC|$MIRROR"; then
+  if [ ! -f "$SRC" ] || [ ! -f "$MIRROR" ]; then
+    red "BLOCKED: expected both $SRC and $MIRROR to exist."
+    FAIL=1
+  elif ! diff -q "$MIRROR" "$SRC" >/dev/null 2>&1; then
+    red "BLOCKED: $MIRROR has DRIFTED from $SRC."
+    echo "  MyTribe's copy is the source of truth. Reconcile with:"
+    echo "    cp $SRC $MIRROR"
+    FAIL=1
+  else
+    grn "ok: firestore.rules mirror matches MyTribe"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Node test suites, only when their code is touched.
+# ---------------------------------------------------------------------------
+if staged | grep -q '^auntieos-admin/web/functions/'; then
+  if (cd auntieos-admin/web/functions && npm test >/dev/null 2>&1); then
+    grn "ok: AuntieOS functions tests pass"
+  else
+    red "BLOCKED: AuntieOS functions tests FAIL."
+    echo "  Run: cd auntieos-admin/web/functions && npm test"
+    FAIL=1
+  fi
+fi
+
+if staged | grep -q '^mytribe/functions/'; then
+  if (cd mytribe/functions && npm test >/dev/null 2>&1); then
+    grn "ok: MyTribe functions tests pass"
+  else
+    red "BLOCKED: MyTribe functions tests FAIL."
+    echo "  Run: cd mytribe/functions && npm test"
+    FAIL=1
+  fi
+fi
+
+[ "$FAIL" -eq 0 ] || { echo; red "pre-commit FAILED. Fix the above, or --no-verify with a reason."; exit 1; }
+exit 0
