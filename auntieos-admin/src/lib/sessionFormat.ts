@@ -224,17 +224,24 @@ function epochOf(iso: string): number {
  * in (see `SESSIONS_QUERY` in `api/sessions.ts` for why the stream's own order
  * is `startTime desc`, a different concern from this display order).
  */
-export function groupSessionsByDay<T extends { startTime: string }>(rows: T[]): SessionDayGroup<T>[] {
+export function groupSessionsByDay<T extends { startTime?: string | undefined }>(
+  rows: T[],
+): SessionDayGroup<T>[] {
   const map = new Map<string, T[]>();
   for (const row of rows) {
-    const key = sessionDayKey(row.startTime);
+    // `startTime` is optional on the row type because `SessionEntry` is a cast
+    // over raw Firestore data, not a validation of it (see `api/sessions.ts`).
+    // A row missing it lands in the 'Undated' group, exactly where a blank or
+    // unparseable `startTime` already landed, rather than throwing here and
+    // taking the whole list down.
+    const key = sessionDayKey(row.startTime ?? '');
     const existing = map.get(key);
     if (existing) existing.push(row);
     else map.set(key, [row]);
   }
   const groups = Array.from(map.entries()).map(([dayKeyValue, groupRows]) => ({
     dayKeyValue,
-    rows: [...groupRows].sort((a, b) => epochOf(a.startTime) - epochOf(b.startTime)),
+    rows: [...groupRows].sort((a, b) => epochOf(a.startTime ?? '') - epochOf(b.startTime ?? '')),
   }));
   groups.sort((a, b) => {
     if (a.dayKeyValue === 'Undated') return b.dayKeyValue === 'Undated' ? 0 : 1;

@@ -7,6 +7,7 @@ import {
   type VerifyResult,
 } from '../api/activityLog';
 import { useCollection } from '../lib/firestore';
+import { str } from '../lib/coerce';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -37,7 +38,8 @@ function anomalyDetail(a: VerifyAnomaly): string {
 function byDay(rows: ActivityLogEntry[]): [string, ActivityLogEntry[]][] {
   const groups = new Map<string, ActivityLogEntry[]>();
   for (const r of rows) {
-    const day = /^\d{4}-\d{2}-\d{2}/.test(r.timestamp) ? r.timestamp.slice(0, 10) : 'Undated';
+    const ts = str(r.timestamp);
+    const day = /^\d{4}-\d{2}-\d{2}/.test(ts) ? ts.slice(0, 10) : 'Undated';
     (groups.get(day) ?? groups.set(day, []).get(day)!).push(r);
   }
   return [...groups.entries()];
@@ -129,7 +131,9 @@ export function ActivityLog() {
                     {group.map((e) => (
                       <li key={e._id} className="log__row">
                         <code className="log__seq">
-                          {e.seq !== undefined ? `#${e.seq} · ${e.entryHash.slice(0, 8)}` : 'legacy'}
+                          {/* A row can carry a seq but no entryHash; slicing that undefined
+                              would blank the screen, so read the hash through str(). */}
+                          {e.seq !== undefined ? `#${e.seq} · ${str(e.entryHash).slice(0, 8)}` : 'legacy'}
                         </code>
                         <div className="log__body">
                           <span className="log__action">{e.actionType || 'event'}</span>
@@ -143,10 +147,10 @@ export function ActivityLog() {
                             </span>
                           ) : null}
                         </div>
-                        <span className={statusClass(e.status)}>{e.status || '-'}</span>
+                        <span className={statusClass(str(e.status))}>{e.status || '-'}</span>
                         <time className="log__time">
-                          {/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(e.timestamp)
-                            ? e.timestamp.slice(11, 16)
+                          {/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(str(e.timestamp))
+                            ? str(e.timestamp).slice(11, 16)
                             : ''}
                         </time>
                       </li>

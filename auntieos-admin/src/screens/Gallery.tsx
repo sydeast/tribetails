@@ -17,6 +17,7 @@ import {
   type MediaKind,
 } from '../lib/mediaFormat';
 import { useCollection } from '../lib/firestore';
+import { str } from '../lib/coerce';
 import { DenScreenHeading } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
@@ -206,7 +207,7 @@ function GalleryGrid({ rows, filter, onFilterChange, kinfolkLabel }: GalleryGrid
       ) : (
         <ul className="gallery__grid">
           {visible.map((m) => (
-            <GalleryTile key={m._id} media={m} householdName={m.kinfolkId !== '' ? kinfolkLabel.get(m.kinfolkId) ?? '' : ''} />
+            <GalleryTile key={m._id} media={m} householdName={str(m.kinfolkId) !== '' ? kinfolkLabel.get(str(m.kinfolkId)) ?? '' : ''} />
           ))}
         </ul>
       )}
@@ -277,10 +278,10 @@ function householdText(kinfolkId: string, householdName: string): string {
 }
 
 function GalleryTile({ media, householdName }: GalleryTileProps) {
-  const kind = mediaKindOf(media.fileType);
+  const kind = mediaKindOf(str(media.fileType));
   const previewUrl = mediaPreviewUrl(media);
   const caption = mediaCaption(media);
-  const meta = mediaMetaLine(media.uploadedAt, media.uploadedBy);
+  const meta = mediaMetaLine(str(media.uploadedAt), str(media.uploadedBy));
   const duration = kind === 'video' ? mediaDurationLabel(media.durationSeconds) : undefined;
   const accessibleLabel = caption !== '' ? caption : 'Media';
 
@@ -313,7 +314,7 @@ function GalleryTile({ media, householdName }: GalleryTileProps) {
         <div className="gallery__tile-body">
           {caption !== '' && <span className="gallery__tile-caption">{caption}</span>}
           <span className="gallery__tile-household">
-            {householdText(media.kinfolkId, householdName)}
+            {householdText(str(media.kinfolkId), householdName)}
           </span>
           {meta !== '' && <span className="gallery__tile-meta">{meta}</span>}
         </div>

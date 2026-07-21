@@ -3,6 +3,7 @@ import { getKinfolkProfile, type KinfolkProfile as Profile } from '../api/kinfol
 import { updateKinfolkTags } from '../api/directoryWrite';
 import { kinfolkDisplayName, initialsOf, type Kin } from '../api/directory';
 import { type Async } from '../lib/async';
+import { str } from '../lib/coerce';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
@@ -175,21 +176,29 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkP
                 ) : (
                   <ul className="kprofile__kin">
                     {kin.map((k) => {
-                      const detail = [k.species, k.breed, k.age !== '' ? `${k.age} yrs` : '']
+                      // These rows render `api/directory.ts#Kin`, which is a CAST over the
+                      // streamed `kin` docs, not a validated merge like the `p` profile
+                      // above (`mergeKinfolkProfile`). A legacy mirror doc genuinely lacks
+                      // `species`/`age`/`name`, and an unguarded read would throw mid-render
+                      // and blank the whole profile over one pet. Coerced to '' here, which
+                      // is the same blank the filters and `initialsOf` already expect.
+                      const name = str(k.name);
+                      const age = str(k.age);
+                      const detail = [str(k.species), str(k.breed), age !== '' ? `${age} yrs` : '']
                         .filter((s) => s !== '')
                         .join(' · ');
                       return (
                         <li key={k._id} className="kprofile__kin-row">
                           <Avatar
-                            label={k.name}
+                            label={name}
                             imageUrl={k.profilePictureUrl}
-                            initials={initialsOf(k.name)}
+                            initials={initialsOf(name)}
                             size={36}
                             shape="rounded"
-                            gradientSeed={k._id !== '' ? k._id : k.name}
+                            gradientSeed={k._id !== '' ? k._id : name}
                           />
                           <span className="kprofile__kin-text">
-                            <span className="kprofile__kin-name">{k.name}</span>
+                            <span className="kprofile__kin-name">{name}</span>
                             {detail !== '' && <span className="kprofile__kin-detail">{detail}</span>}
                           </span>
                         </li>

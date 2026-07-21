@@ -1,4 +1,5 @@
 import { call } from '../lib/fns';
+import { arr, str } from '../lib/coerce';
 
 /**
  * The operator's OWN notification settings ("My Notifications", account
@@ -43,7 +44,24 @@ export type NotifStream = typeof STREAM_BUSINESS | typeof STREAM_STAFF | typeof 
 
 type ChannelMap = Partial<Record<NotificationChannel, boolean>>;
 
-/** One notification type from the server catalog. */
+/**
+ * One notification type from the server catalog.
+ *
+ * Unlike the `*Entry` / `*Row` interfaces elsewhere in `api/`, this one is NOT
+ * a cast over raw document data: nothing constructs it except
+ * `decodeCatalogEntry`, which defaults every field below from the all-optional
+ * `RawCatalogEntry` wire shape. So these fields are required ON PURPOSE, and
+ * must stay that way — they are a post-decode guarantee, and callers
+ * (`lib/myNotificationsFormat.ts`, `lib/notificationGateEdit.ts`) rely on it to
+ * call `.trim()` / `.size` / `.includes()` without a guard at every use.
+ *
+ * The decoder is therefore the ONLY place this shape can be violated, which is
+ * why it coerces by TYPE (`str` / `arr`) and not just by presence: `?? ''`
+ * catches an absent `label`, but a catalog doc that seeded `label` as a number
+ * sails straight through it and blows up later on `.trim()` — one bad row
+ * blanking the whole screen via the error boundary, the exact failure that took
+ * down Invoices and Bookings on 2026-07-20.
+ */
 export interface NotificationCatalogEntry {
   key: string;
   label: string;
@@ -186,15 +204,22 @@ function decodeAudiences(raw: Partial<Record<NotifStream, true>> | undefined, au
 }
 
 function decodeChannelList(raw: string[] | undefined): NotificationChannel[] {
-  return (raw ?? []).filter((c): c is NotificationChannel => NOTIFICATION_CHANNELS.includes(c as NotificationChannel));
+  // `arr` not `?? []`: a non-array `allowedChannels` would throw on `.filter`
+  // here, before any caller gets the chance to guard it.
+  return arr<unknown>(raw).filter((c): c is NotificationChannel =>
+    NOTIFICATION_CHANNELS.includes(c as NotificationChannel),
+  );
 }
 
 function decodeCatalogEntry(raw: RawCatalogEntry): NotificationCatalogEntry {
-  const audience = raw.audience ?? '';
+  // `audience` is coerced before anything else because `legacyAudienceStreams`
+  // calls `.trim()` on it during THIS decode — a non-string there takes out the
+  // whole catalog, not just this row.
+  const audience = str(raw.audience);
   return {
-    key: raw.key ?? '',
-    label: raw.label ?? '',
-    category: raw.category ?? '',
+    key: str(raw.key),
+    label: str(raw.label),
+    category: str(raw.category),
     audience,
     audiences: decodeAudiences(raw.audiences, audience),
     allowedChannels: decodeChannelList(raw.allowedChannels),
@@ -202,9 +227,11 @@ function decodeCatalogEntry(raw: RawCatalogEntry): NotificationCatalogEntry {
     alwaysEnabled: raw.alwaysEnabled ?? false,
     alwaysEnabledStreams: decodeStreamSet(raw.alwaysEnabledStreams),
     kinfolkFacing: raw.kinfolkFacing ?? false,
-    deliveryMode: raw.deliveryMode ?? '',
-    description: raw.description ?? '',
-    ...(raw.marketingCategory !== undefined ? { marketingCategory: raw.marketingCategory } : {}),
+    deliveryMode: str(raw.deliveryMode),
+    description: str(raw.description),
+    // Only carried when it really is a string: the field is declared `string`,
+    // and spreading a number through would make the interface lie.
+    ...(typeof raw.marketingCategory === 'string' ? { marketingCategory: raw.marketingCategory } : {}),
   };
 }
 
@@ -234,7 +261,9 @@ function decodeOverride(raw: RawOverride): NotificationOverride {
 }
 
 function decodeMatrix(raw: RawGetOverridesResult): NotificationMatrix {
-  const catalog = (raw.catalog ?? []).map(decodeCatalogEntry);
+  // `arr` not `?? []`: a non-array `catalog` throws on `.map` and blanks the
+  // screen, and this is the one read every notification surface depends on.
+  const catalog = arr<RawCatalogEntry>(raw.catalog).map(decodeCatalogEntry);
   const overrides: Record<string, NotificationOverride> = {};
   for (const [key, o] of Object.entries(raw.overrides ?? {})) {
     overrides[key] = decodeOverride(o);

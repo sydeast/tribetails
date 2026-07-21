@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   collection,
+  documentId,
   limit as fbLimit,
   onSnapshot,
   orderBy,
@@ -11,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { type Async } from './async';
+import { applyTestScope, isSuppressedInTestMode, DOC_ID_FIELD } from './testScope';
 
 /** One server-side predicate: [field, op, value]. */
 export type Filter = [string, WhereFilterOp, unknown];
@@ -52,9 +54,20 @@ export function useCollection<T>(spec: CollectionSpec): Async<T[]> {
   const [state, setState] = useState<Async<T[]>>({ status: 'loading' });
   const [nonce, setNonce] = useState(0);
   const retry = () => setNonce((n) => n + 1);
-  const key = JSON.stringify(spec);
+  // Sandbox scoping is applied HERE, not in each screen's spec, so a screen
+  // cannot forget it. A test admin is permission-denied on an unscoped read of
+  // the operator collections; see lib/testScope.ts.
+  const scoped = applyTestScope(spec);
+  const key = JSON.stringify(scoped);
 
   useEffect(() => {
+    // Not applicable to a sandbox account, and not scopeable either. Resolve to
+    // a real empty result rather than letting rules deny it and render a scary
+    // permission error. Mirrors android's test-mode suppression.
+    if (isSuppressedInTestMode(scoped.path)) {
+      setState({ status: 'ready', data: [] });
+      return;
+    }
     setState({ status: 'loading' });
 
     // Query construction can throw synchronously (bad path segment count, invalid
@@ -63,10 +76,17 @@ export function useCollection<T>(spec: CollectionSpec): Async<T[]> {
     let q;
     try {
       const constraints: QueryConstraint[] = [];
-      for (const f of spec.filters ?? []) constraints.push(where(f[0], f[1], f[2]));
-      constraints.push(orderBy(spec.order[0], spec.order[1]));
-      constraints.push(fbLimit(spec.max));
-      q = query(collection(db, spec.path), ...constraints);
+      for (const f of scoped.filters ?? []) {
+        // `__name__` is the sandbox doc-id scope (see testScope.ts). Firestore
+        // only filters on document id through the documentId() FieldPath, not
+        // through a plain field-name string.
+        constraints.push(
+          f[0] === DOC_ID_FIELD ? where(documentId(), f[1], f[2]) : where(f[0], f[1], f[2]),
+        );
+      }
+      constraints.push(orderBy(scoped.order[0], scoped.order[1]));
+      constraints.push(fbLimit(scoped.max));
+      q = query(collection(db, scoped.path), ...constraints);
     } catch (err) {
       setState({ status: 'error', message: err instanceof Error ? err.message : 'Invalid query.', retry });
       return;

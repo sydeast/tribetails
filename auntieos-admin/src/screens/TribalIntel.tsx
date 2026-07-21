@@ -14,6 +14,7 @@ import {
 } from '../lib/tribalIntelFormat';
 import { useCollection } from '../lib/firestore';
 import { asyncScalar } from '../lib/async';
+import { str } from '../lib/coerce';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -60,7 +61,7 @@ export function TribalIntel({ onSelect }: TribalIntelProps) {
   // Invoices.tsx convention), never re-fetched, never a separate `?? 0`.
   const totalCount = asyncScalar(rows, (data) => data.length);
   const commTypeCount = asyncScalar(rows, (data) => distinctCommTypes(data).length);
-  const withContentCount = asyncScalar(rows, (data) => data.filter((d) => d.content.trim() !== '').length);
+  const withContentCount = asyncScalar(rows, (data) => data.filter((d) => str(d.content).trim() !== '').length);
 
   // Same derivation as commTypeCount above, kept as the actual array (not
   // just its length) so the roving-tabindex hook below has a real tab count
@@ -195,6 +196,7 @@ function TribalIntelRow({ doc, onSelect }: TribalIntelRowProps) {
   const when = tribalIntelWhen(doc.uploadedAt ?? '');
   const related = relatedToLabel(doc.kinfolkRef ?? '');
   const attachmentLabel = attachmentCountLabel(attachments.length);
+  const reconcileNotes = doc.reconcileNotes ?? '';
   const state = reconcileState(doc.reconcileStatus ?? '');
   const info = reconcileStateInfo(state);
   // Matches the wasm's own `if (doc.reconcileStatus.isNotBlank())`: a
@@ -230,8 +232,8 @@ function TribalIntelRow({ doc, onSelect }: TribalIntelRowProps) {
         )}
       </span>
 
-      {showReconcileChip && doc.reconcileNotes.trim() !== '' && (
-        <p className="tribal-intel__row-reconcile-notes">{doc.reconcileNotes}</p>
+      {showReconcileChip && reconcileNotes.trim() !== '' && (
+        <p className="tribal-intel__row-reconcile-notes">{reconcileNotes}</p>
       )}
     </>
   );

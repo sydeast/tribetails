@@ -38,17 +38,30 @@ import type { Timestamp } from 'firebase/firestore';
  * (createKinCareSession.ts / approveBookingSeriesCore.ts), which is why it is
  * this query's sort key below rather than the free-text `startTime`.
  */
+/**
+ * OPTIONAL ON PURPOSE (2026-07-20). This interface is a CAST over raw Firestore
+ * data, not a validation of it, and the documents genuinely lack these keys:
+ * `serviceType` is ABSENT on 76 of the 99 live kin_care_sessions.
+ *
+ * Declaring them required told TypeScript a lie. `.trim()` compiled fine, threw
+ * at runtime, and React's error boundary blanked the whole Schedule and
+ * Bookings pages over it. Optional moves that failure from a white screen in
+ * front of the operator to a compile error in front of us.
+ *
+ * Do NOT "fix" a compile error here by restoring the non-null type. Default the
+ * READ instead: `?? ''`, or `str()` from lib/coerce.
+ */
 export interface BookingEntry {
   _id: string;
-  kinfolkId: string;
-  kinfolkName: string;
-  serviceType: string;
-  status: string;
-  startTime: string;
-  completedAt: string;
-  departedAt: string;
-  notes: string;
-  kinfolkNotes: string;
+  kinfolkId?: string | undefined;
+  kinfolkName?: string | undefined;
+  serviceType?: string | undefined;
+  status?: string | undefined;
+  startTime?: string | undefined;
+  completedAt?: string | undefined;
+  departedAt?: string | undefined;
+  notes?: string | undefined;
+  kinfolkNotes?: string | undefined;
   createdAt: Timestamp | null;
 }
 

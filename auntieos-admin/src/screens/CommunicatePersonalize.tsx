@@ -1,5 +1,6 @@
 import { useId, useState } from 'react';
 import { useCollection } from '../lib/firestore';
+import { str } from '../lib/coerce';
 import { KINFOLK_QUERY, kinfolkDisplayName, kinfolkSurnameSortKey, type Kinfolk } from '../api/directory';
 import {
   generateDraft,
@@ -89,8 +90,8 @@ export function CommunicatePersonalize({ onClose }: CommunicatePersonalizeProps)
     // Prefer email when the kinfolk has one on file; fall back to sms when
     // only a phone number is present. Neither present is left as 'email' so
     // the "no contact method" banner below has something concrete to name.
-    if (kf.email.trim() !== '') setChannel('email');
-    else if (kf.phoneNumber.trim() !== '') setChannel('sms');
+    if (str(kf.email).trim() !== '') setChannel('email');
+    else if (str(kf.phoneNumber).trim() !== '') setChannel('sms');
   }
 
   async function handleGenerate(kf: Kinfolk, regenerate: boolean) {
@@ -131,7 +132,9 @@ export function CommunicatePersonalize({ onClose }: CommunicatePersonalizeProps)
         channel,
         message_body: draftText.trim(),
         kinfolk_id: kf._id,
-        ...(channel === 'email' ? { recipient_email: kf.email } : { recipient_phone: kf.phoneNumber }),
+        ...(channel === 'email'
+          ? { recipient_email: str(kf.email) }
+          : { recipient_phone: str(kf.phoneNumber) }),
       };
       const result = await sendPersonalizedMessage(args);
       setSendResult(result);
@@ -187,8 +190,8 @@ export function CommunicatePersonalize({ onClose }: CommunicatePersonalizeProps)
               return ak < bk ? -1 : ak > bk ? 1 : 0;
             });
             const kf = selectedKinfolkOf(sorted);
-            const hasEmail = kf !== undefined && kf.email.trim() !== '';
-            const hasPhone = kf !== undefined && kf.phoneNumber.trim() !== '';
+            const hasEmail = kf !== undefined && str(kf.email).trim() !== '';
+            const hasPhone = kf !== undefined && str(kf.phoneNumber).trim() !== '';
             const noContactMethod = kf !== undefined && !hasEmail && !hasPhone;
             const channelUsable = kf !== undefined && (channel === 'email' ? hasEmail : hasPhone);
             const recipientName = kf ? kinfolkDisplayName(kf) : '';

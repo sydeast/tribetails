@@ -5,13 +5,17 @@ import type { Timestamp } from 'firebase/firestore';
  * One Cloudinary attachment on a `training_documents` doc. Mirrors the wasm
  * `TrainingDocAttachment` data class (`FirestoreClient.kt:2642`) and the
  * backend's `AttachmentSchema` (`createTrainingDocument.ts`) field-for-field.
+ *
+ * Optional for the same reason as `TribalIntelEntry` below: these are raw
+ * map entries off the document, cast rather than validated. A half-written
+ * attachment must not be able to throw on read.
  */
 export interface TribalIntelAttachment {
-  storageUrl: string;
-  cloudinaryPublicId: string;
-  fileType: string;
-  mimeType: string;
-  fileName: string;
+  storageUrl?: string | undefined;
+  cloudinaryPublicId?: string | undefined;
+  fileType?: string | undefined;
+  mimeType?: string | undefined;
+  fileName?: string | undefined;
 }
 
 /**
@@ -61,24 +65,33 @@ export interface TribalIntelAttachment {
  * create/edit form (`AddDocumentForm` in the wasm reference), but they are
  * modeled here for completeness against the real doc shape, matching the
  * `directory.ts` "type mirrors the doc, screen renders a subset" convention.
+ *
+ * EVERY DOCUMENT FIELD BELOW IS OPTIONAL. This interface is a CAST over raw
+ * `doc.data()`, not a validation of it: `useCollection` never checks that a
+ * field is present, so declaring `reconcileStatus: string` for a doc that has
+ * no such key hands the screen an `undefined` that `.trim()` throws on, and
+ * React's error boundary blanks the whole page over that one row. The
+ * backend's zod schema defaults these to `''`, but only for docs written
+ * THROUGH the callables: pre-spec-23 and seeded rows predate that guarantee.
+ * `_id` stays required because `useCollection` always sets it itself.
  */
 export interface TribalIntelEntry {
   _id: string;
-  title: string;
-  content: string;
-  notes: string;
-  communicationType: string;
-  kinfolkRef: string;
-  targetType: string;
-  targetKinfolkId: string;
-  targetKinId: string;
-  attachments: TribalIntelAttachment[];
-  reconcileStatus: string;
-  reconcileNotes: string;
+  title?: string | undefined;
+  content?: string | undefined;
+  notes?: string | undefined;
+  communicationType?: string | undefined;
+  kinfolkRef?: string | undefined;
+  targetType?: string | undefined;
+  targetKinfolkId?: string | undefined;
+  targetKinId?: string | undefined;
+  attachments?: TribalIntelAttachment[] | undefined;
+  reconcileStatus?: string | undefined;
+  reconcileNotes?: string | undefined;
   /** Free-text ISO instant, client-stamped at creation only: see `lib/tribalIntelFormat.ts#tribalIntelWhen`. */
-  uploadedAt: string;
+  uploadedAt?: string | undefined;
   /** Real Firestore Timestamp (`FieldValue.serverTimestamp()`), stamped ONCE at creation (an edit re-stamps updatedAt only, never this): the query's sort key, so ordering is stable creation order. */
-  createdAt: Timestamp | null;
+  createdAt?: Timestamp | null | undefined;
 }
 
 /**

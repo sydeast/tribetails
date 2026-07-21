@@ -1,19 +1,28 @@
 import { call } from '../lib/fns';
 import { type CollectionSpec } from '../lib/firestore';
 
-/** One `activity_log` row (mirrors the wasm ActivityLogEntry). */
+/**
+ * One `activity_log` row (mirrors the wasm ActivityLogEntry).
+ *
+ * Every document field is optional because this interface is a CAST over raw
+ * Firestore data, not a validation of it. Writers across three platforms and
+ * several schema generations have produced rows missing any of these keys, and
+ * a `.slice()` or `.toUpperCase()` on an absent one throws into React's error
+ * boundary and blanks the whole screen. Read them with a default at the point
+ * of use (see lib/coerce). `_id` stays required: useCollection always sets it.
+ */
 export interface ActivityLogEntry {
   _id: string;
-  timestamp: string; // ISO-8601 (chained rows are always ISO; see ACTIVITY_LOG_QUERY)
-  actionType: string; // LOGIN | CREATE_BOOKING | UPDATE_SETTINGS | …
-  description: string;
-  status: string; // SUCCESS | FAILURE | PENDING | ERROR
-  actorId: string;
-  targetId: string;
-  targetCollection: string;
+  timestamp?: string | undefined; // ISO-8601 (chained rows are always ISO; see ACTIVITY_LOG_QUERY)
+  actionType?: string | undefined; // LOGIN | CREATE_BOOKING | UPDATE_SETTINGS | …
+  description?: string | undefined;
+  status?: string | undefined; // SUCCESS | FAILURE | PENDING | ERROR
+  actorId?: string | undefined;
+  targetId?: string | undefined;
+  targetCollection?: string | undefined;
   seq?: number; // hash-chain sequence; absent on legacy pre-chain rows
-  prevHash: string;
-  entryHash: string;
+  prevHash?: string | undefined;
+  entryHash?: string | undefined;
 }
 
 /**

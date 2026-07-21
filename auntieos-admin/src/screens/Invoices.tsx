@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { INVOICES_QUERY, type InvoiceEntry } from '../api/invoices';
+import { INVOICES_QUERY, normalizeInvoice, type InvoiceEntry } from '../api/invoices';
 import {
   formatUsd,
   humanizeDate,
@@ -53,7 +53,9 @@ interface RowView {
 }
 
 function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
-  return rows.map((entry) => {
+  // Normalize BEFORE anything reads a field. InvoiceEntry is a cast over raw
+  // Firestore data, not a guarantee, and real docs ARE missing keys it declares.
+  return rows.map(normalizeInvoice).map((entry) => {
     const state = invoiceState({
       status: entry.status,
       amountDue: entry.amountDue,

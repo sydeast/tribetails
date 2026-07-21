@@ -1,4 +1,5 @@
 import type { Timestamp } from 'firebase/firestore';
+import { str } from './coerce';
 
 /**
  * Pure booking classification + display helpers, kept out of the screen so the
@@ -34,14 +35,18 @@ import type { Timestamp } from 'firebase/firestore';
 export type BookingState = 'draft' | 'pending' | 'scheduled' | 'completed' | 'cancelled' | 'unknown';
 
 export interface BookingStateInput {
-  status: string;
+  /** Optional: a real kin_care_sessions doc can omit `status` entirely.
+   *  `| undefined` is required by this repo's `exactOptionalPropertyTypes`. */
+  status?: string | undefined;
 }
 
 /** Ports BookingScreen.kt's `CANCELLED_STATUSES` verbatim. */
 const CANCELLED_STATUSES = new Set(['CANCELLED', 'CANCELED', 'REJECTED']);
 
 export function bookingState(row: BookingStateInput): BookingState {
-  const status = row.status.trim().toUpperCase();
+  // str(): a real kin_care_sessions doc can lack `status` entirely. Reading it
+  // blind blanked the whole Bookings page via the error boundary (2026-07-20).
+  const status = str(row.status).trim().toUpperCase();
   if (status === 'DRAFT') return 'draft';
   if (status === 'PENDING') return 'pending';
   if (status === 'SCHEDULED') return 'scheduled';
@@ -105,10 +110,31 @@ const pad = (n: number): string => String(n).padStart(2, '0');
  * string is blank or genuinely unparseable.
  */
 export function parseFlexibleDate(raw: string): Date | null {
-  const s = raw.trim();
+  const s = str(raw).trim();
   if (s === '') return null;
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
+
+  const direct = new Date(s);
+  if (!Number.isNaN(direct.getTime())) return direct;
+
+  // The format the migration actually wrote, which `new Date()` rejects
+  // outright: "September 3, 2025 2:02pm". The meridiem is lowercase and has no
+  // separating space, and JS requires "2:02 PM". This is not an edge case, it is
+  // the MAJORITY of the data: 83 of 92 kin_care_reports and 14 kin_care_session
+  // date strings. Every one displayed "Date TBD" while the real date sat in the
+  // document (verified live 2026-07-20).
+  //
+  // Only the meridiem is normalised; the rest of the string is handed to Date
+  // unchanged, so nothing is invented. A string with no parseable date at all
+  // (the bare `departedAt: "6pm"` that exists in kin_care_sessions) still
+  // returns null rather than being anchored to an arbitrary day.
+  const normalised = s.replace(/(\d)\s*([ap])\.?\s*m\.?\b/i, (_m, digit: string, ap: string) =>
+    `${digit} ${ap.toUpperCase()}M`,
+  );
+  if (normalised !== s) {
+    const retry = new Date(normalised);
+    if (!Number.isNaN(retry.getTime())) return retry;
+  }
+  return null;
 }
 
 /**
@@ -134,10 +160,12 @@ export function formatLocalDateTime(d: Date): string {
  * approveBookingSeriesCore.ts), the one genuinely reliable moment on this
  * doc, and the field BOOKINGS_QUERY sorts by (see api/bookings.ts).
  */
+/** Optional for the same reason as BookingEntry: these are raw Firestore values
+ *  and the documents really do omit them. `str()` handles it at each read. */
 export interface BookingWhenInput {
-  startTime: string;
-  completedAt: string;
-  departedAt: string;
+  startTime?: string | undefined;
+  completedAt?: string | undefined;
+  departedAt?: string | undefined;
   createdAt: Timestamp | null;
 }
 
@@ -155,7 +183,7 @@ export interface BookingWhenInput {
  * one.
  */
 export function bookingWhen(row: BookingWhenInput): string {
-  const raw = row.startTime.trim() || row.completedAt.trim() || row.departedAt.trim();
+  const raw = str(row.startTime).trim() || str(row.completedAt).trim() || str(row.departedAt).trim();
   if (raw !== '') {
     const parsed = parseFlexibleDate(raw);
     return parsed ? formatLocalDateTime(parsed) : raw;

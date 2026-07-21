@@ -11,6 +11,7 @@ import {
   type NotificationEntry,
 } from '../api/notifications';
 import { useCollection } from '../lib/firestore';
+import { arr } from '../lib/coerce';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
@@ -168,6 +169,9 @@ export function Notifications() {
                     {group.map((entry) => {
                       const read = isRead(entry);
                       const busy = pendingIds.has(entry._id);
+                      // `channels` is absent on rows dispatched before it was
+                      // written; `.length` on undefined would blank the page.
+                      const channels = arr<string>(entry.channels);
                       return (
                         <li
                           key={entry._id}
@@ -191,9 +195,9 @@ export function Notifications() {
                               {entry.actorName ? `${entry.actorName} · ` : ''}
                               {entry.category || 'uncategorized'} · {entry.mode || 'trigger'}
                             </span>
-                            {entry.channels.length > 0 ? (
+                            {channels.length > 0 ? (
                               <span className="notif-row__channels">
-                                channels: {entry.channels.join(', ')}
+                                channels: {channels.join(', ')}
                               </span>
                             ) : null}
                             <span

@@ -1,5 +1,6 @@
 import type { Timestamp } from 'firebase/firestore';
 import { dayKey, type FsTime } from './time';
+import { str } from './coerce';
 import type { MediaFile } from '../api/gallery';
 
 /**
@@ -24,7 +25,9 @@ export type MediaKind = 'image' | 'video' | 'document' | 'audio' | 'other';
 
 /** Classifies a `MediaFile.fileType` free-text field, case-insensitively (mirrors the wasm's own `.uppercase()` compare). */
 export function mediaKindOf(fileType: string): MediaKind {
-  switch (fileType.trim().toUpperCase()) {
+  // Guarded at the boundary: callers pass a RAW Firestore field, which the
+  // `string` annotation cannot actually guarantee.
+  switch (str(fileType).trim().toUpperCase()) {
     case 'IMAGE':
       return 'image';
     case 'VIDEO':
@@ -54,17 +57,20 @@ export function mediaKindHasPreview(kind: MediaKind): boolean {
  * than leaving a blank hole" behavior: this function does not re-solve that.
  */
 export function mediaPreviewUrl(media: Pick<MediaFile, 'thumbnailUrl' | 'storageUrl'>): string | undefined {
-  const thumb = media.thumbnailUrl.trim();
+  // str(): a real media_files doc can lack these entirely. MediaFile is a cast
+  // over raw Firestore data, and reading one blind blanked the whole Gallery
+  // page through the error boundary (2026-07-20).
+  const thumb = str(media.thumbnailUrl).trim();
   if (thumb !== '') return thumb;
-  const storage = media.storageUrl.trim();
+  const storage = str(media.storageUrl).trim();
   return storage !== '' ? storage : undefined;
 }
 
 /** Read-only display caption: `description`, falling back to `originalFileName`. Ports the wasm's `media.description.ifBlank { media.originalFileName }`. Caption EDITING is a separate, not-yet-built surface: this only reads what's stored. */
 export function mediaCaption(media: Pick<MediaFile, 'description' | 'originalFileName'>): string {
-  const d = media.description.trim();
+  const d = str(media.description).trim();
   if (d !== '') return d;
-  return media.originalFileName.trim();
+  return str(media.originalFileName).trim();
 }
 
 /**
@@ -84,7 +90,7 @@ export function mediaCaption(media: Pick<MediaFile, 'description' | 'originalFil
  * sessionFormat.sessionTimeOf / kinTaleFormat.kinTaleTimeOf.
  */
 function mediaTimeOf(uploadedAt: string): FsTime {
-  const trimmed = uploadedAt.trim();
+  const trimmed = str(uploadedAt).trim();
   if (trimmed === '') return null;
   const d = new Date(trimmed);
   if (Number.isNaN(d.getTime())) return null;
@@ -105,7 +111,7 @@ export function mediaLocalMonth(uploadedAt: string): string | null {
 
 export function mediaMetaLine(uploadedAt: string, uploadedBy: string): string {
   const date = mediaLocalDay(uploadedAt);
-  const author = uploadedBy.trim();
+  const author = str(uploadedBy).trim();
   const realAuthor = author !== '' && author.toLowerCase() !== 'auntie' ? author : '';
   return [date, realAuthor].filter((s) => s !== '').join(' · ');
 }
@@ -158,10 +164,14 @@ export type GalleryRow = Pick<MediaFile, 'kinfolkId' | 'fileType' | 'uploadedAt'
 export function filterGalleryMedia<T extends GalleryRow>(all: T[], filter: GalleryFilter): T[] {
   return all.filter(
     (m) =>
-      (filter.kinfolkId === null || m.kinfolkId.trim() === filter.kinfolkId.trim()) &&
+      (filter.kinfolkId === null || str(m.kinfolkId).trim() === filter.kinfolkId.trim()) &&
       (filter.fileType === null ||
-        m.fileType.trim().toUpperCase() === filter.fileType.trim().toUpperCase()) &&
-      (filter.monthPrefix === null || mediaLocalMonth(m.uploadedAt) === filter.monthPrefix),
+        str(m.fileType).trim().toUpperCase() === filter.fileType.trim().toUpperCase()) &&
+      // str(): `uploadedAt` is optional on MediaFile because a real doc can omit
+      // it (see api/gallery.ts). An absent instant reads as blank, which
+      // `mediaLocalMonth` already maps to null, so the row simply matches no
+      // month bucket rather than throwing partway through the filter.
+      (filter.monthPrefix === null || mediaLocalMonth(str(m.uploadedAt)) === filter.monthPrefix),
   );
 }
 
@@ -174,7 +184,7 @@ function cmp(a: string, b: string): number {
 export function galleryMonths(all: GalleryRow[]): string[] {
   const set = new Set<string>();
   for (const m of all) {
-    const prefix = mediaLocalMonth(m.uploadedAt);
+    const prefix = mediaLocalMonth(str(m.uploadedAt));
     if (prefix) set.add(prefix);
   }
   return [...set].sort((a, b) => cmp(b, a));
@@ -184,7 +194,7 @@ export function galleryMonths(all: GalleryRow[]): string[] {
 export function galleryKinfolkIds(all: GalleryRow[]): string[] {
   const seen = new Set<string>();
   for (const m of all) {
-    const id = m.kinfolkId.trim();
+    const id = str(m.kinfolkId).trim();
     if (id !== '') seen.add(id);
   }
   return [...seen];
@@ -194,7 +204,7 @@ export function galleryKinfolkIds(all: GalleryRow[]): string[] {
 export function galleryFileTypes(all: GalleryRow[]): string[] {
   const set = new Set<string>();
   for (const m of all) {
-    const t = m.fileType.trim();
+    const t = str(m.fileType).trim();
     if (t !== '') set.add(t);
   }
   return [...set].sort(cmp);

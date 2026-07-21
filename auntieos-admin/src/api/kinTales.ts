@@ -40,6 +40,16 @@ import { type CollectionSpec } from '../lib/firestore';
  * the orphan-triage fields (`triageStatus`/`triagedAt`/`triagedBy`/
  * `duplicateOfReportId`/`archiveReason`) belong to the not-yet-built
  * detail/triage screens, not this list.
+ *
+ * EVERY FIELD BELOW IS OPTIONAL, and that is the honest shape, not defensive
+ * padding. This interface is a CAST over raw Firestore document data, not a
+ * validation of it: nothing between the document and this type checks that a
+ * key exists. Declaring `title: string` for the 89 of 92 live
+ * `kin_care_reports` that carry no `title` at all is a lie TypeScript then
+ * lets a screen act on, and `.trim()` on the undefined it actually gets throws
+ * through React's error boundary and BLANKS THE PAGE over one legacy row.
+ * Read these through `?? ''` / `?? []` or `lib/coerce.ts`'s `str`/`arr`.
+ * `_id` stays required, `useCollection` always sets it.
  */
 export interface KinTaleEntry {
   _id: string;
@@ -51,28 +61,28 @@ export interface KinTaleEntry {
    * BOTH `kin_care_reports/{id}` and `kin_care_sessions/{sessionId}`, see
    * `api/kinTalesWrite.ts`).
    */
-  sessionId: string;
-  kinfolkId: string;
-  kinfolkName: string;
-  authorDisplayName: string;
+  sessionId?: string | undefined;
+  kinfolkId?: string | undefined;
+  kinfolkName?: string | undefined;
+  authorDisplayName?: string | undefined;
   /** Pets this recap covers. Only its length is shown at the list level, resolving these to real kin names/species would need a `kin` collection join, which belongs to the not-yet-built detail screen (same "no fabricated names" boundary `sessionHousehold`/`kinfolkDisplayName` already draw). */
-  kinIds: string[];
-  serviceType: string;
+  kinIds?: string[] | undefined;
+  serviceType?: string | undefined;
   /** Free-text ISO instant string, not a Timestamp, see `lib/kinTaleFormat.ts#kinTaleWhen`. */
-  visitDate: string;
+  visitDate?: string | undefined;
   /** Same caveat as `visitDate`. */
-  arrivedAt: string;
-  title: string;
-  bodyCopy: string;
-  mediaFileIds: string[];
+  arrivedAt?: string | undefined;
+  title?: string | undefined;
+  bodyCopy?: string | undefined;
+  mediaFileIds?: string[] | undefined;
   /** Free-text; defaults `'DRAFT'` on the source doc, see `lib/kinTaleFormat.ts#kinTaleState`. */
-  status: string;
+  status?: string | undefined;
   /** Same caveat as `visitDate`; blank until sent. */
-  sentAt: string;
+  sentAt?: string | undefined;
   /** Free-text send channel, or a `legacy_*` backfill marker, see `lib/kinTaleFormat.ts#sentViaLabel`. */
-  sentVia: string;
+  sentVia?: string | undefined;
   /** Same caveat as `visitDate`; stamped on every real write (create AND update). */
-  createdAt: string;
+  createdAt?: string | undefined;
 }
 
 /**

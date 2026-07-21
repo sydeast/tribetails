@@ -1,5 +1,6 @@
 import type { Timestamp } from 'firebase/firestore';
 import { formatWhen, type FsTime } from './time';
+import { str } from './coerce';
 import type {
   BusinessSettings,
   PortalBanner,
@@ -23,6 +24,15 @@ import type {
  * grepping their field names across `screens/settings/*.kt`), so porting a
  * display section for them would be inventing content the source screen does
  * not show. They stay out of this overview.
+ *
+ * `mergeBusinessSettings` (api/settings.ts) type-checks every TOP-LEVEL field,
+ * so the `BusinessSettings` values these helpers receive really are strings.
+ * What it does not descend into is the INSIDE of a map or a list: a
+ * `businessHours` value or a `companyHolidays` entry is still raw document
+ * data typed by a cast. Those reads are coerced with `str` at the point of use
+ * — a mistyped entry then lands on the same fallback a blank one already gets
+ * ("Closed", "Not set"), instead of throwing on `.trim()` and blanking the
+ * screen.
  */
 
 // ── Business hours ───────────────────────────────────────────────────────────
@@ -46,7 +56,7 @@ export interface BusinessHoursRow {
 /** One row per day of the week, in order, "Closed" for a blank/missing entry. */
 export function businessHoursRows(hours: Record<string, string>): BusinessHoursRow[] {
   return DAYS_OF_WEEK.map((day) => {
-    const raw = (hours[day] ?? '').trim();
+    const raw = str(hours[day]).trim();
     return { day, label: raw === '' ? 'Closed' : raw };
   });
 }
@@ -62,7 +72,10 @@ export interface ServiceRateRow {
 export function serviceRateRows(rates: Record<string, string>): ServiceRateRow[] {
   return Object.entries(rates)
     .filter(([type]) => type.trim() !== '')
-    .map(([type, rate]) => ({ type, rate: rate.trim() === '' ? 'Not set' : rate }));
+    .map(([type, rate]) => {
+      const value = str(rate);
+      return { type, rate: value.trim() === '' ? 'Not set' : value };
+    });
 }
 
 // ── Payment handles ─────────────────────────────────────────────────────────
@@ -109,7 +122,7 @@ export const US_HOLIDAYS: ReadonlyArray<readonly [string, string]> = [
 
 /** Title-cases a snake_case id, e.g. `some_id` -> `Some Id`. Fallback label for an id outside the known list. */
 export function humanizeId(id: string): string {
-  return id
+  return str(id)
     .split('_')
     .filter((part) => part !== '')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -142,9 +155,10 @@ export interface DatedEntry {
  * whole string as the label and a blank date, rather than being dropped.
  */
 export function parseDatedEntry(raw: string): DatedEntry {
-  const sep = raw.indexOf('|');
-  if (sep === -1) return { date: '', label: raw };
-  return { date: raw.slice(0, sep), label: raw.slice(sep + 1) };
+  const entry = str(raw);
+  const sep = entry.indexOf('|');
+  if (sep === -1) return { date: '', label: entry };
+  return { date: entry.slice(0, sep), label: entry.slice(sep + 1) };
 }
 
 /** Company holidays, oldest first; entries with no parseable date sort last. */

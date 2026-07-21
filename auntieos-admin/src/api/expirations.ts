@@ -13,16 +13,25 @@ import { call } from '../lib/fns';
 /** The kinds of thing that can expire. Free-text on the doc; one of these. */
 export type ExpirationKind = 'gateCode' | 'vetRecord' | 'card' | 'license' | 'other';
 
-/** One `expirations/{id}` row as returned by `listExpirations`. */
+/**
+ * One `expirations/{id}` row as returned by `listExpirations`.
+ *
+ * Every string field is OPTIONAL because this interface is a cast over raw
+ * Firestore document data, not a validation of it. Nothing enforces that a doc
+ * carries `label`, `dateIso` or `kind`, so declaring them non-null was a lie
+ * that let a string method throw on undefined and blank the whole dashboard
+ * through React's error boundary. Default at the point of use (`?? ''` or
+ * `lib/coerce.ts#str`) so one legacy row degrades to one dull row.
+ */
 export interface ExpirationRow {
   _id: string;
-  label: string;
+  label?: string | undefined;
   /** `YYYY-MM-DD` calendar date the item lapses. */
-  dateIso: string;
+  dateIso?: string | undefined;
   /** Optional household this belongs to; blank when it is a global expiry. */
-  kinfolkId?: string;
+  kinfolkId?: string | undefined;
   /** One of ExpirationKind; free-text on the source doc, so typed loosely. */
-  kind: string;
+  kind?: string | undefined;
 }
 
 /**

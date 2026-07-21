@@ -1,6 +1,7 @@
 import { getIdTokenResult, type User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
 import { allowIntoApp, testModeFromClaim } from './gate';
+import { setTestScope } from './testScope';
 import { useAuth } from './auth';
 
 /**
@@ -39,7 +40,13 @@ export function accessFromClaims(claims: Record<string, unknown>): AdminAccess {
  */
 export async function resolveAccess(user: User, forceRefresh = false): Promise<AdminAccess> {
   const token = await getIdTokenResult(user, forceRefresh);
-  return accessFromClaims(token.claims as Record<string, unknown>);
+  const access = accessFromClaims(token.claims as Record<string, unknown>);
+  // Pin every scoped collection query to the sandbox tribe, HERE, because this
+  // is the one place access is decided — so the query scope can never drift from
+  // the claim. Without it a test admin is permission-denied on every screen
+  // (verified live 2026-07-20). See lib/testScope.ts.
+  setTestScope(access.status === 'testAdmin' ? access.testTribeId : null);
+  return access;
 }
 
 /**

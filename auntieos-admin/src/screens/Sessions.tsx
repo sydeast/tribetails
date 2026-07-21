@@ -14,6 +14,7 @@ import {
 } from '../lib/sessionFormat';
 import { useCollection } from '../lib/firestore';
 import { asyncScalar } from '../lib/async';
+import { str } from '../lib/coerce';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -91,18 +92,25 @@ export function Sessions({ onSelect }: SessionsProps) {
   // Invoices.tsx's todayIso: "today" doesn't change mid-session.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
 
+  // Every field below is read through `str()`: `SessionEntry` is a cast over raw
+  // Firestore data, not a validation of it (see api/sessions.ts), so a doc can
+  // genuinely lack `status`/`startTime`/`completedAt`. An absent field degrades
+  // to '' and lands in the honest bucket the helpers already have for blank text
+  // ('unknown' state, 'Undated' day), so it just doesn't count toward a stat
+  // instead of throwing and blanking the screen.
   const activeCount = asyncScalar(rows, (data) =>
-    data.filter((e) => isSessionActive(sessionState(e.status))).length,
+    data.filter((e) => isSessionActive(sessionState(str(e.status)))).length,
   );
   const todayCount = asyncScalar(
     rows,
-    (data) => data.filter((e) => sessionDayKey(e.startTime) === todayIso).length,
+    (data) => data.filter((e) => sessionDayKey(str(e.startTime)) === todayIso).length,
   );
   const wrappedTodayCount = asyncScalar(
     rows,
     (data) =>
-      data.filter((e) => sessionState(e.status) === 'completed' && sessionDayKey(e.completedAt) === todayIso)
-        .length,
+      data.filter(
+        (e) => sessionState(str(e.status)) === 'completed' && sessionDayKey(str(e.completedAt)) === todayIso,
+      ).length,
   );
 
   // The row SessionDetail shows, resolved from the SAME live stream `rows`
@@ -155,7 +163,7 @@ export function Sessions({ onSelect }: SessionsProps) {
             // `filter` only ever holds a key set via setFilter(f.key) from
             // that same array (Invoices.tsx's identical .find()! comment).
             const activeFilter = FILTERS.find((f) => f.key === filter)!;
-            const visible = data.filter((e) => activeFilter.test(sessionState(e.status)));
+            const visible = data.filter((e) => activeFilter.test(sessionState(str(e.status))));
             const groups = groupSessionsByDay(visible);
 
             return (
@@ -207,18 +215,18 @@ interface SessionRowProps {
 }
 
 function SessionRow({ entry, onSelect }: SessionRowProps) {
-  const state = sessionState(entry.status);
+  const state = sessionState(str(entry.status));
   const info = sessionStateInfo(state);
-  const household = sessionHousehold(entry.kinfolkName);
+  const household = sessionHousehold(str(entry.kinfolkName));
 
   const body = (
     <>
       <span className="sessions__row-who">
         <span className="sessions__row-name">{household}</span>
-        <ServicePill serviceType={entry.serviceType} />
+        <ServicePill serviceType={str(entry.serviceType)} />
       </span>
 
-      <span className="sessions__row-when">{sessionWindow(entry.startTime, entry.endTime)}</span>
+      <span className="sessions__row-when">{sessionWindow(str(entry.startTime), str(entry.endTime))}</span>
 
       <span className={`sessions__chip sessions__chip--${info.cssClass}`}>{info.chipLabel}</span>
     </>

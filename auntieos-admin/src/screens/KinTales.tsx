@@ -100,13 +100,13 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
   });
 
   const sentCount = asyncScalar(rows, (data) =>
-    data.filter((e) => kinTaleState(e.status) === 'sent').length,
+    data.filter((e) => kinTaleState(e.status ?? '') === 'sent').length,
   );
   const draftCount = asyncScalar(rows, (data) =>
-    data.filter((e) => kinTaleState(e.status) === 'draft').length,
+    data.filter((e) => kinTaleState(e.status ?? '') === 'draft').length,
   );
   const failedCount = asyncScalar(rows, (data) =>
-    data.filter((e) => kinTaleState(e.status) === 'failed').length,
+    data.filter((e) => kinTaleState(e.status ?? '') === 'failed').length,
   );
 
   return (
@@ -146,7 +146,7 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
             // `filter` only ever holds a key set via setFilter(f.key) from
             // that same array (Sessions.tsx's identical .find()! comment).
             const activeFilter = FILTERS.find((f) => f.key === filter)!;
-            const visible = data.filter((e) => activeFilter.test(kinTaleState(e.status)));
+            const visible = data.filter((e) => activeFilter.test(kinTaleState(e.status ?? '')));
 
             return (
               <>
@@ -190,23 +190,35 @@ interface KinTaleRowProps {
 }
 
 function KinTaleRow({ entry, onSelect }: KinTaleRowProps) {
-  const state = kinTaleState(entry.status);
+  const state = kinTaleState(entry.status ?? '');
   const info = kinTaleStateInfo(state);
-  const household = kinTaleHousehold(entry.kinfolkName);
-  const headline = kinTaleHeadline(entry.title, entry.bodyCopy);
-  const when = kinTaleWhen(entry);
-  const mediaCount = entry.mediaFileIds.length;
-  const kinCount = entry.kinIds.length;
+  const household = kinTaleHousehold(entry.kinfolkName ?? '');
+  const headline = kinTaleHeadline(entry.title ?? '', entry.bodyCopy ?? '');
+  const when = kinTaleWhen({
+    visitDate: entry.visitDate ?? '',
+    arrivedAt: entry.arrivedAt ?? '',
+    sentAt: entry.sentAt ?? '',
+    createdAt: entry.createdAt ?? '',
+  });
+  // Every read below is defaulted. KinTaleEntry is a CAST over raw Firestore
+  // data, not a validation of it: a real kin_care_reports doc can be missing any
+  // of these, and reading one blind blanked the WHOLE KinTales page through the
+  // error boundary (2026-07-20).
+  const mediaCount = (entry.mediaFileIds ?? []).length;
+  const kinCount = (entry.kinIds ?? []).length;
+  const sentVia = entry.sentVia ?? '';
+  const serviceType = entry.serviceType ?? '';
+  const authorDisplayName = entry.authorDisplayName ?? '';
   // Only a SENT (or otherwise dispatched) row carries a real channel; a
   // draft's blank sentVia would otherwise read as the misleading "imported"
   // sentViaLabel default (see lib/kinTaleFormat.ts#sentViaLabel's doc comment).
-  const channel = entry.sentVia.trim() !== '' ? sentViaLabel(entry.sentVia) : null;
+  const channel = sentVia.trim() !== '' ? sentViaLabel(sentVia) : null;
 
   const body = (
     <>
       <span className="kintales__row-head">
         <span className="kintales__row-name">{household}</span>
-        {entry.serviceType.trim() !== '' ? <ServicePill serviceType={entry.serviceType} /> : null}
+        {serviceType.trim() !== '' ? <ServicePill serviceType={serviceType} /> : null}
         <span className={`kintales__chip kintales__chip--${info.cssClass}`}>{info.chipLabel}</span>
       </span>
 
@@ -214,8 +226,8 @@ function KinTaleRow({ entry, onSelect }: KinTaleRowProps) {
 
       <span className="kintales__row-meta">
         <span className="kintales__row-when">{when}</span>
-        {entry.authorDisplayName.trim() !== '' ? (
-          <span className="kintales__row-author">by {entry.authorDisplayName}</span>
+        {authorDisplayName.trim() !== '' ? (
+          <span className="kintales__row-author">by {authorDisplayName}</span>
         ) : null}
         {kinCount > 0 ? <span className="kintales__row-pip">{kinCount} kin</span> : null}
         {mediaCount > 0 ? (

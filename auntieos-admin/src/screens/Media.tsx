@@ -130,7 +130,7 @@ function MediaGrid({ rows, typeFilter, onTypeFilterChange }: MediaGridProps) {
     () =>
       typeFilter === null
         ? safeRows
-        : safeRows.filter((m) => m.fileType.trim().toUpperCase() === typeFilter),
+        : safeRows.filter((m) => (m.fileType ?? '').trim().toUpperCase() === typeFilter),
     [safeRows, typeFilter],
   );
 
@@ -200,10 +200,16 @@ interface MediaTileProps {
  * would be noise, not information.
  */
 function MediaTile({ media }: MediaTileProps) {
-  const kind = mediaKindOf(media.fileType);
+  // `?? ''`: MediaFile's document fields are optional because the interface is a
+  // cast over raw Firestore data, not a validation of it (see api/gallery.ts).
+  // Every row reaching a tile has already been through `withMediaDefaults`, so
+  // these defaults are belt-and-braces rather than the primary guard — but the
+  // type is the only thing standing between an un-defaulted row and a `.trim()`
+  // on undefined, which blanks the whole grid via the error boundary.
+  const kind = mediaKindOf(media.fileType ?? '');
   const previewUrl = mediaPreviewUrl(media);
   const caption = mediaCaption(media);
-  const meta = mediaMetaLine(media.uploadedAt, media.uploadedBy);
+  const meta = mediaMetaLine(media.uploadedAt ?? '', media.uploadedBy ?? '');
   const duration = kind === 'video' ? mediaDurationLabel(media.durationSeconds) : undefined;
   const accessibleLabel = caption !== '' ? caption : 'Media';
 
