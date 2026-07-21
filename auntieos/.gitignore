@@ -34,7 +34,7 @@ android/app/src/main/assets/service-account-key.json
 _workflow_snapshots/
 
 # ---------------------------------------------------------------------------
-# Client PII — REAL client records. Kept on disk, NEVER committed (history is
+# Client PII: REAL client records. Kept on disk, NEVER committed (history is
 # forever and this tree will be hosted). Two rules:
 #   1. Files holding real dossiers / visit notes / contacts / real Auntie comms,
 #      or ops/seed scripts that embed real records, are ignored HERE.
