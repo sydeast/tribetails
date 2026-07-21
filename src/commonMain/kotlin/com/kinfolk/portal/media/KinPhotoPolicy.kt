@@ -19,7 +19,7 @@ object KinPhotoPolicy {
 
     /** Returns a user-facing problem description, or null when the image is acceptable. */
     fun validate(image: PickedImage): String? = when {
-        image.bytes.isEmpty() -> "That file looks empty — pick a different photo."
+        image.bytes.isEmpty() -> "That file looks empty. Pick a different photo."
         image.bytes.size > MAX_BYTES -> "Photos need to be 10MB or smaller."
         image.mimeType.lowercase() !in ALLOWED_MIME_TYPES -> "Use a JPG, PNG, WebP, or GIF image."
         else -> null

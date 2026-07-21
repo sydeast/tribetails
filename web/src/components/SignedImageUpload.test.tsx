@@ -191,8 +191,8 @@ describe('SignedImageUpload', () => {
     await waitFor(() => expect(FakeXHR.instances).toHaveLength(1));
     FakeXHR.instances[0]?.fail();
 
-    await findByText('Network error — check your connection and try again.');
-    expect(onError).toHaveBeenCalledWith('Network error — check your connection and try again.');
+    await findByText('Network error. Check your connection and try again.');
+    expect(onError).toHaveBeenCalledWith('Network error. Check your connection and try again.');
     expect(onUploaded).not.toHaveBeenCalled();
   });
 

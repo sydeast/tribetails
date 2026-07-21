@@ -55,7 +55,7 @@ export const KIN_PHOTO_ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/w
 
 /** Returns a user-facing problem description, or null when the file is acceptable. */
 export function validateKinPhotoFile(file: { size: number; type: string }): string | null {
-  if (file.size === 0) return 'That file looks empty — pick a different photo.';
+  if (file.size === 0) return 'That file looks empty. Pick a different photo.';
   if (file.size > KIN_PHOTO_MAX_BYTES) return 'Photos need to be 10MB or smaller.';
   if (!KIN_PHOTO_ALLOWED_MIME_TYPES.includes(file.type.toLowerCase())) return 'Use a JPG, PNG, WebP, or GIF image.';
   return null;

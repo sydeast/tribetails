@@ -209,7 +209,7 @@ class ShellNavTest {
 
     @Test
     fun avatarInitial_skipsLeadingWhitespaceAndPunctuation() {
-        assertEquals("D", avatarInitial("  'foster"))
+        assertEquals("F", avatarInitial("  'foster"))
         assertEquals("9", avatarInitial(" 9 Lives Tribe"))
     }
 

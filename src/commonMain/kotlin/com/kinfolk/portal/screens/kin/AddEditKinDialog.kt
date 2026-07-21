@@ -158,7 +158,7 @@ fun AddEditKinDialog(
                         val picked2 = pickedPhoto
                         if (picked2 != null) {
                             Text(
-                                text = "${picked2.fileName.ifBlank { "photo" }} — uploads when you save",
+                                text = "${picked2.fileName.ifBlank { "photo" }} (uploads when you save)",
                                 style = type.sansMeta,
                             )
                         }
