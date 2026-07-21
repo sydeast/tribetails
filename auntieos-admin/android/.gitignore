@@ -5,7 +5,15 @@ build/
 local.properties
 .idea/
 *.iml
-app/google-services.json
+# google-services.json is deliberately TRACKED, matching the policy mytribe
+# already documents at mytribe/.gitignore:34-37. It carries project_info, client
+# entries and the Firebase Web API key, which is PUBLIC by design: it ships in
+# every bundle and is protected by Firestore rules plus App Check, not by
+# secrecy. Verified to contain no private_key and no client_secret.
+#
+# Ignoring it made the Android app unbuildable from a fresh clone, since the
+# google-services Gradle plugin aborts when the file is absent, and there was no
+# template and no mention of it in the README.
 
 # Firebase admin credentials - NEVER commit
 serviceAccount.json

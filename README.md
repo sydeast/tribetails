@@ -14,10 +14,14 @@ All three deploy into a single Firebase project, `auntieos-ttpc`.
 ## Why one repo
 
 Features here are vertical slices. A single change routinely touches a callable
-in `mytribe/`, a model in `auntieos/`, and a screen in `auntieos-admin/`, and
-those pieces are only correct together. Three separate repos made that three
-commits that could drift out of sync; one repo makes it one commit that either
-lands whole or not at all.
+in `mytribe/`, a model in `auntieos-admin/web/`, and a screen in
+`auntieos-admin/src/`, and those pieces are only correct together. Separate
+repos made that several commits that could drift out of sync; one repo makes it
+one commit that either lands whole or not at all.
+The two also share `firestore.rules` on one Firebase project, so a deploy from
+either could overwrite the other's. `mytribe/firestore.rules` is the source of
+truth and `auntieos-admin/web/firestore.rules` is a mirror, with a test and a
+pre-commit hook guarding the drift.
 
 History from all three original repos is preserved, grafted in via
 `git subtree`, so `git log` reaches back through the full history of each.
@@ -28,9 +32,10 @@ Each folder keeps its own toolchain and is built independently:
 
 - `mytribe/functions` — Node, `npm test` (vitest)
 - `mytribe/web` — Vite + React, `npm test`
-- `auntieos/web` — Gradle, `:composeApp:compileKotlinJvm`, `:composeApp:jvmTest`
-- `auntieos/android` — Gradle, `:app:testDebugUnitTest`
 - `auntieos-admin` — Vite + React, `npm test`
+- `auntieos-admin/web` — Gradle, `:composeApp:compileKotlinJvm`, `:composeApp:jvmTest`
+- `auntieos-admin/web/functions` — Node, `npm test` (`node --test`)
+- `auntieos-admin/android` — Gradle, `:app:testDebugUnitTest`
 
 There is no root build. Run gates from the folder you changed.
 

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "153396971788",
+    "project_id": "auntieos-ttpc",
+    "storage_bucket": "auntieos-ttpc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:153396971788:android:6bcb7c5411aeda837f2129",
+        "android_client_info": {
+          "package_name": "com.tribetails.auntieos"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDHpCTTQ0t1dtVScohNvBFdk9_cRyMFUdU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

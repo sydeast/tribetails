@@ -47,6 +47,9 @@ kotlin {
     jvmToolchain(21)
 }
 
+val requiredReleaseSigningProps = listOf("KEYSTORE_PATH", "KEYSTORE_PASSWORD", "KEY_ALIAS", "KEY_PASSWORD")
+val missingReleaseSigningProps = requiredReleaseSigningProps.filter { localProps.getProperty(it).isNullOrBlank() }
+val canSignReleaseApk = missingReleaseSigningProps.isEmpty()
 android {
     namespace = "com.tribetails.auntieos"
     compileSdk = 36
@@ -75,12 +78,27 @@ android {
         buildConfigField("String", "SENTRY_DSN", "\"${localProps.getProperty("SENTRY_DSN") ?: project.findProperty("SENTRY_DSN") ?: ""}\"")
     }
 
+    // Release signing, resolved LAZILY.
+    //
+    // signingConfigs.create runs its action eagerly, so the previous
+    // `?: error(...)` fired during CONFIGURATION of any task. That made
+    // `./gradlew :app:testDebugUnitTest` fail on every machine without the
+    // keystore, including CI, even though debug tests need no signing at all.
+    // The android CI job never revealed it because the Mapbox token gate skipped
+    // the job first, so one missing secret was hiding another.
+    //
+    // Now: no keystore means debug still builds and tests, and only an actual
+    // release assembly fails, at execution time, naming what is missing.
+    val canSignRelease = canSignReleaseApk
+
     signingConfigs {
-        create("release") {
-            storeFile = file(localProps.getProperty("KEYSTORE_PATH") ?: error("KEYSTORE_PATH missing from local.properties"))
-            storePassword = localProps.getProperty("KEYSTORE_PASSWORD") ?: error("KEYSTORE_PASSWORD missing from local.properties")
-            keyAlias = localProps.getProperty("KEY_ALIAS") ?: error("KEY_ALIAS missing from local.properties")
-            keyPassword = localProps.getProperty("KEY_PASSWORD") ?: error("KEY_PASSWORD missing from local.properties")
+        if (canSignRelease) {
+            create("release") {
+                storeFile = file(localProps.getProperty("KEYSTORE_PATH"))
+                storePassword = localProps.getProperty("KEYSTORE_PASSWORD")
+                keyAlias = localProps.getProperty("KEY_ALIAS")
+                keyPassword = localProps.getProperty("KEY_PASSWORD")
+            }
         }
     }
 
@@ -89,7 +107,9 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("release")
+            // Null when the keystore is absent. An unsigned release APK is never
+            // silently produced: the guard below fails the assemble task.
+            signingConfig = if (canSignRelease) signingConfigs.getByName("release") else null
 
             // Ship only the ABIs real phones use.
             //
@@ -311,4 +331,18 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+}
+// Fail LOUD, at execution time, if someone tries to ship a release without the
+// keystore. Configuration stays clean so debug and unit tests run anywhere; this
+// only trips on an actual release assembly, and it names the missing keys rather
+// than emitting an unsigned APK.
+if (!canSignReleaseApk) {
+    tasks.matching { it.name.startsWith("assemble") && it.name.contains("Release") }.configureEach {
+        doFirst {
+            error(
+                "Cannot assemble a signed release: missing " + missingReleaseSigningProps.joinToString(", ") +
+                    " in android/local.properties. Debug builds and unit tests do not need these."
+            )
+        }
+    }
 }

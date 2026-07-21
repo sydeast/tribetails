@@ -62,19 +62,19 @@ precise-JU-composer.md
 docs/auntie_voice_rules_v3.md
 voice/CLAUDE_CODE_KICKOFF_dossier-411-reseed.md
 
-# Ops/seed/migration scripts that embed or ingest real client records
-auntieos_data.py
-seed_dossiers_411.py
-test_seed_dossiers_411.py
-test_generate_live.py
-test_generate.py
-generate.py
-reconcile_prompts.py
-test_reconcile_prompts.py
-normalize_staging.py
-backfill_structural_links.py
-android/migration/scripts/
-sotu-hosting/seed_password_reset_template.js
+# Ops/seed/migration scripts that embed or ingest real client records.
+/auntieos_data.py
+/seed_dossiers_411.py
+/test_seed_dossiers_411.py
+/test_generate_live.py
+/test_generate.py
+/generate.py
+/reconcile_prompts.py
+/test_reconcile_prompts.py
+/normalize_staging.py
+/backfill_structural_links.py
+/android/migration/scripts/
+/sotu-hosting/seed_password_reset_template.js
 
 # Historical docs carrying real names that are read-only (root-owned, can't be
 # pseudonymized in place) or archival snapshots

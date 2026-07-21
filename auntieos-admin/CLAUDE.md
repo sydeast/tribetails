@@ -1,10 +1,10 @@
 ## NON-NEGOTIABLE #1: FULLSTACK ON ALL THREE PLATFORMS, OR IT IS NOT DONE
 
-Backend IS in scope and IS reachable. All repos are available to you in this
-session — you created them. The MyTribe Cloud Functions live at
-`/Users/sydeast/Projects/testai/CascadeProjects/MyTribe/functions/` (separate
-dir, same workspace). The AuntieOS React admin, Kotlin tree, functions, android app and visual
-harness all live here, in this one repo.
+Backend IS in scope and IS reachable. Everything is in ONE repo now: the
+AuntieOS React admin, Kotlin tree, functions, android app and visual harness
+under `auntieos-admin/`, and the MyTribe portal and its Cloud Functions under
+`mytribe/`. The MyTribe Cloud Functions are at `mytribe/functions/`, a sibling
+prefix in this same repository.
 
 A feature is DONE only as a full vertical slice, delivered on EVERY platform:
   backend (MyTribe Cloud Function) + validation + frontend wiring + routes +
@@ -53,8 +53,8 @@ that used to live under Documents/TribeTails_Docs/Communication/AuntieOS.
 - AuntieOS-owned Cloud Functions live in `web/functions/` (Node, Firebase
   codebase `default`) and `web/functions-python/` (codebase `reconcile`).
 - MyTribe Cloud Functions (most of the callables this admin invokes) live at
-  `/Users/sydeast/Projects/testai/CascadeProjects/MyTribe/functions/`, a sibling
-  directory in the same workspace. In scope. New shared callables go there.
+  `mytribe/functions/`, a sibling prefix in THIS repository. In scope. New
+  shared callables go there. The Kinfolk portal is `mytribe/web/`.
 - Desktop parity is PAUSED by owner ruling. Web plus mobile only.
 - `sotu-hosting/` is infrastructure for SOTU/ops hosting and Firebase helper scripts.
 - Do not treat `sotu-hosting/` as the primary AuntieOS product web app unless the task explicitly asks for SOTU, hosting, or functions work there.
