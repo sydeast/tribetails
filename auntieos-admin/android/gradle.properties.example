@@ -11,8 +11,14 @@
 #
 # That is all it needs. It resolves the Mapbox SDK from Mapbox's private Maven
 # repo at build time (android/settings.gradle.kts) and grants nothing at
-# runtime. The RUNTIME token is a different, public one (MAPBOX_ACCESS_TOKEN),
-# it is used server-side by the Cloud Functions, and it never belongs here.
+# runtime.
+#
+# The RUNTIME token is a different, PUBLIC one (MAPBOX_ACCESS_TOKEN) and never
+# belongs in this file. Today it is used server-side by the Cloud Functions for
+# search, geocoding and route optimization. It will also be used in the BROWSER
+# once the live KinCare tracking map ships to kinfolk, so restrict it by URL
+# (kinfolk.tribetails.com, auntie.tribetails.com, localhost, and *.web.app for
+# Firebase preview channels) rather than leaving it unbound.
 MAPBOX_DOWNLOADS_TOKEN=sk.REPLACE_ME
 
 
