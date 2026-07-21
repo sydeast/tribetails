@@ -25,8 +25,9 @@ could not see the other.
 | `twilio-service/`, `twilio-functions/` | Telephony. |
 | `sotu-hosting/` | SOTU hosting and Firebase ops scripts. Not the product web app. |
 
-MyTribe, the Kinfolk portal, is a separate repository beside this one. It owns
-`firestore.rules` (this tree carries a mirror the pre-commit hook checks) and
+MyTribe, the Kinfolk portal, is a sibling prefix in this monorepo under
+`mytribe/`, not a separate repository. It owns `firestore.rules` (this tree
+carries a mirror, guarded by a functions test and the root pre-commit hook) and
 most of the callables this admin invokes.
 
 ## Running it
