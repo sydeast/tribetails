@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import * as Sentry from '@sentry/react';
 import { RouterProvider } from '@tanstack/react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -16,8 +17,13 @@ import './styles/shell.css';
 import './styles/screens.css';
 
 import './lib/firebase'; // initialize Firebase before anything touches auth
+import { initSentry } from './lib/sentry';
 import { router } from './router';
 import { ToastProvider } from './components/Toast';
+
+// Start crash reporting before the app renders, so an error during first paint
+// is still captured. No-op (with a visible console line) when no VITE_SENTRY_DSN.
+initSentry();
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,13 +31,64 @@ const queryClient = new QueryClient({
   },
 });
 
+/**
+ * Fail-loud fallback for an uncaught render error: never a white screen. Inline
+ * styles on purpose, so it renders even if the app's CSS is what failed to load.
+ */
+function CrashFallback() {
+  return (
+    <main
+      role="alert"
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '0.75rem',
+        padding: '2rem',
+        textAlign: 'center',
+        fontFamily: 'system-ui, sans-serif',
+        color: '#11131F',
+        background: '#FBFBF9',
+      }}
+    >
+      <h1 style={{ fontSize: '1.25rem', margin: 0 }}>Something broke on this screen.</h1>
+      <p style={{ maxWidth: '32rem', margin: 0, opacity: 0.8 }}>
+        The error was reported. Reloading usually clears it; nothing you saved is lost.
+      </p>
+      <button
+        type="button"
+        onClick={() => window.location.reload()}
+        style={{
+          marginTop: '0.5rem',
+          padding: '0.6rem 1.1rem',
+          borderRadius: '999px',
+          border: 'none',
+          background: '#11131F',
+          color: '#FBFBF9',
+          cursor: 'pointer',
+        }}
+      >
+        Reload
+      </button>
+    </main>
+  );
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       {/* Above the router on purpose: a save confirmed on one screen still
           confirms after it navigates to another. */}
       <ToastProvider>
-        <RouterProvider router={router} />
+        {/* Catches uncaught RENDER errors, reports them, shows a fail-loud
+            fallback instead of a blank page. Event-handler and async throws are
+            caught separately by the window.onerror / unhandledrejection handlers
+            Sentry.init installs, so full coverage exists only once a DSN is set. */}
+        <Sentry.ErrorBoundary fallback={<CrashFallback />}>
+          <RouterProvider router={router} />
+        </Sentry.ErrorBoundary>
       </ToastProvider>
     </QueryClientProvider>
   </React.StrictMode>,
