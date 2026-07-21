@@ -1,6 +1,34 @@
 # Mapbox Configuration
-# Replace with your actual tokens from https://account.mapbox.com/access-tokens/
-MAPBOX_DOWNLOADS_TOKEN=sk.eyJ1IjoidHJpYmVhZG1pbiIsImEiOiJjbW91d2t1Ym0wMHhvMnNvOWZudHJjZ3BkIn0.bsHXNZt7TyIC_8szX7iOLA
+#
+# PLACEHOLDER ONLY. This file is TRACKED. A real secret token sat on the line
+# below until 2026-07-21, so it was in git history and on GitHub; it has been
+# revoked. Put your real value in gradle.properties (gitignored) or export
+# MAPBOX_DOWNLOADS_TOKEN in your environment.
+#
+# Issue at https://account.mapbox.com/access-tokens/ with exactly ONE scope:
+#
+#   DOWNLOADS:READ
+#
+# That is all it needs. It resolves the Mapbox SDK from Mapbox's private Maven
+# repo at build time (android/settings.gradle.kts) and grants nothing at
+# runtime.
+#
+# The RUNTIME token is a different, PUBLIC one (MAPBOX_ACCESS_TOKEN) and never
+# belongs in this file. Today it is used server-side by the Cloud Functions for
+# search, geocoding and route optimization. It reaches the BROWSER once the live
+# KinCare tracking map ships to kinfolk, so it should carry URL restrictions:
+#
+#   kinfolk.tribetails.com
+#   auntie.tribetails.com
+#   localhost
+#
+# Mapbox URL restrictions do NOT support wildcards, and they cannot be applied to
+# an account's DEFAULT public token, so this has to be a purpose-made token with
+# each origin listed exactly (100 max). Firebase preview channel URLs are
+# generated per channel, so they cannot be pre-registered and the live map will
+# not render in a preview. That is the accepted tradeoff; the KinTale route map
+# avoids it entirely by being rendered server-side to a PNG.
+MAPBOX_DOWNLOADS_TOKEN=sk.REPLACE_ME
 
 
 # Other existing gradle properties...
