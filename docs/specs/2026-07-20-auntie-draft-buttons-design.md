@@ -142,10 +142,51 @@ reached" rather than a generic failure.
   `raw_notes`; a present recipient behaves exactly as before.
 - Regression: the Blog 400 case, which is the bug this unblocks.
 
-## Open
+## KinTale titles
 
-Whether the KinTale generate button should also produce a `title`. The Kotlin
-composer fills `bodyCopy` only, which is why 89 of 92 reports have no title and
-why `aiBackfillTaleTitles.ts` exists. Deferred: the generator returns one plain
-string today with no JSON mode, so titles need a second call or a structured
-response. Worth deciding before the backfill is run again.
+The KinTale button produces a title as well as a body, and the title is drawn
+from the body. The Kotlin composer fills `bodyCopy` only, which is why 89 of 92
+reports have no title and why a backfill job had to exist at all. Generating the
+title at compose time stops the debt at its source.
+
+Do not invent a title style. One already exists and is exported:
+`TITLE_INSTRUCTION` at
+`MyTribe/functions/src/admin/aiBackfillTaleTitles.ts:41`.
+
+> Task: write a title for the pet-visit tale below. 2 to 6 words, plain text,
+> no quotes, no ending punctuation. Concrete and warm, drawn only from what the
+> tale says.
+
+Reusing it verbatim is the point: live titles and backfilled titles then read
+the same, instead of the app growing two title voices.
+
+Mechanism: after the body returns, a second short call (`max_tokens: 64`, the
+same budget the backfill uses at `aiBackfillTaleTitles.ts:128`) sends
+`TITLE_INSTRUCTION` plus the generated body. Two calls per KinTale rather than
+one. At the 200/day cap that is 100 KinTales in a day, far above real volume, so
+the cap still never binds.
+
+A single call returning `TITLE: ...` on the first line was considered and
+rejected: parsing is fragile, and the title would drift from the backfill's
+style the moment either prompt changed.
+
+Rules carried over from the backfill:
+
+- Stamp `titleGeneratedByAi: true`, as `aiBatchPollCron.ts:53` does, so a
+  generated title stays distinguishable from one the operator wrote.
+- Never overwrite a non-empty title. If the operator has typed one, generating
+  the body leaves it alone.
+
+### Known wart
+
+`TITLE_INSTRUCTION` lives in the MyTribe functions bundle; the generator lives
+in `AuntieOS/web/functions`. They are separate deploys, so the constant has to
+be copied, with a comment pointing back to the original.
+
+That makes it the sixth hand-synced constant in this feature. `ALLOWED_TYPES` is
+already duplicated in five places (`generate.js:25`,
+`communicateGenerate.ts:60`, `N8nClient.kt:126`, `create_n8n_workflows.py:160`,
+and a doc comment), with no test binding them, so adding a type today means four
+hand edits and nothing fails if one is missed. Worth a shared contract
+eventually. Not part of this spec, but it should not be discovered again from
+scratch.
