@@ -14,7 +14,7 @@ Project Routing Rules (AI + Human)
 
 - AuntieOS product web app lives in `web/` (Compose Multiplatform / Wasm) — admin/auntie-facing.
 - AuntieOS Android app lives in `android/` — admin/auntie-facing.
-- MyTribe kinfolk app lives at `/Users/sydeast/Projects/testai/CascadeProjects/MyTribe/` — client/kinfolk-facing. Its Firebase Functions (TypeScript) live at `MyTribe/functions/`. This is a SEPARATE repo/directory from AuntieOS.
+- MyTribe kinfolk app lives at `mytribe/` — client/kinfolk-facing. Its Firebase Functions (TypeScript) are at `mytribe/functions/` and the portal is `mytribe/web/`. It is a sibling PREFIX in this same repository, not a separate repo: the two were merged on 2026-07-21.
 - `sotu-hosting/` is ONLY for the project status page (SOTU) and Firebase ops scripts. Its Functions are the SOTU page backend only — NOT AuntieOS app functions, NOT MyTribe functions.
 - Do not treat `sotu-hosting/` as the primary AuntieOS product web app unless the task explicitly asks for SOTU, hosting, or functions work there.
 - All three apps (AuntieOS web, AuntieOS Android, MyTribe) share Firebase project `auntieos-ttpc` — one Firestore, one Auth tenant. Two Functions codebases: `MyTribe/functions/` (TS, kinfolk portal) and `sotu-hosting/functions/` (JS, SOTU ops only).
