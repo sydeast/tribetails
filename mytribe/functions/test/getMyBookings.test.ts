@@ -145,4 +145,76 @@ describe('getMyBookingsHandler', () => {
     expect(res.recent).toEqual([]);
     expect(res.envelopes).toEqual([]);
   });
+
+  // An admin-scheduled visit lives ONLY in kin_care_sessions (no booking
+  // envelope). Before the merge it never reached the kinfolk's Upcoming list.
+  it('surfaces an ad-hoc kin_care_session (no booking) in upcoming', async () => {
+    const future = Date.now() + 3 * 3600_000;
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      collectionGroupDocs: { kinCares: [] },
+      queryDocs: {
+        kin_care_sessions: [
+          {
+            id: 'sess-adhoc',
+            data: {
+              kinfolkId: '3',
+              status: 'SCHEDULED',
+              serviceType: 'visit_60',
+              startTime: new Date(future).toISOString(),
+              endTime: new Date(future + 3600_000).toISOString(),
+              kinIds: ['k1'],
+            },
+          },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res: any = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const dto = res.upcoming.find((b: any) => b.id === 'sess-adhoc');
+    expect(dto).toBeTruthy();
+    expect(dto.status).toBe('confirmed');
+    expect(dto.sessionId).toBe('sess-adhoc');
+    expect(dto.serviceType).toBe('visit_60');
+    expect(dto.startTimeMs).toBe(future);
+  });
+
+  it('does not double-show a kin_care_session already linked to a booking', async () => {
+    const future = Date.now() + 3 * 3600_000;
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'families/3/bookings/env-a': { envelopeStatus: 'confirmed', pattern: 'individual' },
+      },
+      collectionGroupDocs: {
+        kinCares: [visit('env-a', 'b-up', { status: 'confirmed', startTime: Timestamp.fromMillis(future), sessionId: 'sess-linked' })],
+      },
+      queryDocs: {
+        kin_care_sessions: [{ id: 'sess-linked', data: { kinfolkId: '3', status: 'SCHEDULED', startTime: new Date(future).toISOString() } }],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res: any = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.upcoming.map((b: any) => b.id)).toEqual(['b-up']);
+  });
+
+  it('ignores completed/cancelled ad-hoc sessions — they are not upcoming', async () => {
+    const now = Date.now();
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      collectionGroupDocs: { kinCares: [] },
+      queryDocs: {
+        kin_care_sessions: [
+          { id: 's-done', data: { kinfolkId: '3', status: 'COMPLETED', startTime: new Date(now).toISOString() } },
+          { id: 's-cancel', data: { kinfolkId: '3', status: 'CANCELLED', startTime: new Date(now).toISOString() } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res: any = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.upcoming).toEqual([]);
+  });
 });

@@ -125,7 +125,7 @@ export async function getMyBookingsHandler(
 
   // Bucket logic, IDENTICAL to the pre-envelope behaviour so the UI is
   // unchanged when the envelope flag is off.
-  const live = all.find((b) => b.status === 'active' || b.status === 'enRoute') ?? null;
+  let liveVisit = all.find((b) => b.status === 'active' || b.status === 'enRoute') ?? null;
   const upcoming = all
     .filter((b) => (b.status === 'requested' || b.status === 'confirmed') && (b.startTimeMs ?? 0) >= nowMs - 60_000)
     .sort((a, b) => (a.startTimeMs ?? 0) - (b.startTimeMs ?? 0));
@@ -133,6 +133,59 @@ export async function getMyBookingsHandler(
     .filter((b) => b.status === 'completed' || b.status === 'cancelled')
     .sort((a, b) => (b.startTimeMs ?? 0) - (a.startTimeMs ?? 0))
     .slice(0, 10);
+
+  // Surface AuntieOS-scheduled visits that have NO booking envelope. A visit
+  // scheduled directly in the admin app (createKinCareSession / an ad-hoc
+  // sitter visit) lives only in `kin_care_sessions`, never in the `kinCares`
+  // collection group above, so before this it never reached the kinfolk's
+  // Upcoming list. Bookings that DID spawn a session already carry that
+  // session's id in `sessionId`; those are skipped here so nothing double-shows.
+  const linkedSessionIds = new Set(all.map((b) => b.sessionId).filter((s): s is string => !!s));
+  const sessionSnap = await firestore
+    .collection('kin_care_sessions')
+    .where('kinfolkId', '==', kinfolkId)
+    .get();
+  // A SCHEDULED visit whose start is more than a day past is stale, not upcoming;
+  // in-flight (ON_MY_WAY/ARRIVED) visits show regardless of clock so the kinfolk
+  // can watch a live visit that started late.
+  const staleFloorMs = nowMs - 24 * 3600_000;
+  for (const d of sessionSnap.docs) {
+    if (linkedSessionIds.has(d.id)) continue;
+    const s = d.data() as Record<string, unknown>;
+    const status = mapSessionStatus(stringOrNull(s['status']));
+    if (status === null) continue; // completed / cancelled / departed / unknown → not upcoming
+    const startTimeMs = isoMillis(s['startTime']);
+    if (status === 'confirmed' && (startTimeMs === null || startTimeMs < staleFloorMs)) continue;
+    const dto: BookingDto = {
+      id: d.id,
+      batchId: null,
+      kinfolkId,
+      status,
+      serviceType: stringOrNull(s['serviceType']),
+      title: stringOrNull(s['serviceType']),
+      startTimeMs,
+      endTimeMs: isoMillis(s['endTime']),
+      kinIds: Array.isArray(s['kinIds']) ? (s['kinIds'] as string[]) : [],
+      kinNames: [],
+      auntieDisplayName: null,
+      auntieAvatarUrl: null,
+      notes: stringOrNull(s['notes']),
+      requestedByUid: stringOrNull(s['createdBy']),
+      createdAtMs: isoMillis(s['createdAt']),
+      updatedAtMs: isoMillis(s['updatedAt']),
+      visitProgress: status === 'active' ? 'active' : status === 'enRoute' ? 'enRoute' : null,
+      sourceBookingId: stringOrNull(s['sourceBookingId']),
+      sessionId: d.id,
+      cancelRequested: false,
+    };
+    if (status === 'active' || status === 'enRoute') {
+      if (!liveVisit) liveVisit = dto;
+      else upcoming.push(dto);
+    } else {
+      upcoming.push(dto);
+    }
+  }
+  upcoming.sort((a, b) => (a.startTimeMs ?? 0) - (b.startTimeMs ?? 0));
 
   // Read the parent envelopes for envelope-level fields.
   const batchIds = [...byBatch.keys()];
@@ -163,8 +216,34 @@ export async function getMyBookingsHandler(
   }
   envelopes.sort((a, b) => (a.firstStartTimeMs ?? 0) - (b.firstStartTimeMs ?? 0));
 
-  logEvent({ severity: 'info', function: 'getMyBookings', event: 'portal.bookings.resolved', uid, extra: { kinfolkId, total: all.length, envelopes: envelopes.length } });
-  return { liveVisit: live, upcoming, recent, envelopes };
+  logEvent({ severity: 'info', function: 'getMyBookings', event: 'portal.bookings.resolved', uid, extra: { kinfolkId, total: all.length, sessions: sessionSnap.size, envelopes: envelopes.length } });
+  return { liveVisit, upcoming, recent, envelopes };
+}
+
+/**
+ * Maps an AuntieOS kin_care_sessions `status` onto the booking status the portal
+ * renders. Only non-terminal states map to a value; COMPLETED/DEPARTED/CANCELLED
+ * (and anything unrecognized) return null so they are not surfaced as upcoming
+ * (completed visits already reach the UI via getMyVisits for GPS replay).
+ */
+function mapSessionStatus(raw: string | null): BookingDto['status'] | null {
+  switch ((raw ?? '').toUpperCase()) {
+    case 'SCHEDULED':
+      return 'confirmed';
+    case 'ON_MY_WAY':
+      return 'enRoute';
+    case 'ARRIVED':
+      return 'active';
+    default:
+      return null;
+  }
+}
+
+/** Parses an ISO-8601 string (kin_care_sessions stamps times as strings) to millis. */
+function isoMillis(v: unknown): number | null {
+  if (typeof v !== 'string' || v.length === 0) return null;
+  const ms = Date.parse(v);
+  return Number.isNaN(ms) ? null : ms;
 }
 
 /** Prefers the doc's own `batchId` field; falls back to the parent doc id. */

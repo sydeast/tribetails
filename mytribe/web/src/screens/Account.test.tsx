@@ -84,6 +84,7 @@ const ACCOUNT: AccountDto = {
   kinfolkIds: ['kin-fam-1'],
   hasPaymentMethod: false,
   updatedAtMs: null,
+  impersonated: false,
 };
 
 const HOME: GetMyHomeResult = {

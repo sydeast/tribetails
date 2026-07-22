@@ -60,7 +60,9 @@ export function Account() {
   const queryClient = useQueryClient();
   const kinfolkId = getActiveKinfolkId();
 
-  const account = useQuery({ queryKey: ['myAccount'], queryFn: getMyAccount });
+  // Thread the active household so an operator who stepped into another tribe
+  // sees THAT household's profile, not their own admin account (impersonated).
+  const account = useQuery({ queryKey: ['myAccount', kinfolkId], queryFn: () => getMyAccount(kinfolkId) });
   // Best-effort: getFormSchema('account') 404s until an admin seeds a
   // schema. retry:false keeps that from hammering the callable; the error
   // itself is never surfaced (see block comment above).
@@ -105,8 +107,8 @@ export function Account() {
       setStatus({ text: 'Saved.', tone: 'ok' });
       // Verify persistence by reloading from the server rather than trusting
       // the optimistic local state (matches the Compose screen).
-      const fresh = await queryClient.fetchQuery({ queryKey: ['myAccount'], queryFn: getMyAccount });
-      queryClient.setQueryData(['myAccount'], fresh);
+      const fresh = await queryClient.fetchQuery({ queryKey: ['myAccount', kinfolkId], queryFn: () => getMyAccount(kinfolkId) });
+      queryClient.setQueryData(['myAccount', kinfolkId], fresh);
       setDisplayName(fresh.displayName && fresh.displayName !== fresh.email ? fresh.displayName : '');
       setPhone(fresh.phone ?? '');
       setPhotoUrl(fresh.photoUrl ?? '');
@@ -143,22 +145,35 @@ export function Account() {
   }
 
   const data = account.data;
-  const initial = (data.displayName || data.email || 'M').charAt(0).toUpperCase();
+  // When an operator has stepped into another tribe, this DTO is the household's
+  // account, not theirs: the profile becomes a read-only view of that household.
+  const readOnly = data.impersonated;
+  const householdName = home.data?.displayName || data.displayName || 'this tribe';
+  const initial = (data.displayName || data.email || householdName || 'M').charAt(0).toUpperCase();
   const roster = (kin.data?.kin ?? []).filter((k) => k.status === 'active').slice(0, 4);
   const businessName = home.data?.businessName || 'Tribe Tails Pet Care';
   const nameValid = displayName.trim().length > 0;
 
   return (
     <>
-      <PortalNav active="account" displayName={data.displayName ?? ''} />
+      <PortalNav active="account" displayName={(readOnly ? householdName : data.displayName) ?? ''} />
 
       <div className="wrap acct">
         <header className="hero-greet">
-          <div className="kick">Signed in as {data.displayName || data.email || 'you'}</div>
+          <div className="kick">
+            {readOnly ? `Viewing ${householdName}'s profile` : `Signed in as ${data.displayName || data.email || 'you'}`}
+          </div>
           <h1>
             Account <span>Settings</span>
           </h1>
         </header>
+
+        {readOnly && (
+          <div className="note" role="status" style={{ marginBottom: 14 }}>
+            <span className="dot" />
+            Operator view. You are looking at {householdName}'s profile because you stepped into their tribe. It is read-only here; switch tribes from the picker to change who you are viewing.
+          </div>
+        )}
 
         <div className="cols">
           <div className="stack">
@@ -166,23 +181,25 @@ export function Account() {
             <section className="glass card d1">
               <div className="sectlabel">Profile</div>
 
-              <SignedImageUpload
-                sign={signKinfolkAvatar}
-                validate={validateAvatarFile}
-                onUploaded={(url) => setPhotoUrl(url)}
-                imageUrl={photoUrl}
-                onClear={() => setPhotoUrl('')}
-                fallback={initial}
-                title="Profile photo"
-                subtitle="Avatar"
-              />
+              <div style={readOnly ? { pointerEvents: 'none', opacity: 0.65 } : undefined}>
+                <SignedImageUpload
+                  sign={signKinfolkAvatar}
+                  validate={validateAvatarFile}
+                  onUploaded={(url) => setPhotoUrl(url)}
+                  imageUrl={photoUrl}
+                  onClear={() => setPhotoUrl('')}
+                  fallback={initial}
+                  title="Profile photo"
+                  subtitle="Avatar"
+                />
+              </div>
 
               <div className="divider" />
 
               <div className="field">
                 <label htmlFor="dname">Display Name</label>
-                <input className="input" id="dname" type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-                {!nameValid && <p className="sub">Add your name to save.</p>}
+                <input className="input" id="dname" type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} disabled={readOnly} />
+                {!nameValid && !readOnly && <p className="sub">Add your name to save.</p>}
               </div>
               <div className="field-row">
                 <div className="field">
@@ -198,7 +215,7 @@ export function Account() {
                 </div>
                 <div className="field">
                   <label htmlFor="phone">Phone</label>
-                  <input className="input" id="phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 014 2298" />
+                  <input className="input" id="phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 014 2298" disabled={readOnly} />
                 </div>
               </div>
             </section>
@@ -220,6 +237,7 @@ export function Account() {
                       value={backupEmail}
                       onChange={(e) => setBackupEmail(e.target.value)}
                       placeholder="name@example.com"
+                      disabled={readOnly}
                     />
                   </div>
                   <div className="field">
@@ -231,6 +249,7 @@ export function Account() {
                       value={backupPhone}
                       onChange={(e) => setBackupPhone(e.target.value)}
                       placeholder="(555) 000 0000"
+                      disabled={readOnly}
                     />
                   </div>
                 </div>
@@ -239,7 +258,7 @@ export function Account() {
                     className="btn ghost"
                     type="button"
                     onClick={() => invite.mutate()}
-                    disabled={invite.isPending || !backupEmail.trim().includes('@')}
+                    disabled={invite.isPending || !backupEmail.trim().includes('@') || readOnly}
                   >
                     {'✉️'} {invite.isPending ? 'Sending…' : 'Send Invite'}
                   </button>
@@ -332,9 +351,11 @@ export function Account() {
               Sign Out
             </button>
           )}
-          <button className="btn grad" type="button" onClick={() => save.mutate()} disabled={save.isPending || !nameValid}>
-            {save.isPending ? 'Saving…' : <>{'✓'} Save Changes</>}
-          </button>
+          {!readOnly && (
+            <button className="btn grad" type="button" onClick={() => save.mutate()} disabled={save.isPending || !nameValid}>
+              {save.isPending ? 'Saving…' : <>{'✓'} Save Changes</>}
+            </button>
+          )}
         </div>
 
         <p className="footnote">
