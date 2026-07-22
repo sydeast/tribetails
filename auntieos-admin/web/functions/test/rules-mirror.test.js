@@ -15,8 +15,17 @@
 // firestore block at all).
 //
 // MyTribe/firestore.rules is the source of truth (owner ruling 2026-07-15).
-// AuntieOS's copy is a mirror, kept only so the emulator + visual harness run
-// against real rules. To change rules: edit MyTribe's file, then copy it here.
+//
+// The mirror used to be a hand-kept COPY, which is what drifted. It is now a
+// SYMLINK to mytribe/firestore.rules, so there is no second copy to drift: the
+// emulator and visual harness read the source through the link, and a rules
+// deploy from this tree (already refused by scripts/safe-deploy.sh) would push
+// the current source, not a stale copy. Drift is now structurally impossible.
+//
+// The byte-identity check below is therefore belt-and-suspenders. The primary
+// guard is now the "is a symlink" test: if someone converts it back to a real
+// copy, drift becomes possible again and that test fails, pointing them back to
+// the symlink.
 //
 // Run: cd web/functions && npm test
 
@@ -44,6 +53,27 @@ const MIRROR = path.resolve(__dirname, '..', '..', 'firestore.rules');
 describe('firestore.rules mirror (shared project auntieos-ttpc)', () => {
   it('the AuntieOS mirror exists', () => {
     assert.ok(fs.existsSync(MIRROR), `missing mirror: ${MIRROR}`);
+  });
+
+  it('is a SYMLINK to the source, so no copy can drift', () => {
+    // lstat, not stat: stat follows the link and would report the target's type.
+    // This is the primary guard now. A regression to a real copy reintroduces the
+    // whole drift class, so catch it here rather than trust byte-identity alone.
+    const st = fs.lstatSync(MIRROR);
+    assert.ok(
+      st.isSymbolicLink(),
+      'web/firestore.rules is no longer a symlink. It must point at ' +
+        'mytribe/firestore.rules so the two cannot diverge. Restore it with:\n' +
+        '  rm auntieos-admin/web/firestore.rules && ' +
+        'ln -s ../../mytribe/firestore.rules auntieos-admin/web/firestore.rules',
+    );
+    const target = fs.readlinkSync(MIRROR);
+    assert.strictEqual(
+      target,
+      '../../mytribe/firestore.rules',
+      `the mirror symlink points at '${target}', not at the source of truth ` +
+        '(../../mytribe/firestore.rules).',
+    );
   });
 
   it('is byte-identical to MyTribe/firestore.rules (the source of truth)', () => {
