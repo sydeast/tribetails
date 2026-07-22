@@ -26,7 +26,7 @@ const ALLOWED_TYPES = new Set(['sms', 'email', 'visit_report', 'social_post', 'b
 
 /**
  * VERBATIM COPY of TITLE_INSTRUCTION from MyTribe
- * `functions/src/admin/aiBackfillTaleTitles.ts` (the export at line 41).
+ * `mytribe/functions/src/admin/aiBackfillTaleTitles.ts` (the export at line 42).
  *
  * It is duplicated, not imported, because that file deploys in a different
  * bundle: this is the AuntieOS functions codebase, that is MyTribe's. Keeping

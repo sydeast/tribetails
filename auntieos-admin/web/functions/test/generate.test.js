@@ -23,6 +23,32 @@ const needsVoice = VOICE_PRESENT
   ? {}
   : { skip: 'brand-voice corpus not present (gitignored; expected on CI)' };
 
+// MyTribe's TITLE_INSTRUCTION is the ORIGINAL; generate.js carries a verbatim
+// copy (they deploy in different function bundles, so it cannot be imported).
+// Both trees are prefixes in this one monorepo now, so the guard test reads the
+// real MyTribe source instead of a hardcoded literal: that way an edit on EITHER
+// side is caught, not just an edit to the AuntieOS copy.
+const MYTRIBE_BACKFILL_SRC = path.join(
+  __dirname, '..', '..', '..', '..',
+  'mytribe', 'functions', 'src', 'admin', 'aiBackfillTaleTitles.ts',
+);
+
+// Pull the runtime string VALUE of a `const NAME = 'a' + 'b' + ...;` assignment
+// out of TS/JS SOURCE TEXT: fold the concatenation, decode the escapes. This
+// compares the string the code PRODUCES, not the exact source bytes, so a
+// reformat of the MyTribe file does not spuriously fail, but any change to the
+// instruction itself does.
+function extractStringConst(source, name) {
+  const m = source.match(new RegExp('const\\s+' + name + '\\s*=\\s*([\\s\\S]*?);'));
+  if (!m) throw new Error(`${name} assignment not found in ${MYTRIBE_BACKFILL_SRC}`);
+  const literals = m[1].match(/'((?:\\.|[^'\\])*)'|"((?:\\.|[^"\\])*)"/g);
+  if (!literals) throw new Error(`${name} assignment has no string literals`);
+  return literals
+    .map((lit) => lit.slice(1, -1).replace(/\\(["'\\nrt])/g, (_, c) =>
+      (c === 'n' ? '\n' : c === 'r' ? '\r' : c === 't' ? '\t' : c)))
+    .join('');
+}
+
 // ---- tiny in-memory Firestore double -------------------------------------
 // Supports: collection(name).get(), .doc(id).get(), .doc().set(),
 //           .where(field, op, value).get()  (op 'in' and '==').
@@ -183,15 +209,16 @@ function scriptedAnthropic(texts, { failOn = -1 } = {}) {
 }
 
 describe('KinTale title generation', () => {
-  // Pins the exact bytes against MyTribe functions/src/admin/aiBackfillTaleTitles.ts.
-  // A title written live must read like one written by the backfill cron; if that
-  // export is edited and this copy is not, the tale list splits into two voices.
-  it('uses the backfill instruction verbatim', () => {
-    assert.strictEqual(
-      gen.TITLE_INSTRUCTION,
-      'Task: write a title for the pet-visit tale below. 2 to 6 words, plain text, no quotes, ' +
-        'no ending punctuation. Concrete and warm, drawn only from what the tale says.\n\nTale:',
-    );
+  // Pins the AuntieOS copy against the REAL MyTribe source, byte for byte. A
+  // title written live must read like one written by the backfill cron; if the
+  // backfill's TITLE_INSTRUCTION is edited and this copy is not, the tale list
+  // splits into two voices. The old test compared against a hardcoded literal,
+  // so it caught an edit to THIS copy but was blind to an edit on the MyTribe
+  // side, the exact drift it was meant to guard. Now it reads the actual file.
+  it('is byte-identical to the MyTribe backfill TITLE_INSTRUCTION', () => {
+    const src = fs.readFileSync(MYTRIBE_BACKFILL_SRC, 'utf8');
+    const backfillInstruction = extractStringConst(src, 'TITLE_INSTRUCTION');
+    assert.strictEqual(gen.TITLE_INSTRUCTION, backfillInstruction);
   });
 
   describe('normalizeTitle', () => {
