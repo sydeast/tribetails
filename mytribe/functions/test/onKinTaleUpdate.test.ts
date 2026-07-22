@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
 vi.mock('../src/lib/wrapTrigger', () => ({
-  wrapTrigger: (_name: string, fn: Function) => fn,
+  wrapTrigger: (_name: string, fn: (...args: unknown[]) => unknown) => fn,
 }));
 vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));

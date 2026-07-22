@@ -92,7 +92,7 @@ function buildFakeDb(opts: {
 
   const fakeDb: any = {
     collection: vi.fn((name: string) => ({
-      doc: vi.fn((id?: string) => {
+      doc: vi.fn((_id?: string) => {
         if (name === 'securityRateLimits') {
           return 'rateLimitDocRef'; // will be used as ref in transaction
         }
