@@ -56,6 +56,45 @@ describe('getMyAccountHandler', () => {
     expect(res.hasPaymentMethod).toBe(true);
     expect(res.updatedAtMs).toBe(99);
     expect(res.kinfolkIds).toEqual(['3']);
+    expect(res.impersonated).toBe(false);
+  });
+
+  it('operator impersonating a foreign household returns THAT household account, read-only', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/op1': { kinfolkIds: ['op-own'] } },
+      queryDocs: {
+        clients: [{ id: 'ownerUid', data: { kinfolkIds: ['demo-family-001'], backupEmail: 's@x.com', stripePaymentMethodId: 'pm_x' } }],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyAccountHandler } = await import('../src/portal/account');
+    const res = await getMyAccountHandler({ data: { kinfolkId: 'demo-family-001' }, auth: { uid: 'op1', token: { admin: true } } } as any);
+    expect(res.impersonated).toBe(true);
+    expect(res.uid).toBe('ownerUid');
+    expect(res.kinfolkIds).toEqual(['demo-family-001']);
+    expect(res.hasPaymentMethod).toBe(true);
+  });
+
+  it('non-operator passing a foreign kinfolkId gets their OWN account (no cross-household leak)', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/k1': { kinfolkIds: ['own-1'], backupEmail: 'me@x.com' } },
+      queryDocs: { clients: [{ id: 'someoneElse', data: { kinfolkIds: ['demo-family-001'] } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyAccountHandler } = await import('../src/portal/account');
+    const res = await getMyAccountHandler({ data: { kinfolkId: 'demo-family-001' }, auth: { uid: 'k1', token: {} } } as any);
+    expect(res.impersonated).toBe(false);
+    expect(res.uid).toBe('k1');
+    expect(res.kinfolkIds).toEqual(['own-1']);
+  });
+
+  it('operator viewing their OWN household is not impersonation', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/op1': { kinfolkIds: ['mine'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyAccountHandler } = await import('../src/portal/account');
+    const res = await getMyAccountHandler({ data: { kinfolkId: 'mine' }, auth: { uid: 'op1', token: { admin: true } } } as any);
+    expect(res.impersonated).toBe(false);
+    expect(res.uid).toBe('op1');
   });
 });
 

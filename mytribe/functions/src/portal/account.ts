@@ -20,22 +20,25 @@ interface AccountDto {
   kinfolkIds: string[];
   hasPaymentMethod: boolean;
   updatedAtMs: number | null;
+  /**
+   * True when an OPERATOR (admin claim) is viewing a household that is not one
+   * of their own. In that case this DTO describes the impersonated household's
+   * primary account, not the signed-in operator, and the portal renders it
+   * read-only. False for a normal kinfolk viewing their own account.
+   */
+  impersonated: boolean;
 }
 
-export async function getMyAccountHandler(req: CallableRequest<unknown>): Promise<AccountDto> {
-  initSentry();
-  const uid = req.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+const GetAccountArgs = z.object({ kinfolkId: z.string().min(1).max(200).optional() });
 
-  const firestore = db();
-  const [clientSnap, authUser] = await Promise.all([
-    firestore.collection('clients').doc(uid).get(),
-    authAdmin().getUser(uid).catch(() => null),
-  ]);
-  const data = (clientSnap.data() ?? {}) as Record<string, unknown>;
+/** Maps a `clients/{uid}` doc + Auth user onto the wire DTO. */
+function toAccountDto(
+  uid: string,
+  data: Record<string, unknown>,
+  authUser: { email?: string; displayName?: string; phoneNumber?: string; photoURL?: string } | null,
+  impersonated: boolean,
+): AccountDto {
   const ts = data['updatedAt'];
-  const updatedAtMs = ts instanceof Timestamp ? ts.toMillis() : null;
-
   return {
     uid,
     email: authUser?.email ?? (typeof data['email'] === 'string' ? (data['email'] as string) : null),
@@ -52,8 +55,59 @@ export async function getMyAccountHandler(req: CallableRequest<unknown>): Promis
     backupPhone: typeof data['backupPhone'] === 'string' ? (data['backupPhone'] as string) : null,
     kinfolkIds: Array.isArray(data['kinfolkIds']) ? (data['kinfolkIds'] as string[]) : [],
     hasPaymentMethod: data['stripePaymentMethodId'] != null,
-    updatedAtMs,
+    updatedAtMs: ts instanceof Timestamp ? ts.toMillis() : null,
+    impersonated,
   };
+}
+
+export async function getMyAccountHandler(req: CallableRequest<unknown>): Promise<AccountDto> {
+  initSentry();
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+
+  const requestedKinfolkId = GetAccountArgs.parse(req.data ?? {}).kinfolkId;
+  const isOperator = req.auth?.token?.admin === true;
+  const firestore = db();
+
+  // Always read the caller's own client doc first so we know which households
+  // are genuinely theirs. A kinfolk viewing their own account, or an operator
+  // whose own household happens to be the active pick, follows the normal path.
+  const ownSnap = await firestore.collection('clients').doc(uid).get();
+  const ownData = (ownSnap.data() ?? {}) as Record<string, unknown>;
+  const ownKinfolkIds = Array.isArray(ownData['kinfolkIds']) ? (ownData['kinfolkIds'] as string[]) : [];
+
+  // Impersonation is ONLY for an operator (admin claim) viewing a household that
+  // is not their own. A non-operator passing someone else's kinfolkId is ignored
+  // (falls through to their own account) so a kinfolk can never read another
+  // household's contact details.
+  const impersonating = !!requestedKinfolkId && isOperator && !ownKinfolkIds.includes(requestedKinfolkId);
+
+  if (impersonating) {
+    const ownerSnap = await firestore
+      .collection('clients')
+      .where('kinfolkIds', 'array-contains', requestedKinfolkId)
+      .limit(1)
+      .get();
+    if (ownerSnap.docs.length === 0) {
+      // Household has no linked portal account yet. Return an empty impersonated
+      // record (not the operator's own) so the profile still reflects "the
+      // household being viewed", not the admin. The display name is filled by the
+      // screen from getMyHome, which does not depend on a client account existing.
+      return {
+        uid: '', email: null, displayName: null, phone: null, photoUrl: null,
+        backupEmail: null, backupPhone: null, kinfolkIds: [requestedKinfolkId],
+        hasPaymentMethod: false, updatedAtMs: null, impersonated: true,
+      };
+    }
+    const ownerDoc = ownerSnap.docs[0];
+    const ownerUid = ownerDoc.id;
+    const ownerData = (ownerDoc.data() ?? {}) as Record<string, unknown>;
+    const ownerAuth = await authAdmin().getUser(ownerUid).catch(() => null);
+    return toAccountDto(ownerUid, ownerData, ownerAuth, true);
+  }
+
+  const authUser = await authAdmin().getUser(uid).catch(() => null);
+  return toAccountDto(uid, ownData, authUser, false);
 }
 
 const SaveArgs = z.object({

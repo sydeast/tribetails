@@ -12,10 +12,13 @@ import { call } from '../lib/fns';
 // ── getMyAccount / saveMyAccount (functions/src/portal/account.ts) ─────────
 
 /**
- * Both callables are uid-scoped only — getMyAccountHandler reads
- * `clients/{req.auth.uid}` and saveMyAccountHandler's zod Args has no
- * kinfolkId field at all, so neither wrapper takes one (unlike most of
- * api/portal.ts's kinfolkId-threaded calls).
+ * `getMyAccount` takes an optional `kinfolkId`: when an OPERATOR (admin claim)
+ * passes a household that is not their own, the backend returns THAT household's
+ * primary account with `impersonated: true`, so the profile reflects the tribe
+ * being viewed rather than the operator. A normal kinfolk (or an operator on
+ * their own household) gets their own uid-scoped account, `impersonated: false`.
+ * `saveMyAccount` stays uid-scoped and has no kinfolkId — the screen renders the
+ * impersonated profile read-only, so an operator never edits a client's account.
  */
 export interface AccountDto {
   uid: string;
@@ -29,10 +32,12 @@ export interface AccountDto {
   kinfolkIds: string[];
   hasPaymentMethod: boolean;
   updatedAtMs: number | null;
+  /** True when an operator is viewing a household that is not their own. */
+  impersonated: boolean;
 }
 
-export function getMyAccount(): Promise<AccountDto> {
-  return call<Record<string, never>, AccountDto>('getMyAccount', {});
+export function getMyAccount(kinfolkId?: string): Promise<AccountDto> {
+  return call<{ kinfolkId?: string }, AccountDto>('getMyAccount', kinfolkId !== undefined ? { kinfolkId } : {});
 }
 
 /**
