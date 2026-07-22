@@ -23,17 +23,20 @@ Frozen request shapes:
 Coverage reality, so nobody over-trusts this: the admin invokes ~50 MyTribe
 callables; the above 10 are frozen. The measured surface, not the stale "~26":
 
-- NEXT TRANCHE (highest blast radius, needs a DEEPER guard than top-level keys):
-  `broadcastMessage` (a `.superRefine` ZodEffects, so `.shape` needs unwrapping),
-  `saveTemplate` (nested `sectionDefinitions`), `saveFormSchema` (3-level nested
-  `sections[].fields[]`, where a nested rename is exactly what a top-level freeze
-  misses). Freeze these with a recursive key-path signature, not `shapeKeys`.
-- The remaining ~36 are lower-complexity (2 to 3 flat fields); freeze as they churn.
+- Nested / effects shapes (added 2026-07-21), frozen by RECURSIVE signature:
+  `saveFormSchema` (3-level `schema.sections[].fields[]`), `saveTemplate`
+  (`sectionDefinitions[]`), `broadcastMessage` (a `.superRefine` ZodEffects wrapping
+  a nested `criteria`). The `shapeSignature` walker unwraps optional/nullable/
+  default/effects and descends arrays, so a rename at ANY depth (e.g.
+  `schema.sections[].fields[].required`) fails the guard.
+- The remaining ~34 are lower-complexity (2 to 3 flat fields); freeze as they churn.
 
-The guard only checks REQUEST top-level keys today. It catches an added / removed /
-renamed top-level field, which is the common drift, but not a nested rename or a
-value-type change. See `docs/2026-07-18-AO5-AO8-shared-contract-design.md` for the
-shared-package vs. guarded-mirror options.
+Two freeze levels now exist: `shapeKeys` (top-level, for flat shapes) and
+`shapeSignature` (recursive dotted key-paths, for nested/effects shapes). Both
+catch an added / removed / renamed field; neither checks a value-TYPE change
+(string vs number on the same key). See
+`docs/2026-07-18-AO5-AO8-shared-contract-design.md` for the shared-package vs.
+guarded-mirror options.
 
 ## Widget callables (admin-gated)
 

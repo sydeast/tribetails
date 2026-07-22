@@ -15,6 +15,13 @@ import { Args as CreateInvoiceArgs } from '../src/admin/createInvoice';
 import { Args as CreateQuoteArgs } from '../src/admin/createQuote';
 import { Args as MarkInvoicePaidArgs } from '../src/admin/markInvoicePaid';
 import { Args as AssignTemplateArgs } from '../src/admin/assignTemplate';
+// Nested / effects shapes (2026-07-21 next tranche). A top-level key freeze is
+// blind below level 1: saveFormSchema's top level is just `{ schema }`, but the
+// client mirrors 3 levels down (schema.sections[].fields[].required). These get
+// a RECURSIVE key-path signature so a nested rename fails the guard too.
+import { Args as SaveFormSchemaArgs } from '../src/admin/saveFormSchema';
+import { Args as SaveTemplateArgs } from '../src/admin/saveTemplate';
+import { Args as BroadcastMessageArgs } from '../src/admin/broadcastMessage';
 
 /**
  * AO-8 drift guard (design doc `docs/2026-07-18-AO5-AO8-shared-contract-design.md`
@@ -34,6 +41,40 @@ import { Args as AssignTemplateArgs } from '../src/admin/assignTemplate';
 /** Sorted top-level key set of a zod object schema. */
 function shapeKeys(schema: z.ZodObject<z.ZodRawShape>): string[] {
   return Object.keys(schema.shape).sort();
+}
+
+/**
+ * RECURSIVE key-path signature of a zod schema: every leaf field as a dotted
+ * path, arrays marked `[]`, wrappers (optional / nullable / default / effects)
+ * unwrapped. So `{ schema: { sections: [{ fields: [{ required }] }] } }`
+ * produces `schema.sections[].fields[].required`. A nested rename changes the
+ * signature; a top-level-only freeze would miss it. Sorted, so order is stable.
+ */
+function shapeSignature(schema: z.ZodTypeAny, prefix = ''): string[] {
+  // Unwrap the wrappers that do not change the field PATH, only its modality.
+  const def = (schema as { _def?: { typeName?: string; innerType?: z.ZodTypeAny; schema?: z.ZodTypeAny; type?: z.ZodTypeAny } })._def;
+  const typeName = def?.typeName;
+  if (typeName === 'ZodOptional' || typeName === 'ZodNullable' || typeName === 'ZodDefault') {
+    return shapeSignature(def!.innerType as z.ZodTypeAny, prefix);
+  }
+  if (typeName === 'ZodEffects') {
+    // .superRefine / .refine / .transform wrap the real schema (broadcastMessage).
+    return shapeSignature(def!.schema as z.ZodTypeAny, prefix);
+  }
+  if (typeName === 'ZodArray') {
+    return shapeSignature(def!.type as z.ZodTypeAny, `${prefix}[]`);
+  }
+  if (typeName === 'ZodObject') {
+    const shape = (schema as z.ZodObject<z.ZodRawShape>).shape;
+    const out: string[] = [];
+    for (const key of Object.keys(shape)) {
+      const child = prefix ? `${prefix}.${key}` : key;
+      out.push(...shapeSignature(shape[key] as z.ZodTypeAny, child));
+    }
+    return out.sort();
+  }
+  // Leaf (string, number, enum, boolean, record, union, ...): the path itself.
+  return [prefix];
 }
 
 const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>; keys: string[] }> = {
@@ -66,6 +107,48 @@ describe('AO-8 callable contract drift guard', () => {
   for (const [name, { schema, keys }] of Object.entries(FROZEN_REQUEST_SHAPES)) {
     it(`${name} request shape is unchanged (update the mirrors + CALLABLE_CONTRACT.md if this fails)`, () => {
       expect(shapeKeys(schema)).toEqual([...keys].sort());
+    });
+  }
+});
+
+// The nested / effects shapes, frozen by RECURSIVE signature. A rename at ANY
+// depth (schema.sections[].fields[].required, a channel field, a nested
+// criteria key) fails the guard, which a top-level freeze could not catch.
+const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: string[] }> = {
+  saveFormSchema: {
+    schema: SaveFormSchemaArgs,
+    signature: [
+      'schema.appliesTo', 'schema.description', 'schema.id', 'schema.name',
+      'schema.sections[].description',
+      'schema.sections[].fields[].defaultValue', 'schema.sections[].fields[].group',
+      'schema.sections[].fields[].helperText', 'schema.sections[].fields[].key',
+      'schema.sections[].fields[].label', 'schema.sections[].fields[].options[]',
+      'schema.sections[].fields[].placeholder', 'schema.sections[].fields[].required',
+      'schema.sections[].fields[].type', 'schema.sections[].title', 'schema.version',
+    ],
+  },
+  saveTemplate: {
+    schema: SaveTemplateArgs,
+    signature: [
+      'body', 'category', 'description', 'html',
+      'sectionDefinitions[].description', 'sectionDefinitions[].title',
+      'subject', 'tags[]', 'templateId', 'title', 'usageInstructions',
+    ],
+  },
+  broadcastMessage: {
+    schema: BroadcastMessageArgs,
+    signature: [
+      'body', 'channels[]',
+      'criteria.kind', 'criteria.statuses[]', 'criteria.tagMatch', 'criteria.tags[]',
+      'segmentId', 'subject',
+    ],
+  },
+};
+
+describe('AO-8 callable contract drift guard (deep / effects shapes)', () => {
+  for (const [name, { schema, signature }] of Object.entries(FROZEN_DEEP_SHAPES)) {
+    it(`${name} recursive request signature is unchanged`, () => {
+      expect(shapeSignature(schema)).toEqual([...signature].sort());
     });
   }
 });

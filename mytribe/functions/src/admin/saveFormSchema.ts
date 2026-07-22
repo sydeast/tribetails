@@ -124,7 +124,8 @@ const SchemaInputSchema = z.object({
   sections: z.array(SectionSchema).min(1, 'schema.sections must be non-empty').max(50),
 });
 
-const Args = z.object({ schema: SchemaInputSchema });
+// Exported for the recursive callable-contract freeze (nested/effects shape).
+export const Args = z.object({ schema: SchemaInputSchema });
 
 export interface SaveFormSchemaResult {
   ok: true;
