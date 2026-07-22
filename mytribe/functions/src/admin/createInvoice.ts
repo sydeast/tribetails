@@ -13,7 +13,8 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 // Server-mints the invoice doc id so the id is authoritative (the composer does
 // not have to invent one). Writes to the canonical FLAT top-level `invoices`
 // collection, stamping `kinfolkId` so the portal's getMyInvoices can see it.
-const Args = z.object({
+// Exported so the callable-contract drift guard can freeze this request shape.
+export const Args = z.object({
   familyId: z.string().min(1),
   kinfolkName: z.string().default(''),
   invoiceNumber: z.string().min(1),

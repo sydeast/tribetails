@@ -7,7 +7,8 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
-const Args = z.object({
+// Exported so the callable-contract drift guard can freeze this request shape.
+export const Args = z.object({
   catalogKey: z.string().min(1).max(120),
   templateId: z.string().min(1).max(120),
   audience: z.enum(['kinfolk', 'auntie', 'admin', 'guest']).optional(),

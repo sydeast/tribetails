@@ -11,10 +11,29 @@ edit that test's frozen set, edit this file, and edit all three client mirrors i
 the same change. Response shapes are not zod-introspectable, so this doc is their
 review anchor.
 
-Status: covers the AO-35/39/40/41 widget callables. The other ~26 admin callables
-the clients mirror are not yet frozen here; extend this file + the guard as they
-churn (see `docs/2026-07-18-AO5-AO8-shared-contract-design.md` for the options on
-making this a real shared package vs. keeping the guarded-mirror approach).
+Frozen request shapes:
+
+- Widget callables (AO-35/39/40/41): `optimizeRoute`, `logExpense`, `listExpenses`,
+  `adjustSupply`, `upsertSupply`, `upsertExpiration`. (`listSupplies` /
+  `listExpirations` take no args.)
+- Money + state mutations (added 2026-07-21): `createInvoice`, `createQuote`,
+  `markInvoicePaid`, `assignTemplate`. Flat shapes, so a top-level key freeze is
+  accurate.
+
+Coverage reality, so nobody over-trusts this: the admin invokes ~50 MyTribe
+callables; the above 10 are frozen. The measured surface, not the stale "~26":
+
+- NEXT TRANCHE (highest blast radius, needs a DEEPER guard than top-level keys):
+  `broadcastMessage` (a `.superRefine` ZodEffects, so `.shape` needs unwrapping),
+  `saveTemplate` (nested `sectionDefinitions`), `saveFormSchema` (3-level nested
+  `sections[].fields[]`, where a nested rename is exactly what a top-level freeze
+  misses). Freeze these with a recursive key-path signature, not `shapeKeys`.
+- The remaining ~36 are lower-complexity (2 to 3 flat fields); freeze as they churn.
+
+The guard only checks REQUEST top-level keys today. It catches an added / removed /
+renamed top-level field, which is the common drift, but not a nested rename or a
+value-type change. See `docs/2026-07-18-AO5-AO8-shared-contract-design.md` for the
+shared-package vs. guarded-mirror options.
 
 ## Widget callables (admin-gated)
 

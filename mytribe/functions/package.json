@@ -12,6 +12,7 @@
     "lint": "eslint --ext .ts src test",
     "format": "prettier -w \"src/**/*.ts\" \"test/**/*.ts\"",
     "test": "vitest run",
+    "test:ci": "vitest run --config vitest.ci.config.ts",
     "test:watch": "vitest",
     "test:rules": "firebase emulators:exec --only firestore --project mytribe-rules-test \"vitest run --config vitest.rules.config.ts\"",
     "serve": "npm run build && firebase emulators:start --only functions",

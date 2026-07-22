@@ -4,6 +4,17 @@ import { LogExpenseArgs, ListExpensesArgs } from '../src/admin/expenses';
 import { OptimizeRouteArgs } from '../src/admin/optimizeRoute';
 import { AdjustSupplyArgs, UpsertSupplyArgs } from '../src/admin/supplies';
 import { UpsertExpirationArgs } from '../src/admin/expirations';
+// Money + state mutations the admin hand-mirrors. Added 2026-07-21: the guard
+// covered only the 8 widget callables, leaving the highest blast-radius shapes
+// (invoices, payment, template assignment) unfrozen. A backend rename here
+// silently broke the client once (signCloudinaryUpload). These four are flat
+// ZodObjects, so a top-level key freeze is accurate; the nested/effects shapes
+// (broadcastMessage, saveTemplate, saveFormSchema) need a deeper mechanism and
+// are the next tranche.
+import { Args as CreateInvoiceArgs } from '../src/admin/createInvoice';
+import { Args as CreateQuoteArgs } from '../src/admin/createQuote';
+import { Args as MarkInvoicePaidArgs } from '../src/admin/markInvoicePaid';
+import { Args as AssignTemplateArgs } from '../src/admin/assignTemplate';
 
 /**
  * AO-8 drift guard (design doc `docs/2026-07-18-AO5-AO8-shared-contract-design.md`
@@ -37,6 +48,18 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // AO-39
   upsertExpiration: { schema: UpsertExpirationArgs, keys: ['dateIso', 'expirationId', 'kind', 'kinfolkId', 'label'] },
   // listSupplies / listExpirations take no args (empty request), so nothing to freeze.
+
+  // Money + state mutations (flat shapes, top-level freeze is accurate here).
+  createInvoice: {
+    schema: CreateInvoiceArgs,
+    keys: ['address', 'amountDue', 'client', 'date', 'discount', 'dueDate', 'familyId', 'invoiceNumber', 'kinfolkName', 'sessionIds', 'status', 'terms', 'total'],
+  },
+  createQuote: {
+    schema: CreateQuoteArgs,
+    keys: ['address', 'amountDue', 'client', 'date', 'discount', 'dueDate', 'familyId', 'invoiceNumber', 'kinfolkName', 'sendToKinfolk', 'sessionIds', 'status', 'terms', 'total'],
+  },
+  markInvoicePaid: { schema: MarkInvoicePaidArgs, keys: ['amount', 'invoiceId', 'method', 'paidAt', 'reference'] },
+  assignTemplate: { schema: AssignTemplateArgs, keys: ['active', 'audience', 'catalogKey', 'templateId', 'triggerKey'] },
 };
 
 describe('AO-8 callable contract drift guard', () => {
