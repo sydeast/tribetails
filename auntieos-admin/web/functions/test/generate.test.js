@@ -163,12 +163,32 @@ describe('sanitizeCopy', () => {
   });
 });
 
-// ALLOWED_TYPES is hand-copied into at least five other places (the admin's
-// GENERATE_COMMUNICATION_TYPES, N8nClient's CommunicationType enum, the android
-// commTypeOptions list, create_n8n_workflows.py, and the SYSTEM_FRAMING prose 20
-// lines below the Set itself). Nothing binds them, so this pins the source of
-// truth: adding or renaming a type here fails loudly and sends you to the copies.
-// A real single source needs the shared contract package (AO-8).
+// ALLOWED_TYPES is hand-copied across four LANGUAGES (this JS Set, the admin's
+// TS GENERATE_COMMUNICATION_TYPES, N8nClient's Kotlin CommunicationType enum,
+// create_n8n_workflows.py). A true single source is infeasible: the copies live
+// in different deploy bundles AND different languages, so none can import
+// another (see the AO-8 design doc, Option C). The drift GUARD is the answer.
+//
+// Until 2026-07-21 the guard bound only this file's two JS copies (the Set and
+// the SYSTEM_FRAMING prose). Now that all four trees are one repo, the test READS
+// the other-language copies as text and cross-checks their token set against this
+// Set, so a rename on any side trips a red test here. This is a test-time
+// filesystem read, not a runtime import.
+const REPO = path.resolve(__dirname, '..', '..', '..', '..');
+
+// Pull the exact quoted tokens out of a delimited slice of a source file, so an
+// unrelated occurrence of "email" elsewhere in the file cannot pollute the set.
+function tokensBetween(absPath, startMarker, endMarker) {
+  const src = fs.readFileSync(absPath, 'utf8');
+  const start = src.indexOf(startMarker);
+  assert.notStrictEqual(start, -1, `marker '${startMarker}' not found in ${absPath}`);
+  const end = src.indexOf(endMarker, start + startMarker.length);
+  assert.notStrictEqual(end, -1, `end marker '${endMarker}' not found in ${absPath}`);
+  const slice = src.slice(start, end);
+  const KNOWN = ['sms', 'email', 'visit_report', 'social_post', 'blog_post', 'general'];
+  return new Set(KNOWN.filter((t) => new RegExp(`["']${t}["']`).test(slice)));
+}
+
 describe('ALLOWED_TYPES (the taxonomy every client mirrors)', () => {
   it('is exactly the six documented types', () => {
     assert.deepStrictEqual(
@@ -176,6 +196,41 @@ describe('ALLOWED_TYPES (the taxonomy every client mirrors)', () => {
       ['blog_post', 'email', 'general', 'sms', 'social_post', 'visit_report'],
     );
   });
+
+  // The cross-language binds. Each reads the real other-tree file; edit any copy
+  // and this fails, pointing at the drift. Paths are checked to exist first so a
+  // moved file fails loud instead of silently matching nothing.
+  const CROSS_LANGUAGE_COPIES = [
+    {
+      lang: 'TS admin GENERATE_COMMUNICATION_TYPES',
+      path: `${REPO}/auntieos-admin/src/api/communicateGenerate.ts`,
+      start: 'GENERATE_COMMUNICATION_TYPES',
+      end: '] as const',
+    },
+    {
+      lang: 'Kotlin N8nClient CommunicationType enum',
+      path: `${REPO}/auntieos-admin/web/composeApp/src/commonMain/kotlin/com/tribetails/auntieos/web/data/N8nClient.kt`,
+      start: 'enum class CommunicationType',
+      end: '}',
+    },
+    {
+      lang: 'Python create_n8n_workflows valid_types',
+      path: `${REPO}/auntieos-admin/create_n8n_workflows.py`,
+      start: 'valid_types',
+      end: ';',
+    },
+  ];
+  for (const c of CROSS_LANGUAGE_COPIES) {
+    it(`${c.lang} carries exactly the six types (drift guard)`, () => {
+      assert.ok(fs.existsSync(c.path), `copy moved or missing: ${c.path}`);
+      const found = tokensBetween(c.path, c.start, c.end);
+      assert.deepStrictEqual(
+        [...found].sort(),
+        [...gen.ALLOWED_TYPES].sort(),
+        `${c.lang} has drifted from generate.js ALLOWED_TYPES. Reconcile the copy.`,
+      );
+    });
+  }
   it('gives every allowed type its own tone line in the system framing', () => {
     for (const t of gen.ALLOWED_TYPES) {
       assert.ok(
