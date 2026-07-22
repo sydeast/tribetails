@@ -151,6 +151,26 @@ android {
         versionName = "0.2.0"
     }
 
+    signingConfigs {
+        // Internal-testing signing with the Android debug keystore. There is no
+        // Play Store; Firebase App Distribution is the only channel, and it rejects
+        // an unsigned APK. This mirrors the AuntieOS app so assembleRelease emits an
+        // installable, distributable release build. The debug keystore password is
+        // the well-known public default, not a secret.
+        create("release") {
+            storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
