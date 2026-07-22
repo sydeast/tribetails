@@ -1,0 +1,61 @@
+import * as Sentry from '@sentry/react';
+
+/**
+ * Crash/error reporting for the AuntieOS admin (React) surface at
+ * auntie.tribetails.com. Mirrors the wasm/android side's
+ * `observability/CrashReporter.kt` seam: same shared Sentry project, same
+ * `reportError(throwable, context)` intent.
+ *
+ * Fail-loud-but-degrade-gracefully (project convention): with no DSN this does
+ * nothing except log one visible line, so a missing secret never silently
+ * disables reporting AND never blocks app boot. The DSN is the one external
+ * secret the operator must supply (VITE_SENTRY_DSN) to activate it.
+ *
+ * VITE_ prefix is mandatory: only VITE_-prefixed vars reach the browser bundle.
+ */
+
+/**
+ * Initialize Sentry for this browser session. Call once, before the app
+ * renders. No-op (with a visible console line) when VITE_SENTRY_DSN is absent.
+ * Never throws: a reporting failure must not take down the admin.
+ */
+export function initSentry(): void {
+  const dsn = (import.meta.env.VITE_SENTRY_DSN ?? '').trim();
+  if (!dsn) {
+    // Visible, not silent: this is the fail-loud signal that reporting is off.
+    console.info('Sentry disabled: no VITE_SENTRY_DSN');
+    return;
+  }
+
+  try {
+    const release = (import.meta.env.VITE_SENTRY_RELEASE ?? '').trim();
+    Sentry.init({
+      dsn,
+      environment: import.meta.env.MODE,
+      tracesSampleRate: 0.1,
+      // This app handles client PII (kinfolk names, contacts, invoices). Do NOT
+      // let Sentry attach request bodies / IPs / user context by default.
+      sendDefaultPii: false,
+      // Only set release when a build-time var is present; omit otherwise so we
+      // never send an empty string (exactOptionalPropertyTypes is on).
+      ...(release ? { release } : {}),
+    });
+  } catch (err) {
+    // Fail loud, but keep the app alive if Sentry itself misbehaves.
+    console.error('Sentry init failed; continuing without crash reporting.', err);
+  }
+}
+
+/**
+ * Report a caught throwable, with an optional context label for triage.
+ * Mirrors the wasm/android `reportError(throwable, context)`. Safe no-op when
+ * Sentry was never initialized (captureException without init does nothing),
+ * and never throws.
+ */
+export function reportError(error: unknown, context?: string): void {
+  try {
+    Sentry.captureException(error, context ? { tags: { context } } : undefined);
+  } catch {
+    // A reporter must never become the thing that crashes the caller.
+  }
+}
