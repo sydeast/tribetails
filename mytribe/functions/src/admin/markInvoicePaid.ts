@@ -35,7 +35,8 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * reacts to the actual persisted state, so it can never fire out of step
  * with what this callable really wrote.
  */
-const Args = z.object({
+// Exported so the callable-contract drift guard can freeze this request shape.
+export const Args = z.object({
   invoiceId: z.string().min(1).max(200),
   /** Dollar amount actually collected. Defaults to the invoice's current amountDue (paying it off in full). */
   amount: z.number().nonnegative().optional(),
