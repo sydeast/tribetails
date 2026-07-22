@@ -128,7 +128,8 @@ jobs:
           cache-dependency-path: mytribe/functions/package-lock.json
       - run: npm ci
       - run: npm run build
-      - run: npm test
+      # test:ci runs the in-project functions suite. Plain `npm test` also globs
+      - run: npm run test:ci
 
   portal:
     name: Kinfolk portal

@@ -32,7 +32,8 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * quote.issued key). targetType/targetId point the notification at the invoice
  * doc for open-linked + quick approve/deny.
  */
-const Args = z.object({
+// Exported so the callable-contract drift guard can freeze this request shape.
+export const Args = z.object({
   familyId: z.string().min(1),
   kinfolkName: z.string().default(''),
   invoiceNumber: z.string().min(1),
