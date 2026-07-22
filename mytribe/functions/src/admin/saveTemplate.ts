@@ -16,7 +16,8 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 // formatting and may not understand which fields are attacker-controllable.
 const NO_TRIPLE_STASH = (s: string | null | undefined): boolean => !s || !/\{\{\{/.test(s);
 
-const Args = z.object({
+// Exported for the recursive callable-contract freeze (nested/effects shape).
+export const Args = z.object({
   templateId: z.string().min(1).max(120).regex(/^[a-zA-Z0-9_.-]+$/, {
     message: 'templateId must be [a-zA-Z0-9_.-]+',
   }),

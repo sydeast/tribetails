@@ -53,7 +53,8 @@ const KINFOLK_COLLECTION = 'kinfolk';
 export const ALL_BROADCAST_CHANNELS = ['inapp', 'email', 'sms', 'push'] as const;
 export type BroadcastChannel = (typeof ALL_BROADCAST_CHANNELS)[number];
 
-const Args = z
+// Exported for the recursive callable-contract freeze (nested/effects shape).
+export const Args = z
   .object({
     segmentId: z.string().min(1).max(200).optional(),
     criteria: CriteriaSchema.optional(),
