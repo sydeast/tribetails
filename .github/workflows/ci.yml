@@ -26,6 +26,8 @@ jobs:
       android: ${{ steps.filter.outputs.android }}
       mytribe: ${{ steps.filter.outputs.mytribe }}
       portal: ${{ steps.filter.outputs.portal }}
+      mytribeGradle: ${{ steps.filter.outputs.mytribeGradle }}
+      scripts: ${{ steps.filter.outputs.scripts }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -53,6 +55,15 @@ jobs:
               - 'mytribe/functions/**'
             portal:
               - 'mytribe/web/**'
+              - '.github/workflows/ci.yml'
+            mytribeGradle:
+              - 'mytribe/build.gradle.kts'
+              - 'mytribe/settings.gradle.kts'
+              - 'mytribe/src/**'
+              - 'mytribe/gradle/**'
+              - '.github/workflows/ci.yml'
+            scripts:
+              - 'scripts/**'
               - '.github/workflows/ci.yml'
 
   admin:
@@ -116,6 +127,7 @@ jobs:
           cache: npm
           cache-dependency-path: mytribe/functions/package-lock.json
       - run: npm ci
+      - run: npm run build
       - run: npm test
 
   portal:
@@ -139,6 +151,38 @@ jobs:
       - name: Production build
         run: npm run build
 
+  deploy-guard:
+    name: Deploy guard
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the deploy-guard test if present
+        run: |
+          if [ -f scripts/safe-deploy.test.sh ]; then
+            bash scripts/safe-deploy.test.sh
+          else
+            echo "scripts/safe-deploy.test.sh not present yet, skipping."
+          fi
+  mytribe-gradle:
+    name: Portal shared (jvm)
+    needs: changes
+    if: needs.changes.outputs.mytribeGradle == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mytribe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Write local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+      - run: ./gradlew :jvmTest --no-daemon
   kotlin:
     name: Shared + desktop (jvm)
     needs: changes
