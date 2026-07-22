@@ -16,7 +16,7 @@
     "test:watch": "vitest",
     "test:rules": "firebase emulators:exec --only firestore --project mytribe-rules-test \"vitest run --config vitest.rules.config.ts\"",
     "serve": "npm run build && firebase emulators:start --only functions",
-    "deploy": "firebase deploy --only functions",
+    "deploy": "../../scripts/safe-deploy.sh mytribe -- firebase deploy --only functions:mytribe",
     "logs": "firebase functions:log",
     "seed:emails": "ts-node --project ../scripts/tsconfig.json ../scripts/seedEmailTemplates.ts",
     "seed:notif-templates": "ts-node --project ../scripts/tsconfig.json ../scripts/seedNotificationTemplates.ts",
