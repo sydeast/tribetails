@@ -127,6 +127,7 @@ jobs:
           cache: npm
           cache-dependency-path: mytribe/functions/package-lock.json
       - run: npm ci
+      - run: npm run lint
       - run: npm run build
       # test:ci runs the in-project functions suite. Plain `npm test` also globs
       - run: npm run test:ci

@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { HttpsError } from 'firebase-functions/v2/https';
 
 const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),

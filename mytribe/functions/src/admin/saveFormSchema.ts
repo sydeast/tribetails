@@ -48,6 +48,7 @@ const FIELD_TYPES = [
 // through < (0x3C), i.e. digits, uppercase letters, parens, periods, commas.
 // That would reject legitimate labels like "Family name" or "Phone (mobile)".
 // Hardened equivalent below blocks only the actual injection vectors.
+// eslint-disable-next-line no-control-regex -- intentionally blocks control chars as injection vectors
 const PLAINTEXT_RE = /^[^<>&\x00-\x1F\x7F]*$/;
 const PLAINTEXT_MSG = 'Must be plaintext (no HTML or control characters)';
 const plaintext = (max: number) =>

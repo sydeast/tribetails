@@ -1,5 +1,4 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';

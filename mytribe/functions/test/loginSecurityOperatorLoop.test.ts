@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildDbMock } from './_helpers/mockDb';
 
 const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
