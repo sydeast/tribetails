@@ -1,4 +1,5 @@
 import { db } from './firestoreAdmin';
+import { resolveDefaultAssigneeUid } from './businessAdmins';
 
 export interface Assignee {
   uid: string;
@@ -14,12 +15,7 @@ export interface Assignee {
  * callers can create unassigned visits rather than fail the booking.
  */
 export async function resolveDefaultAssignee(): Promise<Assignee | null> {
-  const snap = await db().collection('businessSettings').doc('admins').get();
-  const data = snap.data() as { defaultAssigneeUid?: string; uids?: string[] } | undefined;
-  const uid =
-    (typeof data?.defaultAssigneeUid === 'string' && data.defaultAssigneeUid) ||
-    data?.uids?.[0] ||
-    null;
+  const uid = await resolveDefaultAssigneeUid();
   if (!uid) return null;
 
   const staffSnap = await db().collection('staff').doc(uid).get();
