@@ -22,8 +22,27 @@ object RetrofitClient {
     const val LEGACY_N8N_HOST = "auntie.tribetails.com"
     const val TWILIO_BASE_URL  = "https://tribetailsattendant-8587.twil.io/"
 
+    /**
+     * Retrofit's `baseUrl(String)` REJECTS a URL that does not end in '/'
+     * (IllegalArgumentException: "baseUrl must end in /"). Settings used to store
+     * `url.trimEnd('/')`, which guaranteed the throw on every save and left a
+     * slash-less value in DataStore that also failed at startup. Normalize here,
+     * at the single point of consumption, so an already-poisoned stored value
+     * heals on next launch.
+     *
+     * Blank input falls back to [DEFAULT_BASE_URL]. A URL with no scheme is NOT
+     * repaired: Retrofit rejects it and the caller surfaces the error, because
+     * guessing http vs https for the operator would be a silent wrong answer.
+     */
+    fun normalizeBaseUrl(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return DEFAULT_BASE_URL
+        return trimmed.trimEnd('/') + "/"
+    }
+
     // n8n client - specifically designed with high timeouts since n8n generates AI text
-    fun buildN8n(baseUrl: String): N8nApi {
+    fun buildN8n(rawBaseUrl: String): N8nApi {
+        val baseUrl = normalizeBaseUrl(rawBaseUrl)
         val client = OkHttpClient.Builder()
             .connectTimeout(120, TimeUnit.SECONDS)
             .readTimeout(120, TimeUnit.SECONDS)

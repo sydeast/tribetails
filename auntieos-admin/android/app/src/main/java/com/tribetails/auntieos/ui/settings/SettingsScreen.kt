@@ -130,6 +130,11 @@ fun SettingsScreen(
                 keyboardActions = KeyboardActions(onDone = { viewModel.saveBaseUrl(urlDraft) })
             )
 
+            val baseUrlError by viewModel.baseUrlError.collectAsState()
+            baseUrlError?.let { err ->
+                Text(err, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error)
+            }
+
             PrimaryButton(
                 label = "Save",
                 onClick = { viewModel.saveBaseUrl(urlDraft) },

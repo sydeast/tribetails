@@ -2585,7 +2585,7 @@ class AuntieRepository(
         ensureAuthenticated()
         require(clinic.id.isNotBlank()) { "VetClinic.id is required to update." }
         val ts = getCurrentTimestamp()
-        val toWrite = clinic.copy(updatedAt = ts, createdAt = clinic.createdAt.ifBlank { ts })
+        val toWrite = clinic.copy(updatedAt = ts, createdAt = clinic.createdAtIso().ifBlank { ts })
         firestore.collection("vet_clinics").document(clinic.id).set(toWrite).await()
         Unit
     }.onFailure { AuntieLog.e("Failed to update vet clinic", it) }
@@ -2605,7 +2605,7 @@ class AuntieRepository(
         val toWrite = profile.copy(
             id = profile.uid,
             updatedAt = ts,
-            createdAt = profile.createdAt.ifBlank { ts },
+            createdAt = profile.createdAtIso().ifBlank { ts },
         )
         firestore.collection("users").document(profile.uid)
             .set(toWrite)
