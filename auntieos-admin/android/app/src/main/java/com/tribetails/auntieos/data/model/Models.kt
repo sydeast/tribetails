@@ -527,6 +527,18 @@ fun Kin.updatedAtIso(): String = firestoreInstantToIso(updatedAt)
 /** ISO-8601 view of [Kinfolk.updatedAt] (String on live kinfolk, but Timestamp-tolerant). */
 fun Kinfolk.updatedAtIso(): String = firestoreInstantToIso(updatedAt)
 
+/** ISO-8601 view of [VetClinic.createdAt] (Timestamp when portal-submitted, String when admin-created). */
+fun VetClinic.createdAtIso(): String = firestoreInstantToIso(createdAt)
+
+/** ISO-8601 view of [VetClinic.updatedAt] (Timestamp when portal-submitted, String when admin-created). */
+fun VetClinic.updatedAtIso(): String = firestoreInstantToIso(updatedAt)
+
+/** ISO-8601 view of [UserProfile.createdAt] (Timestamp once an avatar is set, else String). */
+fun UserProfile.createdAtIso(): String = firestoreInstantToIso(createdAt)
+
+/** ISO-8601 view of [UserProfile.updatedAt] (Timestamp once an avatar is set, else String). */
+fun UserProfile.updatedAtIso(): String = firestoreInstantToIso(updatedAt)
+
 // KinCareReport (a "KinTale") - visit recap sent to the kinfolk after a session.
 // One session can have many KinTales (multi-day visits, midway updates).
 @Keep
@@ -895,8 +907,12 @@ data class VetClinic(
     // until the operator approves. Missing (legacy) reads as approved -> default true.
     var verified: Boolean = true,
     var submittedBy: String = "",      // uid of the kinfolk who submitted a pending entry
-    var createdAt: String = "",
-    var updatedAt: String = "",
+    // Held raw (Class A, same as Kinfolk/Kin/KinCareSession): this app writes an
+    // ISO String, but portal `submitVetClinic` writes serverTimestamp(), so a
+    // typed String throws on decode for every kinfolk-submitted clinic and takes
+    // down the whole snapshot listener. Read via createdAtIso()/updatedAtIso().
+    var createdAt: Any? = null,
+    var updatedAt: Any? = null,
 )
 
 /**
@@ -932,8 +948,12 @@ data class UserProfile(
     var accentColor: String = "",
     var density: String = "",
     var fontScale: String = "",
-    var createdAt: String = "",
-    var updatedAt: String = "",
+    // Held raw (Class A, same as VetClinic above): this app writes an ISO String,
+    // but `setMediaProfilePhoto` merges serverTimestamp() into users/{uid} when an
+    // operator sets an avatar, so a typed String throws on decode from then on,
+    // including at every cold start. Read via createdAtIso()/updatedAtIso().
+    var createdAt: Any? = null,
+    var updatedAt: Any? = null,
 ) {
     val displayLabel: String
         get() = when {

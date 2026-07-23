@@ -113,11 +113,34 @@ class SettingsViewModel(private val appContext: Context) : ViewModel() {
         SettingsUiState(fcmToken = token, baseUrl = url)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, SettingsUiState())
 
+    private val _baseUrlError = MutableStateFlow<String?>(null)
+
+    /** Non-null when the last Save could not build a client for the URL entered. */
+    val baseUrlError: StateFlow<String?> = _baseUrlError.asStateFlow()
+
+    /**
+     * Persist and apply the tunnel URL. Retrofit requires a trailing slash, so the
+     * value is normalized first (see [RetrofitClient.normalizeBaseUrl]); this used
+     * to store `url.trimEnd('/')` and then hand that same slash-less string to
+     * Retrofit, which threw inside a bare launch and killed the app on every Save.
+     *
+     * A URL Retrofit still rejects after normalizing (usually a missing http/https
+     * scheme) surfaces in [baseUrlError] and is NOT persisted, so a bad entry
+     * cannot poison the next launch.
+     */
     fun saveBaseUrl(url: String) {
         viewModelScope.launch {
-            appContext.saveBaseUrl(url.trimEnd('/'))
-            // Rebuild the repository so it uses the new URL immediately
-            AuntieOSApp.instance.rebuildRepository(url.trimEnd('/'))
+            val normalized = RetrofitClient.normalizeBaseUrl(url)
+            try {
+                AuntieOSApp.instance.rebuildRepository(normalized)
+            } catch (e: IllegalArgumentException) {
+                _baseUrlError.value = "Not a usable URL: ${e.message ?: "check the address"}"
+                return@launch
+            }
+            appContext.saveBaseUrl(normalized)
+            _baseUrlError.value = null
         }
     }
+
+    fun clearBaseUrlError() { _baseUrlError.value = null }
 }

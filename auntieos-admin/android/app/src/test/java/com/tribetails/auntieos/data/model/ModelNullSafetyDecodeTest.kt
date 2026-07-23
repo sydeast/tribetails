@@ -220,4 +220,54 @@ class ModelNullSafetyDecodeTest {
         )
         assertEquals(listOf("VIP"), s.householdTagDefs().map { it.name })
     }
+
+    // ── Cross-platform timestamp fields (Class A) ────────────────────────────
+    // These two were typed `String` while a server writer stamped
+    // serverTimestamp(), so toObject() threw and took down the whole snapshot
+    // listener. VetClinic: any kinfolk calling portal `submitVetClinic` crashed
+    // every operator's Vet Clinics and Directory screens. UserProfile: an
+    // operator setting their own avatar via `setMediaProfilePhoto` poisoned
+    // users/{uid} and crashed the app at every cold start afterward.
+
+    @Test fun `VetClinic tolerates a Timestamp from the portal submit path`() {
+        val c = VetClinic()
+        setVia(c, "setCreatedAt", Any::class.java, Timestamp(Date(0)))
+        setVia(c, "setUpdatedAt", Any::class.java, Timestamp(Date(0)))
+        assertEquals("1970-01-01T00:00:00Z", c.createdAtIso())
+        assertEquals("1970-01-01T00:00:00Z", c.updatedAtIso())
+    }
+
+    @Test fun `VetClinic still round-trips the ISO String this app writes`() {
+        val c = VetClinic(createdAt = "2026-07-23T10:00:00Z", updatedAt = "2026-07-23T11:00:00Z")
+        assertEquals("2026-07-23T10:00:00Z", c.createdAtIso())
+        assertEquals("2026-07-23T11:00:00Z", c.updatedAtIso())
+    }
+
+    @Test fun `VetClinic timestamps read blank when absent`() {
+        val c = VetClinic()
+        setVia(c, "setCreatedAt", Any::class.java, null)
+        assertEquals("", c.createdAtIso())
+        assertEquals("", c.updatedAtIso())
+    }
+
+    @Test fun `UserProfile tolerates a Timestamp from setMediaProfilePhoto`() {
+        val p = UserProfile()
+        setVia(p, "setCreatedAt", Any::class.java, Timestamp(Date(0)))
+        setVia(p, "setUpdatedAt", Any::class.java, Timestamp(Date(0)))
+        assertEquals("1970-01-01T00:00:00Z", p.createdAtIso())
+        assertEquals("1970-01-01T00:00:00Z", p.updatedAtIso())
+    }
+
+    @Test fun `UserProfile still round-trips the ISO String this app writes`() {
+        val p = UserProfile(createdAt = "2026-07-23T10:00:00Z", updatedAt = "2026-07-23T11:00:00Z")
+        assertEquals("2026-07-23T10:00:00Z", p.createdAtIso())
+        assertEquals("2026-07-23T11:00:00Z", p.updatedAtIso())
+    }
+
+    @Test fun `UserProfile timestamps read blank when absent`() {
+        val p = UserProfile()
+        setVia(p, "setCreatedAt", Any::class.java, null)
+        assertEquals("", p.createdAtIso())
+        assertEquals("", p.updatedAtIso())
+    }
 }
