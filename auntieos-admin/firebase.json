@@ -17,10 +17,6 @@
         "function": "generateAuntieCopy"
       },
       {
-        "source": "/api/send-message",
-        "function": "sendMessage"
-      },
-      {
         "source": "**",
         "destination": "/index.html"
       }

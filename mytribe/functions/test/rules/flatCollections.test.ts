@@ -77,21 +77,69 @@ describe('rules: flat top-level collections', () => {
     await assertFails(fs.doc('migrationReports/m1').get());
   });
 
-  it('fcmTokens: own token write succeeds', async () => {
+  // These two used to target `fcmTokens` (camelCase), a collection nothing in
+  // the system reads or writes, and the first asserted that a client write
+  // SUCCEEDED. It did, against a phantom. The real collection is `fcm_tokens`
+  // (snake), which had no rule at all and was therefore default-deny, so the
+  // AuntieOS Android app's token save failed on every call while this suite
+  // stayed green. Registration is callable-only now (registerFcmToken /
+  // unregisterFcmToken, Admin SDK, which bypasses rules), so every client path
+  // below is denied on purpose.
+
+  it('fcm_tokens: own token write denied (callable-only)', async () => {
     const env = await getEnv();
-    await assertSucceeds(
-      asUser(env, 'u-x').firestore().doc('fcmTokens/t1').set({
+    await assertFails(
+      asUser(env, 'u-x').firestore().doc('fcm_tokens/t1').set({
         uid: 'u-x', platform: 'android', token: 'tok', updatedAt: new Date(),
       }),
     );
   });
 
-  it('fcmTokens: foreign token write denied', async () => {
+  it('fcm_tokens: foreign token write denied', async () => {
     const env = await getEnv();
     await assertFails(
-      asUser(env, 'u-x').firestore().doc('fcmTokens/t1').set({
+      asUser(env, 'u-x').firestore().doc('fcm_tokens/t1').set({
         uid: 'u-other', token: 'tok',
       }),
+    );
+  });
+
+  it('fcm_tokens: own token read denied (nothing client-side reads it)', async () => {
+    const env = await getEnv();
+    await assertFails(asUser(env, 'u-x').firestore().doc('fcm_tokens/t1').get());
+  });
+
+  it('fcmTokens: the old camelCase name has no rule and stays denied', async () => {
+    // Guards the rename: if someone reintroduces a `fcmTokens` rule, the split
+    // that caused this bug is back.
+    const env = await getEnv();
+    await assertFails(
+      asUser(env, 'u-x').firestore().doc('fcmTokens/t1').set({ uid: 'u-x', token: 'tok' }),
+    );
+  });
+
+  // ── enhanced_bookings: AuntieOS Android's own scheduling pipeline ─────────
+  // Had no rule at all, so every android booking create and list read was
+  // permission-denied and looked like a broken feature (BookingRepository wraps
+  // the calls in runCatching).
+
+  it('enhanced_bookings: operator can write', async () => {
+    const env = await getEnv();
+    await assertSucceeds(
+      env.authenticatedContext('staff-1', { admin: true }).firestore().doc('enhanced_bookings/b1').set({ kinfolkId: 'k1', status: 'scheduled' }),
+    );
+  });
+
+  it('enhanced_bookings: operator can read', async () => {
+    const env = await getEnv();
+    await assertSucceeds(env.authenticatedContext('staff-1', { admin: true }).firestore().doc('enhanced_bookings/b1').get());
+  });
+
+  it('enhanced_bookings: a signed-in non-operator is denied', async () => {
+    const env = await getEnv();
+    await assertFails(asUser(env, 'u-x').firestore().doc('enhanced_bookings/b1').get());
+    await assertFails(
+      asUser(env, 'u-x').firestore().doc('enhanced_bookings/b1').set({ kinfolkId: 'k1' }),
     );
   });
 });

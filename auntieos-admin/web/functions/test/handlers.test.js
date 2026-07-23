@@ -392,68 +392,16 @@ describe('searchMapbox handler (onRequest)', () => {
   });
 });
 
-// ===========================================================================
-// sendMessage (onRequest)
-// ===========================================================================
-describe('sendMessage handler (onRequest)', () => {
-  it('405 on a non-POST method', async () => {
-    const res = makeRes();
-    await idx.sendMessage(makeReq({ method: 'GET' }), res);
-    assert.strictEqual(res.statusCode, 405);
-    assert.strictEqual(res.jsonBody.error, 'method_not_allowed');
-  });
-
-  it('401 when the bearer token is missing', async () => {
-    const res = makeRes();
-    await idx.sendMessage(makeReq({ headers: {} }), res);
-    assert.strictEqual(res.statusCode, 401);
-    assert.strictEqual(res.jsonBody.error, 'missing_bearer_token');
-  });
-
-  it('403 when the token lacks the admin claim', async () => {
-    installAdmin({ auth: authReturning({ uid: 'u1', admin: false }) });
-    const res = makeRes();
-    await idx.sendMessage(makeReq({ headers: ADMIN_BEARER, body: { channel: 'sms' } }), res);
-    assert.strictEqual(res.statusCode, 403);
-    assert.strictEqual(res.jsonBody.error, 'admin_required');
-  });
-
-  it('happy path: forwards the body to n8n and returns the parsed JSON with the upstream status', async () => {
-    installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
-    let sent;
-    global.fetch = async (url, opts) => {
-      sent = { url: String(url), opts };
-      return { status: 200, text: async () => JSON.stringify({ ok: true, sid: 'MSG_1' }) };
-    };
-    const res = makeRes();
-    const body = { channel: 'sms', message_body: 'hi', recipient_phone: '+15550000000' };
-    await idx.sendMessage(makeReq({ headers: ADMIN_BEARER, body }), res);
-
-    assert.strictEqual(res.statusCode, 200);
-    assert.deepStrictEqual(res.jsonBody, { ok: true, sid: 'MSG_1' });
-    assert.ok(sent.url.includes('auntie-send-message'));
-    assert.strictEqual(sent.opts.method, 'POST');
-    assert.deepStrictEqual(JSON.parse(sent.opts.body), body);
-  });
-
-  it('normalizes a Cloudflare-rewritten non-JSON 5xx body to structured JSON', async () => {
-    installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
-    global.fetch = async () => ({ status: 502, text: async () => 'error code: 502' });
-    const res = makeRes();
-    await idx.sendMessage(makeReq({ headers: ADMIN_BEARER, body: { channel: 'sms' } }), res);
-    assert.strictEqual(res.statusCode, 502);
-    assert.strictEqual(res.jsonBody.error, 'upstream_provider_failure');
-    assert.strictEqual(res.jsonBody.provider_error, 'cf_body_rewritten');
-    assert.strictEqual(res.jsonBody.raw, 'error code: 502');
-  });
-
-  it('503 infra_failure when the upstream fetch throws', async () => {
-    installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
-    global.fetch = async () => { throw new Error('ECONNREFUSED'); };
-    const res = makeRes();
-    await idx.sendMessage(makeReq({ headers: ADMIN_BEARER, body: { channel: 'sms' } }), res);
-    assert.strictEqual(res.statusCode, 503);
-    assert.strictEqual(res.jsonBody.error, 'infra_failure');
-    assert.strictEqual(res.jsonBody.stage, 'proxy_fetch');
-  });
-});
+// sendMessage (onRequest) tests REMOVED 2026-07-23 with the handler.
+//
+// Worth recording why, because the suite was actively misleading. Five tests
+// covered a proxy to https://n8n.tribetails.com/webhook/auntie-send-message
+// with `global.fetch` stubbed, so they reported a working message pipeline
+// against a host that had already been retired. One of them asserted that an
+// ECONNREFUSED from the upstream produced a 503 `infra_failure`, which is
+// exactly what prod was doing on every send, filed as a passing case. Coverage
+// went up while correctness went to zero.
+//
+// The send now goes through MyTribe's `sendExternalMessage` onCall, which is
+// covered in mytribe/functions/test/sendExternalMessage.test.ts against the
+// real handler rather than a mocked upstream.

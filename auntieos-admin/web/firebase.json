@@ -6,7 +6,6 @@
     "ignore": ["firebase.json", "**/.*"],
     "rewrites": [
       { "source": "/api/cloudinary/sign-upload", "function": "signCloudinaryUpload" },
-      { "source": "/api/send-message", "function": "sendMessage" },
       { "source": "/api/generate", "function": "generateAuntieCopy" },
       { "source": "/api/mapbox/sign-search", "function": "searchMapbox" },
       { "source": "/api/mapbox/retrieve", "function": "retrieveMapbox" },

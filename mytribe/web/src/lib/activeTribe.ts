@@ -168,10 +168,34 @@ export function setActiveKinfolkId(kinfolkId: string): void {
   notify();
 
   void setActiveTribe(kinfolkId)
-    .then(() => auth.currentUser?.getIdToken(true))
+    .then((res) => {
+      // An operator viewing a household that is not theirs comes back ok with
+      // claimReminted:false. That is the designed outcome, not a failure: the
+      // server deliberately does not mint a kinfolkId claim for a household the
+      // caller does not own. Nothing to refresh in that case.
+      if (res?.claimReminted === false) return undefined;
+      return auth.currentUser?.getIdToken(true);
+    })
     .catch((err: unknown) => {
-      console.warn('[activeTribe] setActiveTribe claim re-mint failed:', err);
+      // Was a bare console.warn, which swallowed a real permission-denied on
+      // every operator tribe switch and would equally have hidden a genuine
+      // claim-sync outage. The operator case is now an ok response above, so
+      // anything reaching here is a real failure and must be visible.
+      console.error('[activeTribe] setActiveTribe claim re-mint failed:', err);
+      reportActiveTribeError(err);
     });
+}
+
+/** Set by the app shell so a failed claim re-mint can reach the user. */
+let activeTribeErrorSink: ((err: unknown) => void) | null = null;
+
+/** Register a sink for claim-sync failures (see setActiveKinfolkId). */
+export function onActiveTribeError(sink: ((err: unknown) => void) | null): void {
+  activeTribeErrorSink = sink;
+}
+
+function reportActiveTribeError(err: unknown): void {
+  activeTribeErrorSink?.(err);
 }
 
 /** Clears the resolved access (call on sign-out) so the next sign-in re-resolves. */

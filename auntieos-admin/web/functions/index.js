@@ -332,16 +332,13 @@ exports.getDraft = onRequest({ secrets: [N8N_SHARED_SECRET], cors: false }, asyn
   }
 });
 
-// sendMessage: HTTP proxy for the n8n Send Message webhook.
-//
-// Clients call POST https://auntieos-ttpc.web.app/api/send-message instead of
-// the n8n tunnel directly. This function forwards to n8n and normalizes the
-// response so callers always get application/json, including on 5xx paths where
-// Cloudflare rewrites the structured n8n body to plain-text "error code: NNN".
-//
-// Body: { channel, message_body, kinfolk_id?, recipient_phone?, recipient_email? }
-// Returns: same status code as n8n, always application/json body.
-const N8N_SEND_URL = 'https://n8n.tribetails.com/webhook/auntie-send-message';
+// sendMessage (REMOVED 2026-07-23). It was a bare HTTP proxy to
+// https://n8n.tribetails.com/webhook/auntie-send-message. n8n was retired, so
+// the route pointed at a host that no longer answers and every AuntieOS
+// Personalize send failed in prod. The admin now calls MyTribe's
+// `sendExternalMessage` onCall (Twilio + smtp2go, consent gate, external_messages
+// ledger), which the broadcast path was already using. The /api/send-message
+// hosting rewrite is deleted from both firebase.json files in the same change.
 
 // WARNING-12: pure folder-validation helper.
 // Enforces the security boundary that scopes a signed Cloudinary grant to one
@@ -677,56 +674,6 @@ exports.retrieveMapbox = onRequest(
   }
 );
 
-exports.sendMessage = onRequest({ cors: false }, async (req, res) => {
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'method_not_allowed' });
-    return;
-  }
-
-  const decodedToken = await requireAdminToken(req, res, 'sendMessage');
-  if (!decodedToken) return;
-
-  let n8nStatus;
-  let bodyText;
-  try {
-    const upstream = await fetch(N8N_SEND_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'AuntieOS-firebase/1.0',
-      },
-      body: JSON.stringify(req.body),
-    });
-    n8nStatus = upstream.status;
-    bodyText = await upstream.text();
-  } catch (err) {
-    console.error('sendMessage: upstream fetch failed', err);
-    res.status(503).json({ error: 'infra_failure', stage: 'proxy_fetch', detail: err.message });
-    return;
-  }
-
-  // Cloudflare rewrites 5xx response bodies to plain text ("error code: NNN").
-  // Detect by checking whether the body parses as JSON. If not, emit a
-  // normalized upstream_provider_failure so callers always get JSON.
-  let parsed;
-  try {
-    parsed = JSON.parse(bodyText);
-  } catch {
-    parsed = null;
-  }
-
-  if (parsed !== null) {
-    res.status(n8nStatus).json(parsed);
-  } else {
-    // CF rewrote the body, reconstruct best-effort error.
-    console.warn(`sendMessage: n8n returned ${n8nStatus} with non-JSON body: ${bodyText}`);
-    res.status(n8nStatus).json({
-      error: n8nStatus >= 500 ? 'upstream_provider_failure' : 'unexpected_response',
-      provider_error: 'cf_body_rewritten',
-      raw: bodyText,
-    });
-  }
-});
 
 // generateAuntieCopy: Auntie copy generator. Replaces the n8n `auntie-generate`
 // webhook (workflow SIg2KsWn0oyRkSzR). Admin-only (Firebase ID token), reads
