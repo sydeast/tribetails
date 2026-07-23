@@ -1,4 +1,4 @@
-import { db } from '../lib/firestoreAdmin';
+import { resolveBusinessAdminUids } from '../lib/businessAdmins';
 import type { EnqueueArgs, NotificationDef, RecipientResolver } from './types';
 
 export interface ResolvedRecipient {
@@ -32,14 +32,10 @@ export async function resolveRecipients(
     }
 
     case 'businessAdmins': {
-      const snap = await db().collection('businessSettings').doc('admins').get();
-      const data = snap.data() as { uids?: string[] } | undefined;
-      const uids = data?.uids ?? [];
-      if (uids.length === 0) {
-        throw new Error(
-          `recipientResolver(${def.key}): businessSettings/admins.uids is empty, cannot dispatch business notification`,
-        );
-      }
+      // See lib/businessAdmins.ts: the roster document had no writer anywhere
+      // and did not exist in prod, so all 16 businessAdmins keys threw here and
+      // the operator was never notified of a booking, message or bad rating.
+      const uids = await resolveBusinessAdminUids(`recipientResolver(${def.key})`);
       return uids.map((uid) => ({ uid, collection: 'staff' as const }));
     }
 

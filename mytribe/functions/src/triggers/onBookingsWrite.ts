@@ -116,7 +116,11 @@ export const onBookingsWrite = onDocumentWritten(
   {
     document: 'families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}',
     region: 'us-central1',
-    secrets: ['SENTRY_DSN'],
+    // AUNTIE_OPERATOR_UIDS lets lib/businessAdmins self-heal an empty
+    // businessSettings/admins roster on the first booking request rather than
+    // throwing. This trigger dispatches kincare.requested, the highest-traffic
+    // businessAdmins notification, so it is the one worth binding.
+    secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'],
   },
   wrapTrigger('onBookingsWrite', async (event) => {
     const before = event.data?.before.data() as BookingDoc | undefined;
