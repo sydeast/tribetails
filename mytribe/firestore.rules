@@ -133,6 +133,20 @@ service cloud.firestore {
       allow write: if isAuntie();
     }
 
+ // AuntieOS Android's own scheduling pipeline. Operator-only, and deliberately
+ // a separate data path from `kin_care_sessions`: the android Schedule grid
+ // reads this collection and the web grid reads sessions. Direct client
+ // read+write by the operator app (BookingRepository), so unlike most
+ // collections here it is NOT callable-mediated and does need a real rule.
+ //
+ // There was no rule at all, and this file has no catch-all, so every android
+ // booking create and every booking list read was permission-denied. It read as
+ // a broken feature rather than an error because BookingRepository wraps the
+ // calls in runCatching and logs the failure.
+    match /enhanced_bookings/{bookingId} {
+      allow read, write: if isAuntie();
+    }
+
  // Business contact details (name/email/phone) are surfaced to kinfolks via the
  // getBusinessContact callable. The Function uses admin SDK so it bypasses
  // these rules - but allow signed-in read here too in case the client ever
@@ -455,12 +469,22 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    match /fcmTokens/{id} {
-      allow read, delete: if signedIn() && resource.data.uid == request.auth.uid;
-      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
-      allow update: if signedIn()
-        && resource.data.uid == request.auth.uid
-        && request.resource.data.uid == request.auth.uid;
+ // Device tokens for push. The collection is `fcm_tokens` (snake): every writer
+ // and reader uses that name (registerFcmToken.ts, pushChannel.ts,
+ // broadcastMessage.ts, rotateOldFcmTokens.ts). This rule previously matched
+ // `fcmTokens` (camel), which matches NOTHING, and with no catch-all in this
+ // file the real collection was default-deny. Functions never noticed because
+ // the Admin SDK bypasses rules; the AuntieOS Android app did, silently, on
+ // every token save.
+ //
+ // Closed to clients on purpose. Registration goes through the
+ // `registerFcmToken` / `unregisterFcmToken` callables, which own the doc id
+ // (the token, deduped) and stamp `uid`. Both apps use them. A direct client
+ // write cannot get that shape right: pushChannel and broadcastMessage query
+ // `.where('uid','==',...)`, so a doc without `uid` is invisible to every send
+ // even when the write succeeds.
+    match /fcm_tokens/{id} {
+      allow read, write: if false;
     }
 
     match /sharedKinTales/{id}     { allow read, write: if false; }

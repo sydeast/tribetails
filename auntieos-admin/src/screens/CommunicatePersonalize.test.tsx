@@ -41,7 +41,9 @@ function kinfolkRow(over: Partial<Kinfolk>): Kinfolk {
 function draftResult(over: Partial<GenerateDraftResult> = {}): GenerateDraftResult {
   return {
     generated_copy: 'Nova had the best day at the park today.',
-    generated_title: '',
+    // Non-empty because Personalize now asks for want_title on the email
+    // channel and seeds the (required) subject line from it.
+    generated_title: 'Nova at the park',
     communication_type: 'email',
     kinfolk_name: 'Dana Halbrook',
     kinfolk_id: 'kf1',
@@ -137,7 +139,26 @@ describe('CommunicatePersonalize screen', () => {
       communication_type: 'email',
       recipient: 'Dana Halbrook',
       raw_notes: 'Nova ran for an hour.',
+      // Email has somewhere to put a title now (the required subject line),
+      // which is the condition want_title's own doc sets for paying for the
+      // extra model call.
+      want_title: true,
     });
+  });
+
+  it('does NOT ask for a title on the sms channel, which has no subject line', async () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [kinfolkRow({ _id: 'kf1', firstName: 'Dana', lastName: 'Halbrook', email: '', phoneNumber: '+15125551234' })],
+    };
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'sms' }));
+    render(<CommunicatePersonalize onClose={() => {}} />);
+    await pickRecipient();
+    await fillNotes();
+    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
+
+    await waitFor(() => expect(generateDraft).toHaveBeenCalled());
+    expect(generateDraft.mock.calls[0]?.[0]).not.toHaveProperty('want_title');
   });
 
   it('includes tone_hint and max_length only when filled in', async () => {
@@ -225,6 +246,7 @@ describe('CommunicatePersonalize screen', () => {
     expect(dialog).toHaveTextContent('Dana Halbrook');
     expect(dialog).toHaveTextContent('dana@example.com');
     expect(dialog).toHaveTextContent('Email');
+    expect(dialog).toHaveTextContent('Nova at the park');
     expect(dialog).toHaveTextContent('Nova had the best day at the park today.');
     expect(sendPersonalizedMessage).not.toHaveBeenCalled();
   });
@@ -249,6 +271,7 @@ describe('CommunicatePersonalize screen', () => {
       message_body: 'Nova had the best day at the park today.',
       kinfolk_id: 'kf1',
       recipient_email: 'dana@example.com',
+      subject: 'Nova at the park',
     });
 
     release({ ok: true, providerId: 'SM123' });
@@ -307,6 +330,63 @@ describe('CommunicatePersonalize screen', () => {
     expect(screen.queryByDisplayValue('Nova had the best day at the park today.')).toBeNull();
   });
 
+  // ── Email subject ────────────────────────────────────────────────────────
+  // sendExternalMessage rejects a blank subject on the email channel, so the
+  // screen has to collect one. It is seeded from the generated title and only
+  // overwritten while the operator has not typed their own.
+  it('seeds the subject from the generated title and sends it', async () => {
+    generateDraft.mockResolvedValue(draftResult());
+    sendPersonalizedMessage.mockResolvedValue({ ok: true, providerId: 'SM1' });
+    render(<CommunicatePersonalize onClose={() => {}} />);
+    await pickRecipient();
+    await fillNotes();
+    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
+    await screen.findByDisplayValue('Nova had the best day at the park today.');
+    expect(screen.getByLabelText(/subject/i)).toHaveValue('Nova at the park');
+  });
+  it('never overwrites a subject the operator typed, even on regenerate', async () => {
+    generateDraft.mockResolvedValue(draftResult());
+    render(<CommunicatePersonalize onClose={() => {}} />);
+    await pickRecipient();
+    await fillNotes();
+    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
+    await screen.findByDisplayValue('Nova had the best day at the park today.');
+    const subjectField = screen.getByLabelText(/subject/i);
+    await userEvent.clear(subjectField);
+    await userEvent.type(subjectField, 'A subject I wrote');
+    generateDraft.mockResolvedValue(draftResult({ generated_title: 'A different title' }));
+    await userEvent.click(screen.getByRole('button', { name: /regenerate/i }));
+    await waitFor(() => expect(generateDraft).toHaveBeenCalledTimes(2));
+    expect(screen.getByLabelText(/subject/i)).toHaveValue('A subject I wrote');
+  });
+  it('blocks Review & send with an inline error when the email subject is blank', async () => {
+    generateDraft.mockResolvedValue(draftResult({ generated_title: '' }));
+    render(<CommunicatePersonalize onClose={() => {}} />);
+    await pickRecipient();
+    await fillNotes();
+    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
+    await screen.findByDisplayValue('Nova had the best day at the park today.');
+    expect(screen.getByLabelText(/subject/i)).toHaveValue('');
+    await userEvent.click(screen.getByRole('button', { name: /review & send/i }));
+    // No confirm dialog, no send, and the reason is on screen rather than
+    // arriving later as a server-side rejection.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(sendPersonalizedMessage).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(/subject is required/i);
+  });
+  it('has no subject field on the sms channel', async () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [kinfolkRow({ _id: 'kf1', firstName: 'Dana', lastName: 'Halbrook', email: '', phoneNumber: '+15125551234' })],
+    };
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'sms' }));
+    render(<CommunicatePersonalize onClose={() => {}} />);
+    await pickRecipient();
+    await fillNotes();
+    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
+    await screen.findByDisplayValue('Nova had the best day at the park today.');
+    expect(screen.queryByLabelText(/subject/i)).toBeNull();
+  });
   it('"Back to Recent" calls onClose', async () => {
     const onClose = vi.fn();
     render(<CommunicatePersonalize onClose={onClose} />);

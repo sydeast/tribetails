@@ -1,4 +1,5 @@
 import { auth } from '../lib/firebase';
+import { call } from '../lib/fns';
 
 /**
  * Communicate PERSONALIZE (1:1 AI-drafted note) write surface: the flow
@@ -25,36 +26,24 @@ import { auth } from '../lib/firebase';
  *                  returns a byte-compatible `GenerateResponse`. Confirmed
  *                  DEPLOYED (2026-06-17 memory: "/api/generate DEPLOYED
  *                  always-on").
- *   sendMessage    admin-only, proxies to the (not-yet-retired) n8n
- *                  `auntie-send-message` webhook and normalizes the response
- *                  to JSON. This is the SAME endpoint the wasm Communicate
- *                  screen's own Personalize flow sends through
- *                  (`N8nClient.sendMessage` posts to `/api/send-message`);
- *                  it is NOT `sendExternalMessage` (a different, MyTribe-side
- *                  `onCall` with a different payload shape that writes
- *                  `external_messages` directly via Twilio/SMTP2GO, used by
- *                  the broadcast path). Using the proven-live wasm path here
- *                  keeps this port on the backend that is actually wired
- *                  today; n8n retirement Phase B (deleting this proxy) is
- *                  still gated on operator prod-verification per the n8n
- *                  retirement plan.
+ * SENDING is different, and no longer goes through this file's fetch path at
+ * all. It used to POST `/api/send-message`, an AuntieOS `onRequest` that was a
+ * bare proxy to the n8n `auntie-send-message` webhook. n8n was retired, so that
+ * route pointed at a host which no longer answers and every Personalize send in
+ * prod failed. `sendPersonalizedMessage` now calls MyTribe's
+ * `sendExternalMessage` (`onCall`, Twilio + smtp2go), which is what the
+ * broadcast path beside it was already using.
  *
- * ── WHY A BARE fetch, NOT lib/fns.ts's `call` ───────────────────────────────
+ * ── WHY generate STILL USES A BARE fetch ────────────────────────────────────
  * `lib/fns.ts`'s `call()` is `httpsCallable`-only; an `onRequest` endpoint has
  * no callable name to resolve and does not speak the callable wire protocol
  * (no automatic CORS preflight handling, no automatic ID-token attachment).
- * Both facts are why the wasm rewrite exists at all (`web/firebase.json`'s
- * `/api/generate -> generate` / `/api/send-message -> sendMessage`, same-origin
- * so `cors: false` never bites): this admin app is a SEPARATE Firebase Hosting
- * site (`auntieos-admin`, this repo's own `firebase.json`), so it needs the
- * identical rewrite pair added to ITS OWN `firebase.json` before either path
- * works in production. See the rewrite snippet in this module's sibling doc
- * comment on `GENERATE_ENDPOINT` / `SEND_ENDPOINT` below, and the integrator
- * note this task's report calls out.
+ * `generate` is still an `onRequest`, reached through this app's own
+ * `firebase.json` rewrite (`/api/generate -> generateAuntieCopy`), so it keeps
+ * the fetch. The send does not, which is why only one endpoint constant remains.
  */
 
 const GENERATE_ENDPOINT = '/api/generate';
-const SEND_ENDPOINT = '/api/send-message';
 
 /** Every `communication_type` the backend's `ALLOWED_TYPES` accepts (generate.js line 25). */
 export const GENERATE_COMMUNICATION_TYPES = [
@@ -232,60 +221,95 @@ export type PersonalizeChannel = 'email' | 'sms';
 export interface SendPersonalizedArgs {
   channel: PersonalizeChannel;
   message_body: string;
+  /** Required when channel is 'email'; the backend rejects a blank subject. */
+  subject?: string;
   kinfolk_id?: string;
   recipient_email?: string;
   recipient_phone?: string;
 }
 
-/**
- * Normalized send outcome. `sendMessage` (the n8n proxy) can return any of
- * `sid` / `message_sid` / `twilioMessageSid` / `id` depending on which
- * provider the n8n workflow used; `providerId` reads whichever is present,
- * defensively, rather than assuming one fixed field name.
- */
 export interface SendPersonalizedResult {
   ok: true;
   providerId: string | null;
 }
 
+/** Wire shape of the MyTribe `sendExternalMessage` callable. */
+interface SendExternalMessageRequest {
+  channel: PersonalizeChannel;
+  to: string;
+  body: string;
+  subject?: string;
+  transactional: boolean;
+}
+
+interface SendExternalMessageResponse {
+  ok: true;
+  channel: PersonalizeChannel;
+  providerMessageId?: string | null;
+  recipientRedacted?: string;
+}
+
 /**
- * Calls `POST /api/send-message`. Same rewrite/sign-in/error-surfacing
- * contract as `generateDraft` above. Throws `SendMessageError` naming the
- * backend's `error` or `provider_error` field on any failure; never returns
- * a fabricated success when the HTTP call itself failed or the provider
- * rejected the send.
+ * Sends a 1:1 personalized message through MyTribe's `sendExternalMessage`
+ * callable (Twilio for sms, smtp2go for email).
+ *
+ * This used to POST `/api/send-message`, which the hosting rewrite pointed at
+ * an AuntieOS function that was a bare proxy to
+ * `https://n8n.tribetails.com/webhook/auntie-send-message`. n8n was retired, so
+ * every Personalize send in prod hit a host that no longer answers, while the
+ * Broadcast path beside it already used this same callable. The proxy's
+ * defensive `sid` / `message_sid` / `twilioMessageSid` / `id` unwrapping existed
+ * because the n8n workflow's response shape varied by provider; the callable
+ * returns one documented field, so that guesswork is gone.
+ *
+ * Behavior gained by moving, both deliberate: sends now pass the consent gate
+ * (a recipient in `message_suppressions` is refused) and every send is recorded
+ * in `external_messages` with an audit entry.
+ *
+ * Still throws `SendMessageError` on any failure and never fabricates success.
  */
 export async function sendPersonalizedMessage(
   args: SendPersonalizedArgs,
 ): Promise<SendPersonalizedResult> {
-  const idToken = await requireIdToken(SendMessageError, 'sending a message');
-
-  let response: Response;
-  try {
-    response = await fetch(SEND_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${idToken}`,
-      },
-      body: JSON.stringify(args),
-    });
-  } catch (err) {
+  const to =
+    args.channel === 'email'
+      ? (args.recipient_email ?? '').trim()
+      : (args.recipient_phone ?? '').trim();
+  if (to === '') {
     throw new SendMessageError(
-      `sendMessage request failed: ${err instanceof Error ? err.message : 'network error'}`,
+      args.channel === 'email'
+        ? 'This Kinfolk has no email address on file.'
+        : 'This Kinfolk has no phone number on file.',
     );
   }
 
-  const body = await parseJsonBody(response);
-  const errorField = stringField(body, 'error') ?? stringField(body, 'provider_error');
-  if (!response.ok || errorField !== null) {
-    throw new SendMessageError(errorField ?? `sendMessage failed (${response.status})`);
+  const body = args.message_body.trim();
+  if (body === '') throw new SendMessageError('The message body is empty.');
+
+  const subject = (args.subject ?? '').trim();
+  if (args.channel === 'email' && subject === '') {
+    throw new SendMessageError('A subject is required for an email.');
   }
 
-  const providerId =
-    stringField(body, 'sid') ??
-    stringField(body, 'message_sid') ??
-    stringField(body, 'twilioMessageSid') ??
-    stringField(body, 'id');
-  return { ok: true, providerId };
+  const payload: SendExternalMessageRequest = {
+    channel: args.channel,
+    to,
+    body,
+    // A personalized 1:1 message an operator wrote and confirmed is
+    // transactional, not marketing: it must not be dropped by a bulk opt-out.
+    transactional: true,
+    ...(args.channel === 'email' ? { subject } : {}),
+  };
+
+  let res: SendExternalMessageResponse;
+  try {
+    res = await call<SendExternalMessageRequest, SendExternalMessageResponse>(
+      'sendExternalMessage',
+      payload,
+    );
+  } catch (err) {
+    throw new SendMessageError(err instanceof Error ? err.message : 'The send failed.');
+  }
+
+  return { ok: true, providerId: res.providerMessageId ?? null };
 }

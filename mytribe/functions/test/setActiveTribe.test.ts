@@ -23,10 +23,10 @@ beforeEach(() => {
 
 import { setActiveTribeHandler } from '../src/portal/setActiveTribe';
 
-function req(data: unknown, uid = 'u1'): CallableRequest<unknown> {
+function req(data: unknown, uid = 'u1', token: Record<string, unknown> = {}): CallableRequest<unknown> {
   return {
     data,
-    auth: { uid, token: {} as any },
+    auth: { uid, token: token as any },
     rawRequest: {} as any,
     instanceIdToken: undefined,
     acceptsStreaming: false,
@@ -61,7 +61,7 @@ describe('setActiveTribeHandler', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await setActiveTribeHandler(req({ kinfolkId: 'b' }));
 
-    expect(res).toEqual({ ok: true, kinfolkId: 'b' });
+    expect(res).toEqual({ ok: true, kinfolkId: 'b', claimReminted: true });
     const write = ctx.writes.find((w) => w.path === 'clients/u1');
     expect(write?.data.activeKinfolkId).toBe('b');
     expect(write?.merge).toBe(true);
@@ -80,5 +80,54 @@ describe('setActiveTribeHandler', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     await setActiveTribeHandler(req({ kinfolkId: 'b' }));
     expect(mocks.setCustomUserClaims).toHaveBeenCalledWith('u1', { role: 'kinfolk', kinfolkId: 'b' });
+  });
+
+  // ── Operator stepping into a household that is not theirs ────────────────
+  // This used to throw permission-denied, and the portal caught that throw into
+  // a console.warn, so every operator tribe switch logged a swallowed error.
+
+  it('lets an operator view a foreign household instead of throwing', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/op1': { kinfolkIds: [] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await setActiveTribeHandler(req({ kinfolkId: 'someone-else' }, 'op1', { admin: true }));
+
+    expect(res).toEqual({ ok: true, kinfolkId: 'someone-else', claimReminted: false });
+  });
+
+  it('does NOT write or re-mint for the operator view', async () => {
+    // Both omissions are load-bearing, not laziness. syncKinfolkClaim
+    // re-validates activeKinfolkId against the caller's OWN kinfolkIds and would
+    // fall back to kinfolkIds[0], so the write buys nothing; and its
+    // `kinfolk/{activeId}.uid = uid` back-write would overwrite the real
+    // kinfolk's uid on their own doc, breaking push targeting for that
+    // household.
+    const ctx = buildDbMock({ docs: { 'clients/op1': { kinfolkIds: [] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await setActiveTribeHandler(req({ kinfolkId: 'someone-else' }, 'op1', { admin: true }));
+
+    expect(ctx.writes).toHaveLength(0);
+    expect(mocks.setCustomUserClaims).not.toHaveBeenCalled();
+  });
+
+  it('still rejects a NON-operator asking for a foreign household', async () => {
+    // The operator branch must not become a hole for an ordinary kinfolk.
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['a'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(
+      setActiveTribeHandler(req({ kinfolkId: 'someone-else' }, 'u1', { admin: false })),
+    ).rejects.toMatchObject({ code: 'permission-denied' });
+  });
+
+  it('takes the normal path when an operator picks a household they DO own', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/op1': { kinfolkIds: ['a', 'b'], activeKinfolkId: 'b' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await setActiveTribeHandler(req({ kinfolkId: 'b' }, 'op1', { admin: true }));
+
+    expect(res).toEqual({ ok: true, kinfolkId: 'b', claimReminted: true });
+    expect(mocks.setCustomUserClaims).toHaveBeenCalledWith('op1', { role: 'kinfolk', kinfolkId: 'b' });
   });
 });

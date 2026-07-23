@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.data.repository
 
+import com.tribetails.auntieos.BuildConfig
 import com.tribetails.auntieos.domain.withSandboxScope
 import com.tribetails.auntieos.domain.RecentSend
 import com.tribetails.auntieos.domain.decodeRecentSends
@@ -2123,18 +2124,34 @@ class AuntieRepository(
 
     // --- FCM Device Token ---
 
+    /**
+     * Register this device for push via the `registerFcmToken` callable, the same
+     * path the MyTribe kinfolk app uses.
+     *
+     * This used to write `fcm_tokens/{uid}` directly, which was broken three ways
+     * at once and silent about all of them:
+     *  - firestore.rules declared `fcmTokens` (camelCase), a collection nothing
+     *    uses, so the real one was default-deny and every save was rejected;
+     *  - the document carried no `uid` field, while `pushChannel` and
+     *    `broadcastMessage` both resolve devices with `.where('uid','==',...)`,
+     *    so the device would have stayed invisible even once the rule was fixed;
+     *  - it keyed the doc by uid, while the server keys by token, so the two
+     *    writers disagreed and a second device would clobber the first.
+     *
+     * The callable owns all three (token as doc id, deduped, with `uid` stamped),
+     * so the collection is now closed to clients entirely.
+     */
     suspend fun saveDeviceToken(token: String): Result<Unit> = runCatching {
         ensureAuthenticated()
-        val uid = auth.currentUser?.uid ?: error("No authenticated user for FCM token save")
-        val data = mapOf(
+        val payload = hashMapOf(
             "token" to token,
             "platform" to "android",
-            "updatedAt" to getCurrentTimestamp()
+            "appVersion" to BuildConfig.VERSION_NAME,
         )
-        firestore.collection("fcm_tokens").document(uid).set(data).await()
-        AuntieLog.i("FCM token saved for uid: $uid")
+        functions.getHttpsCallable("registerFcmToken").call(payload).await()
+        AuntieLog.i("FCM token registered via callable")
         Unit
-    }.onFailure { AuntieLog.e("Failed to save FCM device token", it) }
+    }.onFailure { AuntieLog.e("Failed to register FCM device token", it) }
 
     // --- Firestore streams for comms history (survives app restart) ---
 

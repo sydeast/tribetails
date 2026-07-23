@@ -62,6 +62,11 @@
   color: var(--color-text-dim);
 }
 
+.personalize__field-error {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-error);
+}
+
 .personalize__select,
 .personalize__text-input,
 .personalize__textarea {

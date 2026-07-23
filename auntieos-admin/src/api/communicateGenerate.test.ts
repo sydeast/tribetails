@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { authState } = vi.hoisted(() => ({ authState: { currentUser: null as null | { getIdToken: () => Promise<string> } } }));
+const { authState, callMock } = vi.hoisted(() => ({
+  authState: { currentUser: null as null | { getIdToken: () => Promise<string> } },
+  callMock: vi.fn(),
+}));
 vi.mock('../lib/firebase', () => ({ auth: authState }));
+// The send is an onCall now (MyTribe `sendExternalMessage`), not a fetch to the
+// retired n8n proxy, so it goes through lib/fns.ts's `call`.
+vi.mock('../lib/fns', () => ({ call: callMock }));
 
 import {
   generateDraft,
@@ -30,6 +36,7 @@ const fetchMock = vi.fn();
 beforeEach(() => {
   authState.currentUser = null;
   fetchMock.mockReset();
+  callMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
 });
 
@@ -169,57 +176,77 @@ describe('draftOpening', () => {
 const sendArgs: SendPersonalizedArgs = {
   channel: 'email',
   message_body: 'Nova had a great day today.',
+  subject: 'Nova had a great day',
   kinfolk_id: 'kf1',
   recipient_email: 'dana@example.com',
 };
 
 describe('sendPersonalizedMessage', () => {
-  it('throws without a signed-in admin, and never calls fetch', async () => {
-    await expect(sendPersonalizedMessage(sendArgs)).rejects.toThrow(SendMessageError);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('POSTs to /api/send-message with a Bearer token and the payload verbatim', async () => {
-    authState.currentUser = fakeUser('xyz.789');
-    fetchMock.mockResolvedValue(jsonResponse(200, { ok: true, sid: 'SM123' }));
-
+  // Was five tests against a stubbed `fetch` to /api/send-message, which the
+  // hosting rewrite pointed at an AuntieOS proxy for the retired n8n webhook.
+  // They passed while every real send in prod failed. The send is now MyTribe's
+  // `sendExternalMessage` onCall, so these drive the callable seam instead.
+  it('calls sendExternalMessage with the mapped payload', async () => {
+    callMock.mockResolvedValue({ ok: true, channel: 'email', providerMessageId: 'SM123' });
     const result = await sendPersonalizedMessage(sendArgs);
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/send-message',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({ Authorization: 'Bearer xyz.789' }),
-        body: JSON.stringify(sendArgs),
-      }),
-    );
+    expect(callMock).toHaveBeenCalledWith('sendExternalMessage', {
+      channel: 'email',
+      to: 'dana@example.com',
+      body: 'Nova had a great day today.',
+      subject: 'Nova had a great day',
+      transactional: true,
+    });
     expect(result).toEqual({ ok: true, providerId: 'SM123' });
   });
-
-  it('reads message_sid when sid is absent (defensive, provider-shape tolerant)', async () => {
-    authState.currentUser = fakeUser();
-    fetchMock.mockResolvedValue(jsonResponse(200, { ok: true, message_sid: 'MS456' }));
+  it('sends sms to the phone number and omits subject entirely', async () => {
+    callMock.mockResolvedValue({ ok: true, channel: 'sms', providerMessageId: 'SM999' });
+    await sendPersonalizedMessage({
+      channel: 'sms',
+      message_body: 'On my way.',
+      kinfolk_id: 'kf1',
+      recipient_phone: '+15125551234',
+    });
+    expect(callMock).toHaveBeenCalledWith('sendExternalMessage', {
+      channel: 'sms',
+      to: '+15125551234',
+      body: 'On my way.',
+      transactional: true,
+    });
+  });
+  it('marks the send transactional so a bulk opt-out cannot drop a 1:1 note', async () => {
+    callMock.mockResolvedValue({ ok: true, channel: 'email', providerMessageId: 'x' });
+    await sendPersonalizedMessage(sendArgs);
+    expect(callMock.mock.calls[0]?.[1]).toMatchObject({ transactional: true });
+  });
+  it('refuses an email with no subject, without calling the backend', async () => {
+    await expect(
+      sendPersonalizedMessage({ ...sendArgs, subject: '   ' }),
+    ).rejects.toThrow(/subject is required/i);
+    expect(callMock).not.toHaveBeenCalled();
+  });
+  it('refuses a recipient with no address on file, without calling the backend', async () => {
+    await expect(
+      sendPersonalizedMessage({ ...sendArgs, recipient_email: '' }),
+    ).rejects.toThrow(/no email address/i);
+    await expect(
+      sendPersonalizedMessage({ channel: 'sms', message_body: 'hi', recipient_phone: '' }),
+    ).rejects.toThrow(/no phone number/i);
+    expect(callMock).not.toHaveBeenCalled();
+  });
+  it('refuses an empty body, without calling the backend', async () => {
+    await expect(
+      sendPersonalizedMessage({ ...sendArgs, message_body: '   ' }),
+    ).rejects.toThrow(/body is empty/i);
+    expect(callMock).not.toHaveBeenCalled();
+  });
+  it('fails loud when the callable rejects, and never fabricates a success', async () => {
+    callMock.mockRejectedValue(new Error('recipient has opted out of messages'));
+    await expect(sendPersonalizedMessage(sendArgs)).rejects.toThrow(SendMessageError);
+    await expect(sendPersonalizedMessage(sendArgs)).rejects.toThrow(/opted out/);
+  });
+  it('reports a null providerId rather than inventing one', async () => {
+    callMock.mockResolvedValue({ ok: true, channel: 'email' });
     const result = await sendPersonalizedMessage(sendArgs);
-    expect(result.providerId).toBe('MS456');
-  });
-
-  it('fails loud on a provider error field even with an HTTP 200 (never a fabricated success)', async () => {
-    authState.currentUser = fakeUser();
-    fetchMock.mockResolvedValue(jsonResponse(200, { ok: false, error: 'recipient_opted_out' }));
-    await expect(sendPersonalizedMessage(sendArgs)).rejects.toThrow('recipient_opted_out');
-  });
-
-  it('fails loud on a non-JSON-normalized provider failure', async () => {
-    authState.currentUser = fakeUser();
-    fetchMock.mockResolvedValue(
-      jsonResponse(502, { error: 'upstream_provider_failure', provider_error: 'cf_body_rewritten' }),
-    );
-    await expect(sendPersonalizedMessage(sendArgs)).rejects.toThrow('upstream_provider_failure');
-  });
-
-  it('fails loud on a network error', async () => {
-    authState.currentUser = fakeUser();
-    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
-    await expect(sendPersonalizedMessage(sendArgs)).rejects.toThrow(/sendMessage request failed/);
+    expect(result).toEqual({ ok: true, providerId: null });
   });
 });

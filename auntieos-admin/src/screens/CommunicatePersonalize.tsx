@@ -58,6 +58,12 @@ export function CommunicatePersonalize({ onClose }: CommunicatePersonalizeProps)
   const [rawNotes, setRawNotes] = useState('');
   const [toneHint, setToneHint] = useState('');
   const [maxLength, setMaxLength] = useState('');
+  // Email subject. sendExternalMessage rejects a blank subject on the email
+  // channel, and an email with no subject line is bad on its own terms. Seeded
+  // from the generated title (see want_title in handleGenerate) unless the
+  // operator has typed their own.
+  const [subject, setSubject] = useState('');
+  const [subjectTouched, setSubjectTouched] = useState(false);
 
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
@@ -104,11 +110,19 @@ export function CommunicatePersonalize({ onClose }: CommunicatePersonalizeProps)
       ...(toneHint.trim() !== '' ? { tone_hint: toneHint.trim() } : {}),
       ...(maxLength.trim() !== '' ? { max_length: maxLength.trim() } : {}),
       ...(regenerate && draftText.trim() !== '' ? { avoid_opening: draftOpening(draftText) } : {}),
+      // Only email has somewhere to put a title (the subject line), which is the
+      // condition want_title's own doc sets for paying for the extra model call.
+      ...(channel === 'email' ? { want_title: true } : {}),
     };
     try {
       const result = await generateDraft(args);
       setDraft(result);
       setDraftText(result.generated_copy);
+      // Never overwrite a subject the operator typed. Same rule the KinTale
+      // composer uses for its Ask Auntie headline.
+      if (channel === 'email' && !subjectTouched && result.generated_title.trim() !== '') {
+        setSubject(result.generated_title.trim());
+      }
       setSendResult(null);
     } catch (err) {
       setGenerateError(err instanceof Error ? err.message : 'Generate failed');
@@ -117,8 +131,17 @@ export function CommunicatePersonalize({ onClose }: CommunicatePersonalizeProps)
     }
   }
 
+  /** Email needs a subject; sms does not have one. */
+  const subjectMissing = channel === 'email' && subject.trim() === '';
+
   function openConfirm() {
     if (busy || draftText.trim() === '') return;
+    if (subjectMissing) {
+      // Reveal the inline error rather than opening a confirm the send would
+      // only reject server-side.
+      setSubjectTouched(true);
+      return;
+    }
     setSendError(null);
     setConfirmOpen(true);
   }
@@ -133,7 +156,7 @@ export function CommunicatePersonalize({ onClose }: CommunicatePersonalizeProps)
         message_body: draftText.trim(),
         kinfolk_id: kf._id,
         ...(channel === 'email'
-          ? { recipient_email: str(kf.email) }
+          ? { recipient_email: str(kf.email), subject: subject.trim() }
           : { recipient_phone: str(kf.phoneNumber) }),
       };
       const result = await sendPersonalizedMessage(args);
@@ -341,6 +364,29 @@ export function CommunicatePersonalize({ onClose }: CommunicatePersonalizeProps)
                         </Banner>
                       )}
 
+                      {channel === 'email' && (
+                        <label className="personalize__field">
+                          <span className="personalize__field-label">Subject</span>
+                          <input
+                            className="personalize__text-input"
+                            type="text"
+                            value={subject}
+                            disabled={busy}
+                            maxLength={500}
+                            onChange={(e) => {
+                              setSubject(e.target.value);
+                              setSubjectTouched(true);
+                            }}
+                            onBlur={() => setSubjectTouched(true)}
+                          />
+                          {subjectTouched && subjectMissing && (
+                            <span className="personalize__field-error" role="alert">
+                              A subject is required for an email.
+                            </span>
+                          )}
+                        </label>
+                      )}
+
                       <label className="personalize__field">
                         <span className="personalize__field-label">Message</span>
                         <textarea
@@ -398,6 +444,11 @@ export function CommunicatePersonalize({ onClose }: CommunicatePersonalizeProps)
                     <p className="personalize__confirm-line">
                       <strong>Channel:</strong> {channel === 'email' ? 'Email' : 'Text (SMS)'}
                     </p>
+                    {channel === 'email' && (
+                      <p className="personalize__confirm-line">
+                        <strong>Subject:</strong> {subject.trim()}
+                      </p>
+                    )}
                     <p className="personalize__confirm-line">
                       <strong>Message:</strong> {draftText}
                     </p>

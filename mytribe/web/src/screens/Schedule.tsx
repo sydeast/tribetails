@@ -38,7 +38,7 @@ export function Schedule() {
 
   const liveVisit = visits.data?.visits.find((v) => v.status.toLowerCase() === 'arrived') ?? null;
   const liveBooking = liveVisit ? findBookingBySessionId(bookings.data, liveVisit.id) : null;
-  const breadcrumbs = useBreadcrumbs(liveVisit?.id ?? null);
+  const { points: breadcrumbs, error: breadcrumbsError } = useBreadcrumbs(liveVisit?.id ?? null);
 
   const { signOut, signingOut } = useSignOut();
 
@@ -112,7 +112,15 @@ export function Schedule() {
               </span>
             </div>
             <div className="routemap-wrap">
-              {breadcrumbs.length === 0 ? (
+              {breadcrumbsError !== null ? (
+                // A dead subscription must not read as a visit that has not
+                // started moving. This branch used to be unreachable: the hook
+                // returned only an array, so a permission-denied showed the
+                // "waiting" copy below forever.
+                <p className="sub" style={{ color: '#fff', opacity: 0.95 }}>
+                  Live tracking is unavailable right now. Your Auntie is still on the visit.
+                </p>
+              ) : breadcrumbs.length === 0 ? (
                 <p className="sub" style={{ color: '#fff', opacity: 0.85 }}>
                   Waiting for the first GPS ping…
                 </p>

@@ -39,8 +39,14 @@ export function getMyAccess(): Promise<GetMyAccessResult> {
  * pick — before this, only callable reads (which pass kinfolkId explicitly)
  * did. See `activeTribe.ts`'s `setActiveKinfolkId`, which calls this.
  */
-export function setActiveTribe(kinfolkId: string): Promise<{ ok: true; kinfolkId: string }> {
-  return call<{ kinfolkId: string }, { ok: true; kinfolkId: string }>('setActiveTribe', { kinfolkId });
+/**
+ * `claimReminted` is false when an operator steps into a household that is not
+ * theirs: the server intentionally does not mint a kinfolkId claim for a
+ * household the caller does not own, so there is no token to refresh. Optional
+ * on the type because a client can outlive a rollback to the prior deploy.
+ */
+export function setActiveTribe(kinfolkId: string): Promise<{ ok: true; kinfolkId: string; claimReminted?: boolean }> {
+  return call<{ kinfolkId: string }, { ok: true; kinfolkId: string; claimReminted?: boolean }>('setActiveTribe', { kinfolkId });
 }
 
 export interface TribeSummary {
