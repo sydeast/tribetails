@@ -137,9 +137,27 @@ hand in the console, a kinfolk booking request throws `no recipients resolved`
 and the operator is never told. The same doc backs `resolveDefaultAssignee()`,
 so every portal-created visit is written `assignedAuntieUid: null`.
 
-**Operator check:** open `businessSettings/admins` in the Firestore console. If
-`uids[]` is populated, this is P1 fragility. If the doc is absent, it is a live
-P0 and booking notifications have never fired.
+**CONFIRMED LIVE 2026-07-23.** The operator checked the Firestore console: the
+document does not exist. This is not fragility. Booking requests, inbound
+messages and bad ratings have never reached the operator, and every
+portal-created visit has been written `assignedAuntieUid: null`.
+
+**FIXED.** `lib/businessAdmins.ts` is the single resolver now: stored roster
+first, `AUNTIE_OPERATOR_UIDS` second (writing itself back, so the fallback is
+needed once rather than on every dispatch), then a throw that names the fix. It
+never returns an empty list, because a business notification with no recipient
+has to be loud; returning `[]` would let the dispatcher believe it delivered to
+nobody successfully.
+
+`AUNTIE_OPERATOR_UIDS` is a Secret Manager secret, not a `functions/.env` value,
+so it only resolves inside functions that bind it. Rather than binding it on all
+16 dispatch paths and risking a miss (a missed binding evaluates false SILENTLY,
+the same trap that would have made the P0-3 fix a no-op), it is bound on
+`onBookingsWrite`, the highest-traffic dispatcher, so the roster self-heals on
+the first booking request. `provisionBusinessAdmins` is the deterministic path
+that does not depend on the env at all: an admin-gated callable that seeds the
+roster from the caller's own uid, idempotent and never narrowing.
+`checkBusinessAdmins` reports deliverability without sending anything.
 
 ### 9. Kin with no `status` field vanish from the portal
 
@@ -506,12 +524,14 @@ Leads that did not survive verification. Recorded so they are not re-raised.
    `createdAtIso()`/`updatedAtIso()` accessors and the two `.ifBlank {}` writers
    repointed. 1443 android tests green, 17 of them new. Not yet built into an
    APK or distributed.
-1. **Same day, one deploy.** P0-1 (repoint the send path), P0-3 and P0-4
+1. **DONE, merged as #26.** P0-1 (repoint the send path), P0-3 and P0-4
    (impersonation gates), P0-5 and P0-6 (the two rules gaps), P0-7 (the sweeper
-   path). All are small and independently testable.
-2. **Operator check, five minutes.** Open `businessSettings/admins` in the
-   console. That single lookup decides whether P0-8 is a live outage or latent
-   fragility.
+   path). Not yet deployed: needs `firestore:rules`, `functions:mytribe`,
+   `functions:default`, both hosting targets, and an APK for the FCM change.
+2. **DONE.** The operator check came back: `businessSettings/admins` did not
+   exist, so P0-8 was a live outage. Fixed, see that entry. After deploy, call
+   `provisionBusinessAdmins` once (or let the first booking request self-heal
+   it), then `checkBusinessAdmins` to confirm `ok: true`.
 3. **Next.** P0-2 (secret clearing), P0-9 (`status` on mirrored kin, which needs
    a backfill as well as a writer fix), and the Android `kin_care_reports`
    merge, which is silently dropping KinTales out of the reconcile pipeline.
