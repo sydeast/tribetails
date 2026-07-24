@@ -225,6 +225,14 @@ fun buildDayPatterns(
             }
         }
 
+        // A schedule with no visits AND no overnight is not a real option. It
+        // happens when the rules are degenerate — the wake window is no wider than
+        // the max gap and there are no pinned visits, so nobody needs to be on
+        // site. Without this guard all three strategies collapse to the same empty
+        // schedule and dedupe to a single phantom $0 "Lean" card. Emit nothing so
+        // the screen shows its actionable empty-state instead.
+        if (touchpoints.isEmpty() && overnightCost == 0.0) continue
+
         val dayTotal = touchpoints.sumOf { it.price } + overnightCost
         val signature = touchpoints.joinToString("|") { "${it.durationId}@${it.time.roundToInt()}" } +
             (if (useOvernight) "+ON:$overnightDurationId" else "")
@@ -244,4 +252,53 @@ fun buildDayPatterns(
     }
 
     return patterns.map { it.first }.sortedBy { it.dayTotal }
+}
+
+/** A "YYYY-MM-DD" date -> a short "Mon, Jul 28" label; "" when unparseable. */
+fun dateLabel(date: String): String {
+    if (date.isBlank()) return ""
+    val d = runCatching { LocalDate.parse(date) }.getOrNull() ?: return ""
+    val month = d.month.name.lowercase().replaceFirstChar { it.uppercase() }.take(3)
+    val weekday = d.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }.take(3)
+    return "$weekday, $month ${d.dayOfMonth}"
+}
+
+/** Everything the quote text needs: the approved daily schedule priced across a stay. */
+data class QuoteInput(
+    val clientName: String,
+    val startDate: String,
+    val endDate: String,
+    val days: Int,
+    val pattern: DayPattern,
+)
+
+/**
+ * A clean plain-text quote for the clipboard / share sheet — pastes cleanly into
+ * an email, text, or a Kinfolk agreement. Behaviour-matched to the web
+ * `quoteText` so a package copied on either platform reads identically.
+ */
+fun quoteText(input: QuoteInput): String {
+    fun money(n: Double): String = "$" + String.format("%.2f", n)
+    val pattern = input.pattern
+    val days = input.days
+    val lines = mutableListOf("TribeTails — Coverage Package", "")
+    if (input.clientName.trim().isNotEmpty()) lines.add("Prepared for: ${input.clientName.trim()}")
+    lines.add("${pattern.strategyLabel} schedule · $days day${if (days != 1) "s" else ""}")
+    val start = dateLabel(input.startDate)
+    val end = dateLabel(input.endDate)
+    if (start.isNotEmpty() && end.isNotEmpty()) lines.add("$start – $end")
+    lines.add("")
+
+    lines.add("Each day:")
+    for (tp in pattern.touchpoints) {
+        val label = if (tp.label == "Check-in") "Check-in (${tp.durationLabel})" else "${tp.label} (${tp.durationLabel})"
+        lines.add("   ${minutesToTime(tp.time).padEnd(9)} $label   ${money(tp.price)}")
+    }
+    pattern.overnightLabel?.let { on ->
+        lines.add("   ${"overnight".padEnd(9)} $on   ${money(pattern.overnightCost)}")
+    }
+    lines.add("   Per day   ${money(pattern.dayTotal)}")
+    lines.add("")
+    lines.add("Total ($days day${if (days != 1) "s" else ""})   ${money(pattern.dayTotal * days)}")
+    return lines.joinToString("\n")
 }

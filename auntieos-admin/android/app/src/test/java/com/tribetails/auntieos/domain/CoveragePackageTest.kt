@@ -116,4 +116,48 @@ class CoveragePackageTest {
             assertTrue("not cheapest-first", many[i].dayTotal <= many[i + 1].dayTotal)
         }
     }
+
+    @Test
+    fun `emits nothing when the rules need no visits`() {
+        // The exact prod config that showed a phantom $0 "Lean" card: an 11:00–14:00
+        // window (3h) is narrower than the 6h max gap and there are no pinned visits.
+        val degenerate = rules(wakeStart = "11:00", wakeEnd = "14:00", maxGapHours = 6.0)
+        assertTrue(buildDayPatterns(DEFAULT_DURATIONS, degenerate, false, "d7").isEmpty())
+    }
+
+    @Test
+    fun `still emits an overnight-only schedule when overnight is on`() {
+        val degenerate = rules(wakeStart = "11:00", wakeEnd = "14:00", maxGapHours = 6.0)
+        val patterns = buildDayPatterns(DEFAULT_DURATIONS, degenerate, true, "d7")
+        assertEquals(1, patterns.size)
+        assertTrue(patterns[0].touchpoints.isEmpty())
+        assertEquals(150.0, patterns[0].overnightCost, 0.001)
+        assertEquals(150.0, patterns[0].dayTotal, 0.001)
+    }
+
+    // ── quoteText ────────────────────────────────────────────────────────────
+
+    @Test
+    fun `quoteText renders a clean client-facing quote`() {
+        // Large max gap + one pinned visit -> a single deterministic pattern
+        // (pinned Meds at 12:00, priced at d3 = $28), so the quote is stable.
+        val r = rules(maxGapHours = 12.0, pinned = listOf(PinnedTime("p1", "Meds", "12:00", "d3")))
+        val pattern = buildDayPatterns(DEFAULT_DURATIONS, r, false, "d7")[0]
+        val text = quoteText(QuoteInput("Rex", "2026-07-01", "2026-07-03", 3, pattern))
+        assertTrue(text.contains("TribeTails — Coverage Package"))
+        assertTrue(text.contains("Prepared for: Rex"))
+        assertTrue(text.contains("12:00 PM"))
+        assertTrue(text.contains("Meds (45-min visit)"))
+        assertTrue(text.contains("Per day   $28.00"))
+        assertTrue(text.contains("Total (3 days)   $84.00"))
+    }
+
+    @Test
+    fun `quoteText omits the client line when no name is given`() {
+        val r = rules(maxGapHours = 12.0, pinned = listOf(PinnedTime("p1", "Meds", "12:00", "d3")))
+        val pattern = buildDayPatterns(DEFAULT_DURATIONS, r, false, "d7")[0]
+        val text = quoteText(QuoteInput("", "", "", 1, pattern))
+        assertTrue(!text.contains("Prepared for"))
+        assertTrue(text.contains("Total (1 day)   $28.00"))
+    }
 }

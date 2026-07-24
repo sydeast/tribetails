@@ -1,5 +1,11 @@
 package com.tribetails.auntieos.ui.admin
 
+import android.content.Context
+import android.content.Intent
+import android.print.PrintAttributes
+import android.print.PrintManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -34,6 +40,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -42,9 +51,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.composables.icons.lucide.CalendarDays
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.Clock
+import com.composables.icons.lucide.Copy
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
+import com.composables.icons.lucide.Printer
 import com.composables.icons.lucide.RefreshCw
+import com.composables.icons.lucide.Share2
 import com.composables.icons.lucide.Trash2
 import com.composables.icons.lucide.TriangleAlert
 import com.tribetails.auntieos.domain.CoverageRules
@@ -54,9 +66,11 @@ import com.tribetails.auntieos.domain.DayPattern
 import com.tribetails.auntieos.domain.Duration
 import com.tribetails.auntieos.domain.OVERNIGHT_MINUTES
 import com.tribetails.auntieos.domain.PinnedTime
+import com.tribetails.auntieos.domain.QuoteInput
 import com.tribetails.auntieos.domain.buildDayPatterns
 import com.tribetails.auntieos.domain.daysBetween
 import com.tribetails.auntieos.domain.minutesToTime
+import com.tribetails.auntieos.domain.quoteText
 import com.tribetails.auntieos.domain.timeToMinutes
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
@@ -78,6 +92,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.UUID
 import kotlin.math.floor
+import kotlin.math.roundToInt
 
 /** Android parity with the web Coverage Package Builder. Config (visit menu +
  *  rules) loads/saves through [CoveragePackageViewModel]; schedule generation and
@@ -92,6 +107,8 @@ fun CoveragePackageScreen(
     viewModel: CoveragePackageViewModel = viewModel<CoveragePackageViewModel>(),
 ) {
     val c = AuntieTheme.colors
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val uiState by viewModel.uiState.collectAsState()
     val config = uiState.config
 
@@ -387,7 +404,7 @@ fun CoveragePackageScreen(
                 },
             ) {
                 if (patterns.isEmpty()) {
-                    EmptyHint("Set your day window and rules above to see valid schedule options.")
+                    EmptyHint(scheduleEmptyReason(rules, durations))
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         patterns.forEach { pattern ->
@@ -431,6 +448,33 @@ fun CoveragePackageScreen(
                                 Text("${approvedPattern.strategyLabel} schedule × $days day${if (days != 1) "s" else ""}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
                             }
                             Text("$${money(packageTotal)}", style = AuntieTheme.typography.displayMedium, color = c.primary, fontWeight = FontWeight.SemiBold)
+                        }
+
+                        // Copy / Share / Print the approved package as a clean text quote.
+                        val quote = quoteText(QuoteInput(clientName, startDate, endDate, days, approvedPattern))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            GhostButton(
+                                label = "Copy quote",
+                                leading = { Icon(Lucide.Copy, contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(14.dp)) },
+                                onClick = { clipboard.setText(AnnotatedString(quote)) },
+                            )
+                            GhostButton(
+                                label = "Share",
+                                leading = { Icon(Lucide.Share2, contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(14.dp)) },
+                                onClick = {
+                                    val send = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_SUBJECT, "TribeTails Coverage Package")
+                                        putExtra(Intent.EXTRA_TEXT, quote)
+                                    }
+                                    context.startActivity(Intent.createChooser(send, "Share quote"))
+                                },
+                            )
+                            PrimaryButton(
+                                label = "Print / Save PDF",
+                                leading = { Icon(Lucide.Printer, contentDescription = null, tint = c.background, modifier = Modifier.size(14.dp)) },
+                                onClick = { printQuote(context, clientName, quote) },
+                            )
                         }
                     }
                 }
@@ -553,4 +597,42 @@ private fun money(d: Double): String = "%.2f".format(d)
 private fun pinnedTimeLabel(p: PinnedTime): String {
     val mins = timeToMinutes(p.time) ?: return ""
     return minutesToTime(mins.toDouble())
+}
+
+/** Why did no schedules generate? An actionable reason (mirrors the web screen),
+ *  so a degenerate rule set never reads as a broken screen. */
+private fun scheduleEmptyReason(rules: CoverageRules, durations: List<Duration>): String {
+    val startMin = timeToMinutes(rules.wakeStart)
+    val endMin = timeToMinutes(rules.wakeEnd)
+    if (startMin == null || endMin == null) return "Enter a valid day start and day end time."
+    if (endMin <= startMin) return "Day ends must be after day starts."
+    val hasPinned = rules.pinnedTimes.any { timeToMinutes(it.time) != null }
+    if (!hasPinned && (endMin - startMin) <= rules.maxGapHours * 60) {
+        val windowHrs = ((endMin - startMin) / 60.0 * 10).roundToInt() / 10.0
+        val hrsText = if (windowHrs == floor(windowHrs)) windowHrs.toInt().toString() else windowHrs.toString()
+        val gapText = if (rules.maxGapHours == floor(rules.maxGapHours)) rules.maxGapHours.toInt().toString() else rules.maxGapHours.toString()
+        return "This day needs no visits yet: the ${hrsText}h window fits inside the ${gapText}h max gap, and there are no pinned visits. Add a pinned visit, widen the day window, or lower the max gap."
+    }
+    if (durations.all { it.price <= 0 || it.minutes >= OVERNIGHT_MINUTES }) {
+        return "Add at least one priced day visit (under ${OVERNIGHT_MINUTES.toInt()} min) to the menu above."
+    }
+    return "Adjust the day window, max gap, or pinned visits above to see valid schedule options."
+}
+
+/** Print / Save-PDF the quote via Android's print framework. The text is rendered
+ *  into an offscreen WebView (monospaced, pre-wrapped) whose PrintDocumentAdapter
+ *  the system print UI drives — the same clean quote the web screen prints. */
+private fun printQuote(context: Context, clientName: String, quote: String) {
+    val escaped = quote.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    val html = "<html><body><pre style=\"font-family:monospace;font-size:12px;white-space:pre-wrap;\">$escaped</pre></body></html>"
+    val jobName = "TribeTails Coverage Package" + if (clientName.isNotBlank()) " – $clientName" else ""
+    val webView = WebView(context)
+    webView.webViewClient = object : WebViewClient() {
+        override fun onPageFinished(view: WebView, url: String?) {
+            val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
+            val adapter = view.createPrintDocumentAdapter(jobName)
+            printManager.print(jobName, adapter, PrintAttributes.Builder().build())
+        }
+    }
+    webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
 }

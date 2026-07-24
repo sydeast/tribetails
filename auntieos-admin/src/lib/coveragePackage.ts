@@ -226,6 +226,14 @@ export function buildDayPatterns(
       }
     }
 
+    // A schedule with no visits AND no overnight is not a real option. It happens
+    // when the rules are degenerate — the wake window is no wider than the max
+    // gap and there are no pinned visits, so nobody needs to be on site. Without
+    // this guard all three strategies collapse to the same empty schedule and
+    // dedupe down to a single phantom $0 "Lean" card, which reads as broken.
+    // Emit nothing instead, so the screen shows its actionable empty-state.
+    if (touchpoints.length === 0 && overnightCost === 0) continue;
+
     const dayTotal = touchpoints.reduce((sum, tp) => sum + tp.price, 0) + overnightCost;
     const signature =
       touchpoints.map((t) => `${t.durationId}@${Math.round(t.time)}`).join('|') +
@@ -247,4 +255,51 @@ export function buildDayPatterns(
   }
 
   return patterns.sort((a, b) => a.dayTotal - b.dayTotal);
+}
+
+/** A "YYYY-MM-DD" date → a short "Mon, Jul 28" label; '' when unparseable. */
+export function dateLabel(date: string): string {
+  if (!date) return '';
+  const d = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+/** Everything the quote text needs: the approved daily schedule priced across a stay. */
+export interface QuoteInput {
+  readonly clientName: string;
+  readonly startDate: string;
+  readonly endDate: string;
+  readonly days: number;
+  readonly pattern: DayPattern;
+}
+
+/**
+ * A clean plain-text quote for the clipboard / share sheet — pastes cleanly into
+ * an email, text, or a Kinfolk agreement. Ported from the standalone applet's
+ * `quoteText`, adapted to the shipped model: one approved daily schedule priced
+ * across the whole stay (the applet's per-day override model is a later port).
+ */
+export function quoteText({ clientName, startDate, endDate, days, pattern }: QuoteInput): string {
+  const money = (n: number): string => `$${n.toFixed(2)}`;
+  const lines: string[] = ['TribeTails — Coverage Package', ''];
+  if (clientName.trim() !== '') lines.push(`Prepared for: ${clientName.trim()}`);
+  lines.push(`${pattern.strategyLabel} schedule · ${days} day${days !== 1 ? 's' : ''}`);
+  const start = dateLabel(startDate);
+  const end = dateLabel(endDate);
+  if (start && end) lines.push(`${start} – ${end}`);
+  lines.push('');
+
+  lines.push('Each day:');
+  for (const tp of pattern.touchpoints) {
+    const label = tp.label === 'Check-in' ? `Check-in (${tp.durationLabel})` : `${tp.label} (${tp.durationLabel})`;
+    lines.push(`   ${minutesToTime(tp.time).padEnd(9)} ${label}   ${money(tp.price)}`);
+  }
+  if (pattern.overnightLabel) {
+    lines.push(`   ${'overnight'.padEnd(9)} ${pattern.overnightLabel}   ${money(pattern.overnightCost)}`);
+  }
+  lines.push(`   Per day   ${money(pattern.dayTotal)}`);
+  lines.push('');
+  lines.push(`Total (${days} day${days !== 1 ? 's' : ''})   ${money(pattern.dayTotal * days)}`);
+  return lines.join('\n');
 }
