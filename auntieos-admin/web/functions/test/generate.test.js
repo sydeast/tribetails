@@ -214,10 +214,16 @@ describe('ALLOWED_TYPES (the taxonomy every client mirrors)', () => {
       end: '}',
     },
     {
-      lang: 'Python create_n8n_workflows valid_types',
-      path: `${REPO}/auntieos-admin/create_n8n_workflows.py`,
-      start: 'valid_types',
-      end: ';',
+      // Was bound to auntieos-admin/create_n8n_workflows.py until 2026-07-23.
+      // That script targeted the retired n8n and imported the retired
+      // baserow_auth, so the guard was anchoring a live contract to a file that
+      // was about to be deleted, which would have turned CI red on the delete.
+      // Repointed at the Android picker, which is a shipping surface: it is the
+      // list an operator actually chooses from, so drift there is user-visible.
+      lang: 'Kotlin Android commTypeOptions',
+      path: `${REPO}/auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/ui/communicate/CommunicateScreen.kt`,
+      start: 'private val commTypeOptions',
+      end: ')',
     },
   ];
   for (const c of CROSS_LANGUAGE_COPIES) {
