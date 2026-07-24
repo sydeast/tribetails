@@ -10,7 +10,7 @@ import './TimeOffEditor.css';
 
 /**
  * The Time Off sub-editor, one of the three DEFERRED editors this port fills
- * in (see `SettingsEdit.tsx`'s header). Edits three doc fields as one saveable
+ * in (see `Settings.tsx`'s header). Edits three doc fields as one saveable
  * unit, exactly the grouping the wasm `TimeOffPanel` uses (`SettingsScreen.kt`):
  *   - `observedUsHolidays: string[]` -- ids from the fixed `US_HOLIDAYS` catalog
  *     (`lib/settingsFormat.ts`, ported verbatim from the wasm panel's private

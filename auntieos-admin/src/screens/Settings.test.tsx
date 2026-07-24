@@ -2,60 +2,42 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { BusinessSettings } from '../api/settings';
 
 const getBusinessSettings = vi.fn();
-vi.mock('../api/settings', () => ({ getBusinessSettings: () => getBusinessSettings() }));
-
-// SettingsEdit is exercised by its own SettingsEdit.test.tsx; here it is a
-// stand-in so this file only asserts Settings.tsx's OWN wiring (does clicking
-// "Edit settings" swap the overview for the editor, and does returning from it
-// reload the overview) without re-testing the editor's field-level behavior.
-const settingsEditOnDone = vi.fn();
-vi.mock('./SettingsEdit', () => ({
-  SettingsEdit: ({ onDone }: { onDone: () => void }) => {
-    settingsEditOnDone.mockImplementation(onDone);
-    return (
-      <div data-testid="settings-edit-stub">
-        <button type="button" onClick={onDone}>
-          stub: back to overview
-        </button>
-      </div>
-    );
-  },
+vi.mock('../api/settings', async (orig) => ({
+  ...(await orig<typeof import('../api/settings')>()),
+  getBusinessSettings: () => getBusinessSettings(),
 }));
 
-// Stubbed the same way as SettingsEdit: this file asserts Settings.tsx's own
-// wiring (does "Open notification gate" swap to the gate, and does its onBack
-// return to the overview), not the gate's own behavior (NotificationGate.test.tsx).
+const saveBusinessSettings = vi.fn();
+vi.mock('../api/settingsWrite', () => ({ saveBusinessSettings: (patch: unknown) => saveBusinessSettings(patch) }));
+
+// Notifications and Tags are their own self-loading editors, exercised by
+// NotificationGate.test.tsx / TagsEditor.test.tsx. Here they are stubs so this
+// file asserts only Settings.tsx's OWN wiring: that a section mounts on its
+// first visit (not before), and that no `onBack` is handed to an inline section
+// (there is nowhere to go back to behind the always-present nav).
 vi.mock('./NotificationGate', () => ({
   NotificationGate: ({ onBack }: { onBack?: () => void }) => (
-    <div data-testid="notification-gate-stub">
-      <button type="button" onClick={onBack}>
-        stub: back to settings
-      </button>
+    <div data-testid="notification-gate-stub" data-hasback={onBack ? 'yes' : 'no'}>
+      notification gate
     </div>
   ),
 }));
-
-// Stubbed like the others: this file asserts Settings.tsx's own wiring (does
-// "Open tags" swap to the Tags editor, and does its onBack return to the
-// overview), not the editor's CRUD (TagsEditor.test.tsx).
 vi.mock('./TagsEditor', () => ({
   TagsEditor: ({ onBack }: { onBack?: () => void }) => (
-    <div data-testid="tags-editor-stub">
-      <button type="button" onClick={onBack}>
-        stub: back to settings from tags
-      </button>
+    <div data-testid="tags-editor-stub" data-hasback={onBack ? 'yes' : 'no'}>
+      tags editor
     </div>
   ),
 }));
 
 import { Settings } from './Settings';
-import type { BusinessSettings } from '../api/settings';
 
 /**
- * A local fixture, not imported from the (mocked) api/settings module: mirrors
- * `DEFAULT_BUSINESS_SETTINGS` (FirestoreClient.kt's `BusinessSettings()`
+ * A local fixture, not imported from the (partially mocked) api/settings module:
+ * mirrors `DEFAULT_BUSINESS_SETTINGS` (FirestoreClient.kt's `BusinessSettings()`
  * defaults) field for field, so this file stays decoupled from the mock.
  */
 const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
@@ -123,198 +105,295 @@ function withOverrides(overrides: Partial<BusinessSettings>): BusinessSettings {
   return { ...DEFAULT_BUSINESS_SETTINGS, ...overrides };
 }
 
+/** Click a section's nav tab and return the one panel that is now visible. */
+async function openSection(tabName: string | RegExp): Promise<HTMLElement> {
+  await userEvent.click(screen.getByRole('tab', { name: tabName }));
+  return screen.getByRole('tabpanel');
+}
+
 beforeEach(() => {
   getBusinessSettings.mockReset();
-  settingsEditOnDone.mockReset();
+  saveBusinessSettings.mockReset();
 });
 
-describe('Settings screen (read-only overview)', () => {
+describe('Settings — section nav shell', () => {
   it('shows a loading state before the doc resolves', () => {
     getBusinessSettings.mockReturnValue(new Promise(() => {})); // never resolves
     render(<Settings />);
     expect(screen.getByText(/loading business settings/i)).toBeInTheDocument();
   });
 
-  it('surfaces a load failure fail-loud, never a false empty overview', async () => {
+  it('surfaces a load failure fail-loud, never a fabricated blank editor', async () => {
     getBusinessSettings.mockRejectedValue(new Error('permission-denied'));
     render(<Settings />);
     expect(await screen.findByText(/permission-denied/i)).toBeInTheDocument();
-    expect(screen.queryByText(/business profile/i)).not.toBeInTheDocument();
+    // The nav tab labelled "Business profile" is always present; the FIELD is the
+    // real tell that content rendered, and it must not on a failed load.
+    expect(screen.queryByLabelText('Business name')).not.toBeInTheDocument();
   });
 
   it('offers Retry on a failed load and re-fetches on click', async () => {
     getBusinessSettings.mockRejectedValueOnce(new Error('offline')).mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);
-    const retry = await screen.findByRole('button', { name: /retry/i });
-    await userEvent.click(retry);
-    expect(await screen.findByText('Business profile')).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: /retry/i }));
+    expect(await screen.findByLabelText('Business name')).toBeInTheDocument();
   });
 
-  it('always shows the read-only banner, never an edit form, in the default (non-editing) view', async () => {
+  it('renders a vertical tablist with one tab per section, Business profile selected first', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);
-    await screen.findByText('Business profile');
-    expect(screen.getByText(/this is an overview, not the editor/i)).toBeInTheDocument();
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    await screen.findByLabelText('Business name');
+
+    const tablist = screen.getByRole('tablist', { name: /settings sections/i });
+    expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
+
+    const tabs = within(tablist).getAllByRole('tab');
+    expect(tabs).toHaveLength(12);
+    expect(screen.getByRole('tab', { name: 'Business profile' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('renders business profile fields, falling back to "Not set" for blanks', async () => {
-    getBusinessSettings.mockResolvedValue(
-      withOverrides({ businessName: 'Tribe Tails Care', businessEmail: '', businessPhone: '512-555-0100' }),
+  it('clicking a section tab swaps which single panel is shown', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name'); // Business profile is the default panel
+
+    const panel = await openSection('Payments');
+    expect(within(panel).getByLabelText('Venmo handle')).toBeInTheDocument();
+    // The previous panel's field is no longer in the visible tabpanel.
+    expect(within(panel).queryByLabelText('Business name')).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Payments' })).toHaveAttribute('aria-selected', 'true');
+  });
+});
+
+describe('Settings — deferred (view-only) sections', () => {
+  it('Calendar sync shows the id read-only with a reason, no editable control', async () => {
+    getBusinessSettings.mockResolvedValue(withOverrides({ calendarSyncId: '' }));
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+
+    const panel = await openSection('Calendar sync');
+    expect(within(panel).getByText('Not configured')).toBeInTheDocument();
+    expect(within(panel).getByText(/it stays view-only/i)).toBeInTheDocument();
+    expect(within(panel).queryByRole('textbox')).not.toBeInTheDocument();
+  });
+
+  it('MyTribe portal keeps the Home layout view-only while its other fields save', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+
+    const panel = await openSection('MyTribe portal');
+    expect(within(panel).getByText('Home layout')).toBeInTheDocument();
+    expect(within(panel).getByText(/isn.t built here yet/i)).toBeInTheDocument();
+    // But the editable fields are here.
+    expect(within(panel).getByLabelText('Theme id')).toBeEnabled();
+  });
+});
+
+describe('Settings — self-loading sections mount lazily and inline', () => {
+  it('does not mount the Notifications editor until its tab is opened, and passes no onBack', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    expect(screen.queryByTestId('notification-gate-stub')).not.toBeInTheDocument();
+
+    await openSection('Notifications');
+    const stub = screen.getByTestId('notification-gate-stub');
+    expect(stub).toBeInTheDocument();
+    expect(stub).toHaveAttribute('data-hasback', 'no');
+  });
+
+  it('mounts the Tags editor inline on first visit, with no back button', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    expect(screen.queryByTestId('tags-editor-stub')).not.toBeInTheDocument();
+
+    await openSection('Tags');
+    const stub = screen.getByTestId('tags-editor-stub');
+    expect(stub).toBeInTheDocument();
+    expect(stub).toHaveAttribute('data-hasback', 'no');
+  });
+});
+
+describe('Settings — Business profile editor', () => {
+  it('disables Save until a field is edited, then saves the patch and shows Saved', async () => {
+    getBusinessSettings.mockResolvedValue(withOverrides({ businessName: 'Tribe Tails Care' }));
+    saveBusinessSettings.mockResolvedValue({ updatedAt: '2026-07-17T12:00:00.000Z', updatedBy: 'auntie@tribetails.com' });
+    render(<Settings />);
+    const panel = screen.getByRole('tabpanel');
+    await within(panel).findByLabelText('Business name');
+    const saveBtn = within(panel).getByRole('button', { name: /^save$/i });
+    expect(saveBtn).toBeDisabled();
+
+    const nameInput = within(panel).getByLabelText('Business name');
+    await userEvent.clear(nameInput);
+    await userEvent.type(nameInput, 'New Name');
+    expect(saveBtn).toBeEnabled();
+
+    await userEvent.click(saveBtn);
+    expect(saveBusinessSettings).toHaveBeenCalledWith({
+      businessName: 'New Name',
+      businessEmail: '',
+      businessPhone: '',
+      businessAddress: '',
+    });
+    expect(await within(panel).findByText('Saved')).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
+  });
+
+  it('shows a fail-loud error and keeps the field dirty when the save rejects', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockRejectedValue(new Error('permission-denied'));
+    render(<Settings />);
+    const panel = screen.getByRole('tabpanel');
+    const nameInput = await within(panel).findByLabelText('Business name');
+    await userEvent.type(nameInput, 'X');
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(await within(panel).findByText(/permission-denied/i)).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: /^save$/i })).toBeEnabled();
+    expect(within(panel).queryByText('Saved')).not.toBeInTheDocument();
+  });
+
+  it('trims saved values', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    const panel = screen.getByRole('tabpanel');
+    await userEvent.type(await within(panel).findByLabelText('Business name'), '  Padded  ');
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith(expect.objectContaining({ businessName: 'Padded' }));
+  });
+
+  it('keeps an in-progress edit alive across a trip to another section (mounted, not reset)', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    let panel = screen.getByRole('tabpanel');
+    await userEvent.type(await within(panel).findByLabelText('Business name'), 'Half-typed');
+
+    // Visit and save a DIFFERENT section.
+    panel = await openSection('Payments');
+    await userEvent.type(within(panel).getByLabelText('Venmo handle'), '@tribetails');
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    await within(panel).findByText('Saved');
+
+    // Back to Business profile: the unsaved edit must still be there.
+    panel = await openSection('Business profile');
+    expect(within(panel).getByLabelText('Business name')).toHaveValue('Half-typed');
+  });
+});
+
+describe('Settings — Booking behavior (instant-save toggles)', () => {
+  it('saves a toggle immediately and reflects the new value once the write resolves', async () => {
+    getBusinessSettings.mockResolvedValue(withOverrides({ autoConfirmRepeatKinfolk: false }));
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('Booking behavior');
+    const sw = within(panel).getByRole('switch', { name: /auto-confirm repeat kinfolk/i });
+    expect(sw).toHaveAttribute('aria-checked', 'false');
+    await userEvent.click(sw);
+    expect(saveBusinessSettings).toHaveBeenCalledWith({ autoConfirmRepeatKinfolk: true });
+    expect(await within(panel).findByRole('switch', { name: /auto-confirm repeat kinfolk/i })).toHaveAttribute(
+      'aria-checked',
+      'true',
     );
-    render(<Settings />);
-    const panel = (await screen.findByText('Business profile')).closest('section') as HTMLElement;
-    expect(within(panel).getByText('Tribe Tails Care')).toBeInTheDocument();
-    expect(within(panel).getByText('512-555-0100')).toBeInTheDocument();
-    expect(within(panel).getAllByText('Not set').length).toBeGreaterThan(0);
   });
 
-  it('renders business hours with Closed for an unset day', async () => {
-    getBusinessSettings.mockResolvedValue(withOverrides({ businessHours: { Monday: '09:00-17:00' } }));
+  it('surfaces a fail-loud error and leaves the switch unchanged on a failed toggle', async () => {
+    getBusinessSettings.mockResolvedValue(withOverrides({ snapRescheduleTo15Min: false }));
+    saveBusinessSettings.mockRejectedValue(new Error('offline'));
     render(<Settings />);
-    const panel = (await screen.findByText('Business hours')).closest('section') as HTMLElement;
-    expect(within(panel).getByText('09:00-17:00')).toBeInTheDocument();
-    expect(within(panel).getAllByText('Closed').length).toBe(6); // every other day of the week
-  });
-
-  it('renders payment handles, flagging an unset one', async () => {
-    getBusinessSettings.mockResolvedValue(withOverrides({ venmoHandle: '@tribetails', paypalHandle: '', cashappHandle: '' }));
-    render(<Settings />);
-    const panel = (await screen.findByText('Payment options')).closest('section') as HTMLElement;
-    expect(within(panel).getByText('@tribetails')).toBeInTheDocument();
-    expect(within(panel).getAllByText('Not set (hidden on invoices)').length).toBe(2);
-  });
-
-  it('renders observed US holidays as chips in catalog order', async () => {
-    getBusinessSettings.mockResolvedValue(withOverrides({ observedUsHolidays: ['christmas', 'new_years'] }));
-    render(<Settings />);
-    // Time Off ships collapsed by default (matches the wasm TimeOffPanel's
-    // `initiallyExpanded = false`), so expand it before asserting on content.
-    await userEvent.click(await screen.findByRole('button', { name: /time off/i }));
-    const panel = (await screen.findByText('Time off')).closest('section') as HTMLElement;
-    const chips = within(panel).getAllByText(/New Year's Day|Christmas Day/);
-    expect(chips.map((c) => c.textContent)).toEqual(["New Year's Day", 'Christmas Day']);
-  });
-
-  it('renders company holidays sorted oldest first', async () => {
-    getBusinessSettings.mockResolvedValue(
-      withOverrides({ companyHolidays: ['2026-12-25|Christmas closure', '2026-01-01|New Year closure'] }),
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('Booking behavior');
+    await userEvent.click(within(panel).getByRole('switch', { name: /snap drag-to-reschedule/i }));
+    expect(await within(panel).findByText(/offline/i)).toBeInTheDocument();
+    expect(within(panel).getByRole('switch', { name: /snap drag-to-reschedule/i })).toHaveAttribute(
+      'aria-checked',
+      'false',
     );
+  });
+});
+
+describe('Settings — real editors wire through the shared persist', () => {
+  it('Business hours: a per-day toggle saves the merged businessHours patch', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
     render(<Settings />);
-    await userEvent.click(await screen.findByRole('button', { name: /time off/i }));
-    const panel = (await screen.findByText('Time off')).closest('section') as HTMLElement;
-    // Scoped to the dated-row labels specifically: the panel subtitle itself
-    // contains the substring "closures", which a loose text match would catch too.
-    const labels = Array.from(panel.querySelectorAll('.settings__dated-label')).map((el) => el.textContent);
-    expect(labels).toEqual(['New Year closure', 'Christmas closure']);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('Business hours');
+    await userEvent.click(within(panel).getByRole('switch', { name: 'Toggle Monday open' }));
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith({ businessHours: { Monday: '09:00-17:00' } });
+    expect(await within(panel).findByText('Saved')).toBeInTheDocument();
   });
 
-  it('renders KinCare types with an unset rate flagged', async () => {
-    getBusinessSettings.mockResolvedValue(withOverrides({ serviceRates: { 'Drop-in visit': '25.00', Overnight: '' } }));
+  it('Time off: a toggled US holiday saves through the shared persist patch', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
     render(<Settings />);
-    const panel = (await screen.findByText('KinCare types')).closest('section') as HTMLElement;
-    expect(within(panel).getByText('25.00')).toBeInTheDocument();
-    expect(within(panel).getByText('Not set')).toBeInTheDocument();
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('Time off');
+    await userEvent.click(within(panel).getByRole('switch', { name: 'Toggle Juneteenth observed' }));
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith({
+      observedUsHolidays: ['juneteenth'],
+      companyHolidays: [],
+      specialHours: [],
+    });
   });
 
-  it('renders booking behavior toggles as On/Off text, not interactive controls', async () => {
-    getBusinessSettings.mockResolvedValue(withOverrides({ autoConfirmRepeatKinfolk: true, snapRescheduleTo15Min: false }));
+  it('KinCare types: adding a rate row saves the folded serviceRates map', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
     render(<Settings />);
-    const panel = (await screen.findByText('Booking behavior')).closest('section') as HTMLElement;
-    expect(within(panel).getByText('On')).toBeInTheDocument();
-    expect(within(panel).getByText('Off')).toBeInTheDocument();
-    expect(within(panel).queryByRole('switch')).not.toBeInTheDocument();
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('KinCare types');
+    await userEvent.type(within(panel).getByPlaceholderText('e.g. Drop-in visit'), 'Walk');
+    await userEvent.click(within(panel).getByRole('button', { name: /^add$/i }));
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith({ serviceRates: { Walk: '' } });
   });
+});
 
-  it('renders branding defaults as hints, never a blank value', async () => {
+describe('Settings — MyTribe portal editor', () => {
+  it('disables the banner message field until the banner toggle is on', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);
-    const panel = (await screen.findByText('Branding')).closest('section') as HTMLElement;
-    expect(within(panel).getByText('Default: "AuntieOS"')).toBeInTheDocument();
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+    expect(within(panel).getByLabelText('Banner message')).toBeDisabled();
+    await userEvent.click(within(panel).getByRole('switch', { name: /toggle the portal top banner/i }));
+    expect(within(panel).getByLabelText('Banner message')).toBeEnabled();
   });
 
-  it('renders the MyTribe portal summary', async () => {
-    getBusinessSettings.mockResolvedValue(
-      withOverrides({
-        mytribePortal: {
-          ...DEFAULT_BUSINESS_SETTINGS.mytribePortal,
-          themeId: 'sunset',
-          banner: { enabled: true, message: 'Closed for the holiday', tone: 'info', dismissMode: 'none', id: 'b1' },
-        },
-      }),
-    );
+  it('saves the whole portal object on Save and clears dirty', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
     render(<Settings />);
-    const panel = (await screen.findByText('MyTribe portal')).closest('section') as HTMLElement;
-    expect(within(panel).getByText('sunset')).toBeInTheDocument();
-    expect(within(panel).getByText('On: "Closed for the holiday"')).toBeInTheDocument();
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+    const themeInput = within(panel).getByLabelText('Theme id');
+    await userEvent.clear(themeInput);
+    await userEvent.type(themeInput, 'sunset');
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith({
+      mytribePortal: expect.objectContaining({ themeId: 'sunset' }),
+    });
+    expect(await within(panel).findByText('Saved')).toBeInTheDocument();
   });
 
-  it('shows "Never saved yet" when updatedAt is blank', async () => {
+  it('Cancel reverts unsaved portal edits', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);
-    expect(await screen.findByText('Never saved yet')).toBeInTheDocument();
-  });
-
-  it('renders "Edit settings" as a real, always-interactive button (the editor is now built)', async () => {
-    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
-    render(<Settings />);
-    await screen.findByText('Business profile');
-    expect(screen.getByRole('button', { name: /edit settings/i })).toBeInTheDocument();
-  });
-
-  it('clicking "Edit settings" swaps the overview for the editor', async () => {
-    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
-    render(<Settings />);
-    await screen.findByText('Business profile');
-    await userEvent.click(screen.getByRole('button', { name: /edit settings/i }));
-    expect(screen.getByTestId('settings-edit-stub')).toBeInTheDocument();
-    expect(screen.queryByText('Business profile')).not.toBeInTheDocument();
-  });
-
-  it('also calls an externally-supplied onEdit, if given, when "Edit settings" is clicked', async () => {
-    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
-    const onEdit = vi.fn();
-    render(<Settings onEdit={onEdit} />);
-    await screen.findByText('Business profile');
-    await userEvent.click(screen.getByRole('button', { name: /edit settings/i }));
-    expect(onEdit).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId('settings-edit-stub')).toBeInTheDocument();
-  });
-
-  it('opens the notification gate in place, and its Back returns to the overview', async () => {
-    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
-    render(<Settings />);
-    await screen.findByText('Business profile');
-
-    await userEvent.click(screen.getByRole('button', { name: /open notification gate/i }));
-    expect(screen.getByTestId('notification-gate-stub')).toBeInTheDocument();
-    expect(screen.queryByText('Business profile')).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByText('stub: back to settings'));
-    expect(await screen.findByText('Business profile')).toBeInTheDocument();
-  });
-
-  it('opens the Tags editor in place, and its Back returns to the overview', async () => {
-    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
-    render(<Settings />);
-    await screen.findByText('Business profile');
-
-    await userEvent.click(screen.getByRole('button', { name: /open tags/i }));
-    expect(screen.getByTestId('tags-editor-stub')).toBeInTheDocument();
-    expect(screen.queryByText('Business profile')).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByText('stub: back to settings from tags'));
-    expect(await screen.findByText('Business profile')).toBeInTheDocument();
-  });
-
-  it('returning from the editor (onDone) reloads the overview', async () => {
-    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
-    render(<Settings />);
-    await screen.findByText('Business profile');
-    await userEvent.click(screen.getByRole('button', { name: /edit settings/i }));
-    getBusinessSettings.mockClear();
-    await userEvent.click(screen.getByText('stub: back to overview'));
-    expect(await screen.findByText('Business profile')).toBeInTheDocument();
-    expect(getBusinessSettings).toHaveBeenCalledTimes(1);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+    const themeInput = within(panel).getByLabelText('Theme id');
+    await userEvent.clear(themeInput);
+    await userEvent.type(themeInput, 'sunset');
+    await userEvent.click(within(panel).getByRole('button', { name: /cancel/i }));
+    expect(within(panel).getByLabelText('Theme id')).toHaveValue('default');
+    expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
   });
 });

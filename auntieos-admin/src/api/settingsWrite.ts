@@ -32,9 +32,9 @@ import { BUSINESS_SETTINGS_DOC_ID, type BusinessSettings } from './settings';
  * with less data on the wire.
  *
  * Fail-loud: never swallows a write failure. A permission-denied, offline, or
- * network write error propagates to the caller (the per-section Save handler in
- * `SettingsEdit.tsx`), which is the only place that can show it beside the field
- * the operator was actually editing.
+ * network write error propagates to the caller (each section's Save handler in
+ * `screens/settings/sections.tsx` and its sibling editors), which is the only
+ * place that can show it beside the field the operator was actually editing.
  */
 export interface SaveStamp {
   updatedAt: string;

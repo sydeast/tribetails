@@ -11,6 +11,87 @@
   margin: 0;
 }
 
+/* ── Two-column: section nav (left) + the one selected panel (right) ──────── */
+
+.settings__layout {
+  display: grid;
+  grid-template-columns: minmax(11rem, 15rem) minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.settings__nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  position: sticky;
+  top: var(--space-4);
+}
+
+.settings__nav-item {
+  font: inherit;
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  text-align: left;
+  color: var(--color-text-dim);
+  background: transparent;
+  border: var(--border-hairline) solid transparent;
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  transition:
+    background var(--dur-base) var(--ease-standard),
+    border-color var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
+}
+.settings__nav-item:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+}
+.settings__nav-item:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.settings__nav-item--active,
+.settings__nav-item--active:hover {
+  color: var(--color-background);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.settings__panelArea {
+  min-width: 0;
+}
+
+.settings__panel:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 4px;
+  border-radius: var(--radius-card);
+}
+
+/* Narrow viewports: the rail becomes a horizontal, scrollable strip of pills
+   above the panel, so the section switch survives on a phone-width admin. */
+@media (max-width: 48rem) {
+  .settings__layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+  .settings__nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: var(--space-2);
+    padding-bottom: var(--space-2);
+  }
+  .settings__nav-item {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    border-radius: var(--radius-pill);
+  }
+}
+
 .settings__updated {
   font-family: var(--font-mono);
   font-size: 0.72rem;

@@ -9,7 +9,7 @@ import { BusinessHoursEditor } from './BusinessHoursEditor';
 /**
  * `BusinessHoursEditor` only clears its own "dirty" state (and shows "Saved")
  * once its `data` prop reflects the just-written patch -- exactly how
- * `SettingsEdit.tsx`'s `persist` feeds a save back to every section. A bare
+ * `Settings.tsx`'s `persist` feeds a save back to every section. A bare
  * `render` with a static `data` object can never demonstrate that (the prop
  * never changes), so this harness plays the parent's role for the one test
  * that needs to see "Saved" appear.

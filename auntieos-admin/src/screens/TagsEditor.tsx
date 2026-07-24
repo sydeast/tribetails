@@ -23,7 +23,7 @@ import './TagsEditor.css';
  * The Business-settings Tags panel: manage the two tag vocabularies (household
  * and pet) that label kinfolk + kin. Reached in place from `Settings.tsx` via
  * the same panel-swap the notification gate uses. Loads the single
- * `business_settings` doc one-shot (like `SettingsEdit`), edits the two
+ * `business_settings` doc one-shot (like the other Settings sections), edits the two
  * `TagDef[]` lists locally, and saves both at once through `saveBusinessSettings`
  * (a `setDoc` merge; no callable). Fail-loud on both load and save.
  *
@@ -34,7 +34,14 @@ import './TagsEditor.css';
  */
 
 interface TagsEditorProps {
-  onBack: () => void;
+  /**
+   * Supplied only when Tags is opened as its own standalone view that needs a
+   * way back. The merged `Settings` screen renders it inline as one section
+   * behind the always-present section nav, so there is nothing to go "back" to
+   * and it passes nothing; the "Back to settings" button is then omitted,
+   * matching `NotificationGate`'s optional `onBack`.
+   */
+  onBack?: () => void;
 }
 
 interface Vocabs {
@@ -264,7 +271,7 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
         kicker="The Den · Admin"
         title="Tags"
         subtitle="Manage the tags you put on households and pets."
-        trailing={<GhostButton label="Back to settings" onClick={onBack} disabled={busy} />}
+        trailing={onBack ? <GhostButton label="Back to settings" onClick={onBack} disabled={busy} /> : undefined}
       />
 
       {error !== null && (

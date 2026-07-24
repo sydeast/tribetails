@@ -10,7 +10,7 @@ import './BusinessHoursEditor.css';
 
 /**
  * The Business Hours sub-editor, one of the three DEFERRED editors this port
- * fills in (see `SettingsEdit.tsx`'s header). Edits `BusinessSettings.businessHours`,
+ * fills in (see `Settings.tsx`'s header). Edits `BusinessSettings.businessHours`,
  * a `Record<day, "HH:MM-HH:MM">` keyed by the SAME `DAYS_OF_WEEK` the read-only
  * overview's `businessHoursRows` (`lib/settingsFormat.ts`) already renders from,
  * and writes the SAME wire format that reader expects: a blank/missing entry
@@ -45,7 +45,7 @@ import './BusinessHoursEditor.css';
  * writes `""` (closed) at save time; toggling it on seeds `DEFAULT_RANGE`
  * ("09:00-17:00") into that day's `start`/`end` so the two time pickers have
  * something valid to show right away. One combined Save/Cancel bar for the
- * whole week, matching `MyTribePortalSection` in `SettingsEdit.tsx` (the whole
+ * whole week, matching `MyTribePortalSection` in `settings/sections.tsx` (the whole
  * map is one saveable doc field, so there is no per-day independence to
  * expose: a per-day save would still round-trip the other six days).
  */
