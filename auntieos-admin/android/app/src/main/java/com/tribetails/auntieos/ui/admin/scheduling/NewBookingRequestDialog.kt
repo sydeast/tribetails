@@ -27,9 +27,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.tribetails.auntieos.data.model.BaseService
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.NewBookingVisit
+import com.tribetails.auntieos.ui.admin.ServiceOption
+import com.tribetails.auntieos.ui.admin.serviceChipLabel
+import com.tribetails.auntieos.ui.admin.serviceOptionsFromRates
 import com.tribetails.auntieos.ui.components.AuntieCard
 import com.tribetails.auntieos.ui.components.AuntieDropdownField
 import com.tribetails.auntieos.ui.components.AuntieTextBtn
@@ -52,12 +54,23 @@ private val MINUTE_STEPS = listOf(0, 15, 30, 45)
  *
  * All date math is LOCAL (see [NewBookingMath]); weekdays use the JS/backend
  * convention (0 = Sunday) so [weeklyDays] passes through to the callable unchanged.
+ *
+ * SERVICES come from [serviceRates] — `business_settings.serviceRates`, the
+ * KinCare types the operator edits in Settings — ordered shortest visit first.
+ * This dialog used to read the `base_services` collection instead, which the
+ * backend itself treats as legacy (`getServiceCatalog` reads serviceRates first
+ * and only falls back to base_services when that map is empty, calling the
+ * collection "a single stale doc in practice"), so the picker could offer
+ * services the business no longer sells while hiding the ones it does.
+ * `serviceId` is therefore null on the wire: a serviceRates key is a NAME, not a
+ * `base_services` document id, and sending it would make the server's
+ * `resolveService` log a resolve-miss on every visit.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NewBookingRequestDialog(
     allKinfolk: List<Kinfolk>,
-    baseServices: List<BaseService>,
+    serviceRates: Map<String, String>,
     inFlight: Boolean,
     error: String?,
     onDismiss: () -> Unit,
@@ -65,8 +78,10 @@ fun NewBookingRequestDialog(
 ) {
     val c = AuntieTheme.colors
 
+    val serviceOptions = remember(serviceRates) { serviceOptionsFromRates(serviceRates) }
+
     var selectedKinfolk by remember { mutableStateOf<Kinfolk?>(null) }
-    var selectedService by remember { mutableStateOf<BaseService?>(null) }
+    var selectedService by remember { mutableStateOf<ServiceOption?>(null) }
     var hour by remember { mutableStateOf(9) }
     var minute by remember { mutableStateOf(0) }
     var weekly by remember { mutableStateOf(false) }
@@ -143,12 +158,21 @@ fun NewBookingRequestDialog(
                 item {
                     AuntieDropdownField(
                         value = selectedService,
-                        options = listOf<BaseService?>(null) + baseServices,
+                        options = listOf<ServiceOption?>(null) + serviceOptions,
                         onSelect = { selectedService = it },
-                        displayText = { it?.title ?: "Select service *" },
+                        displayText = { it?.let(::serviceChipLabel) ?: "Select service *" },
                         label = "SERVICE",
                         modifier = Modifier.fillMaxWidth(),
                     )
+                }
+                if (serviceOptions.isEmpty()) {
+                    item {
+                        Text(
+                            "No KinCare types yet. Add them in Settings, under KinCare types, and they show up here.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    }
                 }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -247,8 +271,10 @@ fun NewBookingRequestDialog(
                                     val visits = startTimesMs.map {
                                         NewBookingVisit(
                                             startTimeMs = it,
-                                            serviceName = svc?.title ?: "Visit",
-                                            serviceId = svc?.id,
+                                            // The serviceRates KEY is the canonical name; see the
+                                            // header for why serviceId stays null.
+                                            serviceName = svc?.name ?: "Visit",
+                                            serviceId = null,
                                         )
                                     }
                                     onCreate(
