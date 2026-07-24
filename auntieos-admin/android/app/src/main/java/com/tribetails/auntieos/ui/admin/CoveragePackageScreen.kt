@@ -270,7 +270,7 @@ fun CoveragePackageScreen(
                     durations.forEach { d ->
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                AuntieField(value = d.label, onValueChange = { v -> updateDuration(d.id) { it.copy(label = v) } }, placeholder = "Service name", modifier = Modifier.weight(2f))
+                                AuntieField(value = d.label, onValueChange = { v -> updateDuration(d.id) { it.copy(label = v) } }, placeholder = "Service name", modifier = Modifier.weight(1.5f))
                                 AuntieField(value = numText(d.minutes), onValueChange = { v -> updateDuration(d.id) { it.copy(minutes = v.toDoubleOrNull() ?: 0.0) } }, placeholder = "min", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
                                 AuntieField(value = numText(d.price), onValueChange = { v -> updateDuration(d.id) { it.copy(price = v.toDoubleOrNull() ?: 0.0) } }, placeholder = "$", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
                                 AuntieIconBtn(onClick = { durations = durations.filter { it.id != d.id } }) {
@@ -286,7 +286,7 @@ fun CoveragePackageScreen(
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AuntieField(value = newDurLabel, onValueChange = { newDurLabel = it }, placeholder = "New service", modifier = Modifier.weight(2f))
+                    AuntieField(value = newDurLabel, onValueChange = { newDurLabel = it }, placeholder = "New service", modifier = Modifier.weight(1.5f))
                     AuntieField(value = newDurMinutes, onValueChange = { newDurMinutes = it }, placeholder = "min", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
                     AuntieField(value = newDurPrice, onValueChange = { newDurPrice = it }, placeholder = "$", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
                     PrimaryButton(label = "Add", onClick = { addDuration() }, leading = { Icon(Lucide.Plus, contentDescription = null, tint = c.background, modifier = Modifier.size(16.dp)) })

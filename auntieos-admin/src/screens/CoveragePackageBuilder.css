@@ -69,6 +69,17 @@
   width: 100%;
   text-align: right;
 }
+/* Drop the native number spinners — they steal ~1.2rem on the right, which clips
+   3-digit values ($150, 720 min) inside these narrow fields. */
+.cpb__input--num {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.cpb__input--num::-webkit-outer-spin-button,
+.cpb__input--num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
 .cpb__select {
   flex: 1 1 8rem;
   width: auto;
@@ -82,7 +93,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  flex: 0 0 5.5rem;
+  flex: 0 0 6.5rem;
 }
 .cpb__unit {
   position: absolute;
@@ -103,7 +114,7 @@
   padding-left: 1.4rem;
 }
 .cpb__pctField {
-  flex: 0 0 4.5rem;
+  flex: 0 0 5rem;
 }
 
 /* ── lists / rows ─────────────────────────────────────────────────────────── */
