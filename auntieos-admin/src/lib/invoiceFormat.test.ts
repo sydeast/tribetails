@@ -5,8 +5,10 @@ import {
   invoiceState,
   invoiceStateInfo,
   isInvoiceOverdue,
+  invoiceActionsFor,
   isoDatePrefixOrNull,
   localDateIso,
+  type InvoiceState,
   type InvoiceStateInput,
 } from './invoiceFormat';
 
@@ -183,5 +185,53 @@ describe('localDateIso', () => {
 
   it('zero-pads month and day', () => {
     expect(localDateIso(new Date(2026, 0, 5, 10, 0, 0))).toBe('2026-01-05');
+  });
+});
+describe('invoiceActionsFor', () => {
+  const ALL_STATES: readonly InvoiceState[] = [
+    'quote',
+    'draft',
+    'cancelled',
+    'credit',
+    'redeemed',
+    'paid',
+    'zero',
+    'open',
+  ];
+  it('a paid invoice offers a receipt and NOTHING else (the AO-19 report)', () => {
+    expect(invoiceActionsFor('paid')).toEqual(['receipt']);
+  });
+  it('an open invoice offers the two collection actions, never a receipt', () => {
+    expect([...invoiceActionsFor('open')].sort()).toEqual(['markPaid', 'reminder']);
+  });
+  it('a draft offers review-and-send only', () => {
+    expect(invoiceActionsFor('draft')).toEqual(['reviewSend']);
+  });
+  it('a quote has no payment actions', () => {
+    expect(invoiceActionsFor('quote')).toEqual([]);
+  });
+  it('cancelled, credit, redeemed and zero-balance rows have no actions', () => {
+    expect(invoiceActionsFor('cancelled')).toEqual([]);
+    expect(invoiceActionsFor('credit')).toEqual([]);
+    expect(invoiceActionsFor('redeemed')).toEqual([]);
+    expect(invoiceActionsFor('zero')).toEqual([]);
+  });
+  it('is TOTAL: every enumerated state resolves to a set, none throws or returns undefined', () => {
+    for (const state of ALL_STATES) {
+      expect(Array.isArray(invoiceActionsFor(state)), `no action set for '${state}'`).toBe(true);
+    }
+  });
+  it('never overlaps: no state offers both a collection action and a receipt', () => {
+    for (const state of ALL_STATES) {
+      const actions = invoiceActionsFor(state);
+      const collecting = actions.includes('markPaid') || actions.includes('reminder');
+      expect(collecting && actions.includes('receipt'), `'${state}' offers both`).toBe(false);
+    }
+  });
+  it('overdue is a display refinement of open, so it cannot pick up a different set', () => {
+    // isInvoiceOverdue only ever returns true for 'open' (asserted above), so
+    // gating on the state alone already covers OVERDUE.
+    expect(isInvoiceOverdue('open', '2020-01-01', '2026-07-16')).toBe(true);
+    expect(invoiceActionsFor('open')).toContain('markPaid');
   });
 });

@@ -1,13 +1,26 @@
 import { useCallback, useState } from 'react';
 import { type InvoiceEntry } from '../api/invoices';
-import { formatUsd, invoiceState, invoiceStateInfo, isInvoiceOverdue, localDateIso } from '../lib/invoiceFormat';
-import { markInvoicePaid, sendInvoiceReminder, generateReceipt } from '../api/invoicesWrite';
+import {
+  formatUsd,
+  invoiceActionsFor,
+  invoiceState,
+  invoiceStateInfo,
+  isInvoiceOverdue,
+  localDateIso,
+  type InvoiceAction,
+} from '../lib/invoiceFormat';
+import {
+  markInvoicePaid,
+  sendInvoiceReminder,
+  generateReceipt,
+  reviewAndSendDraftInvoice,
+} from '../api/invoicesWrite';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { Banner } from './Banner';
 import './InvoiceDetail.css';
 
-type PendingAction = 'reminder' | 'markPaid' | 'receipt';
+type PendingAction = InvoiceAction;
 
 interface ActionMeta {
   key: PendingAction;
@@ -48,6 +61,16 @@ const ACTIONS: readonly ActionMeta[] = [
     busyLabel: 'Issuing…',
     successMessage: 'Receipt issued.',
     callableName: 'generateReceipt',
+  },
+  {
+    key: 'reviewSend',
+    label: 'Review and send',
+    confirmCopy:
+      'This sends the draft to the household on file and marks the invoice open. A draft missing its total, household, or invoice number is rejected rather than sent. Continue?',
+    confirmLabel: 'Review and send',
+    busyLabel: 'Sending…',
+    successMessage: 'Draft sent.',
+    callableName: 'reviewAndSendDraftInvoice',
   },
 ];
 
@@ -92,6 +115,16 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
   const info = overdue ? { label: 'Overdue', chipLabel: 'OVERDUE', cssClass: 'overdue' } : invoiceStateInfo(state);
   const household = invoice.kinfolkName || invoice.client || 'Unknown';
 
+  // AO-19: the actions offered are decided by the SAME enumerated state the
+  // Invoices list chips and filters off (lib/invoiceFormat.ts), so the list and
+  // this panel can never disagree about what an invoice is. A PAID invoice no
+  // longer offers "Mark paid" (which the server rejects) or "Send reminder"
+  // (which would nag a household that already paid). `overdue` is deliberately
+  // NOT passed: it is a display refinement of `open`, never its own state, so
+  // an overdue invoice already resolves to the outstanding set.
+  const allowed = invoiceActionsFor(state);
+  const available = ACTIONS.filter((a) => allowed.includes(a.key));
+
   const meta = pending ? ACTIONS.find((a) => a.key === pending) : undefined;
 
   function startAction(key: PendingAction) {
@@ -113,6 +146,7 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
     setActionError(null);
     try {
       if (meta.key === 'reminder') await sendInvoiceReminder(invoice._id);
+      else if (meta.key === 'reviewSend') await reviewAndSendDraftInvoice(invoice._id);
       else if (meta.key === 'markPaid') {
         const method = paidMethod.trim();
         const reference = paidReference.trim();
@@ -212,9 +246,15 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
           </div>
         ) : (
           <div className="invoice-detail__actions">
-            {ACTIONS.map((a) => (
-              <GhostButton key={a.key} label={a.label} onClick={() => startAction(a.key)} />
-            ))}
+            {available.length === 0 ? (
+              <p className="invoice-detail__no-actions">
+                No actions available for a {info.label.toLowerCase()} invoice.
+              </p>
+            ) : (
+              available.map((a) => (
+                <GhostButton key={a.key} label={a.label} onClick={() => startAction(a.key)} />
+              ))
+            )}
           </div>
         )}
       </div>
