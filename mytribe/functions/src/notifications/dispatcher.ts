@@ -63,7 +63,7 @@ function resolveTargetRef(args: EnqueueArgs): {
  * Behavior by deliveryMode:
  *   trigger   → writes notifications/{auto} → onCreate trigger fans out to channel subdocs
  *   debounced → writes pendingNotifications/{uid}_{key}; bumps fireAfter on collision
- *   batched   → appends to notificationBatch/{uid}/{batchKey}/items/{auto}
+ *   batched   → appends to notificationBatch/{uid}/{batchKey}/{auto}
  *   scheduled → writes scheduledNotifications/{auto} with fireAt
  *
  * Caller responsibilities:
@@ -227,6 +227,21 @@ async function routeByDeliveryMode(
       if (!def.batchKey) {
         throw new Error(`catalog(${def.key}): batched mode requires batchKey`);
       }
+      // PATH CONTRACT. 4 segments: notificationBatch/{uid}/{batchKey}/{auto}.
+      // Do not add an `items` level. Handoff notes from 2026-05-10 and this
+      // file's own docstring long claimed `.../{batchKey}/items/{auto}`, which
+      // is 5 segments and therefore not a document path Firestore can hold; it
+      // was never written. Two consumers are pinned to the shape below:
+      // `firestore.rules` (`match /notificationBatch/{uid}/{batchKey}/{id}`)
+      // and `scheduled/notificationBatchSweep.ts`, whose parent walk reads uid
+      // and batchKey straight off these segments. Changing the depth here
+      // breaks both and strands every row already written.
+      //
+      // `baseDoc.createdAt` (serverTimestamp) is the item's age field. The
+      // sweep sorts on it in memory rather than in the query, so no
+      // COLLECTION_GROUP index is needed for this or any future batchKey; see
+      // the sweep's docstring. Renaming or dropping it silently ages every
+      // item off `createTime` instead.
       const ref = db()
         .collection('notificationBatch')
         .doc(recipientUid)

@@ -110,7 +110,12 @@ export { listCatalogKeys } from './admin/listCatalogKeys';
 export { createBlockedTimeSlot } from './admin/createBlockedTimeSlot';
 export { assignAuntie } from './admin/assignAuntie';
 export { listStaff } from './admin/listStaff';
-export { provisionBusinessAdmins, checkBusinessAdmins } from './admin/provisionBusinessAdmins';
+export {
+  provisionBusinessAdmins,
+  setBusinessAdmins,
+  removeBusinessAdmins,
+  checkBusinessAdmins,
+} from './admin/provisionBusinessAdmins';
 export {
   getMyAdminNotificationPrefs,
   saveMyAdminNotificationPrefs,
