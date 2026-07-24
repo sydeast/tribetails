@@ -68,4 +68,42 @@ describe('rules: /families/{fid}', () => {
       asUser(env, 'u-x').firestore().doc('families/new').set({ displayName: 'X' }),
     );
   });
+
+  // ── isOperator() removed from these two read gates (2026-07-23) ───────────
+  // The helper did an exists() on a retired `operators` collection that nothing
+  // reads, writes or seeds, and it sat between activeMember() and isAuntie() -
+  // three billed document reads before an admin's request could be admitted.
+  // Both remaining branches are pinned here so the removal cannot have quietly
+  // taken the operator path with it.
+
+  it('the operator can still read a family and its member docs', async () => {
+    const env = await getEnv();
+    await seedFamily({ fid: 'f1', primaryUid: 'u-prim' });
+    const fs = env.authenticatedContext('staff-1', { admin: true }).firestore();
+    await assertSucceeds(fs.doc('families/f1').get());
+    await assertSucceeds(fs.doc('families/f1/members/u-prim').get());
+  });
+
+  it('an active member can still read the family and its member docs', async () => {
+    const env = await getEnv();
+    await seedFamily({
+      fid: 'f1', primaryUid: 'u-prim',
+      secondaries: [{ uid: 'u-sec', perms: {} }],
+    });
+    const fs = asUser(env, 'u-sec').firestore();
+    await assertSucceeds(fs.doc('families/f1').get());
+    await assertSucceeds(fs.doc('families/f1/members/u-prim').get());
+  });
+
+  it('a signed-in non-member is still denied both, with no operators back door', async () => {
+    const env = await getEnv();
+    await seedFamily({ fid: 'f1', primaryUid: 'u-prim' });
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      // Even holding an `operators/{uid}` doc grants nothing now.
+      await ctx.firestore().doc('operators/u-stranger').set({ email: 's@x.com' });
+    });
+    const fs = asUser(env, 'u-stranger').firestore();
+    await assertFails(fs.doc('families/f1').get());
+    await assertFails(fs.doc('families/f1/members/u-prim').get());
+  });
 });

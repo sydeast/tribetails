@@ -86,9 +86,20 @@ service cloud.firestore {
 
     function ownsClientRecord(uid) { return signedIn() && request.auth.uid == uid; }
 
-    function isOperator() {
-      return signedIn() && exists(/databases/$(database)/documents/operators/$(request.auth.uid));
-    }
+ // isOperator() lived here and did an exists() on /operators/{uid}. Removed
+ // 2026-07-23: nothing in the tree reads, writes, seeds or tests an `operators`
+ // collection - the MyTribe operators routing path was deleted long ago (see
+ // ISSUES.md #3) and the archived schema table marks the collection
+ // "not used by MyTribe anymore". The one document that survives in prod
+ // belongs to the owner account, which carries admin:true, so isAuntie()
+ // already covers it.
+ //
+ // It was not free to leave in. The two rules that called it - families/{fid}
+ // and families/{fid}/members/{uid} read - evaluate left to right, so an ADMIN
+ // reading a family burned activeMember() (an exists + a get) and then this
+ // exists() before ever reaching isAuntie(): three billed document accesses per
+ // request against the hard per-request budget of 10, spent on a branch that
+ // could only ever decide for a uid isAuntie() would have admitted anyway.
 
  // ── Test-admin sandbox helpers (Stage 0I) ─────────────────────────────────
  // A test admin is a real Firebase Auth user that does NOT get admin:true.
@@ -148,11 +159,24 @@ service cloud.firestore {
     }
 
  // Business contact details (name/email/phone) are surfaced to kinfolks via the
- // getBusinessContact callable. The Function uses admin SDK so it bypasses
- // these rules - but allow signed-in read here too in case the client ever
- // wants to subscribe directly. Operational fields are filtered server-side.
+ // getBusinessContact callable, which projects exactly four fields and
+ // documents "Operational fields ... are NOT exposed here, admin-only".
+ //
+ // This read was `signedIn()`, which handed the WHOLE doc to every signed-in
+ // kinfolk and made that projection cosmetic: serviceRates, businessHours,
+ // calendarSyncId, travelBufferMinutes, the GPS/tracking settings and the
+ // mytribePortal config all live on this one document, so a kinfolk could read
+ // Auntie's pricing and her calendar id straight from the client SDK. No client
+ // ever needed it: the MyTribe portal's only direct Firestore reads are
+ // conversations/{kinfolkId}/messages and kin_care_sessions/{id}/breadcrumbs -
+ // everything else, business contact included, goes through a callable.
+ //
+ // isTestAdmin() stays because the Stage-0I sandbox DOES read this directly:
+ // AuntieOS Android HomeViewModel.load() fans out getBusinessSettings on Home,
+ // and dropping that branch would put a false permission banner on the sandbox
+ // Home screen (pinned by testAdminSandbox.test.ts).
     match /business_settings/{docId} {
-      allow read: if signedIn();
+      allow read: if isAuntie() || isTestAdmin();
       allow write: if isAuntie();
     }
 
@@ -258,30 +282,43 @@ service cloud.firestore {
         && request.auth.uid == uid
         && request.resource.data.keys().hasAll(['email'])
         && !request.resource.data.keys().hasAny(['kinfolkIds','familyIds']);
+ // The allowlist below dropped 'stripeCustomerId', 'stripePaymentMethodId' and
+ // 'email'. All three were client-writable and none is client-owned.
+ //
+ // The Stripe pair is the sharp one: NOTHING server-side writes either field
+ // (the only other mentions in the tree are portal/account.ts and its test), and
+ // portal/account.ts:58 derives `hasPaymentMethod: data['stripePaymentMethodId']
+ // != null`. A client could therefore set the field to any string and make its
+ // own Account screen report a saved card that does not exist at Stripe, right
+ // up until a charge is attempted. Payment-instrument state must be asserted by
+ // the payment backend, never by the payer.
+ //
+ // 'email' is server-owned per lib/schema.ts and is the address notification
+ // dispatch resolves through (emailChannel reads clients/{uid}), so a
+ // self-assigned value redirects the household's own mail.
       allow update: if ownsClientRecord(uid)
         && diffOnly([
           'displayName','phone','preferredContact','avatarUrl','homeAddress',
           'recoveryContacts','updatedAt',
           'backupEmail','backupPhone',
-          'notificationPrefs','notificationPrefsUpdatedAt',
-          'stripeCustomerId','stripePaymentMethodId',
-          'email'
+          'notificationPrefs','notificationPrefsUpdatedAt'
         ]);
       allow delete: if false;
     }
 
-    match /operators/{uid} {
-      allow read: if (signedIn() && request.auth.uid == uid) || isAuntie();
-      allow write: if false;
-    }
+ // The /operators/{uid} match block was removed alongside isOperator(); see the
+ // note on that helper above. It had no writer and no reader anywhere in the
+ // tree, so with the helper gone it granted read on a collection nothing asks
+ // for. Deleting it default-denies the path, which is the correct end state for
+ // a retired grants collection that still holds one stale prod document.
 
     match /families/{fid} {
-      allow read: if activeMember(fid) || isOperator() || isAuntie();
+      allow read: if activeMember(fid) || isAuntie();
       allow create, delete: if false;
       allow update: if isPrimary(fid) && diffOnly(['displayName','updatedAt']);
 
       match /members/{uid} {
-        allow read: if activeMember(fid) || isOperator() || isAuntie();
+        allow read: if activeMember(fid) || isAuntie();
         allow create, delete: if false;
         allow update: if isPrimary(fid)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['secondaryLabel','permissions','updatedAt'])
@@ -386,9 +423,26 @@ service cloud.firestore {
         allow create, update, delete: if isAuntie();
       }
 
+ // Lockbox data: gate/door code, key location, Wi-Fi password, plus whatever
+ // custom fields the operator has defined (alarm codes turn up here). The read
+ // gate is unchanged and still the narrowest one in the file - home_access is
+ // the only permission a SECONDARY can hold that unlocks it.
+ //
+ // Writes are now callable-only. portal/saveHomeAccess.ts:53 is the real and
+ // only writer: it re-checks tribe membership against clients/{uid}.kinfolkIds,
+ // re-checks the home_access perm through requireKinfolkPerm, validates the
+ // payload with zod, stamps updatedByUid, logs portal.homeAccess.saved, and
+ // writes families/{kinfolkId}/homeAccess/current with the Admin SDK (which
+ // bypasses these rules). No client uses the direct path - the portal calls the
+ // callable via tribeApi.saveHomeAccess and does no direct Firestore writes at
+ // all, and no admin client touches this subcollection.
+ //
+ // The direct grant bought nothing and cost the audit trail: a client write
+ // lands with no updatedByUid, no validation and no log line, on the one
+ // document where "who changed the door code, and when" is the whole question.
       match /homeAccess/{id} {
         allow read: if hasPerm(fid, 'home_access') || isAuntie();
-        allow create, update, delete: if hasPerm(fid, 'home_access') || isAuntie();
+        allow create, update, delete: if false;
       }
 
       match /themeConfig/{id} {
@@ -524,18 +578,23 @@ service cloud.firestore {
     match /notifications/{id} {
  // AuntieOS admin console lists the whole collection (unfiltered listen);
  // kinfolk (MyTribe) may still read only their own dispatches.
+ //
+ // Both gates carried a third branch, `isTestAdmin() && recipientUid ==
+ // request.auth.uid`, added by NOTE-55 to "mirror the parent's three-branch
+ // shape". It could never decide anything: isTestAdmin() begins with
+ // `request.auth != null`, so its condition is a strict SUBSET of the recipient
+ // branch above it, which admits any signed-in caller reading their own
+ // dispatch - test admin included. Dropped from both. Sandbox behaviour is
+ // unchanged; what goes away is a branch that reads as an extra grant while
+ // granting nothing, and the get() it re-ran on the channels gate.
       allow read: if isAuntie()
-                  || (signedIn() && resource.data.recipientUid == request.auth.uid)
-                  || (isTestAdmin() && resource.data.recipientUid == request.auth.uid);
+                  || (signedIn() && resource.data.recipientUid == request.auth.uid);
       allow write: if false;
- // Channel subdocs follow same recipient gate via parent doc. NOTE-55: mirror
- // the parent's three-branch shape (admin / recipient / test-admin) so the
- // channels read gate stays consistent with notifications/{id} above.
+ // Channel subdocs follow the same recipient gate, resolved through the parent
+ // notification doc.
       match /channels/{channelId} {
         allow read: if isAuntie()
           || (signedIn()
-              && get(/databases/$(database)/documents/notifications/$(id)).data.recipientUid == request.auth.uid)
-          || (isTestAdmin()
               && get(/databases/$(database)/documents/notifications/$(id)).data.recipientUid == request.auth.uid);
         allow write: if false;
       }
@@ -576,10 +635,14 @@ service cloud.firestore {
  // families/{fid}/secrets/{doc} deny), letting admin claims read and write
  // protected paths despite the explicit deny. Enumerate every operational
  // collection instead - anything not listed gets default-deny.
-    match /activity_log/{id} {
-      allow read, create: if isAuntie();
-      allow update, delete: if false;
-    }
+ //
+ // A SECOND `match /activity_log/{id}` block sat here, byte-equivalent in effect
+ // to the documented one above. Deleted 2026-07-23. Firestore UNIONs matching
+ // rules, so a duplicate is not merely redundant: any future narrowing of the
+ // canonical block (say, scoping read to the writing operator) would have been
+ // silently re-granted in full by this copy, and the audit trail's own rule is
+ // the last place a change should fail to take effect. One block, one place to
+ // edit, and the non-repudiation rationale lives with it.
     // booking_time_slots: Google Calendar "Busy" blocks, written server-side by
     // syncGoogleCalendarBusyEvents (admin SDK bypasses rules). The Schedule grid
     // reads them. Had NO rule => default-deny => the read failed with
@@ -609,7 +672,20 @@ service cloud.firestore {
       allow write: if isAuntie();
     }
     match /dynamic_field_values/{id}            { allow read, write: if isAuntie(); }
-    match /dynamic_fields/{id}                  { allow read, write: if isAuntie(); }
+ // `dynamic_fields` had a rule here. Deleted 2026-07-23: the field-authoring
+ // system it served is retired. migrate_dynamic_fields_to_form_schemas.py folded
+ // those docs into formSchemas and states "dynamic_fields UI/code is retired in
+ // the app"; the Settings section, DynamicFieldsCard.kt and the Android screen +
+ // VM all went with it. What is left is unreachable expect/actual plumbing
+ // (FirestoreInterop.wasmJs.kt / .jvm.kt) that the handoff explicitly kept
+ // "unused" because the model was entangled - no screen calls
+ // dynamicFieldsStream / createDynamicField / updateDynamicField /
+ // archiveDynamicField, so no live read or write hits this path.
+ //
+ // NOT the same collections: `dynamic_field_values` above and
+ // `field_definitions` below ARE live (AuntieRepository.kt reads and writes both
+ // directly from Android). Their near-identical names are exactly why this rule
+ // survived the retirement; do not remove them by association.
     match /emails/{id}                          { allow read, write: if isAuntie(); }
     match /field_definitions/{id}               { allow read, write: if isAuntie(); }
     // Stage-0I sandbox: a test admin may READ its own tribe's generated drafts. The
@@ -658,21 +734,36 @@ service cloud.firestore {
     match /visit_logs/{id}                      { allow read, write: if isAuntie(); }
     match /visit_routes/{id}                    { allow read, write: if isAuntie(); }
     match /voicemails/{id}                      { allow read, write: if isAuntie(); }
- // Dashboard-widget collections (AO-40/41/39): admin-only read+write. Mutations
- // normally flow through the server-bound admin callables (logExpense /
- // adjustSupply / upsertSupply / upsertExpiration; the Admin SDK bypasses rules
- // so the audit entry is bound to the mutation), but the read is admin-scoped so
- // the widgets can list, and no non-admin can ever read or write these.
-    match /expenses/{id}                        { allow read, write: if isAuntie(); }
-    match /supplies/{id}                        { allow read, write: if isAuntie(); }
-    match /expirations/{id}                     { allow read, write: if isAuntie(); }
+ // Dashboard-widget collections (AO-40/41/39): admin read, writes callable-only.
+ //
+ // The comment here used to claim mutations "normally flow through" the
+ // server-bound admin callables (logExpense / adjustSupply / upsertSupply /
+ // upsertExpiration), which is what binds an activity_log entry to every
+ // mutation - and then granted `write: if isAuntie()` anyway, so an admin client
+ // could write these docs directly and produce no audit entry at all. "Normally"
+ // is not an invariant. Closed 2026-07-23.
+ //
+ // Nothing regresses: no client writes these paths directly. The React admin's
+ // src/api/{expenses,supplies,expirations}.ts import only `call` from lib/fns;
+ // AuntieOS Android goes through getHttpsCallable("listExpenses" /
+ // "adjustSupply" / "listExpirations" / ...); the Compose web client decodes the
+ // same callable bodies. This is the shape already used by training_documents,
+ // audience_segments and broadcasts for the same reason.
+    match /expenses/{id}                        { allow read: if isAuntie(); allow write: if false; }
+    match /supplies/{id}                        { allow read: if isAuntie(); allow write: if false; }
+    match /expirations/{id}                     { allow read: if isAuntie(); allow write: if false; }
  // Server-written rate-limit + Stripe dedupe ledgers. Admin reads for
  // monitoring; client writes denied (admin SDK in Cloud Functions bypasses).
     match /ipRateLimits/{key}                   { allow read: if isAuntie(); allow write: if false; }
     match /failedLoginEmailRateLimits/{key}     { allow read: if isAuntie(); allow write: if false; }
     match /passwordResetEmailRateLimits/{key}   { allow read: if isAuntie(); allow write: if false; }
     match /stripeEvents/{eventId}               { allow read: if isAuntie(); allow write: if false; }
-    match /n8nIpRateLimits/{key}                { allow read: if isAuntie(); allow write: if false; }
+ // `n8nIpRateLimits` had a rule here. Deleted 2026-07-23 with the n8n
+ // retirement: its only writer is the Admin SDK inside
+ // auntieos-admin/web/functions/index.js (which bypasses these rules either
+ // way), and no client, dashboard or test ever read the collection - the read
+ // grant existed "for monitoring" that was never built. Nothing observes the
+ // path, so default-deny is the honest state.
     match /kinTaleNotifications/{reportId}      { allow read: if isAuntie(); allow write: if false; }
     match /securityRateLimits/{key}             { allow read: if isAuntie(); allow write: if false; }
     match /securityIncidents/{id}               { allow read: if isAuntie(); allow write: if false; }
