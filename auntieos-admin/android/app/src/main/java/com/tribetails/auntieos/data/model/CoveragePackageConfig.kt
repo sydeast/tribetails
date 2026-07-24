@@ -5,6 +5,7 @@ import com.google.firebase.firestore.DocumentId
 import com.tribetails.auntieos.domain.CoverageRules
 import com.tribetails.auntieos.domain.DEFAULT_DURATIONS
 import com.tribetails.auntieos.domain.Duration
+import com.tribetails.auntieos.domain.withKind
 
 /**
  * Firestore doc `coverage_package_config/config`: the operator-global config for
@@ -27,6 +28,7 @@ data class CoveragePackageConfig(
     var updatedBy: String = "",
 ) {
     /** Fill an empty menu with the shipped defaults; keep a non-empty one, and the
-     *  stored rules, as-is. A totally missing doc is defaulted in the repository. */
-    fun withDefaults(): CoveragePackageConfig = copy(durations = durations.ifEmpty { DEFAULT_DURATIONS })
+     *  stored rules, as-is. `withKind` migrates a menu saved before the visit/overnight
+     *  `kind` existed (only the legacy d7 → overnight). Missing doc → defaulted in repo. */
+    fun withDefaults(): CoveragePackageConfig = copy(durations = withKind(durations.ifEmpty { DEFAULT_DURATIONS }))
 }

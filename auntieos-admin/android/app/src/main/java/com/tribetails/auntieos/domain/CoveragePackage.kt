@@ -2,35 +2,44 @@ package com.tribetails.auntieos.domain
 
 import androidx.annotation.Keep
 import java.time.LocalDate
+import java.time.format.TextStyle
 import java.time.temporal.ChronoUnit
+import java.util.Locale
+import java.util.UUID
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
  * Coverage Package Builder — pure domain logic. Android port of the web
- * `lib/coveragePackage.ts`, kept behaviour-identical so a config saved on one
- * platform prices the same on the other.
+ * `lib/coveragePackage.ts` (the full PackageBuilder_7 model), kept behaviour-
+ * identical so a menu saved on one platform prices the same on the other.
  *
- * An operator prices a multi-day stay by describing ONE covered day: a wake
- * window, a max gap allowed between visits, and any pinned (fixed-time) visits.
- * [buildDayPatterns] turns those rules into a few rule-valid daily schedules at
- * Lean / Balanced / Generous price points; the screen prices the approved one
- * across the stay.
+ * An operator BUILDS one or more named packages: each a template of visits (any
+ * mix of lengths/times), with per-night overnights, per-day overrides, and an
+ * optional discount. Suggestions seed a package from a rule; every seeded visit
+ * is editable. No pinned visit or auto-filled gap is required — the operator can
+ * simply pick services for a client.
  *
- * The [Duration], [PinnedTime] and [CoverageRules] classes double as the
- * Firestore wire model (var + defaults + @Keep), read/written through
- * [com.tribetails.auntieos.data.model.CoveragePackageConfig]. [Touchpoint] and
- * [DayPattern] are derived, never persisted.
+ * Pricing: an overnight is a WINDOW, not a line item — a visit inside the window
+ * (or its arrival buffer) is covered ($0); an overnight also grants one free visit
+ * the next day, stacked on top.
+ *
+ * [Duration], [PinnedTime], [CoverageRules] double as the Firestore wire model
+ * (var + defaults + @Keep). [Visit]/[Package] and the priced/coverage types are
+ * derived UI state, never persisted to Firestore.
  */
 
-/** A named visit length with its price. */
+/** A named service length with its price. `kind` splits day visits from overnights. */
 @Keep
 data class Duration(
     var id: String = "",
     var label: String = "",
     var minutes: Double = 0.0,
     var price: Double = 0.0,
+    var kind: String = "visit",
 )
 
 /** A visit that must happen at a fixed "HH:MM" time every covered day. */
@@ -42,7 +51,7 @@ data class PinnedTime(
     var durationId: String = "",
 )
 
-/** The per-client coverage rules that shape a valid day. */
+/** The per-client coverage rules — seed the suggestions and gap warnings. */
 @Keep
 data class CoverageRules(
     var wakeStart: String = "07:00",
@@ -51,49 +60,150 @@ data class CoverageRules(
     var pinnedTimes: List<PinnedTime> = emptyList(),
 )
 
-/** One visit inside a generated day: a pinned time or a gap-filling check-in. */
+/** One scheduled visit inside a package. `time` is minutes since midnight. */
+data class Visit(
+    val id: String,
+    val time: Int,
+    val durationId: String,
+    val label: String,
+)
+
+/** A named package: a visit template + per-night overnights + optional per-day overrides. */
+data class Package(
+    val id: String,
+    val name: String,
+    val visits: List<Visit> = emptyList(),
+    val dayOverrides: Map<Int, List<Visit>> = emptyMap(),
+    val overnightNights: Map<Int, Boolean> = emptyMap(),
+    val overnightStart: String = "21:00",
+    val overnightBufferHours: Double = 2.0,
+    val discountLabel: String = "",
+    val discountPct: Double = 0.0,
+)
+
+/** One visit inside a generated suggestion (pinned or gap-filling check-in). */
 data class Touchpoint(
     val isPinned: Boolean,
     val label: String,
-    /** Minutes since midnight. */
     val time: Double,
     val durationId: String,
     val durationLabel: String,
     val price: Double,
 )
 
-/** A complete, rule-valid schedule for one covered day. */
+/** A suggested day schedule at one price point (a seed for a new package). */
 data class DayPattern(
     val id: String,
     val strategyLabel: String,
     val touchpoints: List<Touchpoint>,
-    val overnightCost: Double,
-    val overnightLabel: String?,
     val dayTotal: Double,
+    val signature: String,
 )
 
-/** Visit-length ceiling (minutes) separating flexible day visits from overnights. */
-const val OVERNIGHT_MINUTES = 300.0
+/** What an overnight covers on a given day. */
+data class Coverage(
+    val eveningFrom: Int?,
+    val morningUntil: Int?,
+    val bonusFreeVisit: Boolean,
+)
 
-/** The shipped default visit menu, used until an operator edits it. */
+private val BARE_COVERAGE = Coverage(null, null, false)
+
+/** One priced visit line. */
+data class PricedItem(
+    val key: String,
+    val time: Int,
+    val label: String,
+    val durationLabel: String,
+    val price: Double,
+    val listPrice: Double,
+    val covered: Boolean,
+    val bonus: Boolean,
+    val free: Boolean,
+    val freeReason: String?,
+)
+
+/** One priced day of the stay. */
+data class PricedDayRow(
+    val dayIndex: Int,
+    val items: List<PricedItem>,
+    val customized: Boolean,
+    val canOvernight: Boolean,
+    val isOvernight: Boolean,
+    val overnightCost: Double,
+    val overnightLabel: String,
+    val overnightStartMin: Int?,
+    val coverage: Coverage,
+    val dayCost: Double,
+)
+
+/** A fully priced package across the stay. */
+data class PricedPackage(
+    val rows: List<PricedDayRow>,
+    val subtotal: Double,
+    val discountPct: Double,
+    val discount: Double,
+    val total: Double,
+)
+
+/** Context needed to price a package. */
+data class PriceContext(
+    val days: Int,
+    val nights: Int,
+    val durations: List<Duration>,
+    val overnightDuration: Duration?,
+)
+
+/** Everything the quote text needs. */
+data class QuoteInput(
+    val clientName: String,
+    val startDate: String,
+    val days: Int,
+    val pkg: Package,
+    val priced: PricedPackage,
+)
+
+// ── defaults ────────────────────────────────────────────────────────────────
+
+/** The shipped default menu. Only the 12hr is a true overnight; the 2hr and 6hr
+ *  are long daytime stays (they can fill gaps). */
 val DEFAULT_DURATIONS: List<Duration> = listOf(
-    Duration("d1", "15-min visit", 15.0, 15.0),
-    Duration("d2", "30-min visit", 30.0, 22.0),
-    Duration("d3", "45-min visit", 45.0, 28.0),
-    Duration("d4", "60-min visit", 60.0, 35.0),
-    Duration("d5", "90-min visit", 90.0, 60.0),
-    Duration("d6", "Overnight (2hr)", 120.0, 80.0),
-    Duration("d7", "Overnight (12hr)", 720.0, 150.0),
+    Duration("d1", "15-min visit", 15.0, 15.0, "visit"),
+    Duration("d2", "30-min visit", 30.0, 25.0, "visit"),
+    Duration("d3", "45-min visit", 45.0, 35.0, "visit"),
+    Duration("d4", "60-min visit", 60.0, 45.0, "visit"),
+    Duration("d5", "90-min visit", 90.0, 60.0, "visit"),
+    Duration("d6", "2-hour visit", 120.0, 80.0, "visit"),
+    Duration("d8", "6-hour visit", 360.0, 100.0, "visit"),
+    Duration("d7", "Overnight (12hr)", 720.0, 150.0, "overnight"),
 )
 
-/** The shipped default coverage rules. Pinned id is fixed (not random) so the
- *  default is stable across reads and safe to compare in tests. */
+/** d7 was the only real overnight ever shipped before `kind` existed. */
+private val LEGACY_OVERNIGHT_IDS = setOf("d7")
+
+/** Migrate a menu saved before `kind` existed: blank kind → visit, except legacy d7. */
+fun withKind(list: List<Duration>): List<Duration> = list.map { d ->
+    if (d.kind == "visit" || d.kind == "overnight") d
+    else d.copy(kind = if (LEGACY_OVERNIGHT_IDS.contains(d.id)) "overnight" else "visit")
+}
+
 val DEFAULT_COVERAGE_RULES = CoverageRules(
     wakeStart = "07:00",
     wakeEnd = "22:00",
     maxGapHours = 6.0,
     pinnedTimes = listOf(PinnedTime("seed-morning", "Morning feeding", "07:30", "d2")),
 )
+
+/** Fill a partial package up to a full one (used when seeding a new package). */
+fun normalizePackage(
+    id: String = uid(),
+    name: String = "Package",
+    visits: List<Visit> = emptyList(),
+): Package = Package(id = id, name = name, visits = visits)
+
+// ── small helpers ─────────────────────────────────────────────────────────────
+
+fun uid(): String = UUID.randomUUID().toString().take(7)
 
 /** Inclusive day count between two "YYYY-MM-DD" dates; 0 if unset or reversed. */
 fun daysBetween(start: String, end: String): Int {
@@ -102,6 +212,17 @@ fun daysBetween(start: String, end: String): Int {
     val e = runCatching { LocalDate.parse(end) }.getOrNull() ?: return 0
     val diff = ChronoUnit.DAYS.between(s, e).toInt() + 1
     return if (diff > 0) diff else 0
+}
+
+/** A "YYYY-MM-DD" start date + a day offset → "Mon, Jul 28" (or "Jul 28" when monthDayOnly). */
+fun dateLabel(startDate: String, offset: Int = 0, monthDayOnly: Boolean = false): String {
+    if (startDate.isBlank()) return ""
+    val base = runCatching { LocalDate.parse(startDate) }.getOrNull() ?: return ""
+    val d = base.plusDays(offset.toLong())
+    val month = d.month.getDisplayName(TextStyle.SHORT, Locale.US)
+    if (monthDayOnly) return "$month ${d.dayOfMonth}"
+    val weekday = d.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.US)
+    return "$weekday, $month ${d.dayOfMonth}"
 }
 
 /** "HH:MM" -> minutes since midnight, or null when unparseable. */
@@ -115,15 +236,40 @@ fun timeToMinutes(t: String): Int? {
 
 /** Minutes since midnight -> a 12h "h:MM AM/PM" label. */
 fun minutesToTime(mins: Double): String {
-    val whole = mins.roundToInt()
-    val h = floor(((((whole % 1440) + 1440) % 1440) / 60.0)).toInt()
-    val m = (((whole % 60) + 60) % 60)
+    val norm = ((mins.roundToInt() % 1440) + 1440) % 1440
+    val h = norm / 60
+    val m = norm % 60
     val period = if (h >= 12) "PM" else "AM"
     val h12 = if (h % 12 == 0) 12 else h % 12
     return "$h12:${m.toString().padStart(2, '0')} $period"
 }
 
+/** Minutes since midnight -> "HH:MM" for a time input/picker. */
+fun minutesToInput(mins: Int): String {
+    val v = ((mins % 1440) + 1440) % 1440
+    return "${(v / 60).toString().padStart(2, '0')}:${(v % 60).toString().padStart(2, '0')}"
+}
+
+/** A gap in minutes -> "1h 30m" / "45m" / "2h". */
+fun formatGap(mins: Int): String {
+    val h = mins / 60
+    val m = mins % 60
+    if (h == 0) return "${m}m"
+    return if (m != 0) "${h}h ${m}m" else "${h}h"
+}
+
+// ── suggestions ───────────────────────────────────────────────────────────────
+
 private val FILL_STRATEGIES = listOf("cheapest", "mid", "richest")
+
+private fun <T> pick(pool: List<T>, strategy: String): T? {
+    if (pool.isEmpty()) return null
+    return when (strategy) {
+        "cheapest" -> pool.first()
+        "richest" -> pool.last()
+        else -> pool[(pool.size - 1) / 2]
+    }
+}
 
 private fun strategyLabel(strategy: String): String = when (strategy) {
     "cheapest" -> "Lean"
@@ -132,65 +278,57 @@ private fun strategyLabel(strategy: String): String = when (strategy) {
 }
 
 /**
- * Turn coverage rules into a few rule-valid daily schedules at distinct prices.
- * Three fill strategies (Lean / Balanced / Generous) vary which duration fills
- * the gaps; literal duplicates are collapsed by structural signature, and the
- * result is ordered cheapest-first. Returns empty for an invalid day window.
+ * Suggest a starting day: fill any gap wider than the rule with one repeated
+ * duration, at three price points. Only a SEED — every visit it produces is
+ * editable afterwards. Empty suggestions are dropped (no phantom $0 seed).
  */
 fun buildDayPatterns(
     durations: List<Duration>,
-    rules: CoverageRules,
-    useOvernight: Boolean,
-    overnightDurationId: String,
+    pinnedTimes: List<PinnedTime>,
+    maxGapHours: Double,
+    wakeStart: String,
+    wakeEnd: String,
+    dedupe: Boolean = true,
 ): List<DayPattern> {
-    val maxGapMin = rules.maxGapHours * 60.0
-    val wakeStartMin = timeToMinutes(rules.wakeStart)
-    val wakeEndMin = timeToMinutes(rules.wakeEnd)
+    val maxGapMin = maxGapHours * 60.0
+    val wakeStartMin = timeToMinutes(wakeStart)
+    val wakeEndMin = timeToMinutes(wakeEnd)
     if (wakeStartMin == null || wakeEndMin == null || wakeEndMin <= wakeStartMin) return emptyList()
 
     data class PinnedResolved(val pin: PinnedTime, val minutes: Int)
-    val pinned = rules.pinnedTimes
+    val pinned = pinnedTimes
         .mapNotNull { p -> timeToMinutes(p.time)?.let { PinnedResolved(p, it) } }
         .sortedBy { it.minutes }
 
-    // Exclude overnight-length visits from the flexible day fill.
-    val eligibleDurations = durations.filter { it.price > 0 && it.minutes < OVERNIGHT_MINUTES }
-    if (eligibleDurations.isEmpty() && pinned.isEmpty()) return emptyList()
+    val eligible = durations.filter { it.price > 0 && it.kind == "visit" }
+    if (eligible.isEmpty() && pinned.isEmpty()) return emptyList()
 
-    // Fixed anchors across the wake window: start, each pinned time, end.
     val anchors = (listOf(wakeStartMin) + pinned.map { it.minutes } + listOf(wakeEndMin)).sorted()
 
     data class Gap(val start: Double, val size: Double)
     val gaps = mutableListOf<Gap>()
     for (i in 0 until anchors.size - 1) {
-        val from = anchors[i]
-        val to = anchors[i + 1]
-        val gapSize = (to - from).toDouble()
-        if (gapSize > maxGapMin) gaps.add(Gap(from.toDouble(), gapSize))
+        val size = (anchors[i + 1] - anchors[i]).toDouble()
+        if (size > maxGapMin) gaps.add(Gap(anchors[i].toDouble(), size))
     }
 
-    val sortedByPrice = eligibleDurations.sortedBy { it.price }
-    val patterns = mutableListOf<Pair<DayPattern, String>>() // pattern + signature
+    val sortedByPrice = eligible.sortedBy { it.price }
+    val patterns = mutableListOf<DayPattern>()
 
     for (strategy in FILL_STRATEGIES) {
-        val fill: Duration? = when (strategy) {
-            "cheapest" -> sortedByPrice.firstOrNull()
-            "richest" -> sortedByPrice.lastOrNull()
-            else -> sortedByPrice.getOrNull((sortedByPrice.size - 1) / 2)
-        }
-        if (fill == null) continue
+        val fallback = pick(sortedByPrice, strategy) ?: continue
 
         val touchpoints = mutableListOf<Touchpoint>()
         for (pr in pinned) {
-            val pinnedDuration = durations.firstOrNull { it.id == pr.pin.durationId }
+            val pd = durations.firstOrNull { it.id == pr.pin.durationId }
             touchpoints.add(
                 Touchpoint(
                     isPinned = true,
                     label = pr.pin.label.ifBlank { "Pinned visit" },
                     time = pr.minutes.toDouble(),
-                    durationId = pr.pin.durationId.ifBlank { fill.id },
-                    durationLabel = pinnedDuration?.label ?: fill.label,
-                    price = pinnedDuration?.price ?: fill.price,
+                    durationId = pr.pin.durationId.ifBlank { fallback.id },
+                    durationLabel = pd?.label ?: fallback.label,
+                    price = pd?.price ?: fallback.price,
                 ),
             )
         }
@@ -198,13 +336,15 @@ fun buildDayPatterns(
         for (gap in gaps) {
             val numFillVisits = ceil(gap.size / maxGapMin).toInt() - 1
             if (numFillVisits <= 0) continue
+            val spacing = gap.size / (numFillVisits + 1)
+            val fits = sortedByPrice.filter { it.minutes <= spacing }
+            val fill = pick(if (fits.isNotEmpty()) fits else listOf(sortedByPrice.first()), strategy)!!
             for (i in 1..numFillVisits) {
-                val t = gap.start + (gap.size * i) / (numFillVisits + 1)
                 touchpoints.add(
                     Touchpoint(
                         isPinned = false,
                         label = "Check-in",
-                        time = t,
+                        time = gap.start + (gap.size * i) / (numFillVisits + 1),
                         durationId = fill.id,
                         durationLabel = fill.label,
                         price = fill.price,
@@ -214,91 +354,165 @@ fun buildDayPatterns(
         }
 
         touchpoints.sortBy { it.time }
+        if (touchpoints.isEmpty()) continue
+        val dayTotal = touchpoints.sumOf { it.price }
+        val signature = touchpoints.joinToString("|") { "${it.durationId}@${it.time.roundToInt()}" }
+        if (dedupe && patterns.any { it.signature == signature }) continue
 
-        var overnightCost = 0.0
-        var overnightLabel: String? = null
-        if (useOvernight) {
-            val od = durations.firstOrNull { it.id == overnightDurationId }
-            if (od != null) {
-                overnightCost = od.price
-                overnightLabel = od.label
-            }
-        }
-
-        // A schedule with no visits AND no overnight is not a real option. It
-        // happens when the rules are degenerate — the wake window is no wider than
-        // the max gap and there are no pinned visits, so nobody needs to be on
-        // site. Without this guard all three strategies collapse to the same empty
-        // schedule and dedupe to a single phantom $0 "Lean" card. Emit nothing so
-        // the screen shows its actionable empty-state instead.
-        if (touchpoints.isEmpty() && overnightCost == 0.0) continue
-
-        val dayTotal = touchpoints.sumOf { it.price } + overnightCost
-        val signature = touchpoints.joinToString("|") { "${it.durationId}@${it.time.roundToInt()}" } +
-            (if (useOvernight) "+ON:$overnightDurationId" else "")
-
-        if (patterns.any { it.second == signature }) continue
-
-        patterns.add(
-            DayPattern(
-                id = signature.ifBlank { "empty" },
-                strategyLabel = strategyLabel(strategy),
-                touchpoints = touchpoints.toList(),
-                overnightCost = overnightCost,
-                overnightLabel = overnightLabel,
-                dayTotal = dayTotal,
-            ) to signature,
-        )
+        patterns.add(DayPattern(strategy, strategyLabel(strategy), touchpoints.toList(), dayTotal, signature))
     }
 
-    return patterns.map { it.first }.sortedBy { it.dayTotal }
+    return patterns.sortedBy { it.dayTotal }
 }
 
-/** A "YYYY-MM-DD" date -> a short "Mon, Jul 28" label; "" when unparseable. */
-fun dateLabel(date: String): String {
-    if (date.isBlank()) return ""
-    val d = runCatching { LocalDate.parse(date) }.getOrNull() ?: return ""
-    val month = d.month.name.lowercase().replaceFirstChar { it.uppercase() }.take(3)
-    val weekday = d.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }.take(3)
-    return "$weekday, $month ${d.dayOfMonth}"
+/** Seed a package's visit template from a suggestion. */
+fun visitsFromPattern(pattern: DayPattern): List<Visit> =
+    pattern.touchpoints.map { Visit(uid(), it.time.roundToInt(), it.durationId, it.label) }
+
+/** Seed a blank package from the client's pinned visits. */
+fun visitsFromPinned(pinnedTimes: List<PinnedTime>): List<Visit> =
+    pinnedTimes
+        .mapNotNull { p -> timeToMinutes(p.time)?.let { p to it } }
+        .sortedBy { it.second }
+        .map { (p, min) -> Visit(uid(), min, p.durationId, p.label) }
+
+// ── pricing ───────────────────────────────────────────────────────────────────
+
+/** The visits scheduled on a given day: its override if it has one, else the template. */
+fun effectiveVisits(pkg: Package, dayIndex: Int): List<Visit> = pkg.dayOverrides[dayIndex] ?: pkg.visits
+
+/** What an overnight covers on `dayIndex`. */
+fun coverageForDay(pkg: Package, dayIndex: Int, nights: Int, overnightDuration: Duration?): Coverage {
+    val startMin = timeToMinutes(pkg.overnightStart)
+    if (startMin == null || overnightDuration == null) return BARE_COVERAGE
+
+    val span = overnightDuration.minutes
+    val bufferMin = (max(0.0, pkg.overnightBufferHours) * 60).roundToInt()
+    val tonight = dayIndex < nights && pkg.overnightNights[dayIndex] == true
+    val priorNight = dayIndex > 0 && pkg.overnightNights[dayIndex - 1] == true
+    val endAbs = startMin + span
+
+    return Coverage(
+        eveningFrom = if (tonight) startMin - bufferMin else null,
+        morningUntil = if (priorNight && endAbs > 1440) (endAbs - 1440).roundToInt() else null,
+        bonusFreeVisit = priorNight,
+    )
 }
 
-/** Everything the quote text needs: the approved daily schedule priced across a stay. */
-data class QuoteInput(
-    val clientName: String,
-    val startDate: String,
-    val endDate: String,
-    val days: Int,
-    val pattern: DayPattern,
-)
+/** Price a single day's visits against its overnight coverage. */
+fun priceDay(visits: List<Visit>, durations: List<Duration>, coverage: Coverage): Pair<List<PricedItem>, Double> {
+    val sorted = visits.sortedBy { it.time }
+    val items = sorted.map { v ->
+        val d = durations.firstOrNull { it.id == v.durationId }
+        val price = d?.price ?: 0.0
+        val coveredMorning = coverage.morningUntil != null && v.time <= coverage.morningUntil
+        val coveredEvening = coverage.eveningFrom != null && v.time >= coverage.eveningFrom
+        val covered = coveredMorning || coveredEvening
+        PricedItem(
+            key = v.id,
+            time = v.time,
+            label = v.label.ifBlank { "Visit" },
+            durationLabel = d?.label ?: "no duration set",
+            price = if (covered) 0.0 else price,
+            listPrice = price,
+            covered = covered,
+            bonus = false,
+            free = covered,
+            freeReason = if (covered) "covered by overnight" else null,
+        )
+    }.toMutableList()
 
-/**
- * A clean plain-text quote for the clipboard / share sheet — pastes cleanly into
- * an email, text, or a Kinfolk agreement. Behaviour-matched to the web
- * `quoteText` so a package copied on either platform reads identically.
- */
+    if (coverage.bonusFreeVisit) {
+        val idx = items.indexOfFirst { !it.free }
+        if (idx >= 0) {
+            items[idx] = items[idx].copy(price = 0.0, bonus = true, free = true, freeReason = "free visit — overnight bundle")
+        }
+    }
+
+    return items.toList() to items.sumOf { it.price }
+}
+
+/** Gaps checked against the rule but never blocking — a hand-built day is the sitter's call. */
+fun gapWarnings(visits: List<Visit>, wakeStart: String, wakeEnd: String, maxGapHours: Double, coverage: Coverage): List<String> {
+    val ws = timeToMinutes(wakeStart)
+    val we = timeToMinutes(wakeEnd)
+    if (ws == null || we == null || we <= ws) return emptyList()
+
+    val from = if (coverage.morningUntil != null) max(ws, coverage.morningUntil) else ws
+    val to = if (coverage.eveningFrom != null) min(we, coverage.eveningFrom) else we
+    if (to <= from) return emptyList()
+
+    val maxGap = maxGapHours * 60
+    val inside = visits.map { it.time }.filter { it > from && it < to }.sorted()
+    val anchors = listOf(from) + inside + listOf(to)
+    val out = mutableListOf<String>()
+    for (i in 0 until anchors.size - 1) {
+        val size = anchors[i + 1] - anchors[i]
+        if (size > maxGap) out.add("${minutesToTime(anchors[i].toDouble())} → ${minutesToTime(anchors[i + 1].toDouble())} is ${formatGap(size)}")
+    }
+    return out
+}
+
+/** Price a whole package across the stay. */
+fun pricePackage(pkg: Package, ctx: PriceContext): PricedPackage {
+    val rows = mutableListOf<PricedDayRow>()
+    for (i in 0 until ctx.days) {
+        val coverage = coverageForDay(pkg, i, ctx.nights, ctx.overnightDuration)
+        val (items, dayTotal) = priceDay(effectiveVisits(pkg, i), ctx.durations, coverage)
+        val canOvernight = i < ctx.nights
+        val isOvernight = canOvernight && pkg.overnightNights[i] == true
+        val overnightCost = if (isOvernight && ctx.overnightDuration != null) ctx.overnightDuration.price else 0.0
+        rows.add(
+            PricedDayRow(
+                dayIndex = i,
+                items = items,
+                customized = pkg.dayOverrides.containsKey(i),
+                canOvernight = canOvernight,
+                isOvernight = isOvernight,
+                overnightCost = overnightCost,
+                overnightLabel = ctx.overnightDuration?.label ?: "",
+                overnightStartMin = timeToMinutes(pkg.overnightStart),
+                coverage = coverage,
+                dayCost = dayTotal + overnightCost,
+            ),
+        )
+    }
+    val subtotal = rows.sumOf { it.dayCost }
+    val pct = min(100.0, max(0.0, pkg.discountPct))
+    val discount = subtotal * (pct / 100)
+    return PricedPackage(rows, subtotal, pct, discount, subtotal - discount)
+}
+
+// ── quote text ────────────────────────────────────────────────────────────────
+
+/** A clean plain-text quote for the clipboard / share sheet. Byte-matched to web. */
 fun quoteText(input: QuoteInput): String {
-    fun money(n: Double): String = "$" + String.format("%.2f", n)
-    val pattern = input.pattern
+    fun money(n: Double): String = "$" + String.format(Locale.US, "%.2f", n)
+    val pkg = input.pkg
     val days = input.days
     val lines = mutableListOf("TribeTails — Coverage Package", "")
     if (input.clientName.trim().isNotEmpty()) lines.add("Prepared for: ${input.clientName.trim()}")
-    lines.add("${pattern.strategyLabel} schedule · $days day${if (days != 1) "s" else ""}")
-    val start = dateLabel(input.startDate)
-    val end = dateLabel(input.endDate)
-    if (start.isNotEmpty() && end.isNotEmpty()) lines.add("$start – $end")
+    lines.add("${pkg.name} · $days day${if (days != 1) "s" else ""}")
+    if (input.startDate.isNotBlank()) lines.add("${dateLabel(input.startDate, 0)} – ${dateLabel(input.startDate, days - 1)}")
     lines.add("")
 
-    lines.add("Each day:")
-    for (tp in pattern.touchpoints) {
-        val label = if (tp.label == "Check-in") "Check-in (${tp.durationLabel})" else "${tp.label} (${tp.durationLabel})"
-        lines.add("   ${minutesToTime(tp.time).padEnd(9)} $label   ${money(tp.price)}")
+    for (r in input.priced.rows) {
+        val whenLabel = if (input.startDate.isNotBlank()) dateLabel(input.startDate, r.dayIndex) else "Day ${r.dayIndex + 1}"
+        val on = if (r.isOvernight && r.overnightStartMin != null) "   (overnight from ${minutesToTime(r.overnightStartMin.toDouble())})" else ""
+        lines.add("Day ${r.dayIndex + 1} — $whenLabel$on   ${money(r.dayCost)}")
+        for (it in r.items) {
+            val price = if (it.free) "free" else money(it.price)
+            val reason = if (it.freeReason != null) " — ${it.freeReason}" else ""
+            lines.add("   ${minutesToTime(it.time.toDouble()).padEnd(9)} ${it.label} (${it.durationLabel})$reason   $price")
+        }
+        if (r.isOvernight && r.overnightStartMin != null) {
+            lines.add("   ${minutesToTime(r.overnightStartMin.toDouble()).padEnd(9)} ${r.overnightLabel}   ${money(r.overnightCost)}")
+        }
+        lines.add("")
     }
-    pattern.overnightLabel?.let { on ->
-        lines.add("   ${"overnight".padEnd(9)} $on   ${money(pattern.overnightCost)}")
-    }
-    lines.add("   Per day   ${money(pattern.dayTotal)}")
-    lines.add("")
-    lines.add("Total ($days day${if (days != 1) "s" else ""})   ${money(pattern.dayTotal * days)}")
+
+    lines.add("Subtotal   ${money(input.priced.subtotal)}")
+    if (input.priced.discountPct > 0) lines.add("${pkg.discountLabel.ifBlank { "Discount" }} (${input.priced.discountPct.roundToInt()}%)   -${money(input.priced.discount)}")
+    lines.add("Total   ${money(input.priced.total)}")
     return lines.joinToString("\n")
 }
