@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.admin
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,8 +19,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -56,8 +61,10 @@ import com.tribetails.auntieos.domain.timeToMinutes
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChip
+import com.tribetails.auntieos.ui.components.AuntieDropdownField
 import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieIconBtn
+import com.tribetails.auntieos.ui.components.AuntieTextBtn
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieToggle
 import com.tribetails.auntieos.ui.components.DenPanel
@@ -66,6 +73,9 @@ import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.UUID
 import kotlin.math.floor
 
@@ -73,7 +83,9 @@ import kotlin.math.floor
  *  rules) loads/saves through [CoveragePackageViewModel]; schedule generation and
  *  pricing are the pure `domain/CoveragePackage.kt` functions. Per-stay inputs
  *  (client, dates, approved schedule) are UI-only and never persisted. */
-@OptIn(ExperimentalLayoutApi::class)
+private enum class DateTarget { START, END }
+
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun CoveragePackageScreen(
     onBack: () -> Unit,
@@ -100,6 +112,7 @@ fun CoveragePackageScreen(
     var startDate by remember { mutableStateOf("") }
     var endDate by remember { mutableStateOf("") }
     var clientName by remember { mutableStateOf("") }
+    var datePickerFor by remember { mutableStateOf<DateTarget?>(null) }
     var approvedId by remember { mutableStateOf<String?>(null) }
 
     // Draft rows.
@@ -107,7 +120,7 @@ fun CoveragePackageScreen(
     var newDurMinutes by remember { mutableStateOf("") }
     var newDurPrice by remember { mutableStateOf("") }
     var newPinLabel by remember { mutableStateOf("") }
-    var newPinTime by remember { mutableStateOf("") }
+    var newPinTime by remember { mutableStateOf("07:00") }
     var newPinDurId by remember { mutableStateOf("") }
     var formError by remember { mutableStateOf<String?>(null) }
 
@@ -161,7 +174,28 @@ fun CoveragePackageScreen(
         rules = rules.copy(
             pinnedTimes = rules.pinnedTimes + PinnedTime(uid(), newPinLabel.trim(), newPinTime, newPinDurId),
         )
-        newPinLabel = ""; newPinTime = ""; newPinDurId = ""; formError = null
+        newPinLabel = ""; newPinTime = "07:00"; newPinDurId = ""; formError = null
+    }
+
+    datePickerFor?.let { target ->
+        val currentIso = if (target == DateTarget.START) startDate else endDate
+        val initial = runCatching { LocalDate.parse(currentIso) }.getOrNull() ?: LocalDate.now()
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = initial.atStartOfDay(ZoneId.of("UTC")).toInstant().toEpochMilli(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { datePickerFor = null },
+            confirmButton = {
+                AuntieTextBtn(onClick = {
+                    pickerState.selectedDateMillis?.let { ms ->
+                        val picked = Instant.ofEpochMilli(ms).atZone(ZoneId.of("UTC")).toLocalDate().toString()
+                        if (target == DateTarget.START) startDate = picked else endDate = picked
+                    }
+                    datePickerFor = null
+                }) { Text("OK") }
+            },
+            dismissButton = { AuntieTextBtn(onClick = { datePickerFor = null }) { Text("Cancel") } },
+        ) { DatePicker(state = pickerState) }
     }
 
     AuntieScreenScaffold(title = "Coverage Packages", onBack = onBack, imePaddingEnabled = true) {
@@ -274,10 +308,16 @@ fun CoveragePackageScreen(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        AuntieField(value = rules.wakeStart, onValueChange = { rules = rules.copy(wakeStart = it) }, label = "Day starts", placeholder = "HH:MM", modifier = Modifier.weight(1f))
-                        AuntieField(value = rules.wakeEnd, onValueChange = { rules = rules.copy(wakeEnd = it) }, label = "Day ends", placeholder = "HH:MM", modifier = Modifier.weight(1f))
-                        AuntieField(value = numText(rules.maxGapHours), onValueChange = { rules = rules.copy(maxGapHours = it.toDoubleOrNull() ?: 1.0) }, label = "Max gap (hrs)", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                        TimeField(label = "Day starts", value = rules.wakeStart, onChange = { rules = rules.copy(wakeStart = it) }, modifier = Modifier.weight(1f))
+                        TimeField(label = "Day ends", value = rules.wakeEnd, onChange = { rules = rules.copy(wakeEnd = it) }, modifier = Modifier.weight(1f))
                     }
+                    AuntieField(
+                        value = numText(rules.maxGapHours),
+                        onValueChange = { rules = rules.copy(maxGapHours = it.toDoubleOrNull() ?: 1.0) },
+                        label = "Max gap between visits (hrs)",
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(0.5f),
+                    )
 
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         AuntieToggle(checked = useOvernight, onCheckedChange = { useOvernight = it })
@@ -315,9 +355,9 @@ fun CoveragePackageScreen(
                             }
                         }
                     }
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        AuntieField(value = newPinLabel, onValueChange = { newPinLabel = it }, placeholder = "e.g. Medication", modifier = Modifier.weight(2f))
-                        AuntieField(value = newPinTime, onValueChange = { newPinTime = it }, placeholder = "HH:MM", modifier = Modifier.weight(1f))
+                    AuntieField(value = newPinLabel, onValueChange = { newPinLabel = it }, placeholder = "e.g. Medication", modifier = Modifier.fillMaxWidth())
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TimeField(label = "At", value = newPinTime, onChange = { newPinTime = it }, modifier = Modifier.weight(1f))
                         PrimaryButton(label = "Add", onClick = { addPinned() }, leading = { Icon(Lucide.Plus, contentDescription = null, tint = c.background, modifier = Modifier.size(16.dp)) })
                     }
                     if (dayVisitOptions.isNotEmpty()) {
@@ -367,10 +407,10 @@ fun CoveragePackageScreen(
                 subtitle = "The stay's dates. Priced from the approved schedule; not saved with the config.",
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AuntieField(value = clientName, onValueChange = { clientName = it }, label = "Client (optional)", placeholder = "Kinfolk name", modifier = Modifier.fillMaxWidth())
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        AuntieField(value = clientName, onValueChange = { clientName = it }, label = "Client (optional)", placeholder = "Kinfolk name", modifier = Modifier.weight(1f))
-                        AuntieField(value = startDate, onValueChange = { startDate = it }, label = "Start", placeholder = "YYYY-MM-DD", modifier = Modifier.weight(1f))
-                        AuntieField(value = endDate, onValueChange = { endDate = it }, label = "End", placeholder = "YYYY-MM-DD", modifier = Modifier.weight(1f))
+                        DateField(label = "Start", value = startDate, onClick = { datePickerFor = DateTarget.START }, modifier = Modifier.weight(1f))
+                        DateField(label = "End", value = endDate, onClick = { datePickerFor = DateTarget.END }, modifier = Modifier.weight(1f))
                     }
                     if (days > 0) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -447,6 +487,61 @@ private fun PatternCard(pattern: DayPattern, approved: Boolean, onApprove: () ->
         )
     }
 }
+
+/** A "HH:MM" time entered as HOUR + MINUTE dropdowns (the NewBookingRequestDialog
+ *  idiom — the app uses dropdowns for time, not the M3 TimePicker). */
+@Composable
+private fun TimeField(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    val c = AuntieTheme.colors
+    val mins = timeToMinutes(value)
+    val hour = (mins?.div(60))?.coerceIn(0, 23) ?: 9
+    val minute = mins?.rem(60) ?: 0
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label.uppercase(), style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AuntieDropdownField(
+                value = hour,
+                options = (0..23).toList(),
+                onSelect = { onChange(hhmm(it, minute)) },
+                displayText = { "%02d".format(it) },
+                modifier = Modifier.weight(1f),
+            )
+            AuntieDropdownField(
+                value = minute,
+                options = MINUTE_STEPS,
+                onSelect = { onChange(hhmm(hour, it)) },
+                displayText = { "%02d".format(it) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+/** A tappable "YYYY-MM-DD" field that opens the M3 DatePickerDialog owned by the screen. */
+@Composable
+private fun DateField(label: String, value: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val c = AuntieTheme.colors
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label.uppercase(), style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, c.border, RoundedCornerShape(8.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+        ) {
+            Text(
+                value.ifBlank { "Pick a date" },
+                style = AuntieTheme.typography.bodyMedium,
+                color = if (value.isBlank()) c.textFaint else c.textPrimary,
+            )
+        }
+    }
+}
+
+private val MINUTE_STEPS = (0..55 step 5).toList()
+
+private fun hhmm(h: Int, m: Int): String = "%02d:%02d".format(h, m)
 
 private fun uid(): String = UUID.randomUUID().toString().take(7)
 
