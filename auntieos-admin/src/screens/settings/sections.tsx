@@ -1,53 +1,39 @@
-import { useCallback, useEffect, useState } from 'react';
-import { getBusinessSettings, type BusinessSettings, type MyTribePortalConfig } from '../api/settings';
-import { saveBusinessSettings } from '../api/settingsWrite';
-import { type Async } from '../lib/async';
-import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
-import { AsyncRegion } from '../components/AsyncRegion';
-import { Banner } from '../components/Banner';
-import { PrimaryButton, GhostButton } from '../components/Buttons';
-import { Toggle } from '../components/Toggle';
-import { lastSavedLabel } from '../lib/settingsFormat';
-import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
-import { TimeOffEditor } from './settings/TimeOffEditor';
-import { KinCareRatesEditor } from './settings/KinCareRatesEditor';
-import './SettingsEdit.css';
+import { useState } from 'react';
+import { type BusinessSettings, type MyTribePortalConfig } from '../../api/settings';
+import { DenPanel } from '../../components/DenScreenKit';
+import { Banner } from '../../components/Banner';
+import { PrimaryButton, GhostButton } from '../../components/Buttons';
+import { Toggle } from '../../components/Toggle';
+import { portalHomeSummary } from '../../lib/settingsFormat';
+// The `settingsEdit__*` class vocabulary these sections use lives here. It is
+// also depended on by the sibling editors (BusinessHoursEditor, TimeOffEditor,
+// KinCareRatesEditor), which import their own CSS but reuse these input / save-row
+// / toggle classes, so this import is what keeps them styled now that the old
+// SettingsEdit.tsx (its former home) is gone.
+import '../SettingsEdit.css';
 
 /**
- * The Settings EDITOR: the write surface the read-only `Settings.tsx` overview
- * deferred (see that file's header). Loads `business_settings/business_settings`
- * the same one-shot way the overview does, then renders one `DenPanel` per
- * editable section, each with ITS OWN Save action and its own busy/error state,
- * mirroring the wasm `SettingsScreen.kt`: every panel there (`BusinessProfilePanel`,
- * `PaymentOptionsPanel`, `WeatherAreaPanel`, `BookingBehaviorPanel`, `BrandingPanel`,
- * `MyTribePanel`) is its own independently-saved unit, not one giant form with a
- * single submit. There is no callable for any of this (verified: `business_settings`
- * is `allow write: if isAuntie()` in `firestore.rules`, a direct client write, not a
- * Cloud Function), so every section saves through `saveBusinessSettings`
- * (`api/settingsWrite.ts`), a `setDoc(..., {merge: true})` on the single doc.
+ * The independently-saving Settings section editors, lifted out of the old
+ * `SettingsEdit.tsx` verbatim when the read-only overview and the editor were
+ * merged into the single nav-driven `Settings.tsx`. Each one still owns its own
+ * draft state, Save action, and busy/error banner, exactly as before: nothing
+ * about how a section saves changed, only where these components are mounted
+ * (one at a time, behind a section nav, instead of all stacked in one scroll).
  *
- * SCOPE: ships real, saving field editors for every section EXCEPT two, which stay
- * exactly as read-only as the overview already renders them:
- *   - Google Calendar sync (the connect/sync action, not just the id field)
- *   - MyTribe portal Home layout (the section drag-reorder editor) and its logo
- *     upload (Cloudinary picker; out of scope without that pipeline in this repo)
- * Business hours, Time off, and KinCare-type rates -- previously deferred here --
- * are now real editors (`screens/settings/BusinessHoursEditor.tsx`,
- * `TimeOffEditor.tsx`, `KinCareRatesEditor.tsx`), each saving its own doc fields
- * through the same `persist` patch below. This is flagged here, in the on-screen
- * banner below, and in the fan-out report, not silently dropped.
+ * There is no callable for any of this (`business_settings` is `allow write: if
+ * isAuntie()` in `firestore.rules`, a direct client write), so every section
+ * saves through the shared `persist` the shell hands down as `onSave`, a
+ * `setDoc(..., {merge: true})` on the single doc (`api/settingsWrite.ts`).
  */
-interface SettingsEditProps {
-  /** Called when the operator leaves the editor (the "Back to overview" action). */
-  onDone: () => void;
-}
+
+// ── Field specs (Business profile / Weather area / Payments / Branding) ──────
 
 /**
- * The `BusinessSettings` fields this editor renders as a plain text input.
- * Restricted to the doc's actual `string` fields (verified against `api/settings.ts`),
- * so `TextFieldsSection` below can read/write them without a single `any`.
+ * The `BusinessSettings` fields rendered as a plain text input. Restricted to
+ * the doc's actual `string` fields (verified against `api/settings.ts`), so
+ * `TextFieldsSection` can read/write them without a single `any`.
  */
-type StringFieldKey =
+export type StringFieldKey =
   | 'businessName'
   | 'businessEmail'
   | 'businessPhone'
@@ -62,150 +48,37 @@ type StringFieldKey =
   | 'homeGreeting'
   | 'homeAccentTail';
 
-interface TextFieldSpec {
+export interface TextFieldSpec {
   key: StringFieldKey;
   label: string;
   placeholder?: string;
   type?: 'text' | 'email' | 'tel';
 }
 
-const BUSINESS_PROFILE_FIELDS: readonly TextFieldSpec[] = [
+export const BUSINESS_PROFILE_FIELDS: readonly TextFieldSpec[] = [
   { key: 'businessName', label: 'Business name' },
   { key: 'businessEmail', label: 'Email', type: 'email' },
   { key: 'businessPhone', label: 'Phone', type: 'tel' },
   { key: 'businessAddress', label: 'Address' },
 ];
 
-const WEATHER_AREA_FIELDS: readonly TextFieldSpec[] = [
+export const WEATHER_AREA_FIELDS: readonly TextFieldSpec[] = [
   { key: 'weatherLocation', label: 'City, metro, or ZIP', placeholder: 'Austin, TX' },
 ];
 
-const PAYMENT_FIELDS: readonly TextFieldSpec[] = [
+export const PAYMENT_FIELDS: readonly TextFieldSpec[] = [
   { key: 'venmoHandle', label: 'Venmo handle', placeholder: '@tribetails' },
   { key: 'paypalHandle', label: 'PayPal', placeholder: 'you@email.com or paypal.me/tribetails' },
   { key: 'cashappHandle', label: 'Cash App', placeholder: '$tribetails' },
 ];
 
-const BRANDING_FIELDS: readonly TextFieldSpec[] = [
+export const BRANDING_FIELDS: readonly TextFieldSpec[] = [
   { key: 'logoUrl', label: 'Logo URL', placeholder: 'https://…' },
   { key: 'brandWordmark', label: 'App name', placeholder: 'AuntieOS' },
   { key: 'brandTagline', label: 'Tagline', placeholder: 'Tribe Tails Care' },
   { key: 'homeGreeting', label: 'Home greeting' },
   { key: 'homeAccentTail', label: 'Home accent word', placeholder: 'Auntie.' },
 ];
-
-export function SettingsEdit({ onDone }: SettingsEditProps) {
-  const [settings, setSettings] = useState<Async<BusinessSettings>>({ status: 'loading' });
-
-  // Hoisted so a failed load can hand AsyncRegion a real retry, the
-  // FeatureFlags.tsx / Settings.tsx convention.
-  const load = useCallback(() => {
-    let live = true;
-    setSettings({ status: 'loading' });
-    getBusinessSettings()
-      .then((data) => live && setSettings({ status: 'ready', data }))
-      .catch(
-        (err: unknown) =>
-          live &&
-          setSettings({
-            status: 'error',
-            message: `Couldn't read business settings: ${err instanceof Error ? err.message : 'Load failed'}`,
-            retry: load,
-          }),
-      );
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  useEffect(() => load(), [load]);
-
-  // Shared write plumbing every section's Save button calls with ONLY that
-  // section's own fields. Folds the confirmed stamp back onto the local
-  // ready-baseline (no re-fetch): the doc IS what was just written, merged
-  // onto what was already loaded, so a sibling section's un-saved edits (kept
-  // in ITS OWN local state, never re-derived from this baseline after mount)
-  // are untouched, and `lastSavedLabel` reflects the save immediately.
-  const persist = useCallback(async (patch: Partial<BusinessSettings>) => {
-    const stamp = await saveBusinessSettings(patch);
-    setSettings((prev) =>
-      prev.status === 'ready' ? { status: 'ready', data: { ...prev.data, ...patch, ...stamp } } : prev,
-    );
-  }, []);
-
-  return (
-    <div className="screen">
-      <DenScreenHeading
-        kicker="The Den · Admin"
-        title="Edit"
-        accentTail="settings."
-        subtitle="Change a section, then Save it. Each section below saves on its own."
-        trailing={<GhostButton label="Back to overview" onClick={onDone} />}
-      />
-
-      <Banner tone="info" dashed pillLabel="Some sections deferred">
-        Google Calendar sync and the MyTribe Home layout aren&rsquo;t editable here yet. Everything
-        below saves for real; those stay view-only on the overview for now.
-      </Banner>
-
-      <AsyncRegion
-        state={settings}
-        what="business settings"
-        isEmpty={() => false}
-        loading={<p className="settingsEdit__hint">Loading business settings…</p>}
-        empty={<p className="settingsEdit__hint">No settings found.</p>}
-      >
-        {(data) => (
-          <>
-            <p className="settingsEdit__updated">{lastSavedLabel(data.updatedAt, data.updatedBy)}</p>
-
-            <TextFieldsSection
-              title="Business profile"
-              subtitle="Who kinfolk and invoices contact."
-              data={data}
-              fields={BUSINESS_PROFILE_FIELDS}
-              onSave={persist}
-            />
-
-            <BusinessHoursEditor data={data} onSave={persist} />
-
-            <TextFieldsSection
-              title="Weather area"
-              subtitle="Coverage area for the Home weather widgets. A city, metro, or ZIP (e.g. &ldquo;Austin, TX&rdquo;), not a street address."
-              data={data}
-              fields={WEATHER_AREA_FIELDS}
-              onSave={persist}
-            />
-
-            <TimeOffEditor data={data} onSave={persist} />
-
-            <BookingBehaviorSection data={data} onSave={persist} />
-
-            <KinCareRatesEditor data={data} onSave={persist} />
-
-            <TextFieldsSection
-              title="Payment options"
-              subtitle="How kinfolk pay you; each handle prints on every invoice. Leave one blank to hide it."
-              data={data}
-              fields={PAYMENT_FIELDS}
-              onSave={persist}
-            />
-
-            <TextFieldsSection
-              title="Branding"
-              subtitle="Logo, app name, and Home greeting. Leave any field blank to keep the shipped default."
-              data={data}
-              fields={BRANDING_FIELDS}
-              onSave={persist}
-            />
-
-            <MyTribePortalSection data={data} onSave={persist} />
-          </>
-        )}
-      </AsyncRegion>
-    </div>
-  );
-}
 
 // ── Business profile / Weather area / Payment options / Branding ────────────
 
@@ -221,14 +94,14 @@ interface TextFieldsSectionProps {
  * One panel of plain text fields, one Save button. Local `values` is seeded
  * ONCE from `data` at mount (a lazy initializer, not an effect keyed on
  * `data`): a sibling section's save round-trips through the SAME `data` prop
- * (see `persist` above), so re-deriving `values` from `data` on every change
- * would silently erase an in-progress edit here whenever the operator saved a
- * DIFFERENT panel first. `dirty` compares live against `data` instead, which
- * self-heals to false the moment this section's own save lands (the trimmed
- * value the operator typed and the freshly-persisted `data` value agree),
- * without needing to know THAT is why `data` changed.
+ * (see the shell's `persist`), so re-deriving `values` from `data` on every
+ * change would silently erase an in-progress edit here whenever the operator
+ * saved a DIFFERENT panel first. `dirty` compares live against `data` instead,
+ * which self-heals to false the moment this section's own save lands (the
+ * trimmed value the operator typed and the freshly-persisted `data` value
+ * agree), without needing to know THAT is why `data` changed.
  */
-function TextFieldsSection({ title, subtitle, data, fields, onSave }: TextFieldsSectionProps) {
+export function TextFieldsSection({ title, subtitle, data, fields, onSave }: TextFieldsSectionProps) {
   const [values, setValues] = useState<Record<string, string>>(() => {
     const seed: Record<string, string> = {};
     for (const f of fields) seed[f.key] = data[f.key];
@@ -314,7 +187,7 @@ interface BookingBehaviorSectionProps {
  * exactly where it was (the fail-loud error banner explains why) instead of
  * showing a flip that never actually persisted.
  */
-function BookingBehaviorSection({ data, onSave }: BookingBehaviorSectionProps) {
+export function BookingBehaviorSection({ data, onSave }: BookingBehaviorSectionProps) {
   const [savingKey, setSavingKey] = useState<BookingToggleKey | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -380,9 +253,11 @@ interface MyTribePortalSectionProps {
  * WHOLE `mytribePortal` object (not per-field), which is safe under `merge: true`:
  * it deep-merges the nested map, and `portal` already carries `home` unchanged
  * (never mutated here), so a save can never blank out the Home layout a sibling
- * surface configured.
+ * surface configured. The Home layout stays view-only (no drag-reorder editor in
+ * this repo yet); it is shown, read-only, at the foot of the panel so the merge
+ * did not lose the summary the old overview rendered.
  */
-function MyTribePortalSection({ data, onSave }: MyTribePortalSectionProps) {
+export function MyTribePortalSection({ data, onSave }: MyTribePortalSectionProps) {
   const [portal, setPortal] = useState<MyTribePortalConfig>(() => data.mytribePortal);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -484,6 +359,15 @@ function MyTribePortalSection({ data, onSave }: MyTribePortalSectionProps) {
         </label>
       </div>
 
+      <div className="settingsEdit__subsection">
+        <span className="settingsEdit__fieldLabel">Home layout</span>
+        <p className="settingsEdit__readonlyValue">{portalHomeSummary(portal.home)}</p>
+        <p className="settingsEdit__hint">
+          The Home layout&rsquo;s drag-to-reorder editor isn&rsquo;t built here yet, so this stays
+          view-only. Everything above saves for real.
+        </p>
+      </div>
+
       <div className="settingsEdit__saveRow">
         <GhostButton label="Cancel" onClick={handleCancel} disabled={!dirty || busy} />
         <PrimaryButton
@@ -494,6 +378,41 @@ function MyTribePortalSection({ data, onSave }: MyTribePortalSectionProps) {
         />
         {justSaved && !dirty ? <span className="settingsEdit__savedNote">Saved</span> : null}
       </div>
+    </DenPanel>
+  );
+}
+
+// ── Google Calendar sync (read-only; no connect/sync action wired here yet) ──
+
+interface CalendarSyncSectionProps {
+  data: BusinessSettings;
+}
+
+/**
+ * Read-only, deliberately. The old overview showed the calendar id; the old
+ * editor listed Google Calendar sync among its "deferred" sections because the
+ * connect/sync action (an OAuth flow against an external calendar provider) has
+ * no editor in this repo. That external dependency is exactly the one thing
+ * CLAUDE.md says may stay deferred, so this section discloses that in place
+ * rather than pretending an editable control that would do nothing.
+ */
+export function CalendarSyncSection({ data }: CalendarSyncSectionProps) {
+  const id = data.calendarSyncId.trim();
+  return (
+    <DenPanel
+      title="Google Calendar sync"
+      subtitle="Imports the shared calendar&rsquo;s busy events as private blocks."
+    >
+      <dl className="settings__fields">
+        <div className="settings__field">
+          <dt className="settings__field-label">Calendar ID</dt>
+          <dd className="settings__field-value">{id === '' ? 'Not configured' : id}</dd>
+        </div>
+      </dl>
+      <p className="settingsEdit__hint">
+        Connecting and syncing a calendar needs a Google sign-in that isn&rsquo;t wired into this
+        admin yet, so it stays view-only.
+      </p>
     </DenPanel>
   );
 }

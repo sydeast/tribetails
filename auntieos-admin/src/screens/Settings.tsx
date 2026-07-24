@@ -1,69 +1,95 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { getBusinessSettings, type BusinessSettings } from '../api/settings';
+import { saveBusinessSettings } from '../api/settingsWrite';
 import { type Async } from '../lib/async';
-import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+import { DenScreenHeading } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { Banner } from '../components/Banner';
-import { PrimaryButton } from '../components/Buttons';
-import { SettingsEdit } from './SettingsEdit';
+import { lastSavedLabel } from '../lib/settingsFormat';
+import { SectionNav, sectionTabId, sectionPanelId, type SectionNavItem } from './settings/SectionNav';
+import {
+  TextFieldsSection,
+  BookingBehaviorSection,
+  MyTribePortalSection,
+  CalendarSyncSection,
+  BUSINESS_PROFILE_FIELDS,
+  WEATHER_AREA_FIELDS,
+  PAYMENT_FIELDS,
+  BRANDING_FIELDS,
+} from './settings/sections';
+import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
+import { TimeOffEditor } from './settings/TimeOffEditor';
+import { KinCareRatesEditor } from './settings/KinCareRatesEditor';
 import { NotificationGate } from './NotificationGate';
 import { TagsEditor } from './TagsEditor';
-import {
-  businessHoursRows,
-  serviceRateRows,
-  paymentRows,
-  observedHolidayLabels,
-  companyHolidayRows,
-  specialHourRows,
-  boolLabel,
-  brandingRows,
-  portalBannerSummary,
-  portalChatSummary,
-  portalHomeSummary,
-  lastSavedLabel,
-} from '../lib/settingsFormat';
 import './Settings.css';
 
-interface SettingsProps {
-  /**
-   * Optional external hook, called (in addition to opening the editor below)
-   * whenever the operator clicks "Edit settings". `router.tsx` mounts this
-   * screen as a bare route component (`component: Settings`, no props), so
-   * nothing wires this today; it exists purely for a future caller (analytics,
-   * a route-level breadcrumb) that wants to observe the click. The editor
-   * itself does NOT depend on it: see the `editing` state below.
-   */
-  onEdit?: () => void;
-}
-
 /**
- * Admin Settings. Defaults to the READ-ONLY overview: the current
- * `business_settings` document, grouped by the same sections the wasm
- * `SettingsScreen.kt` editor uses. Clicking "Edit settings" switches this
- * screen to `SettingsEdit` (the write surface, `./SettingsEdit.tsx`), in place,
- * with no router change: `router.tsx` mounts `Settings` as a bare route
- * component with no props, so the only way "Edit settings" can open a real
- * editor without touching `router.tsx` is for this screen to own that toggle
- * itself, rather than wait for a parent to hand it one. That is what `editing`
- * below does. Returning from the editor (`onDone`) flips back to the overview
- * and reloads it, so a just-saved change is reflected immediately rather than
- * showing the pre-edit snapshot.
+ * Admin Settings, as ONE nav-driven screen.
  *
- * Several sections (Business hours, Time off, KinCare types, Google Calendar
- * sync, MyTribe portal Home layout) have no editor yet; see `SettingsEdit.tsx`'s
- * header for exactly which and why. They stay exactly this read-only here.
+ * This replaces the old split (a read-only `Settings` overview whose "Edit
+ * settings" button swapped in a separate `SettingsEdit`, each a single long
+ * scroll of ~12 stacked panels). Both were flat scroll pages; the section nav
+ * the superseded wasm `SettingsScreen.kt` had was never ported when `src/` took
+ * over, so the live admin lost it. This restores it: a left [SectionNav] lists
+ * every section, and the right column renders only the selected one, editable
+ * in place. There is no separate view/edit mode any more.
  *
- * Loads once via the one-shot `getBusinessSettings` (a direct Firestore
- * `getDoc`, not a callable, see `api/settings.ts`'s header for why), not a
- * live listener: an overview does not need to react to a concurrent editor's
- * writes, since there is no concurrent editor session (sole admin).
+ * Two sections stay view-only, and say so on their own panel rather than behind
+ * a global banner: Google Calendar sync (its connect/sync needs an external
+ * Google sign-in not wired into this admin) and the MyTribe Home layout (no
+ * drag-reorder editor in this repo yet). Everything else saves for real.
+ *
+ * Loads `business_settings/business_settings` once via the one-shot
+ * `getBusinessSettings` (a direct Firestore `getDoc`, not a callable — see
+ * `api/settings.ts`), not a live listener: a sole admin has no concurrent editor
+ * to react to. `Notifications` and `Tags` are their own self-loading editors
+ * (`NotificationGate`, `TagsEditor`), so they do not depend on this doc and are
+ * rendered directly; the other ten sections read this loaded `data`.
  */
-export function Settings({ onEdit }: SettingsProps) {
+
+type SectionId =
+  | 'businessProfile'
+  | 'businessHours'
+  | 'weather'
+  | 'timeOff'
+  | 'kinCare'
+  | 'booking'
+  | 'payments'
+  | 'branding'
+  | 'mytribe'
+  | 'notifications'
+  | 'tags'
+  | 'calendar';
+
+/** Nav order. Matches the section order the operator saw approved for this screen. */
+const SECTIONS: readonly SectionNavItem<SectionId>[] = [
+  { id: 'businessProfile', label: 'Business profile' },
+  { id: 'businessHours', label: 'Business hours' },
+  { id: 'weather', label: 'Weather area' },
+  { id: 'timeOff', label: 'Time off' },
+  { id: 'kinCare', label: 'KinCare types' },
+  { id: 'booking', label: 'Booking behavior' },
+  { id: 'payments', label: 'Payments' },
+  { id: 'branding', label: 'Branding' },
+  { id: 'mytribe', label: 'MyTribe portal' },
+  { id: 'notifications', label: 'Notifications' },
+  { id: 'tags', label: 'Tags' },
+  { id: 'calendar', label: 'Calendar sync' },
+];
+
+/** The section the screen opens on. Named (not `SECTIONS[0]`) so it stays a
+ *  concrete `SectionId` under `noUncheckedIndexedAccess`, and its nav item is
+ *  asserted to exist below. */
+const FIRST_SECTION: SectionId = 'businessProfile';
+
+export function Settings() {
   const [settings, setSettings] = useState<Async<BusinessSettings>>({ status: 'loading' });
-  // In-place views on this one route (no router change), the same swap pattern
-  // "Edit settings" already uses: 'overview' | 'edit' (SettingsEdit) | 'gate'
-  // (the business notification gate matrix) | 'tags' (the tag vocabularies).
-  const [mode, setMode] = useState<'overview' | 'edit' | 'gate' | 'tags'>('overview');
+  const [selected, setSelected] = useState<SectionId>(FIRST_SECTION);
+  // Which sections have been opened at least once. A section mounts on its first
+  // visit and then stays mounted (hidden when not selected), so an in-progress
+  // edit survives a trip to another section instead of being silently reset, and
+  // the two self-loading sections (Notifications, Tags) don't fetch until opened.
+  const [visited, setVisited] = useState<Set<SectionId>>(() => new Set([FIRST_SECTION]));
 
   // Hoisted so a failed load can hand AsyncRegion a real retry (the
   // FeatureFlags.tsx / FormSchemas.tsx convention).
@@ -88,225 +114,151 @@ export function Settings({ onEdit }: SettingsProps) {
 
   useEffect(() => load(), [load]);
 
-  if (mode === 'edit') {
-    return (
-      <SettingsEdit
-        onDone={() => {
-          setMode('overview');
-          load();
-        }}
-      />
+  // Shared write plumbing every section's Save calls with ONLY that section's own
+  // fields. Folds the confirmed stamp back onto the local ready-baseline (no
+  // re-fetch): the doc IS what was just written, merged onto what was already
+  // loaded, so a sibling section's un-saved edits (kept in ITS OWN local state,
+  // never re-derived from this baseline after mount) are untouched, and
+  // `lastSavedLabel` reflects the save immediately.
+  const persist = useCallback(async (patch: Partial<BusinessSettings>) => {
+    const stamp = await saveBusinessSettings(patch);
+    setSettings((prev) =>
+      prev.status === 'ready' ? { status: 'ready', data: { ...prev.data, ...patch, ...stamp } } : prev,
     );
-  }
+  }, []);
 
-  if (mode === 'gate') {
-    return <NotificationGate onBack={() => setMode('overview')} />;
-  }
-
-  if (mode === 'tags') {
-    return <TagsEditor onBack={() => setMode('overview')} />;
-  }
+  const selectSection = useCallback((id: SectionId) => {
+    setSelected(id);
+    setVisited((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }, []);
 
   return (
     <div className="screen">
       <DenScreenHeading
         kicker="The Den · Admin"
         title="Settings"
-        accentTail="overview."
-        subtitle="What's currently saved on your business settings, grouped by section."
-        trailing={
-          <PrimaryButton
-            label="Edit settings"
-            onClick={() => {
-              onEdit?.();
-              setMode('edit');
-            }}
-          />
-        }
+        accentTail="by section."
+        subtitle="Pick a section on the left. Each one edits and saves on its own."
       />
 
-      <Banner tone="info" dashed pillLabel="Read-only">
-        This is an overview, not the editor. Values below are exactly what&rsquo;s saved; click
-        &ldquo;Edit settings&rdquo; above to change them.
-      </Banner>
+      {settings.status === 'ready' ? (
+        <p className="settings__updated">{lastSavedLabel(settings.data.updatedAt, settings.data.updatedBy)}</p>
+      ) : null}
 
-      <DenPanel
-        title="Notifications"
-        subtitle="Audience tabs (Business, Staff, Kinfolk) and the per-channel gate for every notification."
-      >
-        <p className="settings__hint">
-          Set which channels each notification can use, and lock any that must stay on. This is the gate
-          that everyone&rsquo;s own notification choices sit inside.
-        </p>
-        <PrimaryButton label="Open notification gate" onClick={() => setMode('gate')} />
-      </DenPanel>
+      <div className="settings__layout">
+        <SectionNav items={SECTIONS} selected={selected} onSelect={selectSection} />
 
-      <DenPanel
-        title="Tags"
-        subtitle="The labels you put on households and pets, each with its own color and emoji."
-      >
-        <p className="settings__hint">
-          Build the two tag lists (household and pet) that show up as suggestions when you tag a
-          profile, and that broadcasts and KinTale rules match on.
-        </p>
-        <PrimaryButton label="Open tags" onClick={() => setMode('tags')} />
-      </DenPanel>
-
-      <AsyncRegion
-        state={settings}
-        what="business settings"
-        isEmpty={() => false}
-        loading={<p className="settings__hint">Loading business settings…</p>}
-        empty={<p className="settings__hint">No settings found.</p>}
-      >
-        {(data) => (
-          <>
-            <p className="settings__updated">{lastSavedLabel(data.updatedAt, data.updatedBy)}</p>
-
-            <DenPanel title="Business profile" subtitle="Who kinfolk and invoices contact.">
-              <dl className="settings__fields">
-                <Field label="Business name" value={data.businessName} />
-                <Field label="Email" value={data.businessEmail} />
-                <Field label="Phone" value={data.businessPhone} />
-                <Field label="Address" value={data.businessAddress} />
-              </dl>
-            </DenPanel>
-
-            <DenPanel title="Weather area" subtitle="Coverage area for the Home weather widgets.">
-              <dl className="settings__fields">
-                <Field label="Area" value={data.weatherLocation} />
-              </dl>
-            </DenPanel>
-
-            <DenPanel title="Business hours" subtitle="When the Den is open for visits.">
-              <ul className="settings__hours">
-                {businessHoursRows(data.businessHours).map((row) => (
-                  <li key={row.day} className="settings__hours-row">
-                    <span className="settings__hours-day">{row.day}</span>
-                    <span className="settings__hours-value">{row.label}</span>
-                  </li>
-                ))}
-              </ul>
-            </DenPanel>
-
-            <DenPanel title="Google Calendar sync" subtitle="Imports the shared calendar's busy events as private blocks.">
-              <dl className="settings__fields">
-                <Field label="Calendar ID" value={data.calendarSyncId} empty="Not configured" />
-              </dl>
-            </DenPanel>
-
-            <DenPanel title="Time off" subtitle="Holidays the Den observes and its own closures." collapsible initiallyExpanded={false}>
-              <SettingsSubheading text="US holidays observed" />
-              {observedHolidayLabels(data.observedUsHolidays).length === 0 ? (
-                <p className="settings__hint">No US holidays observed.</p>
-              ) : (
-                <ul className="settings__chips">
-                  {observedHolidayLabels(data.observedUsHolidays).map((label) => (
-                    <li key={label} className="settings__chip">{label}</li>
-                  ))}
-                </ul>
-              )}
-
-              <SettingsSubheading text="Company holidays" />
-              {companyHolidayRows(data.companyHolidays).length === 0 ? (
-                <p className="settings__hint">No company holidays added.</p>
-              ) : (
-                <ul className="settings__dated-list">
-                  {companyHolidayRows(data.companyHolidays).map((row, i) => (
-                    <li key={`${row.date}-${row.label}-${i}`} className="settings__dated-row">
-                      <span className="settings__dated-label">{row.label}</span>
-                      <span className="settings__dated-date">{row.date || 'No date'}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              <SettingsSubheading text="Special hours" />
-              {specialHourRows(data.specialHours).length === 0 ? (
-                <p className="settings__hint">No special hours added.</p>
-              ) : (
-                <ul className="settings__dated-list">
-                  {specialHourRows(data.specialHours).map((row, i) => (
-                    <li key={`${row.date}-${row.label}-${i}`} className="settings__dated-row">
-                      <span className="settings__dated-label">{row.label}</span>
-                      <span className="settings__dated-date">{row.date || 'No date'}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </DenPanel>
-
-            <DenPanel title="KinCare types" subtitle="The service types and rates kinfolk pick when booking.">
-              {serviceRateRows(data.serviceRates).length === 0 ? (
-                <p className="settings__hint">No KinCare types configured.</p>
-              ) : (
-                <ul className="settings__dated-list">
-                  {serviceRateRows(data.serviceRates).map((row) => (
-                    <li key={row.type} className="settings__dated-row">
-                      <span className="settings__dated-label">{row.type}</span>
-                      <span className="settings__dated-date">{row.rate}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </DenPanel>
-
-            <DenPanel title="Booking behavior" subtitle="How new bookings are confirmed and adjusted.">
-              <dl className="settings__fields">
-                <Field label="Auto-confirm repeat kinfolk" value={boolLabel(data.autoConfirmRepeatKinfolk)} />
-                <Field label="Snap drag-to-reschedule to 15 min" value={boolLabel(data.snapRescheduleTo15Min)} />
-              </dl>
-            </DenPanel>
-
-            <DenPanel title="Payment options" subtitle="How kinfolk pay you; each handle prints on every invoice.">
-              <dl className="settings__fields">
-                {paymentRows(data).map((row) => (
-                  <Field key={row.label} label={row.label} value={row.value} />
-                ))}
-              </dl>
-            </DenPanel>
-
-            <DenPanel title="Branding" subtitle="Logo, app name, and Home greeting.">
-              <dl className="settings__fields">
-                {brandingRows(data).map((row) => (
-                  <Field key={row.label} label={row.label} value={row.value} />
-                ))}
-              </dl>
-            </DenPanel>
-
-            <DenPanel title="MyTribe portal" subtitle="The kinfolk-facing portal chrome and Home layout.">
-              <dl className="settings__fields">
-                <Field label="Theme" value={data.mytribePortal.themeId} />
-                <Field label="Top banner" value={portalBannerSummary(data.mytribePortal.banner)} />
-                <Field label="Message Auntie chat" value={portalChatSummary(data.mytribePortal.chat)} />
-                <Field label="Home layout" value={portalHomeSummary(data.mytribePortal.home)} />
-              </dl>
-            </DenPanel>
-          </>
-        )}
-      </AsyncRegion>
+        <div className="settings__panelArea">
+          {SECTIONS.map((section) => {
+            if (!visited.has(section.id)) return null;
+            const active = section.id === selected;
+            return (
+              <div
+                key={section.id}
+                role="tabpanel"
+                id={sectionPanelId(section.id)}
+                aria-labelledby={sectionTabId(section.id)}
+                className="settings__panel"
+                tabIndex={0}
+                hidden={!active}
+              >
+                {renderSection(section.id, settings, persist)}
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
 
-function SettingsSubheading({ text }: { text: string }) {
-  return <p className="settings__subheading">{text}</p>;
-}
+/**
+ * Renders one section's body. The two self-loading sub-editors ignore the shell's
+ * `settings` (they fetch their own data); the other ten read it through
+ * `AsyncRegion`, so a not-yet-loaded doc shows one honest loading/error state
+ * inside the panel rather than a fabricated blank.
+ */
+function renderSection(
+  id: SectionId,
+  settings: Async<BusinessSettings>,
+  persist: (patch: Partial<BusinessSettings>) => Promise<void>,
+): ReactNode {
+  if (id === 'notifications') return <NotificationGate />;
+  if (id === 'tags') return <TagsEditor />;
 
-interface FieldProps {
-  label: string;
-  value: string;
-  /** Shown instead of an empty value. Defaults to "Not set". */
-  empty?: string;
-}
-
-/** One label/value pair. Never renders a bare empty string, which reads like a rendering bug. */
-function Field({ label, value, empty = 'Not set' }: FieldProps) {
-  const trimmed = value.trim();
   return (
-    <div className="settings__field">
-      <dt className="settings__field-label">{label}</dt>
-      <dd className="settings__field-value">{trimmed === '' ? empty : trimmed}</dd>
-    </div>
+    <AsyncRegion
+      state={settings}
+      what="business settings"
+      isEmpty={() => false}
+      loading={<p className="settings__hint">Loading business settings…</p>}
+      empty={<p className="settings__hint">No settings found.</p>}
+    >
+      {(data) => renderDataSection(id, data, persist)}
+    </AsyncRegion>
   );
+}
+
+/** The ten sections that edit the loaded `business_settings` doc. */
+function renderDataSection(
+  id: SectionId,
+  data: BusinessSettings,
+  persist: (patch: Partial<BusinessSettings>) => Promise<void>,
+): ReactNode {
+  switch (id) {
+    case 'businessProfile':
+      return (
+        <TextFieldsSection
+          title="Business profile"
+          subtitle="Who kinfolk and invoices contact."
+          data={data}
+          fields={BUSINESS_PROFILE_FIELDS}
+          onSave={persist}
+        />
+      );
+    case 'businessHours':
+      return <BusinessHoursEditor data={data} onSave={persist} />;
+    case 'weather':
+      return (
+        <TextFieldsSection
+          title="Weather area"
+          subtitle="Coverage area for the Home weather widgets. A city, metro, or ZIP (e.g. &ldquo;Austin, TX&rdquo;), not a street address."
+          data={data}
+          fields={WEATHER_AREA_FIELDS}
+          onSave={persist}
+        />
+      );
+    case 'timeOff':
+      return <TimeOffEditor data={data} onSave={persist} />;
+    case 'kinCare':
+      return <KinCareRatesEditor data={data} onSave={persist} />;
+    case 'booking':
+      return <BookingBehaviorSection data={data} onSave={persist} />;
+    case 'payments':
+      return (
+        <TextFieldsSection
+          title="Payment options"
+          subtitle="How kinfolk pay you; each handle prints on every invoice. Leave one blank to hide it."
+          data={data}
+          fields={PAYMENT_FIELDS}
+          onSave={persist}
+        />
+      );
+    case 'branding':
+      return (
+        <TextFieldsSection
+          title="Branding"
+          subtitle="Logo, app name, and Home greeting. Leave any field blank to keep the shipped default."
+          data={data}
+          fields={BRANDING_FIELDS}
+          onSave={persist}
+        />
+      );
+    case 'mytribe':
+      return <MyTribePortalSection data={data} onSave={persist} />;
+    case 'calendar':
+      return <CalendarSyncSection data={data} />;
+    default:
+      return null;
+  }
 }

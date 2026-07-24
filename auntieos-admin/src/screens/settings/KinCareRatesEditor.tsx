@@ -8,7 +8,7 @@ import './KinCareRatesEditor.css';
 
 /**
  * The KinCare-type rates sub-editor, one of the three DEFERRED editors this
- * port fills in (see `SettingsEdit.tsx`'s header). Edits
+ * port fills in (see `Settings.tsx`'s header). Edits
  * `BusinessSettings.serviceRates: Record<type, rate>`, the map Schedule and the
  * new-visit dialog read when booking, and writes the SAME shape the read-only
  * overview's `serviceRateRows` (`lib/settingsFormat.ts`) already parses (a

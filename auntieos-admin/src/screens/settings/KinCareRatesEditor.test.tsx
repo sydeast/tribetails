@@ -8,7 +8,7 @@ import { KinCareRatesEditor } from './KinCareRatesEditor';
 
 /**
  * `KinCareRatesEditor` only clears "dirty" (and shows "Saved") once its `data`
- * prop reflects the just-written patch -- exactly how `SettingsEdit.tsx`'s
+ * prop reflects the just-written patch -- exactly how `Settings.tsx`'s
  * `persist` feeds a save back to every section. A bare `render` with a static
  * `data` object can never demonstrate that, so this harness plays the
  * parent's role for the one test that needs to see "Saved" appear.
