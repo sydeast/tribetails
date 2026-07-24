@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -58,6 +59,8 @@ import com.composables.icons.lucide.Users
 import com.composables.icons.lucide.X
 import com.composables.icons.lucide.CalendarClock
 import com.composables.icons.lucide.Camera
+import com.composables.icons.lucide.ChevronLeft
+import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Database
 import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.LayoutGrid
@@ -86,6 +89,7 @@ import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieDropdownField
+import com.tribetails.auntieos.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.ui.components.AuntieIconTile
@@ -167,6 +171,139 @@ private const val FF_INTEGRATION_MANAGE = false // TODO(flag): auntieos.settings
  *  - Integration pills reflect the VM's live health probe (Firestore + FCM are
  *    probed; n8n + Twilio stay CONFIGURED) rather than a faked "Connected" glow.
  */
+/**
+ * The Business Settings sections, one per detail panel. A phone can't take the
+ * web admin's left rail, so this screen is a native list -> detail drill-down
+ * instead of one endless scroll: this enum drives BOTH the tappable list
+ * [AdminSettingsSectionNav] renders and the `when` in [AdminSettingsScreen] that
+ * renders the matching panel. Order mirrors the web Settings section nav.
+ */
+internal enum class SettingsSection(
+    val title: String,
+    val blurb: String,
+    val icon: ImageVector,
+) {
+    Branding("Branding", "Logo, app name, and home greeting", Lucide.Pencil),
+    Navigation("Navigation", "Rename and reorder your nav sections", Lucide.LayoutGrid),
+    BusinessOperations("Business operations", "Booking modes, tracking, retention", Lucide.Building2),
+    Payments("Payments", "Handles clients pay you through", Lucide.Wallet),
+    WeatherArea("Weather area", "Coverage area for the weather widgets", Lucide.CloudSun),
+    BusinessHours("Business hours", "When the Den is open for visits", Lucide.CalendarClock),
+    CalendarSync("Google Calendar sync", "Import busy events as private blocks", Lucide.RefreshCw),
+    TimeOff("Time off", "Holidays observed and Den closures", Lucide.Plane),
+    Notifications("Notifications", "The per-notification channel gate", Lucide.Bell),
+    BookingBehavior("Booking behavior", "Auto-confirm and drag-to-snap", Lucide.Check),
+    Integrations("Integrations", "Connected services and their status", Lucide.Webhook),
+    Tags("Tags", "Household and pet tag banks", Lucide.Tag),
+    VetClinics("Vet clinics", "The shared vet clinic bank", Lucide.Stethoscope),
+}
+
+/**
+ * The list <-> detail shell for Admin Settings. Deliberately ViewModel-free and
+ * state-hoisted (like the web `SectionNav`), so the navigation itself is unit
+ * testable without standing up the heavy [AdminSettingsViewModel]:
+ *
+ *  - [selected] null  -> the section LIST: an optional [listHeader] (the
+ *    navigate-away buttons) above one tappable [AuntieEntityRow] per section.
+ *  - [selected] set   -> that section's DETAIL: an "All settings" affordance
+ *    back to the list, then the caller's [detail] slot for that section. A
+ *    [BackHandler] routes the system back gesture to the list too, so back never
+ *    jumps straight out of Settings while a section is open.
+ *
+ * Only ONE section renders at a time, so there is no long scroll; each panel
+ * keeps its own scroll for its own content.
+ */
+@Composable
+internal fun AdminSettingsSectionNav(
+    selected: SettingsSection?,
+    onSelect: (SettingsSection) -> Unit,
+    onBackToList: () -> Unit,
+    detail: @Composable (SettingsSection) -> Unit,
+    modifier: Modifier = Modifier,
+    listHeader: @Composable ColumnScope.() -> Unit = {},
+) {
+    val dims = AuntieTheme.dims
+    val colors = AuntieTheme.colors
+
+    if (selected == null) {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(dims.space4)
+                .verticalScroll(rememberScrollState())
+        ) {
+            DenScreenHeading(
+                kicker = "The Den · Settings",
+                title = "How the Den",
+                accentTail = "runs.",
+                subtitle = "Pick a section to view and edit it. Each one saves on its own.",
+            )
+            Spacer(Modifier.height(dims.space5))
+
+            listHeader()
+            Spacer(Modifier.height(dims.space4))
+
+            SettingsSection.entries.forEachIndexed { index, section ->
+                AuntieEntityRow(
+                    title = section.title,
+                    subtitle = section.blurb,
+                    leading = {
+                        Icon(
+                            imageVector = section.icon,
+                            contentDescription = null,
+                            tint = colors.textDim,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    trailing = {
+                        Icon(
+                            imageVector = Lucide.ChevronRight,
+                            contentDescription = null,
+                            tint = colors.textFaint,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    showDivider = index < SettingsSection.entries.lastIndex,
+                    onClick = { onSelect(section) },
+                )
+            }
+        }
+    } else {
+        BackHandler { onBackToList() }
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(dims.space4)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClick = onBackToList)
+                    .padding(vertical = dims.space2),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Lucide.ChevronLeft,
+                    contentDescription = null,
+                    tint = colors.textDim,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(dims.space1))
+                Text(
+                    text = "All settings",
+                    style = AuntieTheme.typography.labelMedium,
+                    color = colors.textDim,
+                )
+            }
+            Spacer(Modifier.height(dims.space3))
+
+            detail(selected)
+        }
+    }
+}
+
 @Composable
 fun AdminSettingsScreen(
     onBack: () -> Unit,
@@ -241,147 +378,129 @@ fun AdminSettingsScreen(
         }
     }
 
+    // Which section is open. null = the section LIST; set = that section's
+    // detail. Held here (not in the ViewModel) because it is pure view state;
+    // the ViewModel-held businessSettings is untouched by switching sections, so
+    // an edit in one section persists (each panel instant-saves) regardless of
+    // where the operator navigates next.
+    var selectedSection by remember { mutableStateOf<SettingsSection?>(null) }
+
     Box(modifier = Modifier.fillMaxSize()) {
         AuntieScreenScaffold(
-            title = "Admin Settings",
-            onBack = onBack,
+            title = selectedSection?.title ?: "Admin Settings",
+            // Back steps out of an open section to the list first; only from the
+            // list itself does it leave Settings entirely.
+            onBack = { if (selectedSection != null) selectedSection = null else onBack() },
             imePaddingEnabled = true,
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(dims.space4)
-                    .verticalScroll(rememberScrollState())
-            ) {
-                DenScreenHeading(
-                    kicker = "The Den · Settings",
-                    title = "How the Den",
-                    accentTail = "runs.",
-                    subtitle = "Your profile, business operations, hours, notifications and account safety, all in one place.",
-                )
-                Spacer(Modifier.height(dims.space5))
-
-                // Account (punch list #4): the operator's personal profile + login now
-                // live on their own Account screen, reached from here.
-                PrimaryButton(
-                    label = "Your account: profile and login",
-                    onClick = onNavigateToAccount,
-                )
-                Spacer(Modifier.height(dims.space3))
-
-                // The operator's OWN receive prefs (what notifications reach YOU, within
-                // the channels the matrix below enabled). Lives on its own screen.
-                PrimaryButton(
-                    label = "Your notifications: what you receive",
-                    onClick = onNavigateToNotificationPrefs,
-                )
-                Spacer(Modifier.height(dims.space5))
-
-                BrandingPanel(
-                    settings = uiState.businessSettings,
-                    stagedLogoUrl = uiState.stagedLogoUrl,
-                    isUploadingLogo = uiState.isUploadingLogo,
-                    isLoading = uiState.isLoading,
-                    onPickLogo = {
-                        logoPicker.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            AdminSettingsSectionNav(
+                selected = selectedSection,
+                onSelect = { selectedSection = it },
+                onBackToList = { selectedSection = null },
+                listHeader = {
+                    // The operator's OWN account + receive-prefs each live on their
+                    // own screen; kept at the top of the section list as global
+                    // actions rather than as sections.
+                    PrimaryButton(
+                        label = "Your account: profile and login",
+                        onClick = onNavigateToAccount,
+                    )
+                    Spacer(Modifier.height(dims.space3))
+                    PrimaryButton(
+                        label = "Your notifications: what you receive",
+                        onClick = onNavigateToNotificationPrefs,
+                    )
+                },
+                detail = { section ->
+                    when (section) {
+                        SettingsSection.Branding -> BrandingPanel(
+                            settings = uiState.businessSettings,
+                            stagedLogoUrl = uiState.stagedLogoUrl,
+                            isUploadingLogo = uiState.isUploadingLogo,
+                            isLoading = uiState.isLoading,
+                            onPickLogo = {
+                                logoPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            onRemoveLogo = { viewModel.stageLogoRemoval() },
+                            onSaveBranding = { wm, tag, greet, tail ->
+                                viewModel.saveBranding(wm, tag, greet, tail)
+                            },
                         )
-                    },
-                    onRemoveLogo = { viewModel.stageLogoRemoval() },
-                    onSaveBranding = { wm, tag, greet, tail ->
-                        viewModel.saveBranding(wm, tag, greet, tail)
-                    },
-                )
-                Spacer(Modifier.height(dims.space5))
 
-                NavigationSettingsPanel(
-                    navConfig = uiState.profile.navConfig,
-                    canSave = uiState.profile.uid.isNotBlank(),
-                    onSave = { viewModel.saveNavConfig(it) },
-                )
-                Spacer(Modifier.height(dims.space5))
-
-                BusinessOperationsPanel(
-                    settings = uiState.businessSettings,
-                    isLoading = uiState.isLoading,
-                    onSettingsChange = { viewModel.updateBusinessSettings(it) },
-                )
-                Spacer(Modifier.height(dims.space5))
-
-                // A8 Payments: operator enters the peer-to-peer handles clients pay
-                // through; they render on the invoice "How to pay" section + the PDF.
-                PaymentOptionsPanel(
-                    settings = uiState.businessSettings,
-                    onSettingsChange = { viewModel.updateBusinessSettings(it) },
-                )
-                Spacer(Modifier.height(dims.space5))
-
-                // A8 W16/W17: the weather widgets' coverage area (city/metro/ZIP, not a
-                // street address).
-                WeatherAreaPanel(
-                    settings = uiState.businessSettings,
-                    onSettingsChange = { viewModel.updateBusinessSettings(it) },
-                )
-                Spacer(Modifier.height(dims.space5))
-
-                BusinessHoursPanel(
-                    hours = uiState.businessHours,
-                    onRowChange = viewModel::setBusinessHourRow,
-                    onSave = { viewModel.updateBusinessHours(uiState.businessHours) },
-                )
-                Spacer(Modifier.height(dims.space5))
-
-                // #7: Google Calendar sync + busy-block now live under Business Hours.
-                GcalSyncPanel()
-                Spacer(Modifier.height(dims.space5))
-
-                // #5: Time off now lives under Business Hours.
-                TimeOffPanel(
-                    settings = uiState.businessSettings,
-                    onSettingsChange = { updated ->
-                        viewModel.updateBusinessSettings(
-                            // Local update only; persisted on Save Business Settings above.
-                            uiState.businessSettings.copy(
-                                observedUsHolidays = updated.observedUsHolidays,
-                                companyHolidays = updated.companyHolidays,
-                                specialHours = updated.specialHours,
-                            )
+                        SettingsSection.Navigation -> NavigationSettingsPanel(
+                            navConfig = uiState.profile.navConfig,
+                            canSave = uiState.profile.uid.isNotBlank(),
+                            onSave = { viewModel.saveNavConfig(it) },
                         )
-                    },
-                )
-                Spacer(Modifier.height(dims.space5))
 
-                // Per-notification matrix = the GATE. For every notification the operator
-                // picks, per channel, Enable / Disable / Lock. Enable makes a channel
-                // available in each recipient's own notification settings; Disable hides
-                // it; Lock forces it on. The old global pause + coarse channel boxes are
-                // gone: the matrix is the single source of truth, and each user (admin +
-                // kinfolk) chooses what they receive on their own notifications screen.
-                NotificationMatrixPanel()
-                Spacer(Modifier.height(dims.space5))
+                        SettingsSection.BusinessOperations -> BusinessOperationsPanel(
+                            settings = uiState.businessSettings,
+                            isLoading = uiState.isLoading,
+                            onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                        )
 
-                // #7: booking behavior (auto-confirm + snap) now lives under Booking.
-                BookingBehaviorPanel(
-                    settings = uiState.businessSettings,
-                    onSettingsChange = { viewModel.updateBusinessSettings(it) },
-                )
-                Spacer(Modifier.height(dims.space5))
+                        // A8 Payments: the peer-to-peer handles clients pay through;
+                        // they render on the invoice "How to pay" section + the PDF.
+                        SettingsSection.Payments -> PaymentOptionsPanel(
+                            settings = uiState.businessSettings,
+                            onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                        )
 
-                IntegrationsPanel(uiState.integrationsHealth)
-                Spacer(Modifier.height(dims.space5))
+                        // A8 W16/W17: the weather widgets' coverage area (city/metro/
+                        // ZIP, not a street address).
+                        SettingsSection.WeatherArea -> WeatherAreaPanel(
+                            settings = uiState.businessSettings,
+                            onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                        )
 
-                // Tags: the two vocabularies (household + pet) the Den offers on a
-                // profile. Sits beside the vet bank because both are shared banks
-                // the directory picks from rather than per-household settings.
-                TagVocabularyPanel(
-                    settings = uiState.businessSettings,
-                    isLoading = uiState.isLoading,
-                    onSettingsChange = { viewModel.updateBusinessSettings(it) },
-                )
-                Spacer(Modifier.height(dims.space5))
+                        SettingsSection.BusinessHours -> BusinessHoursPanel(
+                            hours = uiState.businessHours,
+                            onRowChange = viewModel::setBusinessHourRow,
+                            onSave = { viewModel.updateBusinessHours(uiState.businessHours) },
+                        )
 
-                VetClinicsPanel()
-            }
+                        SettingsSection.CalendarSync -> GcalSyncPanel()
+
+                        SettingsSection.TimeOff -> TimeOffPanel(
+                            settings = uiState.businessSettings,
+                            onSettingsChange = { updated ->
+                                viewModel.updateBusinessSettings(
+                                    uiState.businessSettings.copy(
+                                        observedUsHolidays = updated.observedUsHolidays,
+                                        companyHolidays = updated.companyHolidays,
+                                        specialHours = updated.specialHours,
+                                    )
+                                )
+                            },
+                        )
+
+                        // Per-notification matrix = the GATE. For every notification
+                        // the operator picks, per channel, Enable / Disable / Lock.
+                        // Enable makes a channel available in each recipient's own
+                        // notification settings; Disable hides it; Lock forces it on.
+                        SettingsSection.Notifications -> NotificationMatrixPanel()
+
+                        SettingsSection.BookingBehavior -> BookingBehaviorPanel(
+                            settings = uiState.businessSettings,
+                            onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                        )
+
+                        SettingsSection.Integrations -> IntegrationsPanel(uiState.integrationsHealth)
+
+                        // Tags: the two vocabularies (household + pet) the Den offers
+                        // on a profile, shared banks the directory picks from.
+                        SettingsSection.Tags -> TagVocabularyPanel(
+                            settings = uiState.businessSettings,
+                            isLoading = uiState.isLoading,
+                            onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                        )
+
+                        SettingsSection.VetClinics -> VetClinicsPanel()
+                    }
+                },
+            )
         }
 
         StatusToast(
