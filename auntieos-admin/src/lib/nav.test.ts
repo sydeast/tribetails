@@ -53,6 +53,17 @@ describe('rail composition', () => {
     expect(e?.slug).toBe('sessions');
   });
 
+  it('places the Coverage Package Builder in Care Ops, just before Schedule', () => {
+    const careOps = railGroup('careOps');
+    const packages = careOps.findIndex((e) => e.dest === 'coveragePackages');
+    const schedule = careOps.findIndex((e) => e.dest === 'schedule');
+    expect(packages).toBeGreaterThanOrEqual(0);
+    expect(schedule).toBeGreaterThanOrEqual(0);
+    expect(packages).toBe(schedule - 1);
+    expect(careOps[packages]?.title).toBe('Packages');
+    expect(careOps[packages]?.slug).toBe('packages');
+  });
+
   it('every destination has a unique slug', () => {
     const slugs = NAV.map((e) => e.slug);
     expect(new Set(slugs).size).toBe(slugs.length);

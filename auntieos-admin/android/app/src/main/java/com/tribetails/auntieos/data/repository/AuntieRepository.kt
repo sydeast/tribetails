@@ -1082,6 +1082,43 @@ class AuntieRepository(
         Unit
     }.onFailure { AuntieLog.e("Failed to save business settings", it) }
 
+    // Coverage Package Builder config (visit menu + coverage rules). Single doc
+    // coverage_package_config/config, same posture as business_settings: direct
+    // client SDK get/set gated by firestore.rules (write: isAuntie). A missing
+    // doc (or an empty menu) resolves to the shipped defaults via withDefaults().
+    suspend fun getCoveragePackageConfig(): Result<CoveragePackageConfig> = runCatching {
+        AuntieLog.d("Fetching coverage package config")
+        ensureAuthenticated()
+        val snapshot = firestore.collection("coverage_package_config")
+            .document("config")
+            .get()
+            .await()
+
+        if (snapshot.exists()) {
+            (snapshot.toObject(CoveragePackageConfig::class.java) ?: CoveragePackageConfig()).withDefaults()
+        } else {
+            AuntieLog.i("Coverage package config not found, returning defaults")
+            CoveragePackageConfig().withDefaults()
+        }
+    }.onFailure { AuntieLog.e("Failed to get coverage package config", it) }
+
+    suspend fun saveCoveragePackageConfig(
+        config: CoveragePackageConfig,
+        updatedBy: String = "admin"
+    ): Result<Unit> = runCatching {
+        AuntieLog.i("Saving coverage package config by $updatedBy")
+        ensureAuthenticated()
+        // durations + rules are one saveable unit; merge() still guards the stamp
+        // fields and any future sibling field on the doc.
+        val stamped = config.copy(updatedAt = getCurrentTimestamp(), updatedBy = updatedBy)
+        firestore.collection("coverage_package_config")
+            .document("config")
+            .set(stamped, com.google.firebase.firestore.SetOptions.merge())
+            .await()
+        AuntieLog.d("Coverage package config saved successfully")
+        Unit
+    }.onFailure { AuntieLog.e("Failed to save coverage package config", it) }
+
     // Business Hours - single source of truth lives in ServiceRepository.
     // AuntieRepository delegates so AdminSettings + ServiceManagement screens
     // never diverge on the `business_hours` collection.

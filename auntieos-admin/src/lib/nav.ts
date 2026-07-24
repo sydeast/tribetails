@@ -18,6 +18,7 @@ export type Destination =
   | 'directory'
   | 'kintales'
   | 'gallery'
+  | 'coveragePackages'
   | 'schedule'
   | 'bookings'
   | 'sessions'
@@ -63,6 +64,7 @@ export const NAV: readonly NavEntry[] = [
   { dest: 'kintales', title: 'KinTales', group: 'den', slug: 'kintales' },
   { dest: 'gallery', title: 'Gallery', group: 'den', slug: 'gallery' },
 
+  { dest: 'coveragePackages', title: 'Packages', group: 'careOps', slug: 'packages' },
   { dest: 'schedule', title: 'Schedule', group: 'careOps', slug: 'schedule' },
   { dest: 'bookings', title: 'Bookings', group: 'careOps', slug: 'bookings' },
   // The rail says "Auntie Time"; the slug and the code say sessions.

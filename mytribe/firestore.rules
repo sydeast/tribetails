@@ -180,6 +180,15 @@ service cloud.firestore {
       allow write: if isAuntie();
     }
 
+ // Coverage Package Builder config (the admin's visit menu + coverage rules).
+ // Operator-global, edited only from the AuntieOS admin. Same posture as
+ // business_settings: the sandbox test admin may READ it (so the applet loads
+ // without a false permission banner) but only a real Auntie may WRITE.
+    match /coverage_package_config/{docId} {
+      allow read: if isAuntie() || isTestAdmin();
+      allow write: if isAuntie();
+    }
+
  // ── AuntieOS flat collections ─────────────────────────────────────────────
  // Kinfolk profile - kinfolk reads/writes their own doc (self-service updates).
     function onlyAllowedKinfolkFields() {

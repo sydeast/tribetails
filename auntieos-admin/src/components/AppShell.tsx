@@ -26,6 +26,7 @@ const LIVE_LINKS = {
   gallery: linkOptions({ to: '/gallery' }),
   templates: linkOptions({ to: '/templates' }),
   'tribal-intel': linkOptions({ to: '/tribal-intel' }),
+  packages: linkOptions({ to: '/packages' }),
   schedule: linkOptions({ to: '/schedule' }),
   inbox: linkOptions({ to: '/inbox' }),
   settings: linkOptions({ to: '/settings' }),

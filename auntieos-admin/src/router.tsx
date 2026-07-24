@@ -24,6 +24,7 @@ import { Templates } from './screens/Templates';
 import { KinTaleTemplates } from './screens/KinTaleTemplates';
 import { TribalIntel } from './screens/TribalIntel';
 import { Schedule } from './screens/Schedule';
+import { CoveragePackageBuilder } from './screens/CoveragePackageBuilder';
 import { Inbox } from './screens/Inbox';
 import { Settings } from './screens/Settings';
 import { Communicate } from './screens/Communicate';
@@ -240,6 +241,12 @@ const tribalIntelRoute = createRoute({
   component: TribalIntel,
 });
 
+const coveragePackagesRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'packages',
+  component: CoveragePackageBuilder,
+});
+
 const scheduleRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'schedule',
@@ -298,7 +305,7 @@ const mediaRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, mediaRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, mediaRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

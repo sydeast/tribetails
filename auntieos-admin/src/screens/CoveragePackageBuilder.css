@@ -1,0 +1,322 @@
+/* Coverage Package Builder. Den tokens only — no raw colours or radii. */
+
+.cpb {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.cpb__hint {
+  color: var(--color-text-dim);
+  font-size: var(--type-body-md-size);
+  margin: var(--space-2) 0;
+}
+
+/* ── save bar ─────────────────────────────────────────────────────────────── */
+
+.cpb__savebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.cpb__savebarActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.cpb__saved {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--color-text-dim);
+}
+.cpb__saved--muted {
+  color: var(--color-text-faint);
+}
+
+.cpb__banner {
+  margin-top: var(--space-2);
+}
+
+/* ── inputs ───────────────────────────────────────────────────────────────── */
+
+.cpb__input {
+  box-sizing: border-box;
+  width: 100%;
+  font: inherit;
+  font-family: var(--font-hanken);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.cpb__input:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.cpb__input::placeholder {
+  color: var(--color-text-faint);
+}
+
+.cpb__input--grow {
+  flex: 2 1 8rem;
+  width: auto;
+}
+.cpb__input--num {
+  width: 100%;
+  text-align: right;
+}
+.cpb__select {
+  flex: 1 1 8rem;
+  width: auto;
+}
+
+/* A number input paired with a unit affix ("min", "$"). */
+.cpb__unitField {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 5.5rem;
+}
+.cpb__unit {
+  position: absolute;
+  right: var(--space-3);
+  color: var(--color-text-faint);
+  font-size: var(--type-body-sm-size);
+  pointer-events: none;
+}
+.cpb__unit--lead {
+  right: auto;
+  left: var(--space-3);
+}
+.cpb__unitField .cpb__input--num {
+  padding-right: 2.2rem;
+}
+.cpb__input--price {
+  padding-right: var(--space-3);
+  padding-left: 1.4rem;
+}
+
+/* ── lists / rows ─────────────────────────────────────────────────────────── */
+
+.cpb__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.cpb__durationRow,
+.cpb__addRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.cpb__addRow {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: var(--border-hairline) dashed var(--color-border-soft);
+}
+
+/* ── coverage rules ───────────────────────────────────────────────────────── */
+
+.cpb__ruleRow {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.cpb__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  flex: 1 1 10rem;
+}
+.cpb__fieldLabel {
+  font-size: var(--type-label-md-size);
+  color: var(--color-text-dim);
+}
+
+.cpb__overnight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+.cpb__overnightText {
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+
+.cpb__pinned {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: var(--border-hairline) dashed var(--color-border-soft);
+}
+.cpb__pinnedHeading {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  margin: 0 0 var(--space-3);
+}
+.cpb__pinnedRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border-radius: var(--radius-card);
+  margin-bottom: var(--space-2);
+  font-size: var(--type-body-md-size);
+}
+.cpb__pinnedLabel {
+  flex: 2;
+  font-weight: 600;
+}
+.cpb__pinnedTime {
+  flex: 1;
+  color: var(--color-primary);
+}
+.cpb__pinnedDuration {
+  flex: 1;
+  color: var(--color-text-dim);
+}
+
+/* ── schedule patterns ────────────────────────────────────────────────────── */
+
+.cpb__patternGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--space-4);
+}
+
+.cpb__pattern {
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  padding: var(--space-4);
+  background: var(--color-surface);
+}
+.cpb__pattern--approved {
+  border: var(--border-emphasis) solid var(--color-primary);
+  background: var(--color-surface-glass);
+}
+
+.cpb__patternHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: var(--space-3);
+}
+.cpb__patternStrategy {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-primary);
+}
+.cpb__patternPrice {
+  font-family: var(--font-fraunces);
+  font-size: var(--type-headline-md-size);
+  font-weight: 600;
+}
+.cpb__perDay {
+  font-family: var(--font-hanken);
+  font-size: var(--type-body-sm-size);
+  font-weight: 400;
+  color: var(--color-text-faint);
+  margin-left: 2px;
+}
+
+.cpb__patternList {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.cpb__patternItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+}
+.cpb__glyphClock {
+  color: var(--color-text-faint);
+  flex-shrink: 0;
+}
+.cpb__patternTime {
+  font-weight: 600;
+  min-width: 4rem;
+  flex-shrink: 0;
+}
+.cpb__patternTpLabel {
+  color: var(--color-text-dim);
+}
+.cpb__approve {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ── coverage window & final price ────────────────────────────────────────── */
+
+.cpb__dayCount {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-dim);
+  margin-top: var(--space-4);
+}
+.cpb__glyphInline {
+  color: var(--color-text-faint);
+}
+
+.cpb__finalPrice {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  padding: var(--space-4) var(--space-5);
+  margin-top: var(--space-4);
+}
+.cpb__finalPriceLabel {
+  font-family: var(--font-fraunces);
+  font-size: var(--type-title-lg-size);
+  font-weight: 600;
+}
+.cpb__finalPriceSub {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  margin-top: 2px;
+}
+.cpb__finalPriceValue {
+  font-family: var(--font-fraunces);
+  font-size: var(--type-display-md-size);
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+@media (max-width: 640px) {
+  .cpb__durationRow,
+  .cpb__addRow {
+    gap: var(--space-2);
+  }
+  .cpb__input--grow {
+    flex-basis: 100%;
+  }
+}
