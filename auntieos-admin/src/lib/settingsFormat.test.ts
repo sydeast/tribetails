@@ -3,21 +3,15 @@ import {
   DAYS_OF_WEEK,
   businessHoursRows,
   serviceRateRows,
-  paymentRows,
   US_HOLIDAYS,
   humanizeId,
   observedHolidayLabels,
   parseDatedEntry,
   companyHolidayRows,
   specialHourRows,
-  boolLabel,
-  brandingRows,
-  portalBannerSummary,
-  portalChatSummary,
   portalHomeSummary,
   lastSavedLabel,
 } from './settingsFormat';
-import { DEFAULT_BUSINESS_SETTINGS } from '../api/settings';
 
 describe('businessHoursRows', () => {
   it('renders one row per day, Monday first, matching the wasm daysOfWeek order', () => {
@@ -50,15 +44,6 @@ describe('serviceRateRows', () => {
 
   it('renders no rows for an empty map, not a fabricated placeholder row', () => {
     expect(serviceRateRows({})).toEqual([]);
-  });
-});
-
-describe('paymentRows', () => {
-  it('shows the three handles in Venmo/PayPal/Cash App order', () => {
-    const rows = paymentRows({ venmoHandle: '@tribetails', paypalHandle: '', cashappHandle: '$tribetails' });
-    expect(rows.map((r) => r.label)).toEqual(['Venmo', 'PayPal', 'Cash App']);
-    expect(rows[0]).toEqual({ label: 'Venmo', value: '@tribetails', isSet: true });
-    expect(rows[1]).toEqual({ label: 'PayPal', value: 'Not set (hidden on invoices)', isSet: false });
   });
 });
 
@@ -124,56 +109,8 @@ describe('companyHolidayRows / specialHourRows', () => {
   });
 });
 
-describe('boolLabel', () => {
-  it('renders On/Off', () => {
-    expect(boolLabel(true)).toBe('On');
-    expect(boolLabel(false)).toBe('Off');
-  });
-});
-
-describe('brandingRows', () => {
-  it('shows the real value when set', () => {
-    const rows = brandingRows({
-      logoUrl: 'https://cdn/logo.png',
-      brandWordmark: 'Tribe Tails',
-      brandTagline: 'Care, always',
-      homeGreeting: 'Evening',
-      homeAccentTail: 'Friend.',
-    });
-    expect(rows.find((r) => r.label === 'App name')?.value).toBe('Tribe Tails');
-  });
-
-  it('shows the shipped-default hint, not a blank value, when a field is unset', () => {
-    const rows = brandingRows(DEFAULT_BUSINESS_SETTINGS);
-    expect(rows.find((r) => r.label === 'App name')?.value).toBe('Default: "AuntieOS"');
-    expect(rows.every((r) => r.value !== '')).toBe(true);
-  });
-});
-
-describe('MyTribe portal summaries', () => {
-  it('portalBannerSummary reports Off when disabled', () => {
-    expect(portalBannerSummary(DEFAULT_BUSINESS_SETTINGS.mytribePortal.banner)).toBe('Off');
-  });
-
-  it('portalBannerSummary quotes the message when enabled', () => {
-    expect(portalBannerSummary({ enabled: true, message: 'We are closed today', tone: 'info', dismissMode: 'none', id: 'x' })).toBe(
-      'On: "We are closed today"',
-    );
-  });
-
-  it('portalBannerSummary flags a message-less enabled banner', () => {
-    expect(portalBannerSummary({ enabled: true, message: '', tone: 'info', dismissMode: 'none', id: 'x' })).toBe(
-      'On (no message set)',
-    );
-  });
-
-  it('portalChatSummary reports the away message when set', () => {
-    expect(
-      portalChatSummary({ enabled: true, awayMessage: "We're out", hoursEnabled: false, hours: {}, maxMessageLength: 2000, rateLimitPerHour: 0 }),
-    ).toBe('On, away message: "We\'re out"');
-  });
-
-  it('portalHomeSummary counts enabled sections out of the configured total', () => {
+describe('portalHomeSummary', () => {
+  it('counts enabled sections out of the configured total', () => {
     expect(
       portalHomeSummary({
         sections: [
@@ -185,7 +122,7 @@ describe('MyTribe portal summaries', () => {
     ).toBe('2 of 3 sections shown');
   });
 
-  it('portalHomeSummary reports the default layout when no sections are configured', () => {
+  it('reports the default layout when no sections are configured', () => {
     expect(portalHomeSummary({ sections: [] })).toBe('Default layout (no custom sections configured)');
   });
 });

@@ -1,12 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
 import { formatWhen, type FsTime } from './time';
 import { str } from './coerce';
-import type {
-  BusinessSettings,
-  PortalBanner,
-  PortalChat,
-  PortalHome,
-} from '../api/settings';
+import type { PortalHome } from '../api/settings';
 
 /**
  * Pure Settings-overview formatting, kept out of the screen so the mapping
@@ -76,27 +71,6 @@ export function serviceRateRows(rates: Record<string, string>): ServiceRateRow[]
       const value = str(rate);
       return { type, rate: value.trim() === '' ? 'Not set' : value };
     });
-}
-
-// ── Payment handles ─────────────────────────────────────────────────────────
-
-export interface PaymentRow {
-  label: string;
-  value: string;
-  isSet: boolean;
-}
-
-/** Venmo / PayPal / Cash App, in the order the wasm Payment Options panel shows them. */
-export function paymentRows(settings: Pick<BusinessSettings, 'venmoHandle' | 'paypalHandle' | 'cashappHandle'>): PaymentRow[] {
-  const rows: Array<[string, string]> = [
-    ['Venmo', settings.venmoHandle],
-    ['PayPal', settings.paypalHandle],
-    ['Cash App', settings.cashappHandle],
-  ];
-  return rows.map(([label, value]) => {
-    const trimmed = value.trim();
-    return { label, value: trimmed === '' ? 'Not set (hidden on invoices)' : trimmed, isSet: trimmed !== '' };
-  });
 }
 
 // ── Holidays / time off ─────────────────────────────────────────────────────
@@ -180,57 +154,7 @@ function sortByDate(rows: DatedEntry[]): DatedEntry[] {
   });
 }
 
-// ── Booking behavior ────────────────────────────────────────────────────────
-
-/** "On" / "Off", the wasm toggle's two states rendered as read-only text. */
-export function boolLabel(value: boolean): 'On' | 'Off' {
-  return value ? 'On' : 'Off';
-}
-
-// ── Branding ─────────────────────────────────────────────────────────────────
-
-export interface BrandingRow {
-  label: string;
-  value: string;
-}
-
-/**
- * The five 17.2 branding fields, each blank-safe: a blank field means "use the
- * shipped default" (per the `BusinessSettings.logoUrl` doc comment), so the
- * overview says so explicitly rather than rendering an empty value that reads
- * as a data-loss bug.
- */
-export function brandingRows(
-  settings: Pick<BusinessSettings, 'logoUrl' | 'brandWordmark' | 'brandTagline' | 'homeGreeting' | 'homeAccentTail'>,
-): BrandingRow[] {
-  const rows: Array<[string, string, string]> = [
-    ['Logo', settings.logoUrl, 'Default PawPrint glyph'],
-    ['App name', settings.brandWordmark, 'Default: "AuntieOS"'],
-    ['Tagline', settings.brandTagline, 'Default: "Tribe Tails Care"'],
-    ['Home greeting', settings.homeGreeting, 'Default: time-aware greeting'],
-    ['Home accent word', settings.homeAccentTail, 'Default: "Auntie."'],
-  ];
-  return rows.map(([label, value, defaultHint]) => {
-    const trimmed = value.trim();
-    return { label, value: trimmed === '' ? defaultHint : trimmed };
-  });
-}
-
 // ── MyTribe portal ───────────────────────────────────────────────────────────
-
-/** One-line summary of the top banner shown to kinfolk in the portal. */
-export function portalBannerSummary(banner: PortalBanner): string {
-  if (!banner.enabled) return 'Off';
-  const message = banner.message.trim();
-  return message === '' ? 'On (no message set)' : `On: "${message}"`;
-}
-
-/** One-line summary of the Message Auntie chat surface. */
-export function portalChatSummary(chat: PortalChat): string {
-  if (!chat.enabled) return 'Off';
-  const away = chat.awayMessage.trim();
-  return away === '' ? 'On' : `On, away message: "${away}"`;
-}
 
 /** "3 of 5 sections shown": how many configured Home sections are enabled. */
 export function portalHomeSummary(home: PortalHome): string {
