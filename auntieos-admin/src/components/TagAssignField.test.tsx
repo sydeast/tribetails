@@ -105,4 +105,67 @@ describe('TagAssignField', () => {
     expect(input).toHaveValue('');
     expect(screen.queryByRole('button', { name: /to your tags/i })).toBeNull();
   });
+
+  it('dismisses the list on Escape, not just the draft', async () => {
+    render(<TagAssignField value={[]} vocab={vocab} onChange={vi.fn()} />);
+    const input = screen.getByLabelText(/add a tag/i);
+    await userEvent.type(input, 'vi');
+    expect(await screen.findByRole('button', { name: /^⭐?\s*VIP$/i })).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+
+    // Clearing alone is not a dismissal: an empty draft suggests the whole
+    // unassigned vocabulary, so the list would come back BIGGER than it was.
+    expect(input).toHaveValue('');
+    expect(screen.queryByRole('button', { name: /^⭐?\s*VIP$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Vet visit/i })).toBeNull();
+  });
+
+  it('Escape reaches an upstream handler only once the list is closed', async () => {
+    // Standing in for the Escape-to-close on a surrounding dialog.
+    const upstream = vi.fn();
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') upstream();
+    }
+    document.addEventListener('keydown', onKey);
+    try {
+      render(<TagAssignField value={[]} vocab={vocab} onChange={vi.fn()} />);
+      const input = screen.getByLabelText(/add a tag/i);
+      await userEvent.type(input, 'vi');
+      expect(await screen.findByRole('button', { name: /^⭐?\s*VIP$/i })).toBeInTheDocument();
+
+      // Open list: the key belongs to the list.
+      await userEvent.keyboard('{Escape}');
+      expect(upstream).not.toHaveBeenCalled();
+
+      // Closed list: the key belongs to whatever is upstream.
+      await userEvent.keyboard('{Escape}');
+      expect(upstream).toHaveBeenCalledTimes(1);
+    } finally {
+      document.removeEventListener('keydown', onKey);
+    }
+  });
+
+  it('reopens the suggestions after Escape, by typing or by refocusing', async () => {
+    render(
+      <div>
+        <TagAssignField value={[]} vocab={vocab} onChange={vi.fn()} />
+        <button type="button">Somewhere else</button>
+      </div>,
+    );
+    const input = screen.getByLabelText(/add a tag/i);
+    await userEvent.type(input, 'vi');
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('button', { name: /^⭐?\s*VIP$/i })).toBeNull();
+
+    // Typing brings it back.
+    await userEvent.type(input, 'vi');
+    expect(await screen.findByRole('button', { name: /^⭐?\s*VIP$/i })).toBeInTheDocument();
+
+    // So does leaving and coming back.
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(screen.getByRole('button', { name: /somewhere else/i }));
+    await userEvent.click(input);
+    expect(await screen.findByRole('button', { name: /^⭐?\s*VIP$/i })).toBeInTheDocument();
+  });
 });
