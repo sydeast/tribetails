@@ -32,7 +32,7 @@ fun legacyAudienceSet(audience: String): Set<String> = when (audience.trim().low
 /** One notification type from the server catalog. */
 data class NotificationCatalogEntry(
     val key: String,
-    /** Short human row title from the catalog (e.g. "Visit report sent"). */
+    /** Short human row title from the catalog (e.g. "KinTale (visit report) published"). */
     val label: String = "",
     val category: String = "",
     val audience: String = "",

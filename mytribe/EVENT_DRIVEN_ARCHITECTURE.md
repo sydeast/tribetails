@@ -102,7 +102,17 @@ spine; the full callable list is longer (read `index.ts`).
 - `onKinTaleUpdate`, fires `kintale.note.added` when an already-SENT report gains
   more body text or more media. Debounced + content-digest idempotent via a parallel
   `kinTaleNotifications/{reportId}` tracker.
-- `onKinTaleCommentCreate`, notifies on a new report comment.
+- `onKinTaleCommentCreate`, fires `kintale.comment.added` for a post in the
+  comment box under a report (the `comments` subcollection). Distinct from
+  `kintale.note.added`, which is the report body growing.
+
+The `dispatchVisitNotification` callable (event `report_sent`, called by the
+Auntie apps on Send) enqueues under the retired key `kincare.report.sent`. Since
+2026-07-24 that key is an ALIAS of `kintale.published` (see
+`NOTIFICATION_KEY_ALIASES` in `functions/src/notifications/catalog.ts`): one
+catalog row, one switch, both emitters. Note the two emitters still fire at
+different moments, `onKinTaleCreate` on the DRAFT write and the callable on
+Send.
 
 ### Kin (pet) mirror triggers
 

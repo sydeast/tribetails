@@ -1,5 +1,10 @@
 import { db } from '../lib/firestoreAdmin';
-import { getNotificationDef } from './catalog';
+import {
+  canonicalNotificationKey,
+  getNotificationDef,
+  legacyCategoriesFor,
+  legacyKeysFor,
+} from './catalog';
 import type {
   AudienceStream,
   BusinessNotificationOverride,
@@ -80,6 +85,27 @@ export async function loadUserPrefs(
   return raw ?? {};
 }
 
+/**
+ * Picks the stored override row that governs [key], following key aliases.
+ *
+ * An override row is authored as a unit (enabled + channels + locks), so this
+ * picks ONE row rather than merging fields across rows: the canonical row if
+ * the operator has one, otherwise the row left behind under a retired key.
+ */
+export function resolveOverrideForKey(
+  byKey: Record<string, BusinessNotificationOverride>,
+  key: string,
+): BusinessNotificationOverride | null {
+  const canonical = canonicalNotificationKey(key);
+  const own = byKey[canonical];
+  if (own) return own;
+  for (const legacy of legacyKeysFor(canonical)) {
+    const stale = byKey[legacy];
+    if (stale) return stale;
+  }
+  return null;
+}
+
 /** Reads the business admin override for a given notification key. */
 export async function loadBusinessOverride(
   key: string,
@@ -87,7 +113,36 @@ export async function loadBusinessOverride(
   const snap = await db().collection('businessSettings').doc('notifications').get();
   if (!snap.exists) return null;
   const data = snap.data() as { byKey?: Record<string, BusinessNotificationOverride> } | undefined;
-  return data?.byKey?.[key] ?? null;
+  return resolveOverrideForKey(data?.byKey ?? {}, key);
+}
+
+/**
+ * The user's explicit choice for [ch] on [def], or undefined when they never
+ * expressed one.
+ *
+ * Alias-aware, canonical-first at each precedence level:
+ *   byKey[canonical] → byKey[legacy] → byCategory[canonical] → byCategory[legacy]
+ *
+ * Canonical-first matters: the merged switch in the settings UI writes the
+ * canonical key, so a household's newest deliberate choice always wins over
+ * whatever was left under the retired key. Without that, the UI would show ON
+ * while the dispatcher stayed OFF. Legacy-next matters just as much: a
+ * household that opted out before the merge stays opted out.
+ */
+function explicitUserChoice(
+  def: NotificationDef,
+  userPrefs: UserNotificationPrefs,
+  ch: Channel,
+): boolean | undefined {
+  for (const key of [def.key, ...legacyKeysFor(def.key)]) {
+    const v = userPrefs.byKey?.[key]?.[ch];
+    if (typeof v === 'boolean') return v;
+  }
+  for (const category of [def.category, ...legacyCategoriesFor(def.key)]) {
+    const v = userPrefs.byCategory?.[category]?.[ch];
+    if (typeof v === 'boolean') return v;
+  }
+  return undefined;
 }
 
 /**
@@ -104,6 +159,8 @@ export async function loadBusinessOverride(
  *   3. catalog.required.{ch} = true               , channel defaults ON (unless disabled in 2)
  *   4. user prefs byKey.{ch}                      , granular override
  *   5. user prefs byCategory.{cat}.{ch}           , category default
+ *      (4 and 5 follow key aliases, canonical first, then any retired key
+ *       merged into it, so pre-merge choices keep being honored)
  *   6. catalog allowedChannels                    , final fallback
  *      (email defaults ON; sms/push default OFF until user opts in)
  *
@@ -161,15 +218,11 @@ export function resolveChannels(
       continue;
     }
 
-    const userKeyPref = userPrefs.byKey?.[def.key]?.[ch];
-    if (typeof userKeyPref === 'boolean') {
-      out[ch] = userKeyPref;
-      continue;
-    }
-
-    const userCatPref = userPrefs.byCategory?.[def.category]?.[ch];
-    if (typeof userCatPref === 'boolean') {
-      out[ch] = userCatPref;
+    // Steps 4+5, alias-aware: per-key then per-category, canonical before any
+    // retired key that was merged into this one (see explicitUserChoice).
+    const userChoice = explicitUserChoice(def, userPrefs, ch);
+    if (typeof userChoice === 'boolean') {
+      out[ch] = userChoice;
       continue;
     }
 

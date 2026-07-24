@@ -1,12 +1,18 @@
 export { enqueueNotification } from './dispatcher';
 export {
   NOTIFICATION_CATALOG,
+  NOTIFICATION_KEY_ALIASES,
+  canonicalNotificationKey,
   getNotificationDef,
+  legacyCategoriesFor,
+  legacyKeysFor,
   listNotificationKeys,
 } from './catalog';
+export type { NotificationKeyAlias } from './catalog';
 export {
   loadUserPrefs,
   loadBusinessOverride,
+  resolveOverrideForKey,
   overrideForStream,
   streamForRecipient,
   resolveChannels,

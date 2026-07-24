@@ -4,7 +4,14 @@ import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
-import { getNotificationDef, NOTIFICATION_CATALOG } from '../notifications/catalog';
+import {
+  canonicalNotificationKey,
+  getNotificationDef,
+  legacyKeysFor,
+  NOTIFICATION_CATALOG,
+  NOTIFICATION_KEY_ALIASES,
+} from '../notifications/catalog';
+import { resolveOverrideForKey } from '../notifications/prefs';
 import type { BusinessNotificationOverride } from '../notifications/types';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
@@ -122,8 +129,24 @@ export async function getBusinessNotificationOverridesHandler(
     ...(def.marketingCategory ? { marketingCategory: def.marketingCategory } : {}),
   }));
 
+  // Key aliases: a row the operator saved under a since-retired key still
+  // governs dispatch, so the matrix must show it on the canonical row rather
+  // than as an invisible shadow setting. Fold it in, drop the retired row, and
+  // leave any other stored key untouched (an unknown key is the operator's
+  // data, not ours to discard).
+  const stored = data?.byKey ?? {};
+  const overrides: Record<string, BusinessNotificationOverride> = {};
+  for (const [key, value] of Object.entries(stored)) {
+    if (NOTIFICATION_KEY_ALIASES[key]) continue;
+    overrides[key] = value;
+  }
+  for (const key of Object.keys(NOTIFICATION_CATALOG)) {
+    const resolved = resolveOverrideForKey(stored, key);
+    if (resolved) overrides[key] = resolved;
+  }
+
   return {
-    overrides: data?.byKey ?? {},
+    overrides,
     catalog,
     updatedAtMs: data?.updatedAtMs ?? null,
   };
@@ -133,8 +156,10 @@ export async function saveBusinessNotificationOverrideHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ ok: true; key: string }> {
   const args = SaveArgs.parse(req.data);
-  // Validates the key exists in the catalog (throws on an unknown key).
+  // Validates the key exists in the catalog (throws on an unknown key). A
+  // retired key from a stale client resolves to the row that replaced it.
   getNotificationDef(args.key);
+  const key = canonicalNotificationKey(args.key);
 
   // #7 (2026-06-08): the operator may now turn off even catalog-required channels
   // and always-on notifications. The admin UI surfaces a warning first
@@ -147,12 +172,18 @@ export async function saveBusinessNotificationOverrideHandler(
     stored.lockReason = FieldValue.delete();
   }
 
+  // The operator has now made an explicit choice on the merged row, so any
+  // value left under a retired key is superseded. Clearing it in the same write
+  // keeps exactly one row per notification and stops the old value resurfacing.
+  const byKey: Record<string, unknown> = { [key]: stored };
+  for (const legacy of legacyKeysFor(key)) byKey[legacy] = FieldValue.delete();
+
   await db()
     .collection('businessSettings')
     .doc('notifications')
     .set(
       {
-        byKey: { [args.key]: stored },
+        byKey,
         updatedAtMs: Date.now(),
         updatedAt: FieldValue.serverTimestamp(),
       },
@@ -163,21 +194,27 @@ export async function saveBusinessNotificationOverrideHandler(
     severity: 'info',
     function: 'saveBusinessNotificationOverride',
     event: 'admin.notif.override.saved',
-    extra: { key: args.key, actorUid: req.auth?.uid, override: args.override },
+    extra: { key, requestedKey: args.key, actorUid: req.auth?.uid, override: args.override },
   });
-  return { ok: true, key: args.key };
+  return { ok: true, key };
 }
 
 export async function deleteBusinessNotificationOverrideHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ ok: true; key: string }> {
   const args = DeleteArgs.parse(req.data);
+  const key = canonicalNotificationKey(args.key);
+  // Reset-to-default must clear the retired keys too, or the row would spring
+  // back to whatever was stored under the pre-merge key.
+  const byKey: Record<string, unknown> = { [key]: FieldValue.delete() };
+  for (const legacy of legacyKeysFor(key)) byKey[legacy] = FieldValue.delete();
+
   await db()
     .collection('businessSettings')
     .doc('notifications')
     .set(
       {
-        byKey: { [args.key]: FieldValue.delete() },
+        byKey,
         updatedAtMs: Date.now(),
       },
       { merge: true },
@@ -187,9 +224,9 @@ export async function deleteBusinessNotificationOverrideHandler(
     severity: 'info',
     function: 'deleteBusinessNotificationOverride',
     event: 'admin.notif.override.deleted',
-    extra: { key: args.key, actorUid: req.auth?.uid },
+    extra: { key, requestedKey: args.key, actorUid: req.auth?.uid },
   });
-  return { ok: true, key: args.key };
+  return { ok: true, key };
 }
 
 export const getBusinessNotificationOverrides = onCall(

@@ -1,4 +1,4 @@
-import type { Channel, NotificationDef } from './types';
+import type { Category, Channel, NotificationDef } from './types';
 
 /**
  * Notification catalog, single source of truth.
@@ -110,21 +110,9 @@ const CATALOG_LIST: NotificationDef[] = [
     templates: { email: 'kincare.auntie.departed', sms: 'kincare.auntie.departed', push: 'kincare.auntie.departed' },
     description: 'Auntie departed KinCare.',
   },
-  {
-    key: 'kincare.report.sent',
-    label: 'Visit report sent',
-    audience: 'kinfolk',
-    audiences: { kinfolk: true },
-    category: 'visit',
-    allowedChannels: ['email', 'sms', 'push'],
-    required: {},
-    alwaysEnabled: false,
-    kinfolkFacing: true,
-    deliveryMode: 'trigger',
-    recipientResolver: 'kinfolkAcct',
-    templates: { email: 'kincare.report.sent', sms: 'kincare.report.sent', push: 'kincare.report.sent' },
-    description: 'KinTale / visit report published for a KinCare visit.',
-  },
+  // NOTE (2026-07-24): `kincare.report.sent` used to live here, a second row
+  // for the same real-world moment as `kintale.published`. It is now an alias
+  // (see NOTIFICATION_KEY_ALIASES below), not a catalog row.
   {
     key: 'kincare.unavailable',
     label: 'KinCare marked unavailable',
@@ -232,8 +220,10 @@ const CATALOG_LIST: NotificationDef[] = [
   // KINTALE
   // ─────────────────────────────────────────────────────────
   {
+    // 2026-07-24: absorbed the old `kincare.report.sent` row. A KinTale IS the
+    // visit report, so the household had two switches for one thing.
     key: 'kintale.published',
-    label: 'New KinTale published',
+    label: 'KinTale (visit report) published',
     audience: 'kinfolk',
     audiences: { kinfolk: true },
     category: 'kintale',
@@ -244,12 +234,12 @@ const CATALOG_LIST: NotificationDef[] = [
     deliveryMode: 'trigger',
     recipientResolver: 'kinfolkAcct',
     templates: { email: 'kintale.published', sms: 'kintale.published', push: 'kintale.published' },
-    description: 'New KinTale published.',
+    description: 'Your Auntie published a KinTale, the written report from a KinCare visit.',
   },
   {
     // Run-4 #13 audit: in BOTH bucket lists ("Comment is added to a KinTale").
     key: 'kintale.comment.added',
-    label: 'Comment added to a KinTale',
+    label: 'New comment on a KinTale (comment box)',
     audience: 'both',
     audiences: { kinfolk: true, staff: true },
     category: 'kintale',
@@ -264,11 +254,14 @@ const CATALOG_LIST: NotificationDef[] = [
     // Run-4 #13: in BOTH buckets -> also notify the business of the new comment.
     secondaryResolver: 'businessAdmins',
     templates: { email: 'kintale.comment.added', push: 'kintale.comment.added' },
-    description: 'Comments added to a KinTale (5-min trailing digest).',
+    description:
+      'Someone posted in the comment box under a KinTale. Collected into one message every 5 minutes.',
   },
   {
+    // The trigger is onKinTaleUpdate: an ALREADY-SENT KinTale gains more body
+    // text or more photos. That is the KinTale itself, not the comment box.
     key: 'kintale.note.added',
-    label: 'Auntie added a note to a KinTale',
+    label: 'Auntie added to a KinTale after sending',
     audience: 'kinfolk',
     audiences: { kinfolk: true },
     category: 'kintale',
@@ -279,7 +272,8 @@ const CATALOG_LIST: NotificationDef[] = [
     deliveryMode: 'trigger',
     recipientResolver: 'kinfolkAcct',
     templates: { email: 'kintale.note.added', push: 'kintale.note.added' },
-    description: 'Auntie posted a note in the kinfolk-facing conversation on a KinTale.',
+    description:
+      'Your Auntie added more words or more photos to a KinTale you already received.',
   },
   // ─────────────────────────────────────────────────────────
   // INVOICE / QUOTE / PAYMENT
@@ -826,8 +820,69 @@ export function alwaysEnabledForStream(
   return def.alwaysEnabledStreams[stream] === true;
 }
 
+/**
+ * A retired key that now resolves to a canonical catalog row.
+ *
+ * Aliases are how a catalog row gets merged into another WITHOUT stranding the
+ * preferences and business overrides already stored against the old key. The
+ * old key keeps working everywhere a key is accepted (dispatch, template
+ * resolution, stored prefs, stored overrides); it just no longer appears in the
+ * catalog, so the settings UI shows one switch instead of two.
+ *
+ * Deleting an alias entry is a data-loss event: every kinfolk and operator who
+ * set a preference under that key silently reverts to defaults. Aliases stay.
+ */
+export interface NotificationKeyAlias {
+  /** The catalog row this legacy key now resolves to. */
+  canonical: string;
+  /**
+   * The category the legacy row used to sit in. Preference resolution falls
+   * back to it, so a household that muted the whole legacy category row does
+   * not silently start receiving the merged notification.
+   */
+  legacyCategory: Category;
+}
+
+/**
+ * 2026-07-24: `kincare.report.sent` and `kintale.published` were two switches
+ * for one event. A KinTale IS the visit report:
+ *   - `kincare.report.sent` was dispatched by the `dispatchVisitNotification`
+ *     callable (event `report_sent`) when an Auntie taps Send on a KinTale.
+ *   - `kintale.published` is dispatched by the `onKinTaleCreate` trigger on the
+ *     same `kin_care_reports` document.
+ * Both told the same household the same thing, and both linked to the same
+ * KinTale. `kintale.published` is the canonical key; the old one is an alias.
+ */
+export const NOTIFICATION_KEY_ALIASES: Readonly<Record<string, NotificationKeyAlias>> =
+  Object.freeze({
+    'kincare.report.sent': { canonical: 'kintale.published', legacyCategory: 'visit' },
+  });
+
+/** The canonical key for [key]; returns [key] unchanged when it is not an alias. */
+export function canonicalNotificationKey(key: string): string {
+  return NOTIFICATION_KEY_ALIASES[key]?.canonical ?? key;
+}
+
+/** Every retired key that resolves to [canonicalKey], in declaration order. */
+export function legacyKeysFor(canonicalKey: string): string[] {
+  return Object.entries(NOTIFICATION_KEY_ALIASES)
+    .filter(([, alias]) => alias.canonical === canonicalKey)
+    .map(([key]) => key);
+}
+
+/** The categories the retired keys for [canonicalKey] used to live under. */
+export function legacyCategoriesFor(canonicalKey: string): Category[] {
+  return Object.values(NOTIFICATION_KEY_ALIASES)
+    .filter((alias) => alias.canonical === canonicalKey)
+    .map((alias) => alias.legacyCategory);
+}
+
+/**
+ * Resolves a key (canonical OR alias) to its catalog row. Throws on anything
+ * else, naming the key exactly as the caller passed it, so a typo stays loud.
+ */
 export function getNotificationDef(key: string): NotificationDef {
-  const def = NOTIFICATION_CATALOG[key];
+  const def = NOTIFICATION_CATALOG[canonicalNotificationKey(key)];
   if (!def) throw new Error(`notificationCatalog: unknown key '${key}'`);
   return def;
 }
