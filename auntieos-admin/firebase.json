@@ -47,7 +47,7 @@
           },
           {
             "key": "Content-Security-Policy",
-            "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https://res.cloudinary.com; connect-src 'self' https://*.googleapis.com https://*.cloudfunctions.net https://*.run.app https://api.cloudinary.com https://res.cloudinary.com https://*.sentry.io; frame-src 'none'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+            "value": "default-src 'self'; script-src 'self' https://www.google.com https://www.gstatic.com https://www.recaptcha.net https://apis.google.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https://res.cloudinary.com https://www.gstatic.com; connect-src 'self' https://*.googleapis.com https://*.cloudfunctions.net https://*.run.app https://api.cloudinary.com https://res.cloudinary.com https://*.sentry.io https://www.google.com https://www.recaptcha.net; frame-src https://www.google.com https://www.recaptcha.net https://auntieos-ttpc.firebaseapp.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
           },
           {
             "key": "Cache-Control",
