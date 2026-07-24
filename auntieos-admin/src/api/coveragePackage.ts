@@ -3,6 +3,7 @@ import { db } from '../lib/firebase';
 import {
   DEFAULT_COVERAGE_RULES,
   DEFAULT_DURATIONS,
+  withKind,
   type CoverageRules,
   type Duration,
   type PinnedTime,
@@ -57,7 +58,13 @@ function decodeDuration(raw: unknown): Duration | null {
   const id = pickString(raw.id, '');
   const label = pickString(raw.label, '');
   if (id === '' || label === '') return null;
-  return { id, label, minutes: pickNumber(raw.minutes, 0), price: pickNumber(raw.price, 0) };
+  // `kind` splits day visits from overnights. Durations saved before it existed
+  // carry none; `withKind` migrates them (only the legacy d7 → overnight).
+  const kind = raw.kind === 'overnight' ? 'overnight' : raw.kind === 'visit' ? 'visit' : undefined;
+  const [decoded] = withKind([
+    { id, label, minutes: pickNumber(raw.minutes, 0), price: pickNumber(raw.price, 0), ...(kind ? { kind } : {}) },
+  ]);
+  return decoded ?? null;
 }
 
 function decodeDurations(raw: unknown): readonly Duration[] {

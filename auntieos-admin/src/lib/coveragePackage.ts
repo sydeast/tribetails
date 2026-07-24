@@ -1,85 +1,186 @@
 /**
  * Coverage Package Builder — pure domain logic.
  *
- * Ported from the standalone `PackageBuilder` applet (a React sketch that
- * persisted to a `window.storage` KV shim). The maths is unchanged; what is new
- * is that it is fully typed and split out of the screen so it can be unit-tested
- * on its own, the same shape as `settingsFormat.ts` (pure helpers + a sibling
- * `.test.ts`) rather than logic buried in a component.
+ * Full port of the canonical `PackageBuilder_7` sketch. An operator prices a
+ * multi-day pet-sitting stay by BUILDING one or more named packages: each package
+ * is a template of visits (any mix of lengths/times), with per-night overnights,
+ * an optional per-day override, and an optional discount. Suggestions seed a
+ * package from a rule (Lean / Balanced / Generous); every seeded visit is then
+ * freely editable — there is no requirement for a pinned visit or an auto-filled
+ * gap, so an operator can simply pick services for a client.
  *
- * The model: an operator prices a multi-day pet-sitting stay by describing how a
- * SINGLE covered day must look — a wake window (e.g. 07:00–22:00), a maximum gap
- * allowed between visits, and any "pinned" visits that must happen at a fixed
- * time every day (medication, a morning feed). `buildDayPatterns` turns those
- * rules into a few concrete, RULE-VALID daily schedules at different price
- * points; the screen prices the approved one across the whole stay.
+ * Pricing rules that make this more than a sum:
+ *  - An overnight is a WINDOW, not a line item. A visit inside the overnight
+ *    window (or its arrival buffer) is already covered → priced $0.
+ *  - Booking an overnight earns ONE free visit the next day, stacked on top of
+ *    the window coverage.
+ *
+ * This file is pure and unit-tested; the screen and its Android twin
+ * (`domain/CoveragePackage.kt`) render it. Keep the two behaviour-identical.
  */
 
-/** A named visit length with its price. `id` is stable for the life of the doc. */
+// ── model ───────────────────────────────────────────────────────────────────
+
+export type DurationKind = 'visit' | 'overnight';
+
+/** A named service length with its price. `kind` splits day visits from overnights. */
 export interface Duration {
   readonly id: string;
   readonly label: string;
   readonly minutes: number;
   readonly price: number;
+  readonly kind: DurationKind;
 }
 
-/** A visit that must happen at a fixed time every covered day. */
+/** A visit that must happen at a fixed time every covered day (client non-negotiable). */
 export interface PinnedTime {
   readonly id: string;
   readonly label: string;
-  /** "HH:MM", 24h, as an `<input type="time">` yields. */
+  /** "HH:MM", 24h. */
   readonly time: string;
-  /** Which `Duration` this pinned visit is billed at. */
   readonly durationId: string;
 }
 
-/** The per-client coverage rules that shape a valid day. */
+/** Per-client coverage rules — seed the suggestion generator, not a hard gate. */
 export interface CoverageRules {
-  /** "HH:MM" the covered day starts. */
   readonly wakeStart: string;
-  /** "HH:MM" the covered day ends. */
   readonly wakeEnd: string;
-  /** Longest allowed gap between consecutive visits, in hours. */
   readonly maxGapHours: number;
   readonly pinnedTimes: readonly PinnedTime[];
 }
 
-/** One visit inside a generated day: a pinned time or a gap-filling check-in. */
+/** One scheduled visit inside a package. `time` is minutes since midnight. */
+export interface Visit {
+  readonly id: string;
+  readonly time: number;
+  readonly durationId: string;
+  readonly label: string;
+}
+
+/** A named package: a visit template + per-night overnights + optional per-day overrides. */
+export interface Package {
+  readonly id: string;
+  readonly name: string;
+  /** The template — applies to every day that isn't customized. */
+  readonly visits: readonly Visit[];
+  /** `{ [dayIndex]: Visit[] }` — a day's own schedule, replacing the template. */
+  readonly dayOverrides: Readonly<Record<number, readonly Visit[]>>;
+  /** `{ [nightIndex]: true }` — which nights get an overnight. */
+  readonly overnightNights: Readonly<Record<number, boolean>>;
+  readonly overnightStart: string;
+  readonly overnightBufferHours: number;
+  readonly discountLabel: string;
+  readonly discountPct: number;
+}
+
+/** One visit inside a generated SUGGESTION (pinned or gap-filling check-in). */
 export interface Touchpoint {
   readonly type: 'pinned' | 'flex';
   readonly label: string;
-  /** Minutes since midnight. */
   readonly time: number;
   readonly durationId: string;
   readonly durationLabel: string;
   readonly price: number;
 }
 
-/** A complete, rule-valid schedule for one covered day. */
+/** A suggested day schedule at one price point (a seed for a new package). */
 export interface DayPattern {
   readonly id: string;
   readonly strategyLabel: string;
   readonly touchpoints: readonly Touchpoint[];
-  readonly overnightCost: number;
-  readonly overnightLabel: string | null;
   readonly dayTotal: number;
-  /** Structural fingerprint used to drop duplicate strategies. */
   readonly signature: string;
 }
 
-/** The shipped default visit menu, used until an operator edits it. */
+/** What an overnight covers on a given day. */
+export interface Coverage {
+  /** Minutes since midnight from which tonight's overnight (incl. buffer) covers. */
+  readonly eveningFrom: number | null;
+  /** Minutes since midnight until which last night's overnight covers this morning. */
+  readonly morningUntil: number | null;
+  /** True when the prior night had an overnight → one free visit today. */
+  readonly bonusFreeVisit: boolean;
+}
+
+const BARE_COVERAGE: Coverage = { eveningFrom: null, morningUntil: null, bonusFreeVisit: false };
+
+/** One priced visit line. */
+export interface PricedItem {
+  readonly key: string;
+  readonly time: number;
+  readonly label: string;
+  readonly durationLabel: string;
+  readonly price: number;
+  readonly listPrice: number;
+  readonly covered: boolean;
+  readonly bonus: boolean;
+  readonly free: boolean;
+  readonly freeReason: string | null;
+}
+
+/** One priced day of the stay. */
+export interface PricedDayRow {
+  readonly dayIndex: number;
+  readonly items: readonly PricedItem[];
+  readonly customized: boolean;
+  readonly canOvernight: boolean;
+  readonly isOvernight: boolean;
+  readonly overnightCost: number;
+  readonly overnightLabel: string;
+  readonly overnightStartMin: number | null;
+  readonly coverage: Coverage;
+  readonly dayCost: number;
+}
+
+/** A fully priced package across the stay. */
+export interface PricedPackage {
+  readonly rows: readonly PricedDayRow[];
+  readonly subtotal: number;
+  readonly discountPct: number;
+  readonly discount: number;
+  readonly total: number;
+}
+
+/** Context needed to price a package. */
+export interface PriceContext {
+  readonly days: number;
+  readonly nights: number;
+  readonly durations: readonly Duration[];
+  readonly overnightDuration: Duration | undefined;
+}
+
+// ── defaults ────────────────────────────────────────────────────────────────
+
+/** The shipped default menu. Only the 12hr is a true overnight; the 2hr and 6hr
+ *  are long daytime stays (they can fill gaps, so "Generous" reaches for the 6hr). */
 export const DEFAULT_DURATIONS: readonly Duration[] = [
-  { id: 'd1', label: '15-min visit', minutes: 15, price: 15 },
-  { id: 'd2', label: '30-min visit', minutes: 30, price: 22 },
-  { id: 'd3', label: '45-min visit', minutes: 45, price: 28 },
-  { id: 'd4', label: '60-min visit', minutes: 60, price: 35 },
-  { id: 'd5', label: '90-min visit', minutes: 90, price: 60 },
-  { id: 'd6', label: 'Overnight (2hr)', minutes: 120, price: 80 },
-  { id: 'd7', label: 'Overnight (12hr)', minutes: 720, price: 150 },
+  { id: 'd1', label: '15-min visit', minutes: 15, price: 15, kind: 'visit' },
+  { id: 'd2', label: '30-min visit', minutes: 30, price: 25, kind: 'visit' },
+  { id: 'd3', label: '45-min visit', minutes: 45, price: 35, kind: 'visit' },
+  { id: 'd4', label: '60-min visit', minutes: 60, price: 45, kind: 'visit' },
+  { id: 'd5', label: '90-min visit', minutes: 90, price: 60, kind: 'visit' },
+  { id: 'd6', label: '2-hour visit', minutes: 120, price: 80, kind: 'visit' },
+  { id: 'd8', label: '6-hour visit', minutes: 360, price: 100, kind: 'visit' },
+  { id: 'd7', label: 'Overnight (12hr)', minutes: 720, price: 150, kind: 'overnight' },
 ];
 
-/** The shipped default coverage rules. `id` is fixed (not random) so the default
- *  is stable across reads and safe to compare in tests. */
+/** Durations saved before `kind` existed carry no type. d7 was the only real
+ *  overnight ever shipped, so everything else migrates to a visit — length is not
+ *  a reliable signal (a 6hr stay is a visit, a 12hr is not). */
+const LEGACY_OVERNIGHT_IDS = new Set<string>(['d7']);
+
+export function withKind(list: readonly Partial<Duration>[]): Duration[] {
+  return list.map((d) => ({
+    id: d.id ?? uid(),
+    label: d.label ?? '',
+    minutes: d.minutes ?? 0,
+    price: d.price ?? 0,
+    kind: d.kind ?? (LEGACY_OVERNIGHT_IDS.has(d.id ?? '') ? 'overnight' : 'visit'),
+  }));
+}
+
+/** The shipped default coverage rules. Pinned id is fixed (not random) so the
+ *  default is stable across reads and safe to compare in tests. */
 export const DEFAULT_COVERAGE_RULES: CoverageRules = {
   wakeStart: '07:00',
   wakeEnd: '22:00',
@@ -87,8 +188,30 @@ export const DEFAULT_COVERAGE_RULES: CoverageRules = {
   pinnedTimes: [{ id: 'seed-morning', label: 'Morning feeding', time: '07:30', durationId: 'd2' }],
 };
 
-/** Visit-length ceiling (minutes) separating flexible day visits from overnights. */
-export const OVERNIGHT_MINUTES = 300;
+/** Blank-package defaults, filled in over any partial persisted package. */
+export const PACKAGE_DEFAULTS: Omit<Package, 'id' | 'name'> = {
+  visits: [],
+  dayOverrides: {},
+  overnightNights: {},
+  overnightStart: '21:00',
+  overnightBufferHours: 2,
+  discountLabel: '',
+  discountPct: 0,
+};
+
+/** Fill a partial (persisted) package up to a full one. */
+export function normalizePackage(p: Partial<Package>): Package {
+  return {
+    ...PACKAGE_DEFAULTS,
+    ...p,
+    id: p.id ?? uid(),
+    name: p.name ?? 'Package',
+    discountPct: Number(p.discountPct) || 0,
+    overnightBufferHours: Number(p.overnightBufferHours ?? PACKAGE_DEFAULTS.overnightBufferHours) || 0,
+  };
+}
+
+// ── small helpers ─────────────────────────────────────────────────────────────
 
 /** A short, collision-unlikely id for a client-created row. */
 export function uid(): string {
@@ -104,6 +227,19 @@ export function daysBetween(start: string, end: string): number {
   return diff > 0 ? diff : 0;
 }
 
+/** A "YYYY-MM-DD" start date + a day offset → a short label; '' when unparseable. */
+export function dateLabel(
+  startDate: string,
+  offset = 0,
+  opts: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'short', day: 'numeric' },
+): string {
+  if (!startDate) return '';
+  const d = new Date(`${startDate}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return '';
+  d.setDate(d.getDate() + offset);
+  return d.toLocaleDateString('en-US', opts);
+}
+
 /** "HH:MM" → minutes since midnight, or null when unparseable. */
 export function timeToMinutes(t: string): number | null {
   if (!t) return null;
@@ -116,15 +252,39 @@ export function timeToMinutes(t: string): number | null {
 
 /** Minutes since midnight → a 12h "h:MM AM/PM" label. */
 export function minutesToTime(mins: number): string {
-  const h = Math.floor(((((mins % 1440) + 1440) % 1440) / 60));
-  const m = Math.floor(((mins % 60) + 60) % 60);
+  const norm = ((Math.round(mins) % 1440) + 1440) % 1440;
+  const h = Math.floor(norm / 60);
+  const m = norm % 60;
   const period = h >= 12 ? 'PM' : 'AM';
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${h12}:${String(m).padStart(2, '0')} ${period}`;
 }
 
+/** Minutes since midnight → "HH:MM" for an `<input type="time">`. */
+export function minutesToInput(mins: number): string {
+  const v = ((Math.round(mins) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
+}
+
+/** A gap in minutes → "1h 30m" / "45m" / "2h". */
+export function formatGap(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = Math.round(mins % 60);
+  if (!h) return `${m}m`;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+// ── suggestions ───────────────────────────────────────────────────────────────
+
 type FillStrategy = 'cheapest' | 'mid' | 'richest';
 const FILL_STRATEGIES: readonly FillStrategy[] = ['cheapest', 'mid', 'richest'];
+
+function pick<T>(pool: readonly T[], strategy: FillStrategy): T | undefined {
+  if (pool.length === 0) return undefined;
+  if (strategy === 'cheapest') return pool[0];
+  if (strategy === 'richest') return pool[pool.length - 1];
+  return pool[Math.floor((pool.length - 1) / 2)];
+}
 
 function strategyLabel(strategy: FillStrategy): string {
   if (strategy === 'cheapest') return 'Lean';
@@ -133,21 +293,18 @@ function strategyLabel(strategy: FillStrategy): string {
 }
 
 /**
- * Turn coverage rules into a few rule-valid daily schedules at distinct prices.
- *
- * A "touchpoint" is either a pinned time (fixed) or a flexible visit dropped in
- * to satisfy the max-gap rule. `wakeStart`/`wakeEnd` bound the covered day; the
- * optional overnight block covers the hours outside it. Three fill strategies
- * (lean / balanced / generous) vary which duration fills the gaps, yielding
- * distinct schedules and prices; literal duplicates are collapsed by signature.
+ * Suggest a starting day: fill any gap wider than the rule with one repeated
+ * duration, at three price points. Only a SEED — every visit it produces is
+ * editable afterwards, which is the whole point of the package model.
  */
 export function buildDayPatterns(
   durations: readonly Duration[],
-  rules: CoverageRules,
-  useOvernight: boolean,
-  overnightDurationId: string,
+  pinnedTimes: readonly PinnedTime[],
+  maxGapHours: number,
+  wakeStart: string,
+  wakeEnd: string,
+  dedupe = true,
 ): DayPattern[] {
-  const { pinnedTimes, maxGapHours, wakeStart, wakeEnd } = rules;
   const maxGapMin = maxGapHours * 60;
   const wakeStartMin = timeToMinutes(wakeStart);
   const wakeEndMin = timeToMinutes(wakeEnd);
@@ -158,148 +315,260 @@ export function buildDayPatterns(
     .filter((p): p is PinnedTime & { minutes: number } => p.minutes !== null)
     .sort((a, b) => a.minutes - b.minutes);
 
-  // Exclude overnight-length visits from the flexible day fill.
-  const eligibleDurations = durations.filter((d) => d.price > 0 && d.minutes < OVERNIGHT_MINUTES);
+  const eligibleDurations = durations.filter((d) => d.price > 0 && d.kind === 'visit');
   if (eligibleDurations.length === 0 && pinned.length === 0) return [];
 
-  // Fixed anchors across the wake window: start, each pinned time, end.
   const anchors = [wakeStartMin, ...pinned.map((p) => p.minutes), wakeEndMin].sort((a, b) => a - b);
 
-  // Gaps wider than the max become fill targets.
-  const gaps: Array<{ start: number; end: number; size: number }> = [];
+  const gaps: Array<{ start: number; size: number }> = [];
   for (let i = 0; i < anchors.length - 1; i++) {
-    const from = anchors[i]!;
-    const to = anchors[i + 1]!;
-    const gapSize = to - from;
-    if (gapSize > maxGapMin) gaps.push({ start: from, end: to, size: gapSize });
+    const size = anchors[i + 1]! - anchors[i]!;
+    if (size > maxGapMin) gaps.push({ start: anchors[i]!, size });
   }
 
   const sortedByPrice = [...eligibleDurations].sort((a, b) => a.price - b.price);
   const patterns: DayPattern[] = [];
 
   for (const strategy of FILL_STRATEGIES) {
-    let fillDuration: Duration | undefined;
-    if (strategy === 'cheapest') fillDuration = sortedByPrice[0];
-    else if (strategy === 'richest') fillDuration = sortedByPrice[sortedByPrice.length - 1];
-    else fillDuration = sortedByPrice[Math.floor((sortedByPrice.length - 1) / 2)];
-    if (!fillDuration) continue;
-    const fill = fillDuration;
+    const fallbackFill = pick(sortedByPrice, strategy);
+    if (!fallbackFill) continue;
 
     const touchpoints: Touchpoint[] = pinned.map((p) => {
-      const pinnedDuration = durations.find((d) => d.id === p.durationId);
+      const pd = durations.find((d) => d.id === p.durationId);
       return {
         type: 'pinned',
         label: p.label || 'Pinned visit',
         time: p.minutes,
-        durationId: p.durationId || fill.id,
-        durationLabel: pinnedDuration?.label ?? fill.label,
-        price: pinnedDuration?.price ?? fill.price,
+        durationId: p.durationId || fallbackFill.id,
+        durationLabel: pd?.label ?? fallbackFill.label,
+        price: pd?.price ?? fallbackFill.price,
       };
     });
 
     for (const gap of gaps) {
-      // Drop visits into the gap spaced at most maxGapMin apart.
       const numFillVisits = Math.ceil(gap.size / maxGapMin) - 1;
       if (numFillVisits <= 0) continue;
+      const spacing = gap.size / (numFillVisits + 1);
+      // A repeated check-in must not run longer than the space between check-ins,
+      // or it overlaps the next — that's a day-stay/overnight the sitter books by
+      // hand. Fall back to the shortest if nothing fits.
+      const fits = sortedByPrice.filter((d) => d.minutes <= spacing);
+      const fillDuration = pick(fits.length ? fits : [sortedByPrice[0]!], strategy)!;
       for (let i = 1; i <= numFillVisits; i++) {
-        const t = gap.start + (gap.size * i) / (numFillVisits + 1);
         touchpoints.push({
           type: 'flex',
           label: 'Check-in',
-          time: t,
-          durationId: fill.id,
-          durationLabel: fill.label,
-          price: fill.price,
+          time: gap.start + (gap.size * i) / (numFillVisits + 1),
+          durationId: fillDuration.id,
+          durationLabel: fillDuration.label,
+          price: fillDuration.price,
         });
       }
     }
 
     touchpoints.sort((a, b) => a.time - b.time);
+    // A suggestion with no visits is useless as a seed (a degenerate window with no
+    // pinned visits) — emit nothing rather than a phantom $0 "Lean" seed button.
+    if (touchpoints.length === 0) continue;
+    const dayTotal = touchpoints.reduce((s, t) => s + t.price, 0);
+    const signature = touchpoints.map((t) => `${t.durationId}@${Math.round(t.time)}`).join('|');
+    if (dedupe && patterns.some((p) => p.signature === signature)) continue;
 
-    let overnightCost = 0;
-    let overnightLabel: string | null = null;
-    if (useOvernight) {
-      const od = durations.find((d) => d.id === overnightDurationId);
-      if (od) {
-        overnightCost = od.price;
-        overnightLabel = od.label;
-      }
-    }
-
-    // A schedule with no visits AND no overnight is not a real option. It happens
-    // when the rules are degenerate — the wake window is no wider than the max
-    // gap and there are no pinned visits, so nobody needs to be on site. Without
-    // this guard all three strategies collapse to the same empty schedule and
-    // dedupe down to a single phantom $0 "Lean" card, which reads as broken.
-    // Emit nothing instead, so the screen shows its actionable empty-state.
-    if (touchpoints.length === 0 && overnightCost === 0) continue;
-
-    const dayTotal = touchpoints.reduce((sum, tp) => sum + tp.price, 0) + overnightCost;
-    const signature =
-      touchpoints.map((t) => `${t.durationId}@${Math.round(t.time)}`).join('|') +
-      (useOvernight ? `+ON:${overnightDurationId}` : '');
-
-    // Avoid literal duplicate strategies (e.g. cheapest === mid when only one
-    // duration qualifies).
-    if (patterns.some((p) => p.signature === signature)) continue;
-
-    patterns.push({
-      id: uid(),
-      strategyLabel: strategyLabel(strategy),
-      touchpoints,
-      overnightCost,
-      overnightLabel,
-      dayTotal,
-      signature,
-    });
+    patterns.push({ id: strategy, strategyLabel: strategyLabel(strategy), touchpoints, dayTotal, signature });
   }
 
   return patterns.sort((a, b) => a.dayTotal - b.dayTotal);
 }
 
-/** A "YYYY-MM-DD" date → a short "Mon, Jul 28" label; '' when unparseable. */
-export function dateLabel(date: string): string {
-  if (!date) return '';
-  const d = new Date(`${date}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+/** Seed a package's visit template from a suggestion. */
+export function visitsFromPattern(pattern: DayPattern): Visit[] {
+  return pattern.touchpoints.map((tp) => ({
+    id: uid(),
+    time: Math.round(tp.time),
+    durationId: tp.durationId,
+    label: tp.label,
+  }));
 }
 
-/** Everything the quote text needs: the approved daily schedule priced across a stay. */
-export interface QuoteInput {
-  readonly clientName: string;
-  readonly startDate: string;
-  readonly endDate: string;
-  readonly days: number;
-  readonly pattern: DayPattern;
+/** Seed a blank package from the client's pinned visits. */
+export function visitsFromPinned(pinnedTimes: readonly PinnedTime[]): Visit[] {
+  return pinnedTimes
+    .map((p) => ({ ...p, minutes: timeToMinutes(p.time) }))
+    .filter((p): p is PinnedTime & { minutes: number } => p.minutes !== null)
+    .sort((a, b) => a.minutes - b.minutes)
+    .map((p) => ({ id: uid(), time: p.minutes, durationId: p.durationId, label: p.label }));
+}
+
+// ── pricing ───────────────────────────────────────────────────────────────────
+
+/** The visits actually scheduled on a given day: its override if it has one, else the template. */
+export function effectiveVisits(pkg: Package, dayIndex: number): readonly Visit[] {
+  return pkg.dayOverrides[dayIndex] ?? pkg.visits;
 }
 
 /**
- * A clean plain-text quote for the clipboard / share sheet — pastes cleanly into
- * an email, text, or a Kinfolk agreement. Ported from the standalone applet's
- * `quoteText`, adapted to the shipped model: one approved daily schedule priced
- * across the whole stay (the applet's per-day override model is a later port).
+ * What an overnight covers on `dayIndex`. An overnight is a window that starts at
+ * the package's overnight time and runs for the overnight duration's length,
+ * spilling into the next morning. A visit inside that window — or the arrival
+ * buffer just before it — is already covered.
  */
-export function quoteText({ clientName, startDate, endDate, days, pattern }: QuoteInput): string {
+export function coverageForDay(
+  pkg: Package,
+  dayIndex: number,
+  nights: number,
+  overnightDuration: Duration | undefined,
+): Coverage {
+  const startMin = timeToMinutes(pkg.overnightStart);
+  if (startMin === null || !overnightDuration) return BARE_COVERAGE;
+
+  const span = Number(overnightDuration.minutes) || 0;
+  const bufferMin = Math.max(0, Number(pkg.overnightBufferHours) || 0) * 60;
+  const tonight = dayIndex < nights && !!pkg.overnightNights[dayIndex];
+  const priorNight = dayIndex > 0 && !!pkg.overnightNights[dayIndex - 1];
+  const endAbs = startMin + span;
+
+  return {
+    eveningFrom: tonight ? startMin - bufferMin : null,
+    morningUntil: priorNight && endAbs > 1440 ? endAbs - 1440 : null,
+    bonusFreeVisit: priorNight,
+  };
+}
+
+/** Price a single day's visits against its overnight coverage. */
+export function priceDay(
+  visits: readonly Visit[],
+  durations: readonly Duration[],
+  coverage: Coverage,
+): { items: PricedItem[]; total: number } {
+  const { eveningFrom, morningUntil, bonusFreeVisit } = coverage;
+  const sorted = [...visits].sort((a, b) => a.time - b.time);
+
+  const items: PricedItem[] = sorted.map((v) => {
+    const d = durations.find((x) => x.id === v.durationId);
+    const price = d ? d.price : 0;
+    const coveredMorning = morningUntil !== null && v.time <= morningUntil;
+    const coveredEvening = eveningFrom !== null && v.time >= eveningFrom;
+    const covered = coveredMorning || coveredEvening;
+    return {
+      key: v.id,
+      time: v.time,
+      label: v.label || 'Visit',
+      durationLabel: d ? d.label : 'no duration set',
+      price: covered ? 0 : price,
+      listPrice: price,
+      covered,
+      bonus: false,
+      free: covered,
+      freeReason: covered ? 'covered by overnight' : null,
+    };
+  });
+
+  // The overnight loyalty perk: one free visit the day after an overnight, applied
+  // to the earliest still-paid visit. The window (above) is the sitter being there;
+  // this free visit is a separate promise stacked on top, so a covered morning does
+  // NOT consume it — the credit floats to the next paid visit.
+  if (bonusFreeVisit) {
+    const idx = items.findIndex((it) => !it.free);
+    if (idx >= 0) {
+      items[idx] = { ...items[idx]!, price: 0, bonus: true, free: true, freeReason: 'free visit — overnight bundle' };
+    }
+  }
+
+  return { items, total: items.reduce((s, i) => s + i.price, 0) };
+}
+
+/** Gaps checked against the rule but never blocking — a hand-built day is the sitter's call. */
+export function gapWarnings(
+  visits: readonly Visit[],
+  wakeStart: string,
+  wakeEnd: string,
+  maxGapHours: number,
+  coverage: Coverage,
+): string[] {
+  const ws = timeToMinutes(wakeStart);
+  const we = timeToMinutes(wakeEnd);
+  if (ws === null || we === null || we <= ws) return [];
+
+  const from = coverage.morningUntil !== null ? Math.max(ws, coverage.morningUntil) : ws;
+  const to = coverage.eveningFrom !== null ? Math.min(we, coverage.eveningFrom) : we;
+  if (to <= from) return [];
+
+  const maxGap = maxGapHours * 60;
+  const inside = visits.map((v) => v.time).filter((t) => t > from && t < to).sort((a, b) => a - b);
+  const anchors = [from, ...inside, to];
+  const out: string[] = [];
+  for (let i = 0; i < anchors.length - 1; i++) {
+    const size = anchors[i + 1]! - anchors[i]!;
+    if (size > maxGap) out.push(`${minutesToTime(anchors[i]!)} → ${minutesToTime(anchors[i + 1]!)} is ${formatGap(size)}`);
+  }
+  return out;
+}
+
+/** Price a whole package across the stay: per-day rows, subtotal, discount, total. */
+export function pricePackage(pkg: Package, ctx: PriceContext): PricedPackage {
+  const { days, nights, durations, overnightDuration } = ctx;
+  const rows: PricedDayRow[] = [];
+  for (let i = 0; i < days; i++) {
+    const coverage = coverageForDay(pkg, i, nights, overnightDuration);
+    const day = priceDay(effectiveVisits(pkg, i), durations, coverage);
+    const canOvernight = i < nights;
+    const isOvernight = canOvernight && !!pkg.overnightNights[i];
+    const overnightCost = isOvernight && overnightDuration ? overnightDuration.price : 0;
+    rows.push({
+      dayIndex: i,
+      items: day.items,
+      customized: !!pkg.dayOverrides[i],
+      canOvernight,
+      isOvernight,
+      overnightCost,
+      overnightLabel: overnightDuration ? overnightDuration.label : '',
+      overnightStartMin: timeToMinutes(pkg.overnightStart),
+      coverage,
+      dayCost: day.total + overnightCost,
+    });
+  }
+  const subtotal = rows.reduce((s, r) => s + r.dayCost, 0);
+  const pct = Math.min(100, Math.max(0, Number(pkg.discountPct) || 0));
+  const discount = subtotal * (pct / 100);
+  return { rows, subtotal, discountPct: pct, discount, total: subtotal - discount };
+}
+
+// ── quote text ────────────────────────────────────────────────────────────────
+
+export interface QuoteInput {
+  readonly clientName: string;
+  readonly startDate: string;
+  readonly days: number;
+  readonly priced: PricedPackage & { readonly pkg: Package };
+}
+
+/** A clean plain-text quote for the clipboard — pastes into an email, text, or agreement. */
+export function quoteText({ clientName, startDate, days, priced }: QuoteInput): string {
+  const { pkg, rows, subtotal, discountPct, discount, total } = priced;
   const money = (n: number): string => `$${n.toFixed(2)}`;
   const lines: string[] = ['TribeTails — Coverage Package', ''];
   if (clientName.trim() !== '') lines.push(`Prepared for: ${clientName.trim()}`);
-  lines.push(`${pattern.strategyLabel} schedule · ${days} day${days !== 1 ? 's' : ''}`);
-  const start = dateLabel(startDate);
-  const end = dateLabel(endDate);
-  if (start && end) lines.push(`${start} – ${end}`);
+  lines.push(`${pkg.name} · ${days} day${days !== 1 ? 's' : ''}`);
+  if (startDate) lines.push(`${dateLabel(startDate, 0)} – ${dateLabel(startDate, days - 1)}`);
   lines.push('');
 
-  lines.push('Each day:');
-  for (const tp of pattern.touchpoints) {
-    const label = tp.label === 'Check-in' ? `Check-in (${tp.durationLabel})` : `${tp.label} (${tp.durationLabel})`;
-    lines.push(`   ${minutesToTime(tp.time).padEnd(9)} ${label}   ${money(tp.price)}`);
+  for (const r of rows) {
+    const when = startDate ? dateLabel(startDate, r.dayIndex) : `Day ${r.dayIndex + 1}`;
+    const on = r.isOvernight && r.overnightStartMin !== null ? `   (overnight from ${minutesToTime(r.overnightStartMin)})` : '';
+    lines.push(`Day ${r.dayIndex + 1} — ${when}${on}   ${money(r.dayCost)}`);
+    for (const it of r.items) {
+      const price = it.free ? 'free' : money(it.price);
+      const reason = it.freeReason ? ` — ${it.freeReason}` : '';
+      lines.push(`   ${minutesToTime(it.time).padEnd(9)} ${it.label} (${it.durationLabel})${reason}   ${price}`);
+    }
+    if (r.isOvernight && r.overnightStartMin !== null) {
+      lines.push(`   ${minutesToTime(r.overnightStartMin).padEnd(9)} ${r.overnightLabel}   ${money(r.overnightCost)}`);
+    }
+    lines.push('');
   }
-  if (pattern.overnightLabel) {
-    lines.push(`   ${'overnight'.padEnd(9)} ${pattern.overnightLabel}   ${money(pattern.overnightCost)}`);
-  }
-  lines.push(`   Per day   ${money(pattern.dayTotal)}`);
-  lines.push('');
-  lines.push(`Total (${days} day${days !== 1 ? 's' : ''})   ${money(pattern.dayTotal * days)}`);
+
+  lines.push(`Subtotal   ${money(subtotal)}`);
+  if (discountPct > 0) lines.push(`${pkg.discountLabel || 'Discount'} (${discountPct}%)   -${money(discount)}`);
+  lines.push(`Total   ${money(total)}`);
   return lines.join('\n');
 }
