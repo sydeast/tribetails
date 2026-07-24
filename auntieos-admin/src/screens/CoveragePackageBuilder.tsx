@@ -11,6 +11,7 @@ import {
   buildDayPatterns,
   daysBetween,
   minutesToTime,
+  quoteText,
   timeToMinutes,
   uid,
   type CoverageRules,
@@ -144,6 +145,8 @@ function Builder({ initial, onSaved }: BuilderProps) {
   const [clientName, setClientName] = useState('');
   const [approvedPatternId, setApprovedPatternId] = useState<string | null>(null);
   const [regenSeed, setRegenSeed] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const [shareNote, setShareNote] = useState<string | null>(null);
 
   // Draft rows.
   const [newDuration, setNewDuration] = useState<NewDuration>({ label: '', minutes: '', price: '' });
@@ -260,6 +263,62 @@ function Builder({ initial, onSaved }: BuilderProps) {
 
   const overnightDurations = durations.filter((d) => d.minutes >= OVERNIGHT_MINUTES);
   const dayVisitDurations = durations.filter((d) => d.minutes < OVERNIGHT_MINUTES);
+
+  // Why did no schedules generate? Give the operator an actionable reason rather
+  // than a bare hint, so a degenerate rule set never reads as a broken screen.
+  const scheduleEmptyReason = ((): string => {
+    const startMin = timeToMinutes(rules.wakeStart);
+    const endMin = timeToMinutes(rules.wakeEnd);
+    if (startMin === null || endMin === null) return 'Enter a valid day start and day end time.';
+    if (endMin <= startMin) return 'Day ends must be after day starts.';
+    const hasPinned = rules.pinnedTimes.some((p) => timeToMinutes(p.time) !== null);
+    if (!hasPinned && endMin - startMin <= rules.maxGapHours * 60) {
+      const windowHrs = Math.round(((endMin - startMin) / 60) * 10) / 10;
+      return `This day needs no visits yet: the ${windowHrs}h window fits inside the ${rules.maxGapHours}h max gap, and there are no pinned visits. Add a pinned visit, widen the day window, or lower the max gap.`;
+    }
+    if (durations.every((d) => d.price <= 0 || d.minutes >= OVERNIGHT_MINUTES)) {
+      return `Add at least one priced day visit (under ${OVERNIGHT_MINUTES} min) to the menu above.`;
+    }
+    return 'Adjust the day window, max gap, or pinned visits above to see valid schedule options.';
+  })();
+
+  // ── quote actions (Copy / Share / Print) on the approved package ────────────
+
+  const buildQuote = (): string =>
+    approvedPattern ? quoteText({ clientName, startDate, endDate, days, pattern: approvedPattern }) : '';
+
+  const copyQuote = async (): Promise<void> => {
+    const text = buildQuote();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard blocked (insecure context / denied permission): fall back to a
+      // prompt the operator can copy from by hand rather than silently failing.
+      window.prompt('Copy this quote:', text);
+    }
+  };
+
+  const shareQuote = async (): Promise<void> => {
+    const text = buildQuote();
+    if (!text) return;
+    const nav = navigator as Navigator & { share?: (data: ShareData) => Promise<void> };
+    if (typeof nav.share === 'function') {
+      try {
+        await nav.share({ title: 'TribeTails Coverage Package', text });
+        return;
+      } catch {
+        // Share sheet dismissed or unsupported mid-call — fall through to copy.
+      }
+    }
+    setShareNote('Sharing not available here — copied the quote to the clipboard instead.');
+    window.setTimeout(() => setShareNote(null), 3000);
+    await copyQuote();
+  };
+
+  const printQuote = (): void => window.print();
 
   // ── render ────────────────────────────────────────────────────────────────
 
@@ -503,7 +562,7 @@ function Builder({ initial, onSaved }: BuilderProps) {
         }
       >
         {dayPatterns.length === 0 ? (
-          <p className="cpb__hint">Set your day window and rules above to see valid schedule options.</p>
+          <p className="cpb__hint">{scheduleEmptyReason}</p>
         ) : (
           <div className="cpb__patternGrid">
             {dayPatterns.map((pattern) => {
@@ -610,7 +669,28 @@ function Builder({ initial, onSaved }: BuilderProps) {
             <div className="cpb__finalPriceValue">${packageTotal.toFixed(2)}</div>
           </div>
         ) : null}
+
+        {approvedPattern && days > 0 ? (
+          <div className="cpb__actions cpb__noprint">
+            <GhostButton
+              label={copied ? 'Copied' : 'Copy quote'}
+              leading={copied ? <CheckGlyph /> : <CopyGlyph />}
+              onClick={() => void copyQuote()}
+            />
+            <GhostButton label="Share" leading={<ShareGlyph />} onClick={() => void shareQuote()} />
+            <PrimaryButton label="Print / Save PDF" leading={<PrinterGlyph />} onClick={printQuote} />
+          </div>
+        ) : null}
+        {shareNote ? <p className="cpb__hint cpb__noprint">{shareNote}</p> : null}
       </DenPanel>
+
+      {/* Print-only quote: hidden on screen; on print, everything else is hidden
+          and this becomes the whole page (see .cpb__printDoc in the stylesheet). */}
+      {approvedPattern && days > 0 ? (
+        <pre className="cpb__printDoc" aria-hidden="true">
+          {buildQuote()}
+        </pre>
+      ) : null}
     </div>
   );
 }
@@ -684,6 +764,35 @@ function CalendarGlyph() {
     <svg {...glyphProps()} className="cpb__glyphInline">
       <rect x="3" y="5" width="18" height="16" rx="2" />
       <path d="M3 9h18M8 3v4M16 3v4" />
+    </svg>
+  );
+}
+
+function CopyGlyph() {
+  return (
+    <svg {...glyphProps()}>
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function ShareGlyph() {
+  return (
+    <svg {...glyphProps()}>
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <path d="m8.6 13.5 6.8 4M15.4 6.5 8.6 10.5" />
+    </svg>
+  );
+}
+
+function PrinterGlyph() {
+  return (
+    <svg {...glyphProps()}>
+      <path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+      <rect x="6" y="14" width="12" height="8" rx="1" />
     </svg>
   );
 }

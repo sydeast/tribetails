@@ -311,6 +311,52 @@
   color: var(--color-primary);
 }
 
+/* ── quote actions (Copy / Share / Print) ─────────────────────────────────── */
+
+.cpb__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+/* ── print-only quote ─────────────────────────────────────────────────────── */
+
+/* Hidden on screen; on print, everything else is hidden and this becomes the
+   whole page, so Cmd-P / Save-PDF yields a clean client-facing quote. */
+.cpb__printDoc {
+  display: none;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .cpb__printDoc,
+  .cpb__printDoc * {
+    visibility: visible;
+  }
+  .cpb__printDoc {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: var(--space-5);
+    white-space: pre-wrap;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    /* Force solid black for paper: the theme token can be near-white in dark
+       mode, which would print invisible. This is a deliberate print exception. */
+    color: #000;
+  }
+  .cpb__noprint {
+    display: none !important;
+  }
+}
+
 @media (max-width: 640px) {
   .cpb__durationRow,
   .cpb__addRow {
