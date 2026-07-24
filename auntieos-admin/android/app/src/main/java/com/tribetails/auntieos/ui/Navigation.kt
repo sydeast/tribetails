@@ -96,6 +96,7 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     object AdminNotifications : Screen("admin_notifications", "Notifications", Lucide.Bell)
     object AdminFeatureFlags : Screen("admin_feature_flags", "Feature Flags", Lucide.Flag)
     object AdminSchedule  : Screen("admin_schedule", "Scheduling Options", Lucide.CalendarDays)
+    object CoveragePackage : Screen("coverage_package", "Coverage Packages", Lucide.Receipt)
     object KinfolkProfile : Screen("kinfolk_profile/{id}", "Profile", Lucide.Users) {
         fun createRoute(id: String) = "kinfolk_profile/$id"
     }
@@ -568,10 +569,18 @@ private fun AuthenticatedNavHost(
                         onNavigateToKinTaleTemplates = { navController.navigate(Screen.KinTaleTemplates.route) },
                         onNavigateToTemplates = { navController.navigate(Screen.Templates.route) },
                         onNavigateToFeatureFlags = { navController.navigate(Screen.AdminFeatureFlags.route) },
+                        onNavigateToCoveragePackages = { navController.navigate(Screen.CoveragePackage.route) },
                     )
                 }
             }
-            
+            composable(Screen.CoveragePackage.route) {
+                AdminGate(repository = app.repository, onDenied = { navController.popBackStack() }) {
+                    com.tribetails.auntieos.ui.admin.CoveragePackageScreen(
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+            }
+
             // Sub Screens
             composable(Screen.KinfolkProfile.route) { backStackEntry ->
                 val id = backStackEntry.arguments?.getString("id") ?: return@composable

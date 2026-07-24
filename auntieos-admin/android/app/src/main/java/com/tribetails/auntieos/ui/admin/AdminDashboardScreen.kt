@@ -35,6 +35,7 @@ fun AdminDashboardScreen(
     onNavigateToKinTaleTemplates: () -> Unit = {},
     onNavigateToTemplates: () -> Unit = {},
     onNavigateToFeatureFlags: () -> Unit = {},
+    onNavigateToCoveragePackages: () -> Unit = {},
 ) {
     AuntieScreenScaffold(
         title = "Dashboard",
@@ -71,6 +72,15 @@ fun AdminDashboardScreen(
                     title       = "Booking Management",
                     description = "Create, edit, confirm, or cancel bookings. Review pending requests.",
                     onClick     = onNavigateToBookingManagement,
+                )
+            }
+            item {
+                AdminDashTile(
+                    icon        = Lucide.Receipt,
+                    accentColor = AuntieTheme.colors.tertiary,
+                    title       = "Coverage Packages",
+                    description = "Build a visit menu + coverage rules, then price a multi-day stay from a rule-valid daily schedule.",
+                    onClick     = onNavigateToCoveragePackages,
                 )
             }
             item {
