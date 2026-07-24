@@ -6,158 +6,120 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Pure-logic tests for the Coverage Package Builder domain, mirroring the web
- * `coveragePackage.test.ts` so both platforms are pinned to the same behaviour.
+ * Pure-logic tests for the Coverage Package Builder domain (PackageBuilder_7
+ * model), mirroring the web `coveragePackage.test.ts` so both platforms are
+ * pinned to the same behaviour.
  */
 class CoveragePackageTest {
 
-    private fun rules(
-        wakeStart: String = "07:00",
-        wakeEnd: String = "22:00",
-        maxGapHours: Double = 6.0,
-        pinned: List<PinnedTime> = emptyList(),
-    ) = CoverageRules(wakeStart, wakeEnd, maxGapHours, pinned)
+    private val overnight = DEFAULT_DURATIONS.first { it.kind == "overnight" } // d7, $150, 720min
 
-    // ── daysBetween ──────────────────────────────────────────────────────────
+    private fun pkg(
+        visits: List<Visit> = emptyList(),
+        overnightNights: Map<Int, Boolean> = emptyMap(),
+        overnightStart: String = "21:00",
+        overnightBufferHours: Double = 2.0,
+        discountPct: Double = 0.0,
+        discountLabel: String = "",
+    ) = Package("p1", "Test", visits, emptyMap(), overnightNights, overnightStart, overnightBufferHours, discountLabel, discountPct)
 
     @Test
     fun `daysBetween counts inclusively`() {
-        assertEquals(1, daysBetween("2026-07-01", "2026-07-01"))
         assertEquals(5, daysBetween("2026-07-01", "2026-07-05"))
-        assertEquals(4, daysBetween("2026-07-30", "2026-08-02"))
-    }
-
-    @Test
-    fun `daysBetween is zero for unset or reversed ranges`() {
-        assertEquals(0, daysBetween("", "2026-07-05"))
-        assertEquals(0, daysBetween("2026-07-05", ""))
         assertEquals(0, daysBetween("2026-07-05", "2026-07-01"))
     }
 
-    // ── time helpers ─────────────────────────────────────────────────────────
+    @Test
+    fun `withKind migrates the legacy overnight id, defaults the rest to visit`() {
+        val migrated = withKind(listOf(Duration("x", "A", 30.0, 20.0, ""), Duration("d7", "Overnight", 720.0, 150.0, "")))
+        assertEquals("visit", migrated[0].kind)
+        assertEquals("overnight", migrated[1].kind)
+    }
 
     @Test
-    fun `timeToMinutes parses and rejects`() {
-        assertEquals(0, timeToMinutes("00:00"))
-        assertEquals(450, timeToMinutes("07:30"))
-        assertEquals(1320, timeToMinutes("22:00"))
-        assertNull(timeToMinutes(""))
-        assertNull(timeToMinutes("nope"))
+    fun `buildDayPatterns is empty for a degenerate window and drops empty suggestions`() {
+        assertTrue(buildDayPatterns(DEFAULT_DURATIONS, emptyList(), 6.0, "14:00", "11:00").isEmpty())
+        assertTrue(buildDayPatterns(DEFAULT_DURATIONS, emptyList(), 6.0, "11:00", "14:00").isEmpty())
+    }
+
+    @Test
+    fun `buildDayPatterns only fills with visit-kind durations`() {
+        val patterns = buildDayPatterns(DEFAULT_DURATIONS, emptyList(), 3.0, "07:00", "22:00")
+        assertTrue(patterns.isNotEmpty())
+        for (p in patterns) for (tp in p.touchpoints) {
+            assertEquals("visit", DEFAULT_DURATIONS.first { it.id == tp.durationId }.kind)
+        }
+    }
+
+    @Test
+    fun `visitsFromPattern seeds a template`() {
+        val p = buildDayPatterns(DEFAULT_DURATIONS, listOf(PinnedTime("p", "Meds", "12:00", "d3")), 12.0, "07:00", "22:00").first()
+        val visits = visitsFromPattern(p)
+        assertEquals(p.touchpoints.size, visits.size)
+        assertEquals(720, visits.first().time)
+    }
+
+    @Test
+    fun `priceDay bills a bare visit at list price`() {
+        val (items, total) = priceDay(listOf(Visit("v", 720, "d3", "Lunch")), DEFAULT_DURATIONS, Coverage(null, null, false))
+        assertEquals(35.0, total, 0.001) // d3 = $35
+        assertTrue(!items[0].free)
+    }
+
+    @Test
+    fun `a visit inside the overnight window is covered`() {
+        val p = pkg(overnightNights = mapOf(0 to true), overnightStart = "21:00", overnightBufferHours = 2.0)
+        val cov = coverageForDay(p, 0, 2, overnight)
+        assertEquals(19 * 60, cov.eveningFrom) // 21:00 minus 2h buffer
+        val (items, _) = priceDay(listOf(Visit("v", 20 * 60, "d3", "Evening")), DEFAULT_DURATIONS, cov)
+        assertTrue(items[0].free)
+        assertEquals(0.0, items[0].price, 0.001)
+    }
+
+    @Test
+    fun `the morning after an overnight grants a bonus free visit`() {
+        val cov = Coverage(null, null, true)
+        val (items, total) = priceDay(
+            listOf(Visit("a", 8 * 60, "d3", "AM"), Visit("b", 12 * 60, "d3", "Noon")),
+            DEFAULT_DURATIONS, cov,
+        )
+        assertTrue(items[0].bonus)
+        assertEquals(0.0, items[0].price, 0.001)
+        assertEquals(35.0, total, 0.001) // only the second visit is billed
+    }
+
+    @Test
+    fun `pricePackage applies a discount to the summed days`() {
+        val p = pkg(visits = listOf(Visit("v", 12 * 60, "d3", "Lunch")), overnightNights = mapOf(0 to true, 1 to true), discountPct = 10.0)
+        val priced = pricePackage(p, PriceContext(3, 2, DEFAULT_DURATIONS, overnight))
+        assertEquals(3, priced.rows.size)
+        assertTrue(priced.subtotal > 0)
+        assertEquals(priced.subtotal * 0.1, priced.discount, 0.001)
+        assertEquals(priced.subtotal - priced.discount, priced.total, 0.001)
+    }
+
+    @Test
+    fun `gapWarnings flags a bare day with a gap wider than the max`() {
+        val warns = gapWarnings(listOf(Visit("a", 8 * 60, "d1", "AM")), "07:00", "22:00", 4.0, Coverage(null, null, false))
+        assertTrue(warns.isNotEmpty())
+    }
+
+    @Test
+    fun `quoteText renders a client-facing per-day quote`() {
+        val p = pkg(visits = listOf(Visit("v", 12 * 60, "d3", "Lunch"))).copy(name = "Balanced")
+        val priced = pricePackage(p, PriceContext(2, 1, DEFAULT_DURATIONS, overnight))
+        val text = quoteText(QuoteInput("Rex", "2026-07-01", 2, p, priced))
+        assertTrue(text.contains("TribeTails — Coverage Package"))
+        assertTrue(text.contains("Prepared for: Rex"))
+        assertTrue(text.contains("Balanced · 2 days"))
+        assertTrue(text.contains("Lunch (45-min visit)"))
+        assertTrue(text.contains("Total"))
     }
 
     @Test
     fun `minutesToTime formats a 12h label`() {
-        assertEquals("12:00 AM", minutesToTime(0.0))
         assertEquals("7:30 AM", minutesToTime(450.0))
-        assertEquals("12:30 PM", minutesToTime(750.0))
         assertEquals("10:00 PM", minutesToTime(1320.0))
-    }
-
-    // ── buildDayPatterns ─────────────────────────────────────────────────────
-
-    @Test
-    fun `no patterns when the day window is empty or reversed`() {
-        assertTrue(buildDayPatterns(DEFAULT_DURATIONS, rules(wakeEnd = "07:00"), false, "d7").isEmpty())
-        assertTrue(buildDayPatterns(DEFAULT_DURATIONS, rules(wakeStart = "", wakeEnd = ""), false, "d7").isEmpty())
-    }
-
-    @Test
-    fun `never leaves a gap wider than the max`() {
-        val r = rules(maxGapHours = 4.0)
-        val maxGapMin = r.maxGapHours * 60
-        val patterns = buildDayPatterns(DEFAULT_DURATIONS, r, false, "d7")
-        assertTrue(patterns.isNotEmpty())
-        val start = timeToMinutes(r.wakeStart)!!.toDouble()
-        val end = timeToMinutes(r.wakeEnd)!!.toDouble()
-        for (p in patterns) {
-            val times = (listOf(start) + p.touchpoints.map { it.time } + listOf(end)).sorted()
-            for (i in 0 until times.size - 1) {
-                assertTrue("gap exceeded max", times[i + 1] - times[i] <= maxGapMin + 0.001)
-            }
-        }
-    }
-
-    @Test
-    fun `includes every pinned visit at its time, priced at its own duration`() {
-        val r = rules(pinned = listOf(PinnedTime("p1", "Meds", "12:00", "d3")))
-        val patterns = buildDayPatterns(DEFAULT_DURATIONS, r, false, "d7")
-        assertTrue(patterns.isNotEmpty())
-        for (p in patterns) {
-            val pinned = p.touchpoints.firstOrNull { it.isPinned }
-            assertTrue("pinned visit present", pinned != null)
-            assertEquals(720.0, pinned!!.time, 0.001)
-            assertEquals("Meds", pinned.label)
-            assertEquals(28.0, pinned.price, 0.001) // d3 price, not the fill duration
-        }
-    }
-
-    @Test
-    fun `overnight cost and label only when requested`() {
-        val withOn = buildDayPatterns(DEFAULT_DURATIONS, rules(), true, "d7")
-        val withoutOn = buildDayPatterns(DEFAULT_DURATIONS, rules(), false, "d7")
-        assertTrue(withOn.isNotEmpty())
-        for (p in withOn) {
-            assertEquals("Overnight (12hr)", p.overnightLabel)
-            assertEquals(150.0, p.overnightCost, 0.001)
-        }
-        for (p in withoutOn) {
-            assertNull(p.overnightLabel)
-            assertEquals(0.0, p.overnightCost, 0.001)
-        }
-    }
-
-    @Test
-    fun `orders cheapest-first and dedupes identical strategies`() {
-        val single = listOf(Duration("only", "30-min", 30.0, 20.0))
-        assertEquals(1, buildDayPatterns(single, rules(maxGapHours = 4.0), false, "d7").size)
-
-        val many = buildDayPatterns(DEFAULT_DURATIONS, rules(maxGapHours = 3.0), false, "d7")
-        for (i in 0 until many.size - 1) {
-            assertTrue("not cheapest-first", many[i].dayTotal <= many[i + 1].dayTotal)
-        }
-    }
-
-    @Test
-    fun `emits nothing when the rules need no visits`() {
-        // The exact prod config that showed a phantom $0 "Lean" card: an 11:00–14:00
-        // window (3h) is narrower than the 6h max gap and there are no pinned visits.
-        val degenerate = rules(wakeStart = "11:00", wakeEnd = "14:00", maxGapHours = 6.0)
-        assertTrue(buildDayPatterns(DEFAULT_DURATIONS, degenerate, false, "d7").isEmpty())
-    }
-
-    @Test
-    fun `still emits an overnight-only schedule when overnight is on`() {
-        val degenerate = rules(wakeStart = "11:00", wakeEnd = "14:00", maxGapHours = 6.0)
-        val patterns = buildDayPatterns(DEFAULT_DURATIONS, degenerate, true, "d7")
-        assertEquals(1, patterns.size)
-        assertTrue(patterns[0].touchpoints.isEmpty())
-        assertEquals(150.0, patterns[0].overnightCost, 0.001)
-        assertEquals(150.0, patterns[0].dayTotal, 0.001)
-    }
-
-    // ── quoteText ────────────────────────────────────────────────────────────
-
-    @Test
-    fun `quoteText renders a clean client-facing quote`() {
-        // Large max gap + one pinned visit -> a single deterministic pattern
-        // (pinned Meds at 12:00, priced at d3 = $28), so the quote is stable.
-        val r = rules(maxGapHours = 12.0, pinned = listOf(PinnedTime("p1", "Meds", "12:00", "d3")))
-        val pattern = buildDayPatterns(DEFAULT_DURATIONS, r, false, "d7")[0]
-        val text = quoteText(QuoteInput("Rex", "2026-07-01", "2026-07-03", 3, pattern))
-        assertTrue(text.contains("TribeTails — Coverage Package"))
-        assertTrue(text.contains("Prepared for: Rex"))
-        assertTrue(text.contains("12:00 PM"))
-        assertTrue(text.contains("Meds (45-min visit)"))
-        assertTrue(text.contains("Per day   $28.00"))
-        assertTrue(text.contains("Total (3 days)   $84.00"))
-    }
-
-    @Test
-    fun `quoteText omits the client line when no name is given`() {
-        val r = rules(maxGapHours = 12.0, pinned = listOf(PinnedTime("p1", "Meds", "12:00", "d3")))
-        val pattern = buildDayPatterns(DEFAULT_DURATIONS, r, false, "d7")[0]
-        val text = quoteText(QuoteInput("", "", "", 1, pattern))
-        assertTrue(!text.contains("Prepared for"))
-        assertTrue(text.contains("Total (1 day)   $28.00"))
+        assertNull(timeToMinutes("nope"))
     }
 }

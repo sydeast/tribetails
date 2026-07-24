@@ -2,7 +2,6 @@ package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.data.model.CoveragePackageConfig
 import com.tribetails.auntieos.data.repository.AuntieRepository
-import com.tribetails.auntieos.domain.CoverageRules
 import com.tribetails.auntieos.domain.DEFAULT_DURATIONS
 import com.tribetails.auntieos.domain.Duration
 import io.mockk.coEvery
@@ -78,18 +77,17 @@ class CoveragePackageViewModelTest {
     }
 
     @Test
-    fun `saveConfig writes the edited menu plus rules and sets saveSuccess`() = runTest(testDispatcher) {
+    fun `saveConfig writes the edited visit menu and sets saveSuccess`() = runTest(testDispatcher) {
         coEvery { mockRepo.saveCoveragePackageConfig(any(), any()) } returns Result.success(Unit)
 
         val vm = buildViewModel()
-        val durations = listOf(Duration("d1", "15-min", 15.0, 15.0))
-        val rules = CoverageRules(maxGapHours = 5.0)
-        vm.saveConfig(durations, rules)
+        val durations = listOf(Duration("d1", "15-min", 15.0, 15.0, "visit"))
+        vm.saveConfig(durations)
         advanceUntilIdle()
 
         coVerify(exactly = 1) {
             mockRepo.saveCoveragePackageConfig(
-                match { it.durations == durations && it.rules == rules },
+                match { it.durations == durations },
                 any(),
             )
         }
@@ -97,7 +95,6 @@ class CoveragePackageViewModelTest {
         assertTrue(state.saveSuccess)
         assertNull(state.error)
         assertEquals(durations, state.config.durations)
-        assertEquals(rules, state.config.rules)
     }
 
     @Test
@@ -105,7 +102,7 @@ class CoveragePackageViewModelTest {
         coEvery { mockRepo.saveCoveragePackageConfig(any(), any()) } returns Result.failure(RuntimeException("Write denied"))
 
         val vm = buildViewModel()
-        vm.saveConfig(DEFAULT_DURATIONS, CoverageRules())
+        vm.saveConfig(DEFAULT_DURATIONS)
         advanceUntilIdle()
 
         val state = vm.uiState.value
@@ -118,7 +115,7 @@ class CoveragePackageViewModelTest {
     fun `clearError and clearSaveSuccess reset their flags`() = runTest(testDispatcher) {
         coEvery { mockRepo.saveCoveragePackageConfig(any(), any()) } returns Result.success(Unit)
         val vm = buildViewModel()
-        vm.saveConfig(DEFAULT_DURATIONS, CoverageRules())
+        vm.saveConfig(DEFAULT_DURATIONS)
         advanceUntilIdle()
         assertTrue(vm.uiState.value.saveSuccess)
 

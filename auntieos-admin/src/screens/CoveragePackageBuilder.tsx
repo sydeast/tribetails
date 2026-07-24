@@ -7,16 +7,27 @@ import { saveCoveragePackageConfig } from '../api/coveragePackageWrite';
 import {
   DEFAULT_COVERAGE_RULES,
   DEFAULT_DURATIONS,
-  OVERNIGHT_MINUTES,
   buildDayPatterns,
+  dateLabel,
   daysBetween,
+  effectiveVisits,
+  gapWarnings,
+  minutesToInput,
   minutesToTime,
+  normalizePackage,
+  pricePackage,
   quoteText,
   timeToMinutes,
   uid,
+  visitsFromPattern,
+  visitsFromPinned,
   type CoverageRules,
+  type DayPattern,
   type Duration,
-  type PinnedTime,
+  type DurationKind,
+  type Package,
+  type PricedDayRow,
+  type Visit,
 } from '../lib/coveragePackage';
 import { lastSavedLabel } from '../lib/settingsFormat';
 import { type Async } from '../lib/async';
@@ -24,27 +35,22 @@ import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
-import { Toggle } from '../components/Toggle';
 import './CoveragePackageBuilder.css';
 
 /**
- * Coverage Package Builder.
+ * Coverage Package Builder (full port of the canonical PackageBuilder_7 sketch).
  *
- * An operator prices a multi-day pet-sitting stay by describing one covered day:
- * a wake window, a max gap between visits, and any pinned (fixed-time) visits.
- * `buildDayPatterns` (in `lib/coveragePackage.ts`, unit-tested there) turns those
- * rules into a few rule-valid daily schedules at Lean / Balanced / Generous price
- * points; the operator approves one and it is priced across the whole stay.
+ * An operator prices a multi-day stay by BUILDING one or more named packages —
+ * each a template of visits (any mix of lengths/times), with per-night overnights,
+ * per-day overrides, and an optional discount. Suggestions seed a package from a
+ * rule; every seeded visit is then editable. There is NO requirement for a pinned
+ * visit or an auto-filled gap — the operator can simply pick services for a client.
  *
  * TWO KINDS OF STATE, deliberately split:
- *  - CONFIG (the visit menu + coverage rules) persists to
- *    `coverage_package_config/config` via an explicit Save, the same
- *    load/Save/last-saved model as the Settings editors.
- *  - The per-stay inputs (client, dates, which schedule was approved) are session
- *    state and are never written — pricing a stay must not mutate saved config.
- *
- * Loads once through `AsyncRegion`, so a permission-denied or offline read shows
- * one honest error with Retry, never a fabricated blank menu.
+ *  - CONFIG (visit menu + coverage rules) persists to `coverage_package_config/config`
+ *    via an explicit Save (the Settings load/Save/last-saved model).
+ *  - The in-progress QUOTE (client, dates, packages, overnight selection) persists to
+ *    localStorage so a hand-built quote survives a reload; "Start new quote" clears it.
  */
 export function CoveragePackageBuilder() {
   const [config, setConfig] = useState<Async<CoveragePackageConfig>>({ status: 'loading' });
@@ -76,7 +82,7 @@ export function CoveragePackageBuilder() {
         kicker="Care Ops · Pricing"
         title="Coverage"
         accentTail="package builder."
-        subtitle="Set your visit menu and coverage rules, approve a rule-valid daily schedule, then price it across the full stay."
+        subtitle="Set your visit menu and this client's rules, then build packages — mix any visit lengths, pick which nights get an overnight, and compare totals side by side. Visits an overnight covers drop off automatically, and every overnight adds a free visit the next day."
       />
 
       <AsyncRegion
@@ -87,10 +93,7 @@ export function CoveragePackageBuilder() {
         empty={<p className="cpb__hint">No config found.</p>}
       >
         {(data) => (
-          <Builder
-            initial={data}
-            onSaved={(saved) => setConfig({ status: 'ready', data: saved })}
-          />
+          <Builder initial={data} onSaved={(saved) => setConfig({ status: 'ready', data: saved })} />
         )}
       </AsyncRegion>
     </div>
@@ -101,7 +104,6 @@ export function CoveragePackageBuilder() {
 
 interface BuilderProps {
   initial: CoveragePackageConfig;
-  /** Called after a successful config save, to refresh the loaded baseline. */
   onSaved: (saved: CoveragePackageConfig) => void;
 }
 
@@ -109,6 +111,7 @@ interface NewDuration {
   label: string;
   minutes: string;
   price: string;
+  kind: DurationKind;
 }
 interface NewPinned {
   label: string;
@@ -116,20 +119,36 @@ interface NewPinned {
   durationId: string;
 }
 
-/** Structural equality for the saveable config (menu + rules), for dirty tracking. */
-function sameConfig(a: { durations: readonly Duration[]; rules: CoverageRules }, b: typeof a): boolean {
-  return (
-    JSON.stringify({ durations: a.durations, rules: a.rules }) ===
-    JSON.stringify({ durations: b.durations, rules: b.rules })
-  );
+const QUOTE_KEY = 'tt-coverage-quote-v1';
+
+interface StoredQuote {
+  clientName: string;
+  startDate: string;
+  endDate: string;
+  overnightDurationId: string;
+  /** Per-client rules travel with the quote — never in the saved global config. */
+  rules: CoverageRules;
+  packages: Package[];
+}
+
+function loadQuote(): Partial<StoredQuote> {
+  try {
+    const raw = window.localStorage.getItem(QUOTE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Partial<StoredQuote>;
+    return {
+      ...parsed,
+      packages: Array.isArray(parsed.packages) ? parsed.packages.map(normalizePackage) : [],
+    };
+  } catch {
+    return {};
+  }
 }
 
 function Builder({ initial, onSaved }: BuilderProps) {
-  // Persisted config, seeded once from the loaded doc.
+  // Persisted CONFIG — the visit menu only (Firestore, via Save).
   const [durations, setDurations] = useState<readonly Duration[]>(initial.durations);
-  const [rules, setRules] = useState<CoverageRules>(initial.rules);
-  // The last-saved baseline, for dirty tracking. Advanced on every successful save.
-  const [baseline, setBaseline] = useState({ durations: initial.durations, rules: initial.rules });
+  const [baseline, setBaseline] = useState<readonly Duration[]>(initial.durations);
   const [savedAt, setSavedAt] = useState<{ updatedAt?: string; updatedBy?: string }>({
     ...(initial.updatedAt !== undefined ? { updatedAt: initial.updatedAt } : {}),
     ...(initial.updatedBy !== undefined ? { updatedBy: initial.updatedBy } : {}),
@@ -137,30 +156,77 @@ function Builder({ initial, onSaved }: BuilderProps) {
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Ephemeral, per-stay session state — never persisted.
-  const [useOvernight, setUseOvernight] = useState(false);
-  const [overnightDurationId, setOvernightDurationId] = useState('d7');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [clientName, setClientName] = useState('');
-  const [approvedPatternId, setApprovedPatternId] = useState<string | null>(null);
-  const [regenSeed, setRegenSeed] = useState(0);
+  // In-progress QUOTE (localStorage) — includes the PER-CLIENT rules.
+  const stored = useMemo(loadQuote, []);
+  const [clientName, setClientName] = useState(stored.clientName ?? '');
+  const [startDate, setStartDate] = useState(stored.startDate ?? '');
+  const [endDate, setEndDate] = useState(stored.endDate ?? '');
+  const [rules, setRules] = useState<CoverageRules>(stored.rules ?? DEFAULT_COVERAGE_RULES);
+  const [packages, setPackages] = useState<Package[]>(stored.packages ?? []);
+  const [overnightDurationId, setOvernightDurationId] = useState(
+    stored.overnightDurationId ?? initial.durations.find((d) => d.kind === 'overnight')?.id ?? '',
+  );
+  const [detailId, setDetailId] = useState<string | null>(null);
+
+  // Draft rows + feedback.
+  const [newDuration, setNewDuration] = useState<NewDuration>({ label: '', minutes: '', price: '', kind: 'visit' });
+  const [newPinned, setNewPinned] = useState<NewPinned>({ label: '', time: '', durationId: '' });
+  const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [shareNote, setShareNote] = useState<string | null>(null);
 
-  // Draft rows.
-  const [newDuration, setNewDuration] = useState<NewDuration>({ label: '', minutes: '', price: '' });
-  const [newPinned, setNewPinned] = useState<NewPinned>({ label: '', time: '', durationId: '' });
-  const [error, setError] = useState('');
-
-  const dirty = !sameConfig({ durations, rules }, baseline);
+  const dirty = JSON.stringify(durations) !== JSON.stringify(baseline);
   const days = daysBetween(startDate, endDate);
+  const nights = Math.max(0, days - 1); // last day is a return day — client home that night
+
+  // Persist the quote on every change (survives a reload; "Start new quote" clears it).
+  // The per-client rules travel here, NOT in the saved global config.
+  useEffect(() => {
+    const quote: StoredQuote = { clientName, startDate, endDate, overnightDurationId, rules, packages };
+    try {
+      window.localStorage.setItem(QUOTE_KEY, JSON.stringify(quote));
+    } catch {
+      // Storage full / disabled — the quote just won't survive a reload. Non-fatal.
+    }
+  }, [clientName, startDate, endDate, overnightDurationId, rules, packages]);
+
+  // Keep the overnight selection pointing at a real overnight-kind duration.
+  useEffect(() => {
+    const overnights = durations.filter((d) => d.kind === 'overnight');
+    if (overnights.length > 0 && !overnights.some((d) => d.id === overnightDurationId)) {
+      setOvernightDurationId(overnights[0]!.id);
+    }
+  }, [durations, overnightDurationId]);
+
+  // Date range shrank: drop overnight toggles / day overrides for days that no longer exist.
+  useEffect(() => {
+    setPackages((prev) => {
+      let changed = false;
+      const next = prev.map((p) => {
+        const keptNights = Object.entries(p.overnightNights).filter(([i]) => Number(i) < nights);
+        const keptDays = Object.entries(p.dayOverrides).filter(([i]) => Number(i) < days);
+        const nightsChanged = keptNights.length !== Object.keys(p.overnightNights).length;
+        const daysChanged = keptDays.length !== Object.keys(p.dayOverrides).length;
+        if (!nightsChanged && !daysChanged) return p;
+        changed = true;
+        return {
+          ...p,
+          overnightNights: nightsChanged ? Object.fromEntries(keptNights.map(([i, v]) => [Number(i), v])) : p.overnightNights,
+          dayOverrides: daysChanged ? Object.fromEntries(keptDays.map(([i, v]) => [Number(i), v])) : p.dayOverrides,
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, [nights, days]);
+
+  const overnightDuration = durations.find((d) => d.id === overnightDurationId);
+  const visitDurations = durations.filter((d) => d.kind === 'visit');
 
   // ── config edits ────────────────────────────────────────────────────────────
 
   const addDuration = () => {
     if (!newDuration.label.trim() || !newDuration.price || !newDuration.minutes) {
-      setError('Enter a duration name, length in minutes, and price.');
+      setError('Enter a name, length in minutes, and price.');
       return;
     }
     setDurations([
@@ -170,20 +236,16 @@ function Builder({ initial, onSaved }: BuilderProps) {
         label: newDuration.label.trim(),
         minutes: parseFloat(newDuration.minutes) || 0,
         price: parseFloat(newDuration.price) || 0,
+        kind: newDuration.kind,
       },
     ]);
-    setNewDuration({ label: '', minutes: '', price: '' });
+    setNewDuration({ label: '', minutes: '', price: '', kind: 'visit' });
     setError('');
   };
-
   const removeDuration = (id: string) => setDurations(durations.filter((d) => d.id !== id));
-
   const updateDuration = (id: string, field: keyof Duration, value: string) => {
-    setDurations(
-      durations.map((d) =>
-        d.id === id ? { ...d, [field]: field === 'label' ? value : parseFloat(value) || 0 } : d,
-      ),
-    );
+    const isText = field === 'label' || field === 'kind';
+    setDurations(durations.map((d) => (d.id === id ? { ...d, [field]: isText ? value : parseFloat(value) || 0 } : d)));
   };
 
   const patchRules = (patch: Partial<CoverageRules>) => setRules((r) => ({ ...r, ...patch }));
@@ -197,21 +259,16 @@ function Builder({ initial, onSaved }: BuilderProps) {
     setNewPinned({ label: '', time: '', durationId: '' });
     setError('');
   };
-
-  const removePinned = (id: string) =>
-    patchRules({ pinnedTimes: rules.pinnedTimes.filter((p) => p.id !== id) });
-
-  const resetConfig = () => {
-    setDurations(baseline.durations);
-    setRules(baseline.rules);
-    setError('');
-    setSaveError(null);
-  };
+  const removePinned = (id: string) => patchRules({ pinnedTimes: rules.pinnedTimes.filter((p) => p.id !== id) });
 
   const restoreDefaults = () => {
     setDurations(DEFAULT_DURATIONS);
-    setRules(DEFAULT_COVERAGE_RULES);
     setError('');
+  };
+  const resetConfig = () => {
+    setDurations(baseline);
+    setError('');
+    setSaveError(null);
   };
 
   const saveConfig = async () => {
@@ -219,12 +276,10 @@ function Builder({ initial, onSaved }: BuilderProps) {
     setSaveBusy(true);
     setSaveError(null);
     try {
-      const stamp = await saveCoveragePackageConfig({ durations, rules });
-      setBaseline({ durations, rules });
+      const stamp = await saveCoveragePackageConfig({ durations });
+      setBaseline(durations);
       setSavedAt(stamp);
-      // Surface the saved baseline (with the fresh stamp) up to the screen, so a
-      // later remount reads back exactly what was written.
-      onSaved({ durations, rules, updatedAt: stamp.updatedAt, updatedBy: stamp.updatedBy });
+      onSaved({ durations, updatedAt: stamp.updatedAt, updatedBy: stamp.updatedBy });
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Save failed.');
     } finally {
@@ -232,77 +287,154 @@ function Builder({ initial, onSaved }: BuilderProps) {
     }
   };
 
-  // ── schedules ─────────────────────────────────────────────────────────────
+  // ── packages ────────────────────────────────────────────────────────────────
 
-  const dayPatterns = useMemo(
-    () => buildDayPatterns(durations, rules, useOvernight, overnightDurationId),
-    // regenSeed re-rolls the (random) fill order without any config change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [durations, rules, useOvernight, overnightDurationId, regenSeed],
+  const suggestions = useMemo(
+    () => buildDayPatterns(durations, rules.pinnedTimes, rules.maxGapHours, rules.wakeStart, rules.wakeEnd),
+    [durations, rules],
   );
 
-  useEffect(() => {
-    if (approvedPatternId && !dayPatterns.some((p) => p.id === approvedPatternId)) {
-      setApprovedPatternId(null);
-    }
-  }, [dayPatterns, approvedPatternId]);
+  const newPackage = (name: string, visits: Visit[]) => {
+    const pkg = normalizePackage({ id: uid(), name, visits });
+    setPackages((prev) => [...prev, pkg]);
+    setDetailId(pkg.id);
+    setError('');
+  };
+  const addFromSuggestion = (pattern: DayPattern) => newPackage(pattern.strategyLabel, visitsFromPattern(pattern));
+  const addBlankPackage = () => newPackage(`Package ${packages.length + 1}`, visitsFromPinned(rules.pinnedTimes));
+  const duplicatePackage = (id: string) => {
+    const src = packages.find((p) => p.id === id);
+    if (!src) return;
+    const copy: Package = {
+      ...src,
+      id: uid(),
+      name: `${src.name} copy`,
+      visits: src.visits.map((v) => ({ ...v, id: uid() })),
+      overnightNights: { ...src.overnightNights },
+      dayOverrides: {},
+    };
+    setPackages((prev) => [...prev, copy]);
+    setDetailId(copy.id);
+  };
+  const removePackage = (id: string) => {
+    setPackages((prev) => prev.filter((p) => p.id !== id));
+    setDetailId((prev) => (prev === id ? null : prev));
+  };
+  const patchPackage = (id: string, patch: Partial<Package>) =>
+    setPackages((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
 
-  // Keep the overnight selection pointing at a real menu item. If the operator
-  // pruned the duration it referenced, snap to the first overnight-length visit
-  // rather than let `buildDayPatterns` find nothing and silently price it $0.
-  useEffect(() => {
-    if (!useOvernight) return;
-    const options = durations.filter((d) => d.minutes >= OVERNIGHT_MINUTES);
-    if (options.length > 0 && !options.some((d) => d.id === overnightDurationId)) {
-      setOvernightDurationId(options[0]!.id);
-    }
-  }, [useOvernight, durations, overnightDurationId]);
+  const patchVisit = (pkgId: string, visitId: string, patch: Partial<Visit>) =>
+    setPackages((prev) =>
+      prev.map((p) => (p.id !== pkgId ? p : { ...p, visits: p.visits.map((v) => (v.id === visitId ? { ...v, ...patch } : v)) })),
+    );
+  const addVisit = (pkgId: string) =>
+    setPackages((prev) =>
+      prev.map((p) =>
+        p.id !== pkgId
+          ? p
+          : {
+              ...p,
+              visits: [
+                ...p.visits,
+                { id: uid(), time: timeToMinutes(rules.wakeStart) ?? 720, durationId: visitDurations[0]?.id ?? '', label: 'Check-in' },
+              ],
+            },
+      ),
+    );
+  const removeVisit = (pkgId: string, visitId: string) =>
+    setPackages((prev) => prev.map((p) => (p.id !== pkgId ? p : { ...p, visits: p.visits.filter((v) => v.id !== visitId) })));
+  const toggleOvernight = (pkgId: string, nightIndex: number) =>
+    setPackages((prev) =>
+      prev.map((p) => (p.id !== pkgId ? p : { ...p, overnightNights: { ...p.overnightNights, [nightIndex]: !p.overnightNights[nightIndex] } })),
+    );
 
-  const approvedPattern = dayPatterns.find((p) => p.id === approvedPatternId) ?? null;
-  const packageTotal = approvedPattern && days > 0 ? approvedPattern.dayTotal * days : 0;
+  // Per-day customization: forks the template into that day's own editable list.
+  const customizeDay = (pkgId: string, dayIndex: number) =>
+    setPackages((prev) =>
+      prev.map((p) => {
+        if (p.id !== pkgId || p.dayOverrides[dayIndex]) return p;
+        return { ...p, dayOverrides: { ...p.dayOverrides, [dayIndex]: p.visits.map((v) => ({ ...v, id: uid() })) } };
+      }),
+    );
+  const resetDay = (pkgId: string, dayIndex: number) =>
+    setPackages((prev) =>
+      prev.map((p) => {
+        if (p.id !== pkgId || !p.dayOverrides[dayIndex]) return p;
+        const next = { ...p.dayOverrides };
+        delete next[dayIndex];
+        return { ...p, dayOverrides: next };
+      }),
+    );
+  const patchDayVisit = (pkgId: string, dayIndex: number, visitId: string, patch: Partial<Visit>) =>
+    setPackages((prev) =>
+      prev.map((p) =>
+        p.id !== pkgId || !p.dayOverrides[dayIndex]
+          ? p
+          : { ...p, dayOverrides: { ...p.dayOverrides, [dayIndex]: p.dayOverrides[dayIndex]!.map((v) => (v.id === visitId ? { ...v, ...patch } : v)) } },
+      ),
+    );
+  const addDayVisit = (pkgId: string, dayIndex: number) =>
+    setPackages((prev) =>
+      prev.map((p) =>
+        p.id !== pkgId || !p.dayOverrides[dayIndex]
+          ? p
+          : {
+              ...p,
+              dayOverrides: {
+                ...p.dayOverrides,
+                [dayIndex]: [...p.dayOverrides[dayIndex]!, { id: uid(), time: timeToMinutes(rules.wakeStart) ?? 720, durationId: visitDurations[0]?.id ?? '', label: 'Check-in' }],
+              },
+            },
+      ),
+    );
+  const removeDayVisit = (pkgId: string, dayIndex: number, visitId: string) =>
+    setPackages((prev) =>
+      prev.map((p) =>
+        p.id !== pkgId || !p.dayOverrides[dayIndex]
+          ? p
+          : { ...p, dayOverrides: { ...p.dayOverrides, [dayIndex]: p.dayOverrides[dayIndex]!.filter((v) => v.id !== visitId) } },
+      ),
+    );
 
-  const overnightDurations = durations.filter((d) => d.minutes >= OVERNIGHT_MINUTES);
-  const dayVisitDurations = durations.filter((d) => d.minutes < OVERNIGHT_MINUTES);
+  const startNewQuote = () => {
+    setPackages([]);
+    setDetailId(null);
+    setClientName('');
+    setStartDate('');
+    setEndDate('');
+    setRules(DEFAULT_COVERAGE_RULES); // rules are per-client — reset for the next one
+  };
 
-  // Why did no schedules generate? Give the operator an actionable reason rather
-  // than a bare hint, so a degenerate rule set never reads as a broken screen.
-  const scheduleEmptyReason = ((): string => {
-    const startMin = timeToMinutes(rules.wakeStart);
-    const endMin = timeToMinutes(rules.wakeEnd);
-    if (startMin === null || endMin === null) return 'Enter a valid day start and day end time.';
-    if (endMin <= startMin) return 'Day ends must be after day starts.';
-    const hasPinned = rules.pinnedTimes.some((p) => timeToMinutes(p.time) !== null);
-    if (!hasPinned && endMin - startMin <= rules.maxGapHours * 60) {
-      const windowHrs = Math.round(((endMin - startMin) / 60) * 10) / 10;
-      return `This day needs no visits yet: the ${windowHrs}h window fits inside the ${rules.maxGapHours}h max gap, and there are no pinned visits. Add a pinned visit, widen the day window, or lower the max gap.`;
-    }
-    if (durations.every((d) => d.price <= 0 || d.minutes >= OVERNIGHT_MINUTES)) {
-      return `Add at least one priced day visit (under ${OVERNIGHT_MINUTES} min) to the menu above.`;
-    }
-    return 'Adjust the day window, max gap, or pinned visits above to see valid schedule options.';
-  })();
+  // ── pricing ─────────────────────────────────────────────────────────────────
 
-  // ── quote actions (Copy / Share / Print) on the approved package ────────────
+  const priced = useMemo(
+    () =>
+      packages.map((p) => ({
+        pkg: p,
+        ...pricePackage(p, { days, nights, durations, overnightDuration }),
+        // Warn against a day with no overnight — the one that has to stand on its own.
+        warnings: gapWarnings(p.visits, rules.wakeStart, rules.wakeEnd, rules.maxGapHours, { eveningFrom: null, morningUntil: null, bonusFreeVisit: false }),
+      })),
+    [packages, days, nights, durations, overnightDuration, rules],
+  );
+  const detail = priced.find((p) => p.pkg.id === detailId) ?? null;
 
-  const buildQuote = (): string =>
-    approvedPattern ? quoteText({ clientName, startDate, endDate, days, pattern: approvedPattern }) : '';
+  const buildDetailQuote = (): string =>
+    detail ? quoteText({ clientName, startDate, days, priced: { ...detail, pkg: detail.pkg } }) : '';
 
   const copyQuote = async (): Promise<void> => {
-    const text = buildQuote();
+    const text = buildDetailQuote();
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard blocked (insecure context / denied permission): fall back to a
-      // prompt the operator can copy from by hand rather than silently failing.
       window.prompt('Copy this quote:', text);
     }
   };
-
   const shareQuote = async (): Promise<void> => {
-    const text = buildQuote();
+    const text = buildDetailQuote();
     if (!text) return;
     const nav = navigator as Navigator & { share?: (data: ShareData) => Promise<void> };
     if (typeof nav.share === 'function') {
@@ -310,30 +442,37 @@ function Builder({ initial, onSaved }: BuilderProps) {
         await nav.share({ title: 'TribeTails Coverage Package', text });
         return;
       } catch {
-        // Share sheet dismissed or unsupported mid-call — fall through to copy.
+        // dismissed / unsupported → fall through to copy
       }
     }
-    setShareNote('Sharing not available here — copied the quote to the clipboard instead.');
+    setShareNote('Sharing not available here — copied the quote instead.');
     window.setTimeout(() => setShareNote(null), 3000);
     await copyQuote();
   };
-
   const printQuote = (): void => window.print();
+
+  const overnightEndLabel = (pkg: Package): string => {
+    const s = timeToMinutes(pkg.overnightStart);
+    if (s === null || !overnightDuration) return '';
+    return minutesToTime(s + (Number(overnightDuration.minutes) || 0));
+  };
+
+  const hasQuote = packages.length > 0 || startDate !== '' || clientName !== '';
 
   // ── render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="cpb">
-      <div className="cpb__savebar">
+      <div className="cpb__savebar cpb__noprint">
         {savedAt.updatedAt !== undefined ? (
           <span className="cpb__saved">{lastSavedLabel(savedAt.updatedAt, savedAt.updatedBy ?? '')}</span>
         ) : (
-          <span className="cpb__saved cpb__saved--muted">Config never saved yet</span>
+          <span className="cpb__saved cpb__saved--muted">Visit menu never saved yet</span>
         )}
         <span className="cpb__savebarActions">
           <GhostButton label="Revert" onClick={resetConfig} disabled={!dirty || saveBusy} />
           <PrimaryButton
-            label={saveBusy ? 'Saving…' : dirty ? 'Save configuration' : 'Saved'}
+            label={saveBusy ? 'Saving…' : dirty ? 'Save visit menu' : 'Saved'}
             onClick={() => void saveConfig()}
             disabled={!dirty || saveBusy}
             busy={saveBusy}
@@ -341,198 +480,103 @@ function Builder({ initial, onSaved }: BuilderProps) {
         </span>
       </div>
       {saveError ? (
-        <Banner tone="error" title="Save failed" className="cpb__banner">
+        <Banner tone="error" title="Save failed" className="cpb__banner cpb__noprint">
           {saveError}
         </Banner>
       ) : null}
 
-      {/* Visit durations & prices */}
+      {/* Visit menu */}
       <DenPanel
         title="Visit menu"
-        subtitle="Your visit lengths and their prices. These feed every schedule below."
+        subtitle="Your service lengths, prices, and type. Overnights price as a window; visits are per-drop-in."
         trailing={<GhostButton label="Restore defaults" onClick={restoreDefaults} />}
+        className="cpb__noprint"
       >
         <ul className="cpb__list">
           {durations.map((d) => (
             <li key={d.id} className="cpb__durationRow">
-              <input
-                className="cpb__input cpb__input--grow"
-                aria-label="Visit name"
-                value={d.label}
-                onChange={(e) => updateDuration(d.id, 'label', e.target.value)}
-              />
+              <input className="cpb__input cpb__input--grow" aria-label="Service name" value={d.label} onChange={(e) => updateDuration(d.id, 'label', e.target.value)} />
               <span className="cpb__unitField">
-                <input
-                  className="cpb__input cpb__input--num"
-                  type="number"
-                  min="1"
-                  aria-label="Visit length in minutes"
-                  value={d.minutes}
-                  onChange={(e) => updateDuration(d.id, 'minutes', e.target.value)}
-                />
+                <input className="cpb__input cpb__input--num" type="number" min="1" aria-label="Length in minutes" value={d.minutes} onChange={(e) => updateDuration(d.id, 'minutes', e.target.value)} />
                 <span className="cpb__unit">min</span>
               </span>
               <span className="cpb__unitField">
                 <span className="cpb__unit cpb__unit--lead">$</span>
-                <input
-                  className="cpb__input cpb__input--num cpb__input--price"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  aria-label="Visit price"
-                  value={d.price}
-                  onChange={(e) => updateDuration(d.id, 'price', e.target.value)}
-                />
+                <input className="cpb__input cpb__input--num cpb__input--price" type="number" min="0" step="0.01" aria-label="Price" value={d.price} onChange={(e) => updateDuration(d.id, 'price', e.target.value)} />
               </span>
+              <select className="cpb__input cpb__kindSelect" aria-label="Type" value={d.kind} onChange={(e) => updateDuration(d.id, 'kind', e.target.value)}>
+                <option value="visit">Visit</option>
+                <option value="overnight">Overnight</option>
+              </select>
               <IconButton icon={<TrashGlyph />} label={`Remove ${d.label}`} destructive onClick={() => removeDuration(d.id)} />
             </li>
           ))}
         </ul>
-
         <div className="cpb__addRow">
-          <input
-            className="cpb__input cpb__input--grow"
-            placeholder="New visit name"
-            value={newDuration.label}
-            onChange={(e) => setNewDuration({ ...newDuration, label: e.target.value })}
-          />
+          <input className="cpb__input cpb__input--grow" placeholder="New service name" value={newDuration.label} onChange={(e) => setNewDuration({ ...newDuration, label: e.target.value })} />
           <span className="cpb__unitField">
-            <input
-              className="cpb__input cpb__input--num"
-              type="number"
-              min="1"
-              placeholder="min"
-              aria-label="New visit length"
-              value={newDuration.minutes}
-              onChange={(e) => setNewDuration({ ...newDuration, minutes: e.target.value })}
-            />
+            <input className="cpb__input cpb__input--num" type="number" min="1" placeholder="min" aria-label="New length" value={newDuration.minutes} onChange={(e) => setNewDuration({ ...newDuration, minutes: e.target.value })} />
             <span className="cpb__unit">min</span>
           </span>
           <span className="cpb__unitField">
             <span className="cpb__unit cpb__unit--lead">$</span>
-            <input
-              className="cpb__input cpb__input--num cpb__input--price"
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="0.00"
-              aria-label="New visit price"
-              value={newDuration.price}
-              onChange={(e) => setNewDuration({ ...newDuration, price: e.target.value })}
-            />
+            <input className="cpb__input cpb__input--num cpb__input--price" type="number" min="0" step="0.01" placeholder="0.00" aria-label="New price" value={newDuration.price} onChange={(e) => setNewDuration({ ...newDuration, price: e.target.value })} />
           </span>
+          <select className="cpb__input cpb__kindSelect" aria-label="New type" value={newDuration.kind} onChange={(e) => setNewDuration({ ...newDuration, kind: e.target.value as DurationKind })}>
+            <option value="visit">Visit</option>
+            <option value="overnight">Overnight</option>
+          </select>
           <PrimaryButton label="Add" leading={<PlusGlyph />} onClick={addDuration} />
         </div>
+        <p className="cpb__hint">
+          An overnight's length decides how much of the next morning it covers: a 12hr overnight from 9:00 PM runs to 9:00 AM, so anything before then is already covered.
+        </p>
       </DenPanel>
 
       {/* Coverage rules */}
-      <DenPanel
-        title="Coverage rules"
-        subtitle="The window the day covers, the longest allowed gap, and any fixed daily visits."
-      >
+      <DenPanel title="Coverage rules for this client" subtitle="Per-client — they travel with this quote, not the saved menu. Seed the suggestions and gap warnings; not a hard gate." className="cpb__noprint">
         <div className="cpb__ruleRow">
           <label className="cpb__field">
             <span className="cpb__fieldLabel">Day starts</span>
-            <input
-              className="cpb__input"
-              type="time"
-              value={rules.wakeStart}
-              onChange={(e) => patchRules({ wakeStart: e.target.value })}
-            />
+            <input className="cpb__input" type="time" value={rules.wakeStart} onChange={(e) => patchRules({ wakeStart: e.target.value })} />
           </label>
           <label className="cpb__field">
             <span className="cpb__fieldLabel">Day ends</span>
-            <input
-              className="cpb__input"
-              type="time"
-              value={rules.wakeEnd}
-              onChange={(e) => patchRules({ wakeEnd: e.target.value })}
-            />
+            <input className="cpb__input" type="time" value={rules.wakeEnd} onChange={(e) => patchRules({ wakeEnd: e.target.value })} />
           </label>
           <label className="cpb__field">
             <span className="cpb__fieldLabel">Max gap between visits (hrs)</span>
-            <input
-              className="cpb__input"
-              type="number"
-              min="1"
-              step="0.5"
-              value={rules.maxGapHours}
-              onChange={(e) => patchRules({ maxGapHours: parseFloat(e.target.value) || 1 })}
-            />
+            <input className="cpb__input" type="number" min="1" step="0.5" value={rules.maxGapHours} onChange={(e) => patchRules({ maxGapHours: parseFloat(e.target.value) || 1 })} />
+          </label>
+          <label className="cpb__field">
+            <span className="cpb__fieldLabel">Overnight duration</span>
+            <select className="cpb__input" value={overnightDurationId} onChange={(e) => setOvernightDurationId(e.target.value)}>
+              {durations.filter((d) => d.kind === 'overnight').map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.label} — ${d.price}
+                </option>
+              ))}
+              {durations.every((d) => d.kind !== 'overnight') ? <option value="">no overnight defined</option> : null}
+            </select>
           </label>
         </div>
 
-        <div className="cpb__overnight">
-          <Toggle
-            label="Include overnight coverage"
-            checked={useOvernight}
-            onChange={setUseOvernight}
-          />
-          <span className="cpb__overnightText">
-            Include overnight coverage (covers the hours outside the day window above)
-          </span>
-        </div>
-        {useOvernight ? (
-          overnightDurations.length > 0 ? (
-            <select
-              className="cpb__input cpb__select"
-              aria-label="Overnight visit length"
-              value={overnightDurationId}
-              onChange={(e) => setOvernightDurationId(e.target.value)}
-            >
-              {overnightDurations.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.label} · ${d.price}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <p className="cpb__hint">
-              Add a visit of {OVERNIGHT_MINUTES} minutes or more to the menu to use as overnight coverage.
-            </p>
-          )
-        ) : null}
-
         <div className="cpb__pinned">
-          <p className="cpb__pinnedHeading">Pinned visits (specific times that must happen every day)</p>
+          <p className="cpb__pinnedHeading">Pinned visits — this client's non-negotiables. New blank packages start with these.</p>
           {rules.pinnedTimes.map((p) => (
             <div key={p.id} className="cpb__pinnedRow">
               <span className="cpb__pinnedLabel">{p.label}</span>
-              <span className="cpb__pinnedTime">{p.time ? pinnedTimeLabel(p) : ''}</span>
-              <span className="cpb__pinnedDuration">
-                {durations.find((d) => d.id === p.durationId)?.label ?? ''}
-              </span>
-              <IconButton
-                icon={<TrashGlyph />}
-                label={`Remove ${p.label}`}
-                destructive
-                size={30}
-                onClick={() => removePinned(p.id)}
-              />
+              <span className="cpb__pinnedTime">{p.time ? minutesToTime(timeToMinutes(p.time) ?? 0) : ''}</span>
+              <span className="cpb__pinnedDuration">{durations.find((d) => d.id === p.durationId)?.label ?? ''}</span>
+              <IconButton icon={<TrashGlyph />} label={`Remove ${p.label}`} destructive size={30} onClick={() => removePinned(p.id)} />
             </div>
           ))}
           <div className="cpb__addRow">
-            <input
-              className="cpb__input cpb__input--grow"
-              placeholder="e.g. Medication"
-              value={newPinned.label}
-              onChange={(e) => setNewPinned({ ...newPinned, label: e.target.value })}
-            />
-            <input
-              className="cpb__input"
-              type="time"
-              aria-label="Pinned visit time"
-              value={newPinned.time}
-              onChange={(e) => setNewPinned({ ...newPinned, time: e.target.value })}
-            />
-            <select
-              className="cpb__input cpb__select"
-              aria-label="Pinned visit length"
-              value={newPinned.durationId}
-              onChange={(e) => setNewPinned({ ...newPinned, durationId: e.target.value })}
-            >
+            <input className="cpb__input cpb__input--grow" placeholder="e.g. Medication" value={newPinned.label} onChange={(e) => setNewPinned({ ...newPinned, label: e.target.value })} />
+            <input className="cpb__input" type="time" aria-label="Pinned time" value={newPinned.time} onChange={(e) => setNewPinned({ ...newPinned, time: e.target.value })} />
+            <select className="cpb__input cpb__select" aria-label="Pinned visit length" value={newPinned.durationId} onChange={(e) => setNewPinned({ ...newPinned, durationId: e.target.value })}>
               <option value="">visit length…</option>
-              {dayVisitDurations.map((d) => (
+              {durations.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.label}
                 </option>
@@ -541,7 +585,6 @@ function Builder({ initial, onSaved }: BuilderProps) {
             <PrimaryButton label="Add" leading={<PlusGlyph />} onClick={addPinned} />
           </div>
         </div>
-
         {error ? (
           <Banner tone="warning" title="Check your entry" className="cpb__banner">
             {error}
@@ -549,160 +592,386 @@ function Builder({ initial, onSaved }: BuilderProps) {
         ) : null}
       </DenPanel>
 
-      {/* Valid daily schedules */}
+      {/* Coverage window (dates) */}
       <DenPanel
-        title="Valid daily schedules"
-        subtitle="Rule-valid options at different price points. Approve one to price the stay."
-        trailing={
-          <GhostButton
-            label="Regenerate"
-            leading={<RefreshGlyph />}
-            onClick={() => setRegenSeed((n) => n + 1)}
-          />
-        }
-      >
-        {dayPatterns.length === 0 ? (
-          <p className="cpb__hint">{scheduleEmptyReason}</p>
-        ) : (
-          <div className="cpb__patternGrid">
-            {dayPatterns.map((pattern) => {
-              const approved = approvedPatternId === pattern.id;
-              return (
-                <div key={pattern.id} className={approved ? 'cpb__pattern cpb__pattern--approved' : 'cpb__pattern'}>
-                  <div className="cpb__patternHead">
-                    <span className="cpb__patternStrategy">{pattern.strategyLabel}</span>
-                    <span className="cpb__patternPrice">
-                      ${pattern.dayTotal.toFixed(2)}
-                      <span className="cpb__perDay">/day</span>
-                    </span>
-                  </div>
-                  <ul className="cpb__patternList">
-                    {pattern.touchpoints.map((tp, i) => (
-                      <li key={i} className="cpb__patternItem">
-                        <ClockGlyph />
-                        <span className="cpb__patternTime">{minutesToTime(tp.time)}</span>
-                        <span className="cpb__patternTpLabel">
-                          {tp.label === 'Check-in'
-                            ? `Check-in (${tp.durationLabel})`
-                            : `${tp.label} (${tp.durationLabel})`}
-                        </span>
-                      </li>
-                    ))}
-                    {pattern.overnightLabel ? (
-                      <li className="cpb__patternItem">
-                        <ClockGlyph />
-                        <span className="cpb__patternTpLabel">
-                          {pattern.overnightLabel} · ${pattern.overnightCost.toFixed(2)}
-                        </span>
-                      </li>
-                    ) : null}
-                  </ul>
-                  <PrimaryButton
-                    label={approved ? 'Approved' : 'Approve this schedule'}
-                    leading={approved ? <CheckGlyph /> : undefined}
-                    onClick={() => setApprovedPatternId(pattern.id)}
-                    className="cpb__approve"
-                  />
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </DenPanel>
-
-      {/* Coverage window & price */}
-      <DenPanel
-        title="Coverage window & price"
-        subtitle="The stay's dates. Priced from the approved schedule; not saved with the config."
+        title="Coverage window"
+        subtitle="The stay's dates. Packages price across this range; not saved with the menu."
+        trailing={hasQuote ? <GhostButton label="Start new quote" onClick={startNewQuote} /> : undefined}
+        className="cpb__noprint"
       >
         <div className="cpb__ruleRow">
           <label className="cpb__field">
             <span className="cpb__fieldLabel">Client (optional)</span>
-            <input
-              className="cpb__input"
-              placeholder="Kinfolk name"
-              value={clientName}
-              onChange={(e) => setClientName(e.target.value)}
-            />
+            <input className="cpb__input" placeholder="Kinfolk name" value={clientName} onChange={(e) => setClientName(e.target.value)} />
           </label>
           <label className="cpb__field">
             <span className="cpb__fieldLabel">Start</span>
-            <input
-              className="cpb__input"
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-            />
+            <input className="cpb__input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           </label>
           <label className="cpb__field">
             <span className="cpb__fieldLabel">End</span>
-            <input
-              className="cpb__input"
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-            />
+            <input className="cpb__input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
           </label>
         </div>
-
         {days > 0 ? (
           <p className="cpb__dayCount">
             <CalendarGlyph />
-            {days} day{days !== 1 ? 's' : ''} of coverage
+            {days} day{days !== 1 ? 's' : ''} of coverage · {nights} night{nights !== 1 ? 's' : ''} available
           </p>
         ) : null}
+      </DenPanel>
 
-        {!approvedPattern ? (
-          <p className="cpb__hint">Approve a daily schedule above to price the full stay.</p>
-        ) : null}
+      {/* Packages */}
+      <DenPanel
+        title="Packages"
+        subtitle="Build one or more options for this client. Mix any visit lengths — a 15-min lunch check-in with a 60-min evening, however you like."
+        trailing={
+          <span className="cpb__seedRow">
+            {suggestions.map((s) => (
+              <GhostButton key={s.id} label={`${s.strategyLabel} ($${s.dayTotal.toFixed(0)}/day)`} leading={<SparklesGlyph />} onClick={() => addFromSuggestion(s)} />
+            ))}
+            <PrimaryButton label="New package" leading={<PlusGlyph />} onClick={addBlankPackage} />
+          </span>
+        }
+        className="cpb__noprint"
+      >
+        {packages.length === 0 ? (
+          <p className="cpb__hint">
+            Start from a suggestion or an empty package, then change any visit's time and length. No pinned visit required.
+          </p>
+        ) : (
+          <div className="cpb__pkgGrid">
+            {priced.map(({ pkg, subtotal, discount, discountPct, total, warnings }) => (
+              <div key={pkg.id} className={detailId === pkg.id ? 'cpb__pkg cpb__pkg--active' : 'cpb__pkg'}>
+                <div className="cpb__pkgHead">
+                  <input className="cpb__input cpb__pkgName" aria-label="Package name" value={pkg.name} onChange={(e) => patchPackage(pkg.id, { name: e.target.value })} />
+                  <IconButton icon={<CopyGlyph />} label="Duplicate package" size={30} onClick={() => duplicatePackage(pkg.id)} />
+                  <IconButton icon={<TrashGlyph />} label="Delete package" destructive size={30} onClick={() => removePackage(pkg.id)} />
+                </div>
 
-        {approvedPattern && days > 0 ? (
-          <div className="cpb__finalPrice">
-            <div>
-              <div className="cpb__finalPriceLabel">
-                {clientName ? `${clientName}'s package` : 'Package total'}
+                <p className="cpb__pkgSectionLabel">Every day of the stay</p>
+                <div className="cpb__visitList">
+                  {[...pkg.visits].sort((a, b) => a.time - b.time).map((v) => (
+                    <VisitRow key={v.id} visit={v} durations={durations} onPatch={(patch) => patchVisit(pkg.id, v.id, patch)} onRemove={() => removeVisit(pkg.id, v.id)} />
+                  ))}
+                  {pkg.visits.length === 0 ? <p className="cpb__miniEmpty">No visits yet.</p> : null}
+                </div>
+                <button type="button" className="cpb__addVisitBtn" onClick={() => addVisit(pkg.id)}>
+                  <PlusGlyph /> Add visit
+                </button>
+
+                {warnings.length > 0 ? (
+                  <div className="cpb__warn">
+                    <AlertGlyph />
+                    <div>
+                      {warnings.map((w, i) => (
+                        <div key={i}>
+                          {w} — over your {rules.maxGapHours}h max gap on a night with no overnight
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                <p className="cpb__pkgSectionLabel">Overnights</p>
+                <div className="cpb__cfgRow">
+                  <label className="cpb__field">
+                    <span className="cpb__fieldLabel">Starts</span>
+                    <input className="cpb__input" type="time" value={pkg.overnightStart} onChange={(e) => patchPackage(pkg.id, { overnightStart: e.target.value })} />
+                  </label>
+                  <label className="cpb__field">
+                    <span className="cpb__fieldLabel">Buffer (hrs)</span>
+                    <input className="cpb__input" type="number" min="0" step="0.5" value={pkg.overnightBufferHours} onChange={(e) => patchPackage(pkg.id, { overnightBufferHours: parseFloat(e.target.value) || 0 })} />
+                  </label>
+                </div>
+                {overnightDuration ? (
+                  <p className="cpb__cfgNote">
+                    <MoonGlyph /> {overnightDuration.label} → covers until {overnightEndLabel(pkg)}, plus one free visit the next day
+                  </p>
+                ) : null}
+
+                {nights === 0 ? (
+                  <p className="cpb__miniEmpty">{days > 0 ? 'Single day — no nights.' : 'Set a date range above.'}</p>
+                ) : !overnightDuration ? (
+                  <p className="cpb__miniEmpty">No overnight duration defined (add one to the menu).</p>
+                ) : (
+                  <div className="cpb__nightChips">
+                    {Array.from({ length: nights }).map((_, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        className={pkg.overnightNights[i] ? 'cpb__nightChip cpb__nightChip--on' : 'cpb__nightChip'}
+                        onClick={() => toggleOvernight(pkg.id, i)}
+                        title={`Night of ${dateLabel(startDate, i) || `day ${i + 1}`}`}
+                      >
+                        {dateLabel(startDate, i, { month: 'short', day: 'numeric' }) || `N${i + 1}`}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <p className="cpb__pkgSectionLabel">Discount</p>
+                <div className="cpb__discountRow">
+                  <input className="cpb__input cpb__input--grow" placeholder="e.g. Military" value={pkg.discountLabel} onChange={(e) => patchPackage(pkg.id, { discountLabel: e.target.value })} />
+                  <span className="cpb__unitField cpb__pctField">
+                    <input className="cpb__input cpb__input--num" type="number" min="0" max="100" step="1" placeholder="0" aria-label="Discount percent" value={pkg.discountPct || ''} onChange={(e) => patchPackage(pkg.id, { discountPct: parseFloat(e.target.value) || 0 })} />
+                    <span className="cpb__unit">%</span>
+                  </span>
+                </div>
+
+                <div className="cpb__pkgTotals">
+                  {days === 0 ? (
+                    <p className="cpb__miniEmpty">Set a date range to price this.</p>
+                  ) : (
+                    <>
+                      <div className="cpb__totalLine">
+                        <span>Subtotal</span>
+                        <span>${subtotal.toFixed(2)}</span>
+                      </div>
+                      {discountPct > 0 ? (
+                        <div className="cpb__totalLine cpb__totalLine--discount">
+                          <span>{pkg.discountLabel || 'Discount'} ({discountPct}%)</span>
+                          <span>−${discount.toFixed(2)}</span>
+                        </div>
+                      ) : null}
+                      <div className="cpb__totalLine cpb__totalLine--final">
+                        <span>Total</span>
+                        <span>${total.toFixed(2)}</span>
+                      </div>
+                      <GhostButton
+                        label={detailId === pkg.id ? 'Hide day-by-day' : 'View day-by-day'}
+                        onClick={() => setDetailId(detailId === pkg.id ? null : pkg.id)}
+                      />
+                    </>
+                  )}
+                </div>
               </div>
-              <div className="cpb__finalPriceSub">
-                {approvedPattern.strategyLabel} schedule × {days} day{days !== 1 ? 's' : ''}
-              </div>
-            </div>
-            <div className="cpb__finalPriceValue">${packageTotal.toFixed(2)}</div>
+            ))}
           </div>
-        ) : null}
+        )}
+      </DenPanel>
 
-        {approvedPattern && days > 0 ? (
-          <div className="cpb__actions cpb__noprint">
-            <GhostButton
-              label={copied ? 'Copied' : 'Copy quote'}
-              leading={copied ? <CheckGlyph /> : <CopyGlyph />}
-              onClick={() => void copyQuote()}
-            />
+      {/* Day-by-day detail + quote (also the print surface) */}
+      {detail && days > 0 ? (
+        <DenPanel className="cpb__printSurface" title={`${clientName ? `${clientName} — ` : ''}${detail.pkg.name}`} subtitle={`${days} day${days !== 1 ? 's' : ''}${startDate ? ` · ${dateLabel(startDate, 0)} – ${dateLabel(startDate, days - 1)}` : ''}`}>
+          <div className="cpb__detailActions cpb__noprint">
+            <GhostButton label={copied ? 'Copied' : 'Copy quote'} leading={copied ? <CheckGlyph /> : <CopyGlyph />} onClick={() => void copyQuote()} />
             <GhostButton label="Share" leading={<ShareGlyph />} onClick={() => void shareQuote()} />
             <PrimaryButton label="Print / Save PDF" leading={<PrinterGlyph />} onClick={printQuote} />
           </div>
-        ) : null}
-        {shareNote ? <p className="cpb__hint cpb__noprint">{shareNote}</p> : null}
-      </DenPanel>
+          {shareNote ? <p className="cpb__hint cpb__noprint">{shareNote}</p> : null}
 
-      {/* Print-only quote: hidden on screen; on print, everything else is hidden
-          and this becomes the whole page (see .cpb__printDoc in the stylesheet). */}
-      {approvedPattern && days > 0 ? (
-        <pre className="cpb__printDoc" aria-hidden="true">
-          {buildQuote()}
-        </pre>
+          <div className="cpb__nightList">
+            {detail.rows.map((row) => (
+              <DayDetailRow
+                key={row.dayIndex}
+                row={row}
+                pkg={detail.pkg}
+                durations={durations}
+                startDate={startDate}
+                onCustomize={() => customizeDay(detail.pkg.id, row.dayIndex)}
+                onReset={() => resetDay(detail.pkg.id, row.dayIndex)}
+                onPatchVisit={(vid, patch) => patchDayVisit(detail.pkg.id, row.dayIndex, vid, patch)}
+                onAddVisit={() => addDayVisit(detail.pkg.id, row.dayIndex)}
+                onRemoveVisit={(vid) => removeDayVisit(detail.pkg.id, row.dayIndex, vid)}
+              />
+            ))}
+          </div>
+
+          <div className="cpb__finalPrice">
+            <div>
+              <div className="cpb__finalPriceLabel">{clientName ? `${clientName}'s package` : 'Package total'}</div>
+              <div className="cpb__finalPriceSub">
+                {detail.pkg.name} · {days} day{days !== 1 ? 's' : ''}
+                {detail.discountPct > 0 ? ` · ${detail.pkg.discountLabel || 'Discount'} ${detail.discountPct}% off $${detail.subtotal.toFixed(2)}` : ''}
+              </div>
+            </div>
+            <div className="cpb__finalPriceValue">${detail.total.toFixed(2)}</div>
+          </div>
+        </DenPanel>
       ) : null}
     </div>
   );
 }
 
-/** 12h label for a pinned visit's stored "HH:MM" time. */
-function pinnedTimeLabel(p: PinnedTime): string {
-  const mins = timeToMinutes(p.time);
-  return mins === null ? '' : minutesToTime(mins);
+// ── sub-components ──────────────────────────────────────────────────────────────
+
+function VisitRow({
+  visit,
+  durations,
+  onPatch,
+  onRemove,
+}: {
+  visit: Visit;
+  durations: readonly Duration[];
+  onPatch: (patch: Partial<Visit>) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="cpb__visitRow">
+      <input
+        className="cpb__input cpb__visitTime"
+        type="time"
+        aria-label="Visit time"
+        value={minutesToInput(visit.time)}
+        onChange={(e) => {
+          const m = timeToMinutes(e.target.value);
+          if (m !== null) onPatch({ time: m });
+        }}
+      />
+      <select className="cpb__input cpb__visitDuration" aria-label="Visit length" value={visit.durationId} onChange={(e) => onPatch({ durationId: e.target.value })}>
+        <option value="">length…</option>
+        {durations.map((d) => (
+          <option key={d.id} value={d.id}>
+            {d.label} — ${d.price}
+          </option>
+        ))}
+      </select>
+      <input className="cpb__input cpb__visitLabel" placeholder="Label" value={visit.label} onChange={(e) => onPatch({ label: e.target.value })} />
+      <IconButton icon={<TrashGlyph />} label="Remove visit" destructive size={30} onClick={onRemove} />
+    </div>
+  );
 }
 
-// ── inline glyphs (the repo installs no icon set; one SVG per glyph, per the
-//    DenScreenKit / Banner convention) ─────────────────────────────────────────
+function DayItemsReadonly({ row }: { row: PricedDayRow }) {
+  return (
+    <ul className="cpb__dayItemList">
+      {row.items.map((it) => (
+        <li key={it.key} className={it.free ? 'cpb__dayItem cpb__dayItem--covered' : 'cpb__dayItem'}>
+          <span className="cpb__dayItemTime">{minutesToTime(it.time)}</span>
+          <span className="cpb__dayItemLabel">
+            {it.label} ({it.durationLabel})
+            {it.freeReason ? <span className="cpb__coverTag"> — {it.freeReason}</span> : null}
+          </span>
+          <span className={it.free ? 'cpb__dayItemFree' : 'cpb__dayItemPrice'}>{it.free ? '—' : `$${it.price.toFixed(2)}`}</span>
+        </li>
+      ))}
+      {row.items.length === 0 ? (
+        <li className="cpb__dayItem">
+          <span className="cpb__dayItemLabel">No visits this day</span>
+        </li>
+      ) : null}
+      {row.isOvernight && row.overnightStartMin !== null ? (
+        <li className="cpb__dayItem">
+          <span className="cpb__dayItemTime">{minutesToTime(row.overnightStartMin)}</span>
+          <span className="cpb__dayItemLabel">{row.overnightLabel}</span>
+          <span className="cpb__dayItemPrice">${row.overnightCost.toFixed(2)}</span>
+        </li>
+      ) : null}
+    </ul>
+  );
+}
+
+function DayDetailRow({
+  row,
+  pkg,
+  durations,
+  startDate,
+  onCustomize,
+  onReset,
+  onPatchVisit,
+  onAddVisit,
+  onRemoveVisit,
+}: {
+  row: PricedDayRow;
+  pkg: Package;
+  durations: readonly Duration[];
+  startDate: string;
+  onCustomize: () => void;
+  onReset: () => void;
+  onPatchVisit: (visitId: string, patch: Partial<Visit>) => void;
+  onAddVisit: () => void;
+  onRemoveVisit: (visitId: string) => void;
+}) {
+  const dayVisits = [...effectiveVisits(pkg, row.dayIndex)].sort((a, b) => a.time - b.time);
+  return (
+    <div className="cpb__nightRow">
+      <div className="cpb__nightRowTop">
+        <span className="cpb__nightRowLabel">
+          Day {row.dayIndex + 1}
+          {startDate ? <span className="cpb__nightRowDate">{dateLabel(startDate, row.dayIndex)}</span> : null}
+        </span>
+        <span className="cpb__nightToggleNote">
+          {row.isOvernight && row.overnightStartMin !== null
+            ? `Overnight — ${row.overnightLabel} from ${minutesToTime(row.overnightStartMin)}`
+            : row.canOvernight
+              ? 'No overnight'
+              : 'Client returns — no overnight'}
+        </span>
+        <span className="cpb__nightRowPrice">${row.dayCost.toFixed(2)}</span>
+      </div>
+
+      {row.customized ? (
+        <>
+          <div className="cpb__dayEditor cpb__noprint">
+            {dayVisits.map((v) => {
+              const it = row.items.find((i) => i.key === v.id);
+              return (
+                <div key={v.id} className="cpb__dayEditRow">
+                  <input
+                    className="cpb__input cpb__visitTime"
+                    type="time"
+                    aria-label="Visit time"
+                    value={minutesToInput(v.time)}
+                    onChange={(e) => {
+                      const m = timeToMinutes(e.target.value);
+                      if (m !== null) onPatchVisit(v.id, { time: m });
+                    }}
+                  />
+                  <select className="cpb__input cpb__visitDuration" aria-label="Visit length" value={v.durationId} onChange={(e) => onPatchVisit(v.id, { durationId: e.target.value })}>
+                    <option value="">length…</option>
+                    {durations.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.label} — ${d.price}
+                      </option>
+                    ))}
+                  </select>
+                  <input className="cpb__input cpb__visitLabel" placeholder="Label" value={v.label} onChange={(e) => onPatchVisit(v.id, { label: e.target.value })} />
+                  <span className={it && it.free ? 'cpb__dayEditTag cpb__dayEditTag--free' : 'cpb__dayEditTag'}>
+                    {it ? (it.free ? it.freeReason || 'free' : `$${it.price.toFixed(2)}`) : ''}
+                  </span>
+                  <IconButton icon={<TrashGlyph />} label="Remove visit" destructive size={28} onClick={() => onRemoveVisit(v.id)} />
+                </div>
+              );
+            })}
+            {dayVisits.length === 0 ? <p className="cpb__miniEmpty">No visits this day.</p> : null}
+            <button type="button" className="cpb__addVisitBtn" onClick={onAddVisit}>
+              <PlusGlyph /> Add visit to this day
+            </button>
+            {row.isOvernight && row.overnightStartMin !== null ? (
+              <p className="cpb__dayEditOvernight">
+                + {row.overnightLabel} from {minutesToTime(row.overnightStartMin)} — ${row.overnightCost.toFixed(2)}
+              </p>
+            ) : null}
+          </div>
+          {/* print mirror */}
+          <div className="cpb__printonly">
+            <DayItemsReadonly row={row} />
+          </div>
+        </>
+      ) : (
+        <DayItemsReadonly row={row} />
+      )}
+
+      <div className="cpb__dayCustomizeRow cpb__noprint">
+        {row.customized ? (
+          <>
+            <span className="cpb__customBadge">Customized</span>
+            <button type="button" className="cpb__linkBtn" onClick={onReset}>
+              Reset to template
+            </button>
+          </>
+        ) : (
+          <button type="button" className="cpb__linkBtn" onClick={onCustomize}>
+            Customize this day
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── inline glyphs (the repo installs no icon set; one SVG per glyph) ────────────
 
 function glyphProps() {
   return {
@@ -725,7 +994,6 @@ function TrashGlyph() {
     </svg>
   );
 }
-
 function PlusGlyph() {
   return (
     <svg {...glyphProps()}>
@@ -733,7 +1001,6 @@ function PlusGlyph() {
     </svg>
   );
 }
-
 function CheckGlyph() {
   return (
     <svg {...glyphProps()}>
@@ -741,24 +1008,6 @@ function CheckGlyph() {
     </svg>
   );
 }
-
-function RefreshGlyph() {
-  return (
-    <svg {...glyphProps()}>
-      <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" />
-    </svg>
-  );
-}
-
-function ClockGlyph() {
-  return (
-    <svg {...glyphProps()} className="cpb__glyphClock">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v5l3 2" />
-    </svg>
-  );
-}
-
 function CalendarGlyph() {
   return (
     <svg {...glyphProps()} className="cpb__glyphInline">
@@ -767,7 +1016,6 @@ function CalendarGlyph() {
     </svg>
   );
 }
-
 function CopyGlyph() {
   return (
     <svg {...glyphProps()}>
@@ -776,7 +1024,6 @@ function CopyGlyph() {
     </svg>
   );
 }
-
 function ShareGlyph() {
   return (
     <svg {...glyphProps()}>
@@ -787,12 +1034,33 @@ function ShareGlyph() {
     </svg>
   );
 }
-
 function PrinterGlyph() {
   return (
     <svg {...glyphProps()}>
       <path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
       <rect x="6" y="14" width="12" height="8" rx="1" />
+    </svg>
+  );
+}
+function MoonGlyph() {
+  return (
+    <svg {...glyphProps()} className="cpb__glyphInline">
+      <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+    </svg>
+  );
+}
+function SparklesGlyph() {
+  return (
+    <svg {...glyphProps()}>
+      <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" />
+    </svg>
+  );
+}
+function AlertGlyph() {
+  return (
+    <svg {...glyphProps()} className="cpb__glyphWarn">
+      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+      <path d="M12 9v4M12 17h.01" />
     </svg>
   );
 }

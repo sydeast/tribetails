@@ -21,13 +21,11 @@
   gap: var(--space-3);
   flex-wrap: wrap;
 }
-
 .cpb__savebarActions {
   display: flex;
   align-items: center;
   gap: var(--space-3);
 }
-
 .cpb__saved {
   font-family: var(--font-mono);
   font-size: 0.72rem;
@@ -37,7 +35,6 @@
 .cpb__saved--muted {
   color: var(--color-text-faint);
 }
-
 .cpb__banner {
   margin-top: var(--space-2);
 }
@@ -64,7 +61,6 @@
 .cpb__input::placeholder {
   color: var(--color-text-faint);
 }
-
 .cpb__input--grow {
   flex: 2 1 8rem;
   width: auto;
@@ -77,8 +73,11 @@
   flex: 1 1 8rem;
   width: auto;
 }
+.cpb__kindSelect {
+  flex: 0 0 7rem;
+  width: auto;
+}
 
-/* A number input paired with a unit affix ("min", "$"). */
 .cpb__unitField {
   position: relative;
   display: flex;
@@ -103,6 +102,9 @@
   padding-right: var(--space-3);
   padding-left: 1.4rem;
 }
+.cpb__pctField {
+  flex: 0 0 4.5rem;
+}
 
 /* ── lists / rows ─────────────────────────────────────────────────────────── */
 
@@ -114,7 +116,6 @@
   flex-direction: column;
   gap: var(--space-2);
 }
-
 .cpb__durationRow,
 .cpb__addRow {
   display: flex;
@@ -122,7 +123,6 @@
   gap: var(--space-2);
   flex-wrap: wrap;
 }
-
 .cpb__addRow {
   margin-top: var(--space-3);
   padding-top: var(--space-3);
@@ -136,7 +136,6 @@
   gap: var(--space-4);
   flex-wrap: wrap;
 }
-
 .cpb__field {
   display: flex;
   flex-direction: column;
@@ -146,17 +145,6 @@
 .cpb__fieldLabel {
   font-size: var(--type-label-md-size);
   color: var(--color-text-dim);
-}
-
-.cpb__overnight {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-}
-.cpb__overnightText {
-  font-size: var(--type-body-md-size);
-  color: var(--color-text-primary);
 }
 
 .cpb__pinned {
@@ -192,84 +180,7 @@
   color: var(--color-text-dim);
 }
 
-/* ── schedule patterns ────────────────────────────────────────────────────── */
-
-.cpb__patternGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-  gap: var(--space-4);
-}
-
-.cpb__pattern {
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card-lg);
-  padding: var(--space-4);
-  background: var(--color-surface);
-}
-.cpb__pattern--approved {
-  border: var(--border-emphasis) solid var(--color-primary);
-  background: var(--color-surface-glass);
-}
-
-.cpb__patternHead {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: var(--space-3);
-}
-.cpb__patternStrategy {
-  font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  letter-spacing: var(--type-label-sm-tracking);
-  text-transform: uppercase;
-  color: var(--color-primary);
-}
-.cpb__patternPrice {
-  font-family: var(--font-fraunces);
-  font-size: var(--type-headline-md-size);
-  font-weight: 600;
-}
-.cpb__perDay {
-  font-family: var(--font-hanken);
-  font-size: var(--type-body-sm-size);
-  font-weight: 400;
-  color: var(--color-text-faint);
-  margin-left: 2px;
-}
-
-.cpb__patternList {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.cpb__patternItem {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-primary);
-}
-.cpb__glyphClock {
-  color: var(--color-text-faint);
-  flex-shrink: 0;
-}
-.cpb__patternTime {
-  font-weight: 600;
-  min-width: 4rem;
-  flex-shrink: 0;
-}
-.cpb__patternTpLabel {
-  color: var(--color-text-dim);
-}
-.cpb__approve {
-  width: 100%;
-  justify-content: center;
-}
-
-/* ── coverage window & final price ────────────────────────────────────────── */
+/* ── coverage window ──────────────────────────────────────────────────────── */
 
 .cpb__dayCount {
   display: flex;
@@ -281,6 +192,313 @@
 }
 .cpb__glyphInline {
   color: var(--color-text-faint);
+}
+
+/* ── packages ─────────────────────────────────────────────────────────────── */
+
+.cpb__seedRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+.cpb__pkgGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: var(--space-4);
+}
+.cpb__pkg {
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.cpb__pkg--active {
+  border: var(--border-emphasis) solid var(--color-primary);
+  background: var(--color-surface-glass);
+}
+.cpb__pkgHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.cpb__pkgName {
+  flex: 1;
+  font-weight: 600;
+}
+.cpb__pkgSectionLabel {
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-primary);
+  margin: var(--space-3) 0 0;
+}
+
+.cpb__visitList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.cpb__visitRow,
+.cpb__dayEditRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.cpb__visitTime {
+  flex: 0 0 6.5rem;
+  width: auto;
+}
+.cpb__visitDuration {
+  flex: 2 1 9rem;
+  width: auto;
+}
+.cpb__visitLabel {
+  flex: 1 1 6rem;
+  width: auto;
+}
+.cpb__miniEmpty {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-faint);
+  margin: var(--space-2) 0;
+}
+.cpb__addVisitBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1, 0.25rem);
+  border: var(--border-hairline) dashed var(--color-border);
+  background: transparent;
+  color: var(--color-primary);
+  cursor: pointer;
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-hanken);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  width: 100%;
+  justify-content: center;
+  margin-top: var(--space-2);
+}
+.cpb__addVisitBtn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cpb__warn {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  background: var(--color-surface-glass);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  margin-top: var(--space-2);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+.cpb__glyphWarn {
+  color: var(--color-warning, var(--color-primary));
+  flex-shrink: 0;
+}
+
+.cpb__cfgRow {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.cpb__cfgNote {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  margin: var(--space-2) 0 0;
+}
+
+.cpb__nightChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.cpb__nightChip {
+  border: var(--border-hairline) solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-dim);
+  cursor: pointer;
+  border-radius: var(--radius-pill, 999px);
+  padding: var(--space-1, 0.25rem) var(--space-3);
+  font-family: var(--font-hanken);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+}
+.cpb__nightChip--on {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-on-primary, #fff);
+}
+
+.cpb__discountRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.cpb__pkgTotals {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: var(--border-hairline) dashed var(--color-border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 0.25rem);
+}
+.cpb__totalLine {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+.cpb__totalLine--discount {
+  color: var(--color-primary);
+}
+.cpb__totalLine--final {
+  font-family: var(--font-fraunces);
+  font-size: var(--type-title-md-size, 1.1rem);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-top: var(--space-1, 0.25rem);
+}
+
+/* ── day-by-day detail ────────────────────────────────────────────────────── */
+
+.cpb__detailActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.cpb__nightList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.cpb__nightRow {
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-3);
+}
+.cpb__nightRowTop {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.cpb__nightRowLabel {
+  font-weight: 600;
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+.cpb__nightRowDate {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-faint);
+  font-weight: 400;
+}
+.cpb__nightToggleNote {
+  flex: 1;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+.cpb__nightRowPrice {
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.cpb__dayItemList {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 0.25rem);
+}
+.cpb__dayItem {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+}
+.cpb__dayItem--covered {
+  color: var(--color-text-faint);
+}
+.cpb__dayItemTime {
+  flex: 0 0 4.5rem;
+  font-weight: 600;
+}
+.cpb__dayItemLabel {
+  flex: 1;
+  color: var(--color-text-dim);
+}
+.cpb__coverTag {
+  color: var(--color-text-faint);
+  font-style: italic;
+}
+.cpb__dayItemPrice {
+  font-weight: 600;
+}
+.cpb__dayItemFree {
+  color: var(--color-text-faint);
+}
+
+.cpb__dayEditor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.cpb__dayEditTag {
+  flex: 0 0 auto;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  min-width: 3.5rem;
+  text-align: right;
+}
+.cpb__dayEditTag--free {
+  color: var(--color-text-faint);
+  font-style: italic;
+}
+.cpb__dayEditOvernight {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  margin: 0;
+}
+.cpb__dayCustomizeRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+.cpb__customBadge {
+  font-size: var(--type-label-sm-size);
+  text-transform: uppercase;
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-primary);
+}
+.cpb__linkBtn {
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  cursor: pointer;
+  font-family: var(--font-hanken);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  text-decoration: underline;
+  padding: 0;
 }
 
 .cpb__finalPrice {
@@ -311,49 +529,30 @@
   color: var(--color-primary);
 }
 
-/* ── quote actions (Copy / Share / Print) ─────────────────────────────────── */
+/* ── print: only the day-by-day detail panel becomes the page ─────────────── */
 
-.cpb__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-}
-
-/* ── print-only quote ─────────────────────────────────────────────────────── */
-
-/* Hidden on screen; on print, everything else is hidden and this becomes the
-   whole page, so Cmd-P / Save-PDF yields a clean client-facing quote. */
-.cpb__printDoc {
+.cpb__printonly {
   display: none;
 }
-
 @media print {
   body * {
     visibility: hidden;
   }
-  .cpb__printDoc,
-  .cpb__printDoc * {
+  .cpb__printSurface,
+  .cpb__printSurface * {
     visibility: visible;
   }
-  .cpb__printDoc {
-    display: block;
+  .cpb__printSurface {
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
-    margin: 0;
-    padding: var(--space-5);
-    white-space: pre-wrap;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    line-height: 1.5;
-    /* Force solid black for paper: the theme token can be near-white in dark
-       mode, which would print invisible. This is a deliberate print exception. */
-    color: #000;
   }
   .cpb__noprint {
     display: none !important;
+  }
+  .cpb__printonly {
+    display: block !important;
   }
 }
 
@@ -364,5 +563,8 @@
   }
   .cpb__input--grow {
     flex-basis: 100%;
+  }
+  .cpb__pkgGrid {
+    grid-template-columns: 1fr;
   }
 }
