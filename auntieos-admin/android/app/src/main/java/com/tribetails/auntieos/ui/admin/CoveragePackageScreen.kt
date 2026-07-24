@@ -125,15 +125,12 @@ fun CoveragePackageScreen(
 
     LaunchedEffect(Unit) { viewModel.loadConfig() }
 
-    // Working copy of the saveable config.
+    // Working copy of the saveable config — the visit menu only.
     var durations by remember { mutableStateOf(config.durations) }
-    var rules by remember { mutableStateOf(config.rules) }
-    LaunchedEffect(config) {
-        durations = config.durations
-        rules = config.rules
-    }
+    LaunchedEffect(config) { durations = config.durations }
 
-    // Session quote state.
+    // Session quote state (rules are PER-CLIENT — never in the saved config).
+    var rules by remember { mutableStateOf(DEFAULT_COVERAGE_RULES) }
     var clientName by remember { mutableStateOf("") }
     var startDate by remember { mutableStateOf("") }
     var endDate by remember { mutableStateOf("") }
@@ -152,7 +149,7 @@ fun CoveragePackageScreen(
     var newPinDurId by remember { mutableStateOf("") }
     var formError by remember { mutableStateOf<String?>(null) }
 
-    val dirty = durations != config.durations || rules != config.rules
+    val dirty = durations != config.durations
     val days = daysBetween(startDate, endDate)
     val nights = (days - 1).coerceAtLeast(0)
 
@@ -210,6 +207,7 @@ fun CoveragePackageScreen(
     }
     fun startNewQuote() {
         packages = emptyList(); detailId = null; clientName = ""; startDate = ""; endDate = ""
+        rules = DEFAULT_COVERAGE_RULES // rules are per-client — reset for the next one
     }
 
     val ctx = PriceContext(days, nights, durations, overnightDuration)
@@ -250,11 +248,11 @@ fun CoveragePackageScreen(
             // save bar (config)
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = if (config.updatedAt.isBlank()) "Menu & rules not saved yet" else "Last saved${if (config.updatedBy.isBlank()) "" else " by ${config.updatedBy}"}",
+                    text = if (config.updatedAt.isBlank()) "Visit menu not saved yet" else "Last saved${if (config.updatedBy.isBlank()) "" else " by ${config.updatedBy}"}",
                     style = AuntieTheme.typography.labelSmall, color = c.textFaint, modifier = Modifier.weight(1f),
                 )
-                GhostButton(label = "Revert", enabled = dirty && !uiState.isLoading, onClick = { durations = config.durations; rules = config.rules; formError = null })
-                PrimaryButton(label = if (dirty) "Save menu & rules" else "Saved", enabled = dirty, onClick = { viewModel.saveConfig(durations, rules) })
+                GhostButton(label = "Revert", enabled = dirty && !uiState.isLoading, onClick = { durations = config.durations; formError = null })
+                PrimaryButton(label = if (dirty) "Save visit menu" else "Saved", enabled = dirty, onClick = { viewModel.saveConfig(durations) })
             }
             uiState.error?.let { msg ->
                 AuntieBanner(tone = AuntieBannerTone.Error, title = "Something went wrong", icon = Lucide.TriangleAlert) {
@@ -266,7 +264,7 @@ fun CoveragePackageScreen(
             DenPanel(
                 title = "Visit menu",
                 subtitle = "Service lengths, prices, and type. Overnights price as a window; visits are per-drop-in.",
-                trailing = { GhostButton(label = "Defaults", onClick = { durations = DEFAULT_DURATIONS; rules = DEFAULT_COVERAGE_RULES }) },
+                trailing = { GhostButton(label = "Defaults", onClick = { durations = DEFAULT_DURATIONS }) },
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     durations.forEach { d ->
@@ -300,7 +298,7 @@ fun CoveragePackageScreen(
             }
 
             // ── coverage rules ───────────────────────────────────────────────
-            DenPanel(title = "Coverage rules for this client", subtitle = "Seed the suggestions and gap warnings. Not a hard gate.") {
+            DenPanel(title = "Coverage rules for this client", subtitle = "Per-client — they travel with this quote, not the saved menu. Seed the suggestions and gap warnings.") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         TimeField(label = "Day starts", value = rules.wakeStart, onChange = { rules = rules.copy(wakeStart = it) }, modifier = Modifier.weight(1f))

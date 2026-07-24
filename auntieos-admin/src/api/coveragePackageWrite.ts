@@ -13,10 +13,9 @@ import {
  * `firestore.rules` (`coverage_package_config` → `allow write: if isAuntie()`),
  * with an `updatedAt`/`updatedBy` stamp from the signed-in operator.
  *
- * `merge: true`, but the whole config (both `durations` and `rules`) is always
- * written together — the screen holds both in state and saves them as one unit,
- * so there is no sibling field to preserve and no array-merge surprise (Firestore
- * replaces, not merges, an array field under `merge: true`).
+ * Only the visit menu (`durations`) is persisted. Coverage rules are per-client
+ * and live with the in-progress quote, never in this global doc. `merge: true`
+ * leaves any legacy `rules` field on an old doc untouched (it is ignored on read).
  *
  * Fail-loud: a permission-denied, offline, or network write error propagates to
  * the caller's Save handler, which shows it beside the control the operator used.
@@ -33,7 +32,7 @@ export async function saveCoveragePackageConfig(
   const updatedBy = auth.currentUser?.email ?? auth.currentUser?.uid ?? '';
   await setDoc(
     doc(db, COVERAGE_PACKAGE_COLLECTION, COVERAGE_PACKAGE_DOC_ID),
-    { durations: config.durations, rules: config.rules, updatedAt, updatedBy },
+    { durations: config.durations, updatedAt, updatedBy },
     { merge: true },
   );
   return { updatedAt, updatedBy };

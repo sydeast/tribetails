@@ -1,12 +1,9 @@
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import {
-  DEFAULT_COVERAGE_RULES,
   DEFAULT_DURATIONS,
   withKind,
-  type CoverageRules,
   type Duration,
-  type PinnedTime,
 } from '../lib/coveragePackage';
 
 /**
@@ -29,10 +26,13 @@ import {
 export const COVERAGE_PACKAGE_COLLECTION = 'coverage_package_config';
 export const COVERAGE_PACKAGE_DOC_ID = 'config';
 
-/** The persisted, operator-global config. */
+/**
+ * The persisted, operator-global config — ONLY the visit menu. Coverage rules
+ * (day window, max gap, pinned visits) are per-client and live with the in-progress
+ * quote, never in this global doc, so switching clients can't inherit stale rules.
+ */
 export interface CoveragePackageConfig {
   readonly durations: readonly Duration[];
-  readonly rules: CoverageRules;
   /** Save stamp, for the "last saved" line. Absent on a never-saved doc. */
   readonly updatedAt?: string;
   readonly updatedBy?: string;
@@ -75,39 +75,11 @@ function decodeDurations(raw: unknown): readonly Duration[] {
   return decoded.length > 0 ? decoded : DEFAULT_DURATIONS;
 }
 
-function decodePinnedTime(raw: unknown): PinnedTime | null {
-  if (!isRecord(raw)) return null;
-  const id = pickString(raw.id, '');
-  if (id === '') return null;
-  return {
-    id,
-    label: pickString(raw.label, ''),
-    time: pickString(raw.time, ''),
-    durationId: pickString(raw.durationId, ''),
-  };
-}
-
-function decodeRules(raw: unknown): CoverageRules {
-  const d = DEFAULT_COVERAGE_RULES;
-  if (!isRecord(raw)) return d;
-  const pinnedRaw = Array.isArray(raw.pinnedTimes) ? raw.pinnedTimes : [];
-  const pinnedTimes = pinnedRaw
-    .map(decodePinnedTime)
-    .filter((p): p is PinnedTime => p !== null);
-  return {
-    wakeStart: pickString(raw.wakeStart, d.wakeStart),
-    wakeEnd: pickString(raw.wakeEnd, d.wakeEnd),
-    maxGapHours: pickNumber(raw.maxGapHours, d.maxGapHours),
-    // An absent `pinnedTimes` key keeps the default seed; an explicit empty array
-    // is honoured (the operator cleared every pinned visit).
-    pinnedTimes: 'pinnedTimes' in raw ? pinnedTimes : d.pinnedTimes,
-  };
-}
-
-/** Merge a raw doc onto the shipped defaults. `undefined` (missing doc) → defaults. */
+/** Merge a raw doc onto the shipped defaults. `undefined` (missing doc) → defaults.
+ *  Only the visit menu is read; any legacy `rules` field on the doc is ignored. */
 export function mergeCoveragePackageConfig(raw: RawRecord | undefined): CoveragePackageConfig {
   if (raw === undefined) {
-    return { durations: DEFAULT_DURATIONS, rules: DEFAULT_COVERAGE_RULES };
+    return { durations: DEFAULT_DURATIONS };
   }
   // `exactOptionalPropertyTypes`: only attach the stamp fields when the doc
   // actually carries them, rather than setting them to `undefined`.
@@ -115,7 +87,6 @@ export function mergeCoveragePackageConfig(raw: RawRecord | undefined): Coverage
   const updatedBy = typeof raw.updatedBy === 'string' ? raw.updatedBy : undefined;
   return {
     durations: decodeDurations(raw.durations),
-    rules: decodeRules(raw.rules),
     ...(updatedAt !== undefined ? { updatedAt } : {}),
     ...(updatedBy !== undefined ? { updatedBy } : {}),
   };

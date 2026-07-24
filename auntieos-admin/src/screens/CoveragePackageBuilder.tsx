@@ -126,6 +126,8 @@ interface StoredQuote {
   startDate: string;
   endDate: string;
   overnightDurationId: string;
+  /** Per-client rules travel with the quote — never in the saved global config. */
+  rules: CoverageRules;
   packages: Package[];
 }
 
@@ -143,16 +145,10 @@ function loadQuote(): Partial<StoredQuote> {
   }
 }
 
-/** Structural equality for the saveable config (menu + rules), for dirty tracking. */
-function sameConfig(a: { durations: readonly Duration[]; rules: CoverageRules }, b: typeof a): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
 function Builder({ initial, onSaved }: BuilderProps) {
-  // Persisted CONFIG (Firestore, via Save).
+  // Persisted CONFIG — the visit menu only (Firestore, via Save).
   const [durations, setDurations] = useState<readonly Duration[]>(initial.durations);
-  const [rules, setRules] = useState<CoverageRules>(initial.rules);
-  const [baseline, setBaseline] = useState({ durations: initial.durations, rules: initial.rules });
+  const [baseline, setBaseline] = useState<readonly Duration[]>(initial.durations);
   const [savedAt, setSavedAt] = useState<{ updatedAt?: string; updatedBy?: string }>({
     ...(initial.updatedAt !== undefined ? { updatedAt: initial.updatedAt } : {}),
     ...(initial.updatedBy !== undefined ? { updatedBy: initial.updatedBy } : {}),
@@ -160,11 +156,12 @@ function Builder({ initial, onSaved }: BuilderProps) {
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // In-progress QUOTE (localStorage).
+  // In-progress QUOTE (localStorage) — includes the PER-CLIENT rules.
   const stored = useMemo(loadQuote, []);
   const [clientName, setClientName] = useState(stored.clientName ?? '');
   const [startDate, setStartDate] = useState(stored.startDate ?? '');
   const [endDate, setEndDate] = useState(stored.endDate ?? '');
+  const [rules, setRules] = useState<CoverageRules>(stored.rules ?? DEFAULT_COVERAGE_RULES);
   const [packages, setPackages] = useState<Package[]>(stored.packages ?? []);
   const [overnightDurationId, setOvernightDurationId] = useState(
     stored.overnightDurationId ?? initial.durations.find((d) => d.kind === 'overnight')?.id ?? '',
@@ -178,19 +175,20 @@ function Builder({ initial, onSaved }: BuilderProps) {
   const [copied, setCopied] = useState(false);
   const [shareNote, setShareNote] = useState<string | null>(null);
 
-  const dirty = !sameConfig({ durations, rules }, baseline);
+  const dirty = JSON.stringify(durations) !== JSON.stringify(baseline);
   const days = daysBetween(startDate, endDate);
   const nights = Math.max(0, days - 1); // last day is a return day — client home that night
 
   // Persist the quote on every change (survives a reload; "Start new quote" clears it).
+  // The per-client rules travel here, NOT in the saved global config.
   useEffect(() => {
-    const quote: StoredQuote = { clientName, startDate, endDate, overnightDurationId, packages };
+    const quote: StoredQuote = { clientName, startDate, endDate, overnightDurationId, rules, packages };
     try {
       window.localStorage.setItem(QUOTE_KEY, JSON.stringify(quote));
     } catch {
       // Storage full / disabled — the quote just won't survive a reload. Non-fatal.
     }
-  }, [clientName, startDate, endDate, overnightDurationId, packages]);
+  }, [clientName, startDate, endDate, overnightDurationId, rules, packages]);
 
   // Keep the overnight selection pointing at a real overnight-kind duration.
   useEffect(() => {
@@ -265,12 +263,10 @@ function Builder({ initial, onSaved }: BuilderProps) {
 
   const restoreDefaults = () => {
     setDurations(DEFAULT_DURATIONS);
-    setRules(DEFAULT_COVERAGE_RULES);
     setError('');
   };
   const resetConfig = () => {
-    setDurations(baseline.durations);
-    setRules(baseline.rules);
+    setDurations(baseline);
     setError('');
     setSaveError(null);
   };
@@ -280,10 +276,10 @@ function Builder({ initial, onSaved }: BuilderProps) {
     setSaveBusy(true);
     setSaveError(null);
     try {
-      const stamp = await saveCoveragePackageConfig({ durations, rules });
-      setBaseline({ durations, rules });
+      const stamp = await saveCoveragePackageConfig({ durations });
+      setBaseline(durations);
       setSavedAt(stamp);
-      onSaved({ durations, rules, updatedAt: stamp.updatedAt, updatedBy: stamp.updatedBy });
+      onSaved({ durations, updatedAt: stamp.updatedAt, updatedBy: stamp.updatedBy });
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Save failed.');
     } finally {
@@ -406,6 +402,7 @@ function Builder({ initial, onSaved }: BuilderProps) {
     setClientName('');
     setStartDate('');
     setEndDate('');
+    setRules(DEFAULT_COVERAGE_RULES); // rules are per-client — reset for the next one
   };
 
   // ── pricing ─────────────────────────────────────────────────────────────────
@@ -470,12 +467,12 @@ function Builder({ initial, onSaved }: BuilderProps) {
         {savedAt.updatedAt !== undefined ? (
           <span className="cpb__saved">{lastSavedLabel(savedAt.updatedAt, savedAt.updatedBy ?? '')}</span>
         ) : (
-          <span className="cpb__saved cpb__saved--muted">Menu &amp; rules never saved yet</span>
+          <span className="cpb__saved cpb__saved--muted">Visit menu never saved yet</span>
         )}
         <span className="cpb__savebarActions">
           <GhostButton label="Revert" onClick={resetConfig} disabled={!dirty || saveBusy} />
           <PrimaryButton
-            label={saveBusy ? 'Saving…' : dirty ? 'Save menu & rules' : 'Saved'}
+            label={saveBusy ? 'Saving…' : dirty ? 'Save visit menu' : 'Saved'}
             onClick={() => void saveConfig()}
             disabled={!dirty || saveBusy}
             busy={saveBusy}
@@ -537,7 +534,7 @@ function Builder({ initial, onSaved }: BuilderProps) {
       </DenPanel>
 
       {/* Coverage rules */}
-      <DenPanel title="Coverage rules for this client" subtitle="Seed the suggestions and gap warnings. Not a hard gate — you can always hand-build a package." className="cpb__noprint">
+      <DenPanel title="Coverage rules for this client" subtitle="Per-client — they travel with this quote, not the saved menu. Seed the suggestions and gap warnings; not a hard gate." className="cpb__noprint">
         <div className="cpb__ruleRow">
           <label className="cpb__field">
             <span className="cpb__fieldLabel">Day starts</span>

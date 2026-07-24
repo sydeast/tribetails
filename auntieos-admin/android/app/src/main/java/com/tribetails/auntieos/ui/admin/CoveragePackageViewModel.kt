@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.CoveragePackageConfig
 import com.tribetails.auntieos.data.repository.AuntieRepository
-import com.tribetails.auntieos.domain.CoverageRules
 import com.tribetails.auntieos.domain.Duration
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -49,11 +48,12 @@ class CoveragePackageViewModel(
         }
     }
 
-    /** Persist the operator-edited menu + rules as one unit. */
-    fun saveConfig(durations: List<Duration>, rules: CoverageRules) {
+    /** Persist the operator-edited visit menu. Coverage rules are per-client and
+     *  are never written to this global doc. */
+    fun saveConfig(durations: List<Duration>) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(saveSuccess = false)
-            val next = _uiState.value.config.copy(durations = durations, rules = rules)
+            val next = _uiState.value.config.copy(durations = durations)
             repository.saveCoveragePackageConfig(next).fold(
                 onSuccess = {
                     _uiState.value = _uiState.value.copy(
