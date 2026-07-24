@@ -14,6 +14,7 @@ import {
   type KinfolkEditInput,
   type KinfolkPickableStatus,
 } from '../lib/kinfolkEditSchema';
+import { joinDateForEdit } from '../lib/joinDate';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -89,7 +90,12 @@ function toForm(p: KinfolkProfile): FormState {
     // status because the picker did not recognise it is a data edit nobody asked
     // for. The picker shows nothing selected until the operator chooses.
     status: normaliseStatus(p.status),
-    joinDate: p.joinDate,
+    // The date picker can only hold `YYYY-MM-DD`, and the schema now says the
+    // same, so a legacy string is coerced (a stored ISO instant) or cleared
+    // (anything unreadable) HERE, once, on the way in. The cleared case is not
+    // silent: `joinDateForEdit` also returns the note the field renders, naming
+    // the string that is still in Firestore. See lib/joinDate.ts.
+    joinDate: joinDateForEdit(p.joinDate).value,
     secondaryPhone: p.secondaryPhone,
     secondaryEmail: p.secondaryEmail,
     serviceAddress: p.serviceAddress,
@@ -181,6 +187,13 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
   const errors: KinfolkEditErrors = form ? validateKinfolkEdit(form) : {};
   const busy = saving || archiving;
   const isArchived = form?.status === KINFOLK_ARCHIVED_STATUS;
+
+  // What the stored join date was, when it is not what the picker is showing.
+  // Held until the operator changes the field, then it has been answered and the
+  // note goes away rather than describing a value that is no longer in play.
+  const openedJoinDate = joinDateForEdit(loaded.status === 'ready' ? loaded.data.joinDate : '');
+  const joinDateNote =
+    form !== null && form.joinDate === openedJoinDate.value ? openedJoinDate.note : null;
 
   // The name as it should be SPOKEN, for the archive dialog and the toasts. Falls
   // back to what the caller passed, then to the id, so a confirmation is never
@@ -370,11 +383,12 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
                       </div>
                     </div>
                   )}
-                  <TextField
+                  <DateField
                     name="joinDate"
                     label="Join date"
                     value={form.joinDate}
                     error={errorFor('joinDate')}
+                    hint={joinDateNote}
                     onChange={(v) => set('joinDate', v)}
                     onBlur={() => markTouched('joinDate')}
                   />
@@ -590,6 +604,62 @@ function TextField({ name, label, value, error, onChange, onBlur, wide, multilin
         {label}
       </label>
       {multiline === true ? <textarea {...shared} rows={2} /> : <input {...shared} />}
+      {error !== null && (
+        <span id={errorId} className="kfedit__error" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
+interface DateFieldProps {
+  name: string;
+  label: string;
+  /** `YYYY-MM-DD`, or blank. Anything else is a value the control cannot show. */
+  value: string;
+  error: string | null;
+  /** What the stored value was, when the picker could not open it as-is. */
+  hint: string | null;
+  onChange: (value: string) => void;
+  onBlur: () => void;
+}
+
+/**
+ * A calendar day. Same shell as TextField, kept separate rather than adding a
+ * `type` flag to a control fifteen text fields share: a date input has its own
+ * value contract (`YYYY-MM-DD` or blank, never free text) and its own failure
+ * mode (a value it cannot parse renders as an EMPTY field, with no hint that
+ * anything was dropped), and the `hint` line exists to answer exactly that.
+ */
+function DateField({ name, label, value, error, hint, onChange, onBlur }: DateFieldProps) {
+  const id = `kfedit-${name}`;
+  const errorId = `${id}-error`;
+  const hintId = `${id}-hint`;
+  const describedBy = [error !== null ? errorId : null, hint !== null ? hintId : null]
+    .filter((x): x is string => x !== null)
+    .join(' ');
+
+  return (
+    <div className="kfedit__field">
+      <label className="kfedit__label" htmlFor={id}>
+        {label}
+      </label>
+      <input
+        id={id}
+        type="date"
+        className="kfedit__input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
+        aria-invalid={error !== null}
+        {...(describedBy !== '' ? { 'aria-describedby': describedBy } : {})}
+      />
+      {hint !== null && (
+        <span id={hintId} className="kfedit__hint">
+          {hint}
+        </span>
+      )}
       {error !== null && (
         <span id={errorId} className="kfedit__error" role="alert">
           {error}

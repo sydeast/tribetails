@@ -137,4 +137,22 @@ describe('validateKinfolkEdit', () => {
     const errors = validateKinfolkEdit(form({ email: 'nope' }));
     expect(Object.keys(errors)).toEqual(['email']);
   });
+
+  it('takes a join date as a calendar day, or blank', () => {
+    expect(validateKinfolkEdit(form({ joinDate: '2026-07-24' }))).toEqual({});
+    expect(validateKinfolkEdit(form({ joinDate: '' }))).toEqual({});
+  });
+
+  it('rejects the formats the picker cannot produce', () => {
+    // The field is an `<input type="date">`, so the only values it can emit are
+    // YYYY-MM-DD and blank. Anything else reached the form from a legacy document
+    // and has to be replaced rather than saved forward.
+    expect(validateKinfolkEdit(form({ joinDate: '07/24/2026' })).joinDate).toBeDefined();
+    expect(validateKinfolkEdit(form({ joinDate: '2026-07-24T12:34:56.789Z' })).joinDate).toBeDefined();
+    expect(validateKinfolkEdit(form({ joinDate: 'sometime in the spring' })).joinDate).toBeDefined();
+  });
+
+  it('rejects a well shaped day that never happened', () => {
+    expect(validateKinfolkEdit(form({ joinDate: '2026-02-30' })).joinDate).toBeDefined();
+  });
 });

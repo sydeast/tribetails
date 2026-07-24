@@ -96,6 +96,47 @@ describe('KinfolkEdit: rendering from data', () => {
   });
 });
 
+describe('KinfolkEdit: join date', () => {
+  it('is a date picker, not a free text box', async () => {
+    mount({ joinDate: '2026-07-24' });
+    const field = await screen.findByLabelText('Join date');
+    expect(field).toHaveAttribute('type', 'date');
+    expect(field).toHaveValue('2026-07-24');
+  });
+
+  it('opens a legacy UTC timestamp on the right day and says the time is dropped', async () => {
+    mount({ joinDate: '2026-07-24T12:34:56.789Z' });
+    expect(await screen.findByLabelText('Join date')).toHaveValue('2026-07-24');
+    expect(screen.getByText(/2026-07-24T12:34:56\.789Z/)).toBeInTheDocument();
+  });
+
+  /**
+   * The trap this guards against: a stricter schema plus a legacy value the
+   * picker cannot render would leave the operator staring at an error on a field
+   * they never touched, unable to save the phone number they came to fix.
+   */
+  it('lets an unreadable legacy value be fixed rather than blocking the save', async () => {
+    mount({ joinDate: '07/24/2026' });
+    const field = await screen.findByLabelText('Join date');
+    expect(field).toHaveValue('');
+    expect(screen.getByText(/07\/24\/2026/)).toBeInTheDocument();
+    expect(screen.queryByText(/pick a join date/i)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateKinfolkProfile).toHaveBeenCalledTimes(1));
+    expect(updateKinfolkProfile.mock.calls[0]![1].joinDate).toBe('');
+  });
+
+  it('saves a picked day as a plain calendar date', async () => {
+    mount({ joinDate: '' });
+    const field = await screen.findByLabelText('Join date');
+    await userEvent.type(field, '2026-07-24');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateKinfolkProfile).toHaveBeenCalledTimes(1));
+    expect(updateKinfolkProfile.mock.calls[0]![1].joinDate).toBe('2026-07-24');
+  });
+});
+
 describe('KinfolkEdit: secrets', () => {
   it('does not put a gate code or Wi-Fi password in the DOM before reveal', async () => {
     mount();
