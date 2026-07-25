@@ -193,22 +193,30 @@ const directoryRoute = createRoute({
   component: Directory,
 });
 
-/** Adapts the `directory/$kinfolkId` param to Directory's initial-profile prop. */
-function DirectoryProfileView() {
+/**
+ * Deep link to ONE household's profile, `/directory/{kinfolkId}`.
+ *
+ * Directory already owns the profile as a sibling view of its list; this route
+ * just opens the list on that view, and closing it navigates back to the bare
+ * list so the URL and the screen never disagree. Added for the Schedule detail
+ * sheet's kinfolk link (operator issue 16), which needs somewhere real to
+ * point: a link to a route that does not exist is worse than no link.
+ */
+function DirectoryProfileRouteView() {
   const { kinfolkId } = directoryProfileRoute.useParams();
-  return <Directory initialKinfolkId={kinfolkId} />;
+  const navigate = useNavigate();
+  return (
+    <Directory
+      initialKinfolkId={kinfolkId}
+      onProfileClose={() => void navigate({ to: '/directory' })}
+    />
+  );
 }
 
-/**
- * The household profile as a real URL. Directory already renders the profile as
- * an in-screen sibling view; this route just opens it directly, which is what
- * lets a kinfolk notification link to a household instead of dumping the
- * operator on an unfiltered directory.
- */
 const directoryProfileRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'directory/$kinfolkId',
-  component: DirectoryProfileView,
+  component: DirectoryProfileRouteView,
 });
 
 const bookingsRoute = createRoute({
@@ -258,7 +266,7 @@ function KinTalesView() {
     return (
       <KinTaleCompose
         {...(mode.kinTaleId ? { kinTaleId: mode.kinTaleId } : {})}
-        onClose={() => setMode({ kind: 'list' })}
+        onClose={closeToList}
       />
     );
   }
@@ -267,7 +275,7 @@ function KinTalesView() {
       <KinTaleDetail
         kinTaleId={mode.kinTaleId}
         onEdit={(id) => setMode({ kind: 'compose', kinTaleId: id })}
-        onClose={() => setMode({ kind: 'list' })}
+        onClose={closeToList}
       />
     );
   }
@@ -284,6 +292,29 @@ const kinTalesRoute = createRoute({
   path: 'kintales',
   validateSearch: optionalIdSearch(['kinTaleId'] as const),
   component: KinTalesView,
+});
+
+/**
+ * Deep link to ONE report, `/kintales/{kinTaleId}`. Opens the same detail view
+ * a row click opens; closing it returns to `/kintales`. Added so the Schedule
+ * detail sheet's "Open the KinTale" link has a real destination (operator
+ * issue 16, the KinTale half).
+ */
+function KinTaleDetailRouteView() {
+  const { kinTaleId } = kinTaleDetailRoute.useParams();
+  const navigate = useNavigate();
+  return (
+    <KinTalesView
+      initialKinTaleId={kinTaleId}
+      onDetailClose={() => void navigate({ to: '/kintales' })}
+    />
+  );
+}
+
+const kinTaleDetailRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'kintales/$kinTaleId',
+  component: KinTaleDetailRouteView,
 });
 
 const galleryRoute = createRoute({
