@@ -21,6 +21,7 @@ jobs:
       pull-requests: read
     outputs:
       admin: ${{ steps.filter.outputs.admin }}
+      adminE2e: ${{ steps.filter.outputs.adminE2e }}
       functions: ${{ steps.filter.outputs.functions }}
       kotlin: ${{ steps.filter.outputs.kotlin }}
       android: ${{ steps.filter.outputs.android }}
@@ -41,6 +42,19 @@ jobs:
               - 'auntieos-admin/tsconfig.json'
               - 'auntieos-admin/vite.config.ts'
               - 'auntieos-admin/vitest.config.ts'
+              - '.github/workflows/ci.yml'
+            # Its own filter rather than a step inside `admin`, because this job
+            # downloads Chromium and boots two emulators and so costs minutes
+            # where the unit suite costs seconds. It still watches src/** and
+            # the styles, since catching what a change there does in a REAL
+            # browser is the entire reason the specs exist.
+            adminE2e:
+              - 'auntieos-admin/e2e/**'
+              - 'auntieos-admin/e2e.firebase.json'
+              - 'auntieos-admin/src/**'
+              - 'auntieos-admin/web/firestore.rules'
+              - 'auntieos-admin/package.json'
+              - 'auntieos-admin/package-lock.json'
               - '.github/workflows/ci.yml'
             functions:
               - 'auntieos-admin/web/functions/**'
@@ -88,6 +102,52 @@ jobs:
         run: npm test
       - name: Production build
         run: npm run build
+
+  admin-e2e:
+    name: React admin e2e
+    needs: changes
+    if: needs.changes.outputs.adminE2e == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: auntieos-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: auntieos-admin/package-lock.json
+      # The Firestore emulator is a JAR. Without a JDK it fails at startup with
+      # a message about `java`, several steps away from anything that looks
+      # like a test.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      # Pinned. firebase-tools ships emulator behaviour changes in minor
+      # releases, and an unpinned global install turns an upstream release into
+      # a red build on a PR that touched nothing.
+      - name: Install firebase-tools
+        run: npm install -g firebase-tools@15.18.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      # No Firebase credentials anywhere in this job, deliberately. The
+      # emulators run entirely offline against a throwaway project id, so
+      # nothing here can read or write real data even if a spec is wrong.
+      - name: E2E
+        run: npm run e2e
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          # Traces and screenshots are written only for failures, which is
+          # exactly when a red CI run is otherwise unreadable from the log.
+          path: auntieos-admin/e2e/.artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
 
   functions:
     name: AuntieOS functions
