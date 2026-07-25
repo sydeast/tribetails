@@ -45,3 +45,54 @@ fun createVetClinicLabel(query: String): String = "Create \"${query.trim()}\" as
  */
 @Suppress("UNUSED_PARAMETER")
 fun shouldOfferVetClinicCreate(query: String, clinics: List<VetClinic>): Boolean = query.trim().isNotEmpty()
+
+// ── the committed selection ──────────────────────────────────────────────────
+
+/**
+ * What a household stores for a vet: the catalog id, plus the name, phone and
+ * address denormalized alongside it. Mirrors the web `VetClinicSelection`.
+ *
+ * The denormalized copy is not redundancy for its own sake. An Auntie standing
+ * on a doorstep needs the clinic's phone off the household record without a
+ * second read, and a clinic later renamed or removed from the bank must not
+ * blank the number on file. [clinicId] is what makes the link repairable; the
+ * three strings are what make it useful.
+ *
+ * A LEGACY household has the three strings and an EMPTY [clinicId]. That is a
+ * valid, renderable state, not an error: it is the state every household saved
+ * before 2026-07-25 is in.
+ */
+data class VetClinicSelection(
+    val clinicId: String = "",
+    val name: String = "",
+    val phone: String = "",
+    val address: String = "",
+) {
+    /** Keyed on the NAME as well as the id, so a legacy vet counts as a selection. */
+    val hasSelection: Boolean get() = clinicId.isNotBlank() || name.isNotBlank()
+
+    /** A vet on file that is not joined to a catalog row. Legacy, not broken. */
+    val unlinked: Boolean get() = clinicId.isBlank() && name.isNotBlank()
+
+    /** Phone and address as one secondary line, omitting whichever is missing. */
+    val detail: String get() = listOf(phone, address).filter { it.isNotBlank() }.joinToString(" · ")
+}
+
+val EMPTY_VET_CLINIC_SELECTION = VetClinicSelection()
+
+/** A catalog row as a committed selection: the id, plus the denormalized copy. */
+fun vetClinicSelectionOf(clinic: VetClinic) = VetClinicSelection(
+    clinicId = clinic.id,
+    name = clinic.name.trim(),
+    phone = clinic.phone.trim(),
+    address = clinic.address.trim(),
+)
+
+/**
+ * What the picker says about a legacy vet. Honest rather than alarming: the
+ * record works, it simply is not joined to the bank yet, and the operator is
+ * told how to join it if and when they want to. Verbatim from the web picker so
+ * an operator reading both surfaces gets the same sentence.
+ */
+const val VET_CLINIC_UNLINKED_NOTE =
+    "Not linked to the shared catalog. Clear it and search to link this household to a clinic record."

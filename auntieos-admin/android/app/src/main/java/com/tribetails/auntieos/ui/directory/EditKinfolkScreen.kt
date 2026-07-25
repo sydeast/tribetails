@@ -26,9 +26,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.AuntieOSApp
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.tribetails.auntieos.data.model.TagDef
 import com.tribetails.auntieos.data.model.TagScope
 import com.tribetails.auntieos.data.model.addAssigned
+import com.tribetails.auntieos.data.model.VetClinic
 import com.tribetails.auntieos.data.model.normalizeTagName
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.theme.*
@@ -412,7 +416,14 @@ fun EditKinfolkScreen(
                     }
                 }
 
-                // Vet Clinic (household-level, shared catalog)
+                // Vet Clinic (household-level, shared catalog).
+                //
+                // The phone and address are NOT editable here any more. They are
+                // the catalog clinic's own details, shown read-only inside the
+                // committed chip; editing them on the household would fork the
+                // record away from the bank everything else reads. A clinic with
+                // wrong details is fixed on the clinic, in the Vet Clinics admin
+                // screen, once, for every household that uses it.
                 item {
                     val vetClinics by viewModel.vetClinicsFlow.collectAsState()
                     AuntieCard(modifier = Modifier.fillMaxWidth()) {
@@ -425,28 +436,39 @@ fun EditKinfolkScreen(
                                 style = AuntieTheme.typography.labelSmall,
                                 color = AuntieTheme.colors.kinfolkOrange
                             )
-                            VetClinicSearchField(
-                                query = state.vetClinicName,
-                                onQueryChange = viewModel::updateEditVetClinicName,
+                            VetClinicPickerField(
+                                label = "Vet clinic",
+                                selection = VetClinicSelection(
+                                    clinicId = state.vetClinicId,
+                                    name     = state.vetClinicName,
+                                    phone    = state.vetClinicPhone,
+                                    address  = state.vetClinicAddress,
+                                ),
                                 clinics = vetClinics,
-                                onPick = viewModel::selectVetClinic,
-                                onCreate = { name ->
-                                    viewModel.createVetClinicFromSearch(name = name)
+                                onSelectionChange = { sel ->
+                                    if (sel.hasSelection) {
+                                        viewModel.selectVetClinic(
+                                            VetClinic(
+                                                id = sel.clinicId,
+                                                name = sel.name,
+                                                phone = sel.phone,
+                                                address = sel.address,
+                                            )
+                                        )
+                                    } else {
+                                        viewModel.clearVetClinic()
+                                    }
                                 },
-                            )
-                            AuntieField(
-                                value = state.vetClinicPhone,
-                                onValueChange = viewModel::updateEditVetClinicPhone,
-                                label = "Clinic Phone",
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            AuntieField(
-                                value = state.vetClinicAddress,
-                                onValueChange = viewModel::updateEditVetClinicAddress,
-                                label = "Clinic Address",
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = false,
-                                minLines = 2,
+                                onCreate = { clinic ->
+                                    viewModel.createVetClinicFromSearch(
+                                        name = clinic.name,
+                                        phone = clinic.phone,
+                                        address = clinic.address,
+                                        website = clinic.website,
+                                        isEmergency = clinic.isEmergency,
+                                    )
+                                },
+                                enabled = !state.isSaving,
                             )
                         }
                     }
@@ -468,32 +490,45 @@ fun EditKinfolkScreen(
                                 style = AuntieTheme.typography.labelSmall,
                                 color = AuntieTheme.colors.kinfolkOrange
                             )
-                            VetClinicSearchField(
-                                query = state.emergencyVetClinicName,
-                                onQueryChange = viewModel::updateEditEmergencyVetClinicName,
+                            VetClinicPickerField(
+                                label = "Emergency vet",
+                                selection = VetClinicSelection(
+                                    clinicId = state.emergencyVetClinicId,
+                                    name     = state.emergencyVetClinicName,
+                                    phone    = state.emergencyVetClinicPhone,
+                                    address  = state.emergencyVetClinicAddress,
+                                ),
                                 clinics = erClinics,
-                                onPick = viewModel::selectEmergencyVetClinic,
-                                onCreate = { name ->
+                                onSelectionChange = { sel ->
+                                    if (sel.hasSelection) {
+                                        viewModel.selectEmergencyVetClinic(
+                                            VetClinic(
+                                                id = sel.clinicId,
+                                                name = sel.name,
+                                                phone = sel.phone,
+                                                address = sel.address,
+                                                isEmergency = true,
+                                            )
+                                        )
+                                    } else {
+                                        viewModel.clearEmergencyVetClinic()
+                                    }
+                                },
+                                onCreate = { clinic ->
                                     // Created already flagged, so it shows up in
                                     // this picker for the next household too.
                                     viewModel.createVetClinicFromSearch(
-                                        name = name,
+                                        name = clinic.name,
+                                        phone = clinic.phone,
+                                        address = clinic.address,
+                                        website = clinic.website,
                                         isEmergency = true,
                                         forEmergencySlot = true,
                                     )
                                 },
-                                emptyCatalogLabel = "Clinic Name (no 24 hour clinics yet)",
+                                createAsEmergency = true,
+                                enabled = !state.isSaving,
                             )
-                            if (state.emergencyVetClinicPhone.isNotBlank() ||
-                                state.emergencyVetClinicAddress.isNotBlank()
-                            ) {
-                                Text(
-                                    listOf(state.emergencyVetClinicPhone, state.emergencyVetClinicAddress)
-                                        .filter { it.isNotBlank() }.joinToString(" · "),
-                                    style = AuntieTheme.typography.bodySmall,
-                                    color = AuntieTheme.colors.textDim,
-                                )
-                            }
                         }
                     }
                 }
@@ -835,101 +870,344 @@ internal fun editTagsFromField(csv: String): List<String> =
  */
 internal fun editTagsToField(names: List<String>): String =
     names.joinToString(", ") { normalizeTagName(it.replace(',', ' ')) }
+// ─────────────────────────────────────────────────────────────────────────────
+// Vet clinic picker
+// ─────────────────────────────────────────────────────────────────────────────
 /**
- * The vet-clinic search field: a text box whose dropdown lists matches from the
- * shared `vet_clinics` bank, with a CREATE button pinned at the very bottom.
+ * The household's vet clinic: a search over the curated `vet_clinics` bank whose
+ * value is ALWAYS a row in that bank.
  *
- * The pinned button is the point (operator issue #13: "there is a button at the
- * very bottom of the dropdown for them to create a vet clinic"). It is present
- * whenever anything has been typed, INCLUDING when nothing matched, which is
- * exactly when an operator needs it. The old panel only offered "Add to shared
- * catalog" below the address field, well past the fold, and only after the whole
- * form had been filled in, so the moment the operator discovered the clinic was
- * missing was not the moment they could do anything about it.
+ * PARITY WITH WEB (operator ruling, issue #13, 2026-07-25). Typing is a SEARCH
+ * and can never on its own produce a saved vet. An earlier revision of this file
+ * let the text box double as the stored clinic name and documented that as a
+ * deliberate divergence; the operator ruled parity required, and that note was
+ * wrong the moment it was written. If free text could stand as the value, a typo
+ * would quietly become a fourth spelling of a clinic the bank already holds,
+ * which is the exact mess a shared catalog exists to prevent, and it would do it
+ * in a catalog the kinfolk portal reads too.
  *
- * The create path goes through `submitVetClinic`, which dedupes on a normalized
- * name and returns the existing id on a match, so pressing it for a clinic the
- * bank already holds selects that record rather than writing a duplicate.
+ * THE COMMITTED-SELECTION AFFORDANCE, modelled on [TagAssignField] + [TagChip],
+ * which is how this app already expresses "a value that has been committed, and
+ * can be taken back": a pill of the brand tone washed over the surface, a
+ * hairline border in the same tone, and an [AuntieIconButton] × to remove it,
+ * exactly as an assigned tag chip renders. A committed clinic is that chip plus
+ * its phone/address line. Search and selection are mutually exclusive states, so
+ * while a clinic is committed the text box is GONE rather than merely disabled:
+ * a prefilled text box is an invitation to type into it, and that invitation is
+ * the thing being removed.
  *
- * Divergence from the web picker, deliberate: web forbids free text entirely
- * (its value is always a catalog row). Here the text box still doubles as the
- * stored clinic name, because every household on this app's Firestore holds
- * exactly that and Compose has no equivalent of the web chip-plus-clear
- * affordance on this screen yet. Selecting a suggestion or creating one stamps
- * `vetClinicId`; typing alone leaves it blank, which readers already treat as
- * "not linked to the catalog".
+ * LEGACY HOUSEHOLDS. Every household saved before this holds the vet strings and
+ * no id. That renders as a perfectly valid committed chip carrying
+ * [VET_CLINIC_UNLINKED_NOTE], and it saves back untouched. What is forbidden is
+ * creating NEW free-text vets, not displaying old ones, and an operator who
+ * opened a legacy record to fix a phone number is never blocked from saving by
+ * a vet field they did not touch.
+ *
+ * @param selection The committed clinic, or [EMPTY_VET_CLINIC_SELECTION].
+ * @param clinics The catalog to search. The EMERGENCY instance passes a list
+ *   already filtered by [emergencyVetClinics].
+ * @param onCreate Receives the clinic to add to the shared catalog. The caller
+ *   submits it and selects the result, so a dedupe hit can pick the existing row.
+ * @param createAsEmergency Seeds the create form's 24-hour toggle. True for the
+ *   emergency instance, so a clinic added there is already flagged.
  */
 @Composable
-internal fun VetClinicSearchField(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    clinics: List<com.tribetails.auntieos.data.model.VetClinic>,
-    onPick: (com.tribetails.auntieos.data.model.VetClinic) -> Unit,
-    onCreate: (String) -> Unit,
-    emptyCatalogLabel: String = "Clinic Name",
+internal fun VetClinicPickerField(
+    label: String,
+    selection: VetClinicSelection,
+    clinics: List<VetClinic>,
+    onSelectionChange: (VetClinicSelection) -> Unit,
+    onCreate: (VetClinic) -> Unit,
+    modifier: Modifier = Modifier,
+    createAsEmergency: Boolean = false,
+    enabled: Boolean = true,
 ) {
-    val matches = vetClinicSuggestions(query, clinics)
-    val exact = clinics.any { it.name.equals(query.trim(), ignoreCase = true) }
-    val offerCreate = shouldOfferVetClinicCreate(query, clinics) && !exact
-    AuntieField(
-        value = query,
-        onValueChange = onQueryChange,
-        label = if (clinics.isEmpty()) emptyCatalogLabel
-                else "Clinic Name (type to search ${clinics.size})",
-        modifier = Modifier.fillMaxWidth(),
-    )
-    if (matches.isNotEmpty() || offerCreate) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(top = 6.dp)
-                .background(AuntieTheme.colors.surface2, RoundedCornerShape(12.dp)),
-        ) {
-            if (!exact) {
-                matches.forEach { clinic ->
-                    val detail = listOf(clinic.phone, clinic.address)
-                        .filter { it.isNotBlank() }.joinToString(" · ")
+    val c = AuntieTheme.colors
+    var query by remember { mutableStateOf("") }
+    var creating by remember { mutableStateOf(false) }
+    Column(modifier = modifier.fillMaxWidth()) {
+        AuntieFieldLabel(text = label)
+        Spacer(Modifier.height(6.dp))
+        when {
+            creating -> CreateVetClinicForm(
+                initialName = query.trim(),
+                initialEmergency = createAsEmergency,
+                enabled = enabled,
+                onCancel = { creating = false },
+                onSave = { clinic ->
+                    creating = false
+                    query = ""
+                    onCreate(clinic)
+                },
+            )
+            selection.hasSelection -> CommittedVetClinic(
+                selection = selection,
+                enabled = enabled,
+                onClear = { onSelectionChange(EMPTY_VET_CLINIC_SELECTION) },
+            )
+            else -> {
+                AuntieField(
+                    value = query,
+                    onValueChange = { query = it },
+                    enabled = enabled,
+                    placeholder = if (clinics.isEmpty()) "No clinics in the catalog yet"
+                                  else "Type to search ${clinics.size} clinics",
+                    modifier = Modifier.fillMaxWidth(),
+                    fieldModifier = Modifier.semantics { contentDescription = label },
+                )
+                val matches = vetClinicSuggestions(query, clinics)
+                val offerCreate = shouldOfferVetClinicCreate(query, clinics)
+                if (matches.isNotEmpty() || offerCreate) {
+                    val shape = RoundedCornerShape(12.dp)
+                    Spacer(Modifier.height(8.dp))
                     Column(
-                        Modifier
+                        modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onPick(clinic) }
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                            .clip(shape)
+                            .background(c.surface2)
+                            .border(AuntieTheme.dims.borderHairline, SolidColor(c.border), shape)
+                            .padding(vertical = 4.dp),
                     ) {
-                        Text(
-                            clinic.name,
-                            style = AuntieTheme.typography.bodyMedium,
-                            color = AuntieTheme.colors.textPrimary,
-                        )
-                        if (detail.isNotBlank()) {
+                        matches.forEach { clinic ->
+                            VetClinicSuggestionRow(
+                                clinic = clinic,
+                                onClick = {
+                                    query = ""
+                                    onSelectionChange(vetClinicSelectionOf(clinic))
+                                },
+                            )
+                        }
+                        if (matches.isEmpty() && offerCreate) {
                             Text(
-                                detail,
+                                "No clinic in the catalog matches that.",
                                 style = AuntieTheme.typography.bodySmall,
-                                color = AuntieTheme.colors.textDim,
+                                color = c.textDim,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            )
+                        }
+                        if (offerCreate) {
+                            // PINNED, always last. Below every match, never above
+                            // one, and present when nothing matched at all, which
+                            // is the case it exists for.
+                            Text(
+                                text = createVetClinicLabel(query),
+                                style = AuntieTheme.typography.bodyMedium,
+                                color = c.primary,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = enabled) { creating = true }
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
                             )
                         }
                     }
                 }
-                if (matches.isEmpty()) {
-                    Text(
-                        "No clinic in the catalog matches that.",
-                        style = AuntieTheme.typography.bodySmall,
-                        color = AuntieTheme.colors.textDim,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    )
-                }
             }
-            if (offerCreate) {
-                // LAST, always. Below every match, never above one.
-                Text(
-                    createVetClinicLabel(query),
-                    style = AuntieTheme.typography.bodyMedium,
-                    color = AuntieTheme.colors.kinfolkOrange,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onCreate(query) }
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
+        }
+    }
+}
+/** One catalog match: the clinic name over its phone and address. */
+@Composable
+private fun VetClinicSuggestionRow(clinic: VetClinic, onClick: () -> Unit) {
+    val c = AuntieTheme.colors
+    val detail = vetClinicSelectionOf(clinic).detail
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Text(clinic.name, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        if (detail.isNotBlank()) {
+            Text(detail, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        }
+    }
+}
+/**
+ * A clinic that has been chosen: the TagChip idiom (tone wash, hairline border in
+ * the same tone, an × that takes it back) grown to carry the clinic's contact
+ * line and, for a legacy record, the honest note that it is not joined to the
+ * catalog yet.
+ */
+@Composable
+private fun CommittedVetClinic(
+    selection: VetClinicSelection,
+    enabled: Boolean,
+    onClear: () -> Unit,
+) {
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    val shape = RoundedCornerShape(14.dp)
+    // A legacy record is quieter than a linked one: it is a real value, but it is
+    // not the curated thing, and the chip should not claim otherwise.
+    val tone = if (selection.unlinked) c.textDim else c.primary
+    val fillAlpha = if (c.isDark) 0.16f else 0.10f
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(tone.copy(alpha = fillAlpha))
+            .border(dims.borderHairline, SolidColor(tone.copy(alpha = 0.45f)), shape)
+            .padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 10.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = selection.name,
+                style = AuntieTheme.typography.bodyMedium,
+                color = c.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            if (enabled) {
+                AuntieIconButton(
+                    icon = Lucide.X,
+                    contentDescription = "Clear ${selection.name}",
+                    onClick = onClear,
+                    size = 32.dp,
+                    destructive = true,
                 )
             }
+        }
+        if (selection.detail.isNotBlank()) {
+            Text(
+                text = selection.detail,
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+                modifier = Modifier.padding(end = 10.dp),
+            )
+        }
+        if (selection.unlinked) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = VET_CLINIC_UNLINKED_NOTE,
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+                modifier = Modifier.padding(end = 10.dp),
+            )
+        }
+    }
+}
+/**
+ * The inline "this clinic is not in the bank yet" form.
+ *
+ * With free text gone this is the ONLY way to record a clinic the catalog lacks,
+ * so it collects everything the catalog row needs rather than just a name: an
+ * operator who cannot find a clinic must be able to add it, with its phone and
+ * address, without leaving the household they are editing. Inline rather than a
+ * dialog for the same reason, a sheet over a form is how a half-typed form gets
+ * lost.
+ */
+@Composable
+private fun CreateVetClinicForm(
+    initialName: String,
+    initialEmergency: Boolean,
+    enabled: Boolean,
+    onCancel: () -> Unit,
+    onSave: (VetClinic) -> Unit,
+) {
+    val c = AuntieTheme.colors
+    var name by remember { mutableStateOf(initialName) }
+    var phone by remember { mutableStateOf("") }
+    var address by remember { mutableStateOf("") }
+    var website by remember { mutableStateOf("") }
+    var isEmergency by remember { mutableStateOf(initialEmergency) }
+    var nameError by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(c.surface2)
+            .border(AuntieTheme.dims.borderHairline, SolidColor(c.border), shape)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            "Add this clinic to the shared catalog",
+            style = AuntieTheme.typography.bodyMedium,
+            color = c.textPrimary,
+        )
+        AuntieField(
+            value = name,
+            onValueChange = { name = it; nameError = false },
+            label = "Clinic name",
+            enabled = enabled,
+            isError = nameError,
+            modifier = Modifier.fillMaxWidth(),
+            fieldModifier = Modifier.semantics { contentDescription = "Clinic name" },
+        )
+        if (nameError) {
+            Text(
+                "Clinic name can't be blank.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.error,
+            )
+        }
+        AuntieField(
+            value = phone,
+            onValueChange = { phone = it },
+            label = "Clinic phone",
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+            fieldModifier = Modifier.semantics { contentDescription = "Clinic phone" },
+        )
+        AuntieField(
+            value = address,
+            onValueChange = { address = it },
+            label = "Clinic address",
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+            fieldModifier = Modifier.semantics { contentDescription = "Clinic address" },
+        )
+        AuntieField(
+            value = website,
+            onValueChange = { website = it },
+            label = "Website",
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+            fieldModifier = Modifier.semantics { contentDescription = "Website" },
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            AuntieToggle(
+                checked = isEmergency,
+                onCheckedChange = { isEmergency = it },
+                enabled = enabled,
+            )
+            Text(
+                "24 hour / emergency clinic",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textPrimary,
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            GhostButton(label = "Cancel", onClick = onCancel, enabled = enabled)
+            PrimaryButton(
+                label = "Save clinic",
+                enabled = enabled,
+                onClick = {
+                    if (name.trim().isBlank()) {
+                        nameError = true
+                        return@PrimaryButton
+                    }
+                    onSave(
+                        VetClinic(
+                            name = name.trim(),
+                            phone = phone.trim(),
+                            address = address.trim(),
+                            website = website.trim(),
+                            isEmergency = isEmergency,
+                        )
+                    )
+                },
+            )
         }
     }
 }

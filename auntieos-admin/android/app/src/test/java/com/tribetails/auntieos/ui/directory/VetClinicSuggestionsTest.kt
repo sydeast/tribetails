@@ -84,4 +84,44 @@ class VetClinicSuggestionsTest {
         assertTrue(!shouldOfferVetClinicCreate("", catalog))
         assertTrue(!shouldOfferVetClinicCreate("   ", catalog))
     }
+    // ── committed selection (no free text, parity with web) ──────────────────
+    @Test fun selectionOfACatalogClinic_stampsTheIdAndDenormalizesTheRest() {
+        val clinic = VetClinic(
+            id = "riverside",
+            name = "  Riverside Animal Hospital  ",
+            phone = " (512) 555-0100 ",
+            address = " 1 Mill St ",
+        )
+        val sel = vetClinicSelectionOf(clinic)
+        assertEquals("riverside", sel.clinicId)
+        assertEquals("Riverside Animal Hospital", sel.name)
+        assertEquals("(512) 555-0100", sel.phone)
+        assertEquals("1 Mill St", sel.address)
+        assertTrue(sel.hasSelection)
+        assertTrue(!sel.unlinked)
+    }
+    @Test fun emptySelection_hasNothingAndIsNotUnlinked() {
+        val sel = EMPTY_VET_CLINIC_SELECTION
+        assertTrue(!sel.hasSelection)
+        assertTrue(!sel.unlinked)
+        assertEquals("", sel.detail)
+    }
+    /**
+     * Every household written before the picker holds the strings and NO id.
+     * That is a valid, renderable selection, not a broken one.
+     */
+    @Test fun legacySelection_isAValidSelectionMarkedUnlinked() {
+        val sel = VetClinicSelection(name = "Old Corner Vet", phone = "512-555-0000")
+        assertTrue(sel.hasSelection)
+        assertTrue(sel.unlinked)
+        assertEquals("512-555-0000", sel.detail)
+    }
+    @Test fun detail_joinsPhoneAndAddressAndSkipsWhicheverIsMissing() {
+        assertEquals(
+            "(512) 555-0100 · 1 Mill St",
+            VetClinicSelection(clinicId = "c", name = "N", phone = "(512) 555-0100", address = "1 Mill St").detail,
+        )
+        assertEquals("1 Mill St", VetClinicSelection(clinicId = "c", name = "N", address = "1 Mill St").detail)
+        assertEquals("", VetClinicSelection(clinicId = "c", name = "N").detail)
+    }
 }

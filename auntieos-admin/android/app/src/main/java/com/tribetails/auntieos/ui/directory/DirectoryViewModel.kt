@@ -615,29 +615,51 @@ class DirectoryViewModel(private val repository: AuntieRepository) : ViewModel()
         _editKinfolkState.value = _editKinfolkState.value.copy(joinDate = value, joinDateNote = null)
     }
     fun updateEditInternalNotes(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(internalNotes = value) }
-    fun updateEditVetClinicName(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(vetClinicName = value) }
-    fun updateEditVetClinicPhone(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(vetClinicPhone = value) }
-    fun updateEditVetClinicAddress(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(vetClinicAddress = value) }
+    // ── vet clinic: always a catalog row, never free text ────────────────────
+    //
+    // Operator ruling (issue #13, 2026-07-25): parity with web. There are
+    // deliberately NO `updateEditVetClinicName/Phone/Address` writers any more.
+    // They existed so the edit screen's plain text fields could type straight
+    // into the household's stored vet, which is exactly the free-text path the
+    // ruling removes. The only ways in are now [selectVetClinic] (a catalog
+    // row), [createVetClinicFromSearch] (a row this creates), and
+    // [clearVetClinic]. Re-adding a plain setter here re-opens the hole.
+    //
+    // Legacy households still LOAD their stored strings with an empty id, and
+    // save back untouched. What is forbidden is creating new free-text vets,
+    // not displaying old ones.
 
     fun selectVetClinic(clinic: com.tribetails.auntieos.data.model.VetClinic) {
+        val sel = vetClinicSelectionOf(clinic)
         _editKinfolkState.value = _editKinfolkState.value.copy(
-            vetClinicId      = clinic.id,
-            vetClinicName    = clinic.name,
-            vetClinicPhone   = clinic.phone,
-            vetClinicAddress = clinic.address,
+            vetClinicId      = sel.clinicId,
+            vetClinicName    = sel.name,
+            vetClinicPhone   = sel.phone,
+            vetClinicAddress = sel.address,
         )
     }
 
-    fun updateEditEmergencyVetClinicName(value: String) {
-        _editKinfolkState.value = _editKinfolkState.value.copy(emergencyVetClinicName = value)
+    /** Empties ALL FOUR fields. A cleared vet must not leave a name behind. */
+    fun clearVetClinic() {
+        _editKinfolkState.value = _editKinfolkState.value.copy(
+            vetClinicId = "", vetClinicName = "", vetClinicPhone = "", vetClinicAddress = "",
+        )
     }
 
     fun selectEmergencyVetClinic(clinic: com.tribetails.auntieos.data.model.VetClinic) {
+        val sel = vetClinicSelectionOf(clinic)
         _editKinfolkState.value = _editKinfolkState.value.copy(
-            emergencyVetClinicId      = clinic.id,
-            emergencyVetClinicName    = clinic.name,
-            emergencyVetClinicPhone   = clinic.phone,
-            emergencyVetClinicAddress = clinic.address,
+            emergencyVetClinicId      = sel.clinicId,
+            emergencyVetClinicName    = sel.name,
+            emergencyVetClinicPhone   = sel.phone,
+            emergencyVetClinicAddress = sel.address,
+        )
+    }
+
+    fun clearEmergencyVetClinic() {
+        _editKinfolkState.value = _editKinfolkState.value.copy(
+            emergencyVetClinicId = "", emergencyVetClinicName = "",
+            emergencyVetClinicPhone = "", emergencyVetClinicAddress = "",
         )
     }
 
@@ -674,7 +696,14 @@ class DirectoryViewModel(private val repository: AuntieRepository) : ViewModel()
                     isEmergency = isEmergency,
                 )
             ).onSuccess { clinicId ->
-                val selected = com.tribetails.auntieos.data.model.VetClinic(
+                // On a DEDUPE hit the callable returns the id of a clinic already
+                // in the bank. Prefer that record's stored details over what was
+                // just typed: the bank's copy is the curated one, and replacing a
+                // good phone number with a blank from a hurried retype is the
+                // failure this guards. Falls back to the typed values for a
+                // genuinely new clinic, which is not in the catalog snapshot yet.
+                val existing = vetClinicsFlow.value.firstOrNull { it.id == clinicId }
+                val selected = existing ?: com.tribetails.auntieos.data.model.VetClinic(
                     id = clinicId,
                     name = trimmed,
                     phone = phone.trim(),
