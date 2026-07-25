@@ -57,6 +57,30 @@ Do not pipe gradle to `tail`. It masks the exit code, and a failing build then
 reports success. `scripts/loud-build.sh` preserves the code and prints a
 heartbeat.
 
+## The brand-voice corpus, and the copy nobody sees
+
+`generateAuntieCopy` reads the voice corpus from `web/functions/voice/`, which is
+a COPY. The source of truth is `voice/` at the admin root. Both are gitignored
+(anchored `/voice/` and `web/functions/voice/`), so the corpus lives on the
+operator's machine and never ships in a pull request.
+
+Edit `voice/`, then push the copy the function actually reads:
+
+```
+cd web/functions && npm run sync:voice
+```
+
+Nothing enforces this. The two trees drifted for four days once, and the
+deployed function kept generating against the older rules with no warning: the
+Voice Bible pairing note, the no-formula-openers guidance and the
+gracious-formal demotion were all live in `voice/` and absent from what the
+model saw. Run the sync after every corpus edit, and again before deploying the
+function.
+
+Channel and length rules belong in `voice/02_Channel_Playbook.md` §2. The
+per-type lines in `SYSTEM_FRAMING` (`web/functions/generate.js`) must agree with
+that table; when they disagree, the table is right and the prompt is the bug.
+
 ## Deploying, and why the site names read backwards
 
 Deploy by TARGET, never by site id:
@@ -87,6 +111,46 @@ none of that risk.
 
 Deploy commands and CI both use targets, so nobody has to hold the mapping in
 their head. If you find yourself typing a raw site id, that is the bug.
+
+### Deploying the AuntieOS functions
+
+Every production deploy goes through `scripts/safe-deploy.sh`, functions
+included. It pins the project, refuses a bare deploy, and refuses a rules push
+from this tree, so going around it is how live security rules get overwritten
+by a stale copy.
+
+```
+scripts/safe-deploy.sh auntieos-admin -- firebase deploy --only functions:default:generateAuntieCopy
+scripts/safe-deploy.sh auntieos-admin -- firebase deploy --only functions:reconcile:nightly_reconcile
+```
+
+`default` is `web/functions` (Node), `reconcile` is `web/functions-python`.
+Name the function; `--only functions:default` alone pushes all nine, and a bare
+`--only functions` is refused because it would ship both codebases at once.
+
+`DRY_RUN=1` in front prints the command instead of running it. Use it whenever
+you are unsure.
+
+Worth knowing, because it caused a real bypass: `auntieos-admin` is TWO
+`firebase.json` files. This directory's declares hosting; `web/firebase.json`
+declares the functions codebases. The wrapper handles that split for you and
+runs a functions deploy from `web/`. For the same reason it refuses one command
+that mixes functions with hosting: those are two trees, so run two deploys.
+
+Two things that will stop a functions deploy on a fresh checkout:
+
+- The Firebase CLI analyzes the codebase locally before uploading, so
+  `web/functions/node_modules` must exist. Nothing else in this repo installs
+  it. `cd web/functions && npm install`.
+- If npm fails with `EACCES` renaming inside `~/.npm/_cacache`, the cache has
+  root-owned entries from an earlier `sudo npm`. Pass `--cache` a writable
+  directory rather than fixing it destructively. Some transitive postinstall
+  scripts also hang here; `--ignore-scripts` is safe for a deploy-analysis
+  install.
+
+`generateAuntieCopy` in particular must be deployed before the Communicate
+composer's Push format works. An un-deployed function returns 400 for `push`
+while the other six formats keep working, so it fails loud rather than quietly.
 
 ## Visual regression
 
