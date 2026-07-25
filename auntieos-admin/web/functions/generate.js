@@ -148,9 +148,16 @@ function validateRequest(body) {
   const recipient = typeof b.recipient === 'string' ? b.recipient.trim() : '';
   const rawNotes = typeof b.raw_notes === 'string' ? b.raw_notes.trim() : '';
   if (!rawNotes) throw new GenerateError('raw_notes is required', 400);
+  // kinfolk_id: the household id the CLIENT already resolved. Optional and
+  // additive — a caller that sends only a name behaves exactly as it always
+  // did. A non-string or blank value normalizes to null rather than to '', so
+  // it can never be concatenated into a Firestore doc path.
+  const kinfolkId =
+    typeof b.kinfolk_id === 'string' && b.kinfolk_id.trim() ? b.kinfolk_id.trim() : null;
   return {
     communication_type: b.communication_type,
     recipient,
+    kinfolk_id: kinfolkId,
     raw_notes: rawNotes,
     tone_hint: typeof b.tone_hint === 'string' ? b.tone_hint : null,
     max_length: typeof b.max_length === 'string' ? b.max_length : null,
@@ -287,19 +294,38 @@ function emptyKinfolkContext(trainingDocs) {
   };
 }
 
-async function resolveContext(db, v) {
-  // No recipient: there is no household to resolve, so every kinfolk-scoped read
-  // (roster, dossier, kin, the_411, visit_logs) is skipped rather than 404ing.
-  if (!v.recipient) return emptyKinfolkContext(await loadTrainingDocs(db, v.communication_type));
+/**
+ * Resolves the household this generate is about.
+ *
+ * TWO PATHS, and the id path is the one to prefer.
+ *
+ * `kinfolk_id` is an exact doc read. The client's recipient picker already
+ * holds a real `kinfolk` doc, so making the server re-derive it from a display
+ * name is a lossy round trip: matchKinfolk() folds case and falls back to
+ * startsWith, so two households named Dana, or one entered as "Dana M.",
+ * resolve to whichever the scan reached first — and the wrong dossier, kin and
+ * 411s then feed the model. The archive's picker had this bug for its whole
+ * life while its own comment claimed otherwise.
+ *
+ * The name path stays exactly as it was, for the callers that have only a name
+ * (the KinTale composer, Android, anything typed rather than picked).
+ */
+async function resolveKinfolk(db, v) {
+  if (v.kinfolk_id) {
+    const snap = await db.collection('kinfolk').doc(v.kinfolk_id).get();
+    if (!snap.exists) {
+      throw new GenerateError(`No Kinfolk with id "${v.kinfolk_id}"`, 404);
+    }
+    return { id: v.kinfolk_id, ...snap.data() };
+  }
 
-  // Full-collection read is REQUIRED here (NOTE-48): matchKinfolk() resolves a
-  // free-text recipient ("Dana", "Dana M.", "Dana (Nova & Otis)") against
-  // firstName/lastName with case-folding and a startsWith fallback. There is no
-  // normalized lookup key to do a server-side .where() against, so we cannot
-  // .limit() without breaking recipient resolution. The kinfolk collection is
-  // a single small-business roster (tens of docs, admin-only), so the read is
-  // bounded. If this roster ever grows large, add a normalized name index and
-  // query it instead of scanning.
+  // Full-collection read is REQUIRED on this path (NOTE-48): matchKinfolk()
+  // resolves a free-text recipient ("Dana", "Dana M.", "Dana (Nova & Otis)")
+  // against firstName/lastName with case-folding and a startsWith fallback.
+  // There is no normalized lookup key to do a server-side .where() against, so
+  // we cannot .limit() without breaking recipient resolution. The kinfolk
+  // collection is a single small-business roster (tens of docs, admin-only), so
+  // the read is bounded. Callers that send kinfolk_id skip it entirely.
   const kfSnap = await db.collection('kinfolk').get();
   const kinfolkDocs = kfSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const kinfolk = matchKinfolk(v.recipient, kinfolkDocs);
@@ -308,6 +334,18 @@ async function resolveContext(db, v) {
       known: kinfolkDocs.map((k) => [k.firstName, k.lastName].filter(Boolean).join(' ')).filter(Boolean),
     });
   }
+  return kinfolk;
+}
+
+async function resolveContext(db, v) {
+  // Nothing to resolve by: no id AND no name means there is no household, so
+  // every kinfolk-scoped read (roster, dossier, kin, the_411, visit_logs) is
+  // skipped rather than 404ing. That is the broadcast / blog / social path.
+  if (!v.recipient && !v.kinfolk_id) {
+    return emptyKinfolkContext(await loadTrainingDocs(db, v.communication_type));
+  }
+
+  const kinfolk = await resolveKinfolk(db, v);
   const kinfolkId = kinfolk.id;
   const kinfolkName = [kinfolk.firstName, kinfolk.lastName].filter(Boolean).join(' ').trim() || v.recipient;
 

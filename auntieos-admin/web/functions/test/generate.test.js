@@ -355,6 +355,108 @@ describe('validateRequest', () => {
   });
 });
 
+// kinfolk_id: the client-resolved household id. Optional and additive — every
+// caller that sends only a name keeps working exactly as before.
+describe('validateRequest with kinfolk_id', () => {
+  it('carries a supplied id through, trimmed', () => {
+    assert.strictEqual(gen.validateRequest({ ...VALID, kinfolk_id: '  9  ' }).kinfolk_id, '9');
+  });
+  it('normalizes an absent id to null, not to empty string', () => {
+    assert.strictEqual(gen.validateRequest(VALID).kinfolk_id, null);
+  });
+  it('normalizes a blank id to null so it never becomes a doc path', () => {
+    assert.strictEqual(gen.validateRequest({ ...VALID, kinfolk_id: '   ' }).kinfolk_id, null);
+  });
+  it('ignores a non-string id rather than stringifying an object into a doc path', () => {
+    assert.strictEqual(gen.validateRequest({ ...VALID, kinfolk_id: { evil: true } }).kinfolk_id, null);
+  });
+});
+
+describe('resolveContext with a kinfolk_id', () => {
+  // The whole point: no fuzzy scan. A roster read here would mean the id is
+  // being ignored and matchKinfolk is still deciding who the copy is about.
+  function countingDb(data) {
+    const inner = makeDb(data);
+    const reads = [];
+    return {
+      reads,
+      collection(name) {
+        const c = inner.collection(name);
+        return {
+          ...c,
+          where: c.where.bind(c),
+          doc(id) {
+            reads.push(`${name}.doc(${id})`);
+            return c.doc(id);
+          },
+          async get() {
+            reads.push(`${name}.get()`);
+            return c.get.call(this);
+          },
+        };
+      },
+    };
+  }
+
+  it('reads the household directly and never scans the roster', async () => {
+    const db = countingDb({ kinfolk: KINFOLK });
+    const ctx = await gen.resolveContext(db, {
+      communication_type: 'email',
+      recipient: 'Dana',
+      kinfolk_id: '9',
+      raw_notes: 'x',
+    });
+    assert.strictEqual(ctx.kinfolkId, '9');
+    assert.strictEqual(ctx.kinfolkName, 'Dana Delgado');
+    assert.ok(db.reads.includes('kinfolk.doc(9)'), 'expected a direct kinfolk doc read');
+    assert.ok(!db.reads.includes('kinfolk.get()'), 'the roster scan must not run when an id is supplied');
+  });
+
+  it('trusts the id over a name that would have matched somebody else', async () => {
+    const db = fullDb();
+    const ctx = await gen.resolveContext(db, {
+      communication_type: 'email',
+      recipient: 'Dana',
+      kinfolk_id: '3',
+      raw_notes: 'x',
+    });
+    assert.strictEqual(ctx.kinfolkId, '3');
+    assert.strictEqual(ctx.kinfolkName, 'Nora Halbrook');
+  });
+
+  it('404s on an id that does not exist, naming the id', async () => {
+    const db = fullDb();
+    await assert.rejects(
+      () => gen.resolveContext(db, { communication_type: 'email', recipient: 'Dana', kinfolk_id: 'ghost', raw_notes: 'x' }),
+      (e) => e.status === 404 && /ghost/.test(e.message),
+    );
+  });
+
+  it('still loads the dossier, kin, 411s and prior visit for the id path', async () => {
+    const db = fullDb();
+    const ctx = await gen.resolveContext(db, {
+      communication_type: 'email',
+      recipient: '',
+      kinfolk_id: '9',
+      raw_notes: 'x',
+    });
+    assert.ok(ctx.dossier, 'dossier should load from the id path');
+    assert.ok(ctx.kins.length > 0, 'kin should load from the id path');
+  });
+
+  it('resolves by id even when no recipient name was sent at all', async () => {
+    const db = fullDb();
+    const ctx = await gen.resolveContext(db, { communication_type: 'email', recipient: '', kinfolk_id: '9', raw_notes: 'x' });
+    assert.strictEqual(ctx.kinfolkId, '9');
+  });
+
+  it('falls back to the name scan when no id is supplied, unchanged', async () => {
+    const db = fullDb();
+    const ctx = await gen.resolveContext(db, { communication_type: 'email', recipient: 'Dana', raw_notes: 'x' });
+    assert.strictEqual(ctx.kinfolkId, '9');
+  });
+});
+
 describe('matchKinfolk', () => {
   it('matches on first name, case-insensitive', () => {
     assert.strictEqual(gen.matchKinfolk('dana', KINFOLK).id, '9');
