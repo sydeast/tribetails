@@ -38,9 +38,7 @@ import com.tribetails.auntieos.ui.components.AuntieTextBtn
 import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
-import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneId
 
 private val WEEKDAY_LABELS = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 private val MINUTE_STEPS = listOf(0, 15, 30, 45)
@@ -111,7 +109,10 @@ fun NewBookingRequestDialog(
     if (pickerFor != -1) {
         val current = if (pickerFor == -2) weeklyStart else dates.getOrElse(pickerFor) { LocalDate.now() }
         val pickerState = rememberDatePickerState(
-            initialSelectedDateMillis = current.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+            // Seeded and read back through the SAME zone, see NewBookingMath's
+            // PICKER_ZONE. Seeding in the device zone and reading in UTC opened
+            // the picker a day early everywhere east of Greenwich.
+            initialSelectedDateMillis = NewBookingMath.pickerSeedMs(current),
         )
         DatePickerDialog(
             onDismissRequest = { pickerFor = -1 },
@@ -119,7 +120,7 @@ fun NewBookingRequestDialog(
                 AuntieTextBtn(onClick = {
                     val ms = pickerState.selectedDateMillis
                     if (ms != null) {
-                        val picked = Instant.ofEpochMilli(ms).atZone(ZoneId.of("UTC")).toLocalDate()
+                        val picked = NewBookingMath.pickerPickedDate(ms)
                         if (pickerFor == -2) weeklyStart = picked
                         else dates = dates.toMutableList().also { it[pickerFor] = picked }
                     }
