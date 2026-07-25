@@ -21,6 +21,8 @@ import { Args as AssignTemplateArgs } from '../src/admin/assignTemplate';
 import { Args as UpdateInvoiceArgs } from '../src/admin/updateInvoice';
 import { Args as ArchiveInvoiceArgs } from '../src/admin/archiveInvoice';
 import { Args as UnarchiveInvoiceArgs } from '../src/admin/unarchiveInvoice';
+// The partial-payment detection/repair pass (2026-07-25).
+import { Args as RepairInvoicePaymentsArgs } from '../src/admin/repairInvoicePayments';
 // Shared catalog write reached by BOTH the kinfolk portal and the AuntieOS
 // admin vet-clinic picker (Task 1.8). Two independent clients now build this
 // payload, which is exactly the condition this guard exists for.
@@ -144,6 +146,13 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
     keys: ['address', 'amountDue', 'client', 'date', 'discount', 'dueDate', 'familyId', 'invoiceNumber', 'kinfolkName', 'sendToKinfolk', 'sessionIds', 'status', 'terms', 'total'],
   },
   markInvoicePaid: { schema: MarkInvoicePaidArgs, keys: ['amount', 'invoiceId', 'method', 'paidAt', 'reference'] },
+  // `mode` defaults to the read-only 'detect'; the destructive mode is always
+  // named by the caller, so a shape change here is a change to how a billing
+  // mass-write is triggered.
+  repairInvoicePayments: {
+    schema: RepairInvoicePaymentsArgs,
+    keys: ['limit', 'mode', 'startAfterId'],
+  },
   archiveInvoice: { schema: ArchiveInvoiceArgs, keys: ['force', 'invoiceId'] },
   unarchiveInvoice: { schema: UnarchiveInvoiceArgs, keys: ['invoiceId'] },
   assignTemplate: { schema: AssignTemplateArgs, keys: ['active', 'audience', 'catalogKey', 'templateId', 'triggerKey'] },

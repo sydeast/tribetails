@@ -1556,6 +1556,40 @@ class AuntieRepository(
             ?: error("generateInvoicePdf: server returned no pdfUrl")
     }.onFailure { AuntieLog.e("generateInvoicePdf failed for $invoiceId", it) }
 
+    /**
+     * Records a payment against an invoice via the `markInvoicePaid` callable,
+     * and returns WHERE THE INVOICE STANDS AFTERWARDS.
+     *
+     * THE SERVER DECIDES, from the sum of every payment recorded against the
+     * invoice, not from the amount sent here. A payment that does not cover the
+     * total leaves the invoice OPEN with a real remaining balance and comes back
+     * `partial`; only a settling payment marks it paid. Until 2026-07-25 that
+     * callable wrote `paid` with a zero balance for ANY amount, which is how $20
+     * against a $40 invoice made the remaining $20 uncollectable.
+     *
+     * Fail-loud: the server's precondition messages (already settled, draft or
+     * quote, cancelled, credit) surface verbatim.
+     */
+    suspend fun markInvoicePaid(
+        invoiceId: String,
+        amount: Double?,
+        method: String,
+        reference: String,
+    ): Result<InvoiceSettlement> = runCatching {
+        ensureAuthenticated()
+        val payload = buildMap<String, Any> {
+            put("invoiceId", invoiceId)
+            if (amount != null) put("amount", amount)
+            if (method.isNotBlank()) put("method", method)
+            if (reference.isNotBlank()) put("reference", reference)
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("markInvoicePaid")
+            .call(payload)
+            .await().data as? Map<String, Any?>
+        decodeInvoiceSettlement(raw)
+    }.onFailure { AuntieLog.e("markInvoicePaid failed for $invoiceId", it) }
+
     /** Slice 2: marks an invoice receipted via the generateReceipt callable. */
     suspend fun generateReceipt(invoiceId: String): Result<Unit> = runCatching {
         ensureAuthenticated()
@@ -3372,6 +3406,48 @@ internal fun decodeExternalSuppressResult(raw: Map<String, Any?>?, requestedChan
     val channel = (raw?.get("channel") as? String)?.ifBlank { requestedChannel } ?: requestedChannel
     val recipientRedacted = (raw?.get("recipientRedacted") as? String).orEmpty()
     return ExternalSuppressResult(channel = channel, recipientRedacted = recipientRedacted)
+}
+
+/**
+ * Where an invoice stands after a payment, as the `markInvoicePaid` callable
+ * reports it. Every figure is INTEGER CENTS.
+ *
+ * [amountDueCents] is never negative: an overpayment settles the invoice and
+ * puts the excess in [overpaidCents] instead, because a negative balance is this
+ * codebase's CREDIT signal and would silently turn an over-collected invoice
+ * into a credit owed back to the household.
+ */
+data class InvoiceSettlement(
+    /** One of `unpaid`, `partial`, `settled`, `overpaid`. */
+    val state: String,
+    val totalCents: Long,
+    val paidCents: Long,
+    val amountDueCents: Long,
+    val overpaidCents: Long,
+) {
+    val isPartial: Boolean get() = state == "partial"
+    val isOverpaid: Boolean get() = state == "overpaid"
+}
+
+/**
+ * Pure decode of the markInvoicePaid callable payload into [InvoiceSettlement].
+ *
+ * A MISSING `state` DECODES TO "partial", NOT TO "settled". If the server's
+ * answer cannot be read, the safe reading is that the invoice may still be
+ * owed: that keeps it in Outstanding and keeps the operator able to collect,
+ * which is exactly what the original defect took away. Defaulting the other way
+ * would reproduce the bug in the client. Pure; unit-tested.
+ */
+internal fun decodeInvoiceSettlement(raw: Map<String, Any?>?): InvoiceSettlement {
+    fun cents(key: String): Long = (raw?.get(key) as? Number)?.toLong() ?: 0L
+    val state = (raw?.get("state") as? String)?.takeIf { it.isNotBlank() } ?: "partial"
+    return InvoiceSettlement(
+        state = state,
+        totalCents = cents("totalCents"),
+        paidCents = cents("paidCents"),
+        amountDueCents = cents("amountDueCents"),
+        overpaidCents = cents("overpaidCents"),
+    )
 }
 
 /**

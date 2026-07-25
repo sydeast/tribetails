@@ -7,6 +7,8 @@ import {
   invoiceStatusInfo,
   longDateLabel,
   parseDateMs,
+  partPaidStatusInfo,
+  partPaidSummary,
   shortDateLabel,
 } from './invoiceFormat';
 
@@ -106,5 +108,25 @@ describe('creditTargetLabel', () => {
     [null, 'Redeemed'],
   ] as const)('%s -> %s', (target, expected) => {
     expect(creditTargetLabel(target)).toBe(expected);
+  });
+});
+describe('part-paid rendering (the portal must not call it paid or unpaid)', () => {
+  const partPaid = { partiallyPaid: true, paidCents: 2000, total: 40 };
+  it('gives a part-paid invoice its own chip, distinct from PAID and from PENDING', () => {
+    const info = partPaidStatusInfo();
+    expect(info.chipLabel).toBe('PART PAID');
+    expect(info.chipLabel).not.toBe(invoiceStatusInfo('paid', null).chipLabel);
+    expect(info.chipLabel).not.toBe(invoiceStatusInfo('open', null).chipLabel);
+  });
+  it('keeps the open row treatment, so a part-paid invoice is still payable and still chased', () => {
+    expect(partPaidStatusInfo().invClass).toBe(invoiceStatusInfo('open', null).invClass);
+  });
+  it('spells out both numbers rather than leaving the household to subtract', () => {
+    expect(partPaidSummary(partPaid)).toBe('$20.00 of $40.00 paid');
+  });
+  it('says nothing at all when the invoice is not part-paid', () => {
+    expect(partPaidSummary({ partiallyPaid: false, paidCents: 0, total: 40 })).toBeNull();
+    // Not even when a stale paidCents is present without the flag.
+    expect(partPaidSummary({ partiallyPaid: false, paidCents: 2000, total: 40 })).toBeNull();
   });
 });

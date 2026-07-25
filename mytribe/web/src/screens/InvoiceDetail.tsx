@@ -2,7 +2,15 @@ import { Link, useParams } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyInvoicePdf, getMyInvoices, payInvoice, redeemCredit } from '../api/invoicesApi';
 import { getBusinessContact } from '../api/portal';
-import { creditTargetLabel, formatCentsUsd, formatUsd, invoiceStatusInfo, longDateLabel } from '../lib/invoiceFormat';
+import {
+  creditTargetLabel,
+  formatCentsUsd,
+  formatUsd,
+  invoiceStatusInfo,
+  longDateLabel,
+  partPaidStatusInfo,
+  partPaidSummary,
+} from '../lib/invoiceFormat';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
@@ -91,10 +99,18 @@ export function InvoiceDetail() {
   }
 
   const inv = found;
-  const status = invoiceStatusInfo(inv.status, inv.creditRedeemedAtMs);
+  // A part-paid invoice is neither paid nor untouched, and this is the screen a
+  // paying household reads. It keeps the open bucket and the Pay button; only
+  // what it SAYS about itself changes. See lib/invoiceFormat.ts.
+  const status = inv.partiallyPaid ? partPaidStatusInfo() : invoiceStatusInfo(inv.status, inv.creditRedeemedAtMs);
+  const partPaid = partPaidSummary(inv);
   const isCredit = inv.status === 'credit';
   const redeemed = inv.creditRedeemedAtMs !== null;
-  const paidAmount = Math.max(0, inv.total - inv.amountDue);
+  // `paidCents` when the server has recorded one, and only then. The
+  // total-minus-balance fallback stays for invoices predating the field, but it
+  // can never override a real figure: on every invoice the pre-2026-07-25 write
+  // touched it would report the whole total as collected.
+  const paidAmount = inv.paidCents > 0 ? inv.paidCents / 100 : Math.max(0, inv.total - inv.amountDue);
   const payable = !isCredit && inv.status !== 'cancelled' && !inv.isPaid && inv.amountDue > 0;
 
   return (
@@ -145,6 +161,7 @@ export function InvoiceDetail() {
                   <div className="doc-status">
                     <div className="lbl">Status</div>
                     <span className={`chip big ${status.cssClass}`}>{status.chipLabel}</span>
+                    {partPaid && <div className="num">{partPaid}</div>}
                     <div className="num">Invoice {inv.id}</div>
                   </div>
                 </div>
@@ -235,7 +252,12 @@ export function InvoiceDetail() {
                 <div className="doc-actions">
                   {payable && (
                     <button className="btn grad" onClick={() => pay.mutate()} disabled={pay.isPending}>
-                      {'\u{1F4B3}'} {pay.isPending ? 'Opening checkout…' : `Pay ${formatUsd(inv.amountDue)}`}
+                      {'\u{1F4B3}'}{' '}
+                      {pay.isPending
+                        ? 'Opening checkout…'
+                        : inv.partiallyPaid
+                          ? `Pay remaining ${formatUsd(inv.amountDue)}`
+                          : `Pay ${formatUsd(inv.amountDue)}`}
                     </button>
                   )}
                   <button className="btn ghost" onClick={() => downloadPdf.mutate()} disabled={downloadPdf.isPending}>

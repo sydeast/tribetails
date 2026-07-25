@@ -94,3 +94,29 @@ export function invoiceStatusInfo(status: InvoiceStatus, creditRedeemedAtMs: num
 export function creditTargetLabel(target: 'accountBalance' | null): string {
   return target === 'accountBalance' ? 'Saved to Account Balance' : 'Redeemed';
 }
+/**
+ * The chip and label for a PART-PAID invoice: money has come in and it does not
+ * cover the bill.
+ *
+ * A DISPLAY REFINEMENT OF `open`, NOT A SIXTH STATUS. `InvoiceStatus` is the
+ * backend's own enum and a part-paid invoice is genuinely open, so it keeps its
+ * bucket, its Pay button and its due-date treatment. What changes is only what
+ * the household is TOLD, and that matters here more than anywhere else in this
+ * codebase: this is the screen a paying customer looks at. "PENDING" alone hides
+ * the $20 they already sent, and "PAID" hides the $20 they still owe. Neither is
+ * a small inaccuracy when it is about someone's money.
+ */
+export function partPaidStatusInfo(): InvoiceStatusInfo {
+  return { label: 'Part paid', chipLabel: 'PART PAID', cssClass: 'partpaid', invClass: 'due' };
+}
+/**
+ * "$20.00 of $40.00 paid" for a part-paid invoice, or null when it is not one.
+ * Spelled out rather than left to a bare chip: the two numbers together are the
+ * whole point, and a chip alone would still leave the household adding up.
+ */
+export function partPaidSummary(
+  invoice: { partiallyPaid: boolean; paidCents: number; total: number },
+): string | null {
+  if (!invoice.partiallyPaid) return null;
+  return `${formatCentsUsd(invoice.paidCents)} of ${formatUsd(invoice.total)} paid`;
+}

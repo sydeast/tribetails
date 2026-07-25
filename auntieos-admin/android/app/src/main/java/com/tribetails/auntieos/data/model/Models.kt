@@ -363,6 +363,22 @@ data class Invoice(
     // Nullable: legacy invoices store paymentsHistory as null (Class B decode crash).
     var paymentsHistory: String? = "",
     var amountDue: Double = 0.0,
+    /**
+     * What has been collected against this invoice, in INTEGER CENTS, written by
+     * the `markInvoicePaid` callable and by the partial-payment repair pass.
+     *
+     * ABSENT on every invoice predating 2026-07-25, so it decodes to 0, and
+     * [com.tribetails.auntieos.domain.invoicePartPaid] reads 0 as "no record of
+     * a payment" rather than as a real zero.
+     *
+     * Deliberately NOT derived from `total - amountDue`: those are float
+     * dollars, and on every invoice the old partial-payment write touched
+     * `amountDue` reads 0.0 while a real balance is owed, so that subtraction
+     * would report the whole total as collected on exactly the wrong invoices.
+     */
+    var paidCents: Long = 0L,
+    /** Collected beyond the total, in integer cents. Non-zero only after an overpayment. */
+    var overpaidCents: Long = 0L,
     var status: String = "",
     var viewed: String = "",
     // Attribution fields written by backfill_structural_links.py

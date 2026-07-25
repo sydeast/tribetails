@@ -3,6 +3,7 @@ import { type InvoiceEntry } from '../api/invoices';
 import {
   formatUsd,
   invoiceActionsFor,
+  invoicePartialPayment,
   invoiceState,
   invoiceStateInfo,
   isInvoiceOverdue,
@@ -46,11 +47,14 @@ const ACTIONS: readonly ActionMeta[] = [
   },
   {
     key: 'markPaid',
-    label: 'Mark paid',
-    confirmCopy: 'This sets the invoice to paid and notifies the household. Method and reference are optional. Continue?',
-    confirmLabel: 'Mark paid',
-    busyLabel: 'Marking paid…',
-    successMessage: 'Invoice marked paid.',
+    label: 'Record payment',
+    confirmCopy:
+      'Enter the amount actually collected. A payment smaller than the balance leaves the invoice open for the rest, and the household is only notified once it is paid off. Method and reference are optional.',
+    confirmLabel: 'Record payment',
+    busyLabel: 'Recording…',
+    // Replaced at confirm time by what the server says actually happened, so the
+    // panel never claims an invoice was paid off when it was not.
+    successMessage: 'Payment recorded.',
     callableName: 'markInvoicePaid',
   },
   {
@@ -103,6 +107,9 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [paidMethod, setPaidMethod] = useState('');
   const [paidReference, setPaidReference] = useState('');
+  // Free text, not a number input, so a half-typed "2" is never read as $2.
+  // Parsed and validated at submit, where the operator can be told what is wrong.
+  const [paidAmount, setPaidAmount] = useState('');
 
   const todayIso = localDateIso(new Date());
   const state = invoiceState({
@@ -112,7 +119,15 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
     creditRedeemed: invoice.creditRedeemedAt !== undefined,
   });
   const overdue = isInvoiceOverdue(state, invoice.dueDate, todayIso);
-  const info = overdue ? { label: 'Overdue', chipLabel: 'OVERDUE', cssClass: 'overdue' } : invoiceStateInfo(state);
+  // Part-paid is a display refinement of `open`, like overdue, never its own
+  // state: it changes the chip and the copy and leaves the action set alone,
+  // which is what keeps collecting the rest possible. See invoiceFormat.ts.
+  const partial = invoicePartialPayment(state, invoice);
+  const info = overdue
+    ? { label: 'Overdue', chipLabel: 'OVERDUE', cssClass: 'overdue' }
+    : partial
+      ? { label: 'Part paid', chipLabel: 'PART PAID', cssClass: 'partpaid' }
+      : invoiceStateInfo(state);
   const household = invoice.kinfolkName || invoice.client || 'Unknown';
 
   // AO-19: the actions offered are decided by the SAME enumerated state the
@@ -132,6 +147,9 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
     setNotice(null);
     setPaidMethod('');
     setPaidReference('');
+    // Prefilled with the outstanding balance so the common case is one click,
+    // and editable so a partial is one field away rather than impossible.
+    setPaidAmount(key === 'markPaid' && invoice.amountDue > 0 ? String(invoice.amountDue) : '');
     setPending(key);
   }
 
@@ -145,18 +163,49 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
     setBusy(true);
     setActionError(null);
     try {
+      let outcome = meta.successMessage;
+
       if (meta.key === 'reminder') await sendInvoiceReminder(invoice._id);
       else if (meta.key === 'reviewSend') await reviewAndSendDraftInvoice(invoice._id);
       else if (meta.key === 'markPaid') {
         const method = paidMethod.trim();
         const reference = paidReference.trim();
-        await markInvoicePaid(invoice._id, {
+        const typed = paidAmount.trim();
+
+        // Validated here rather than by the input's type, so the operator gets a
+        // sentence instead of a silently-ignored keystroke. An unparseable
+        // amount is refused outright: guessing at it would record real money
+        // against a household.
+        let amount: number | undefined;
+        if (typed !== '') {
+          const parsed = Number(typed.replace(/^\$/, ''));
+          if (!Number.isFinite(parsed) || parsed <= 0) {
+            setBusy(false);
+            setActionError(`"${typed}" is not an amount. Enter dollars, for example 20 or 20.50.`);
+            return;
+          }
+          amount = parsed;
+        }
+
+        const res = await markInvoicePaid(invoice._id, {
+          ...(amount !== undefined && { amount }),
           ...(method !== '' && { method }),
           ...(reference !== '' && { reference }),
         });
+
+        // WHAT THE SERVER SAYS HAPPENED, not what the button was called. The
+        // whole defect this change fixes was a UI that reported "paid" for a
+        // payment that paid off half the invoice.
+        outcome =
+          res.state === 'partial'
+            ? `Partial payment recorded. ${formatUsd(res.amountDueCents / 100)} is still owed, and the invoice stays open.`
+            : res.state === 'overpaid'
+              ? `Payment recorded and the invoice is settled. It was overpaid by ${formatUsd(res.overpaidCents / 100)}, which has not been turned into a credit; issue one if that is what the household is owed.`
+              : 'Payment recorded. The invoice is paid in full.';
       } else await generateReceipt(invoice._id);
+
       setBusy(false);
-      setNotice(meta.successMessage);
+      setNotice(outcome);
       setPending(null);
     } catch (caught) {
       setBusy(false);
@@ -184,8 +233,14 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
             <dt>Total</dt>
             <dd>{formatUsd(invoice.total)}</dd>
           </div>
+          {partial && (
+            <div className="invoice-detail__fact">
+              <dt>Paid so far</dt>
+              <dd>{formatUsd(partial.paidCents / 100)}</dd>
+            </div>
+          )}
           <div className="invoice-detail__fact">
-            <dt>Amount due</dt>
+            <dt>{partial ? 'Still owed' : 'Amount due'}</dt>
             <dd>{formatUsd(invoice.amountDue)}</dd>
           </div>
           <div className="invoice-detail__fact">
@@ -210,6 +265,18 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
             <p className="invoice-detail__confirm-copy">{meta.confirmCopy}</p>
             {meta.key === 'markPaid' && (
               <div className="invoice-detail__confirm-fields">
+                <label className="invoice-detail__field">
+                  <span className="invoice-detail__field-label">Amount collected</span>
+                  <input
+                    className="invoice-detail__field-input"
+                    value={paidAmount}
+                    onChange={(e) => setPaidAmount(e.target.value)}
+                    placeholder={String(invoice.amountDue)}
+                    inputMode="decimal"
+                    disabled={busy}
+                    aria-label="Amount collected in dollars"
+                  />
+                </label>
                 <label className="invoice-detail__field">
                   <span className="invoice-detail__field-label">Method, optional</span>
                   <input

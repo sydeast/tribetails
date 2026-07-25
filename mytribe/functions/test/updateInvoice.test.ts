@@ -231,8 +231,27 @@ describe('updateInvoice edit gating (enforced here, not in the UI)', () => {
     expect(ctx.writes).toHaveLength(0);
   });
 
-  it('refuses a MONEY edit once a payment has been recorded', async () => {
+  it('ALLOWS A MONEY EDIT on a PART-PAID invoice, so a part-collected bill stays repairable', async () => {
+    // CHANGED 2026-07-25, deliberately. The old rule froze the money on the
+    // first payment of any size, which is the second half of the defect that
+    // made a part-collected balance unrecoverable: markInvoicePaid refused the
+    // remaining payment, and this refused the correction. $10 against a $40
+    // invoice is PARTIAL, not settled.
     const ctx = seed(OPEN_INVOICE, [{ id: 'p1', data: { amount: 10 } }]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(
+      updateInvoiceHandler(
+        req({
+          invoiceId: 'inv1',
+          patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 2500 }] },
+        }),
+      ),
+    ).resolves.toMatchObject({ ok: true });
+  });
+
+  it('refuses a MONEY edit once the recorded payments SETTLE the invoice', async () => {
+    const ctx = seed(OPEN_INVOICE, [{ id: 'p1', data: { amount: 40 } }]);
     mocks.dbFn.mockReturnValue(ctx.db);
 
     await expect(
@@ -249,13 +268,62 @@ describe('updateInvoice edit gating (enforced here, not in the UI)', () => {
     expect(ctx.writes).toHaveLength(0);
   });
 
-  it('still allows a METADATA edit on that same part-paid invoice', async () => {
-    const ctx = seed(OPEN_INVOICE, [{ id: 'p1', data: { amount: 10 } }]);
+  it('still allows a METADATA edit on a settled invoice', async () => {
+    const ctx = seed(OPEN_INVOICE, [{ id: 'p1', data: { amount: 40 } }]);
     mocks.dbFn.mockReturnValue(ctx.db);
 
     await expect(
       updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { terms: 'Net 14' } })),
     ).resolves.toMatchObject({ ok: true });
+  });
+
+  it('lets an invoice LABELLED paid but only part-collected be corrected', async () => {
+    // The corrupt shape the pre-fix write produced. Freezing it on the label is
+    // what left it beyond repair from every direction at once.
+    const ctx = seed({ ...OPEN_INVOICE, status: 'paid', amountDue: 0 }, [
+      { id: 'p1', data: { amount: 20 } },
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(
+      updateInvoiceHandler(
+        req({
+          invoiceId: 'inv1',
+          patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 4000 }] },
+        }),
+      ),
+    ).resolves.toMatchObject({ ok: true });
+  });
+
+  it('clamps the balance and records overpaidCents when an edit drops the total below what was paid', async () => {
+    // A negative amountDue is this codebase's CREDIT signal, so an edit that
+    // leaves an invoice over-collected must not silently convert it into a
+    // credit owed back to the household.
+    // $60 against a $100 invoice: PART-paid, so the edit is allowed. The edit
+    // then cuts the invoice to $25, which is less than the $60 already taken.
+    const ctx = seed(
+      {
+        ...OPEN_INVOICE,
+        total: 100,
+        amountDue: 40,
+        lineItems: [{ description: 'Dog walking', qty: 4, unitCents: 2500 }],
+      },
+      [{ id: 'p1', data: { amount: 60 } }],
+    );
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await updateInvoiceHandler(
+      req({
+        invoiceId: 'inv1',
+        patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 2500 }] },
+      }),
+    );
+
+    const w = invoiceWrite(ctx)!;
+    expect(w.data.totalCents).toBe(2500);
+    expect(w.data.amountDue).toBe(0);
+    expect(w.data.amountDueCents).toBe(0);
+    expect(w.data.overpaidCents).toBe(3500);
   });
 
   it('refuses an edit to a cancelled invoice and to a credit', async () => {

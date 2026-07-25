@@ -37,6 +37,21 @@ export interface InvoiceEntry {
   dueDate: string;
   total: number;
   amountDue: number;
+  /**
+   * What has been collected against this invoice, in integer cents, written by
+   * `markInvoicePaid` and by the partial-payment repair pass.
+   *
+   * ABSENT on every invoice that predates 2026-07-25, which is why it is
+   * optional and why `invoiceState` reads a missing value as "no evidence"
+   * rather than as a real zero. Deliberately NOT derived from
+   * `total - amountDue`: those are float dollars, and on every invoice the old
+   * partial-payment write touched `amountDue` reads 0 while a real balance is
+   * owed, so that subtraction would report the whole total as collected on
+   * exactly the invoices that are wrong.
+   */
+  paidCents?: number;
+  /** Collected beyond the total, in integer cents. Present only after an overpayment. */
+  overpaidCents?: number;
   status: string;
   sessionIds: string[];
   creditTarget?: 'accountBalance' | 'originalPaymentMethod';

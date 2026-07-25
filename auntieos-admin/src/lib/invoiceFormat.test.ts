@@ -6,6 +6,7 @@ import {
   invoiceStateInfo,
   isInvoiceOverdue,
   invoiceActionsFor,
+  invoicePartialPayment,
   isoDatePrefixOrNull,
   localDateIso,
   type InvoiceState,
@@ -232,6 +233,40 @@ describe('invoiceActionsFor', () => {
     // isInvoiceOverdue only ever returns true for 'open' (asserted above), so
     // gating on the state alone already covers OVERDUE.
     expect(isInvoiceOverdue('open', '2020-01-01', '2026-07-16')).toBe(true);
+    expect(invoiceActionsFor('open')).toContain('markPaid');
+  });
+});
+describe('invoicePartialPayment', () => {
+  const open = { amountDue: 20, paidCents: 2000 };
+  it('reports what was collected and what is left on a part-paid open invoice', () => {
+    expect(invoicePartialPayment('open', open)).toEqual({ paidCents: 2000, remainingCents: 2000 });
+  });
+  it('is null for an open invoice nobody has paid', () => {
+    expect(invoicePartialPayment('open', { amountDue: 40 })).toBeNull();
+    expect(invoicePartialPayment('open', { amountDue: 40, paidCents: 0 })).toBeNull();
+  });
+  it('NEVER INFERS a payment from total minus amountDue', () => {
+    // On every invoice the pre-2026-07-25 write touched, amountDue reads 0 while
+    // a real balance is owed, so that subtraction reports the whole total as
+    // collected on exactly the rows that are wrong. Absent paidCents means we
+    // have no record of a payment, and we do not claim one.
+    expect(invoicePartialPayment('open', { amountDue: 20 })).toBeNull();
+  });
+  it('is null for every state other than open, so it can never change an action set', () => {
+    for (const state of ['paid', 'draft', 'quote', 'credit', 'redeemed', 'cancelled', 'zero'] as const) {
+      expect(invoicePartialPayment(state, open)).toBeNull();
+    }
+  });
+  it('is null once nothing is left owing, however much was collected', () => {
+    expect(invoicePartialPayment('open', { amountDue: 0, paidCents: 4000 })).toBeNull();
+  });
+  it('ignores a non-integer paidCents rather than rendering a laundered figure', () => {
+    expect(invoicePartialPayment('open', { amountDue: 20, paidCents: 20.5 })).toBeNull();
+    expect(invoicePartialPayment('open', { amountDue: 20, paidCents: Number.NaN })).toBeNull();
+  });
+  it('does not change which actions a part-paid invoice may be offered', () => {
+    // The guard that keeps collecting the balance possible: part-paid is a
+    // display refinement of open, so the outstanding action set is untouched.
     expect(invoiceActionsFor('open')).toContain('markPaid');
   });
 });

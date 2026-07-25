@@ -161,6 +161,33 @@ describe('Invoices screen', () => {
     expect(screen.queryByText('OPEN')).toBeNull();
   });
 
+  it('a part-paid open invoice shows PART PAID rather than a bare OPEN', () => {
+    // Neither paid nor untouched. "OPEN" alone hides the $20 already collected.
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'open', amountDue: 20, total: 40, paidCents: 2000 })]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('PART PAID')).toBeInTheDocument();
+    expect(screen.queryByText('OPEN')).toBeNull();
+  });
+
+  it('OVERDUE still outranks PART PAID: an overdue part-paid invoice is, first, overdue', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'open', amountDue: 20, total: 40, paidCents: 2000, dueDate: '2020-01-01' })]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('OVERDUE')).toBeInTheDocument();
+    expect(screen.queryByText('PART PAID')).toBeNull();
+  });
+
+  it('does NOT invent a part-paid chip from total minus amountDue', () => {
+    // No paidCents on the doc means no record of a payment, so no claim of one.
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'open', amountDue: 20, total: 40 })]));
+    render(<Invoices />);
+    expect(screen.queryByText('PART PAID')).toBeNull();
+    expect(screen.getByText('OPEN')).toBeInTheDocument();
+  });
+
   it('every row is a real interactive button (InvoiceDetail is wired in now, no more static placeholder)', () => {
     usePagedCollection.mockReturnValue(paged([entry({})]));
     render(<Invoices />);
