@@ -12,10 +12,12 @@ import { getAuthState } from '../lib/auth';
  *    DIRECTLY from the client SDK. There is no `createKinTaleReport` /
  *    `updateKinTaleReport` / `sendKinTale` Cloud Function anywhere in
  *    MyTribe/functions/src; the backend only REACTS to these client writes via
- *    Firestore triggers (`onKinTaleCreate.ts` fires the `kintale.published`
- *    notification on every create, `onKinTaleUpdate.ts` fires
- *    `kintale.note.added` for a post-send edit, both intentionally skip the
- *    DRAFT->SENT transition itself).
+ *    Firestore triggers. `onKinTaleUpdate.ts` fires `kintale.published` on the
+ *    DRAFT->SENT flip `sendKinTale` performs below — that trigger is the ONLY
+ *    thing that tells the household a web-composed KinTale exists — and
+ *    `kintale.note.added` for a later post-send edit. `onKinTaleCreate.ts` fires
+ *    only for a report created already SENT, so the draft `saveKinTaleDraft`
+ *    writes is silent.
  *  - `FirestoreInterop.wasmJs.kt#platformCreateKinTaleReport` /
  *    `#platformUpdateKinTaleReport`, the wasm's real writers: `addDoc`/`setDoc`
  *    on `kin_care_reports`, stamping `createdAt`/`updatedAt` via a
