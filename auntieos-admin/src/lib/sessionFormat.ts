@@ -106,6 +106,8 @@ function daysBetween(aIso: string, bIso: string): number {
 export function sessionDayLabel(dayKeyValue: string, todayIso: string): string {
   if (dayKeyValue === 'Undated') return dayKeyValue;
   const diff = daysBetween(todayIso, dayKeyValue);
+  // Relative labels win over the year rule below: "Yesterday" is unambiguous
+  // even when it falls on the other side of a New Year.
   if (diff === 0) return 'Today';
   if (diff === 1) return 'Tomorrow';
   if (diff === -1) return 'Yesterday';
@@ -118,7 +120,12 @@ export function sessionDayLabel(dayKeyValue: string, todayIso: string): string {
   const asDate = new Date(y, m - 1, d, 12);
   const weekday = WEEKDAYS[asDate.getDay()] ?? '';
   const month = MONTHS[m - 1] ?? '';
-  return `${weekday}, ${month} ${d}`;
+  // The YEAR, when it is not the current one. Without it a visit from last
+  // January read as "Thu, Jan 16", identical to this January (operator issue
+  // #17). Omitted in the current year so the common case stays uncluttered.
+  const currentYear = Number(todayIso.slice(0, 4));
+  const suffix = Number.isFinite(currentYear) && y !== currentYear ? `, ${y}` : '';
+  return `${weekday}, ${month} ${d}${suffix}`;
 }
 
 // ── household display ────────────────────────────────────────────────────
@@ -248,6 +255,183 @@ export function groupSessionsByDay<T extends { startTime?: string | undefined }>
     if (b.dayKeyValue === 'Undated') return -1;
     return a.dayKeyValue < b.dayKeyValue ? -1 : a.dayKeyValue > b.dayKeyValue ? 1 : 0;
   });
+  return groups;
+}
+
+// ── phase grouping: the Auntie Time window (operator issue #17) ─────────────
+//
+// The sub-header has always read "Every Kin Care today and coming up, plus what
+// wrapped recently", while `SESSIONS_QUERY` streamed a flat 300 rows ordered by
+// startTime desc, so the data contradicted the copy: a visit from March sat in
+// the same list as tomorrow's. Everything below makes the data match the
+// promise, porting the archive's `KinCareSessionsScreen.kt` phases
+// (`Phase.Active` / `Upcoming` / `CompletedToday`, labelled "Recent") and its
+// `isVisibleOnAuntieTime` day-of filter.
+//
+// THE WINDOW BOUNDARIES, and why each is where it is:
+//
+//  RECENT, 7 days back. The archive used "yesterday onward", which is a day-of
+//    run sheet. The operator asked for "recent", and a week is the span in
+//    which "did that visit get wrapped?" is still a live question. Measured on
+//    the WRAP day (completedAt, falling back to startTime, because a CANCELLED
+//    session never gets a completedAt).
+//  UPCOMING, 14 days forward, and one day BACK. Forward is the archive's own
+//    horizon, and it exists so a long approved recurring series cannot bury
+//    today under next month. Backward by one day is also the archive's: a visit
+//    still sitting at SCHEDULED after its slot passed is the single row an
+//    operator most needs to see, so it stays put rather than vanishing at
+//    midnight.
+//  ACTIVE, no date bound at all. An in-flight visit is in flight whatever its
+//    startTime says; a clock-in nobody closed must never fall out of the list.
+//    (The FETCH range still bounds it; see `sessionsWindowBounds`.)
+//
+// Anything outside those lives behind the Archive affordance in `Sessions.tsx`.
+
+export type SessionPhase = 'active' | 'upcoming' | 'recent';
+
+/** Sort direction the operator picks; applied WITHIN a phase, never across phases. */
+export type SessionSort = 'soonest' | 'latest';
+
+export const RECENT_WINDOW_DAYS = 7;
+export const UPCOMING_WINDOW_DAYS = 14;
+
+/**
+ * How far the bounded FETCH reaches, which is deliberately wider than the
+ * display window above.
+ *
+ * Back 30 rather than 7, because Active carries no date bound: a visit clocked
+ * in three weeks ago and never completed still has to reach the Active group,
+ * and it cannot if the query never fetched it. Forward 15 rather than 14, to
+ * absorb the UTC-vs-local boundary: the query compares raw ISO text while
+ * grouping parses to a LOCAL day, so a row can sit one calendar day either side
+ * of where the string sort puts it. Fetching the extra day and letting
+ * `groupSessionsByPhase` decide keeps that seam out of the query.
+ */
+export const FETCH_DAYS_BACK = 30;
+export const FETCH_DAYS_FORWARD = 15;
+
+/** Shift a `YYYY-MM-DD` day by whole days, via UTC-anchored arithmetic (no time-of-day, so no zone ambiguity). */
+export function shiftDayIso(dayIso: string, days: number): string {
+  const [y, m, d] = dayIso.split('-').map(Number);
+  const shifted = new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, (d ?? 1) + days));
+  const yy = String(shifted.getUTCFullYear()).padStart(4, '0');
+  const mm = String(shifted.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(shifted.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+/** The inclusive `YYYY-MM-DD` range the bounded listener should fetch. */
+export function sessionsWindowBounds(todayIso: string): { from: string; to: string } {
+  return {
+    from: shiftDayIso(todayIso, -FETCH_DAYS_BACK),
+    to: shiftDayIso(todayIso, FETCH_DAYS_FORWARD),
+  };
+}
+
+/**
+ * The states the BOOKINGS screen owns, never shown on Auntie Time (the
+ * archive's AO-60 note: a booking surfaces here only once it is approved to
+ * SCHEDULED). A positive membership test against the literal codes, so an
+ * unrecognized status is NOT swept in here by accident, it lands in Upcoming
+ * with its own honest UNKNOWN chip.
+ */
+const BOOKING_QUEUE_STATUSES: readonly string[] = ['DRAFT', 'PENDING', 'REJECTED'];
+
+export function isBookingQueueStatus(status: string): boolean {
+  return BOOKING_QUEUE_STATUSES.includes((status ?? '').trim().toUpperCase());
+}
+
+/** The row shape phase grouping needs. Every field optional, for the same reason `SessionEntry`'s are. */
+export interface PhaseRow {
+  startTime?: string | undefined;
+  status?: string | undefined;
+  completedAt?: string | undefined;
+}
+
+/**
+ * Which phase a row belongs to, or `null` when it falls outside the window and
+ * belongs behind the Archive affordance instead. [todayIso] is a LOCAL
+ * `YYYY-MM-DD`.
+ */
+export function sessionPhase(row: PhaseRow, todayIso: string): SessionPhase | null {
+  const status = row.status ?? '';
+  if (isBookingQueueStatus(status)) return null;
+
+  const state = sessionState(status);
+  if (isSessionActive(state)) return 'active';
+
+  if (state === 'completed' || state === 'cancelled') {
+    // A cancellation has no completedAt, so it is dated by when it was meant to
+    // happen. Falling back rather than dropping it keeps the Cancelled filter
+    // tab meaningful inside the window.
+    const wrapDay = sessionDayKey(row.completedAt ?? '') === 'Undated'
+      ? sessionDayKey(row.startTime ?? '')
+      : sessionDayKey(row.completedAt ?? '');
+    if (wrapDay === 'Undated') return null;
+    const diff = daysBetween(todayIso, wrapDay);
+    return diff <= 0 && diff >= -RECENT_WINDOW_DAYS ? 'recent' : null;
+  }
+
+  // SCHEDULED, plus any status code no writer produces today (AO-12: placed by
+  // its date, which we do know, rather than dropped for a word we don't).
+  const startDay = sessionDayKey(row.startTime ?? '');
+  if (startDay === 'Undated') return null;
+  const diff = daysBetween(todayIso, startDay);
+  return diff >= -1 && diff <= UPCOMING_WINDOW_DAYS ? 'upcoming' : null;
+}
+
+/** One phase's rows, still sub-grouped by local day so the day headers survive. */
+export interface SessionPhaseGroup<T> {
+  phase: SessionPhase;
+  label: string;
+  /** Total rows across every day in this phase, for the group's count chip. */
+  count: number;
+  days: SessionDayGroup<T>[];
+}
+
+const PHASE_ORDER: readonly SessionPhase[] = ['active', 'upcoming', 'recent'];
+
+export const PHASE_LABEL: Record<SessionPhase, string> = {
+  active: 'Active',
+  upcoming: 'Upcoming',
+  recent: 'Recent',
+};
+
+/**
+ * Group rows into Active / Upcoming / Recent, each still sub-grouped by LOCAL
+ * day, dropping anything outside the window (see `sessionPhase`). Phases keep
+ * the archive's fixed order; [sort] reverses days and rows WITHIN a phase only,
+ * so "latest first" never puts Recent above Active. A phase with no rows emits
+ * no group at all, rather than an empty heading.
+ */
+export function groupSessionsByPhase<T extends PhaseRow>(
+  rows: readonly T[],
+  todayIso: string,
+  sort: SessionSort = 'soonest',
+): SessionPhaseGroup<T>[] {
+  const byPhase = new Map<SessionPhase, T[]>();
+  for (const row of rows) {
+    const phase = sessionPhase(row, todayIso);
+    if (phase === null) continue;
+    const existing = byPhase.get(phase);
+    if (existing) existing.push(row);
+    else byPhase.set(phase, [row]);
+  }
+
+  const groups: SessionPhaseGroup<T>[] = [];
+  for (const phase of PHASE_ORDER) {
+    const phaseRows = byPhase.get(phase);
+    if (!phaseRows || phaseRows.length === 0) continue;
+    // `groupSessionsByDay` already returns days ascending with rows ascending
+    // inside each; "latest first" is that same ordering read backwards, on both
+    // axes, so a day's rows stay consistent with the day order around them.
+    const days = groupSessionsByDay(phaseRows);
+    const ordered =
+      sort === 'latest'
+        ? [...days].reverse().map((d) => ({ ...d, rows: [...d.rows].reverse() }))
+        : days;
+    groups.push({ phase, label: PHASE_LABEL[phase], count: phaseRows.length, days: ordered });
+  }
   return groups;
 }
 

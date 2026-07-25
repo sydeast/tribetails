@@ -23,13 +23,90 @@
   margin: 0;
 }
 
-/* ── filter tabs ─────────────────────────────────────────────────────────── */
+/* ── filter tabs + sort ──────────────────────────────────────────────────── */
+
+.sessions__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
 
 .sessions__tabs {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.sessions__control-label {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size);
+  letter-spacing: var(--type-label-md-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.sessions__sort,
+.sessions__range-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.sessions__sort-select,
+.sessions__range-input {
+  font: inherit;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+}
+
+.sessions__range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
   margin-bottom: var(--space-4);
+}
+
+/* ── phase groups ────────────────────────────────────────────────────────── */
+
+.sessions__phases {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.sessions__phase {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sessions__phase-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--type-label-lg-size);
+  font-weight: var(--type-label-lg-weight);
+  color: var(--color-text-primary);
+}
+
+.sessions__phase-count {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size);
+  color: var(--color-text-dim);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-2);
 }
 
 .sessions__tab {

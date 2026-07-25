@@ -10,7 +10,10 @@ import {
   sessionStateInfo,
   isSessionActive,
   groupSessionsByDay,
+  groupSessionsByPhase,
+  sessionsWindowBounds,
   localDateIso,
+  type SessionSort,
 } from './sessionFormat';
 
 // File-scope TZ pin: several suites below (groupSessionsByDay, sessionDayLabel)
@@ -119,6 +122,26 @@ describe('sessionDayLabel', () => {
   it('passes Undated through verbatim rather than folding it into Today', () => {
     expect(sessionDayLabel('Undated', '2026-07-16')).toBe('Undated');
   });
+
+  /**
+   * OPERATOR ISSUE #17: "add year display". A visit from last January read as
+   * "Thu, Jan 16", indistinguishable from this January, which is the one thing
+   * a day header must never be ambiguous about once the Archive view can reach
+   * back past a year boundary.
+   */
+  it('shows the year when the day is not in the current year', () => {
+    expect(sessionDayLabel('2025-01-16', '2026-07-16')).toBe('Thu, Jan 16, 2025');
+    expect(sessionDayLabel('2027-03-02', '2026-07-16')).toBe('Tue, Mar 2, 2027');
+  });
+
+  it('omits the year in the current year, so the common case stays uncluttered', () => {
+    expect(sessionDayLabel('2026-07-20', '2026-07-16')).toBe('Mon, Jul 20');
+  });
+
+  it('still says Yesterday across a New Year boundary, rather than a dated label', () => {
+    // Relative labels win over the year rule: "Yesterday" is never ambiguous.
+    expect(sessionDayLabel('2025-12-31', '2026-01-01')).toBe('Yesterday');
+  });
 });
 
 describe('sessionHousehold', () => {
@@ -208,5 +231,163 @@ describe('localDateIso re-export', () => {
   it('is the same lib/invoiceFormat helper, not a re-derived duplicate', () => {
     expect(typeof localDateIso).toBe('function');
     expect(localDateIso(new Date(2026, 6, 16))).toBe('2026-07-16');
+  });
+});
+/**
+ * OPERATOR ISSUE #17. The sub-header has always promised "Every Kin Care today
+ * and coming up, plus what wrapped recently", while the screen streamed a flat
+ * 300 rows ordered by startTime desc, so the data contradicted the copy. These
+ * cases pin the window the copy describes.
+ */
+describe('groupSessionsByPhase: Active / Upcoming / Recent, and nothing else', () => {
+  interface Row {
+    id: string;
+    startTime: string;
+    status: string;
+    completedAt?: string;
+  }
+  const TODAY = '2026-07-16';
+  /** Local noon on the day [TODAY] + [offset], as a UTC instant string. */
+  function dayOffset(offset: number, hour = 12): string {
+    return new Date(2026, 6, 16 + offset, hour).toISOString();
+  }
+  const fixture: Row[] = [
+    { id: 'active', startTime: dayOffset(0, 9), status: 'ARRIVED' },
+    { id: 'tomorrow', startTime: dayOffset(1), status: 'SCHEDULED' },
+    { id: 'threeDaysAgo', startTime: dayOffset(-3), status: 'COMPLETED', completedAt: dayOffset(-3, 14) },
+    { id: 'thirtyDaysAgo', startTime: dayOffset(-30), status: 'COMPLETED', completedAt: dayOffset(-30, 14) },
+  ];
+  function idsByPhase(rows: Row[], today = TODAY) {
+    const groups = groupSessionsByPhase(rows, today);
+    return Object.fromEntries(
+      groups.map((g) => [g.phase, g.days.flatMap((d) => d.rows.map((r) => r.id))]),
+    );
+  }
+  it('puts an in-flight visit, tomorrow, and a wrap from three days ago in their own phases', () => {
+    expect(idsByPhase(fixture)).toEqual({
+      active: ['active'],
+      upcoming: ['tomorrow'],
+      recent: ['threeDaysAgo'],
+    });
+  });
+  it('excludes a wrap from thirty days ago: Recent means the last seven days', () => {
+    const all = Object.values(idsByPhase(fixture)).flat();
+    expect(all).not.toContain('thirtyDaysAgo');
+  });
+  it('keeps a wrap exactly seven days old, and drops one eight days old (the boundary)', () => {
+    const rows: Row[] = [
+      { id: 'sevenDays', startTime: dayOffset(-7), status: 'COMPLETED', completedAt: dayOffset(-7, 14) },
+      { id: 'eightDays', startTime: dayOffset(-8), status: 'COMPLETED', completedAt: dayOffset(-8, 14) },
+    ];
+    expect(idsByPhase(rows).recent).toEqual(['sevenDays']);
+  });
+  it('keeps an in-flight visit whatever its date, so a stale clock-in is never lost', () => {
+    const rows: Row[] = [{ id: 'stuck', startTime: dayOffset(-20), status: 'ARRIVED' }];
+    expect(idsByPhase(rows).active).toEqual(['stuck']);
+  });
+  it('dates a cancellation by its start time, since a cancelled visit has no completedAt', () => {
+    const rows: Row[] = [{ id: 'called-off', startTime: dayOffset(-2), status: 'CANCELLED' }];
+    expect(idsByPhase(rows).recent).toEqual(['called-off']);
+  });
+  it('shows a scheduled visit yesterday that never got clocked, rather than dropping it', () => {
+    // The archive kept SCHEDULED visible from yesterday for exactly this reason:
+    // a visit nobody started is the one an operator most needs to see.
+    const rows: Row[] = [{ id: 'missed', startTime: dayOffset(-1), status: 'SCHEDULED' }];
+    expect(idsByPhase(rows).upcoming).toEqual(['missed']);
+  });
+  it('stops at the fourteen-day upcoming horizon, so an approved series cannot bury today', () => {
+    const rows: Row[] = [
+      { id: 'inHorizon', startTime: dayOffset(14), status: 'SCHEDULED' },
+      { id: 'pastHorizon', startTime: dayOffset(15), status: 'SCHEDULED' },
+    ];
+    expect(idsByPhase(rows).upcoming).toEqual(['inHorizon']);
+  });
+  it('hides the booking-queue states the Bookings screen owns (archive AO-60)', () => {
+    const rows: Row[] = [
+      { id: 'draft', startTime: dayOffset(1), status: 'DRAFT' },
+      { id: 'pending', startTime: dayOffset(1), status: 'PENDING' },
+      { id: 'rejected', startTime: dayOffset(1), status: 'REJECTED' },
+    ];
+    expect(groupSessionsByPhase(rows, TODAY)).toEqual([]);
+  });
+  it('surfaces an unrecognized status under Upcoming rather than swallowing it', () => {
+    // AO-12: an unknown code is not silently dropped. It is not a booking-queue
+    // state (those are matched positively above), so it is a visit on the books
+    // and the row still carries its own UNKNOWN chip.
+    const rows: Row[] = [{ id: 'novel', startTime: dayOffset(2), status: 'some_new_code' }];
+    expect(idsByPhase(rows).upcoming).toEqual(['novel']);
+  });
+  it('emits no group at all for a phase with no rows, never an empty heading', () => {
+    const rows: Row[] = [{ id: 'tomorrow', startTime: dayOffset(1), status: 'SCHEDULED' }];
+    expect(groupSessionsByPhase(rows, TODAY).map((g) => g.phase)).toEqual(['upcoming']);
+  });
+  it('orders the phases Active, Upcoming, Recent, matching the archive', () => {
+    expect(groupSessionsByPhase(fixture, TODAY).map((g) => g.phase)).toEqual([
+      'active',
+      'upcoming',
+      'recent',
+    ]);
+  });
+  it('keeps day sub-groups inside each phase, so headers stay per-day', () => {
+    const rows: Row[] = [
+      { id: 'day1a', startTime: dayOffset(1, 9), status: 'SCHEDULED' },
+      { id: 'day1b', startTime: dayOffset(1, 15), status: 'SCHEDULED' },
+      { id: 'day2', startTime: dayOffset(2, 9), status: 'SCHEDULED' },
+    ];
+    const upcoming = groupSessionsByPhase(rows, TODAY)[0]!;
+    expect(upcoming.days).toHaveLength(2);
+    expect(upcoming.days[0]!.rows.map((r) => r.id)).toEqual(['day1a', 'day1b']);
+  });
+});
+describe('groupSessionsByPhase: the sort control', () => {
+  interface Row {
+    id: string;
+    startTime: string;
+    status: string;
+  }
+  const TODAY = '2026-07-16';
+  function dayOffset(offset: number, hour = 12): string {
+    return new Date(2026, 6, 16 + offset, hour).toISOString();
+  }
+  const rows: Row[] = [
+    { id: 'day1a', startTime: dayOffset(1, 9), status: 'SCHEDULED' },
+    { id: 'day1b', startTime: dayOffset(1, 15), status: 'SCHEDULED' },
+    { id: 'day2', startTime: dayOffset(2, 9), status: 'SCHEDULED' },
+  ];
+  function flatIds(direction: SessionSort): string[] {
+    return groupSessionsByPhase(rows, TODAY, direction)[0]!.days.flatMap((d) =>
+      d.rows.map((r) => r.id),
+    );
+  }
+  it('defaults to soonest first', () => {
+    expect(flatIds('soonest')).toEqual(['day1a', 'day1b', 'day2']);
+    expect(
+      groupSessionsByPhase(rows, TODAY)[0]!.days.flatMap((d) => d.rows.map((r) => r.id)),
+    ).toEqual(['day1a', 'day1b', 'day2']);
+  });
+  it('latest first reverses both the day groups and the rows within a day', () => {
+    expect(flatIds('latest')).toEqual(['day2', 'day1b', 'day1a']);
+  });
+  it('reverses WITHIN a phase without reordering the phases themselves', () => {
+    const mixed = [
+      { id: 'upcoming', startTime: dayOffset(1), status: 'SCHEDULED' },
+      { id: 'active', startTime: dayOffset(0), status: 'ARRIVED' },
+    ];
+    expect(groupSessionsByPhase(mixed, TODAY, 'latest').map((g) => g.phase)).toEqual([
+      'active',
+      'upcoming',
+    ]);
+  });
+});
+describe('sessionsWindowBounds: the bounded fetch range', () => {
+  it('reaches back thirty days and forward fifteen, a deliberate backstop around the display window', () => {
+    // The DISPLAY window is -7 recent / +14 upcoming. The FETCH range is wider
+    // on purpose: a stale in-flight visit must still reach Active, and the extra
+    // forward day absorbs the UTC-vs-local boundary, since the query compares
+    // raw ISO text while grouping parses to a local day.
+    expect(sessionsWindowBounds('2026-07-16')).toEqual({ from: '2026-06-16', to: '2026-07-31' });
+  });
+  it('rolls over a year boundary correctly', () => {
+    expect(sessionsWindowBounds('2026-01-05')).toEqual({ from: '2025-12-06', to: '2026-01-20' });
   });
 });

@@ -1,4 +1,5 @@
 import { type CollectionSpec } from '../lib/firestore';
+import { sessionsWindowBounds } from '../lib/sessionFormat';
 
 /**
  * One `kin_care_sessions` row (the "Auntie Time" collection, the rail label
@@ -128,3 +129,59 @@ export const SESSIONS_QUERY: CollectionSpec = {
   order: ['startTime', 'desc'],
   max: 300,
 };
+
+/**
+ * THE AUNTIE TIME LIST'S OWN QUERY (operator issue #17).
+ *
+ * `SESSIONS_QUERY` above stays exactly as it is: `KinTaleCompose`,
+ * `SafeboxWidget` and `CareFlagsWidget` all read this collection for their own
+ * reasons and want the latest rows, not a day-of window. Only the LIST screen
+ * needs its data to match its sub-header, so only the list screen gets a date
+ * range.
+ *
+ * Bounded on both axes: a server-side `startTime` range plus the same 300 cap.
+ * The range and the `orderBy` are the SAME field, so this needs no composite
+ * index of its own; and the order stays `desc` because a test admin's spec picks
+ * up a `kinfolkId ==` predicate from `lib/testScope`, and the index deployed for
+ * that pair (`mytribe/firestore.indexes.json`) is `(kinfolkId ASC, startTime
+ * DESC)`. Flipping to asc here would need an index that is not deployed, for no
+ * gain: `groupSessionsByPhase` re-derives the display order from whatever page
+ * comes back, exactly as `groupSessionsByDay` always did.
+ *
+ * The bounds come from `sessionsWindowBounds`, which is deliberately WIDER than
+ * the displayed window; that function's doc explains both margins. Comparing a
+ * `YYYY-MM-DD` bound against a full ISO instant string works because every
+ * writer stamps an ISO-8601 value, so the date is a plain lexical prefix, and
+ * the day-boundary slop that leaves is exactly what the wider fetch absorbs.
+ *
+ * The `orderBy('startTime')` caveat from `SESSIONS_QUERY` still applies: a doc
+ * missing `startTime` is dropped by the sort and never reaches the 'Undated'
+ * group. Backfill rather than weaken the sort.
+ */
+export function sessionsWindowQuery(todayIso: string): CollectionSpec {
+  const { from, to } = sessionsWindowBounds(todayIso);
+  return sessionsArchiveQuery(from, to);
+}
+
+/**
+ * Older history, behind the Archive affordance: the same bounded shape over an
+ * operator-chosen `YYYY-MM-DD` range.
+ *
+ * SEAM FOR TASK 4.1. This is a fixed range-and-cap, not pagination: 300 rows is
+ * the whole page, and a range holding more is silently truncated at the far end
+ * of the sort. Task 4.1 introduces the shared cursor-based pagination hook;
+ * when it lands, this becomes its first caller and the cap becomes a page size.
+ * Until then the Archive UI keeps the range narrow enough that the cap is not
+ * reached in practice, and says what range it is showing.
+ */
+export function sessionsArchiveQuery(fromDay: string, toDay: string): CollectionSpec {
+  return {
+    path: 'kin_care_sessions',
+    order: ['startTime', 'desc'],
+    max: 300,
+    filters: [
+      ['startTime', '>=', fromDay],
+      ['startTime', '<=', toDay],
+    ],
+  };
+}

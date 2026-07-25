@@ -243,7 +243,7 @@
   align-items: center;
   gap: var(--space-1);
   border: var(--border-hairline) solid var(--color-border-soft);
-  border-radius: var(--radius-8);
+  border-radius: var(--radius-card);
   background: transparent;
   color: var(--color-text-primary);
   font: inherit;
