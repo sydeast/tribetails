@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   NOTIFICATIONS_QUERY,
   markNotificationRead,
   markNotificationUnread,
-  bulkMarkNotificationsRead,
   isRead,
   formatWhen,
   dayKey,
@@ -11,18 +10,19 @@ import {
   type NotificationEntry,
 } from '../api/notifications';
 import { useCollection } from '../lib/firestore';
+import { activeNotifications, unreadNotificationCount } from '../lib/notificationsFeed';
+import { useBulkMarkRead } from '../lib/useBulkMarkRead';
 import { arr } from '../lib/coerce';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 
-/** Groups rows by `dayKey`, preserving the stream's own (server) order within each day. */
-/** Archived notifications never reappear in the feed (wasm activeNotifications). */
-function activeNotifications(rows: NotificationEntry[]): NotificationEntry[] {
-  return rows.filter((r) => r.archivedAt === undefined);
-}
-
+/**
+ * Groups rows by `dayKey`, preserving the stream's own (server) order within
+ * each day. `activeNotifications` (archived rows never reappear) now lives in
+ * `lib/notificationsFeed.ts` so the Inbox digest applies the same rule.
+ */
 function byDay(rows: NotificationEntry[]): [string, NotificationEntry[]][] {
   const groups = new Map<string, NotificationEntry[]>();
   for (const r of rows) {
@@ -51,20 +51,12 @@ function byDay(rows: NotificationEntry[]): [string, NotificationEntry[]][] {
 export function Notifications() {
   const rows = useCollection<NotificationEntry>(NOTIFICATIONS_QUERY);
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkBusy, setBulkBusy] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  // Drop any selected id that has left the live list (e.g. it scrolled out of
-  // the 200-row cap), so the bulk bar's count never lies about what's selected.
-  useEffect(() => {
-    if (rows.status !== 'ready') return;
-    const live = new Set(rows.data.map((r) => r._id));
-    setSelectedIds((prev) => {
-      const next = new Set([...prev].filter((id) => live.has(id)));
-      return next.size === prev.size ? prev : next;
-    });
-  }, [rows]);
+  // Selection + bulk mark-read, shared verbatim with the Inbox's Notifications
+  // digest (lib/useBulkMarkRead.ts): the prune-on-stream-change, the
+  // keep-the-selection-on-failure, and the partial-batch report all live there
+  // so the two surfaces cannot drift apart.
+  const bulk = useBulkMarkRead(rows);
+  const { selectedIds, error: actionError, setError: setActionError } = bulk;
 
   async function toggleOne(entry: NotificationEntry) {
     if (pendingIds.has(entry._id)) return;
@@ -87,39 +79,10 @@ export function Notifications() {
     }
   }
 
-  async function markSelectedRead() {
-    const ids = [...selectedIds];
-    if (ids.length === 0 || bulkBusy) return;
-    setBulkBusy(true);
-    setActionError(null);
-    try {
-      const marked = await bulkMarkNotificationsRead(ids);
-      setSelectedIds(new Set());
-      if (marked < ids.length) {
-        setActionError(
-          `Marked ${marked} of ${ids.length}, the rest were already read or not yours to mark.`,
-        );
-      }
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Marking notifications read failed.');
-    } finally {
-      setBulkBusy(false);
-    }
-  }
-
-  function toggleSelected(id: string, checked: boolean) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }
-
   // Only claimed once the stream has actually resolved, never a fabricated
   // 0 while loading/erroring (the StatCard / AsyncRegion policy this app
   // follows throughout; see lib/async.ts).
-  const unreadCount = rows.status === 'ready' ? rows.data.filter((r) => !isRead(r)).length : 0;
+  const unreadCount = rows.status === 'ready' ? unreadNotificationCount(rows.data) : 0;
 
   return (
     <div className="screen">
@@ -139,11 +102,11 @@ export function Notifications() {
       {selectedIds.size > 0 ? (
         <div className="notif-bulkbar">
           <span className="notif-bulkbar__count">{selectedIds.size} selected</span>
-          <GhostButton label="Clear" onClick={() => setSelectedIds(new Set())} disabled={bulkBusy} />
+          <GhostButton label="Clear" onClick={bulk.clear} disabled={bulk.busy} />
           <PrimaryButton
             label="Mark selected read"
-            onClick={() => void markSelectedRead()}
-            busy={bulkBusy}
+            onClick={() => void bulk.markSelectedRead()}
+            busy={bulk.busy}
           />
         </div>
       ) : null}
@@ -182,7 +145,7 @@ export function Notifications() {
                             className="notif-row__select"
                             aria-label={`Select ${entry.key || 'notification'}`}
                             checked={selectedIds.has(entry._id)}
-                            onChange={(e) => toggleSelected(entry._id, e.target.checked)}
+                            onChange={(e) => bulk.toggle(entry._id, e.target.checked)}
                           />
                           <div className="notif-row__body">
                             {/* AO-28: prefer the human title (catalog label); fall
