@@ -215,7 +215,7 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
       <DenScreenHeading
         kicker="The Den · Notifications"
         title="Notifications"
-        subtitle="What needs you, and who it is about. The audit trail lives in Activity Log."
+        subtitle="Events that need you, and the household each one is about. Activity Log keeps the audit trail."
         trailing={unreadCount > 0 ? <span className="notif-badge">{unreadCount} unread</span> : undefined}
       />
 
@@ -243,7 +243,12 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
         </div>
       ) : null}
 
-      <DenPanel title="Activity" subtitle="Catalog-dispatched events for your account, newest first.">
+      {/* Not titled "Activity" any more: that word is precisely what made this
+          feed read as a second Activity Log. */}
+      <DenPanel
+        title="Recent notifications"
+        subtitle="Catalog-dispatched events for your account, newest first."
+      >
         <AsyncRegion
           state={rows}
           what="notifications"
