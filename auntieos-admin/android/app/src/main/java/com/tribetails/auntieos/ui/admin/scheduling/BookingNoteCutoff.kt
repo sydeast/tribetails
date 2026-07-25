@@ -12,11 +12,12 @@ package com.tribetails.auntieos.ui.admin.scheduling
 // for the warning, so the same rule was stated twice and explained two
 // different ways. Both surfaces now come through here.
 //
-// APPLIES TO BOTH THREADS. The server only enforces the cutoff on the
-// kinfolk-facing note (addInternalBookingNote has no check), but the operator
-// ruling is that both freeze before a visit, so the internal composer is locked
-// as a client policy on web and here alike. Flagged rather than left looking
-// server-backed when it is not.
+// APPLIES TO BOTH THREADS, ON BOTH SIDES. addBookingNote and
+// addInternalBookingNote both enforce the window server-side (2026-07-25,
+// functions/src/lib/bookingNoteCutoff.ts) and reject identically:
+// failed-precondition with details.code == "booking_note_cutoff". This file is
+// a MIRROR of that rule, so the composer is already closed rather than the
+// operator typing a note and being refused. It is not the guard.
 // ─────────────────────────────────────────────────────────────────────────────
 
 internal const val NOTE_CUTOFF_MS: Long = 3L * 60L * 60L * 1000L

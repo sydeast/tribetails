@@ -18,11 +18,16 @@
 /**
  * How long before a visit starts the note composers lock, in milliseconds.
  *
- * ONE constant, deliberately: the server enforces exactly this window for the
- * kinfolk-facing note (`mytribe/functions/src/portal/addBookingNote.ts`'s
- * `CUTOFF_MS`), and the sheet locks both composers against it. Two literals in
- * two places is how a client and a server drift into disagreeing about whether
- * a note is allowed, which reads to an operator as a button that does nothing.
+ * A MIRROR OF THE SERVER RULE, not the rule itself. Both note callables
+ * enforce this window in `mytribe/functions/src/lib/bookingNoteCutoff.ts` and
+ * reject with `failed-precondition` + `details.code === 'booking_note_cutoff'`.
+ * The lock this constant drives exists so the operator sees a closed composer
+ * instead of typing a note and being refused.
+ *
+ * ONE constant on this side too, deliberately. Two literals in two places is
+ * how a client and a server drift into disagreeing about whether a note is
+ * allowed, which reads to an operator as a button that does nothing. Change it
+ * only alongside the server's, which `test/callableContract.test.ts` freezes.
  */
 export const NOTE_CUTOFF_MS = 3 * 60 * 60 * 1000;
 

@@ -2050,9 +2050,9 @@ fun BookingDetailsDialog(
                     onValueChange = { notes = it },
                     placeholder   = if (locked) "Locked until after the visit" else "Internal-only - not shown to kinfolk",
                     // Locked on the same cutoff as the kinfolk-facing field
-                    // above. Both threads freeze before a visit; see
-                    // scheduling/BookingNoteCutoff.kt for why the internal half
-                    // is a client policy rather than a server rule.
+                    // above. Both threads freeze before a visit, and both
+                    // callables enforce it server-side; see
+                    // scheduling/BookingNoteCutoff.kt.
                     enabled       = !locked && !isArchived,
                     singleLine    = false,
                     minLines      = 2,

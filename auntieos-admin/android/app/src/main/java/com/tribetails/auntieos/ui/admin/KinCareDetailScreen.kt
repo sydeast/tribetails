@@ -808,9 +808,9 @@ private fun BookingNotesSection(
                 singleLine = false,
                 minLines = 3,
                 // Locked on the same 3-hour cutoff as the kinfolk-facing thread.
-                // The server does not enforce it here (addInternalBookingNote has
-                // no check), so this is the client policy the operator asked for,
-                // matching web; see BookingNoteCutoff.kt.
+                // addInternalBookingNote enforces it server-side too, so this is
+                // a mirror that closes the composer early, not the guard itself;
+                // see BookingNoteCutoff.kt.
                 enabled = canStream && !locked,
             )
             noteCutoffWarning(locked)?.let { msg ->

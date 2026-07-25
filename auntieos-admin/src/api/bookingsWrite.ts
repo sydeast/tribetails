@@ -310,10 +310,11 @@ export interface AddNoteResult {
  * NOTE the codebase this lives in: it is the one note verb that is NOT under
  * `functions/src/admin/`, because the household writes it too
  * (`functions/src/portal/addBookingNote.ts`). Consequences that matter here:
- *  - the SERVER enforces the 3-hour cutoff (`CUTOFF_MS`), rejecting with
- *    `failed-precondition` + `{ code: 'booking_note_cutoff' }`. The client lock
- *    in `lib/bookingDetailFormat.ts` is a courtesy so the operator is not
- *    surprised; this rejection is the real gate and is surfaced verbatim.
+ *  - the SERVER enforces the 3-hour cutoff (`lib/bookingNoteCutoff.ts`),
+ *    rejecting with `failed-precondition` + `{ code: 'booking_note_cutoff' }`.
+ *    The client lock in `lib/bookingDetailFormat.ts` is a courtesy so the
+ *    operator is not surprised; this rejection is the real gate and is
+ *    surfaced verbatim.
  *  - `authorRole` is stamped from the CALLER, never sent, so an admin's note
  *    lands as `'admin'` and a household's as `'kinfolk'`.
  *
@@ -338,12 +339,16 @@ export async function addBookingNote(
  * `.../kinCares/{visitId}/internalNotes`, a separate subcollection whose read
  * rule is `isAuntie()` alone.
  *
- * DISCLOSED ASYMMETRY: this callable has NO cutoff check. The sheet still locks
- * its composer at the same 3-hour mark as the kinfolk-facing one, per the
- * operator's ruling that both threads freeze before a visit, so the lock here is
- * a CLIENT policy rather than a server-enforced one. If that ruling should bind
- * everywhere, the cutoff belongs in `addInternalBookingNote.ts` too; it is
- * flagged here rather than left to look server-backed when it is not.
+ * SAME 3-HOUR CUTOFF as `addBookingNote`, enforced SERVER-SIDE since
+ * 2026-07-25 through the shared `functions/src/lib/bookingNoteCutoff.ts`. Both
+ * threads reject identically: `failed-precondition` with
+ * `details.code === 'booking_note_cutoff'`.
+ *
+ * It did not always: the rule was private to `addBookingNote`, so this thread
+ * was guarded by client code alone and any other caller, a stale bundle, or a
+ * direct invocation wrote straight past it. The composer lock in the sheet is
+ * now a courtesy so the operator is not surprised by a rejection, not the
+ * enforcement.
  */
 export async function addInternalBookingNote(
   kinfolkId: string,

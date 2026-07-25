@@ -25,7 +25,7 @@ const VISIT_PATH = 'families/f1/bookings/batch1/kinCares/v1';
 describe('addInternalBookingNote (envelope model)', () => {
   it('HAPPY: writes to internalNotes subcollection on the kinCare with authorRole=admin', async () => {
     const ctx = buildDbMock({
-      docs: { [VISIT_PATH]: { startTime: new Date(Date.now() + 10_000_000) } },
+      docs: { [VISIT_PATH]: { startTime: new Date(Date.now() + 4 * 3600 * 1000) } },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await addInternalBookingNoteHandler(
@@ -50,8 +50,11 @@ describe('addInternalBookingNote (envelope model)', () => {
   });
 
   it('SAD: whitespace-only body rejected', async () => {
+    // Start deliberately OUTSIDE the cutoff window, so this can only fail for
+    // the reason it is testing. Seeded at `new Date()` it would now also be
+    // inside the 3-hour lock, and would keep passing for the wrong reason.
     const ctx = buildDbMock({
-      docs: { [VISIT_PATH]: { startTime: new Date() } },
+      docs: { [VISIT_PATH]: { startTime: new Date(Date.now() + 4 * 3600 * 1000) } },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(
@@ -61,7 +64,7 @@ describe('addInternalBookingNote (envelope model)', () => {
 
   it('strips injected markup from the internal note body', async () => {
     const ctx = buildDbMock({
-      docs: { [VISIT_PATH]: { startTime: new Date(Date.now() + 10_000_000) } },
+      docs: { [VISIT_PATH]: { startTime: new Date(Date.now() + 4 * 3600 * 1000) } },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     await addInternalBookingNoteHandler(
@@ -71,20 +74,33 @@ describe('addInternalBookingNote (envelope model)', () => {
     expect(internalAdd?.data.body).toBe('internal context');
   });
 
-  it('HAPPY: writes even within 3hr of start (no cutoff on internal notes)', async () => {
+  /**
+   * INVERTED on purpose (2026-07-25). This case used to assert the opposite,
+   * that internal notes had no cutoff, which pinned the gap rather than the
+   * rule: the 3-hour lock existed only in client code, so any other caller
+   * wrote straight past it. The cutoff now lives in the callable, shared with
+   * addBookingNote. Boundary and error-surface coverage is in
+   * `bookingNoteCutoff.test.ts`; this keeps the rejection pinned from the
+   * suite that owns this callable.
+   */
+  it('SAD: rejects within 3hr of start, same cutoff as the kinfolk-facing thread', async () => {
     const ctx = buildDbMock({
       docs: { [VISIT_PATH]: { startTime: new Date(Date.now() + 60_000) } },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await addInternalBookingNoteHandler(
-      req({ kinfolkId: 'f1', batchId: 'batch1', visitId: 'v1', body: 'last-minute auntie note' }),
-    );
-    expect(res.noteId).toMatch(/^auto-/);
+    await expect(
+      addInternalBookingNoteHandler(
+        req({ kinfolkId: 'f1', batchId: 'batch1', visitId: 'v1', body: 'last-minute auntie note' }),
+      ),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'booking_note_cutoff' },
+    });
   });
 
   it('BACK-COMPAT: legacy bookingId resolves via collectionGroup lookup', async () => {
     const ctx = buildDbMock({
-      docs: { [VISIT_PATH]: { familyId: 'f1', batchId: 'batch1', startTime: new Date(Date.now() + 10_000_000) } },
+      docs: { [VISIT_PATH]: { familyId: 'f1', batchId: 'batch1', startTime: new Date(Date.now() + 4 * 3600 * 1000) } },
       collectionGroupDocs: {
         kinCares: [
           { id: 'v1', path: VISIT_PATH, data: { familyId: 'f1', batchId: 'batch1' } },

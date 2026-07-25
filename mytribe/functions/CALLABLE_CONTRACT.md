@@ -138,3 +138,35 @@ must say "next reconcile pass", never "instantly".
   it across every keystroke's `mapboxSearch`, passes the SAME token to
   `mapboxRetrieve`, and only then rotates it. A fresh token per keystroke bills
   each keystroke as its own session.
+Two threads on one visit, at
+`families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`. They are separate
+SUBCOLLECTIONS, not one collection with a flag, because `firestore.rules` draws
+the kinfolk boundary at the path (`notes` is member-readable, `internalNotes` is
+`isAuntie()` only) and denies every client write to both. That path-level
+boundary is why these are callables at all.
+Both are mirrored by the React admin (`src/api/bookingsWrite.ts`) and android
+(`BookingNotesRepository`).
+- req `{ kinfolkId: string, batchId?: string, visitId?: string, bookingId?: string, body: string }`
+  (send `batchId`+`visitId`; `bookingId` is the legacy flat id, resolved
+  best-effort by `resolveKinCareRef`)
+- res `{ noteId: string }`
+- writes `.../kinCares/{visitId}/notes`, `authorRole` stamped from the CALLER
+  (`'admin'` or `'kinfolk'`), never sent by the client
+- req: identical to `addBookingNote`
+- res `{ noteId: string }`
+- writes `.../kinCares/{visitId}/internalNotes`, `authorRole` always `'admin'`
+BOTH callables enforce it, through `src/lib/bookingNoteCutoff.ts`. Changed
+2026-07-25: it used to be private to `addBookingNote`, so the internal thread
+was guarded by client code alone and any other caller wrote straight past it.
+- rejection `failed-precondition`, message
+  `"Notes cannot be edited within 3 hours of booking start window."`,
+  details `{ code: 'booking_note_cutoff' }`
+- clients branch on `details.code`, not on the message text
+- a visit with no readable `startTime` is NOT locked: there is no window to be
+  inside of
+- `test/bookingNoteCutoff.test.ts` freezes the boundary to the millisecond and
+  asserts both callables reject identically
+Clients mirror the rule for a courtesy lock so the operator is not surprised by
+a rejection (`auntieos-admin/src/lib/bookingDetailFormat.ts`,
+`ui/admin/scheduling/BookingNoteCutoff.kt`). Those are conveniences. The
+callable is the enforcement.

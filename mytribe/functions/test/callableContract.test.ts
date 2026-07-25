@@ -35,6 +35,13 @@ import { Args as BroadcastMessageArgs } from '../src/admin/broadcastMessage';
 import { TrainingDocumentArgs as CreateTrainingDocumentArgs } from '../src/admin/createTrainingDocument';
 import { UpdateTrainingDocumentArgs } from '../src/admin/updateTrainingDocument';
 import { DeleteTrainingDocumentArgs } from '../src/admin/deleteTrainingDocument';
+// Not a request shape: the SHARED REJECTION both booking-note callables throw.
+// See the error-surface guard at the foot of this file.
+import {
+  NOTE_CUTOFF_MS,
+  NOTE_CUTOFF_CODE,
+  NOTE_CUTOFF_MESSAGE,
+} from '../src/lib/bookingNoteCutoff';
 
 /**
  * AO-8 drift guard (design doc `docs/2026-07-18-AO5-AO8-shared-contract-design.md`
@@ -188,4 +195,33 @@ describe('AO-8 callable contract drift guard (deep / effects shapes)', () => {
       expect(shapeSignature(schema)).toEqual([...signature].sort());
     });
   }
+});
+/**
+ * ERROR-SURFACE freeze, not a request-shape freeze.
+ *
+ * The two booking-note callables take identical request shapes and neither
+ * changed here. What three clients now hand-mirror is their shared REJECTION:
+ * the React admin, android and the household portal each branch on
+ * `details.code` to tell "the note window closed" apart from "the write
+ * broke", and each renders the message. A silent edit to either would leave
+ * those branches matching nothing, which reads to a user as a button that does
+ * nothing, the same failure mode the request-shape guard above exists to catch.
+ *
+ * The 3-hour value is frozen alongside them because two client mirrors compute
+ * a courtesy lock from it (`bookingDetailFormat.ts`, `BookingNoteCutoff.kt`);
+ * changing the server window without those would show an unlocked composer that
+ * the callable then rejects.
+ */
+describe('AO-8 callable contract drift guard (booking note cutoff error surface)', () => {
+  it('the cutoff window is unchanged', () => {
+    expect(NOTE_CUTOFF_MS).toBe(3 * 60 * 60 * 1000);
+  });
+  it('the machine-readable detail code is unchanged', () => {
+    expect(NOTE_CUTOFF_CODE).toBe('booking_note_cutoff');
+  });
+  it('the user-facing message is unchanged', () => {
+    expect(NOTE_CUTOFF_MESSAGE).toBe(
+      'Notes cannot be edited within 3 hours of booking start window.',
+    );
+  });
 });

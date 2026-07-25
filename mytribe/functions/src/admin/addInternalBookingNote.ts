@@ -7,7 +7,23 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { resolveKinCareRef } from '../lib/resolveKinCareRef';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { sanitizeRichText } from '../lib/richText';
+import { assertNoteWindowOpen } from '../lib/bookingNoteCutoff';
 
+/**
+ * Append a STAFF-ONLY note to
+ * `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}/internalNotes`.
+ *
+ * The kinfolk boundary is drawn at the PATH, not by masking a field:
+ * `firestore.rules` reads `notes` for members and `internalNotes` for
+ * `isAuntie()` only, and denies every client write to both, which is why this
+ * is a callable at all.
+ *
+ * SAME 3-HOUR CUTOFF as the kinfolk-facing `portal/addBookingNote.ts`, through
+ * the shared `lib/bookingNoteCutoff.ts`. It did not used to have one: the rule
+ * was private to the other callable, so this thread was guarded by client code
+ * alone and any other caller walked past it. Both threads now freeze together
+ * and reject with the same typed error.
+ */
 const Args = z
   .object({
     kinfolkId: z.string().min(1),
@@ -45,6 +61,12 @@ export async function addInternalBookingNoteHandler(
   if (!resolved) throw new HttpsError('not-found', 'booking not found');
   const visitSnap = await resolved.ref.get();
   if (!visitSnap.exists) throw new HttpsError('not-found', 'booking not found');
+
+  // Same 3-hour cutoff the kinfolk-facing thread enforces, same shared helper,
+  // same typed rejection, so a client can render one message for either thread.
+  // Runs AFTER the not-found check so a missing booking never surfaces as a
+  // cutoff failure.
+  assertNoteWindowOpen(visitSnap.data() ?? {});
 
   const ref = await resolved.ref.collection('internalNotes').add({
     authorUid: uid,

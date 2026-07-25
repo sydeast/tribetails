@@ -105,9 +105,10 @@ export interface BookingDetailModalProps {
  *  - The note threads read the nested `kinCares/{visitId}` path the server
  *    actually writes to; the archive read the flat parent path and so never
  *    displayed a note back. See `api/bookingNotes.ts`.
- *  - Both composers lock at the 3-hour cutoff. The server only enforces it on
- *    the kinfolk-facing one; the internal lock is a client policy, flagged in
- *    `api/bookingsWrite.ts#addInternalBookingNote`.
+ *  - Both composers lock at the 3-hour cutoff, and BOTH callables enforce it
+ *    server-side (`functions/src/lib/bookingNoteCutoff.ts`). The lock here is
+ *    a courtesy so the operator is not surprised by a rejection; it is not the
+ *    guard. A rejection is surfaced verbatim either way.
  */
 export function BookingDetailModal({
   entry,
