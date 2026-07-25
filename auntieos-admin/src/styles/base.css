@@ -81,3 +81,60 @@ code {
   font-family: var(--font-mono);
   font-size: 0.9em;
 }
+
+/* ── Entrance ────────────────────────────────────────────────────────────────
+   All 39 mocks open a screen by settling its blocks into place from below, on a
+   per-block delay, so the page assembles top to bottom instead of hard-cutting
+   into existence. The MyTribe portal shipped exactly this as `.d1` through
+   `.d4` (`mytribe/web/src/styles/base.css:132`); the admin had no entrance
+   animation on any screen. These four classes are the whole mechanism: put one
+   on each top-level block of a screen, in reading order.
+
+   `both` fill matters. Without it the element is at full opacity for the length
+   of its own delay and then jumps back to invisible to start animating. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.d1,
+.d2,
+.d3,
+.d4 {
+  animation: rise var(--dur-rise) var(--ease-emphasized) both;
+}
+.d1 {
+  animation-delay: 0.06s;
+}
+.d2 {
+  animation-delay: 0.12s;
+}
+.d3 {
+  animation-delay: 0.18s;
+}
+.d4 {
+  animation-delay: 0.24s;
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────────
+   GLOBAL, and deliberately blunt. Until now this was honoured per file in 8 of
+   79 stylesheets, which means every new animation had to remember to opt in and
+   the ones that forgot were invisible until someone with the preference set hit
+   them. The portal takes the same global approach. `animation: none` on a `both`
+   fill leaves the element at its natural resting state, so nothing that relies
+   on `rise` to become visible can be stranded at opacity 0. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
