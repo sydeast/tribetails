@@ -24,6 +24,14 @@ vi.mock('../api/communicateApprove', async (orig) => ({
 const { sendExternalMessage } = vi.hoisted(() => ({ sendExternalMessage: vi.fn() }));
 vi.mock('../api/externalSend', () => ({ sendExternalMessage, suppressExternalRecipient: vi.fn() }));
 
+// Stubbed rather than exercised: RecipientContextPanel has its own full test
+// file. This file proves only the WIRING, that the panel is mounted for the
+// message types that address a household and carries the resolved id.
+vi.mock('../components/RecipientContextPanel', () => ({
+  RecipientContextPanel: ({ kinfolkId }: { kinfolkId: string }) => (
+    <div data-testid="context-stub" data-kinfolk-id={kinfolkId} />
+  ),
+}));
 import { CommunicatePersonalize } from './CommunicatePersonalize';
 
 // NOTE: mocks reset inside `setup()`, called at the top of EACH test body rather
@@ -328,5 +336,25 @@ describe('approve', () => {
 
     expect(await screen.findByText(/audit chain busy/)).toBeInTheDocument();
     expect(screen.getByText(/Draft approved/i)).toBeInTheDocument();
+  });
+});
+describe('the recipient context panel', () => {
+  it('is mounted for a message type that addresses a household', () => {
+    setup();
+    render(<CommunicatePersonalize />);
+    expect(screen.getByTestId('context-stub')).toBeInTheDocument();
+  });
+  it('hands it the resolved kinfolk id once one is picked', async () => {
+    const user = setup();
+    render(<CommunicatePersonalize />);
+    expect(screen.getByTestId('context-stub')).toHaveAttribute('data-kinfolk-id', '');
+    await pickRecipient(user, 'Zamora', 'Dana Zamora');
+    expect(screen.getByTestId('context-stub')).toHaveAttribute('data-kinfolk-id', 'kf2');
+  });
+  it('is not mounted for a Blog post, which addresses nobody and has no dossier to read', async () => {
+    const user = setup();
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'Blog' }));
+    expect(screen.queryByTestId('context-stub')).toBeNull();
   });
 });

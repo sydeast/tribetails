@@ -24,6 +24,7 @@ import { DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
+import { RecipientContextPanel } from '../components/RecipientContextPanel';
 import { Banner } from '../components/Banner';
 import './CommunicatePersonalize.css';
 
@@ -394,6 +395,11 @@ export function CommunicatePersonalize() {
               </div>
             </DenPanel>
 
+            {/* The context Auntie reads before drafting. Rendered for the types
+                that address a household; a Blog post has no recipient, so there
+                is no dossier to show and the panel would be a permanent empty
+                state taking up the screen. */}
+            {def.needsRecipient && <RecipientContextPanel kinfolkId={form.recipientId} />}
             {draft !== null && (
               <DenPanel title="Auntie AI draft" subtitle={draftSubtitle(draft)}>
                 <div className="personalize__form">

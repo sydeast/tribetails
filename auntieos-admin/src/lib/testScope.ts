@@ -84,6 +84,22 @@ export const SUPPRESSED_IN_TEST_MODE: ReadonlySet<string> = new Set([
   // raw "Missing or insufficient permissions", which is the exact scary-banner
   // failure this set exists to convert into an honest empty state.
   'training_documents',
+  // The four communication logs the recipient context panel reads. Same shape
+  // of reason as training_documents above, and it applies to all four equally:
+  //   1. Each is `allow read, write: if isAuntie();` with NO isTestAdmin branch
+  //      (mytribe/firestore.rules: calls_log:674, sms_messages:735, emails:698,
+  //      voicemails:745, and web/firestore.rules is a byte-identical copy). A
+  //      test admin does not hold isAuntie, so every read is denied whatever
+  //      predicate the query carries.
+  //   2. They DO carry a kinfolkId, so scoping looks available at a glance, and
+  //      it would buy nothing: no filter grants a permission the rule withholds.
+  // Left unsuppressed, opening Communicate as a sandbox account turns the
+  // recipient context panel into four red "Missing or insufficient permissions"
+  // banners for logs that are simply not part of a sandbox tribe.
+  'calls_log',
+  'emails',
+  'sms_messages',
+  'voicemails',
 ]);
 
 /** True when this collection should resolve to an empty list instead of being
