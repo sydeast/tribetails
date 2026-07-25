@@ -243,7 +243,10 @@ export function Schedule({ onSelect }: ScheduleProps) {
                       void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })
                     }
                     onOpenKinTale={(kinTaleId) =>
-                      void navigate({ to: '/kintales/$kinTaleId', params: { kinTaleId } })
+                      // Search param, not a path: `lib/notificationActions.ts`
+                      // set that convention for invoice and kintale deep links,
+                      // and one convention beats two that drift.
+                      void navigate({ to: '/kintales', search: { kinTaleId } })
                     }
                   />
                 )}

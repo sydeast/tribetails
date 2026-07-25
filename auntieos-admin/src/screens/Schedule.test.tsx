@@ -383,9 +383,11 @@ describe('Schedule screen', () => {
     render(<Schedule />);
     await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
     await user.click(screen.getByRole('button', { name: 'stub open kintale' }));
+    // Search param, not a path: lib/notificationActions.ts set that convention
+    // for kintale and invoice deep links, and this sheet follows it.
     expect(navigate).toHaveBeenCalledWith({
-      to: '/kintales/$kinTaleId',
-      params: { kinTaleId: 'rep1' },
+      to: '/kintales',
+      search: { kinTaleId: 'rep1' },
     });
   });
 

@@ -258,9 +258,20 @@ function KinTalesView() {
   // kintale notification's "Open". Initial state only, so closing the detail
   // returns to the list rather than bouncing back off a stale URL.
   const { kinTaleId } = kinTalesRoute.useSearch();
+  const navigate = useNavigate();
   const [mode, setMode] = useState<KinTalesMode>(
     kinTaleId ? { kind: 'detail', kinTaleId } : { kind: 'list' },
   );
+
+  /**
+   * Back to the list, and drop `?kinTaleId=` on the way out. Without clearing
+   * the search param the URL keeps naming a report the operator has closed, and
+   * a reload would reopen it.
+   */
+  function closeToList() {
+    setMode({ kind: 'list' });
+    if (kinTaleId) void navigate({ to: '/kintales', search: {} });
+  }
 
   if (mode.kind === 'compose') {
     return (
@@ -294,28 +305,6 @@ const kinTalesRoute = createRoute({
   component: KinTalesView,
 });
 
-/**
- * Deep link to ONE report, `/kintales/{kinTaleId}`. Opens the same detail view
- * a row click opens; closing it returns to `/kintales`. Added so the Schedule
- * detail sheet's "Open the KinTale" link has a real destination (operator
- * issue 16, the KinTale half).
- */
-function KinTaleDetailRouteView() {
-  const { kinTaleId } = kinTaleDetailRoute.useParams();
-  const navigate = useNavigate();
-  return (
-    <KinTalesView
-      initialKinTaleId={kinTaleId}
-      onDetailClose={() => void navigate({ to: '/kintales' })}
-    />
-  );
-}
-
-const kinTaleDetailRoute = createRoute({
-  getParentRoute: () => adminRoute,
-  path: 'kintales/$kinTaleId',
-  component: KinTaleDetailRouteView,
-});
 
 const galleryRoute = createRoute({
   getParentRoute: () => adminRoute,
