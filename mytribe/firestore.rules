@@ -189,6 +189,29 @@ service cloud.firestore {
       allow write: if isAuntie();
     }
 
+ // Task 7.2, Google Calendar over OAuth. DENIED TO EVERY CLIENT, INCLUDING AN
+ // AUNTIE, which is stricter than business_settings next door and deliberately
+ // so: `integrations_config/googleCalendar` holds a REFRESH TOKEN. That is a
+ // standing credential, and whoever holds it can create, edit and delete events
+ // on the operator's real calendar until the grant is revoked, so handing it to
+ // a client is not leaking data about the calendar, it is handing over the
+ // calendar. WRITE is denied for the same weight of reason: a client able to
+ // write this doc could point the connection at a token it owns, and the next
+ // push would put our households' visits on a calendar someone else controls.
+ // Nothing is lost by the denial, because no client needs the document: the
+ // admin-gated `getGoogleCalendarConnection` callable returns a projection with
+ // the token stripped, and the Admin SDK inside the functions bypasses rules.
+ // The collection already had a second server-only occupant before this rule
+ // existed, `integrations_config/email` (the smtp2go webhook shared secret, read
+ // by `admin/engagementWebhooks.ts`). It was covered by default-deny; writing the
+ // rule down makes the posture explicit rather than accidental, and both
+ // documents want exactly the same answer.
+    match /integrations_config/{docId}          { allow read, write: if false; }
+ // One-time OAuth `state` nonces. Denied for the same reason: a caller who could
+ // read these could take a pending nonce and complete someone else's connect
+ // flow against their own Google account.
+    match /google_oauth_states/{nonce}          { allow read, write: if false; }
+
  // ── AuntieOS flat collections ─────────────────────────────────────────────
  // Kinfolk profile - kinfolk reads/writes their own doc (self-service updates).
     function onlyAllowedKinfolkFields() {

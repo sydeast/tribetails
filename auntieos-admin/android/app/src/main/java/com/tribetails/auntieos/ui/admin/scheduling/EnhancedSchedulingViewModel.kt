@@ -8,7 +8,10 @@ import com.tribetails.auntieos.data.admin.EventType
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
+import com.tribetails.auntieos.data.repository.GoogleCalendarPushSkip
+import com.tribetails.auntieos.data.repository.GoogleCalendarSummary
 import com.tribetails.auntieos.data.repository.ServiceRepository
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -72,7 +75,63 @@ data class SchedulingState(
     val incomingError: String? = null,
     val seriesActionBatchId: String? = null, // batchId currently being approved/cancelled
     val seriesActionMessage: String? = null,
+    // Task 7.2: Google Calendar over OAuth, the editable half. A different
+    // feature from calendarSyncRun above (that one is 7.1's free/busy read);
+    // this one writes visits onto a calendar the operator connects to.
+    val googleCalendar: GoogleCalendarUiState = GoogleCalendarUiState(),
 )
+
+/**
+ * UI state for the Google Calendar OAuth connect/push card (Task 7.2). Kept as
+ * its own nested state, not flattened onto [SchedulingState], because it is a
+ * small state machine of its own (idle, connecting, polling, connected,
+ * pushing, disconnecting) and flattening it would scatter that machine across
+ * a dozen unrelated top-level fields.
+ */
+data class GoogleCalendarUiState(
+    // Server-read projection, never carrying a refresh token; see
+    // GoogleCalendarConnection in GoogleCalendarTargets.kt.
+    val connection: GoogleCalendarConnection? = null,
+    // Task 7.1's saved free/busy target, echoed by the server so the picker can
+    // apply writeCalendarProblem locally without a second read.
+    val freeBusyCalendarId: String = "",
+    // The redirect URI the operator must register on the OAuth client. Seeded
+    // with the known-deployed constant and overwritten with whatever the
+    // server itself echoes, which is the value that actually governs.
+    val redirectUri: String = GOOGLE_OAUTH_REDIRECT_URI,
+    val calendars: List<GoogleCalendarSummary> = emptyList(),
+    val loadingConnection: Boolean = false,
+    val connecting: Boolean = false,
+    // True while polling getGoogleCalendarConnection after the consent window
+    // opened. The UI must render a distinct waiting state here, never claim
+    // "connected" until a poll has actually observed it.
+    val polling: Boolean = false,
+    // The poll window ended with nothing connected. Distinct from a plain
+    // error: this is what the card shows when Google never called back at all,
+    // as opposed to calling back with a failure.
+    val pollTimedOut: Boolean = false,
+    // One-shot signal for the screen to open a browser tab. The ViewModel sets
+    // it once per successful startGoogleCalendarConnect and the screen clears
+    // it via consumeGoogleCalendarAuthUrl right after launching the Intent, so
+    // a recomposition (rotation, a later state update) can never re-open the
+    // same consent URL a second time.
+    val pendingAuthUrl: String? = null,
+    val savingTargets: Boolean = false,
+    val pushing: Boolean = false,
+    // Sessions the last push could not push, and why (no end time, etc).
+    val pushSkipped: List<GoogleCalendarPushSkip> = emptyList(),
+    val disconnecting: Boolean = false,
+    // Routed straight from the server's own message wherever one exists (a
+    // thrown HttpsError's .message, or a stamped connectLastError/revokeError).
+    // Never replaced with a friendly summary: on the not-configured path this
+    // IS the setup instruction, naming the missing secret and the exact
+    // firebase functions:secrets:set command.
+    val error: String? = null,
+)
+
+/** Poll cadence for the Google Calendar OAuth connect flow: 3s x 40 = ~2 minutes. */
+private const val GOOGLE_CALENDAR_POLL_INTERVAL_MS = 3_000L
+private const val GOOGLE_CALENDAR_POLL_MAX_ATTEMPTS = 40
 
 enum class CalendarViewMode(val displayName: String) {
     DAY("Day"),
@@ -135,6 +194,7 @@ class EnhancedSchedulingViewModel(
         loadInitialData()
         observeBusyTimeSlots()
         observeIncomingSeries()
+        loadGoogleCalendarState()
     }
 
     /**
@@ -971,6 +1031,244 @@ class EnhancedSchedulingViewModel(
                 )
             }
         }
+    }
+
+    // === Google Calendar over OAuth (Task 7.2) ===
+    //
+    // A DIFFERENT FEATURE from the free/busy sync above (saveCalendarSyncId /
+    // importGoogleBusyEvents), sharing nothing but the word calendar. See
+    // GoogleCalendarTargets.kt and CALLABLE_CONTRACT.md.
+
+    private fun gcalUpdate(update: (GoogleCalendarUiState) -> GoogleCalendarUiState) {
+        _state.value = _state.value.copy(googleCalendar = update(_state.value.googleCalendar))
+    }
+
+    /** Loads the current connection + free/busy target. Safe to call repeatedly (screen open, resume). */
+    fun loadGoogleCalendarState() {
+        gcalUpdate { it.copy(loadingConnection = true, error = null) }
+        viewModelScope.launch {
+            bookingRepository.getGoogleCalendarConnection()
+                .onSuccess { result ->
+                    gcalUpdate {
+                        it.copy(
+                            loadingConnection = false,
+                            connection = result.connection,
+                            freeBusyCalendarId = result.freeBusyCalendarId,
+                            redirectUri = result.redirectUri.ifBlank { it.redirectUri },
+                        )
+                    }
+                    if (result.connection.connected) refreshGoogleCalendars()
+                }
+                .onFailure { e ->
+                    gcalUpdate {
+                        it.copy(
+                            loadingConnection = false,
+                            error = e.message ?: "Couldn't load the Google Calendar connection.",
+                        )
+                    }
+                }
+        }
+    }
+
+    /** Re-reads only the connection doc (receipt fields, disconnect/error state), no calendar list refresh. */
+    private fun refreshGoogleCalendarConnectionOnly() {
+        viewModelScope.launch {
+            bookingRepository.getGoogleCalendarConnection().onSuccess { result ->
+                gcalUpdate {
+                    it.copy(connection = result.connection, freeBusyCalendarId = result.freeBusyCalendarId)
+                }
+            }
+        }
+    }
+
+    /**
+     * Starts the OAuth flow: mints the consent URL and sets [GoogleCalendarUiState.pendingAuthUrl]
+     * for the screen to open in a browser, then begins polling for the outcome.
+     * On failure (most commonly `google_oauth_not_configured`) the server's
+     * message is routed verbatim: it names the missing secret and the exact
+     * `firebase functions:secrets:set` command, which is the whole point of
+     * that message and must not be replaced with a summary.
+     */
+    fun connectGoogleCalendar() {
+        if (_state.value.googleCalendar.connecting || _state.value.googleCalendar.polling) return
+        gcalUpdate { it.copy(connecting = true, error = null, pollTimedOut = false) }
+        viewModelScope.launch {
+            bookingRepository.startGoogleCalendarConnect()
+                .onSuccess { start ->
+                    gcalUpdate {
+                        it.copy(
+                            connecting = false,
+                            pendingAuthUrl = start.authUrl,
+                            redirectUri = start.redirectUri.ifBlank { it.redirectUri },
+                        )
+                    }
+                    pollForGoogleCalendarConnection()
+                }
+                .onFailure { e ->
+                    gcalUpdate {
+                        it.copy(
+                            connecting = false,
+                            error = e.message ?: "Couldn't start the Google Calendar connection.",
+                        )
+                    }
+                }
+        }
+    }
+
+    /**
+     * Consumed by the screen the instant it has launched the browser for
+     * [GoogleCalendarUiState.pendingAuthUrl], so a later recomposition (a
+     * rotation, another state update while the tab is open) can never
+     * re-launch the same one-time consent URL a second time.
+     */
+    fun consumeGoogleCalendarAuthUrl() {
+        gcalUpdate { it.copy(pendingAuthUrl = null) }
+    }
+
+    /**
+     * Polls [BookingRepository.getGoogleCalendarConnection] every
+     * [GOOGLE_CALENDAR_POLL_INTERVAL_MS] for up to [GOOGLE_CALENDAR_POLL_MAX_ATTEMPTS]
+     * attempts (~2 minutes), because the consent screen runs in a window this
+     * app cannot read the result of directly.
+     *
+     * NEVER CLAIMS SUCCESS IT HAS NOT OBSERVED: the loop only reports connected
+     * on a poll response whose `connection.connected` is actually true. If the
+     * window ends first, [GoogleCalendarUiState.pollTimedOut] is set and
+     * whatever `connectLastError` the callback itself stamped (a declined
+     * consent, an exchange failure) is surfaced, because the server records
+     * that receipt precisely for this moment: the window that started the flow
+     * cannot read the callback's own outcome any other way.
+     */
+    private fun pollForGoogleCalendarConnection() {
+        viewModelScope.launch {
+            gcalUpdate { it.copy(polling = true, pollTimedOut = false) }
+            repeat(GOOGLE_CALENDAR_POLL_MAX_ATTEMPTS) { _ ->
+                delay(GOOGLE_CALENDAR_POLL_INTERVAL_MS)
+                val result = bookingRepository.getGoogleCalendarConnection().getOrNull()
+                if (result != null) {
+                    gcalUpdate {
+                        it.copy(connection = result.connection, freeBusyCalendarId = result.freeBusyCalendarId)
+                    }
+                    if (result.connection.connected) {
+                        gcalUpdate { it.copy(polling = false) }
+                        refreshGoogleCalendars()
+                        return@launch
+                    }
+                }
+            }
+            val lastError = _state.value.googleCalendar.connection?.connectLastError?.takeIf { it.isNotBlank() }
+            gcalUpdate { it.copy(polling = false, pollTimedOut = true, error = lastError) }
+        }
+    }
+
+    /** Calendars on the connected account, for the picker. */
+    fun refreshGoogleCalendars() {
+        viewModelScope.launch {
+            bookingRepository.listGoogleCalendars()
+                .onSuccess { result ->
+                    gcalUpdate {
+                        it.copy(
+                            calendars = result.calendars,
+                            connection = result.connection,
+                            freeBusyCalendarId = result.freeBusyCalendarId,
+                            error = null,
+                        )
+                    }
+                }
+                .onFailure { e ->
+                    gcalUpdate { it.copy(error = e.message ?: "Couldn't list the calendars on this account.") }
+                }
+        }
+    }
+
+    /**
+     * Saves the write target. [writeCalendarProblem] (GoogleCalendarTargets.kt)
+     * is checked here first so an echo-loop pick is refused before the round
+     * trip; the callable enforces the same rule and its message is what
+     * surfaces if this mirror ever disagrees with it.
+     */
+    fun saveGoogleCalendarTargets(writeCalendarId: String, enabledCalendarIds: List<String>) {
+        val gcal = _state.value.googleCalendar
+        if (gcal.savingTargets) return
+        val problem = writeCalendarProblem(writeCalendarId, gcal.freeBusyCalendarId, gcal.connection?.googleAccountEmail ?: "")
+        if (problem != null) {
+            gcalUpdate { it.copy(error = problem) }
+            return
+        }
+        gcalUpdate { it.copy(savingTargets = true, error = null) }
+        viewModelScope.launch {
+            bookingRepository.setGoogleCalendarTargets(writeCalendarId, enabledCalendarIds)
+                .onSuccess { connection ->
+                    gcalUpdate { it.copy(savingTargets = false, connection = connection) }
+                }
+                .onFailure { e ->
+                    gcalUpdate {
+                        it.copy(savingTargets = false, error = e.message ?: "Couldn't save the calendar target.")
+                    }
+                }
+        }
+    }
+
+    /**
+     * Pushes upcoming visits to the connected calendar. The connection's
+     * receipt fields are re-read afterward EITHER WAY: a failed push is
+     * stamped server-side too, and that stamp is what the card shows after the
+     * transient error banner is dismissed or the screen is reopened, same
+     * reasoning as 7.1's importGoogleBusyEvents.
+     */
+    fun pushGoogleCalendarVisits(lookAheadDays: Int = 30) {
+        val gcal = _state.value.googleCalendar
+        if (gcal.pushing) return
+        gcalUpdate { it.copy(pushing = true, error = null) }
+        viewModelScope.launch {
+            bookingRepository.pushVisitsToGoogleCalendar(lookAheadDays)
+                .onSuccess { result ->
+                    gcalUpdate { it.copy(pushing = false, pushSkipped = result.skipped) }
+                    refreshGoogleCalendarConnectionOnly()
+                }
+                .onFailure { e ->
+                    gcalUpdate {
+                        it.copy(pushing = false, error = e.message ?: "Couldn't push visits to Google Calendar.")
+                    }
+                    refreshGoogleCalendarConnectionOnly()
+                }
+        }
+    }
+
+    /**
+     * Revokes at Google, then clears our copy. Does NOT remove any event
+     * already written to Google; the server holds no delete-on-disconnect step
+     * and the UI copy says so plainly. If Google did not confirm the revoke,
+     * [GoogleCalendarDisconnectResult.revokeError] is surfaced rather than a
+     * clean "disconnected" message, because AuntieOS may still be listed as
+     * having access on the operator's Google account.
+     */
+    fun disconnectGoogleCalendar() {
+        val gcal = _state.value.googleCalendar
+        if (gcal.disconnecting) return
+        gcalUpdate { it.copy(disconnecting = true, error = null) }
+        viewModelScope.launch {
+            bookingRepository.disconnectGoogleCalendar()
+                .onSuccess { result ->
+                    gcalUpdate {
+                        it.copy(
+                            disconnecting = false,
+                            connection = result.connection,
+                            calendars = emptyList(),
+                            error = if (result.revoked) null else result.revokeError,
+                        )
+                    }
+                }
+                .onFailure { e ->
+                    gcalUpdate {
+                        it.copy(disconnecting = false, error = e.message ?: "Couldn't disconnect Google Calendar.")
+                    }
+                }
+        }
+    }
+
+    fun clearGoogleCalendarError() {
+        gcalUpdate { it.copy(error = null) }
     }
 
     // === Dialog Management ===

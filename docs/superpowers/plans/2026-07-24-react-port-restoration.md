@@ -598,7 +598,41 @@ Once secrets exist, the slice (expand to micro-plan first):
 - Android: same via Custom Tabs flow against the same endpoints
 - Tests: functions (state nonce mismatch rejected, token never returned to client, echo-loop guard), web (connect/disconnect flows, poll timeout error), Android ViewModel tests
 
-- [ ] Name the two secrets to the operator; build only after they exist
+- [x] Name the two secrets to the operator
+- [x] Functions, all seven entry points, built and tested WITHOUT the secret
+      values: `startGoogleCalendarConnect`, `googleOAuthCallback`,
+      `getGoogleCalendarConnection`, `listGoogleCalendars`,
+      `setGoogleCalendarTargets`, `disconnectGoogleCalendar`,
+      `pushVisitsToGoogleCalendar`
+- [x] Both secret names declared in every `secrets: [...]` that needs them AND
+      read in `lib/googleOAuth.ts`; a test asserts the declaration per function
+- [x] `firestore.rules` denies `integrations_config` and `google_oauth_states`
+      to every client, read and write; mirror re-checked
+- [x] Web: connect / poll / pick calendar / push / disconnect, with tests
+- [x] Contract entries + freezes (`CALLABLE_CONTRACT.md`, `callableContract.test.ts`)
+- [ ] OPERATOR: create the OAuth client in Google Cloud Console, set both
+      secrets, redeploy. Nothing works until then, and until then the panel says
+      exactly which piece is missing.
+
+Three deliberate departures from the sketch above, each recorded in the code:
+
+- `googleOAuthStart` is a CALLABLE (`startGoogleCalendarConnect`), not HTTP. A
+  browser navigation carries no ID token, so an HTTP start endpoint could not
+  tell an Auntie from a stranger. Both clients want a URL to open anyway.
+- `upsertCalendarEventForSession` is not a callable and there is no trigger. A
+  per-session callable with no surface to press would be gate-dark; a trigger
+  would write to a real person's calendar on the next edit of any visit, once
+  per field change. What ships is `pushVisitsToGoogleCalendar`, the bulk action
+  the panel exposes, following Task 7.1's callable-only precedent exactly.
+- The echo loop is REFUSED, not marked. A `source` field cannot break it:
+  `freebusy.query` returns start and end and nothing else, so an imported busy
+  block cannot be traced back to the event that produced it. The write target is
+  refused when it resolves to the free/busy calendar, `primary` included.
+- The refresh token is stored in `integrations_config/googleCalendar` with rules
+  denying all client access, NOT encrypted under a key of our own. That would
+  need a third operator-managed secret whose loss would strand a connection no
+  code path could then revoke, and it defends against nothing that can already
+  run inside these functions.
 
 ---
 

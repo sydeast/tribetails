@@ -16,6 +16,7 @@ import {
 } from './settings/sections';
 import { BrandingSection } from './settings/BrandingSection';
 import { CalendarSyncSection } from './settings/CalendarSyncSection';
+import { GoogleCalendarSection } from './settings/GoogleCalendarSection';
 import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
 import { TimeOffEditor } from './settings/TimeOffEditor';
 import { KinCareRatesEditor } from './settings/KinCareRatesEditor';
@@ -64,7 +65,8 @@ type SectionId =
   | 'mytribe'
   | 'notifications'
   | 'tags'
-  | 'calendar';
+  | 'calendar'
+  | 'googleCalendar';
 
 /** Nav order. Matches the section order the operator saw approved for this screen. */
 const SECTIONS: readonly SectionNavItem<SectionId>[] = [
@@ -80,6 +82,11 @@ const SECTIONS: readonly SectionNavItem<SectionId>[] = [
   { id: 'notifications', label: 'Notifications' },
   { id: 'tags', label: 'Tags' },
   { id: 'calendar', label: 'Calendar sync' },
+  // Task 7.2. Next to Calendar sync because an operator looking for "the Google
+  // thing" will look here, and separate from it because they are two features
+  // that fail separately: one reads busy time as a service account, the other
+  // writes visits as a signed-in Google account.
+  { id: 'googleCalendar', label: 'Google Calendar (editable)' },
 ];
 
 /** The section the screen opens on. Named (not `SECTIONS[0]`) so it stays a
@@ -201,6 +208,10 @@ function renderSection(
 ): ReactNode {
   if (id === 'notifications') return <NotificationGate />;
   if (id === 'tags') return <TagsEditor />;
+  // Also self-loading, and it has to be: the OAuth connection lives in a
+  // document `firestore.rules` denies to every client, so this panel cannot
+  // read it from `business_settings` like the others. It asks a callable.
+  if (id === 'googleCalendar') return <GoogleCalendarSection />;
 
   return (
     <AsyncRegion
