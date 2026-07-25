@@ -84,12 +84,9 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
                 description = "When your Auntie wraps up and leaves.",
                 allowedChannels = ALL,
             ),
-            NotificationKey(
-                key = "kincare.report.sent",
-                title = "Visit Report Ready",
-                description = "When your KinTale visit report is published.",
-                allowedChannels = ALL,
-            ),
+            // "kincare.report.sent" used to sit here. A KinTale IS the visit
+            // report, so it was merged into "kintale.published" (KinTales,
+            // below) on 2026-07-24 and is now a server-side alias.
             NotificationKey(
                 key = "kincare.unavailable",
                 title = "Visit Marked Unavailable",
@@ -105,20 +102,20 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
         keys = listOf(
             NotificationKey(
                 key = "kintale.published",
-                title = "New KinTale Published",
-                description = "When a new story posts to the app.",
+                title = "KinTale (visit report) published",
+                description = "When your Auntie publishes the written report from a KinCare visit.",
                 allowedChannels = ALL,
             ),
             NotificationKey(
                 key = "kintale.comment.added",
-                title = "Comments Added",
+                title = "New comment on a KinTale (comment box)",
                 description = "Five-minute trailing digest of new comments on your KinTales.",
                 allowedChannels = EMAIL_PUSH,
             ),
             NotificationKey(
                 key = "kintale.note.added",
-                title = "Note Added to KinTale",
-                description = "When your Auntie writes a note on the kinfolk-facing box of a KinTale.",
+                title = "Auntie added to a KinTale after sending",
+                description = "When your Auntie adds more words or photos to a KinTale you already received.",
                 allowedChannels = EMAIL_PUSH,
             ),
         ),
