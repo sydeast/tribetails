@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { KINTALES_QUERY, type KinTaleEntry } from '../api/kinTales';
+import { useMemo, useState } from 'react';
+import { kinTaleMatchesSearch, kinTalesPageQuery, type KinTaleEntry } from '../api/kinTales';
+import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import {
   kinTaleHeadline,
   kinTaleHousehold,
@@ -10,11 +11,19 @@ import {
   type KinTaleState,
 } from '../lib/kinTaleFormat';
 import { useCollection } from '../lib/firestore';
+import { usePagedCollection } from '../lib/usePagedCollection';
 import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint } from '../components/DenScreenKit';
+import {
+  ListToolbar,
+  DATE_RANGE_PRESETS,
+  DEFAULT_DATE_RANGE,
+  rangeStartIso,
+  type DateRangeKey,
+} from '../components/ListToolbar';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { PrimaryButton } from '../components/Buttons';
+import { GhostButton, PrimaryButton } from '../components/Buttons';
 import './KinTales.css';
 
 function PlusGlyph() {
@@ -48,6 +57,17 @@ const FILTERS: readonly FilterDef[] = [
   { key: 'failed', label: 'Failed', test: (s) => s === 'failed' },
 ];
 
+/**
+ * The selected window as it reads inside a sentence, e.g. "the last 7 days".
+ * Derived from the toolbar's own preset list so the chip and the prose can never
+ * name two different windows.
+ */
+function rangeLabel(range: DateRangeKey): string {
+  const preset = DATE_RANGE_PRESETS.find((p) => p.key === range);
+  if (preset === undefined || preset.days === null) return 'the archive';
+  return `the ${preset.label.toLowerCase()}`;
+}
+
 interface KinTalesProps {
   /**
    * Placeholder: the single-report detail/editor (`KinTaleReportScreen.kt`:
@@ -74,21 +94,61 @@ interface KinTalesProps {
 
 /**
  * Admin KinTales list ("The Den · KinTales", nav slug `kintales` per
- * `lib/nav.ts`). Streams the flat `kin_care_reports` collection through the
- * bounded, server-ordered listener (KINTALES_QUERY, createdAt desc, capped
- * 200), then classifies every row through the enumerated `kinTaleState`
+ * `lib/nav.ts`). Reads the flat `kin_care_reports` collection a PAGE at a time
+ * through `usePagedCollection` (createdAt desc, windowed by the toolbar's date
+ * preset), then classifies every row through the enumerated `kinTaleState`
  * (never by negation, see lib/kinTaleFormat.ts for the AO-12-style
  * rationale) for both the summary stat strip and the filter tabs.
  *
+ * WHAT PHASE 4 CHANGED, AND WHY THE COPY CHANGED WITH IT. This screen used to
+ * take a flat 200 newest rows and do everything client-side. Every number on it
+ * was therefore a fact about a page nobody could see the edges of, and the
+ * subtitle said "capped at 200", which named the cap without naming what fell
+ * outside it. Now the fetch is a real date window with "Load more", which is
+ * strictly more honest but only if the screen says which window it is in. So:
+ *
+ *  - the toolbar note states the window, the number of rows LOADED, and that
+ *    search covers those rows rather than the collection,
+ *  - the stat strip carries a line saying whether its three counts cover the
+ *    whole window or only what is loaded so far, decided from `hasMore` rather
+ *    than assumed,
+ *  - the empty state names the window ("No KinTales in the last 7 days"), never
+ *    the collection, because a quiet week is not an empty archive.
+ *
+ * SEARCH IS CLIENT-SIDE over the loaded rows, and that is stated on screen. The
+ * archive's own KinTale search was client-side too; what is new is that the
+ * scope is now visible instead of implied by an invisible cap.
+ *
  * List/feed only: composing or editing a KinTale (KinTaleComposeScreen), the
  * per-report detail/comment-thread/share-link view (KinTaleReportScreen), the
- * orphan-migration triage actions (assign/mark-duplicate/archive), template
- * editing, and search/sort are separate, not-yet-built surfaces. `onSelect`
- * is this screen's only hook into that later work.
+ * orphan-migration triage actions (assign/mark-duplicate/archive) and template
+ * editing are separate surfaces. `onSelect` is this screen's only hook into
+ * that later work.
  */
 export function KinTales({ onSelect, onNew }: KinTalesProps) {
-  const rows = useCollection<KinTaleEntry>(KINTALES_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [search, setSearch] = useState('');
+  const [range, setRange] = useState<DateRangeKey>(DEFAULT_DATE_RANGE);
+  const [kinfolkId, setKinfolkId] = useState('');
+
+  // Computed once per window choice, never per render: a boundary recreated
+  // every render would churn the page and reset the cursor (see CollectionSpec's
+  // "filter values must be stable" note, which the paged hook inherits).
+  const startIso = useMemo(() => rangeStartIso(range, new Date()), [range]);
+  const spec = useMemo(() => kinTalesPageQuery({ startIso, kinfolkId }), [startIso, kinfolkId]);
+  const { state: rows, hasMore, more, loadMore } = usePagedCollection<KinTaleEntry>(spec);
+
+  // The facet's options come from the household DIRECTORY, not from the loaded
+  // KinTales. Deriving them from the page would offer only households that are
+  // already on screen, which is the opposite of what the control is for.
+  const households = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const householdOptions = useMemo(
+    () =>
+      households.status === 'ready'
+        ? households.data.map((kf) => ({ value: kf._id, label: kinfolkDisplayName(kf) }))
+        : [],
+    [households],
+  );
 
   // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
   // Home/End, roving tabIndex); called unconditionally at the top level per
@@ -109,6 +169,20 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
     data.filter((e) => kinTaleState(e.status ?? '') === 'failed').length,
   );
 
+  const windowLabel = rangeLabel(range);
+  const loaded = rows.status === 'ready' ? rows.data.length : null;
+  const plural = loaded === 1 ? '' : 's';
+  // "all 1 KinTale" is not a sentence anyone writes.
+  const everyOne = loaded === 1 ? 'the 1' : `all ${String(loaded)}`;
+
+  // THE HONESTY LINE. Two forms, because before the first page lands there is no
+  // count to state and inventing one is the whole failure class this app refuses.
+  const scopeNote =
+    loaded === null
+      ? `Search covers household and title, within ${windowLabel}.`
+      : `Searching the ${String(loaded)} KinTale${plural} loaded from ${windowLabel}, by household and title.` +
+        (hasMore ? ' Load more to reach further back.' : '');
+
   return (
     <div className="screen">
       {/* d1 / d2 / d3: the Den entrance stagger (styles/base.css). Three blocks
@@ -125,32 +199,80 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
         />
       </div>
 
-      <div className="kintales__summary d2">
-        <StatCard label="Sent" value={sentCount} trend="delivered to a Kinfolk" tone="success" />
-        <StatCard label="Drafts" value={draftCount} trend="not yet sent" tone="teal" />
-        <StatCard
-          label="Needs another look"
-          value={failedCount}
-          trend="failed to send"
-          tone={failedCount.kind === 'value' && failedCount.value > 0 ? 'error' : 'muted'}
-          feature={failedCount.kind === 'value' && failedCount.value > 0}
-        />
+      <div className="d2">
+        <div className="kintales__summary">
+          <StatCard label="Sent" value={sentCount} trend="delivered to a Kinfolk" tone="success" />
+          <StatCard label="Drafts" value={draftCount} trend="not yet sent" tone="teal" />
+          <StatCard
+            label="Needs another look"
+            value={failedCount}
+            trend="failed to send"
+            tone={failedCount.kind === 'value' && failedCount.value > 0 ? 'error' : 'muted'}
+            feature={failedCount.kind === 'value' && failedCount.value > 0}
+          />
+        </div>
+
+        {/* What the three numbers above actually count. They are a fact about the
+            rows that have been LOADED, which is the whole window only once the
+            cursor is exhausted, so the line reads off `hasMore` rather than
+            guessing from the page size. */}
+        {loaded !== null && (
+          <p className="kintales__stats-note">
+            {hasMore
+              ? `These counts cover the ${String(loaded)} KinTale${plural} loaded so far, not all of ${windowLabel}.`
+              : `These counts cover ${everyOne} KinTale${plural} in ${windowLabel}.`}
+          </p>
+        )}
       </div>
 
-      <DenPanel title="KinTales" subtitle="Newest first, capped at 200." className="d3">
+      <DenPanel title="KinTales" subtitle="Newest first, a page at a time." className="d3">
+        <ListToolbar
+          label="Filter KinTales"
+          search={search}
+          onSearchChange={setSearch}
+          searchLabel="Search KinTales"
+          range={range}
+          onRangeChange={setRange}
+          facets={[
+            {
+              id: 'household',
+              label: 'Household',
+              value: kinfolkId,
+              onChange: setKinfolkId,
+              options: householdOptions,
+            },
+          ]}
+          note={
+            <>
+              {scopeNote}
+              {/* A facet whose options failed to load is a control that silently
+                  offers nothing. Say so beside it rather than rendering an
+                  empty dropdown that looks like an empty directory. */}
+              {households.status === 'error' && (
+                <span className="kintales__facet-error">
+                  {' '}
+                  Household list unavailable: {households.message}
+                </span>
+              )}
+            </>
+          }
+        />
+
         <AsyncRegion
           state={rows}
           what="KinTales"
           isEmpty={(data) => data.length === 0}
           loading={<p className="kintales__hint">Loading KinTales…</p>}
-          empty={<EmptyHint>No KinTales sent yet.</EmptyHint>}
+          empty={<EmptyHint>{`No KinTales in ${windowLabel}.`}</EmptyHint>}
         >
           {(data) => {
             // Non-null: FILTERS lists all four FilterKey members above, and
             // `filter` only ever holds a key set via setFilter(f.key) from
             // that same array (Sessions.tsx's identical .find()! comment).
             const activeFilter = FILTERS.find((f) => f.key === filter)!;
-            const visible = data.filter((e) => activeFilter.test(kinTaleState(e.status ?? '')));
+            const visible = data
+              .filter((e) => activeFilter.test(kinTaleState(e.status ?? '')))
+              .filter((e) => kinTaleMatchesSearch(e, search));
 
             return (
               <>
@@ -171,13 +293,43 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
                 </div>
 
                 {visible.length === 0 ? (
-                  <EmptyHint>Nothing matches this filter.</EmptyHint>
+                  <EmptyHint>
+                    {`Nothing in the loaded KinTales matches this filter.${
+                      hasMore ? ' Load more to reach further back.' : ''
+                    }`}
+                  </EmptyHint>
                 ) : (
                   <ul className="kintales__list">
                     {visible.map((entry) => (
                       <KinTaleRow key={entry._id} entry={entry} onSelect={onSelect} />
                     ))}
                   </ul>
+                )}
+
+                {/* A FAILED PAGE IS NOT A FAILED LIST. The rows above stayed
+                    exactly where they were: the hook keeps them, keeps the
+                    cursor, and reports the failure here instead of blanking a
+                    list the operator can already read. That is why this is an
+                    inline alert and not the AsyncRegion error above. */}
+                {hasMore && (
+                  <div className="kintales__more">
+                    <GhostButton
+                      label={more.status === 'loading' ? 'Loading more…' : 'Load more'}
+                      onClick={loadMore}
+                      disabled={more.status === 'loading'}
+                    />
+                    {more.status === 'error' && (
+                      <p className="kintales__more-error" role="alert">
+                        Couldn&rsquo;t load more KinTales. {more.message} The{' '}
+                        {String(data.length)} already listed are unaffected.
+                        {more.retry && (
+                          <button type="button" className="async-retry" onClick={more.retry}>
+                            Retry
+                          </button>
+                        )}
+                      </p>
+                    )}
+                  </div>
                 )}
               </>
             );

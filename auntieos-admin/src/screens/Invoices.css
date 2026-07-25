@@ -17,15 +17,65 @@
   display: flex;
   gap: var(--space-3);
   flex-wrap: wrap;
-  margin-bottom: var(--space-5);
+  /* The scope line below belongs to this strip, so the gap to the panel is
+     carried by that line rather than by the cards. */
+  margin-bottom: var(--space-2);
 }
 .invoices__summary > * {
   flex: 1 1 12rem;
 }
 
+/* What the three totals above actually cover. Dim, never hidden: a money figure
+   with no stated scope is the failure this screen was rewritten to avoid. */
+.invoices__stats-note {
+  margin: 0 0 var(--space-5);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line);
+  color: var(--color-text-dim);
+}
+
+/* The household facet's own failure, rendered inside the toolbar's scope line.
+   Error-coloured because an empty dropdown is otherwise indistinguishable from
+   an empty directory. */
+.invoices__facet-error {
+  color: var(--color-error);
+}
+
 .invoices__hint {
   color: var(--color-text-dim);
   margin: 0;
+}
+
+/* A deep link that landed outside the current window. Loud, because the
+   operator clicked something and would otherwise get nothing at all. */
+.invoices__deep-link-miss {
+  margin: 0 0 var(--space-4);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line);
+  color: var(--color-error);
+}
+
+/* ── load more ───────────────────────────────────────────────────────────── */
+
+.invoices__more {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+/* A failed PAGE, beside rows that are still perfectly good. Deliberately not
+   the full-width `.async-error` banner the first-page failure gets: this one
+   qualifies the end of the list, it does not replace it. */
+.invoices__more-error {
+  margin: 0;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line);
+  color: var(--color-error);
 }
 
 /* ── filter tabs ─────────────────────────────────────────────────────────── */

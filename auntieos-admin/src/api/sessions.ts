@@ -1,4 +1,5 @@
 import { type CollectionSpec } from '../lib/firestore';
+import type { PagedCollectionSpec } from '../lib/usePagedCollection';
 import { sessionsWindowBounds } from '../lib/sessionFormat';
 
 /**
@@ -203,12 +204,10 @@ export function sessionsWindowQuery(todayIso: string): CollectionSpec {
  * Older history, behind the Archive affordance: the same bounded shape over an
  * operator-chosen `YYYY-MM-DD` range.
  *
- * SEAM FOR TASK 4.1. This is a fixed range-and-cap, not pagination: 300 rows is
- * the whole page, and a range holding more is silently truncated at the far end
- * of the sort. Task 4.1 introduces the shared cursor-based pagination hook;
- * when it lands, this becomes its first caller and the cap becomes a page size.
- * Until then the Archive UI keeps the range narrow enough that the cap is not
- * reached in practice, and says what range it is showing.
+ * Kept as a plain `CollectionSpec` because `sessionsWindowQuery` above is built
+ * from it and both are still the shape a live `useCollection` listener takes.
+ * The LIST screen no longer uses either; it pages through `sessionsPageQuery`
+ * below, which is the Task 4.1 seam this function's previous comment promised.
  */
 export function sessionsArchiveQuery(fromDay: string, toDay: string): CollectionSpec {
   return {
@@ -220,4 +219,63 @@ export function sessionsArchiveQuery(fromDay: string, toDay: string): Collection
       ['startTime', '<=', toDay],
     ],
   };
+}
+
+/**
+ * Rows per "Load more" on Auntie Time.
+ *
+ * FOUR TIMES the other two lists' page size, and that is deliberate rather than
+ * inconsistent. Auntie Time's stat strip counts across what is loaded ("In
+ * flight", "Today", "Wrapped today") and its rows are grouped into Active /
+ * Upcoming / Recent, so a page that stops part-way through the window makes
+ * three counts and three group sizes describe a fragment. The sort is `desc`
+ * (see the index note below), so a small first page would be the most FUTURE
+ * visits, and today's could sit on page two.
+ *
+ * 100 rows over a 45 day window is the whole window for any realistic book, so
+ * the first page is normally complete and "Load more" is the overflow valve
+ * rather than the usual path. The screen never assumes that: it states whether
+ * the counts cover the whole window or only what is loaded, and it decides that
+ * from `hasMore` rather than from this number.
+ */
+export const SESSIONS_PAGE_SIZE = 100;
+
+/**
+ * THE AUNTIE TIME LIST'S PAGED QUERY, for both the day-of window and the
+ * Archive. Same `YYYY-MM-DD` inclusive range as `sessionsArchiveQuery`, with the
+ * 300-row cap replaced by a cursor and a page size.
+ *
+ * ORDER STAYS `desc`, and that is an index constraint rather than a preference:
+ * a sandbox admin's spec picks up a `kinfolkId ==` predicate from
+ * `lib/testScope`, and the deployed pair is `kin_care_sessions (kinfolkId ASC,
+ * startTime DESC)`. Flipping to asc would need an index that is not deployed,
+ * and would buy nothing, since `groupSessionsByPhase` / `groupSessionsByDay`
+ * re-derive the displayed order from whatever page comes back.
+ *
+ * The range and the `orderBy` are the same field, so the unfaceted query needs
+ * no composite index at all. Comparing a `YYYY-MM-DD` bound against a full ISO
+ * instant works because every writer stamps ISO-8601, making the day a lexical
+ * prefix; `sessionsWindowBounds` fetches wider than it displays precisely to
+ * absorb the day-boundary slop that leaves.
+ *
+ * The `orderBy('startTime')` caveat from `SESSIONS_QUERY` still applies: a doc
+ * missing `startTime` is dropped by the sort and never reaches the 'Undated'
+ * group. Backfill rather than weaken the sort.
+ */
+export function sessionsPageQuery(fromDay: string, toDay: string): PagedCollectionSpec {
+  return {
+    path: 'kin_care_sessions',
+    order: ['startTime', 'desc'],
+    pageSize: SESSIONS_PAGE_SIZE,
+    filters: [
+      ['startTime', '>=', fromDay],
+      ['startTime', '<=', toDay],
+    ],
+  };
+}
+
+/** The day-of window as a paged query: the same bounds `sessionsWindowQuery` uses. */
+export function sessionsWindowPageQuery(todayIso: string): PagedCollectionSpec {
+  const { from, to } = sessionsWindowBounds(todayIso);
+  return sessionsPageQuery(from, to);
 }

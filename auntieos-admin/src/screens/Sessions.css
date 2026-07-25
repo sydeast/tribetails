@@ -12,15 +12,54 @@
   display: flex;
   gap: var(--space-3);
   flex-wrap: wrap;
-  margin-bottom: var(--space-5);
+  /* The scope line below belongs to this strip, so the gap to the panel is
+     carried by that line rather than by the cards. */
+  margin-bottom: var(--space-2);
 }
 .sessions__summary > * {
   flex: 1 1 12rem;
 }
 
+/* What the three counts above actually cover, and what the Archive has actually
+   fetched. Dim, never hidden: a count with no stated scope is exactly the
+   failure operator issue #17 was about. */
+.sessions__stats-note,
+.sessions__range-note {
+  margin: 0 0 var(--space-5);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line);
+  color: var(--color-text-dim);
+}
+
+.sessions__range-note {
+  margin-bottom: var(--space-4);
+}
+
 .sessions__hint {
   color: var(--color-text-dim);
   margin: 0;
+}
+
+/* ── load more ───────────────────────────────────────────────────────────── */
+
+.sessions__more {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+/* A failed PAGE, beside visits that are still perfectly good. Deliberately not
+   the full-width `.async-error` banner the first-page failure gets: this one
+   qualifies the end of the list, it does not replace it. */
+.sessions__more-error {
+  margin: 0;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line);
+  color: var(--color-error);
 }
 
 /* ── filter tabs + sort ──────────────────────────────────────────────────── */

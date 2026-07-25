@@ -1,4 +1,5 @@
 import { type CollectionSpec } from '../lib/firestore';
+import type { PagedCollectionSpec } from '../lib/usePagedCollection';
 
 /**
  * One `kin_care_reports` row, a KinTale, the recap that goes home to a
@@ -123,3 +124,85 @@ export const KINTALES_QUERY: CollectionSpec = {
   order: ['createdAt', 'desc'],
   max: 200,
 };
+
+/**
+ * Rows per "Load more" on the KinTales LIST screen (Phase 4).
+ *
+ * Not a cap on the collection the way `KINTALES_QUERY.max` is: the list grows by
+ * this much each time the operator asks for more. 25 because a KinTale row is
+ * four lines tall, so a page is roughly two screens of scroll, which is the
+ * point at which "there is more below" stops being obvious on its own.
+ */
+export const KINTALES_PAGE_SIZE = 25;
+
+export interface KinTalesPageOptions {
+  /**
+   * Lower bound on `createdAt`, from `ListToolbar`'s `rangeStartIso`, or null
+   * for "All (archive)". Null adds NO predicate rather than one that matches
+   * everything: see `rangeStartIso`'s own doc for why the two differ.
+   */
+  startIso: string | null;
+  /** The kinfolk facet. Blank/undefined means every household. */
+  kinfolkId?: string | undefined;
+}
+
+/**
+ * The LIST screen's own paged query. `KINTALES_QUERY` above stays exactly as it
+ * is: `KinTaleCompose` and `KinTaleDetail` both read this collection wanting the
+ * latest rows rather than a date window, and neither pages.
+ *
+ * WHY `createdAt` CARRIES BOTH THE ORDER AND THE WINDOW. It is an ISO STRING on
+ * every doc (see `KinTaleEntry.createdAt`), so it compares correctly against the
+ * ISO string `rangeStartIso` produces. That is not a small detail: a Firestore
+ * Timestamp field compared against a string matches NOTHING at all, because
+ * Firestore orders every timestamp before every string, and the failure is a
+ * silent empty list rather than an error. `invoices.createdAt` IS a Timestamp,
+ * which is exactly why `invoicesPageQuery` windows on a different field.
+ *
+ * INDEXES. Range and order on the same field needs no composite index. With the
+ * kinfolk facet, or with a sandbox admin's automatic `kinfolkId ==` scope, the
+ * pair is covered by the deployed `kin_care_reports (kinfolkId ASC, createdAt
+ * DESC)` index.
+ *
+ * The `orderBy('createdAt')` caveat every query on this collection carries still
+ * applies: a doc missing `createdAt` is dropped by the sort. Every real write
+ * path stamps it (create AND update), so that is a legacy-row risk, not a
+ * routine one.
+ */
+export function kinTalesPageQuery({ startIso, kinfolkId }: KinTalesPageOptions): PagedCollectionSpec {
+  const filters: CollectionSpec['filters'] = [];
+  if (kinfolkId !== undefined && kinfolkId !== '') filters.push(['kinfolkId', '==', kinfolkId]);
+  if (startIso !== null) filters.push(['createdAt', '>=', startIso]);
+
+  return {
+    path: 'kin_care_reports',
+    order: ['createdAt', 'desc'],
+    pageSize: KINTALES_PAGE_SIZE,
+    ...(filters.length > 0 ? { filters } : {}),
+  };
+}
+
+/**
+ * Does this row match the operator's search text?
+ *
+ * CLIENT-SIDE, over the rows already loaded, and the screen SAYS so. Firestore
+ * has no substring search, so the honest choices were this or a search callable,
+ * and the archive's own KinTale search was client-side over an unbounded stream.
+ * What changes here is only that the scope is now stated on screen instead of
+ * being implied by a cap nobody could see.
+ *
+ * Household and title, per Phase 4's spec, and each field is tested on its own
+ * rather than against one joined haystack: joining lets "whitfields a great"
+ * match a row where those words are in different fields, which is a result the
+ * operator cannot explain from what is on screen.
+ */
+export function kinTaleMatchesSearch(
+  entry: Pick<KinTaleEntry, 'kinfolkName' | 'title'>,
+  search: string,
+): boolean {
+  const needle = search.trim().toLowerCase();
+  if (needle === '') return true;
+  return [entry.kinfolkName ?? '', entry.title ?? ''].some((field) =>
+    field.toLowerCase().includes(needle),
+  );
+}
