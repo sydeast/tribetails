@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { getAdmin } from './firestoreAdmin';
+import { lineAmountCents } from './invoiceMath';
 
 /**
  * Stage 3 / 16.2 - server-side invoice PDF.
@@ -12,10 +13,35 @@ import { getAdmin } from './firestoreAdmin';
  * no extra service-account role / operator grant is required; the token is an
  * unguessable per-file secret, so the invoice is not publicly enumerable.
  *
- * The PDF is rendered ONLY from fields already on the invoice doc (no
- * fabricated line items - the flat `invoices` doc has no itemized array, so we
- * render the authoritative scalar summary + the recorded payments history).
+ * The PDF is rendered ONLY from fields already on the invoice doc. Nothing here
+ * is fabricated.
+ *
+ * WHAT TASK 5.1 CHANGED, since the comment that stood here was load-bearing and
+ * is now false: the flat `invoices` doc DOES carry an itemized `lineItems` array
+ * once an operator has itemized it, written by `createInvoice` and
+ * `updateInvoice`. When it is present the items table below is the real billed
+ * detail and is rendered as such. When it is ABSENT, which is every invoice
+ * created before 5.1, the authoritative scalar summary is still the only thing
+ * there is to show, and is still rendered on its own exactly as before.
+ *
+ * AN EMPTY ITEMS TABLE IS NEVER DRAWN. A heading over no rows reads as "nothing
+ * was billed", which on a document a household receives is a worse claim than
+ * saying nothing at all.
+ *
+ * THE PER-LINE AMOUNTS ARE DERIVED HERE, from `qty` and `unitCents` through the
+ * shared `lib/invoiceMath.ts`, not read off the doc. There is no stored per-line
+ * amount to read, and deriving it in the renderer is what makes the printed
+ * lines and the printed total obey one rule.
  */
+
+export interface InvoiceLineForPdf {
+  description: string;
+  qty: number;
+  unitCents: number;
+  discountCents: number;
+  /** DERIVED: Math.round(qty x unitCents) - discountCents, via invoiceMath. */
+  amountCents: number;
+}
 
 export interface InvoiceForPdf {
   id: string;
@@ -31,9 +57,52 @@ export interface InvoiceForPdf {
   total: number;
   amountDue: number;
   paymentsHistory: string;
+  /** Empty when this invoice was never itemized. Never a fabricated single row. */
+  lineItems: InvoiceLineForPdf[];
+  /** Whole-invoice reduction in cents. 0, and unprinted, when absent. */
+  invoiceDiscountCents: number;
+  /** Sum of the line amounts BEFORE the invoice-level discount, in cents. */
+  subtotalCents: number;
   // Payments: operator-entered handles (Venmo/PayPal/Cash App), pre-formatted for the
   // "How to pay" footer. Sourced from business_settings, not the invoice doc.
   paymentMethods: string;
+}
+
+/**
+ * The stored line items, defensively.
+ *
+ * This reads a RAW Firestore document, not a validated payload. The callables
+ * validate what they write, but `firestore.rules` grants `allow update: if
+ * isAuntie()` over the whole collection and `postInvoiceEvent` merges an
+ * arbitrary payload, so a malformed row can genuinely be sitting on a doc. A bad
+ * row is DROPPED rather than thrown on: throwing here would fail the entire PDF
+ * and leave the operator with no document at all, which is a worse outcome than
+ * one missing line on a document they are about to read before sending.
+ */
+export function lineItemsForPdf(raw: unknown): InvoiceLineForPdf[] {
+  if (!Array.isArray(raw)) return [];
+  const out: InvoiceLineForPdf[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const li = entry as Record<string, unknown>;
+    const rawQty = li['qty'];
+    const rawUnit = li['unitCents'];
+    const rawDiscount = li['discountCents'];
+    const description = typeof li['description'] === 'string' ? li['description'] : '';
+    const qty = typeof rawQty === 'number' && Number.isFinite(rawQty) ? rawQty : NaN;
+    const unitCents = typeof rawUnit === 'number' && Number.isFinite(rawUnit) ? rawUnit : NaN;
+    if (description.trim() === '' || !Number.isFinite(qty) || !Number.isFinite(unitCents)) continue;
+    const discountCents =
+      typeof rawDiscount === 'number' && Number.isFinite(rawDiscount) ? rawDiscount : 0;
+    out.push({
+      description,
+      qty,
+      unitCents,
+      discountCents,
+      amountCents: lineAmountCents({ description, qty, unitCents, discountCents }),
+    });
+  }
+  return out;
 }
 
 /** Reads the PDF-relevant fields off a raw invoice doc, defaulting missing scalars. */
@@ -48,6 +117,11 @@ export function invoiceForPdf(id: string, data: Record<string, unknown>): Invoic
     }
     return 0;
   };
+  const intOr0 = (k: string): number => {
+    const v = data[k];
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  };
+  const lineItems = lineItemsForPdf(data['lineItems']);
   return {
     id,
     invoiceNumber: str('invoiceNumber') || id,
@@ -62,6 +136,13 @@ export function invoiceForPdf(id: string, data: Record<string, unknown>): Invoic
     total: num('total'),
     amountDue: num('amountDue'),
     paymentsHistory: str('paymentsHistory'),
+    lineItems,
+    invoiceDiscountCents: intOr0('invoiceDiscountCents'),
+    // Summed from the lines rather than read from the stored `subtotalCents`.
+    // The stored figure and the lines can genuinely disagree (see the note in
+    // `admin/updateInvoice.ts`), and on a document the household receives the
+    // printed lines must add up to the printed subtotal.
+    subtotalCents: lineItems.reduce((sum, li) => sum + li.amountCents, 0),
     paymentMethods: '', // set from business_settings in generateAndStoreInvoicePdf
   };
 }
@@ -70,6 +151,26 @@ function usd(n: number): string {
   const sign = n < 0 ? '-' : '';
   const abs = Math.abs(n);
   return `${sign}$${abs.toFixed(2)}`;
+}
+
+/** "$36.00" from an INTEGER count of cents. The line-item money is cents, not dollars. */
+export function usdCents(cents: number): string {
+  const n = Number.isFinite(cents) ? cents : 0;
+  const sign = n < 0 ? '-' : '';
+  return `${sign}$${(Math.abs(n) / 100).toFixed(2)}`;
+}
+
+/**
+ * "2" for a whole quantity, "2.5" for a fractional one.
+ *
+ * `qty` may legitimately be fractional (2.5 hours), so it cannot be printed as
+ * an integer; but printing "2.00 visits" for two visits reads like a money
+ * figure on a document that is full of money figures. Trailing zeroes are
+ * dropped rather than padded.
+ */
+export function formatQty(qty: number): string {
+  if (!Number.isFinite(qty)) return '0';
+  return Number.isInteger(qty) ? String(qty) : String(Number(qty.toFixed(2)));
 }
 
 // pdf-lib's StandardFonts (Helvetica) can only encode WinAnsi (cp1252). Drawing
@@ -133,11 +234,60 @@ export async function renderInvoicePdf(inv: InvoiceForPdf): Promise<Uint8Array> 
   if (inv.address) { line(inv.address); gap(); }
   gap(10);
 
+  // THE ITEMS TABLE, drawn only when this invoice was actually itemized. An
+  // un-itemized invoice falls straight through to the scalar summary below,
+  // which is exactly what it did before line items existed.
+  if (inv.lineItems.length > 0) {
+    const qtyX = 300;
+    const unitX = 370;
+    const amountX = 470;
+
+    line('Items', { f: bold, color: dim });
+    gap();
+    line('Description', { size: 9, color: dim });
+    line('Qty', { size: 9, color: dim, x: qtyX });
+    line('Unit', { size: 9, color: dim, x: unitX });
+    line('Amount', { size: 9, color: dim, x: amountX });
+    gap(14);
+
+    for (const li of inv.lineItems) {
+      // The description is the only unbounded field on the row, so it is the
+      // only one truncated. Truncating a number would misstate money.
+      const desc = li.description.length > 46 ? `${li.description.slice(0, 45)}…` : li.description;
+      line(desc, { size: 10 });
+      line(formatQty(li.qty), { size: 10, x: qtyX });
+      line(usdCents(li.unitCents), { size: 10, x: unitX });
+      line(usdCents(li.amountCents), { size: 10, x: amountX });
+      gap(14);
+      // A per-line discount is printed on its own sub-line rather than folded
+      // silently into the amount, so the household can see what was taken off.
+      if (li.discountCents > 0) {
+        line(`includes ${usdCents(li.discountCents)} off`, { size: 9, color: dim, x: 64 });
+        gap(13);
+      }
+    }
+    gap(4);
+    line('Subtotal', { size: 10, color: dim, x: unitX });
+    line(usdCents(inv.subtotalCents), { size: 10, x: amountX });
+    gap(14);
+    if (inv.invoiceDiscountCents > 0) {
+      line('Discount', { size: 10, color: dim, x: unitX });
+      line(`-${usdCents(inv.invoiceDiscountCents)}`, { size: 10, x: amountX });
+      gap(14);
+    }
+    gap(6);
+  }
+
   line('Amounts', { f: bold, color: dim });
   gap();
   line(`Total: ${usd(inv.total)}`);
   gap();
-  if (inv.discount && inv.discount !== '0' && inv.discount !== '0.00') { line(`Discount: ${inv.discount}`); gap(); }
+  // The free-text `discount` string is the LEGACY field, and on an itemized
+  // invoice the real reduction is already printed above in cents. Printing both
+  // would show the same invoice two discounts.
+  if (inv.lineItems.length === 0 && inv.discount && inv.discount !== '0' && inv.discount !== '0.00') {
+    line(`Discount: ${inv.discount}`); gap();
+  }
   line(`Amount due: ${usd(inv.amountDue)}`, { f: bold });
   gap(16);
 

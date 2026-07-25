@@ -128,3 +128,176 @@ describe('createInvoice handler effects', () => {
     expect(res.ok).toBe(true);
   });
 });
+
+/**
+ * Task 5.1's additive `lineItems`.
+ *
+ * The first test here is the one that matters most: the legacy 13-key payload
+ * every un-migrated caller still sends must keep behaving EXACTLY as it did,
+ * which means no `lineItems: []` and no `totalCents: 0` appearing on the doc.
+ * `updateInvoice`'s un-itemized guard reads the presence of `lineItems` to
+ * decide whether recomputing is safe, so an empty array written here would
+ * quietly re-arm the very bug that guard exists to prevent: a later due-date
+ * edit would recompute a real invoice down to $0.
+ */
+describe('createInvoice line items', () => {
+  const twoLines = [
+    { description: 'Dog walk', qty: 3, unitCents: 2500 },
+    { description: 'Overnight stay', qty: 1, unitCents: 8000, discountCents: 500 },
+  ];
+  // 3 x 2500 = 7500, plus 8000 - 500 = 7500 -> subtotal 15000
+  const subtotalCents = 15000;
+
+  it('writes NO cents fields at all for a legacy un-itemized payload', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req(validPayload));
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    expect(write.data).not.toHaveProperty('lineItems');
+    expect(write.data).not.toHaveProperty('totalCents');
+    expect(write.data).not.toHaveProperty('subtotalCents');
+    expect(write.data).not.toHaveProperty('amountDueCents');
+    expect(write.data).not.toHaveProperty('invoiceDiscountCents');
+    // And the caller's dollars are still stored verbatim.
+    expect(write.data.total).toBe(150.5);
+    expect(write.data.amountDue).toBe(150.5);
+  });
+
+  it('stores the lines and derives every cents figure from them', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(
+      req({ ...validPayload, total: 150, amountDue: 150, lineItems: twoLines }),
+    );
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    expect(write.data.lineItems).toEqual(twoLines);
+    expect(write.data.subtotalCents).toBe(subtotalCents);
+    expect(write.data.totalCents).toBe(subtotalCents);
+    expect(write.data.amountDueCents).toBe(subtotalCents);
+    expect(write.data.invoiceDiscountCents).toBe(0);
+  });
+
+  it('projects the legacy dollar scalars from the same cents figures', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(
+      req({ ...validPayload, total: 150, amountDue: 150, lineItems: twoLines }),
+    );
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    expect(write.data.total).toBe(150);
+    expect(write.data.amountDue).toBe(150);
+  });
+
+  it('applies an invoice-level discount to the total but not the subtotal', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(
+      req({
+        ...validPayload,
+        total: 130,
+        amountDue: 130,
+        lineItems: twoLines,
+        invoiceDiscountCents: 2000,
+      }),
+    );
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    expect(write.data.subtotalCents).toBe(subtotalCents);
+    expect(write.data.totalCents).toBe(subtotalCents - 2000);
+    expect(write.data.total).toBe(130);
+  });
+
+  it('REFUSES a total that disagrees with the lines, naming both figures', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createInvoiceHandler(req({ ...validPayload, total: 999, amountDue: 999, lineItems: twoLines })),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'invoice_total_mismatch' },
+      message: expect.stringContaining('$999.00'),
+    });
+    await expect(
+      createInvoiceHandler(req({ ...validPayload, total: 999, amountDue: 999, lineItems: twoLines })),
+    ).rejects.toMatchObject({ message: expect.stringContaining('$150.00') });
+    expect(ctx.writes.find((w) => w.path.startsWith('invoices/'))).toBeUndefined();
+  });
+
+  it('REFUSES an amountDue that disagrees with the lines', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createInvoiceHandler(req({ ...validPayload, total: 150, amountDue: 10, lineItems: twoLines })),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'invoice_amount_due_mismatch' },
+    });
+  });
+
+  it('refuses a discount larger than the line it is taken off', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createInvoiceHandler(
+        req({
+          ...validPayload,
+          total: 0,
+          amountDue: 0,
+          lineItems: [{ description: 'Dog walk', qty: 1, unitCents: 2500, discountCents: 9999 }],
+        }),
+      ),
+    ).rejects.toMatchObject({ details: { code: 'invoice_money_invalid' } });
+  });
+
+  it('refuses an invoice discount larger than the subtotal', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createInvoiceHandler(
+        req({ ...validPayload, total: 0, amountDue: 0, lineItems: twoLines, invoiceDiscountCents: 999_999 }),
+      ),
+    ).rejects.toMatchObject({ details: { code: 'invoice_money_invalid' } });
+  });
+
+  it('rejects a non-integer unitCents at the schema boundary', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createInvoiceHandler(
+        req({ ...validPayload, lineItems: [{ description: 'x', qty: 1, unitCents: 25.5 }] }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('rejects a blank line description at the schema boundary', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createInvoiceHandler(req({ ...validPayload, lineItems: [{ description: '', qty: 1, unitCents: 100 }] })),
+    ).rejects.toThrow();
+  });
+
+  it('records whether the invoice was itemized in the audit payload', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(
+      req({ ...validPayload, total: 150, amountDue: 150, lineItems: twoLines }),
+    );
+    expect(writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: expect.objectContaining({ itemized: true, lineCount: 2 }) }),
+    );
+  });
+
+  it('an EMPTY lineItems array is an itemized invoice worth zero, not an un-itemized one', async () => {
+    // Deliberate and tested: `[]` is the operator saying "this bills nothing",
+    // which is a different statement from never having itemized it. The doc
+    // gets the cents fields so `updateInvoice` may recompute it later, which is
+    // what lets a blank invoice receive its first line.
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req({ ...validPayload, total: 0, amountDue: 0, lineItems: [] }));
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    expect(write.data.lineItems).toEqual([]);
+    expect(write.data.totalCents).toBe(0);
+    expect(write.data.total).toBe(0);
+  });
+});

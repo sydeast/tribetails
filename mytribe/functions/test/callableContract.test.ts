@@ -135,10 +135,11 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // listSupplies / listExpirations take no args (empty request), so nothing to freeze.
 
   // Money + state mutations (flat shapes, top-level freeze is accurate here).
-  createInvoice: {
-    schema: CreateInvoiceArgs,
-    keys: ['address', 'amountDue', 'client', 'date', 'discount', 'dueDate', 'familyId', 'invoiceNumber', 'kinfolkName', 'sessionIds', 'status', 'terms', 'total'],
-  },
+  // NOTE: `createInvoice` USED to be frozen here and has MOVED to the deep
+  // (recursive-signature) table below. Task 5.1 gave it a `lineItems` array of
+  // objects, and a top-level key freeze would have gone on passing while
+  // `lineItems[].unitCents` was renamed underneath it. That is the exact drift
+  // this guard exists to catch, so the freeze followed the shape.
   createQuote: {
     schema: CreateQuoteArgs,
     keys: ['address', 'amountDue', 'client', 'date', 'discount', 'dueDate', 'familyId', 'invoiceNumber', 'kinfolkName', 'sendToKinfolk', 'sessionIds', 'status', 'terms', 'total'],
@@ -215,6 +216,22 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
       'attachments[].mimeType', 'attachments[].storageUrl',
       'communicationType', 'content', 'notes',
       'targetKinId', 'targetKinfolkId', 'targetType', 'title',
+    ],
+  },
+  // MOVED here from the flat table in Task 5.1, when `lineItems` arrived. The
+  // freeze is the SUPERSET: every key of the legacy 13-field payload is still
+  // listed, so a caller that omits the two new optional fields still validates
+  // and this guard still describes it accurately.
+  createInvoice: {
+    schema: CreateInvoiceArgs,
+    signature: [
+      'address', 'amountDue', 'client', 'date', 'discount', 'dueDate', 'familyId',
+      'invoiceDiscountCents', 'invoiceNumber', 'kinfolkName',
+      'lineItems[].description', 'lineItems[].discountCents',
+      'lineItems[].qty', 'lineItems[].unitCents',
+      // `sessionIds[]`, not `sessionIds`: the walker descends arrays, and a
+      // string array's element is a leaf it still names.
+      'sessionIds[]', 'status', 'terms', 'total',
     ],
   },
   updateInvoice: {

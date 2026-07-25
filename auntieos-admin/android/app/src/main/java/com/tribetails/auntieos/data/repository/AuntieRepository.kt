@@ -1556,6 +1556,49 @@ class AuntieRepository(
             ?: error("generateInvoicePdf: server returned no pdfUrl")
     }.onFailure { AuntieLog.e("generateInvoicePdf failed for $invoiceId", it) }
 
+    /**
+     * Task 5.1: archives ONE invoice via the archiveInvoice callable, taking it
+     * out of the operator's working list and out of the revenue and outstanding
+     * tiles. Nothing is deleted and nothing is cancelled; the household still
+     * sees the invoice and can still pay it.
+     *
+     * A CALLABLE RATHER THAN A DIRECT FIRESTORE WRITE, even though
+     * `updateInvoiceSessionIds` nearby writes the doc directly and the rules
+     * would permit this too. The server enforces the precondition that actually
+     * matters: archiving an invoice money is still owed on removes it from the
+     * very total that would remind anyone to collect it, so it is REFUSED unless
+     * [force] is set, and a forced archive is audited distinctly as a write-off.
+     * A client-side version of that rule is not a rule.
+     *
+     * Fail-loud: the server's message (still owing, already archived) is
+     * surfaced verbatim, because it is the part that tells the operator what to
+     * do next.
+     */
+    suspend fun archiveInvoice(invoiceId: String, force: Boolean = false): Result<Unit> = runCatching {
+        ensureAuthenticated()
+        require(invoiceId.isNotBlank()) { "archiveInvoice requires an invoice id" }
+        val payload = if (force) mapOf("invoiceId" to invoiceId, "force" to true) else mapOf("invoiceId" to invoiceId)
+        functions.getHttpsCallable("archiveInvoice").call(payload).await()
+        Unit
+    }.onFailure { AuntieLog.e("archiveInvoice failed for $invoiceId", it) }
+
+    /**
+     * Task 5.1: restores an archived invoice to the working list.
+     *
+     * The server writes `archivedAt: null` rather than deleting the field, so a
+     * restored invoice carries the same shape a future backfill would give every
+     * legacy invoice. `invoiceIsArchived` reads null as "not archived" for that
+     * reason.
+     */
+    suspend fun unarchiveInvoice(invoiceId: String): Result<Unit> = runCatching {
+        ensureAuthenticated()
+        require(invoiceId.isNotBlank()) { "unarchiveInvoice requires an invoice id" }
+        functions.getHttpsCallable("unarchiveInvoice")
+            .call(mapOf("invoiceId" to invoiceId))
+            .await()
+        Unit
+    }.onFailure { AuntieLog.e("unarchiveInvoice failed for $invoiceId", it) }
+
     /** Slice 2: marks an invoice receipted via the generateReceipt callable. */
     suspend fun generateReceipt(invoiceId: String): Result<Unit> = runCatching {
         ensureAuthenticated()

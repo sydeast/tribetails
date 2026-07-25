@@ -46,6 +46,13 @@ data class InvoiceDetailUiState(
     val pdfUrlToOpen: String? = null,
     // A8 Payments: the operator's payment handles, for the invoice "How to pay" section.
     val businessSettings: com.tribetails.auntieos.data.model.BusinessSettings? = null,
+    // Task 5.1 archive/restore. `archiveForceOffered` is set only after the
+    // SERVER refuses because money is still owed: that refusal is a decision to
+    // put back to the operator as an explicit write-off, not an error to bounce
+    // off, so the confirm re-renders rather than closing.
+    val archivePrompt: Boolean = false,
+    val archiveForceOffered: Boolean = false,
+    val archiving: Boolean = false,
 )
 
 class InvoiceDetailViewModel(
@@ -377,6 +384,88 @@ class InvoiceDetailViewModel(
         }
     }
 
+    /* ------------------------------------------------------- Task 5.1 archive */
+
+    /** Opens the archive/restore confirm. Nothing is sent until it is confirmed. */
+    fun promptArchive() {
+        _uiState.value = _uiState.value.copy(archivePrompt = true, archiveForceOffered = false)
+    }
+
+    fun dismissArchivePrompt() {
+        if (_uiState.value.archiving) return
+        _uiState.value = _uiState.value.copy(archivePrompt = false, archiveForceOffered = false)
+    }
+
+    /**
+     * Archives or restores the invoice, depending on which state it is in.
+     *
+     * [force] is only ever true on a SECOND press, after the server has refused
+     * because money is still owed. That refusal is not an error to report and
+     * move on from: it is a decision to hand back to the operator, because
+     * archiving an unpaid invoice writes its balance off the outstanding total
+     * and nothing will remind anyone to collect it afterwards. So the confirm
+     * re-renders with the write-off spelled out rather than closing.
+     */
+    fun confirmArchive(force: Boolean = false) {
+        val invoice = _uiState.value.invoice ?: return
+        if (_uiState.value.archiving) return
+        val restoring = com.tribetails.auntieos.domain.invoiceIsArchived(invoice)
+        _uiState.value = _uiState.value.copy(archiving = true)
+        viewModelScope.launch {
+            val outcome = if (restoring) {
+                repository.unarchiveInvoice(invoice.id)
+            } else {
+                repository.archiveInvoice(invoice.id, force)
+            }
+            outcome
+                .onSuccess {
+                    com.tribetails.auntieos.data.admin.AuditLog.fire(
+                        scope            = viewModelScope,
+                        repository       = repository,
+                        actionType       = if (restoring) "UNARCHIVE_INVOICE" else "ARCHIVE_INVOICE",
+                        description      = (if (restoring) "Restored invoice " else "Archived invoice ") +
+                            invoice.invoiceNumber.ifBlank { invoice.id } +
+                            (if (!restoring && force) " (forced, money still owed)" else ""),
+                        targetId         = invoice.id,
+                        targetCollection = "invoices",
+                    )
+                    _uiState.value = _uiState.value.copy(
+                        archiving = false,
+                        archivePrompt = false,
+                        archiveForceOffered = false,
+                        toastMessage = archiveSuccessMessage(restoring, force),
+                        toastVisible = true,
+                        toastIsError = false,
+                    )
+                    // The doc changed, so the panel must re-read it or it would
+                    // go on offering Archive on an invoice that is now archived.
+                    reloadInvoiceQuietly(invoice.id)
+                }
+                .onFailure { err ->
+                    val message = err.message.orEmpty()
+                    if (!restoring && archiveRefusedForMoneyOwed(message)) {
+                        _uiState.value = _uiState.value.copy(
+                            archiving = false,
+                            archivePrompt = true,
+                            archiveForceOffered = true,
+                            toastMessage = message,
+                            toastVisible = true,
+                            toastIsError = true,
+                        )
+                    } else {
+                        _uiState.value = _uiState.value.copy(
+                            archiving = false,
+                            archivePrompt = false,
+                            archiveForceOffered = false,
+                            toastMessage = (if (restoring) "Couldn't restore: " else "Couldn't archive: ") + message,
+                            toastVisible = true,
+                            toastIsError = true,
+                        )
+                    }
+                }
+        }
+    }
+
     /**
      * Stage 2 tail: review and send a DRAFT invoice via the postInvoiceEvent callable
      * (status -> "sent"). Reloads the invoice on success so the draft affordance drops.
@@ -487,3 +576,33 @@ internal fun buildInvoicePayment(
     invoiceId = invoice.id,
     invoiceNumber = invoice.invoiceNumber,
 )
+/**
+ * Did the server refuse this archive because money is still owed, as opposed to
+ * any other failure?
+ *
+ * MATCHED ON THE MESSAGE, WITH A REASON. The Android Functions SDK surfaces a
+ * callable's `details` payload only through a `FirebaseFunctionsException`, and
+ * this repository deliberately flattens every callable to `Result<T>` so no
+ * caller has to know that; the `details.code` of `invoice_still_owing` is
+ * therefore not reachable here without unwinding that seam for one branch. The
+ * consequence of a false negative is mild and safe: the operator sees the
+ * server's own sentence and can press Archive again, rather than being offered
+ * the write-off in one step. A false POSITIVE cannot make anything happen on
+ * its own, because forcing still requires a second, explicit press.
+ *
+ * Pure, so the phrasing this depends on is pinned by a test rather than by hope.
+ */
+internal fun archiveRefusedForMoneyOwed(message: String): Boolean =
+    message.contains("owing", ignoreCase = true) || message.contains("outstanding total", ignoreCase = true)
+/**
+ * The toast for a completed archive or restore.
+ *
+ * A FORCED archive says what was actually given up, rather than reporting the
+ * same bland success as an ordinary one. The operator has just written a real
+ * balance off the outstanding total and nothing will chase it again.
+ */
+internal fun archiveSuccessMessage(restoring: Boolean, force: Boolean): String = when {
+    restoring -> "Invoice restored to the working list."
+    force -> "Invoice archived, and the balance written off the outstanding total."
+    else -> "Invoice archived."
+}

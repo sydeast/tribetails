@@ -369,6 +369,66 @@ data class Invoice(
     var sessionIds: List<String> = emptyList(),
     @get:PropertyName("_attribution") @set:PropertyName("_attribution") var attribution: String = "",
     @get:PropertyName("_attributionAt") @set:PropertyName("_attributionAt") var attributionAt: String = "",
+
+    /**
+     * Set by the `archiveInvoice` callable, cleared to NULL by `unarchiveInvoice`.
+     *
+     * NULLABLE `Any?`, ON PURPOSE, TWICE OVER. It is nullable because
+     * `unarchiveInvoice` writes an explicit null rather than deleting the field,
+     * and a non-null Kotlin setter THROWS under `toObject()` on a null value,
+     * which in a batched `toObjects()` blanks the entire invoice query rather
+     * than one row. That is the Class B decode crash `paymentsHistory` above
+     * records. It is `Any?` rather than `Timestamp?` because only its PRESENCE
+     * is ever read (see `invoiceIsArchived`), and typing it invites someone to
+     * start formatting a value whose shape the server does not promise.
+     */
+    var archivedAt: Any? = null,
+    var archivedBy: String? = null,
+
+    /**
+     * The itemization, held RAW and decoded on read through
+     * `domain.decodeInvoiceLineItems`.
+     *
+     * This is the Class A pattern the tag vocabulary uses (`decodeTagDefs`), and
+     * the reason is the same: `firestore.rules` grants `allow update: if
+     * isAuntie()` over the whole invoices collection and `postInvoiceEvent`
+     * merges an arbitrary payload, so this field can genuinely hold something
+     * that is not a list of line items. A typed `List<InvoiceLineItem>` here
+     * would make Firestore throw on such a document and take down the whole
+     * invoice list with it. Raw plus a tolerant decoder drops the bad row instead.
+     *
+     * ABSENT IS NOT EMPTY. Null means nobody ever itemized this invoice, which
+     * is every invoice created before Task 5.1; an empty list means somebody
+     * itemized it as billing nothing. The server's `updateInvoice` refuses to
+     * recompute an un-itemized invoice precisely on that distinction, so nothing
+     * here may flatten the two.
+     */
+    var lineItems: Any? = null,
+    var invoiceDiscountCents: Long = 0L,
+    var subtotalCents: Long = 0L,
+    var totalCents: Long = 0L,
+    var amountDueCents: Long = 0L,
+)
+
+/**
+ * One billed line, in integer cents. Mirrors the server's zod schema
+ * (`mytribe/functions/src/admin/updateInvoice.ts`) field for field.
+ *
+ * There is NO stored per-line amount, deliberately. It is derived through
+ * `domain.lineAmountCents`, so the lines shown and the total shown obey one rule.
+ *
+ * NOT decoded by Firestore directly, see `Invoice.lineItems` above; this is the
+ * shape `decodeInvoiceLineItems` produces.
+ */
+@Keep
+data class InvoiceLineItem(
+    val description: String = "",
+    /** Units billed. May be fractional (2.5 hours). */
+    val qty: Double = 0.0,
+    /** Price per unit, an INTEGER count of cents. */
+    val unitCents: Long = 0L,
+    /** Optional per-line reduction, integer cents. */
+    val discountCents: Long = 0L,
 )
 
 @Keep

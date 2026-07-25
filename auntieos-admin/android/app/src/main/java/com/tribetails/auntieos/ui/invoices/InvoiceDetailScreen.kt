@@ -55,6 +55,7 @@ import com.tribetails.auntieos.domain.invoiceStateOf
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChip
+import com.tribetails.auntieos.ui.components.AuntieDialog
 import com.tribetails.auntieos.ui.components.AuntieIconButton
 import com.tribetails.auntieos.ui.components.AuntieKeyValueRow
 import com.tribetails.auntieos.ui.components.AuntieModal
@@ -206,12 +207,14 @@ fun InvoiceDetailScreen(
                         sendingDraft      = uiState.sendingDraft,
                         generatingPdf     = uiState.generatingPdf,
                         businessSettings  = uiState.businessSettings,
+                        archiving         = uiState.archiving,
                         onOpenEdit        = { viewModel.openEditMode() },
                         onRecordPayment   = { viewModel.openRecordPayment() },
                         onGenerateReceipt = { viewModel.generateReceipt() },
                         onSendReminder    = { viewModel.sendReminder() },
                         onSendDraft       = { viewModel.reviewAndSendDraft() },
                         onDownloadPdf     = { viewModel.downloadPdf() },
+                        onArchive         = { viewModel.promptArchive() },
                     )
                 }
             }
@@ -227,6 +230,54 @@ fun InvoiceDetailScreen(
                 onDismiss  = { viewModel.closeRecordPayment() },
                 onSubmit   = { payment -> viewModel.recordPayment(payment) },
             )
+        }
+    }
+
+    // ── Archive / restore confirm ────────────────────────────────────────────────
+    // Confirmed before anything is sent, and the copy says what archiving does
+    // NOT do. That matters more than usual here: "archive" reads like "delete"
+    // to most people, and this action is reversible and invisible to the
+    // household, which is the opposite of what the word suggests.
+    uiState.invoice?.let { inv ->
+        val restoring = com.tribetails.auntieos.domain.invoiceIsArchived(inv)
+        AuntieDialog(
+            visible   = uiState.archivePrompt,
+            title     = if (restoring) "Restore this invoice?" else "Archive this invoice?",
+            onDismiss = { viewModel.dismissArchivePrompt() },
+            footer = {
+                GhostButton(label = "Cancel", onClick = { viewModel.dismissArchivePrompt() })
+                PrimaryButton(
+                    label = when {
+                        restoring -> "Restore"
+                        uiState.archiveForceOffered -> "Archive anyway"
+                        else -> "Archive"
+                    },
+                    onClick = { viewModel.confirmArchive(uiState.archiveForceOffered) },
+                    loading = uiState.archiving,
+                )
+            },
+        ) {
+            Text(
+                text = if (restoring) {
+                    "This puts the invoice back into the working list and back into the revenue and " +
+                        "outstanding totals."
+                } else {
+                    "This takes the invoice out of the working list and out of the revenue and outstanding " +
+                        "totals. It does NOT delete it, cancel it, or forgive what is owed, and the household " +
+                        "can still see it and still pay it."
+                },
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textDim,
+            )
+            if (!restoring && uiState.archiveForceOffered) {
+                Text(
+                    text = "This invoice still has money owing. Archiving it anyway writes that balance off " +
+                        "the outstanding total, so nothing will remind you to collect it. That choice is " +
+                        "recorded separately in the audit trail.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.error,
+                )
+            }
         }
     }
 }
@@ -248,12 +299,14 @@ private fun invoiceDetailBody(
     sendingDraft: Boolean,
     generatingPdf: Boolean,
     businessSettings: com.tribetails.auntieos.data.model.BusinessSettings?,
+    archiving: Boolean,
     onOpenEdit: () -> Unit,
     onRecordPayment: () -> Unit,
     onGenerateReceipt: () -> Unit,
     onSendReminder: () -> Unit,
     onSendDraft: () -> Unit,
     onDownloadPdf: () -> Unit,
+    onArchive: () -> Unit,
 ) = with(scope) {
     val todayKey = runCatching { LocalDate.now().toString() }.getOrDefault("")
     // AO-19: state, overdue flag, and the offered actions all come from the
@@ -348,6 +401,34 @@ private fun invoiceDetailBody(
                     },
                 )
             }
+            // Archive is deliberately NOT part of `actions`. That matrix answers
+            // "what can be done about the money", and archiving is orthogonal to
+            // it: an invoice in any state can be taken out of the working list.
+            // Folding it in would have meant appending it to all seven branches.
+            GhostButton(
+                label   = if (com.tribetails.auntieos.domain.invoiceIsArchived(invoice)) "Restore" else "Archive",
+                onClick = onArchive,
+                enabled = !archiving,
+            )
+        }
+    }
+
+    // An archived invoice says what that does and does NOT mean, rather than
+    // simply vanishing from the list with no explanation on its own detail page.
+    if (com.tribetails.auntieos.domain.invoiceIsArchived(invoice)) {
+        item {
+            AuntieBanner(
+                tone  = AuntieBannerTone.Info,
+                title = "Archived",
+            ) {
+                Text(
+                    text = "This invoice is out of the working list and out of the revenue and outstanding " +
+                        "totals. It has not been deleted or cancelled, and the household can still see it " +
+                        "and still pay it.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim,
+                )
+            }
         }
     }
 
@@ -388,6 +469,59 @@ private fun invoiceDetailBody(
                 DetailRow("Due date", invoice.dueDate.ifBlank { "-" })
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
                 if (invoice.address.isNotBlank()) DetailRow("Address", invoice.address)
+            }
+        }
+    }
+
+    // ── Line items ──────────────────────────────────────────────────────────────
+    // Read-only in Task 5.1 by explicit ruling: Android renders what the web
+    // wrote. The editor and the un-invoiced-visits picker are task 5.1a.
+    item {
+        val lines = com.tribetails.auntieos.domain.invoiceLineItems(invoice)
+        DenPanel(title = "Line items") {
+            Column {
+                when {
+                    // ABSENT, not empty. Every invoice created before Task 5.1 is
+                    // in this state, so it is the common branch. It gets a
+                    // SENTENCE rather than an empty table: a heading over no rows
+                    // reads as "nothing was billed", which is a different and far
+                    // worse claim than "nobody has broken this invoice down".
+                    lines == null -> EmptyHint("No itemized breakdown. This invoice's total was entered directly.")
+                    lines.isEmpty() -> EmptyHint("Itemized as billing nothing: there is a breakdown, and it is empty.")
+                    else -> {
+                        lines.forEachIndexed { idx, line ->
+                            InvoiceLineItemRow(line, showDivider = idx > 0)
+                        }
+                        InvoiceLineTotalsRows(lines, invoice.invoiceDiscountCents)
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Lines-versus-total disagreement ─────────────────────────────────────────
+    // NOT decoration. `firestore.rules:219-226` grants `allow update: if
+    // isAuntie()` over the whole invoices collection, and `postInvoiceEvent`
+    // merges an arbitrary payload; both bypass every callable that would have
+    // kept the stored total in step with the lines. The banner NAMES BOTH
+    // FIGURES and RECONCILES NEITHER: picking a winner, or quietly showing the
+    // derived figure in place of the stored one, would hide the drift from the
+    // only person who can resolve it.
+    com.tribetails.auntieos.domain.invoiceTotalDisagreement(invoice)?.let { drift ->
+        item {
+            AuntieBanner(
+                tone  = AuntieBannerTone.Error,
+                title = "This invoice disagrees with itself",
+            ) {
+                Text(
+                    text = "The line items add up to ${com.tribetails.auntieos.domain.formatCents(drift.derivedCents)}, " +
+                        "but the total stored on the invoice says ${com.tribetails.auntieos.domain.formatCents(drift.storedCents)}. " +
+                        "Nothing has been changed to make them match, and nothing will be. The household is " +
+                        "billed the stored figure. Re-saving the line items in the web admin will recompute " +
+                        "the stored total from them, if the lines are the version you want to keep.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim,
+                )
             }
         }
     }
@@ -628,6 +762,102 @@ private fun LinkedSessionsSection(
             }
         }
     }
+}
+
+/**
+ * One billed line, read-only. Follows `LinkedSessionRow` below, including its
+ * top-hairline-between-rows treatment.
+ *
+ * THE AMOUNT IS DERIVED, not read off the document. There is no stored per-line
+ * amount, and computing it here through the shared `domain/InvoiceLineItems.kt`
+ * is what makes the lines shown and the total shown obey one rule.
+ */
+@Composable
+private fun InvoiceLineItemRow(
+    line: com.tribetails.auntieos.data.model.InvoiceLineItem,
+    showDivider: Boolean,
+) {
+    val c = AuntieTheme.colors
+    val hairline = AuntieTheme.dims.borderHairline
+    val ruleColor = c.borderSoft
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                if (showDivider) {
+                    val h = hairline.toPx()
+                    drawLine(
+                        color       = ruleColor,
+                        start       = Offset(0f, h / 2f),
+                        end         = Offset(size.width, h / 2f),
+                        strokeWidth = h,
+                    )
+                }
+            }
+            .padding(vertical = 9.dp),
+        verticalAlignment     = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                // A line whose description was lost says so, rather than
+                // rendering blank, which reads as a display bug and not as data.
+                line.description.ifBlank { "no description" },
+                style = AuntieTheme.typography.bodySmall,
+                color = if (line.description.isBlank()) c.textDim else c.textPrimary,
+            )
+            Text(
+                buildString {
+                    append(com.tribetails.auntieos.domain.formatQty(line.qty))
+                    append(" x ")
+                    append(com.tribetails.auntieos.domain.formatCents(line.unitCents))
+                    if (line.discountCents > 0) {
+                        // Printed rather than folded silently into the amount, so
+                        // the operator can see what was taken off.
+                        append(", less ")
+                        append(com.tribetails.auntieos.domain.formatCents(line.discountCents))
+                    }
+                },
+                style = AuntieTheme.typography.labelSmall,
+                color = c.textDim,
+            )
+        }
+        Text(
+            com.tribetails.auntieos.domain.formatCents(com.tribetails.auntieos.domain.lineAmountCents(line)),
+            style = AuntieTheme.typography.bodyMedium,
+            color = c.textPrimary,
+        )
+    }
+}
+
+/** Subtotal, optional whole-invoice discount, and the total the lines come to. */
+@Composable
+private fun InvoiceLineTotalsRows(
+    lines: List<com.tribetails.auntieos.data.model.InvoiceLineItem>,
+    invoiceDiscountCents: Long,
+) {
+    val subtotal = com.tribetails.auntieos.domain.invoiceSubtotalCents(lines)
+    AuntieKeyValueRow(
+        label = "Subtotal",
+        value = com.tribetails.auntieos.domain.formatCents(subtotal),
+        valueMono = true,
+    )
+    if (invoiceDiscountCents > 0) {
+        AuntieKeyValueRow(
+            label = "Invoice discount",
+            value = "-" + com.tribetails.auntieos.domain.formatCents(invoiceDiscountCents),
+            valueMono = true,
+        )
+    }
+    AuntieKeyValueRow(
+        label = "Total from these lines",
+        value = com.tribetails.auntieos.domain.formatCents(subtotal - invoiceDiscountCents),
+        valueMono = true,
+        showDivider = false,
+    )
 }
 
 @Composable

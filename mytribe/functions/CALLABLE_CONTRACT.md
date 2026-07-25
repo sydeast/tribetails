@@ -124,17 +124,49 @@ caller sent, so classify it through a shared enumerator rather than deciding
 "paid" by ruling out the other states (the AO-12 defect).
 
 ### createInvoice
-- req `{ familyId: string, kinfolkName?: string, invoiceNumber: string, client?: string, address?: string, date?: string, terms?: string, dueDate?: string, discount?: string, total: number, amountDue: number, status?: string, sessionIds?: string[] }`
+- req `{ familyId: string, kinfolkName?: string, invoiceNumber: string, client?: string, address?: string, date?: string, terms?: string, dueDate?: string, discount?: string, total: number, amountDue: number, status?: string, sessionIds?: string[], lineItems?: Array<{ description: string /* 1..200 */, qty: number /* >0, <=999 */, unitCents: number /* int 0..10_000_000 */, discountCents?: number /* int >=0 */ }> /* max 100 */, invoiceDiscountCents?: number /* int >=0 */ }`
 - res `{ ok: true, invoiceId: string }`
-- Every `?` field above is a zod `.default('')` / `.default([])`, so an omitted key
-  validates. The freeze in `test/callableContract.test.ts` is the full 13-key
-  superset, not the required subset.
+- Every `?` field above is a zod `.default('')` / `.default([])` or genuinely
+  optional, so an omitted key validates. The freeze in
+  `test/callableContract.test.ts` is the full SUPERSET, not the required subset.
+- The freeze MOVED from the flat `shapeKeys` table to the recursive
+  `shapeSignature` table in Task 5.1: `lineItems` is an array of objects, and a
+  top-level key freeze would have gone on passing while `lineItems[].unitCents`
+  was renamed underneath it.
 - The SERVER mints the doc id; the composer does not invent one. Stamps
   `kinfolkId` from `familyId` (this is why the portal can see the invoice at all),
   plus `_id`, `createdAt`, `updatedAt`.
-- Audit `BILLING_INVOICE_CREATED`. The `invoice.new` notification is best-effort:
-  a dispatch failure is logged and swallowed, so a notification outage cannot
-  fail an invoice that was already written.
+- `lineItems` IS ADDITIVE. Omit it and the behaviour is unchanged: the caller's
+  `total` / `amountDue` are stored verbatim and NO cents field is written at all.
+  That absence is load-bearing rather than cosmetic. `updateInvoice` reads the
+  PRESENCE of `lineItems` to decide whether recomputing the money is safe, so
+  writing an empty array onto an un-itemized invoice would re-arm the bug that
+  guard exists to prevent: a later due-date edit would recompute a real invoice
+  down to $0.
+- Supply `lineItems` and the SERVER owns the money. It writes `lineItems`,
+  `invoiceDiscountCents`, `subtotalCents`, `totalCents`, `amountDueCents`, and
+  the legacy dollar `total` / `amountDue` as a projection of that same
+  computation (`lib/invoiceMath.ts`). `paidCents` is 0 by construction: an
+  invoice cannot have a payment recorded against it before it exists.
+- A `total` or `amountDue` that DISAGREES with the sum of the lines is REFUSED:
+  `failed-precondition`, `details.code` of `invoice_total_mismatch` or
+  `invoice_amount_due_mismatch`, naming both figures. It is not silently
+  overwritten, because quietly substituting the server's number would hide a
+  client bug while changing what a household is billed. Unlike `updateInvoice`,
+  this callable cannot simply omit `total` from its request: the field is
+  required by the legacy shape and every un-migrated caller sends it.
+- Invalid money (a line discount larger than its line, an invoice discount
+  larger than the subtotal) is `failed-precondition` with
+  `details.code: 'invoice_money_invalid'`.
+- `lineItems: []` is an ITEMIZED invoice worth zero, deliberately distinct from
+  an ABSENT `lineItems`. It writes the cents fields, which is what lets a blank
+  invoice later receive its first line through `updateInvoice`.
+- Audit `BILLING_INVOICE_CREATED`, payload carrying `itemized` and `lineCount`.
+  The `invoice.new` notification is best-effort: a dispatch failure is logged and
+  swallowed, so a notification outage cannot fail an invoice that was already
+  written.
+- `createQuote` was deliberately NOT given line items in Task 5.1; it keeps the
+  flat freeze and the legacy shape.
 
 ### createQuote
 - req: identical to `createInvoice`, plus `sendToKinfolk?: boolean` (default false)

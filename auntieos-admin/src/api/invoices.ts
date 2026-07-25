@@ -45,16 +45,93 @@ export interface InvoiceEntry {
   /**
    * Stamped by Task 5.1's `archiveInvoice` callable, cleared by `unarchiveInvoice`.
    *
-   * ABSENT ON EVERY INVOICE THAT EXISTS TODAY: nothing writes it yet. That is
+   * ABSENT ON EVERY INVOICE THAT PREDATES 5.1, and that does not change now that
+   * the field is finally being written: writing it onto new archives does NOT
+   * retroactively give it to the invoices already in the collection. That is
    * precisely why `isArchivedInvoice` below is a PRESENCE check applied to rows
    * already loaded, and not a `where('archivedAt', '==', null)` predicate.
    * Firestore's equality-to-null matches only documents that HAVE the field set
-   * to null, so a server-side exclusion today would return zero invoices, and it
-   * would do it silently. The deployed `invoices (archivedAt ASC, date DESC)`
-   * index is waiting for 5.1 to start writing the field; until it does, the
-   * presence check is the honest reading of the same rule.
+   * to null, so a server-side exclusion would return ZERO invoices, and it would
+   * do it silently. The deployed `invoices (archivedAt ASC, date DESC)` index
+   * stays unused for this purpose until a backfill runs, which is a migration
+   * and not this task. `unarchiveInvoice` writes `archivedAt: null` rather than
+   * deleting the field, so a restored invoice already carries the shape such a
+   * backfill would converge on.
    */
   archivedAt?: Timestamp;
+  /**
+   * The itemization, written by `createInvoice` and `updateInvoice`.
+   *
+   * ABSENT IS NOT THE SAME AS EMPTY, and the distinction is load-bearing rather
+   * than pedantic. Absent means nobody has ever itemized this invoice, which is
+   * true of every invoice created before Task 5.1. Empty means somebody itemized
+   * it as billing nothing. `updateInvoice` REFUSES to recompute an un-itemized
+   * invoice for exactly this reason: "the sum of zero lines" is not the same
+   * statement as "this invoice is worth nothing", and treating them alike would
+   * rewrite a real $40 invoice to $0 the next time an operator corrected its due
+   * date. Nothing in this app may flatten the two into `lineItems ?? []`; read
+   * them through `invoiceLineItems` below.
+   */
+  lineItems?: InvoiceLineItem[];
+  /** Whole-invoice reduction, integer cents. Only meaningful alongside `lineItems`. */
+  invoiceDiscountCents?: number;
+  /** Sum of the line amounts before the invoice discount, integer cents. Server-derived. */
+  subtotalCents?: number;
+  /** The exact total in integer cents. `total` above is its rounded dollar projection. */
+  totalCents?: number;
+  /** The exact balance in integer cents. `amountDue` above is its dollar projection. */
+  amountDueCents?: number;
+}
+
+/**
+ * One billed line. Integer cents, matching the server's zod schema field for
+ * field (`mytribe/functions/src/admin/updateInvoice.ts`).
+ *
+ * There is NO stored per-line amount, deliberately. It is always derived through
+ * `lib/invoiceMath.ts#lineAmountCents`, so the lines shown and the total shown
+ * can only ever come from one rule.
+ */
+export interface InvoiceLineItem {
+  description: string;
+  /** Units billed. May be fractional (2.5 hours). */
+  qty: number;
+  /** Price per unit, an INTEGER count of cents. */
+  unitCents: number;
+  /** Optional per-line reduction, integer cents. */
+  discountCents?: number;
+}
+
+/**
+ * The stored lines, or null when this invoice has never been itemized.
+ *
+ * The single place the absent-versus-empty distinction above is read, so no
+ * screen has to remember it. Returns null for absent, `[]` for empty, and drops
+ * any row that is not a usable line: `InvoiceEntry` is a cast over raw Firestore
+ * data rather than a validation of it, and `firestore.rules` grants
+ * `allow update: if isAuntie()` over this collection, so a malformed row can
+ * genuinely be sitting on a doc. Dropping one bad line beats letting it blank
+ * the whole panel through the error boundary, which is the failure the
+ * `normalizeInvoice` note below records happening twice on live data.
+ */
+export function invoiceLineItems(row: Pick<InvoiceEntry, 'lineItems'>): InvoiceLineItem[] | null {
+  if (!Array.isArray(row.lineItems)) return null;
+  const out: InvoiceLineItem[] = [];
+  for (const entry of row.lineItems as unknown[]) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const li = entry as Record<string, unknown>;
+    const qty = li['qty'];
+    const unitCents = li['unitCents'];
+    if (typeof qty !== 'number' || !Number.isFinite(qty)) continue;
+    if (typeof unitCents !== 'number' || !Number.isFinite(unitCents)) continue;
+    const discountCents = li['discountCents'];
+    out.push({
+      description: typeof li['description'] === 'string' ? li['description'] : '',
+      qty,
+      unitCents,
+      ...(typeof discountCents === 'number' && Number.isFinite(discountCents) ? { discountCents } : {}),
+    });
+  }
+  return out;
 }
 
 /**
