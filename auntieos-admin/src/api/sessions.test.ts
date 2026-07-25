@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { SESSIONS_QUERY, sessionsWindowQuery, sessionsArchiveQuery } from './sessions';
+import {
+  SESSIONS_QUERY,
+  SESSIONS_PAGE_SIZE,
+  sessionsWindowQuery,
+  sessionsArchiveQuery,
+  sessionsPageQuery,
+  sessionsWindowPageQuery,
+} from './sessions';
 
 describe('SESSIONS_QUERY', () => {
   it('streams the flat top-level kin_care_sessions collection', () => {
@@ -63,5 +70,61 @@ describe('sessionsArchiveQuery: the older-history seam', () => {
     const spec = sessionsArchiveQuery('', '');
     expect(spec.max).toBe(300);
     expect(spec.filters).toHaveLength(2);
+  });
+});
+
+/**
+ * PHASE 4. The Auntie Time list pages both its day-of window and its Archive.
+ * `sessionsWindowQuery` / `sessionsArchiveQuery` above stay for the live
+ * listeners that still want a flat capped read.
+ */
+describe('sessionsPageQuery: the paged range', () => {
+  const spec = sessionsPageQuery('2026-01-01', '2026-03-31');
+
+  it('pages the same collection over the same inclusive range', () => {
+    expect(spec.path).toBe('kin_care_sessions');
+    expect(spec.filters).toEqual([
+      ['startTime', '>=', '2026-01-01'],
+      ['startTime', '<=', '2026-03-31'],
+    ]);
+  });
+
+  it('grows a page at a time instead of truncating at a fixed cap', () => {
+    expect(spec.pageSize).toBe(SESSIONS_PAGE_SIZE);
+    // Bigger than the other two lists on purpose: this screen's counts and its
+    // phase groups describe the whole window, so a small first page would leave
+    // three numbers describing a fragment. See the constant's own doc.
+    expect(SESSIONS_PAGE_SIZE).toBeGreaterThan(25);
+  });
+
+  it('ranges and orders on the SAME field, so no composite index is needed', () => {
+    for (const f of spec.filters ?? []) expect(f[0]).toBe(spec.order[0]);
+  });
+
+  it('keeps the desc order the deployed (kinfolkId, startTime DESC) index covers', () => {
+    expect(spec.order).toEqual(['startTime', 'desc']);
+  });
+
+  it('stays bounded even when handed a blank range', () => {
+    expect(sessionsPageQuery('', '').filters).toHaveLength(2);
+  });
+});
+
+describe('sessionsWindowPageQuery: the day-of window, paged', () => {
+  it('uses exactly the bounds the unpaged window query already used', () => {
+    const paged = sessionsWindowPageQuery('2026-07-16');
+    expect(paged.filters).toEqual(sessionsWindowQuery('2026-07-16').filters);
+    expect(paged.filters).toEqual([
+      ['startTime', '>=', '2026-06-16'],
+      ['startTime', '<=', '2026-07-31'],
+    ]);
+  });
+
+  it('reaches FORWARD as well as back, which is why this screen has no "last N days" chips', () => {
+    // The toolbar presets are backward-only lower bounds. Auntie Time's window
+    // is today plus the next fortnight plus what wrapped recently, so the two
+    // are not the same control wearing different clothes.
+    const [, , upper] = sessionsWindowPageQuery('2026-07-16').filters?.[1] ?? [];
+    expect(String(upper) > '2026-07-16').toBe(true);
   });
 });

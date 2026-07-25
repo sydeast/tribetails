@@ -1,4 +1,5 @@
 import { type CollectionSpec } from '../lib/firestore';
+import type { PagedCollectionSpec } from '../lib/usePagedCollection';
 import type { Timestamp } from 'firebase/firestore';
 
 /**
@@ -41,6 +42,31 @@ export interface InvoiceEntry {
   creditTarget?: 'accountBalance' | 'originalPaymentMethod';
   creditRedeemedAt?: Timestamp;
   createdAt: Timestamp | null;
+  /**
+   * Stamped by Task 5.1's `archiveInvoice` callable, cleared by `unarchiveInvoice`.
+   *
+   * ABSENT ON EVERY INVOICE THAT EXISTS TODAY: nothing writes it yet. That is
+   * precisely why `isArchivedInvoice` below is a PRESENCE check applied to rows
+   * already loaded, and not a `where('archivedAt', '==', null)` predicate.
+   * Firestore's equality-to-null matches only documents that HAVE the field set
+   * to null, so a server-side exclusion today would return zero invoices, and it
+   * would do it silently. The deployed `invoices (archivedAt ASC, date DESC)`
+   * index is waiting for 5.1 to start writing the field; until it does, the
+   * presence check is the honest reading of the same rule.
+   */
+  archivedAt?: Timestamp;
+}
+
+/**
+ * Has this invoice been archived?
+ *
+ * Presence, not truthiness: an archived invoice carries a Timestamp, an active
+ * one carries nothing at all. `null` is accepted as "not archived" so that an
+ * unarchive implemented as `archivedAt: null` (rather than a field delete) reads
+ * the same way here.
+ */
+export function isArchivedInvoice(row: Pick<InvoiceEntry, 'archivedAt'>): boolean {
+  return row.archivedAt !== undefined && row.archivedAt !== null;
 }
 
 /**
@@ -100,3 +126,82 @@ export const INVOICES_QUERY: CollectionSpec = {
   order: ['createdAt', 'desc'],
   max: 200,
 };
+
+/** Rows per "Load more" on the Invoices list. Same reasoning as `KINTALES_PAGE_SIZE`. */
+export const INVOICES_PAGE_SIZE = 25;
+
+export interface InvoicesPageOptions {
+  /**
+   * Lower bound on the invoice `date`, as a `YYYY-MM-DD` DAY (not a full ISO
+   * instant), or null for "All (archive)". Null adds NO predicate at all.
+   */
+  startDay: string | null;
+  /** The household facet. Blank/undefined means every household. */
+  kinfolkId?: string | undefined;
+}
+
+/**
+ * The LIST screen's own paged query. `INVOICES_QUERY` above stays as it is:
+ * `InvoiceDetail` is handed a row by value from whatever the list loaded, and
+ * nothing else pages this collection.
+ *
+ * WHY THE WINDOW MOVED OFF `createdAt` ONTO `date`, which is the one substantive
+ * change here and is not a preference:
+ *
+ *  - `createdAt` is a real Firestore Timestamp (`FieldValue.serverTimestamp()`
+ *    in createInvoice.ts / createQuote.ts). `ListToolbar.rangeStartIso` produces
+ *    an ISO STRING, and Firestore sorts every timestamp before every string, so
+ *    `where('createdAt', '>=', '2026-07-18T...')` matches NOTHING. It does not
+ *    throw; it returns an empty list. A window that silently empties the screen
+ *    is the exact failure class this codebase is built to refuse.
+ *  - Passing a real Timestamp instead is not available either: the paged hook
+ *    keys and rebuilds its spec through `JSON.stringify`/`JSON.parse` (see
+ *    `usePagedCollection`), which turns a Timestamp into a plain object the SDK
+ *    rejects.
+ *  - `date` is free text on the doc but it is what the row already displays and
+ *    what the operator means by "an invoice from last week", and it is the field
+ *    Phase 4's deployed indexes were built for: `invoices (kinfolkId ASC, date
+ *    DESC)` and `invoices (archivedAt ASC, date DESC)`.
+ *
+ * THE COST, stated rather than hidden: `orderBy('date')` drops any invoice whose
+ * `date` is missing, and a `date >= <day>` window also excludes an invoice whose
+ * `date` is the empty string that `createInvoice`'s schema defaults to. Such an
+ * invoice is reachable only under "All (archive)", where there is no predicate
+ * and blank sorts last. `Invoices.tsx` says so on screen whenever a dated window
+ * is selected, rather than letting an undated draft simply disappear.
+ *
+ * INDEXES. Range and order share `date`, so the plain window needs no composite
+ * index. With the household facet, or a sandbox admin's automatic `kinfolkId ==`
+ * scope, `invoices (kinfolkId ASC, date DESC)` covers it.
+ */
+export function invoicesPageQuery({ startDay, kinfolkId }: InvoicesPageOptions): PagedCollectionSpec {
+  const filters: CollectionSpec['filters'] = [];
+  if (kinfolkId !== undefined && kinfolkId !== '') filters.push(['kinfolkId', '==', kinfolkId]);
+  if (startDay !== null) filters.push(['date', '>=', startDay]);
+
+  return {
+    path: 'invoices',
+    order: ['date', 'desc'],
+    pageSize: INVOICES_PAGE_SIZE,
+    ...(filters.length > 0 ? { filters } : {}),
+  };
+}
+
+/**
+ * Does this invoice match the operator's search text?
+ *
+ * Client-side over the loaded rows, same contract and same disclosure as
+ * `kinTaleMatchesSearch`. Number, household and client are each tested on their
+ * own: an invoice is found by who it is for or by the number written on it, and
+ * those are the two things the row shows.
+ */
+export function invoiceMatchesSearch(
+  row: Pick<InvoiceEntry, 'invoiceNumber' | 'kinfolkName' | 'client'>,
+  search: string,
+): boolean {
+  const needle = search.trim().toLowerCase();
+  if (needle === '') return true;
+  return [row.invoiceNumber ?? '', row.kinfolkName ?? '', row.client ?? ''].some((field) =>
+    field.toLowerCase().includes(needle),
+  );
+}

@@ -2,11 +2,17 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { type Async } from '../lib/async';
 import { type SessionEntry } from '../api/sessions';
+import { type PagedCollection } from '../lib/usePagedCollection';
 
-const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
-vi.mock('../lib/firestore', () => ({ useCollection }));
+/**
+ * BOTH MODES PAGE NOW, so this file mocks `usePagedCollection` rather than
+ * `useCollection`. Everything else about the contract is identical: `state` is
+ * the same `Async<SessionEntry[]>` this screen has always rendered, which is
+ * why every pre-existing case below needed only its fixture rewrapped.
+ */
+const { usePagedCollection } = vi.hoisted(() => ({ usePagedCollection: vi.fn() }));
+vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
 
 import { Sessions } from './Sessions';
 
@@ -46,6 +52,32 @@ function entry(over: Partial<SessionEntry>): SessionEntry {
   };
 }
 
+const loadMore = vi.fn();
+const reload = vi.fn();
+
+/** A settled first page. Overrides cover the in-flight, failed and more-to-come cases. */
+function paged(
+  rows: SessionEntry[],
+  over: Partial<PagedCollection<SessionEntry>> = {},
+): PagedCollection<SessionEntry> {
+  return {
+    state: { status: 'ready', data: rows },
+    hasMore: false,
+    more: { status: 'ready', data: null },
+    loadMore,
+    reload,
+    ...over,
+  };
+}
+
+/** The spec the screen most recently asked the hook for. */
+function lastSpec(): { pageSize: number; filters?: [string, string, unknown][] } {
+  return usePagedCollection.mock.calls.at(-1)![0] as {
+    pageSize: number;
+    filters?: [string, string, unknown][];
+  };
+}
+
 // TZ pinned to a west-of-UTC zone so the AO-18 day-grouping assertions below
 // are meaningful on any CI runner (see the identical rationale in
 // lib/sessionFormat.test.ts). Restored afterAll for any sibling test file
@@ -63,12 +95,14 @@ afterAll(() => {
 const user = userEvent.setup();
 
 beforeEach(() => {
-  useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] } satisfies Async<SessionEntry[]>);
+  loadMore.mockReset();
+  reload.mockReset();
+  usePagedCollection.mockReset().mockReturnValue(paged([]));
 });
 
 describe('Sessions screen', () => {
   it('renders a streamed row with its household, service, time window, and status chip', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
+    usePagedCollection.mockReturnValue(paged([entry({})]));
     render(<Sessions />);
     // Scope by the row container: the household name also seeds the row button's
     // accessible name, so scoping keeps these assertions on the row's own cells.
@@ -83,10 +117,7 @@ describe('Sessions screen', () => {
     // what grouping by a raw slice of the string would have wrongly used.
     const eveningToday = at(0, 20);
     expect(eveningToday.slice(0, 10)).not.toBe(at(0, 12).slice(0, 10));
-    useCollection.mockReturnValue({
-      status: 'ready',
-      data: [entry({ startTime: eveningToday, endTime: at(0, 21, 30) })],
-    });
+    usePagedCollection.mockReturnValue(paged([entry({ startTime: eveningToday, endTime: at(0, 21, 30) })]));
     render(<Sessions />);
     // Scoped to the day-header specifically: the "Today" StatCard label is also
     // on the page and would otherwise make this an ambiguous match.
@@ -95,10 +126,7 @@ describe('Sessions screen', () => {
   });
 
   it('shows the local clock time in the row, not the UTC hour', () => {
-    useCollection.mockReturnValue({
-      status: 'ready',
-      data: [entry({ startTime: at(0, 20), endTime: at(0, 21, 30) })],
-    });
+    usePagedCollection.mockReturnValue(paged([entry({ startTime: at(0, 20), endTime: at(0, 21, 30) })]));
     render(<Sessions />);
     expect(screen.getByText('20:00 to 21:30')).toBeInTheDocument();
   });
@@ -111,52 +139,49 @@ describe('Sessions screen', () => {
     ['COMPLETED', 'COMPLETED'],
     ['CANCELLED', 'CANCELLED'],
   ])('renders the %s status positively as its own chip', (status, chip) => {
-    useCollection.mockReturnValue({
-      status: 'ready',
-      data: [entry({ status, startTime: at(0, 9), completedAt: at(0, 10) })],
-    });
+    usePagedCollection.mockReturnValue(paged([entry({ status, startTime: at(0, 9), completedAt: at(0, 10) })]));
     render(<Sessions />);
     expect(screen.getByText(chip)).toBeInTheDocument();
   });
 
   it('AO-12-style regression guard: an unrecognized status renders UNKNOWN, never a fabricated SCHEDULED', () => {
-    useCollection.mockReturnValue({
-      status: 'ready',
-      data: [entry({ status: 'some_new_code', startTime: at(1) })],
-    });
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'some_new_code', startTime: at(1) })]));
     render(<Sessions />);
     expect(screen.getByText('UNKNOWN')).toBeInTheDocument();
     expect(screen.queryByText('SCHEDULED')).toBeNull();
   });
 
-  it('surfaces a listener error, never a false empty', () => {
-    useCollection.mockReturnValue({ status: 'error', message: 'permission-denied' });
+  it('surfaces a read error, never a false empty', () => {
+    usePagedCollection.mockReturnValue(
+      paged([], { state: { status: 'error', message: 'permission-denied' } }),
+    );
     render(<Sessions />);
     expect(screen.getByText('permission-denied', { selector: '.async-error-detail' })).toBeInTheDocument();
     expect(screen.queryByText(/nothing on the books/i)).toBeNull();
   });
 
   it('surfaces a load failure with retry, not a silent spinner', () => {
-    useCollection.mockReturnValue({ status: 'error', message: 'deadline-exceeded', retry: vi.fn() });
+    usePagedCollection.mockReturnValue(
+      paged([], { state: { status: 'error', message: 'deadline-exceeded', retry: reload } }),
+    );
     render(<Sessions />);
     expect(screen.getByText('deadline-exceeded', { selector: '.async-error-detail' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
   });
 
   it('renders the proven-empty state only when the stream is ready and genuinely empty', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [] });
+    usePagedCollection.mockReturnValue(paged([]));
     render(<Sessions />);
     expect(screen.getByText(/nothing on the books in this window/i)).toBeInTheDocument();
   });
 
   it('filter tabs narrow the visible rows without hiding the others behind a false empty', async () => {
-    useCollection.mockReturnValue({
-      status: 'ready',
-      data: [
+    usePagedCollection.mockReturnValue(
+      paged([
         entry({ _id: 'a', kinfolkName: 'Household A', status: 'CANCELLED', startTime: at(0, 9) }),
         entry({ _id: 'b', kinfolkName: 'Household B', status: 'SCHEDULED', startTime: at(1) }),
-      ],
-    });
+      ]),
+    );
     render(<Sessions />);
     expect(screen.getByText('Household A')).toBeInTheDocument();
     expect(screen.getByText('Household B')).toBeInTheDocument();
@@ -167,7 +192,7 @@ describe('Sessions screen', () => {
   });
 
   it('shows a "nothing matches" hint (not the window empty state) when a filter excludes every row', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ status: 'SCHEDULED' })] });
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'SCHEDULED' })]));
     render(<Sessions />);
     await user.click(screen.getByRole('tab', { name: 'Cancelled' }));
     expect(screen.getByText(/nothing matches this filter/i)).toBeInTheDocument();
@@ -175,7 +200,7 @@ describe('Sessions screen', () => {
   });
 
   it('clicking a row calls onSelect with the session id', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'sess-42' })] });
+    usePagedCollection.mockReturnValue(paged([entry({ _id: 'sess-42' })]));
     const onSelect = vi.fn();
     render(<Sessions onSelect={onSelect} />);
     await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
@@ -183,7 +208,7 @@ describe('Sessions screen', () => {
   });
 
   it('propless, a row is now interactive and opens the in-screen SessionDetail view', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
+    usePagedCollection.mockReturnValue(paged([entry({})]));
     render(<Sessions />);
     // No external onSelect: the row is a real <button> that opens SessionDetail
     // (fed from this same stream, no second fetch), NOT a static dead control.
@@ -195,14 +220,13 @@ describe('Sessions screen', () => {
   });
 
   it('the "In flight" stat counts only the three active states', () => {
-    useCollection.mockReturnValue({
-      status: 'ready',
-      data: [
+    usePagedCollection.mockReturnValue(
+      paged([
         entry({ _id: 'a', status: 'ON_MY_WAY' }),
         entry({ _id: 'b', status: 'ARRIVED' }),
         entry({ _id: 'c', status: 'SCHEDULED' }),
-      ],
-    });
+      ]),
+    );
     render(<Sessions />);
     const card = screen.getByText('In flight').closest('.den-stat, button.den-stat--button');
     expect(card).not.toBeNull();
@@ -210,13 +234,12 @@ describe('Sessions screen', () => {
   });
 
   it('the "Wrapped today" stat counts only sessions completed on the local today', () => {
-    useCollection.mockReturnValue({
-      status: 'ready',
-      data: [
+    usePagedCollection.mockReturnValue(
+      paged([
         entry({ _id: 'a', status: 'COMPLETED', completedAt: at(0, 13) }),
         entry({ _id: 'b', status: 'COMPLETED', completedAt: at(-45, 13) }),
-      ],
-    });
+      ]),
+    );
     render(<Sessions />);
     const card = screen.getByText('Wrapped today').closest('.den-stat, button.den-stat--button');
     expect(card).not.toBeNull();
@@ -250,13 +273,12 @@ describe('Sessions screen: the Auntie Time window', () => {
   ];
 
   it('fetches a bounded date range rather than the flat latest 300', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [] });
+    usePagedCollection.mockReturnValue(paged([]));
     render(<Sessions />);
-    const spec = useCollection.mock.calls[0]![0] as {
-      max: number;
-      filters?: [string, string, unknown][];
-    };
-    expect(spec.max).toBe(300);
+    const spec = lastSpec();
+    // A PAGE size now, not a cap: a busy window is reachable rather than
+    // silently truncated at the far end of the sort.
+    expect(spec.pageSize).toBe(100);
     expect(spec.filters?.map((f) => [f[0], f[1]])).toEqual([
       ['startTime', '>='],
       ['startTime', '<='],
@@ -264,7 +286,7 @@ describe('Sessions screen: the Auntie Time window', () => {
   });
 
   it('renders the three phase headings, and no fourth', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: windowFixture });
+    usePagedCollection.mockReturnValue(paged(windowFixture));
     render(<Sessions />);
     const headings = screen
       .getAllByRole('heading', { level: 3 })
@@ -273,7 +295,7 @@ describe('Sessions screen: the Auntie Time window', () => {
   });
 
   it('sorts the in-flight visit, tomorrow, and the recent wrap into their own phases', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: windowFixture });
+    usePagedCollection.mockReturnValue(paged(windowFixture));
     render(<Sessions />);
     const phaseOf = (name: string) =>
       screen.getByText(name).closest('.sessions__phase')?.className;
@@ -283,13 +305,13 @@ describe('Sessions screen: the Auntie Time window', () => {
   });
 
   it('leaves a wrap from thirty days ago out of the default window', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: windowFixture });
+    usePagedCollection.mockReturnValue(paged(windowFixture));
     render(<Sessions />);
     expect(screen.queryByText('Old News')).toBeNull();
   });
 
   it('says where the older visits went, rather than just showing fewer rows', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [] });
+    usePagedCollection.mockReturnValue(paged([]));
     render(<Sessions />);
     expect(screen.getByText(/older visits are in the archive/i)).toBeInTheDocument();
   });
@@ -309,27 +331,26 @@ describe('Sessions screen: the sort control', () => {
   }
 
   it('defaults to soonest first', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: twoDays });
+    usePagedCollection.mockReturnValue(paged(twoDays));
     render(<Sessions />);
     expect(screen.getByLabelText('Sort')).toHaveValue('soonest');
     expect(renderedOrder()).toEqual(['First Up', 'Later Same Day', 'Day After']);
   });
 
   it('latest first reverses the order within the phase', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: twoDays });
+    usePagedCollection.mockReturnValue(paged(twoDays));
     render(<Sessions />);
     await user.selectOptions(screen.getByLabelText('Sort'), 'latest');
     expect(renderedOrder()).toEqual(['Day After', 'Later Same Day', 'First Up']);
   });
 
   it('reverses within a phase without reordering the phases themselves', async () => {
-    useCollection.mockReturnValue({
-      status: 'ready',
-      data: [
+    usePagedCollection.mockReturnValue(
+      paged([
         entry({ _id: 'a', kinfolkName: 'In Flight', status: 'ARRIVED', startTime: at(0, 9) }),
         entry({ _id: 'b', kinfolkName: 'Next Up', status: 'SCHEDULED', startTime: at(1) }),
-      ],
-    });
+      ]),
+    );
     render(<Sessions />);
     await user.selectOptions(screen.getByLabelText('Sort'), 'latest');
     const headings = screen
@@ -340,23 +361,20 @@ describe('Sessions screen: the sort control', () => {
 });
 
 describe('Sessions screen: the Archive', () => {
-  it('swaps in a date-ranged query over the operator-chosen range', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [] });
+  it('swaps in a date-ranged PAGED query over the operator-chosen range', async () => {
+    usePagedCollection.mockReturnValue(paged([]));
     render(<Sessions />);
     await user.click(screen.getByRole('button', { name: 'Archive' }));
 
-    const spec = useCollection.mock.calls.at(-1)![0] as {
-      max: number;
-      filters?: [string, string, unknown][];
-    };
-    expect(spec.max).toBe(300);
+    const spec = lastSpec();
+    expect(spec.pageSize).toBe(100);
     expect(spec.filters).toHaveLength(2);
     expect(screen.getByLabelText('From')).toBeInTheDocument();
     expect(screen.getByLabelText('To')).toBeInTheDocument();
   });
 
   it('defaults to the range just BEFORE the day-of window, so it never re-shows the same rows', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [] });
+    usePagedCollection.mockReturnValue(paged([]));
     render(<Sessions />);
     await user.click(screen.getByRole('button', { name: 'Archive' }));
     const from = (screen.getByLabelText('From') as HTMLInputElement).value;
@@ -370,9 +388,8 @@ describe('Sessions screen: the Archive', () => {
     // The whole point of the Archive is reaching past the window, which is
     // where an undated "Thu, Jan 16" becomes ambiguous (operator issue #17).
     const lastYear = new Date().getFullYear() - 1;
-    useCollection.mockReturnValue({
-      status: 'ready',
-      data: [
+    usePagedCollection.mockReturnValue(
+      paged([
         entry({
           _id: 'old',
           kinfolkName: 'Long Ago',
@@ -380,8 +397,8 @@ describe('Sessions screen: the Archive', () => {
           startTime: `${lastYear}-01-16T18:00:00.000Z`,
           completedAt: `${lastYear}-01-16T19:00:00.000Z`,
         }),
-      ],
-    });
+      ]),
+    );
     render(<Sessions />);
     await user.click(screen.getByRole('button', { name: 'Archive' }));
     expect(screen.getByText(`Thu, Jan 16, ${lastYear}`, { selector: '.sessions__day-header' })).toBeInTheDocument();
@@ -389,9 +406,8 @@ describe('Sessions screen: the Archive', () => {
   });
 
   it('drops the window rules in the Archive: an old wrap renders instead of vanishing', async () => {
-    useCollection.mockReturnValue({
-      status: 'ready',
-      data: [
+    usePagedCollection.mockReturnValue(
+      paged([
         entry({
           _id: 'old',
           kinfolkName: 'Old News',
@@ -399,8 +415,8 @@ describe('Sessions screen: the Archive', () => {
           startTime: at(-120),
           completedAt: at(-120, 14),
         }),
-      ],
-    });
+      ]),
+    );
     render(<Sessions />);
     expect(screen.queryByText('Old News')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
@@ -408,11 +424,163 @@ describe('Sessions screen: the Archive', () => {
   });
 
   it('goes back to the day-of view, restoring the stat row', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [] });
+    usePagedCollection.mockReturnValue(paged([]));
     render(<Sessions />);
     await user.click(screen.getByRole('button', { name: 'Archive' }));
     expect(screen.queryByText('In flight')).toBeNull();
     await user.click(screen.getByRole('button', { name: /back to auntie time/i }));
     expect(screen.getByText('In flight')).toBeInTheDocument();
+  });
+});
+/**
+ * PHASE 4. Both modes page. The risk paging introduces on THIS screen is that
+ * three counts and three phase groups start describing a fragment of the window
+ * instead of the window, so these cases are mostly about what the screen ADMITS.
+ */
+describe('Sessions screen: paging', () => {
+  it('offers Load more only while the cursor says there may be another page', () => {
+    usePagedCollection.mockReturnValue(paged([entry({})]));
+    const { unmount } = render(<Sessions />);
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+    unmount();
+    usePagedCollection.mockReturnValue(paged([entry({})], { hasMore: true }));
+    render(<Sessions />);
+    expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument();
+  });
+  it('asks the hook for the next page, and never re-implements the cursor itself', async () => {
+    usePagedCollection.mockReturnValue(paged([entry({})], { hasMore: true }));
+    render(<Sessions />);
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(loadMore).toHaveBeenCalledOnce();
+  });
+  it('blocks a second request while one is in flight, and says it is working', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({})], { hasMore: true, more: { status: 'loading' } }),
+    );
+    render(<Sessions />);
+    expect(screen.getByRole('button', { name: 'Loading more…' })).toBeDisabled();
+  });
+  it('pages in the Archive too, not only in the day-of window', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ _id: 'old', startTime: at(-120), status: 'COMPLETED', completedAt: at(-120, 14) })], {
+        hasMore: true,
+      }),
+    );
+    render(<Sessions />);
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(loadMore).toHaveBeenCalledOnce();
+  });
+  it('renders every visit of a large accumulated page, with no 300-row cap left anywhere', () => {
+    // Cap regression guard. The old query took a flat 300 and a busier range was
+    // silently truncated at the far end of the sort.
+    const many = Array.from({ length: 250 }, (_, i) =>
+      entry({
+        _id: `s${String(i)}`,
+        kinfolkName: `Household ${String(i)}`,
+        startTime: at(1, 9, i % 60),
+        endTime: at(1, 10, i % 60),
+      }),
+    );
+    usePagedCollection.mockReturnValue(paged(many));
+    render(<Sessions />);
+    expect(document.querySelectorAll('.sessions__row')).toHaveLength(250);
+    expect(screen.getByText('Household 249')).toBeInTheDocument();
+  });
+});
+describe('Sessions screen: the stat strip says what it counts', () => {
+  it('claims the whole window only once the cursor is exhausted', () => {
+    usePagedCollection.mockReturnValue(paged([entry({}), entry({ _id: 'b' })]));
+    render(<Sessions />);
+    expect(
+      screen.getByText('These counts cover all 2 visits fetched for this window.'),
+    ).toBeInTheDocument();
+  });
+  it('says the counts are partial while there are more pages to load', () => {
+    usePagedCollection.mockReturnValue(paged([entry({})], { hasMore: true }));
+    render(<Sessions />);
+    expect(
+      screen.getByText(
+        'These counts cover the 1 visit loaded so far. Load more to include the rest of the window.',
+      ),
+    ).toBeInTheDocument();
+  });
+  it('makes no claim at all while the first page is in flight', () => {
+    usePagedCollection.mockReturnValue(paged([], { state: { status: 'loading' } }));
+    render(<Sessions />);
+    expect(screen.queryByText(/These counts cover/)).toBeNull();
+  });
+  it('drops the claim in the Archive, where there is no stat strip to qualify', async () => {
+    usePagedCollection.mockReturnValue(paged([entry({})]));
+    render(<Sessions />);
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    expect(screen.queryByText(/These counts cover/)).toBeNull();
+  });
+});
+describe('Sessions screen: the Archive says how much of its range it has', () => {
+  it('states the count and the range together, not the range alone', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ _id: 'old', startTime: at(-120), status: 'COMPLETED', completedAt: at(-120, 14) })]),
+    );
+    render(<Sessions />);
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    const from = (screen.getByLabelText('From') as HTMLInputElement).value;
+    const to = (screen.getByLabelText('To') as HTMLInputElement).value;
+    expect(screen.getByText(`Showing the 1 visit from ${from} to ${to}.`)).toBeInTheDocument();
+  });
+  it('says "the first N" while the range holds more than has been fetched', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ _id: 'old', startTime: at(-120), status: 'COMPLETED', completedAt: at(-120, 14) })], {
+        hasMore: true,
+      }),
+    );
+    render(<Sessions />);
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    const from = (screen.getByLabelText('From') as HTMLInputElement).value;
+    const to = (screen.getByLabelText('To') as HTMLInputElement).value;
+    expect(
+      screen.getByText(`Showing the first 1 visit from ${from} to ${to}. There are more to load.`),
+    ).toBeInTheDocument();
+  });
+});
+describe('Sessions screen: a failed FIRST page is not a failed LATER page', () => {
+  it('replaces the list when the first page fails, and offers a retry', () => {
+    usePagedCollection.mockReturnValue(
+      paged([], { state: { status: 'error', message: 'permission-denied', retry: reload } }),
+    );
+    render(<Sessions />);
+    expect(
+      screen.getByText('permission-denied', { selector: '.async-error-detail' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(document.querySelectorAll('.sessions__row')).toHaveLength(0);
+    expect(screen.queryByText(/nothing on the books in this window/i)).toBeNull();
+  });
+  it('KEEPS the visits when a later page fails, and reports the failure beside them', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ kinfolkName: 'Still Here' })], {
+        hasMore: true,
+        more: { status: 'error', message: 'deadline-exceeded', retry: loadMore },
+      }),
+    );
+    render(<Sessions />);
+    expect(screen.getByText('Still Here')).toBeInTheDocument();
+    expect(document.querySelectorAll('.sessions__row')).toHaveLength(1);
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Couldn’t load more Kin Care sessions. deadline-exceeded');
+    expect(alert).toHaveTextContent('The 1 already loaded are unaffected');
+    expect(screen.queryByText('Kin Care sessions unavailable while the load is failing.')).toBeNull();
+  });
+  it('retries the failed page from where it stopped, not from the top', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({})], {
+        hasMore: true,
+        more: { status: 'error', message: 'deadline-exceeded', retry: loadMore },
+      }),
+    );
+    render(<Sessions />);
+    await user.click(within(screen.getByRole('alert')).getByRole('button', { name: /retry/i }));
+    expect(loadMore).toHaveBeenCalledOnce();
+    expect(reload).not.toHaveBeenCalled();
   });
 });

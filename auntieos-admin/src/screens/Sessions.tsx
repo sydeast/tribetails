@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { sessionsArchiveQuery, sessionsWindowQuery, type SessionEntry } from '../api/sessions';
+import { sessionsPageQuery, sessionsWindowPageQuery, type SessionEntry } from '../api/sessions';
 import {
   sessionState,
   sessionStateInfo,
@@ -19,7 +19,7 @@ import {
   type SessionSort,
   type SessionState,
 } from '../lib/sessionFormat';
-import { useCollection } from '../lib/firestore';
+import { usePagedCollection } from '../lib/usePagedCollection';
 import { asyncScalar } from '../lib/async';
 import { str } from '../lib/coerce';
 import { useRovingTabs } from '../lib/useRovingTabs';
@@ -74,8 +74,8 @@ interface SessionsProps {
 /**
  * Admin Sessions list ("The Den · Auntie Time", nav slug `sessions`,
  * `lib/nav.ts` is explicit that the rail label and the slug are not the same
- * word). Streams the flat `kin_care_sessions` collection through a bounded,
- * server-ordered, DATE-RANGED listener, classifies every row through the
+ * word). Reads the flat `kin_care_sessions` collection a PAGE at a time through
+ * a bounded, server-ordered, DATE-RANGED query, classifies every row through the
  * enumerated `sessionState` (never by negation), then groups the FILTERED rows
  * into Active / Upcoming / Recent, each still sub-grouped by LOCAL calendar day
  * (the AO-18 fix).
@@ -85,7 +85,7 @@ interface SessionsProps {
  * screen read `SESSIONS_QUERY`: a flat 300 rows by startTime desc, no date
  * predicate, day-grouped and nothing else. A visit from March sat in the same
  * list as tomorrow's, so the copy and the data disagreed. Now:
- *  - `sessionsWindowQuery` fetches a bounded date range, and
+ *  - `sessionsWindowPageQuery` fetches a bounded date range, and
  *    `groupSessionsByPhase` narrows it to the three phases the copy describes
  *    (see `lib/sessionFormat.ts` for each boundary and why it sits where it
  *    does).
@@ -95,8 +95,24 @@ interface SessionsProps {
  *    phase; the phases themselves keep the archive's fixed order.
  *  - The filter tabs are unchanged, and now operate inside the window.
  *  - Older history moved behind an Archive toggle, which swaps in
- *    `sessionsArchiveQuery` over an operator-chosen range and drops the phase
+ *    `sessionsPageQuery` over an operator-chosen range and drops the phase
  *    rules (escaping them is the point of opening it).
+ *
+ * PHASE 4: BOTH MODES NOW PAGE. `usePagedCollection` replaced the flat
+ * range-and-cap in each, so a busy month is reachable instead of being silently
+ * truncated at the far end of the sort, and a failed SECOND page leaves the
+ * visits already on screen exactly where they were.
+ *
+ * WHY THIS SCREEN DOES NOT WEAR `ListToolbar`, unlike KinTales and Invoices.
+ * That toolbar's windows are "the last N days from now", which is the wrong
+ * shape twice over here. Auntie Time reaches FORWARD: its window is today plus
+ * the next fortnight plus what wrapped recently, so a backward-only preset would
+ * either describe the wrong half of the list or need an upper bound the chips
+ * cannot express. And the Archive is defined as the range BEFORE that window, so
+ * a "Last 7 days" chip inside it would re-show exactly the rows the operator
+ * opened the Archive to escape. The explicit From/To pair says more than four
+ * chips can, and it already exists. A control that lies about its own scope is
+ * worse than a control that looks different from its neighbours.
  *
  * Selecting a row opens `SessionDetail`, a read-only detail view of that one
  * session (status/service, timing, household/kin, notes), resolved from this
@@ -135,16 +151,19 @@ export function Sessions({ onSelect }: SessionsProps) {
   );
   const [archiveTo, setArchiveTo] = useState(() => shiftDayIso(todayIso, -(FETCH_DAYS_BACK + 1)));
 
-  // One bounded listener either way. The spec is memoized on its inputs so a
-  // re-render cannot churn the subscription (see CollectionSpec's own note).
+  // One bounded, PAGED read either way. The spec is memoized on its inputs so a
+  // re-render cannot churn the read (see CollectionSpec's own note, which the
+  // paged hook inherits). Switching mode, or moving either archive bound, resets
+  // the cursor and the page error, which is the hook's own contract: page two of
+  // the day-of window must never append itself under the Archive's rows.
   const spec = useMemo(
     () =>
       mode === 'archive'
-        ? sessionsArchiveQuery(archiveFrom, archiveTo)
-        : sessionsWindowQuery(todayIso),
+        ? sessionsPageQuery(archiveFrom, archiveTo)
+        : sessionsWindowPageQuery(todayIso),
     [mode, archiveFrom, archiveTo, todayIso],
   );
-  const rows = useCollection<SessionEntry>(spec);
+  const { state: rows, hasMore, more, loadMore } = usePagedCollection<SessionEntry>(spec);
 
   // Every field below is read through `str()`: `SessionEntry` is a cast over raw
   // Firestore data, not a validation of it (see api/sessions.ts), so a doc can
@@ -166,6 +185,11 @@ export function Sessions({ onSelect }: SessionsProps) {
         (e) => sessionState(str(e.status)) === 'completed' && sessionDayKey(str(e.completedAt)) === todayIso,
       ).length,
   );
+
+  const loaded = rows.status === 'ready' ? rows.data.length : null;
+  const visitPlural = loaded === 1 ? '' : 's';
+  // "all 1 visit" is not a sentence anyone writes.
+  const everyOne = loaded === 1 ? 'the 1' : `all ${String(loaded)}`;
 
   // The row SessionDetail shows, resolved from the SAME live stream `rows`
   // already holds (never a second fetch): the Bookings.tsx `detailEntry`
@@ -193,17 +217,31 @@ export function Sessions({ onSelect }: SessionsProps) {
       />
 
       {mode === 'window' && (
-        <div className="sessions__summary">
-          <StatCard
-            label="In flight"
-            value={activeCount}
-            trend="on the way, arrived, or departed"
-            tone="teal"
-            feature={activeCount.kind === 'value' && activeCount.value > 0}
-          />
-          <StatCard label="Today" value={todayCount} trend="on today's calendar" tone="orange" />
-          <StatCard label="Wrapped today" value={wrappedTodayCount} trend="completed Kin Cares" tone="success" />
-        </div>
+        <>
+          <div className="sessions__summary">
+            <StatCard
+              label="In flight"
+              value={activeCount}
+              trend="on the way, arrived, or departed"
+              tone="teal"
+              feature={activeCount.kind === 'value' && activeCount.value > 0}
+            />
+            <StatCard label="Today" value={todayCount} trend="on today's calendar" tone="orange" />
+            <StatCard label="Wrapped today" value={wrappedTodayCount} trend="completed Kin Cares" tone="success" />
+          </div>
+
+          {/* What the three numbers above actually count. They are computed over
+              the visits LOADED, which is the whole fetched window only once the
+              cursor is exhausted, so the line reads off `hasMore` rather than
+              trusting the page size to have covered everything. */}
+          {loaded !== null && (
+            <p className="sessions__stats-note">
+              {hasMore
+                ? `These counts cover the ${String(loaded)} visit${visitPlural} loaded so far. Load more to include the rest of the window.`
+                : `These counts cover ${everyOne} visit${visitPlural} fetched for this window.`}
+            </p>
+          )}
+        </>
       )}
 
       <DenPanel
@@ -221,28 +259,42 @@ export function Sessions({ onSelect }: SessionsProps) {
         }
       >
         {mode === 'archive' && (
-          <div className="sessions__range">
-            <label className="sessions__range-field">
-              <span className="sessions__control-label">From</span>
-              <input
-                type="date"
-                className="sessions__range-input"
-                value={archiveFrom}
-                max={archiveTo}
-                onChange={(e) => setArchiveFrom(e.target.value)}
-              />
-            </label>
-            <label className="sessions__range-field">
-              <span className="sessions__control-label">To</span>
-              <input
-                type="date"
-                className="sessions__range-input"
-                value={archiveTo}
-                min={archiveFrom}
-                onChange={(e) => setArchiveTo(e.target.value)}
-              />
-            </label>
-          </div>
+          <>
+            <div className="sessions__range">
+              <label className="sessions__range-field">
+                <span className="sessions__control-label">From</span>
+                <input
+                  type="date"
+                  className="sessions__range-input"
+                  value={archiveFrom}
+                  max={archiveTo}
+                  onChange={(e) => setArchiveFrom(e.target.value)}
+                />
+              </label>
+              <label className="sessions__range-field">
+                <span className="sessions__control-label">To</span>
+                <input
+                  type="date"
+                  className="sessions__range-input"
+                  value={archiveTo}
+                  min={archiveFrom}
+                  onChange={(e) => setArchiveTo(e.target.value)}
+                />
+              </label>
+            </div>
+
+            {/* The Archive's own scope line. The range is right there in the two
+                inputs; what the operator cannot see is how much of it has
+                actually been fetched, which is the thing the filter tabs and the
+                day groups below are really describing. */}
+            {loaded !== null && (
+              <p className="sessions__range-note">
+                {hasMore
+                  ? `Showing the first ${String(loaded)} visit${visitPlural} from ${archiveFrom} to ${archiveTo}. There are more to load.`
+                  : `Showing ${everyOne} visit${visitPlural} from ${archiveFrom} to ${archiveTo}.`}
+              </p>
+            )}
+          </>
         )}
 
         <AsyncRegion
@@ -338,6 +390,31 @@ export function Sessions({ onSelect }: SessionsProps) {
                       </li>
                     ))}
                   </ul>
+                )}
+
+                {/* A FAILED PAGE IS NOT A FAILED LIST. The visits above are
+                    still true, the cursor has not advanced, and the failure is
+                    reported beside them rather than replacing them. That is why
+                    this is an inline alert and not the AsyncRegion banner. */}
+                {hasMore && (
+                  <div className="sessions__more">
+                    <GhostButton
+                      label={more.status === 'loading' ? 'Loading more…' : 'Load more'}
+                      onClick={loadMore}
+                      disabled={more.status === 'loading'}
+                    />
+                    {more.status === 'error' && (
+                      <p className="sessions__more-error" role="alert">
+                        Couldn&rsquo;t load more Kin Care sessions. {more.message} The{' '}
+                        {String(data.length)} already loaded are unaffected.
+                        {more.retry && (
+                          <button type="button" className="async-retry" onClick={more.retry}>
+                            Retry
+                          </button>
+                        )}
+                      </p>
+                    )}
+                  </div>
                 )}
               </>
             );

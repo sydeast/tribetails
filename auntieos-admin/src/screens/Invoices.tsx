@@ -1,5 +1,12 @@
 import { useMemo, useState } from 'react';
-import { INVOICES_QUERY, normalizeInvoice, type InvoiceEntry } from '../api/invoices';
+import {
+  invoiceMatchesSearch,
+  invoicesPageQuery,
+  isArchivedInvoice,
+  normalizeInvoice,
+  type InvoiceEntry,
+} from '../api/invoices';
+import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import {
   formatUsd,
   humanizeDate,
@@ -10,11 +17,19 @@ import {
   type InvoiceState,
 } from '../lib/invoiceFormat';
 import { useCollection } from '../lib/firestore';
+import { usePagedCollection } from '../lib/usePagedCollection';
 import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
+import {
+  ListToolbar,
+  DATE_RANGE_PRESETS,
+  DEFAULT_DATE_RANGE,
+  rangeStartIso,
+  type DateRangeKey,
+} from '../components/ListToolbar';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { PrimaryButton } from '../components/Buttons';
+import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { InvoiceDetail } from '../components/InvoiceDetail';
 import { InvoiceCreate, type InvoiceCreateMode } from './InvoiceCreate';
 import './Invoices.css';
@@ -45,6 +60,40 @@ const FILTERS: readonly FilterDef[] = [
   { key: 'credit', label: 'Credit', test: (s) => s === 'credit' || s === 'redeemed' },
 ];
 
+/**
+ * The archive facet. Blank is the toolbar's own "all" value, so the three
+ * states are: hide archived (the default), show them alongside, show only them.
+ *
+ * Applied CLIENT-SIDE over the loaded page, deliberately. See
+ * `InvoiceEntry.archivedAt`: nothing writes the field yet, and Firestore's
+ * `== null` matches only documents that HAVE it, so a server-side exclusion
+ * today would return every invoice as "archived" by omission, silently. A
+ * presence check over the loaded rows is the same rule with none of that.
+ */
+type ArchivedMode = 'hide' | '' | 'only';
+
+const ARCHIVED_OPTIONS = [
+  { value: 'hide', label: 'Hidden' },
+  { value: 'only', label: 'Only archived' },
+] as const;
+
+function archivedAllows(mode: ArchivedMode, entry: InvoiceEntry): boolean {
+  if (mode === 'hide') return !isArchivedInvoice(entry);
+  if (mode === 'only') return isArchivedInvoice(entry);
+  return true;
+}
+
+/**
+ * The selected window as it reads inside a sentence, e.g. "the last 7 days".
+ * Derived from the toolbar's own preset list so the chip and the prose can never
+ * name two different windows.
+ */
+function rangeLabel(range: DateRangeKey): string {
+  const preset = DATE_RANGE_PRESETS.find((p) => p.key === range);
+  if (preset === undefined || preset.days === null) return 'the archive';
+  return `the ${preset.label.toLowerCase()}`;
+}
+
 /** One row's derived display facts, computed once per render pass. */
 interface RowView {
   entry: InvoiceEntry;
@@ -67,11 +116,29 @@ function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
 }
 
 /**
- * Admin Invoices list ("The Den · Invoices"). Streams the flat `invoices`
- * collection through the bounded, server-ordered listener (INVOICES_QUERY,
- * createdAt desc, capped 200), then classifies every row through the
+ * Admin Invoices list ("The Den · Invoices"). Reads the flat `invoices`
+ * collection a PAGE at a time through `usePagedCollection` (invoice `date` desc,
+ * windowed by the toolbar's date preset), then classifies every row through the
  * enumerated `invoiceState` (never by negation, see lib/invoiceFormat.ts for
  * the AO-12 rationale) for both the summary stat strip and the filter tabs.
+ *
+ * WHAT PHASE 4 CHANGED. The date window, the household facet and the archive
+ * facet are SERVER-side or list-wide; the status tabs and the search box narrow
+ * what is already loaded. They compose in that order, and the screen says which
+ * is which, because the difference decides what a count means:
+ *
+ *  - the toolbar note states the window, how many invoices are LOADED, and that
+ *    search runs over those rather than over the books,
+ *  - the stat strip carries a line saying whether Outstanding / Billed / Overdue
+ *    cover the whole window or only what is loaded so far. "Billed total" in
+ *    particular reads like a business fact, and across a partial page it is not
+ *    one,
+ *  - the empty state names the window, never the books.
+ *
+ * ARCHIVED INVOICES ARE EXCLUDED BY DEFAULT, by the presence of `archivedAt`,
+ * with a facet to include or isolate them. Nothing writes that field until Task
+ * 5.1; until then the exclusion is a no-op that costs nothing and needs no
+ * second code path later.
  *
  * InvoiceDetail (row actions: reminder/mark-paid/receipt) and InvoiceCreate
  * (new invoice/new quote) are now BUILT. Unlike the FormSchemas editor (a
@@ -106,8 +173,11 @@ interface CreatingState {
   seedKinfolkId?: string;
 }
 export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: InvoicesProps = {}) {
-  const rows = useCollection<InvoiceEntry>(INVOICES_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [search, setSearch] = useState('');
+  const [range, setRange] = useState<DateRangeKey>(DEFAULT_DATE_RANGE);
+  const [kinfolkId, setKinfolkId] = useState('');
+  const [archived, setArchived] = useState<ArchivedMode>('hide');
   const [selectedId, setSelectedId] = useState<string | null>(initialInvoiceId ?? null);
   // Seeded only on mount: reopening the composer from the "New quote" button
   // later must start blank, not silently re-seed the household from a stale URL.
@@ -124,16 +194,48 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
     activeIndex: FILTERS.findIndex((f) => f.key === filter),
   });
 
-  const selected =
-    selectedId && rows.status === 'ready' ? rows.data.find((r) => r._id === selectedId) : undefined;
-
   // Computed once per render, not per keystroke/tick: today doesn't change
   // mid-session, and recomputing on every render would be a stable value
   // recreated every time regardless, this just names that stability.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
 
+  // The window's lower bound as a DAY, because `invoices.date` is a `YYYY-MM-DD`
+  // day string rather than an instant (see `invoicesPageQuery`). Truncating the
+  // instant to its day makes the boundary day itself fall inside the window,
+  // which is what "last 7 days" means to the person reading it.
+  const startDay = useMemo(() => rangeStartIso(range, new Date())?.slice(0, 10) ?? null, [range]);
+  const spec = useMemo(() => invoicesPageQuery({ startDay, kinfolkId }), [startDay, kinfolkId]);
+  const { state: rows, hasMore, more, loadMore } = usePagedCollection<InvoiceEntry>(spec);
+
+  // The facet's options come from the household DIRECTORY rather than from the
+  // loaded invoices: a facet built from the page can only offer households that
+  // are already visible, which is the opposite of what the control is for.
+  const households = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const householdOptions = useMemo(
+    () =>
+      households.status === 'ready'
+        ? households.data.map((kf) => ({ value: kf._id, label: kinfolkDisplayName(kf) }))
+        : [],
+    [households],
+  );
+
+  const selected =
+    selectedId && rows.status === 'ready' ? rows.data.find((r) => r._id === selectedId) : undefined;
+
+  // THE DEEP LINK CAN NOW MISS. `/invoices?invoiceId=<id>` is where the
+  // Notifications feed's "Open" lands, and it resolves against the rows this
+  // screen has loaded. That used to be the 200 newest and is now one page of one
+  // date window, so an invoice dated outside it opens NOTHING. Silently opening
+  // nothing after a click is the dead-control failure in another costume, so the
+  // screen says which of its own filters is in the way.
+  const deepLinkMissed =
+    initialInvoiceId !== undefined &&
+    selectedId === initialInvoiceId &&
+    rows.status === 'ready' &&
+    selected === undefined;
+
   // Classify every row exactly once (memoized), then project the stat strip AND
-  // the list off the SAME views, rather than re-walking all 200 rows per stat.
+  // the list off the SAME views, rather than re-walking the page per stat.
   // asyncScalar's projector runs only in the `ready` branch, where `views` holds
   // the ready data; AsyncRegion likewise renders its children only when ready.
   const views = useMemo(
@@ -141,11 +243,50 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
     [rows, todayIso],
   );
 
-  const outstandingTotal = asyncScalar(rows, () =>
-    views.filter((r) => r.state === 'open').reduce((sum, r) => sum + r.entry.amountDue, 0),
+  // The archive facet is list-wide, not a tab: it decides which rows this screen
+  // is ABOUT, so the stat strip is projected off the survivors. An archived
+  // invoice counted into Outstanding would be money the operator has already
+  // decided to stop chasing.
+  const inScope = useMemo(
+    () => views.filter((v) => archivedAllows(archived, v.entry)),
+    [views, archived],
   );
-  const billedTotal = asyncScalar(rows, (data) => data.reduce((sum, e) => sum + e.total, 0));
-  const overdueCount = asyncScalar(rows, () => views.filter((r) => r.overdue).length);
+  const archivedHidden = views.length - inScope.length;
+
+  const outstandingTotal = asyncScalar(rows, () =>
+    inScope.filter((r) => r.state === 'open').reduce((sum, r) => sum + r.entry.amountDue, 0),
+  );
+  const billedTotal = asyncScalar(rows, () => inScope.reduce((sum, r) => sum + r.entry.total, 0));
+  const overdueCount = asyncScalar(rows, () => inScope.filter((r) => r.overdue).length);
+
+  const windowLabel = rangeLabel(range);
+  const loaded = rows.status === 'ready' ? inScope.length : null;
+  const plural = loaded === 1 ? '' : 's';
+  // "all 1 invoice" is not a sentence anyone writes.
+  const everyOne = loaded === 1 ? 'the 1' : `all ${String(loaded)}`;
+
+  // Built as single strings rather than as adjacent JSX expressions: each of
+  // these is ONE sentence to the operator, and it should be one text node to a
+  // screen reader too.
+  const statsNote =
+    loaded === null
+      ? null
+      : (hasMore
+          ? `These totals cover the ${String(loaded)} invoice${plural} loaded so far, not all of ${windowLabel}.`
+          : `These totals cover ${everyOne} invoice${plural} in ${windowLabel}.`) +
+        (archivedHidden > 0
+          ? ` ${String(archivedHidden)} archived invoice${archivedHidden === 1 ? '' : 's'} excluded.`
+          : '');
+
+  // THE HONESTY LINE. What the search box actually reaches, plus the one cost of
+  // windowing on the free-text `date` field, said out loud rather than left as a
+  // row that quietly never appears.
+  const scopeNote =
+    (loaded === null
+      ? `Search covers invoice number, household and client, within ${windowLabel}.`
+      : `Searching the ${String(loaded)} invoice${plural} loaded from ${windowLabel}, by number, household and client.` +
+        (hasMore ? ' Load more to reach further back.' : '')) +
+    (range === 'all' ? '' : ' Invoices with no date appear only under All (archive).');
 
   return (
     <div className="screen">
@@ -153,7 +294,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
         kicker="The Den · Invoices"
         title="Getting"
         accentTail="paid."
-        subtitle="Every invoice on the books, newest first."
+        subtitle="Every invoice in the window you choose, by invoice date, newest first."
         trailing={
           <div className="invoices__new-actions">
             <PrimaryButton label="New quote" onClick={() => setCreating({ mode: 'quote' })} />
@@ -171,7 +312,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           feature={outstandingTotal.kind === 'value' && outstandingTotal.value > 0}
           formatValue={formatUsd}
         />
-        <StatCard label="Billed total" value={billedTotal} trend="all invoices on the books" tone="teal" formatValue={formatUsd} />
+        <StatCard label="Billed total" value={billedTotal} trend="invoiced in this window" tone="teal" formatValue={formatUsd} />
         <StatCard
           label="Overdue"
           value={overdueCount}
@@ -181,20 +322,70 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
         />
       </div>
 
-      <DenPanel title="Invoices" subtitle="Newest first, capped at 200.">
+      {/* What the three totals above actually cover. "Billed total" especially:
+          summed across a partial page it reads like a book figure and is not
+          one, so the line reads off `hasMore` rather than assuming a full page. */}
+      {statsNote !== null && <p className="invoices__stats-note">{statsNote}</p>}
+
+      <DenPanel title="Invoices" subtitle="By invoice date, newest first, a page at a time.">
+        <ListToolbar
+          label="Filter invoices"
+          search={search}
+          onSearchChange={setSearch}
+          searchLabel="Search invoices"
+          range={range}
+          onRangeChange={setRange}
+          facets={[
+            {
+              id: 'household',
+              label: 'Household',
+              value: kinfolkId,
+              onChange: setKinfolkId,
+              options: householdOptions,
+            },
+            {
+              id: 'archived',
+              label: 'Archived',
+              value: archived,
+              onChange: (value) => setArchived(value as ArchivedMode),
+              options: ARCHIVED_OPTIONS,
+              allLabel: 'Included',
+            },
+          ]}
+          note={
+            <>
+              {scopeNote}
+              {households.status === 'error' && (
+                <span className="invoices__facet-error">
+                  {' '}
+                  Household list unavailable: {households.message}
+                </span>
+              )}
+            </>
+          }
+        />
+
+        {deepLinkMissed && (
+          <p className="invoices__deep-link-miss" role="alert">
+            {`The invoice this link points at is not in ${windowLabel}. Try All (archive), clear the household filter, or Load more.`}
+          </p>
+        )}
+
         <AsyncRegion
           state={rows}
           what="invoices"
           isEmpty={(data) => data.length === 0}
           loading={<p className="invoices__hint">Loading invoices…</p>}
-          empty={<EmptyHint>No invoices on the books yet.</EmptyHint>}
+          empty={<EmptyHint>{`No invoices in ${windowLabel}.`}</EmptyHint>}
         >
-          {() => {
+          {(data) => {
             // Non-null: FILTERS lists all seven FilterKey members above, and `filter`
             // only ever holds a key set via setFilter(f.key) from that same array, so
             // this always finds one, TS just can't see that invariant through .find().
             const activeFilter = FILTERS.find((f) => f.key === filter)!;
-            const visible = views.filter((v) => activeFilter.test(v.state, v.overdue));
+            const visible = inScope
+              .filter((v) => activeFilter.test(v.state, v.overdue))
+              .filter((v) => invoiceMatchesSearch(v.entry, search));
 
             return (
               <>
@@ -215,13 +406,42 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
                 </div>
 
                 {visible.length === 0 ? (
-                  <EmptyHint>Nothing matches this filter.</EmptyHint>
+                  <EmptyHint>
+                    {`Nothing in the loaded invoices matches this filter.${
+                      hasMore ? ' Load more to reach further back.' : ''
+                    }`}
+                  </EmptyHint>
                 ) : (
                   <ul className="invoices__list">
                     {visible.map((v) => (
                       <InvoiceRow key={v.entry._id} view={v} todayIso={todayIso} onSelect={setSelectedId} />
                     ))}
                   </ul>
+                )}
+
+                {/* A FAILED PAGE IS NOT A FAILED LIST. The rows above are still
+                    true, the cursor has not moved, and the failure is reported
+                    beside them rather than replacing them. That is why this is
+                    an inline alert and not the AsyncRegion banner above. */}
+                {hasMore && (
+                  <div className="invoices__more">
+                    <GhostButton
+                      label={more.status === 'loading' ? 'Loading more…' : 'Load more'}
+                      onClick={loadMore}
+                      disabled={more.status === 'loading'}
+                    />
+                    {more.status === 'error' && (
+                      <p className="invoices__more-error" role="alert">
+                        Couldn&rsquo;t load more invoices. {more.message} The{' '}
+                        {String(data.length)} already listed are unaffected.
+                        {more.retry && (
+                          <button type="button" className="async-retry" onClick={more.retry}>
+                            Retry
+                          </button>
+                        )}
+                      </p>
+                    )}
+                  </div>
                 )}
               </>
             );
