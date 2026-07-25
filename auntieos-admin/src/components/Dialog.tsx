@@ -7,6 +7,16 @@ interface DialogProps {
   children: ReactNode;
   /** Action row (e.g. Cancel / Confirm buttons). */
   footer?: ReactNode;
+  /**
+   * `'center'` (default) is the confirm/edit modal every screen already uses.
+   * `'sheet'` is the full-height right-side panel the archive used for a
+   * per-record detail view with several stacked sections
+   * (`BookingDetailModal.kt`, 480dp). A modifier rather than a second
+   * component, because the parts that are easy to get wrong (Escape, the Tab
+   * focus trap, focus restore, backdrop dismissal, the labelled
+   * `role="dialog"`) are identical and must not be re-implemented per shape.
+   */
+  variant?: 'center' | 'sheet';
 }
 
 /**
@@ -17,7 +27,7 @@ interface DialogProps {
  * ~28 screens that need a confirm/edit modal do not each re-implement (and each
  * omit) these.
  */
-export function Dialog({ title, onClose, children, footer }: DialogProps) {
+export function Dialog({ title, onClose, children, footer, variant = 'center' }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
@@ -51,14 +61,14 @@ export function Dialog({ title, onClose, children, footer }: DialogProps) {
 
   return (
     <div
-      className="dialog__backdrop"
+      className={variant === 'sheet' ? 'dialog__backdrop dialog__backdrop--sheet' : 'dialog__backdrop'}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
         ref={panelRef}
-        className="dialog"
+        className={variant === 'sheet' ? 'dialog dialog--sheet' : 'dialog'}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
