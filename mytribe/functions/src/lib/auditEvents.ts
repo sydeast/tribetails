@@ -189,6 +189,11 @@ export const AUDIT_EVENTS = {
   SUPPLY_ADJUSTED: 'SUPPLY_ADJUSTED',
   SUPPLY_UPSERTED: 'SUPPLY_UPSERTED',
   EXPIRATION_UPSERTED: 'EXPIRATION_UPSERTED',
+  // A brand logo was set or cleared on `business_settings`
+  // (confirmBrandAssetUpload). Payload carries the kind (businessLogo /
+  // portalLogo) and the action, never the URL: the asset is operator-supplied
+  // branding, and the doc itself is the record of what it currently is.
+  BRANDING_ASSET_UPDATED: 'BRANDING_ASSET_UPDATED',
 } as const;
 
 export type AuditEvent = (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];

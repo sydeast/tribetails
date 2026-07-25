@@ -1,6 +1,9 @@
 import { Link } from '@tanstack/react-router';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth, useSignOut } from '../lib/auth';
-import { useAccessState } from '../lib/activeTribe';
+import { useAccessState, getActiveKinfolkId } from '../lib/activeTribe';
+import { getMyHome } from '../api/portal';
+import { BrandLogo } from './BrandLogo';
 
 export type PortalNavTab = 'home' | 'tribe' | 'schedule' | 'kintales' | 'invoices' | 'account' | 'messages';
 
@@ -43,6 +46,31 @@ export function PortalNav(props: { active: PortalNavTab; displayName?: string })
   const authState = useAuth();
   const access = useAccessState();
   const { signOut, signingOut } = useSignOut();
+
+  // Operator branding, off the EXISTING `getMyHome` payload rather than a new
+  // callable. That payload already carried `businessLogoUrl` (the portal logo)
+  // and `businessName` on every Home and Account load; the portal simply threw
+  // them away. Same query key as Home.tsx and Account.tsx, so on those screens
+  // this is free.
+  //
+  // `staleTime` is the reason this does not become a callable per navigation:
+  // Home/Account keep their own staleTime-0 observers and still refetch when
+  // they mount, while this one reuses whatever is cached. Branding changes at
+  // most a few times a year, so five minutes of staleness costs nothing and a
+  // refetch on every screen change would cost a round trip each time.
+  //
+  // A FAILURE HERE IS SILENT ON PURPOSE, the one place in this codebase where
+  // that is right: the query is not rendered as data, it decides whether an
+  // optional decoration appears. There is no degraded state to disclose,
+  // because the header without a logo IS the shipped header. Home.tsx still
+  // surfaces its own getMyHome failure as a LaunchError; this observer must not
+  // put a second error banner in the chrome of every screen for a missing logo.
+  const kinfolkId = getActiveKinfolkId();
+  const branding = useQuery({
+    queryKey: ['myHome', kinfolkId],
+    queryFn: () => getMyHome(kinfolkId),
+    staleTime: 5 * 60_000,
+  });
   const initial =
     (props.displayName || (authState.status === 'signedIn' ? (authState.user.email ?? '') : '') || 'M')
       .charAt(0)
@@ -52,6 +80,10 @@ export function PortalNav(props: { active: PortalNavTab; displayName?: string })
     <>
       <nav className="nav">
         <div className="in">
+          <BrandLogo
+            logoUrl={branding.data?.businessLogoUrl}
+            businessName={branding.data?.businessName}
+          />
           <div className="wordmark">
             My<span className="grad">Tribe</span>
           </div>

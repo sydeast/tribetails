@@ -248,3 +248,47 @@ callable is the enforcement.
   `android .../ui/home/DashboardLayout.kt`, and the superseded
   `web/composeApp/.../screens/home/DashboardLayout.kt`. One field, three
   parsers, so a layout arranged on any surface opens arranged on the others.
+
+## Branding (admin-gated)
+
+### confirmBrandAssetUpload
+- req `{ kind: 'businessLogo' | 'portalLogo', secureUrl: string /* url, <=2000 */ | null }`
+- res `{ kind, logoUrl: string, logoRemovedAt: string }`
+- `secureUrl: null` is the REMOVE action, on the same callable. One callable
+  rather than a `removeBrandAsset` sibling because set and clear write the same
+  two fields on the same doc under the same gate, and a second callable would be
+  a second place for the "what does cleared mean" rule to drift.
+- **There is deliberately no matching signer.** AuntieOS's already-deployed
+  `/api/cloudinary/sign-upload` (`web/functions/index.js`) is what mints the
+  signature, and BOTH admin clients already call it with entityType `BUSINESS`
+  and entityId `business_settings` to upload the logo today. Adding a MyTribe
+  signer for the same upload is the exact shape of the `signCloudinaryUpload`
+  collision recorded at the top of `src/index.ts`. See `src/lib/brandAsset.ts`.
+- Writes are field-scoped and merged: `businessLogo` sets top-level `logoUrl` +
+  `logoRemovedAt`; `portalLogo` sets `mytribePortal.logoUrl` +
+  `mytribePortal.logoRemovedAt` as a NESTED map, so a logo change can never blank
+  the portal's theme, banner, home layout or chat config.
+- `invalid-argument` when `secureUrl` is not provably ours:
+  `assertCloudinaryUrlInFolder` requires https, host `res.cloudinary.com`, our
+  cloud name, an `/image/upload/` asset, and the signed folder
+  `tribetails/business/business_settings`. This is the only check between a
+  client-supplied string and the CLIENT-FACING portal header, which is why the
+  admin never writes `logoUrl` directly even though `firestore.rules` would let
+  it (`business_settings` is `allow write: if isAuntie()`).
+- `logoRemovedAt` exists so a CLEARED logo stays distinguishable from one that
+  was NEVER SET. Both are `logoUrl === ''`; without the stamp an operator who
+  presses Remove sees the identical empty panel a fresh install shows and cannot
+  tell the removal landed. Mirrored in `auntieos-admin/src/api/settings.ts` and
+  rendered by `logoStateLabel` (`src/lib/settingsFormat.ts`).
+- **The Cloudinary asset is NOT deleted**, only the reference. These functions
+  hold no Cloudinary delete credential, a mistaken removal would otherwise be
+  unrecoverable, and the URL may still be live in an already-sent email. The
+  admin's copy says so rather than implying a deletion that does not happen.
+- A removal never touches Cloudinary config, so a clear still works when signing
+  is misconfigured. Otherwise a bad logo could be stranded on the portal with no
+  way to take it down.
+- Reads need no callable. `getMyHome` already returns `businessLogoUrl` (which is
+  `mytribePortal.logoUrl`) and the whole `portal` config to the kinfolk portal on
+  every Home and Account load; the portal was simply discarding it. Limits are
+  duplicated in `auntieos-admin/src/lib/brandAssetFile.ts` (5 MB, PNG/JPEG/WebP,
+  48px..4000px) and enforced there BEFORE upload; SVG is refused on both sides.

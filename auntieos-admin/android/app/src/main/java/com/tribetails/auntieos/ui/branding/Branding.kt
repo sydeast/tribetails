@@ -58,13 +58,52 @@ fun BusinessSettings.withBranding(
     tagline: String,
     greeting: String,
     accentTail: String,
+    logoRemovedAt: String = this.logoRemovedAt,
 ): BusinessSettings = copy(
     logoUrl = logoUrl.trim(),
+    logoRemovedAt = logoRemovedAt,
     brandWordmark = wordmark.trim(),
     brandTagline = tagline.trim(),
     homeGreeting = greeting.trim(),
     homeAccentTail = accentTail.trim(),
 )
+
+/** The three states a logo slot can be in. Two of them are both `logoUrl == ""`. */
+enum class LogoState { SET, REMOVED, NEVER_SET }
+
+/**
+ * Which of the three states to show. REMOVED and NEVER_SET are distinguished
+ * ONLY by [logoRemovedAt]; collapsing them would leave an operator who just
+ * pressed Remove looking at the same panel a fresh install shows, with no
+ * confirmation the removal landed. Mirrors `logoStateLabel` in the React admin
+ * (`src/lib/settingsFormat.ts`).
+ */
+fun logoState(logoUrl: String, logoRemovedAt: String): LogoState = when {
+    logoUrl.isNotBlank() -> LogoState.SET
+    logoRemovedAt.isNotBlank() -> LogoState.REMOVED
+    else -> LogoState.NEVER_SET
+}
+
+/**
+ * The `logoRemovedAt` stamp a branding save should carry, given what was loaded
+ * and what is about to be written. Pure, and the clock is the caller's, so it is
+ * unit-testable.
+ *
+ * Three cases, and the middle one is the reason this is a function rather than a
+ * ternary at the call site: a save that leaves an ALREADY-blank logo blank must
+ * NOT restamp, or every unrelated text edit would keep moving the removal date
+ * forward and the operator could never tell when the logo actually went.
+ */
+fun nextLogoRemovedAt(
+    previousLogoUrl: String,
+    previousRemovedAt: String,
+    nextLogoUrl: String,
+    nowIso: String,
+): String = when {
+    nextLogoUrl.isNotBlank() -> ""                                   // a logo is set: nothing was removed
+    previousLogoUrl.isNotBlank() -> nowIso                           // this save is the removal
+    else -> previousRemovedAt                                        // already blank: leave the record alone
+}
 
 /** True when any of the five branding fields differ (Save-bar enablement). */
 fun brandingDirty(loaded: BusinessSettings, edited: BusinessSettings): Boolean =

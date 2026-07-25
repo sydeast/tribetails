@@ -5,6 +5,8 @@ import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
 import { Toggle } from '../../components/Toggle';
 import { portalHomeSummary } from '../../lib/settingsFormat';
+import { type ImageDecoder } from '../../lib/brandAssetFile';
+import { LogoUploadField } from './LogoUploadField';
 // The `settingsEdit__*` class vocabulary these sections use lives here. It is
 // also depended on by the sibling editors (BusinessHoursEditor, TimeOffEditor,
 // KinCareRatesEditor), which import their own CSS but reuse these input / save-row
@@ -42,7 +44,6 @@ export type StringFieldKey =
   | 'venmoHandle'
   | 'paypalHandle'
   | 'cashappHandle'
-  | 'logoUrl'
   | 'brandWordmark'
   | 'brandTagline'
   | 'homeGreeting'
@@ -72,8 +73,16 @@ export const PAYMENT_FIELDS: readonly TextFieldSpec[] = [
   { key: 'cashappHandle', label: 'Cash App', placeholder: '$tribetails' },
 ];
 
+/**
+ * `logoUrl` is NOT here any more. It was a free-text "Logo URL" box, which is
+ * the placeholder this task replaced: it asked an operator to produce a hosted
+ * image address by themselves, accepted any string including one pointing at
+ * somebody else's server, and offered no way to see the result before saving.
+ * The logo is now a real upload (`LogoUploadField`), and it saves through
+ * `confirmBrandAssetUpload` rather than through this panel's Save bar, because
+ * by the time Save could be pressed the file is already in Cloudinary.
+ */
 export const BRANDING_FIELDS: readonly TextFieldSpec[] = [
-  { key: 'logoUrl', label: 'Logo URL', placeholder: 'https://…' },
   { key: 'brandWordmark', label: 'App name', placeholder: 'AuntieOS' },
   { key: 'brandTagline', label: 'Tagline', placeholder: 'Tribe Tails Care' },
   { key: 'homeGreeting', label: 'Home greeting' },
@@ -243,6 +252,10 @@ export function BookingBehaviorSection({ data, onSave }: BookingBehaviorSectionP
 interface MyTribePortalSectionProps {
   data: BusinessSettings;
   onSave: (patch: Partial<BusinessSettings>) => Promise<void>;
+  /** Folds an already-persisted server write (the logo) into the loaded settings without writing again. */
+  onServerChanged: (patch: Partial<BusinessSettings>) => void;
+  /** Test seam for the pre-upload dimension check. */
+  decode?: ImageDecoder;
 }
 
 /**
@@ -257,7 +270,7 @@ interface MyTribePortalSectionProps {
  * this repo yet); it is shown, read-only, at the foot of the panel so the merge
  * did not lose the summary the old overview rendered.
  */
-export function MyTribePortalSection({ data, onSave }: MyTribePortalSectionProps) {
+export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: MyTribePortalSectionProps) {
   const [portal, setPortal] = useState<MyTribePortalConfig>(() => data.mytribePortal);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -268,6 +281,21 @@ export function MyTribePortalSection({ data, onSave }: MyTribePortalSectionProps
   function edit(next: MyTribePortalConfig) {
     setPortal(next);
     setJustSaved(false);
+  }
+
+  /**
+   * The logo is written by `confirmBrandAssetUpload`, not by this panel's Save.
+   * Both copies have to learn about it, and MISSING THE SECOND ONE IS A REAL
+   * BUG, not tidiness: `portal` is seeded once at mount and this panel saves the
+   * WHOLE `mytribePortal` object, so an operator who uploaded a logo and then
+   * changed the theme would write the stale, pre-upload `logoUrl` straight back
+   * over the one the server had just stored, silently undoing the upload.
+   */
+  function applyLogo(result: { logoUrl: string; logoRemovedAt: string }) {
+    setPortal((p) => ({ ...p, logoUrl: result.logoUrl, logoRemovedAt: result.logoRemovedAt }));
+    onServerChanged({
+      mytribePortal: { ...data.mytribePortal, logoUrl: result.logoUrl, logoRemovedAt: result.logoRemovedAt },
+    });
   }
 
   async function handleSave() {
@@ -300,6 +328,17 @@ export function MyTribePortalSection({ data, onSave }: MyTribePortalSectionProps
           {error}
         </Banner>
       ) : null}
+
+      <LogoUploadField
+        kind="portalLogo"
+        label="Portal logo"
+        help="THIS is the logo kinfolk see, in the portal header beside the MyTribe wordmark. It is separate from your admin logo, and leaving it empty is fine: the header just shows the wordmark on its own."
+        logoUrl={portal.logoUrl}
+        logoRemovedAt={portal.logoRemovedAt}
+        onChanged={applyLogo}
+        preview="portal"
+        {...(decode ? { decode } : {})}
+      />
 
       <label className="settingsEdit__field">
         <span className="settingsEdit__fieldLabel">Theme id</span>

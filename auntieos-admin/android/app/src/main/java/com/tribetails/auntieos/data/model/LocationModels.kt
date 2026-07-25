@@ -215,6 +215,13 @@ data class BusinessSettings(
     // until customized. Wire names match web BusinessSettings byte-for-byte. Resolved
     // for display by the pure helpers in ui/branding/Branding.kt.
     var logoUrl: String = "",        // nav/home brand mark image (Cloudinary URL); blank -> PawPrint glyph
+    // ISO instant of the last time an operator CLEARED logoUrl, or "" when one is
+    // set or was never set. `logoUrl == ""` alone cannot tell "I removed this"
+    // from "never configured", and those want different words on screen. Written
+    // here by saveBranding and server-side by the `confirmBrandAssetUpload`
+    // callable the React admin uses; both mean the same thing, and the web
+    // Settings screen renders both through `logoStateLabel`.
+    var logoRemovedAt: String = "",
     var brandWordmark: String = "",  // app name; blank -> "AuntieOS"
     var brandTagline: String = "",   // tagline; blank -> "Tribe Tails Care"
     var homeGreeting: String = "",   // Home heading salutation; blank -> time-aware greetingForHour()

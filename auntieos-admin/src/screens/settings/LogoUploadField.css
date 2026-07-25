@@ -1,0 +1,118 @@
+/* Logo upload field, used by the Branding and MyTribe portal sections.
+   Every token referenced here is declared in styles/tokens.css, and none of
+   them carries a literal fallback, per styles/tokenUsage.test.ts. */
+
+.logoField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.logoField__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+/* A FIXED box. The preview must not resize itself around whatever the operator
+   picked, because the whole question this field answers is "will my logo sit
+   properly inside a box it does not control". */
+.logoField__plate {
+  width: 132px;
+  height: 72px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-13);
+  background: var(--color-surface-2);
+}
+
+/* The kinfolk portal's header wash, pinned to the same brand cream the portal's
+   own tokens.css uses. Fixed rather than theme-following on purpose: the portal
+   is light-only, so previewing a portal logo on the admin's dark surface would
+   flatter a white-ink logo that is invisible where it actually renders. */
+.logoField__plate--portal {
+  background: var(--tt-brand-cream);
+  border-color: var(--border-hairline);
+}
+
+/* `contain` + both caps, the same constraint the portal header applies, so what
+   the operator sees here is what kinfolk get. */
+.logoField__img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+.logoField__glyph {
+  font-size: 26px;
+  opacity: 0.55;
+}
+
+.logoField__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.logoField__state {
+  margin: 0;
+  font-family: var(--type-label-md-family);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  color: var(--color-text-primary);
+}
+
+/* The label IS the button; the input below is visually hidden but still
+   focusable, so the control works by keyboard and by pointer alike. */
+.logoField__pick {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-family: var(--type-label-md-family);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-fast) var(--ease-standard);
+}
+
+.logoField__pick:hover {
+  border-color: var(--color-primary);
+  background: var(--color-surface-2);
+}
+
+.logoField__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.logoField__input:focus-visible + .logoField__pick {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.logoField__stage {
+  margin: 0;
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+}

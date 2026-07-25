@@ -341,3 +341,54 @@ describe('AO-8 callable contract drift guard (dashboard layout token grammar)', 
     expect(parse(Array.from({ length: 31 }, () => 'stats:wide')).success).toBe(false);
   });
 });
+
+/**
+ * Task 5.2 branding. Two clients hand-mirror this payload (the React admin's
+ * `api/brandAsset.ts`, and Android once it adopts the callable), and the shape
+ * carries a NULL that means "remove" rather than "missing", which is exactly
+ * the kind of detail a well-meaning tidy-up turns into `.optional()` and
+ * silently breaks.
+ *
+ * Imported inside the block rather than at the top of this file on purpose: it
+ * keeps every line this task added contiguous at the end, so a concurrent
+ * branch editing the import header does not conflict with it.
+ */
+describe('callable contract drift guard (brand asset confirm/remove)', () => {
+  it('freezes the top-level request keys', async () => {
+    const { Args } = await import('../src/admin/confirmBrandAssetUpload');
+    expect(Object.keys(Args.shape).sort()).toEqual(['kind', 'secureUrl']);
+  });
+  it('accepts exactly the two logo kinds, and no third', async () => {
+    const { Args } = await import('../src/admin/confirmBrandAssetUpload');
+    const url = 'https://res.cloudinary.com/tribetails/image/upload/a.png';
+    for (const kind of ['businessLogo', 'portalLogo']) {
+      expect(Args.safeParse({ kind, secureUrl: url }).success, `${kind} must be accepted`).toBe(true);
+    }
+    for (const bad of ['faviconLogo', 'businesslogo', 'BUSINESSLOGO', '']) {
+      expect(Args.safeParse({ kind: bad, secureUrl: url }).success, `${bad} must be refused`).toBe(false);
+    }
+  });
+  it('keeps null a LEGAL secureUrl, because null is the remove action', async () => {
+    // If this ever becomes `.optional()` instead of `.nullable()`, an omitted
+    // key would start meaning "remove", and every client that sends a partial
+    // payload would silently clear the operator's logo.
+    const { Args } = await import('../src/admin/confirmBrandAssetUpload');
+    expect(Args.safeParse({ kind: 'businessLogo', secureUrl: null }).success).toBe(true);
+    expect(Args.safeParse({ kind: 'businessLogo' }).success).toBe(false);
+  });
+  it('refuses a non-url string and an over-long one', async () => {
+    const { Args } = await import('../src/admin/confirmBrandAssetUpload');
+    expect(Args.safeParse({ kind: 'businessLogo', secureUrl: 'not-a-url' }).success).toBe(false);
+    expect(Args.safeParse({ kind: 'businessLogo', secureUrl: `https://x.test/${'a'.repeat(2100)}` }).success).toBe(false);
+  });
+  it('pins the shared limits against the admin copy of them', async () => {
+    // Duplicated in auntieos-admin/src/lib/brandAssetFile.ts (separate npm
+    // package, no shared module). Pinned on both sides so a drift fails a build.
+    const m = await import('../src/lib/brandAsset');
+    expect(m.MAX_BRAND_ASSET_BYTES).toBe(5_000_000);
+    expect(m.MIN_BRAND_ASSET_PX).toBe(48);
+    expect(m.MAX_BRAND_ASSET_PX).toBe(4000);
+    expect([...m.ACCEPTED_BRAND_ASSET_TYPES]).toEqual(['image/png', 'image/jpeg', 'image/webp']);
+    expect(m.BRAND_ASSET_FOLDER).toBe('tribetails/business/business_settings');
+  });
+});
