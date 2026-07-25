@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { normalizeTagName, type TagDef } from '../lib/tags/model';
 import { suggestTags, addAssigned, removeAssigned } from '../lib/tags/assign';
 import { TagChip } from './TagChip';
@@ -46,15 +46,50 @@ export function TagAssignField({
   inputLabel = 'Add a tag',
 }: TagAssignFieldProps) {
   const [draft, setDraft] = useState('');
-  const [focused, setFocused] = useState(false);
+  // Openness is its own state, not a read of "is the input focused". Escape has
+  // to be able to dismiss the list while the operator keeps typing in a field
+  // that never lost focus, and typing has to bring it back.
+  const [open, setOpen] = useState(false);
   const listId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const blurTimer = useRef<number | undefined>(undefined);
 
   const suggestions = useMemo(() => suggestTags(draft, vocab, value), [draft, vocab, value]);
 
   const trimmed = normalizeTagName(draft);
   const inVocab = vocab.some((t) => lower(t.name) === lower(trimmed));
   const canCreate = onCreateVocab !== undefined && trimmed !== '' && !inVocab;
-  const showList = focused && (suggestions.length > 0 || canCreate);
+  const showList = open && (suggestions.length > 0 || canCreate);
+
+  function cancelBlurClose() {
+    if (blurTimer.current !== undefined) {
+      window.clearTimeout(blurTimer.current);
+      blurTimer.current = undefined;
+    }
+  }
+
+  /**
+   * Close on a pointer landing anywhere outside the field. Blur alone is not
+   * enough: a press on something that never takes focus leaves the input
+   * focused, and the list would sit there over the page. Listening on
+   * pointerdown (not click) also beats the suggestion buttons' own click, but
+   * those live inside the root, so they are excluded by the containment check.
+   */
+  useEffect(() => {
+    if (!showList) return;
+    function onPointerDown(e: PointerEvent) {
+      const root = rootRef.current;
+      const target = e.target;
+      if (root === null || !(target instanceof Node) || root.contains(target)) return;
+      cancelBlurClose();
+      setOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [showList]);
+
+  /** No stray timer firing into an unmounted field. */
+  useEffect(() => cancelBlurClose, []);
 
   /** Prefer the vocabulary's canonical casing when the name matches an entry. */
   function canonical(name: string): string {
@@ -79,12 +114,25 @@ export function TagAssignField({
       e.preventDefault();
       if (trimmed !== '') assign(trimmed);
     } else if (e.key === 'Escape') {
+      // Escape closes the list as well as clearing the draft. Clearing alone
+      // left the list open on an empty query, which suggests the whole
+      // vocabulary, so the dismissal gesture visibly GREW the dropdown.
+      //
+      // While the list is open the key is ours and stops here, so a surrounding
+      // dialog is not closed out from under an operator who only meant to shed
+      // the suggestions. With the list closed the key carries on upstream, the
+      // combobox convention. (A dialog listening in the capture phase, as
+      // Dialog.tsx does, sees the key first either way; no mount site does that
+      // today, and this is the half of the contract we can hold up.)
+      if (showList) e.stopPropagation();
+      cancelBlurClose();
+      setOpen(false);
       setDraft('');
     }
   }
 
   return (
-    <div className="tag-assign">
+    <div className="tag-assign" ref={rootRef}>
       <fieldset className="tag-assign__fieldset" disabled={disabled}>
         {value.length > 0 && (
           <ul className="tag-assign__chips">
@@ -106,11 +154,27 @@ export function TagAssignField({
             aria-expanded={showList}
             aria-controls={showList ? listId : undefined}
             autoComplete="off"
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              // Typing reopens: Escape dismisses the list, it does not mute the
+              // field until the operator clicks away and back.
+              setOpen(true);
+            }}
             onKeyDown={onKeyDown}
-            onFocus={() => setFocused(true)}
+            onFocus={() => {
+              // A pending close from a blur we have since come back from must
+              // not fire, or the list would shut on a freshly focused field.
+              cancelBlurClose();
+              setOpen(true);
+            }}
             // Delay so a suggestion's click lands before the list unmounts.
-            onBlur={() => window.setTimeout(() => setFocused(false), 120)}
+            onBlur={() => {
+              cancelBlurClose();
+              blurTimer.current = window.setTimeout(() => {
+                blurTimer.current = undefined;
+                setOpen(false);
+              }, 150);
+            }}
           />
 
           {showList && (

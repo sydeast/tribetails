@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TagAssignField } from './TagAssignField';
 import { TAG_PALETTE, type TagDef } from '../lib/tags/model';
@@ -55,5 +55,117 @@ describe('TagAssignField', () => {
     render(<TagAssignField value={[]} vocab={vocab} onChange={vi.fn()} onCreateVocab={vi.fn()} />);
     await userEvent.type(screen.getByLabelText(/add a tag/i), 'vip');
     expect(screen.queryByRole('button', { name: /to your tags/i })).toBeNull();
+  });
+
+  it('dismisses suggestions on outside pointerdown', async () => {
+    render(
+      <div>
+        <TagAssignField value={[]} vocab={vocab} onChange={vi.fn()} />
+        <button type="button">Somewhere else</button>
+      </div>,
+    );
+    await userEvent.type(screen.getByLabelText(/add a tag/i), 'vi');
+    expect(await screen.findByRole('button', { name: /^⭐?\s*VIP$/i })).toBeInTheDocument();
+
+    // No blur, no timers: a pointer landing outside the field closes the list
+    // on its own. This is the case a focus-only guard misses, e.g. a press on
+    // something that never takes focus.
+    fireEvent.pointerDown(screen.getByRole('button', { name: /somewhere else/i }));
+
+    expect(screen.queryByRole('button', { name: /^⭐?\s*VIP$/i })).toBeNull();
+  });
+
+  it('dismisses on blur without swallowing suggestion click', async () => {
+    const onChange = vi.fn();
+    render(<TagAssignField value={[]} vocab={vocab} onChange={onChange} />);
+    const input = screen.getByLabelText(/add a tag/i);
+    await userEvent.type(input, 'vi');
+    const option = await screen.findByRole('button', { name: /^⭐?\s*VIP$/i });
+
+    // The classic race: blur reaches the field before the suggestion's click.
+    // The click must still land.
+    fireEvent.blur(input);
+    fireEvent.click(option);
+    expect(onChange).toHaveBeenCalledWith(['VIP']);
+
+    // And with focus gone for good, the list closes shortly after.
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /^⭐?\s*VIP$/i })).toBeNull();
+    });
+  });
+
+  it('keeps existing Escape behavior', async () => {
+    render(<TagAssignField value={[]} vocab={vocab} onChange={vi.fn()} onCreateVocab={vi.fn()} />);
+    const input = screen.getByLabelText(/add a tag/i);
+    await userEvent.type(input, 'Grooming');
+    expect(await screen.findByRole('button', { name: /to your tags/i })).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(input).toHaveValue('');
+    expect(screen.queryByRole('button', { name: /to your tags/i })).toBeNull();
+  });
+
+  it('dismisses the list on Escape, not just the draft', async () => {
+    render(<TagAssignField value={[]} vocab={vocab} onChange={vi.fn()} />);
+    const input = screen.getByLabelText(/add a tag/i);
+    await userEvent.type(input, 'vi');
+    expect(await screen.findByRole('button', { name: /^⭐?\s*VIP$/i })).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+
+    // Clearing alone is not a dismissal: an empty draft suggests the whole
+    // unassigned vocabulary, so the list would come back BIGGER than it was.
+    expect(input).toHaveValue('');
+    expect(screen.queryByRole('button', { name: /^⭐?\s*VIP$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Vet visit/i })).toBeNull();
+  });
+
+  it('Escape reaches an upstream handler only once the list is closed', async () => {
+    // Standing in for the Escape-to-close on a surrounding dialog.
+    const upstream = vi.fn();
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') upstream();
+    }
+    document.addEventListener('keydown', onKey);
+    try {
+      render(<TagAssignField value={[]} vocab={vocab} onChange={vi.fn()} />);
+      const input = screen.getByLabelText(/add a tag/i);
+      await userEvent.type(input, 'vi');
+      expect(await screen.findByRole('button', { name: /^⭐?\s*VIP$/i })).toBeInTheDocument();
+
+      // Open list: the key belongs to the list.
+      await userEvent.keyboard('{Escape}');
+      expect(upstream).not.toHaveBeenCalled();
+
+      // Closed list: the key belongs to whatever is upstream.
+      await userEvent.keyboard('{Escape}');
+      expect(upstream).toHaveBeenCalledTimes(1);
+    } finally {
+      document.removeEventListener('keydown', onKey);
+    }
+  });
+
+  it('reopens the suggestions after Escape, by typing or by refocusing', async () => {
+    render(
+      <div>
+        <TagAssignField value={[]} vocab={vocab} onChange={vi.fn()} />
+        <button type="button">Somewhere else</button>
+      </div>,
+    );
+    const input = screen.getByLabelText(/add a tag/i);
+    await userEvent.type(input, 'vi');
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('button', { name: /^⭐?\s*VIP$/i })).toBeNull();
+
+    // Typing brings it back.
+    await userEvent.type(input, 'vi');
+    expect(await screen.findByRole('button', { name: /^⭐?\s*VIP$/i })).toBeInTheDocument();
+
+    // So does leaving and coming back.
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(screen.getByRole('button', { name: /somewhere else/i }));
+    await userEvent.click(input);
+    expect(await screen.findByRole('button', { name: /^⭐?\s*VIP$/i })).toBeInTheDocument();
   });
 });
