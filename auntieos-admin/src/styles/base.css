@@ -164,6 +164,66 @@ code {
   animation-delay: 0.24s;
 }
 
+/* ── Lift ────────────────────────────────────────────────────────────────────
+   The mock idiom for a clickable card: it rises 3px, takes a tone-coloured
+   border, and casts one long soft shadow. All 39 mocks put it on every
+   clickable card on every screen. Shipped, the rise existed in exactly one
+   stylesheet (`DenScreenKit.css`, on the stat card and the panel) and
+   `box-shadow` reached 8 of 79 files, so most of the app's cards changed
+   colour on hover and nothing else.
+
+   The three values live here ONCE, and `.lift` is the only rule that reads
+   them. Everything that lifts wears the class: the stat card, the hover-lift
+   panel, and the clickable row or card on Directory, KinTales, Sessions,
+   Invoices, Bookings and Schedule. A surface that is NOT clickable does not get
+   the class rather than getting it and cancelling it, because a card that rises
+   under the pointer is a promise that clicking it does something.
+
+   Colour is the one part a card keeps for itself: set `--lift-border-color` on
+   the card and the hover border follows its tone (the stat card points it at
+   `--den-tone`). Unset, it falls back to the brand orange.
+
+   These four properties stay HERE and not in tokens.css, deliberately. That
+   file is a strict port of the live Compose theme, file by file, and its header
+   says so: every value in it answers to AuntieColors.kt, AuntieTypography.kt,
+   AuntieShapes.kt or AuntieDimensions.kt. There is no lift in the Compose
+   source to port. These are utility values for one web interaction, not design
+   system roles, and moving them into tokens.css would make that file claim a
+   provenance it does not have. Do not "tidy" them over.
+
+   Reduced motion is handled by re-pointing the properties at `none` in the
+   guard at the bottom of this file, so an adopter needs no guard of its own.
+   That guard is necessary and not redundant: a hover lift is a TRANSITION, and
+   the blanket `animation: none` rule below does not reach a transform. */
+:root {
+  --lift-rise: translateY(-3px);
+  /* Long, soft, and thrown down and back, per the mocks' `0 16px 36px -22px`.
+     Tinted with brand navy rather than pure black so it deepens the cream page
+     instead of dirtying it. Theme-invariant on purpose: a shadow is an absence
+     of light in both schemes, not a colour role. */
+  --lift-shadow: 0 16px 36px -22px color-mix(in srgb, var(--tt-brand-navy) 80%, transparent);
+  --lift-transition:
+    transform var(--dur-base) var(--ease-emphasized),
+    box-shadow var(--dur-base) var(--ease-emphasized),
+    border-color var(--dur-base) var(--ease-standard),
+    background-color var(--dur-base) var(--ease-standard);
+}
+
+.lift {
+  transition: var(--lift-transition);
+}
+
+.lift:hover,
+.lift:focus-visible {
+  transform: var(--lift-rise);
+  box-shadow: var(--lift-shadow);
+  /* The fallback lives in the `var()` rather than as a `--lift-border-color`
+     declaration on `.lift`, so that a card setting its own tone wins outright
+     instead of tying on specificity with this rule and being decided by which
+     stylesheet the bundler happened to emit second. */
+  border-color: var(--lift-border-color, var(--color-primary));
+}
+
 /* ── Reduced motion ──────────────────────────────────────────────────────────
    GLOBAL, and deliberately blunt. Until now this was honoured per file in 8 of
    79 stylesheets, which means every new animation had to remember to opt in and
@@ -172,6 +232,16 @@ code {
    fill leaves the element at its natural resting state, so nothing that relies
    on `rise` to become visible can be stranded at opacity 0. */
 @media (prefers-reduced-motion: reduce) {
+  /* The card lift is the one thing the blanket rule below cannot reach: killing
+     the transition still leaves the hover `transform` applied, instantly. Both
+     lift properties are neutralised at the root instead, which covers `.lift`
+     and every surface composing from it without any of them naming a media
+     query. `transform: none` is the resting state, so nothing is stranded. */
+  :root {
+    --lift-rise: none;
+    --lift-transition: none;
+  }
+
   *,
   *::before,
   *::after {

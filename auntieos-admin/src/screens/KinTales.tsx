@@ -250,7 +250,7 @@ function KinTaleRow({ entry, onSelect }: KinTaleRowProps) {
   return (
     <li className="kintales__row">
       {onSelect ? (
-        <button type="button" className="kintales__row-main" onClick={() => onSelect(entry._id)}>
+        <button type="button" className="kintales__row-main lift" onClick={() => onSelect(entry._id)}>
           {body}
         </button>
       ) : (

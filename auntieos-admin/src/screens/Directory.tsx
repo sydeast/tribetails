@@ -162,7 +162,7 @@ function KinfolkCard({ kf, kin, kinPending, onClick }: KinfolkCardProps) {
   return (
     <li className="directory__cell">
       {onClick ? (
-        <button type="button" className="directory__card" onClick={onClick}>
+        <button type="button" className="directory__card lift" onClick={onClick}>
           {body}
         </button>
       ) : (
@@ -218,7 +218,7 @@ function KinCard({ kin, onClick }: KinCardProps) {
   return (
     <li className="directory__cell">
       {onClick ? (
-        <button type="button" className="directory__card" onClick={onClick}>
+        <button type="button" className="directory__card lift" onClick={onClick}>
           {body}
         </button>
       ) : (

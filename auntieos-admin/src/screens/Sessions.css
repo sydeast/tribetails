@@ -198,7 +198,10 @@
   color: inherit;
   padding: var(--space-3) var(--space-2);
   border-radius: var(--radius-card);
-  transition: background var(--dur-base) var(--ease-standard);
+  /* No `transition` here: the clickable branch of this row wears `lift`
+     (styles/base.css), which brings the transition, the rise, the shadow and
+     the reduced-motion guard. All 39 ui-ideas mocks lift every clickable card
+     on every screen; this row only changed colour until 2026-07-25. */
 }
 .sessions__row-main:hover,
 .sessions__row-main:focus-visible {
