@@ -1,16 +1,25 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 const { useAuth } = vi.hoisted(() => ({ useAuth: vi.fn() }));
-const { useRouteContext } = vi.hoisted(() => ({ useRouteContext: vi.fn() }));
+const { useRouteContext, useNavigate, navigate } = vi.hoisted(() => {
+  const navigate = vi.fn();
+  return { useRouteContext: vi.fn(), useNavigate: vi.fn(() => navigate), navigate };
+});
 const { getUserProfile } = vi.hoisted(() => ({ getUserProfile: vi.fn() }));
+const { changeEmail, changePassword, sendReset } = vi.hoisted(() => ({
+  changeEmail: vi.fn(),
+  changePassword: vi.fn(),
+  sendReset: vi.fn(),
+}));
 
-vi.mock('../lib/auth', () => ({ useAuth }));
-vi.mock('@tanstack/react-router', () => ({ useRouteContext }));
+vi.mock('../lib/auth', () => ({ useAuth, changeEmail, changePassword, sendReset }));
+vi.mock('@tanstack/react-router', () => ({ useRouteContext, useNavigate }));
 vi.mock('../api/account', () => ({ getUserProfile }));
 
-import { Account } from './Account';
+import { Account, AccountRouteView } from './Account';
 
 function signedIn(userOver: Record<string, unknown> = {}) {
   return {
@@ -49,6 +58,7 @@ beforeEach(() => {
   useAuth.mockReturnValue(signedIn());
   useRouteContext.mockReturnValue({ access: { status: 'admin' } });
   getUserProfile.mockResolvedValue(profile());
+  navigate.mockReset();
 });
 
 describe('Account screen', () => {
@@ -93,5 +103,35 @@ describe('Account screen', () => {
     useAuth.mockReturnValue({ status: 'signedOut' });
     render(<Account />);
     expect(screen.getByText(/not signed in/i)).toBeInTheDocument();
+  });
+
+  it('carries a Security panel: the operator can reach their password from here', async () => {
+    render(<Account />);
+    await screen.findByText('Auntie Nora', { selector: '.account__identity-name' });
+    expect(screen.getByRole('group', { name: /change password/i })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: /login email/i })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The routed wrapper. It exists so the notification control's navigation is a
+ * plain unit test instead of a full router mount: router.tsx registers THIS as
+ * the /account component, so a regression that unwires the prop fails here.
+ */
+describe('AccountRouteView', () => {
+  it('renders the notifications control as a real button, not the dead static span', async () => {
+    render(<AccountRouteView />);
+    await screen.findByText('Auntie Nora', { selector: '.account__identity-name' });
+    expect(
+      screen.getByRole('button', { name: /open my notification settings/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('navigates to /my-notifications when that button is clicked', async () => {
+    const user = userEvent.setup();
+    render(<AccountRouteView />);
+    await screen.findByText('Auntie Nora', { selector: '.account__identity-name' });
+    await user.click(screen.getByRole('button', { name: /open my notification settings/i }));
+    expect(navigate).toHaveBeenCalledWith({ to: '/my-notifications' });
   });
 });

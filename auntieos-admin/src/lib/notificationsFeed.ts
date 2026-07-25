@@ -1,4 +1,4 @@
-import { isRead, type NotificationEntry } from '../api/notifications';
+import { dayKey, isRead, type NotificationEntry } from '../api/notifications';
 
 /**
  * Pure `notifications` feed selectors, shared by the Notifications SCREEN and
@@ -40,4 +40,57 @@ export function unreadNotifications(rows: readonly NotificationEntry[]): Notific
  */
 export function unreadNotificationCount(rows: readonly NotificationEntry[]): number {
   return unreadNotifications(rows).length;
+}
+
+/** The bucket a row with a blank or absent `category` falls into. */
+const UNCATEGORIZED = 'uncategorized';
+
+/** Sentinel filter value for the "Unread" chip. Never a real category name. */
+export const NOTIF_UNREAD_FILTER = ' unread';
+
+/**
+ * The categories actually present in the feed, sorted. Ports the archive's
+ * `NotificationsScreen.kt` FilterRow rule verbatim: the chips reflect what the
+ * dispatcher really emitted, never an invented taxonomy that would leave the
+ * operator clicking chips that match nothing.
+ */
+export function notificationCategories(rows: readonly NotificationEntry[]): string[] {
+  const seen = new Set<string>();
+  for (const r of rows) seen.add((r.category ?? '').trim() || UNCATEGORIZED);
+  return [...seen].sort();
+}
+
+/**
+ * The rows visible under the active filter chip: `null` = All,
+ * [NOTIF_UNREAD_FILTER] = unread (by the real `readAt` field), anything else a
+ * category match. A category nothing matches yields an EMPTY list, not a silent
+ * fallback to everything: the operator asked to narrow, so an empty result is
+ * the honest answer and the screen says so.
+ */
+export function notificationsForFilter(
+  rows: readonly NotificationEntry[],
+  filter: string | null,
+): NotificationEntry[] {
+  if (filter === null) return [...rows];
+  if (filter === NOTIF_UNREAD_FILTER) return rows.filter((r) => !isRead(r));
+  return rows.filter((r) => ((r.category ?? '').trim() || UNCATEGORIZED) === filter);
+}
+
+/**
+ * Day separators. Groups by LOCAL day (`dayKey`, see lib/time for why local and
+ * not UTC), preserving the stream's own newest-first order both between groups
+ * and within one. Rows whose `createdAt` has not round-tripped yet collect under
+ * a single "Undated" separator rather than being dropped.
+ */
+export function notificationsByDay(
+  rows: readonly NotificationEntry[],
+): [string, NotificationEntry[]][] {
+  const groups = new Map<string, NotificationEntry[]>();
+  for (const r of rows) {
+    const day = dayKey(r.createdAt);
+    const bucket = groups.get(day);
+    if (bucket) bucket.push(r);
+    else groups.set(day, [r]);
+  }
+  return [...groups.entries()];
 }

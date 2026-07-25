@@ -5,6 +5,7 @@ import {
   createRoute,
   createRouter,
   redirect,
+  useNavigate,
 } from '@tanstack/react-router';
 import { waitForAuthReady } from './lib/auth';
 import { resolveAccess } from './lib/access';
@@ -28,7 +29,7 @@ import { CoveragePackageBuilder } from './screens/CoveragePackageBuilder';
 import { Inbox } from './screens/Inbox';
 import { Settings } from './screens/Settings';
 import { Communicate } from './screens/Communicate';
-import { Account } from './screens/Account';
+import { AccountRouteView } from './screens/Account';
 import { MyNotificationsEdit } from './screens/MyNotificationsEdit';
 import { NotificationGate } from './screens/NotificationGate';
 import { Media } from './screens/Media';
@@ -37,6 +38,25 @@ import { FormSchemaEditor } from './screens/FormSchemaEditor';
 import { KinTaleCompose } from './screens/KinTaleCompose';
 import { KinTaleDetail } from './screens/KinTaleDetail';
 import { AppShell } from './components/AppShell';
+import { type NotificationRoute } from './lib/notificationActions';
+/**
+ * Search-param validator for the deep links the Notifications feed emits.
+ *
+ * Keeps only the listed keys, and only when they are non-blank strings.
+ * Deliberately NON-THROWING: a hand-edited or stale URL should land the
+ * operator on the plain list, not on a router error boundary, and a screen that
+ * receives no id already renders correctly (that is its normal state).
+ */
+function optionalIdSearch<K extends string>(keys: readonly K[]) {
+  return (raw: Record<string, unknown>): Partial<Record<K, string>> => {
+    const out: Partial<Record<K, string>> = {};
+    for (const key of keys) {
+      const value = raw[key];
+      if (typeof value === 'string' && value.trim() !== '') out[key] = value.trim() as never;
+    }
+    return out;
+  };
+}
 
 /** Shared chrome: the two drifting orbs behind every screen (Den background). */
 function RootLayout() {
@@ -105,10 +125,28 @@ const activityRoute = createRoute({
   component: ActivityLog,
 });
 
+/**
+ * Performs the navigations the Notifications feed asks for.
+ *
+ * The feed hands up a `NotificationRoute` from its own tested routing table
+ * (`lib/notificationActions.ts`) rather than calling the router itself, so the
+ * table stays unit-testable and the screen stays renderable without a router.
+ * The cast is the price of a runtime-computed destination: TanStack types
+ * `navigate()` against the literal route tree, which cannot express "one of
+ * four routes, decided from Firestore data". Every `to` the table can produce
+ * is a route registered below, and `notificationActions.test.ts` pins all four.
+ */
+function NotificationsView() {
+  const navigate = useNavigate();
+  const go = (route: NotificationRoute) => {
+    void navigate(route as unknown as Parameters<typeof navigate>[0]);
+  };
+  return <Notifications onNavigate={go} />;
+}
 const notificationsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'notifications',
-  component: Notifications,
+  component: NotificationsView,
 });
 
 function FormSchemasView() {
@@ -131,16 +169,46 @@ const formSchemasRoute = createRoute({
   component: FormSchemasView,
 });
 
+/** Adapts `/invoices?invoiceId=&composeQuoteForKinfolkId=` to Invoices' props. */
+function InvoicesView() {
+  const { invoiceId, composeQuoteForKinfolkId } = invoicesRoute.useSearch();
+  return (
+    <Invoices
+      {...(invoiceId ? { initialInvoiceId: invoiceId } : {})}
+      {...(composeQuoteForKinfolkId ? { composeQuoteForKinfolkId } : {})}
+    />
+  );
+}
+
 const invoicesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'invoices',
-  component: Invoices,
+  validateSearch: optionalIdSearch(['invoiceId', 'composeQuoteForKinfolkId'] as const),
+  component: InvoicesView,
 });
 
 const directoryRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'directory',
   component: Directory,
+});
+
+/** Adapts the `directory/$kinfolkId` param to Directory's initial-profile prop. */
+function DirectoryProfileView() {
+  const { kinfolkId } = directoryProfileRoute.useParams();
+  return <Directory initialKinfolkId={kinfolkId} />;
+}
+
+/**
+ * The household profile as a real URL. Directory already renders the profile as
+ * an in-screen sibling view; this route just opens it directly, which is what
+ * lets a kinfolk notification link to a household instead of dumping the
+ * operator on an unfiltered directory.
+ */
+const directoryProfileRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'directory/$kinfolkId',
+  component: DirectoryProfileView,
 });
 
 const bookingsRoute = createRoute({
@@ -178,7 +246,13 @@ type KinTalesMode =
   | { kind: 'compose'; kinTaleId?: string };
 
 function KinTalesView() {
-  const [mode, setMode] = useState<KinTalesMode>({ kind: 'list' });
+  // `/kintales?kinTaleId=<id>` opens straight into DETAIL, the destination of a
+  // kintale notification's "Open". Initial state only, so closing the detail
+  // returns to the list rather than bouncing back off a stale URL.
+  const { kinTaleId } = kinTalesRoute.useSearch();
+  const [mode, setMode] = useState<KinTalesMode>(
+    kinTaleId ? { kind: 'detail', kinTaleId } : { kind: 'list' },
+  );
 
   if (mode.kind === 'compose') {
     return (
@@ -208,6 +282,7 @@ function KinTalesView() {
 const kinTalesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'kintales',
+  validateSearch: optionalIdSearch(['kinTaleId'] as const),
   component: KinTalesView,
 });
 
@@ -271,10 +346,14 @@ const communicateRoute = createRoute({
   component: Communicate,
 });
 
+// AccountRouteView (not Account) so the screen's "Open my notification
+// settings" control is a live button that lands on /my-notifications. Mounting
+// Account bare left that control as a dead static span, which is how the
+// operator's own notification settings became unreachable except by URL.
 const accountRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'account',
-  component: Account,
+  component: AccountRouteView,
 });
 
 const myNotificationsRoute = createRoute({
@@ -305,7 +384,7 @@ const mediaRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, mediaRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, directoryProfileRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, mediaRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

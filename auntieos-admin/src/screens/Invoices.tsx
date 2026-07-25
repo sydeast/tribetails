@@ -83,11 +83,37 @@ function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
  * `onSelect`-absent "static row" branch (the dead-control guard that made
  * sense while there was nothing to select INTO) is retired along with it.
  */
-export function Invoices() {
+export interface InvoicesProps {
+  /**
+   * Opens this invoice's detail on mount. Set by the router from
+   * `/invoices?invoiceId=<id>`, which is where the Notifications feed's "Open"
+   * lands for an invoice notification. An id that is not in the streamed page
+   * simply opens nothing, the same as selecting a row that scrolled out.
+   */
+  initialInvoiceId?: string;
+  /**
+   * Opens the QUOTE composer on mount, pre-filled with this household. Set by
+   * the router from `/invoices?composeQuoteForKinfolkId=<id>`, the destination
+   * of the Notifications feed's "Create quote". The archive threaded the same
+   * seed through its App shell under this exact name; here it rides the URL, so
+   * a seeded composer survives a reload and is linkable.
+   */
+  composeQuoteForKinfolkId?: string;
+}
+/** The composer's open state: which mode, and the household it was seeded with. */
+interface CreatingState {
+  mode: InvoiceCreateMode;
+  seedKinfolkId?: string;
+}
+export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: InvoicesProps = {}) {
   const rows = useCollection<InvoiceEntry>(INVOICES_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [creating, setCreating] = useState<InvoiceCreateMode | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialInvoiceId ?? null);
+  // Seeded only on mount: reopening the composer from the "New quote" button
+  // later must start blank, not silently re-seed the household from a stale URL.
+  const [creating, setCreating] = useState<CreatingState | null>(
+    composeQuoteForKinfolkId ? { mode: 'quote', seedKinfolkId: composeQuoteForKinfolkId } : null,
+  );
 
   // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
   // Home/End, roving tabIndex); called unconditionally at the top level per
@@ -130,8 +156,8 @@ export function Invoices() {
         subtitle="Every invoice on the books, newest first."
         trailing={
           <div className="invoices__new-actions">
-            <PrimaryButton label="New quote" onClick={() => setCreating('quote')} />
-            <PrimaryButton label="New invoice" onClick={() => setCreating('invoice')} />
+            <PrimaryButton label="New quote" onClick={() => setCreating({ mode: 'quote' })} />
+            <PrimaryButton label="New invoice" onClick={() => setCreating({ mode: 'invoice' })} />
           </div>
         }
       />
@@ -205,7 +231,13 @@ export function Invoices() {
 
       {selected && <InvoiceDetail invoice={selected} onClose={() => setSelectedId(null)} />}
 
-      {creating && <InvoiceCreate mode={creating} onClose={() => setCreating(null)} />}
+      {creating && (
+        <InvoiceCreate
+          mode={creating.mode}
+          {...(creating.seedKinfolkId ? { seedKinfolkId: creating.seedKinfolkId } : {})}
+          onClose={() => setCreating(null)}
+        />
+      )}
     </div>
   );
 }

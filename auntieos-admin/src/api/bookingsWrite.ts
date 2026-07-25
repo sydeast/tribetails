@@ -39,14 +39,19 @@ import { call } from '../lib/fns';
  *      doc the backend wraps with its own audited before/after read, shared by
  *      both Schedule's drag-to-reschedule and this screen's Reschedule action.
  *
- * OUT OF SCOPE, confirmed and flagged rather than silently added: `manageBookingSeries`
- * (MyTribe/functions/src/admin/manageBookingSeries.ts) and `batchUpdateBookings`
- * (MyTribe/functions/src/admin/batchUpdateBookings.ts) act on the SEPARATE nested
- * booking-envelope model (`families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`),
+ * STILL OUT OF SCOPE for the Bookings LIST: `manageBookingSeries`
+ * (MyTribe/functions/src/admin/manageBookingSeries.ts). It acts on the SEPARATE
+ * nested booking-envelope model (`families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`),
  * the wasm's "Incoming requests" panel, not the flat `kin_care_sessions` rows this
- * screen lists. api/bookings.ts's own OUT-OF-SCOPE note already rules that panel
- * out of this port; these two callables stay out of scope for the same reason,
- * they would not act on the row BookingActions.tsx is showing.
+ * screen lists, so it would not act on the row BookingActions.tsx is showing.
+ *
+ * `batchUpdateBookings` (added below) carried that same note until the
+ * Notifications feed gained quick actions. It still targets the envelope model,
+ * NOT `kin_care_sessions`, and it still must not be wired into this screen's row
+ * actions for exactly the reason above. It lives here because this is the
+ * bookings write module and a second copy elsewhere would be worse; its one
+ * caller is the Notifications row's Approve/Deny, whose `targetId` comes from a
+ * booking-request notification and IS an envelope visit id.
  */
 
 /** The three states a direct client patch ever sets on this collection. */
@@ -149,6 +154,41 @@ export async function createMultiDateBookingRequest(
   return call<CreateMultiDateBookingArgs, CreateMultiDateBookingResult>(
     'createMultiDateBookingRequest',
     args,
+  );
+}
+
+/** The three transitions `batchUpdateBookings` accepts. */
+export type BatchBookingAction = 'APPROVE' | 'REJECT' | 'CANCEL';
+
+export interface BatchUpdateBookingsResult {
+  ok: true;
+  action: BatchBookingAction;
+  /** How many visits actually reached the target status. */
+  updated: number;
+  /** Per-id failures; the handler collects these instead of aborting the batch. */
+  failed: Array<{ id: string; error: string }>;
+}
+
+/**
+ * batchUpdateBookings (admin callable): apply ONE transition to many envelope
+ * visits at once. APPROVE confirms; REJECT and CANCEL both terminate (the
+ * backend has no distinct 'rejected' status, as batchUpdateBookings.ts's own
+ * comment documents), and REJECT is still audited as a REJECT so the intent
+ * survives in the trail.
+ *
+ * PARTIAL SUCCESS IS NORMAL, and the caller must read it. The handler resolves
+ * each id through `collectionGroup('kinCares')` and pushes unresolvable ones
+ * into `failed` rather than throwing, so a resolved promise with
+ * `updated: 0, failed: [...]` is a FAILURE the operator has to see. Idempotent
+ * per id: a visit already in the target status counts as updated with no write.
+ */
+export async function batchUpdateBookings(
+  ids: string[],
+  action: BatchBookingAction,
+): Promise<BatchUpdateBookingsResult> {
+  return call<{ ids: string[]; action: BatchBookingAction }, BatchUpdateBookingsResult>(
+    'batchUpdateBookings',
+    { ids, action },
   );
 }
 

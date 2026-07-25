@@ -173,6 +173,18 @@ describe('Directory screen, Kinfolk tab', () => {
     expect(getKinfolkProfile).toHaveBeenCalledWith('kf1');
   });
 
+  // The landing half of the Notifications feed's kinfolk deep link (issue #20):
+  // /directory/{id} mounts this screen straight into the household profile.
+  it('initialKinfolkId opens that household profile on mount, no click needed', async () => {
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
+    getKinfolkProfile.mockResolvedValue(
+      (await import('../api/kinfolkProfile')).mergeKinfolkProfile('kf1', { firstName: 'Jamie', lastName: 'Halbrook' }),
+    );
+    render(<Directory initialKinfolkId="kf1" />);
+    expect(await screen.findByRole('button', { name: /back to directory/i })).toBeInTheDocument();
+    expect(getKinfolkProfile).toHaveBeenCalledWith('kf1');
+  });
+
   it('the sort select reverses alphabetical order between A→Z and Z→A', async () => {
     kinfolkAsync = {
       status: 'ready',

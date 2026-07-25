@@ -1,0 +1,70 @@
+/**
+ * SecurityPanel styling. Scoped to this component and imported directly (the
+ * EditProfileDialog.css / Dialog.css convention). Every value comes from
+ * styles/tokens.css: no literal colours, radii, or durations.
+ */
+
+.security__stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.security__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.security__section:disabled {
+  opacity: 0.6;
+}
+
+/* Visible: each section legend is the operator's only cue for which "Current
+   password" box belongs to which action. */
+.security__legend {
+  padding: 0;
+  font-family: var(--font-fraunces);
+  font-size: 1rem;
+  color: var(--color-text-primary);
+}
+
+.security__hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-dim);
+}
+
+.security__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.security__label {
+  font-size: 0.8rem;
+  color: var(--color-text-dim);
+}
+
+.security__input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+.security__input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.security__error {
+  font-size: 0.8rem;
+  color: var(--color-error);
+}
