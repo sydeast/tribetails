@@ -601,7 +601,7 @@ fun ScheduleViewScreen(
         if (state.showNewRequestDialog) {
             NewBookingRequestDialog(
                 allKinfolk   = state.allKinfolk,
-                baseServices = state.baseServices.filter { it.isActive },
+                serviceRates = state.businessSettings.serviceRates,
                 inFlight     = state.newRequestInFlight,
                 error        = state.newRequestError,
                 onDismiss    = { viewModel.hideNewRequestDialog() },
