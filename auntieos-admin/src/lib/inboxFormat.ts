@@ -100,6 +100,35 @@ export function unreadThreadCount(rows: readonly { unreadForAdmin: boolean }[]):
   return rows.filter((r) => threadReadState(r.unreadForAdmin) === 'unread').length;
 }
 
+// ── reply readiness ───────────────────────────────────────────────────────
+
+/**
+ * The server's `MAX_MESSAGE_BODY` (mytribe/functions/src/lib/conversations.ts),
+ * mirrored so the client can name the limit before the callable rejects it.
+ * Kept as a named constant rather than an inline 5000 so the two sides are
+ * greppable together if the server ever moves it.
+ */
+export const MAX_REPLY_BODY = 5000;
+
+/**
+ * Why a reply cannot be sent yet, or `null` when it can. Ported verbatim in
+ * behaviour from the archive's `Conversations.kt#replyBlocker`, the one pure
+ * chat-side rule the React port dropped.
+ *
+ * The length check matters because `replyToConversation`'s zod schema caps
+ * `body` at `MAX_MESSAGE_BODY`, and a rejection there surfaces as
+ * "replyToConversation validation failed", which tells the operator nothing
+ * about a long message. Checking the RAW length (not the trimmed one) is what
+ * the server does, so the two agree on the boundary case exactly.
+ */
+export function replyBlocker(body: string): string | null {
+  if (body.trim() === '') return 'Write a reply first.';
+  if (body.length > MAX_REPLY_BODY) {
+    return `Message is too long (${MAX_REPLY_BODY} character max).`;
+  }
+  return null;
+}
+
 // ── last-sender classification (positive enumeration, unknown bucket) ─────
 
 /**

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getConversationThread, replyToConversation, type ThreadMessage } from '../api/inboxThread';
-import { threadClock, threadMachineTime, threadDayKey, threadDayLabel, localDateIso } from '../lib/inboxFormat';
+import {
+  threadClock,
+  threadMachineTime,
+  threadDayKey,
+  threadDayLabel,
+  localDateIso,
+  replyBlocker,
+} from '../lib/inboxFormat';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -74,9 +81,14 @@ export function ConversationThread({ kinfolkId, kinfolkName, onBack }: Conversat
 
   useEffect(() => load(), [load]);
 
+  // Archive parity (Conversations.kt#replyBlocker): the same rule drives the
+  // inline hint AND the disabled Send control, so the button state and the
+  // explanation can never disagree.
+  const blocker = replyBlocker(draft);
+
   async function handleSend() {
     const body = draft.trim();
-    if (body === '' || sending) return;
+    if (blocker !== null || sending) return;
     setSending(true);
     setSendError(null);
     try {
@@ -150,10 +162,17 @@ export function ConversationThread({ kinfolkId, kinfolkName, onBack }: Conversat
             disabled={sending}
             aria-label="Reply to this household"
           />
+          {/* Only shown once there IS a draft: "Write a reply first." on an
+              untouched box would scold the operator for not having started. */}
+          {draft !== '' && blocker !== null ? (
+            <p className="thread__blocker" role="status">
+              {blocker}
+            </p>
+          ) : null}
           <PrimaryButton
             label={sending ? 'Sending…' : 'Send reply'}
             onClick={() => void handleSend()}
-            disabled={draft.trim() === '' || sending}
+            disabled={blocker !== null || sending}
             busy={sending}
           />
         </div>
