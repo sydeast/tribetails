@@ -73,6 +73,18 @@ data class NotificationEntry(
     var status: String = "",           // pending | dispatched
     var mode: String = "",             // trigger | debounced | batched | scheduled
     var channels: List<String> = emptyList(),
+    // AO-28 content, written by dispatcher.ts from the catalog def: `title` is
+    // the label, `description` the description, `actorName` the resolved actor.
+    // Blank on rows dispatched before AO-28, so the row falls back to `key`.
+    var title: String = "",
+    var description: String = "",
+    var actorName: String = "",
+    // The emitter's free-form merge bag (`data: args.data` in dispatcher.ts).
+    // Untyped on purpose: it is whatever the calling function passed to
+    // enqueueNotification, with no schema. It is where the household reference
+    // lives for most notifications; see notificationKinfolkId in
+    // ui/admin/NotificationsScreen.kt for how it is read safely.
+    var data: Map<String, Any?> = emptyMap(),
     var createdAt: String = "",        // ISO-8601 derived from server timestamp
     // Per-recipient read marker written by bulkMarkNotificationsRead /
     // markNotificationRead (server timestamp). Non-null/non-blank => already read.
