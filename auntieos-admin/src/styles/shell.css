@@ -15,14 +15,14 @@
 
 .shell__rail {
   padding: 1.25rem 1rem;
-  border-right: 1px solid var(--color-border-soft, #e6e4dd);
-  background: color-mix(in srgb, var(--color-background, #fbfbf9) 70%, transparent);
+  border-right: 1px solid var(--color-border-soft);
+  background: color-mix(in srgb, var(--color-background) 70%, transparent);
   backdrop-filter: blur(8px);
   overflow-y: auto;
 }
 
 .shell__brand {
-  font-family: var(--font-fraunces, serif);
+  font-family: var(--font-fraunces);
   font-weight: 600;
   font-size: 1.35rem;
   padding: 0.25rem 0.5rem 1rem;
@@ -40,25 +40,52 @@
   font-size: 0.7rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--color-secondary, #5a5c6a);
+  color: var(--color-text-dim);
   margin: 0 0 0.35rem 0.5rem;
 }
 
+/* The rail is on every screen, so it is the flatness the operator sees most.
+   Until 2026-07-25 this rule was `cursor: default` with no `:hover` and no
+   `:focus-visible` at all, which made a list of live destinations read as
+   static text and left keyboard users with no idea where focus was. */
 .shell__link {
   display: block;
-  padding: 0.45rem 0.6rem;
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-card);
   font-size: 0.92rem;
-  cursor: default;
+  color: var(--color-text-primary);
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
 }
+
+.shell__link:hover {
+  background: var(--color-surface-2);
+}
+
+.shell__link:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 .shell__link--active {
-  background: var(--color-accent, #e8a06a);
-  color: #fff;
+  background: var(--color-accent);
+  color: var(--tt-brand-cream);
   font-weight: 600;
 }
+
+/* A destination whose screen is not built yet. Still not interactive, and it
+   says so with the cursor rather than only with opacity. */
 .shell__link--pending {
-  color: var(--color-secondary, #5a5c6a);
+  color: var(--color-text-dim);
   opacity: 0.6;
+  cursor: default;
+}
+
+.shell__link--pending:hover {
+  background: none;
 }
 
 .shell__main {
@@ -85,14 +112,14 @@
   align-items: center;
   gap: 0.6rem;
   padding: 0.3rem 0.7rem 0.3rem 0.3rem;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   text-decoration: none;
   color: inherit;
-  transition: background var(--motion-fast, 150ms) ease;
+  transition: background var(--dur-fast) ease;
 }
 .shell__account:hover,
 .shell__account--active {
-  background: var(--color-surface-2, rgba(0, 0, 0, 0.05));
+  background: var(--color-surface-2);
 }
 .shell__account:focus-visible {
   outline: 2px solid var(--color-accent);
@@ -107,7 +134,7 @@
   height: 2rem;
   border-radius: 50%;
   background: var(--gradient-teal-purple);
-  color: var(--tt-brand-cream, #f8f6f0);
+  color: var(--tt-brand-cream);
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -124,5 +151,5 @@
 }
 .shell__account-role {
   font-size: 0.72rem;
-  color: var(--color-secondary, #5a5c6a);
+  color: var(--color-text-dim);
 }

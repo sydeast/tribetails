@@ -18,9 +18,15 @@ body,
 }
 
 body {
-  font-family: var(--font-hanken, system-ui, sans-serif);
-  color: var(--color-primary, #1a1c28);
-  background: var(--color-background, #fbfbf9);
+  font-family: var(--font-hanken);
+  /* `--color-text-primary`, NOT `--color-primary`. Until 2026-07-25 this said
+     the latter, whose `#1a1c28` fallback records that navy was meant. The token
+     it actually names is Kinfolk Orange, so every element whose own CSS omits
+     `color` inherited orange body text. `.screen` sets no colour, so the ones
+     that showed it were the plain, unstyled ones: bare `<p>`, `<li>`, dialog
+     copy. Well styled components masked the bug by overriding it. */
+  color: var(--color-text-primary);
+  background: var(--color-background);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -35,8 +41,14 @@ body {
      document flow and cannot extend the scroll area. */
 }
 
-/* The two drifting Den orbs behind every screen. Purely decorative; the RootLayout
-   marks them aria-hidden. Kept subtle so foreground text stays legible. */
+/* The two Den orbs behind every screen. Purely decorative; the RootLayout marks
+   them aria-hidden. Kept subtle so foreground text stays legible.
+
+   `.orb.b` named `--color-teal`, which no file declares, so it took an
+   `#6ab0a6` literal and was the one element on the page that ignored the theme
+   entirely. Both now carry role tokens, and they carry DIFFERENT ones: with
+   `.orb.a` already on `--color-accent`, pointing b at the same token would have
+   traded a themeless orb for a monochrome wash. */
 .orb {
   position: fixed;
   z-index: -1;
@@ -50,17 +62,17 @@ body {
   height: 42vw;
   top: -12vw;
   left: -8vw;
-  background: var(--color-accent, #e8a06a);
+  background: var(--color-tertiary);
 }
 .orb.b {
   width: 38vw;
   height: 38vw;
   bottom: -14vw;
   right: -10vw;
-  background: var(--color-teal, #6ab0a6);
+  background: var(--color-accent);
 }
 
 code {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.9em;
 }

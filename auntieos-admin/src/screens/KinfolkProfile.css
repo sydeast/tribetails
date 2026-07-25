@@ -16,7 +16,7 @@
 }
 
 .kprofile__name {
-  font-size: var(--type-title-md-size, 1.1rem);
+  font-size: var(--type-title-md-size);
   font-weight: 600;
   color: var(--color-text-primary);
 }

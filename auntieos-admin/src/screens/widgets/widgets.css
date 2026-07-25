@@ -10,8 +10,8 @@
 
 .dash-widget__count {
   margin: 0;
-  font-family: var(--font-fraunces, var(--font-hanken));
-  font-size: var(--type-title-lg-size, 1.6rem);
+  font-family: var(--font-fraunces);
+  font-size: var(--type-title-lg-size);
   font-weight: 600;
   color: var(--color-text-primary);
   line-height: 1;
@@ -19,7 +19,7 @@
 
 .dash-widget__count-unit {
   font-family: var(--font-hanken);
-  font-size: var(--type-label-md-size, 0.85rem);
+  font-size: var(--type-label-md-size);
   font-weight: 500;
   color: var(--color-text-dim);
   margin-inline-start: 0.35rem;
@@ -50,7 +50,7 @@
 
 .dash-widget__row-name {
   grid-area: name;
-  font-size: var(--type-label-md-size, 0.85rem);
+  font-size: var(--type-label-md-size);
   font-weight: 600;
   color: var(--color-text-primary);
   overflow: hidden;
@@ -60,7 +60,7 @@
 
 .dash-widget__row-preview {
   grid-area: preview;
-  font-size: var(--type-body-sm-size, 0.8rem);
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -70,14 +70,14 @@
 .dash-widget__row-time {
   grid-area: time;
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size, 0.72rem);
+  font-size: var(--type-label-sm-size);
   color: var(--color-text-faint);
   white-space: nowrap;
 }
 
 .dash-widget__more {
   margin: 0;
-  font-size: var(--type-label-sm-size, 0.72rem);
+  font-size: var(--type-label-sm-size);
   color: var(--color-text-faint);
 }
 
@@ -90,15 +90,15 @@
 }
 
 .safebox__who {
-  font-family: var(--font-fraunces, var(--font-hanken));
-  font-size: var(--type-title-md-size, 1.1rem);
+  font-family: var(--font-fraunces);
+  font-size: var(--type-title-md-size);
   font-weight: 600;
   color: var(--color-text-primary);
 }
 
 .safebox__when {
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size, 0.72rem);
+  font-size: var(--type-label-sm-size);
   color: var(--color-text-faint);
 }
 
@@ -116,20 +116,20 @@
 }
 
 .safebox__fact-label {
-  font-size: var(--type-label-sm-size, 0.72rem);
+  font-size: var(--type-label-sm-size);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--color-text-faint);
 }
 
 .safebox__fact-value {
-  font-size: var(--type-body-sm-size, 0.85rem);
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-primary);
 }
 
 .safebox__fact-value--mono {
   font-family: var(--font-mono);
-  font-size: var(--type-body-md-size, 0.95rem);
+  font-size: var(--type-body-md-size);
   color: var(--color-accent);
 }
 
@@ -150,18 +150,18 @@
 .care-flag__chip {
   align-self: center;
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size, 0.7rem);
+  font-size: var(--type-label-sm-size);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   padding: 0.1rem 0.4rem;
   border-radius: 999px;
-  background: var(--color-surface-raised, rgba(255, 255, 255, 0.06));
+  background: var(--color-surface-2);
   color: var(--color-text-dim);
 }
 
 .care-flag[data-kind='reactive'] .care-flag__chip {
-  background: var(--color-error-soft, rgba(220, 80, 80, 0.16));
-  color: var(--color-error, #d95555);
+  background: var(--color-error-container);
+  color: var(--color-error);
 }
 
 .care-flag__body {
@@ -172,7 +172,7 @@
 }
 
 .care-flag__who {
-  font-size: var(--type-label-md-size, 0.85rem);
+  font-size: var(--type-label-md-size);
   font-weight: 600;
   color: var(--color-text-primary);
 }
@@ -183,7 +183,7 @@
 }
 
 .care-flag__text {
-  font-size: var(--type-body-sm-size, 0.8rem);
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }
 
@@ -208,7 +208,7 @@
 }
 
 .exp-row__label {
-  font-size: var(--type-label-md-size, 0.85rem);
+  font-size: var(--type-label-md-size);
   font-weight: 600;
   color: var(--color-text-primary);
   overflow: hidden;
@@ -218,7 +218,7 @@
 
 .exp-row__kind {
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size, 0.7rem);
+  font-size: var(--type-label-sm-size);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--color-text-faint);
@@ -232,19 +232,19 @@
 }
 
 .exp-row__countdown {
-  font-size: var(--type-label-md-size, 0.85rem);
+  font-size: var(--type-label-md-size);
   font-weight: 600;
   color: var(--color-text-primary);
   white-space: nowrap;
 }
 
 .exp-row[data-soon='true'] .exp-row__countdown {
-  color: var(--color-error, #d95555);
+  color: var(--color-error);
 }
 
 .exp-row__date {
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size, 0.7rem);
+  font-size: var(--type-label-sm-size);
   color: var(--color-text-faint);
   white-space: nowrap;
 }
@@ -271,7 +271,7 @@
 }
 
 .expense-form__label {
-  font-size: var(--type-label-sm-size, 0.7rem);
+  font-size: var(--type-label-sm-size);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--color-text-faint);
@@ -279,9 +279,9 @@
 
 .expense-form__input {
   font-family: var(--font-hanken);
-  font-size: var(--type-body-sm-size, 0.85rem);
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-primary);
-  background: var(--color-surface-sunken, rgba(0, 0, 0, 0.18));
+  background: var(--color-surface-2);
   border: var(--border-hairline) solid var(--color-border-soft);
   border-radius: 0.4rem;
   padding: 0.4rem 0.5rem;
@@ -305,15 +305,15 @@
 }
 
 .expense-total__label {
-  font-size: var(--type-label-sm-size, 0.7rem);
+  font-size: var(--type-label-sm-size);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--color-text-faint);
 }
 
 .expense-total__value {
-  font-family: var(--font-fraunces, var(--font-hanken));
-  font-size: var(--type-title-md-size, 1.1rem);
+  font-family: var(--font-fraunces);
+  font-size: var(--type-title-md-size);
   font-weight: 600;
   color: var(--color-text-primary);
 }
@@ -333,14 +333,14 @@
 
 .expense-row__kind {
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size, 0.7rem);
+  font-size: var(--type-label-sm-size);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--color-text-faint);
 }
 
 .expense-row__note {
-  font-size: var(--type-body-sm-size, 0.8rem);
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -349,7 +349,7 @@
 
 .expense-row__amount {
   font-family: var(--font-mono);
-  font-size: var(--type-label-md-size, 0.85rem);
+  font-size: var(--type-label-md-size);
   font-weight: 600;
   color: var(--color-text-primary);
   white-space: nowrap;
@@ -357,7 +357,7 @@
 
 .expense-row__day {
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size, 0.7rem);
+  font-size: var(--type-label-sm-size);
   color: var(--color-text-faint);
   white-space: nowrap;
 }
@@ -384,14 +384,14 @@
 }
 
 .supply-row__name {
-  font-size: var(--type-label-md-size, 0.85rem);
+  font-size: var(--type-label-md-size);
   font-weight: 600;
   color: var(--color-text-primary);
 }
 
 .supply-row__count {
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size, 0.72rem);
+  font-size: var(--type-label-sm-size);
   color: var(--color-text-dim);
 }
 
@@ -424,9 +424,9 @@
   width: 1.5rem;
   height: 1.5rem;
   border-radius: 999px;
-  background: var(--color-surface-raised, rgba(255, 255, 255, 0.06));
+  background: var(--color-surface-2);
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size, 0.72rem);
+  font-size: var(--type-label-sm-size);
   font-weight: 600;
   color: var(--color-text-primary);
 }
@@ -439,7 +439,7 @@
 }
 
 .route-stop__household {
-  font-size: var(--type-label-md-size, 0.85rem);
+  font-size: var(--type-label-md-size);
   font-weight: 600;
   color: var(--color-text-primary);
   overflow: hidden;
@@ -448,7 +448,7 @@
 }
 
 .route-stop__address {
-  font-size: var(--type-body-sm-size, 0.8rem);
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -457,7 +457,7 @@
 
 .route-stop__eta {
   font-family: var(--font-mono);
-  font-size: var(--type-label-md-size, 0.85rem);
+  font-size: var(--type-label-md-size);
   color: var(--color-text-primary);
   white-space: nowrap;
 }
@@ -466,15 +466,15 @@
   margin-top: 0.5rem;
   padding: 0.5rem 0.6rem;
   border-radius: 0.5rem;
-  background: var(--color-error-soft, rgba(220, 80, 80, 0.12));
-  border: var(--border-hairline) solid var(--color-error, #d95555);
+  background: var(--color-error-container);
+  border: var(--border-hairline) solid var(--color-error);
 }
 
 .route-unroutable__title {
   margin: 0 0 0.35rem;
-  font-size: var(--type-label-md-size, 0.85rem);
+  font-size: var(--type-label-md-size);
   font-weight: 600;
-  color: var(--color-error, #d95555);
+  color: var(--color-error);
 }
 
 .route-unroutable__list {
@@ -493,12 +493,12 @@
 }
 
 .route-unroutable__who {
-  font-size: var(--type-label-md-size, 0.85rem);
+  font-size: var(--type-label-md-size);
   font-weight: 600;
   color: var(--color-text-primary);
 }
 
 .route-unroutable__reason {
-  font-size: var(--type-body-sm-size, 0.8rem);
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }
