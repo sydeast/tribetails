@@ -114,22 +114,28 @@ their head. If you find yourself typing a raw site id, that is the bug.
 
 ### Deploying the AuntieOS functions
 
-The functions codebases are declared in `web/firebase.json`, not in this
-directory's `firebase.json` (which carries hosting only). So a functions deploy
-runs from `web/`, and it needs the codebase prefix:
+Every production deploy goes through `scripts/safe-deploy.sh`, functions
+included. It pins the project, refuses a bare deploy, and refuses a rules push
+from this tree, so going around it is how live security rules get overwritten
+by a stale copy.
 
 ```
-cd web
-firebase deploy --only functions:default:generateAuntieCopy --project auntieos-ttpc
-firebase deploy --only functions:reconcile:<name> --project auntieos-ttpc
+scripts/safe-deploy.sh auntieos-admin -- firebase deploy --only functions:default:generateAuntieCopy
+scripts/safe-deploy.sh auntieos-admin -- firebase deploy --only functions:reconcile:nightly_reconcile
 ```
 
 `default` is `web/functions` (Node), `reconcile` is `web/functions-python`.
-Deploy one function by name; a bare `--only functions:default` pushes all nine.
+Name the function; `--only functions:default` alone pushes all nine, and a bare
+`--only functions` is refused because it would ship both codebases at once.
 
-`scripts/safe-deploy.sh` does NOT cover this path. It cds into `auntieos-admin/`,
-whose `firebase.json` has no functions block, so it cannot deploy these. Use it
-for MyTribe functions, rules and indexes, where its guards earn their keep.
+`DRY_RUN=1` in front prints the command instead of running it. Use it whenever
+you are unsure.
+
+Worth knowing, because it caused a real bypass: `auntieos-admin` is TWO
+`firebase.json` files. This directory's declares hosting; `web/firebase.json`
+declares the functions codebases. The wrapper handles that split for you and
+runs a functions deploy from `web/`. For the same reason it refuses one command
+that mixes functions with hosting: those are two trees, so run two deploys.
 
 Two things that will stop a functions deploy on a fresh checkout:
 

@@ -66,7 +66,29 @@ expect_refuse "missing -- separator refused"     "separator" \
 expect_refuse "case-variant FIRESTORE from admin refused" "auntieos-admin" \
   -- auntieos-admin -- firebase deploy --only FIRESTORE
 
+# The AuntieOS functions live in a different tree from its hosting, so one
+# deploy cannot serve both. Refuse rather than silently pick a tree and drop
+# half the request.
+expect_refuse "admin cannot mix hosting and functions in one deploy" "two trees" \
+  -- auntieos-admin -- firebase deploy --only hosting:app,functions:default:generateAuntieCopy
+# A bare `functions` from admin means BOTH codebases, Node and Python, which is
+# the same everything-at-once hazard as a bare deploy.
+expect_refuse "admin bare functions (no codebase) refused" "codebase" \
+  -- auntieos-admin -- firebase deploy --only functions
+
 # --- allows (DRY_RUN, never deploys) --------------------------------------
+# AuntieOS functions are declared in auntieos-admin/web/firebase.json, not in
+# auntieos-admin/firebase.json, so the deploy has to run one level down.
+expect_allow "admin functions deploy runs from the web tree" "auntieos-admin/web" \
+  -- auntieos-admin -- firebase deploy --only functions:default:generateAuntieCopy
+expect_allow "admin python codebase also runs from the web tree" "auntieos-admin/web" \
+  -- auntieos-admin -- firebase deploy --only functions:reconcile:nightly_reconcile
+# Hosting still runs from the admin root, so the two must not be confused.
+expect_allow "admin hosting still runs from the admin root, not web" "DRY_RUN" \
+  -- auntieos-admin -- firebase deploy --only hosting:app
+# MyTribe is untouched by any of this.
+expect_allow "mytribe functions unchanged" "functions:mytribe:health" \
+  -- mytribe -- firebase deploy --only functions:mytribe:health
 expect_allow "indexes-only is NOT a rules push, allowed from admin" "firestore:indexes" \
   -- auntieos-admin -- firebase deploy --only firestore:indexes
 expect_allow "hosting from admin allowed"        "hosting:app" \

@@ -11,14 +11,27 @@
 # from the admin tree, or shipping everything with a bare deploy, or aiming at
 # the wrong project, is one command away. This wrapper makes those impossible.
 #
-# It enforces four things and then execs firebase from the right tree:
+# It enforces five things and then execs firebase from the right tree:
 #   1. rules can be pushed ONLY from mytribe, and ONLY when the mirror is
 #      byte-identical to mytribe's copy (else the stale admin copy could win);
 #   2. --project is always pinned to auntieos-ttpc; a different --project is
 #      refused (a wrong project is as dangerous as wrong rules);
 #   3. a bare `firebase deploy` (no --only) is refused (it ships hosting, every
 #      functions codebase, rules AND indexes at once);
-#   4. every refusal prints, in red, WHAT was refused and WHY, and exits non-zero.
+#   4. an admin functions deploy runs from auntieos-admin/web, where those
+#      codebases are actually declared, and a bare `--only functions` (both
+#      codebases at once) or a functions+hosting mix (two trees) is refused;
+#   5. every refusal prints, in red, WHAT was refused and WHY, and exits non-zero.
+#
+# THE TWO-TREE FACT, which guard 4 exists for
+# auntieos-admin is TWO firebase.json files. The admin root declares hosting;
+# auntieos-admin/web declares the functions codebases (default = web/functions
+# Node, reconcile = web/functions-python). Before guard 4 this wrapper always
+# ran from the admin root, found no functions block there, and so could not
+# deploy AuntieOS functions at all. That is not a theoretical gap: on
+# 2026-07-25 it pushed generateAuntieCopy straight past this door with a raw
+# `firebase deploy`, losing guards 1 to 3 for that deploy. mytribe is a single
+# firebase.json and is unaffected by any of this.
 #
 # USAGE
 #   scripts/safe-deploy.sh <prefix> -- firebase deploy --only <targets> [flags]
@@ -230,18 +243,69 @@ if [ "$PUSHES_RULES" -eq 1 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# GUARD 4: pick the tree the deploy actually runs from. auntieos-admin is TWO
+# firebase.json files, not one: the admin root declares hosting, and web/
+# declares the two functions codebases (default = web/functions Node, reconcile
+# = web/functions-python). Running a functions deploy from the admin root finds
+# no functions block, which is why this wrapper could not deploy them at all and
+# a raw `firebase deploy` got used instead, losing every guard above.
+# mytribe is one firebase.json and is unaffected.
+# ---------------------------------------------------------------------------
+DEPLOY_DIR="$PREFIX_DIR"
+if [ "$PREFIX" = "auntieos-admin" ]; then
+  WANTS_FUNCTIONS=0
+  WANTS_OTHER=0
+  for part in "${ONLY_PARTS[@]+"${ONLY_PARTS[@]}"}"; do
+    lower="$(printf '%s' "$part" | tr '[:upper:]' '[:lower:]')"
+    case "$lower" in
+      functions|functions:*)
+        WANTS_FUNCTIONS=1
+        # A bare `functions` ships BOTH codebases at once, the same
+        # everything-in-one-shot hazard the bare-deploy guard refuses.
+        if [ "$lower" = "functions" ]; then
+          refuse "deploying '--only functions' from the admin tree." \
+            "That ships BOTH codebases at once: 'default' (web/functions, Node)" \
+            "and 'reconcile' (web/functions-python). Name the codebase, and" \
+            "ideally the function:" \
+            "  --only functions:default:generateAuntieCopy" \
+            "  --only functions:reconcile:nightly_reconcile"
+        fi
+        ;;
+      *) WANTS_OTHER=1 ;;
+    esac
+  done
+
+  if [ "$WANTS_FUNCTIONS" -eq 1 ] && [ "$WANTS_OTHER" -eq 1 ]; then
+    refuse "one deploy mixing functions with non-functions targets from the admin tree." \
+      "Those live in two trees: functions are declared in auntieos-admin/web/," \
+      "everything else in auntieos-admin/. One firebase run cannot serve both," \
+      "and picking a tree silently would drop half of what you asked for." \
+      "Run them as two deploys instead:" \
+      "  scripts/safe-deploy.sh auntieos-admin -- firebase deploy --only $ONLY_VALUE" \
+      "split into its functions:* targets and its others."
+  fi
+
+  if [ "$WANTS_FUNCTIONS" -eq 1 ]; then
+    DEPLOY_DIR="$PREFIX_DIR/web"
+    [ -f "$DEPLOY_DIR/firebase.json" ] || refuse \
+      "cannot find the functions config at $DEPLOY_DIR/firebase.json." \
+      "AuntieOS functions codebases are declared there, not in the admin root."
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Allowed. Pin the project, then run (or print, under DRY_RUN) from the tree.
 # ---------------------------------------------------------------------------
 FINAL+=( --project "$PROJECT" )
 
-cyan "safe-deploy: prefix '$PREFIX' -> $PREFIX_DIR"
+cyan "safe-deploy: prefix '$PREFIX' -> $DEPLOY_DIR"
 cyan "safe-deploy: about to run: firebase ${FINAL[*]}"
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
-  ylw "DRY_RUN=1: not executing. Would cd '$PREFIX_DIR' and run:"
+  ylw "DRY_RUN=1: not executing. Would cd '$DEPLOY_DIR' and run:"
   printf '  firebase %s\n' "${FINAL[*]}"
   exit 0
 fi
 
-cd "$PREFIX_DIR" || refuse "cannot cd into $PREFIX_DIR."
+cd "$DEPLOY_DIR" || refuse "cannot cd into $DEPLOY_DIR."
 exec firebase "${FINAL[@]}"

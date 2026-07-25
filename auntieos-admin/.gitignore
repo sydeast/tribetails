@@ -95,7 +95,12 @@ web/composeApp/build/
 .gradle/
 .kotlin/
 kotlin-js-store/
+# Both forms on purpose. `node_modules/` matches a directory only, so a SYMLINK
+# named node_modules slips past it. Two such symlinks, each pointing at an
+# absolute path on one machine, were committed on 2026-07-24 and checked out
+# over the real install, destroying it.
 node_modules/
+node_modules
 .firebase/
 dist/
 
