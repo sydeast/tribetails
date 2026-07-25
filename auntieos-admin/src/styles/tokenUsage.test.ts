@@ -151,18 +151,6 @@ describe('the specific mis-wirings found on 2026-07-25', () => {
   });
 });
 
-describe('the background orbs are themed', () => {
-  const base = readFileSync(join(stylesDir, 'base.css'), 'utf8');
-  it('tints both orbs from role tokens, and from DIFFERENT ones', () => {
-    // `.orb.b` named `--color-teal`, which nothing declares, so it took a
-    // literal and was the one element on the page that ignored dark mode.
-    const orbs = base.slice(base.indexOf('.orb {'));
-    expect(orbs).toContain('var(--color-tertiary)');
-    expect(orbs).toContain('var(--color-accent)');
-    expect(orbs).not.toContain('--color-teal');
-  });
-});
-
 describe('Fraunces actually renders', () => {
   const tokens = readFileSync(join(stylesDir, 'tokens.css'), 'utf8');
   const main = readFileSync(join(srcDir, 'main.tsx'), 'utf8');
@@ -195,8 +183,7 @@ describe('Fraunces actually renders', () => {
   });
 });
 
-
-describe('the Den screen entrance', () => {
+describe('the Den entrance and ambient wash', () => {
   const base = readFileSync(join(stylesDir, 'base.css'), 'utf8');
 
   it('declares the rise keyframe and all four stagger steps', () => {
@@ -220,6 +207,29 @@ describe('the Den screen entrance', () => {
     expect(guard).toMatch(/\*,\s*\*::before,\s*\*::after/);
   });
 
+  it('gives the orbs radial falloff, a blend mode, and motion', () => {
+    const orbs = base.slice(base.indexOf('.orb {'));
+    expect(orbs).toContain('mix-blend-mode');
+    expect(orbs).toContain('animation: orb-drift');
+    expect(orbs).toContain('@keyframes orb-drift');
+    for (const orb of ['.orb.a', '.orb.b', '.orb.c']) {
+      expect(orbs).toMatch(new RegExp(`\\${orb} \\{[^}]*radial-gradient`));
+    }
+  });
+
+  it('starts the orbs out of phase, or the wash pulses instead of drifting', () => {
+    const orbs = base.slice(base.indexOf('.orb {'));
+    expect([...orbs.matchAll(/animation-delay:\s*-\d+s/g)]).toHaveLength(2);
+  });
+
+  it('renders three orbs, since two of three brand hues is not the Tribe palette', () => {
+    const router = readFileSync(join(srcDir, 'router.tsx'), 'utf8');
+    for (const cls of ['orb a', 'orb b', 'orb c']) {
+      expect(router).toContain(`className="${cls}"`);
+    }
+    // Decorative only. They must never reach the accessibility tree.
+    expect([...router.matchAll(/className="orb [abc]" aria-hidden="true"/g)]).toHaveLength(3);
+  });
 
   it('staggers the three screens the audit called out', () => {
     // Home, Directory and KinTales are the surfaces the 2026-07-25 audit picked
@@ -234,5 +244,14 @@ describe('the Den screen entrance', () => {
         expect(src, `${screen} is missing .${step}`).toMatch(new RegExp(`["' ]${step}["' ]`));
       }
     }
+  });
+
+  it('tints the orbs from role tokens so the wash follows the theme', () => {
+    const orbs = base.slice(base.indexOf('.orb {'), base.indexOf('@keyframes orb-drift'));
+    // `.orb.b` used to name `--color-teal`, which nothing declares, so it took a
+    // literal and was the one element on the page that ignored dark mode.
+    expect(orbs).toContain('var(--color-tertiary)');
+    expect(orbs).toContain('var(--color-primary)');
+    expect(orbs).toContain('var(--color-accent)');
   });
 });

@@ -46,35 +46,77 @@ body {
      document flow and cannot extend the scroll area. */
 }
 
-/* The two Den orbs behind every screen. Purely decorative; the RootLayout marks
+/* ── The Den ambient wash ────────────────────────────────────────────────────
+   Three drifting orbs behind every screen. Purely decorative; RootLayout marks
    them aria-hidden. Kept subtle so foreground text stays legible.
 
-   `.orb.b` named `--color-teal`, which no file declares, so it took an
-   `#6ab0a6` literal and was the one element on the page that ignored the theme
-   entirely. Both now carry role tokens, and they carry DIFFERENT ones: with
-   `.orb.a` already on `--color-accent`, pointing b at the same token would have
-   traded a themeless orb for a monochrome wash. */
+   Restored 2026-07-25 to what all 39 `ui-ideas/*.html` mocks specify and the
+   MyTribe portal already ships (`mytribe/web/src/styles/base.css:18`). Three
+   things were missing, and each one is why the background read as a flat wash
+   rather than as atmosphere:
+
+     - They did not move. The class comment said "drifting" and nothing drifted.
+     - They were FLAT fills, so each was a hard-edged disc softened only by the
+       blur, instead of a radial falloff that fades into the page.
+     - They did not blend, so the two overlapped by occlusion rather than mixing
+       into a third hue.
+
+   Colours are role tokens, so the wash re-tints itself in dark mode with no
+   second rule. `.orb.b` previously named `--color-teal`, which no file declares,
+   so it silently took an `#6ab0a6` literal and was the one element on the page
+   that ignored the theme entirely. */
 .orb {
   position: fixed;
   z-index: -1;
   border-radius: 50%;
   filter: blur(80px);
-  opacity: 0.5;
+  opacity: 0.45;
   pointer-events: none;
+  /* Additive-ish mixing where two orbs overlap, which is what produces the
+     third colour the mocks show at the seams. */
+  mix-blend-mode: screen;
+  /* Negative delays start the three mid-cycle so they are permanently out of
+     phase; without them all three turn at the same instant and the wash
+     pulses instead of drifting. */
+  animation: orb-drift 29s var(--ease-standard) infinite alternate;
 }
+
+/* `screen` lightens, which is right on the dark navy but washes out the cream
+   page. Light mode multiplies instead, so the orbs deepen the cream rather than
+   bleaching it. */
+:root:not([data-theme='dark']) .orb {
+  mix-blend-mode: multiply;
+  opacity: 0.25;
+}
+
 .orb.a {
   width: 42vw;
   height: 42vw;
   top: -12vw;
   left: -8vw;
-  background: var(--color-tertiary);
+  background: radial-gradient(circle, var(--color-tertiary), transparent 62%);
 }
 .orb.b {
-  width: 38vw;
-  height: 38vw;
-  bottom: -14vw;
+  width: 40vw;
+  height: 40vw;
+  top: 10vw;
   right: -10vw;
-  background: var(--color-accent);
+  background: radial-gradient(circle, var(--color-primary), transparent 60%);
+  animation-delay: -10s;
+}
+.orb.c {
+  width: 34vw;
+  height: 34vw;
+  bottom: -14vw;
+  left: 30vw;
+  background: radial-gradient(circle, var(--color-accent), transparent 60%);
+  animation-delay: -16s;
+}
+
+@keyframes orb-drift {
+  to {
+    transform: translate3d(-4vmax, 3vmax, 0) scale(1.1) rotate(-9deg);
+  }
 }
 
 code {

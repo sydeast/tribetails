@@ -172,10 +172,12 @@
   --font-fraunces: 'Fraunces Variable', 'Fraunces', ui-serif, Georgia, serif;
   --font-hanken: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'Spline Sans Mono', ui-monospace, 'SF Mono', monospace;
+
   /* Fraunces variable axes, from the mocks (all 39 set exactly this pair on
      their display headings). SOFT rounds the terminals; WONK swaps in the
      single-storey g and the cocked-leg R, which is the whole reason this face
      reads as warm rather than as a stock serif.
+
      Applied ONCE, on `body` in base.css, rather than at each of the 26 rules
      that name a Fraunces family. `font-variation-settings` INHERITS, and an
      axis a face does not carry is ignored, so Hanken Grotesk and Spline Sans
