@@ -26,7 +26,14 @@ if (existsSync(envPath)) {
 
 const EMAIL = process.env.VISUAL_ADMIN_EMAIL;
 const PASSWORD = process.env.VISUAL_ADMIN_PASSWORD;
-const BASE_URL = process.env.VISUAL_BASE_URL || "https://auntie.tribetails.com";
+// THE DEFAULT IS THE WASM SITE, NOT auntie.tribetails.com, and the change is a fix.
+// Since 2026-07-20 auntie.tribetails.com serves the REACT admin, which has no
+// `window.__fb` bridge and no Skia canvas, so this script aimed at it waits the
+// full 60 seconds for a bridge that will never appear and then fails every
+// screen. Per web/firebase.json the wasm build deploys to the `auntieos-admin`
+// site, which is what this now names. Override with VISUAL_BASE_URL to capture a
+// local `npm run serve-dist`.
+const BASE_URL = process.env.VISUAL_BASE_URL || "https://auntieos-admin.web.app";
 
 if (!EMAIL || !PASSWORD) {
   console.error(
@@ -74,9 +81,31 @@ try {
   await page.goto(BASE_URL, { waitUntil: "load" });
   // Wait for the Firebase bridge + Wasm to be ready, then let the canvas settle so the
   // sign-in evaluate doesn't race a recomposition that destroys the execution context.
-  await page.waitForFunction(() => window.__fbReady === true && typeof window.__fb === "object", null, {
-    timeout: 60000,
-  });
+  try {
+    await page.waitForFunction(() => window.__fbReady === true && typeof window.__fb === "object", null, {
+      timeout: 60000,
+    });
+  } catch {
+    // NAME THE LIKELY CAUSE. The bare Playwright timeout says only that a
+    // predicate never became true, and the overwhelmingly common reason is that
+    // BASE_URL is serving the React admin rather than the wasm build. A minute
+    // of waiting followed by a generic message is how somebody concludes the
+    // harness is broken when the URL is simply wrong.
+    const isReact = await page
+      .evaluate(() => document.querySelector("#root") !== null && document.querySelector("canvas") === null)
+      .catch(() => false);
+    console.error(
+      `FATAL: no Compose wasm bridge at ${BASE_URL} after 60s.\n` +
+        (isReact
+          ? "  That URL is serving the REACT admin (#root, no canvas). This script drives the\n" +
+            "  Compose wasm build, which deploys to the `auntieos-admin` site. Point\n" +
+            "  VISUAL_BASE_URL at that host or at a local `npm run serve-dist`.\n" +
+            "  The React admin has its OWN browser coverage: see auntieos-admin/e2e/."
+          : "  The page loaded but never set window.__fbReady. Check the build actually\n" +
+            "  deployed, and that the canvas is painting (see the WebGL notes above).")
+    );
+    process.exit(2);
+  }
   await page.waitForTimeout(3000);
 
   // Programmatic sign-in via the app's own bridge (retry once if a recomposition

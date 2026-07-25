@@ -1,4 +1,4 @@
-# Visual Regression Runbook: capture, verify, approve (2026-07-21)
+# Visual Regression Runbook: capture, verify, approve (updated 2026-07-25)
 
 The visual harness has two halves that are easy to confuse. **Capture** re-renders each screen and overwrites the PNGs under `visual/<surface>/`. **Verify** compares those captures against the operator-approved goldens under `visual/baselines/<surface>/` and fails on drift. Capture alone proves nothing: until 2026-07-21 nothing in the repo ever invoked the verify step, so the goldens recorded history instead of guarding it. Design doc: `docs/2026-05-31-visual-testing-design.md`. Verify implementation: `web/visual/baseline.mjs`.
 
@@ -27,7 +27,7 @@ cd web/visual
 npm run visual:web
 ```
 
-`VISUAL_BASE_URL` defaults to `https://auntie.tribetails.com`, which since 2026-07-20 serves the **React** admin, not the Compose wasm app the script drives (it authenticates through `window.__fb.signIn` and screenshots the Skia `<canvas>`). Per `web/firebase.json` the wasm build deploys to the `auntieos-admin` site, so point `VISUAL_BASE_URL` at that host (or a local `npm run serve-dist`) before capturing, or the run will fail loud on every screen.
+`VISUAL_BASE_URL` now defaults to `https://auntieos-admin.web.app`, the site `web/firebase.json` deploys the wasm build to. It used to default to `https://auntie.tribetails.com`, which since 2026-07-20 serves the **React** admin, not the Compose wasm app this script drives (it authenticates through `window.__fb.signIn` and screenshots the Skia `<canvas>`). Aimed at that host, the script waited the full 60 seconds for a bridge that will never exist and then failed every screen with a bare Playwright timeout. It now detects the case (`#root` present, no `<canvas>`) and says which app it found and where the wasm build actually lives. Override `VISUAL_BASE_URL` for a local `npm run serve-dist`.
 
 ### Desktop
 
@@ -83,9 +83,21 @@ Do not approve to clear a red run. If you cannot account for a diff, leave it re
 
 `DesktopScreenshotTest` records and never compares, and that is intentional, not an oversight to fix. Making it assert would need a Compose-side compare harness (golden loading, tolerance policy, diff-artifact emission) that this repo does not have and that Roborazzi cannot supply here, since its Gradle plugin is incompatible with AGP 9.2.1. `baseline.mjs` already fills that role for all three surfaces with one tolerance policy and one report. Keep the Kotlin tests as pure capture; keep the assertion in `baseline.mjs`.
 
-## Known state as of 2026-07-21
+## This harness does not cover the React admin
 
-A verify run against the committed captures reports **23 ok, 37 regressions, 0 unbaselined** (exit 1): 19 desktop screens and 18 android screens, ranging from 0.69 percent to 78.9 percent changed. Web is clean on all 20. This is accumulated drift from sessions that captured without ever verifying, so it is unreviewed and deliberately **not** approved. Someone has to walk `visual/report/regress/` screen by screen and decide which diffs are intended UI changes before the goldens are promoted. Until that happens the harness is wired but the baselines are stale.
+All three surfaces render the **Compose** app. `web` drives the wasm build's Skia canvas through `window.__fb`; `desktop` is Compose JVM; `android` is the Compose Android app under Robolectric. The React admin that `auntie.tribetails.com` has served since 2026-07-20 appears in none of them, so it has **zero** visual coverage and the 20 goldens under `visual/baselines/web/` are pictures of a different application.
+
+Do not read a green verify run as a statement about the React admin. Whatever browser coverage that app has asserts computed style and font metrics, not pixels, and is not a substitute for a screenshot diff. (Task 8.1 adds that coverage under `e2e/`, with its own runbook at `docs/runbooks/e2e.md`.)
+
+Closing the gap means a fourth surface whose capture step drives the React app and whose verify step is this same `baseline.mjs`, so there stays one tolerance policy and one report. It needs a Firebase emulator and a seeded admin, which the e2e harness already provides, and it needs the non-deterministic parts of those screens pinned first: the sign-in orbs drift, and most list screens render relative timestamps. Capturing before that is done produces a golden that fails on the next run for reasons nobody can name, which is how a harness gets ignored.
+
+## Known state as of 2026-07-25
+
+A verify run against the committed captures reports **24 ok, 36 regressions, 0 unbaselined** (exit 1): 19 desktop screens and 17 android screens, from 0.69 percent to 19.76 percent changed. Web is clean on all 20. This is accumulated drift from sessions that captured without ever verifying, so it is unreviewed and deliberately **not** approved. Someone has to walk `visual/report/regress/` screen by screen and decide which diffs are intended UI changes before the goldens are promoted. Until that happens the harness is wired but the baselines are stale.
+
+**The tracked report was lying, and the lie was the reassuring direction.** Until 2026-07-25 `visual/report/regression.md` in git listed all 60 screens as `ok | 0`, because it was last written immediately after an approve, when captures and goldens were by definition identical, and never regenerated as the tree moved on. It has been regenerated here so the tracked report describes the tracked PNGs. Anyone who opened that file instead of running the check read a clean bill of health for a harness that was 36 screens red, which is worse than having no report at all. If you run verify and do not commit the result, restore it (`git restore visual/report/`) rather than leaving a half-updated one behind.
+
+**Neither surface can be re-captured casually to clear this.** Desktop and Android both need Gradle, both rewrite 20 tracked PNGs in place, and both produce exactly the unreviewed drift above. Web capture additionally needs a live test-admin credential that only the operator holds. So the 36 rows stay red until someone with those credentials and a reason walks the overlays.
 
 ## Suggested order for a routine check
 
