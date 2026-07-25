@@ -162,3 +162,36 @@ describe('the background orbs are themed', () => {
     expect(orbs).not.toContain('--color-teal');
   });
 });
+
+describe('Fraunces actually renders', () => {
+  const tokens = readFileSync(join(stylesDir, 'tokens.css'), 'utf8');
+  const main = readFileSync(join(srcDir, 'main.tsx'), 'utf8');
+  const base = readFileSync(join(stylesDir, 'base.css'), 'utf8');
+
+  it('names the family @fontsource-variable registers, not the one it does not', () => {
+    // The package declares `font-family: 'Fraunces Variable'`. This token said
+    // 'Fraunces', which nothing declares, so every serif heading in the admin
+    // fell through to Georgia from the port until 2026-07-25. The face was
+    // downloaded on every page load and never used.
+    const family = tokens.match(/--font-fraunces:\s*([^;]+);/)?.[1] ?? '';
+    expect(family).toMatch(/^'Fraunces Variable'/);
+  });
+
+  it('loads the axis-carrying stylesheet, not the wght-only default', () => {
+    // `@fontsource-variable/fraunces` alone ships wght only; SOFT and WONK,
+    // which are the axes the mocks set, live in /full.css.
+    expect(main).toContain("@fontsource-variable/fraunces/full.css");
+    expect(main).not.toMatch(/from '@fontsource-variable\/fraunces'|import '@fontsource-variable\/fraunces';/);
+  });
+
+  it('applies the variable axes once, inheritably, from body', () => {
+    expect(tokens).toMatch(/--type-serif-variation:\s*'SOFT' 50, 'WONK' 1;/);
+    expect(base).toContain('font-variation-settings: var(--type-serif-variation)');
+  });
+
+  it('leaves wght out of the variation settings so font-weight still governs weight', () => {
+    const variation = tokens.match(/--type-serif-variation:\s*([^;]+);/)?.[1] ?? '';
+    expect(variation.toLowerCase()).not.toContain('wght');
+  });
+});
+

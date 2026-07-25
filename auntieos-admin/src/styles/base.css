@@ -29,6 +29,11 @@ body {
   background: var(--color-background);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Inherited by everything, and ignored by any face without these axes, so
+     this one declaration reaches all 26 Fraunces rules and Hanken and Spline
+     Sans Mono are untouched. See --type-serif-variation in tokens.css. */
+  font-variation-settings: var(--type-serif-variation);
+  font-optical-sizing: auto;
 }
 
 #root {
