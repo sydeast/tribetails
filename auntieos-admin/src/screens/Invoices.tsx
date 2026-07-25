@@ -12,6 +12,8 @@ import {
   humanizeDate,
   invoiceState,
   invoiceStateInfo,
+  invoicePartialPayment,
+  type InvoicePartialPayment,
   isInvoiceOverdue,
   localDateIso,
   type InvoiceState,
@@ -119,6 +121,8 @@ interface RowView {
   entry: InvoiceEntry;
   state: InvoiceState;
   overdue: boolean;
+  /** Non-null when money has come in that does not cover the invoice. */
+  partial: InvoicePartialPayment | null;
 }
 
 function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
@@ -131,7 +135,14 @@ function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
       total: entry.total,
       creditRedeemed: entry.creditRedeemedAt !== undefined,
     });
-    return { entry, state, overdue: isInvoiceOverdue(state, entry.dueDate, todayIso) };
+    return {
+      entry,
+      state,
+      overdue: isInvoiceOverdue(state, entry.dueDate, todayIso),
+      // Like `overdue`, a display refinement of `open` rather than a state of
+      // its own, so it changes the chip and never the actions.
+      partial: invoicePartialPayment(state, entry),
+    };
   });
 }
 
@@ -489,11 +500,17 @@ interface InvoiceRowProps {
 }
 
 function InvoiceRow({ view, todayIso, onSelect }: InvoiceRowProps) {
-  const { entry, state, overdue } = view;
+  const { entry, state, overdue, partial } = view;
   // Overdue is a display-level refinement of "open" (see FILTERS' comment),
   // it never becomes its own InvoiceState, it just outranks the plain "Open"
   // chip visually, the same relationship the wasm's InvoiceRow renders.
-  const info = overdue ? { label: 'Overdue', chipLabel: 'OVERDUE', cssClass: 'overdue' } : invoiceStateInfo(state);
+  // Part-paid is the same kind of refinement, ranked below overdue: an overdue
+  // invoice that is also part-paid is still, first, overdue.
+  const info = overdue
+    ? { label: 'Overdue', chipLabel: 'OVERDUE', cssClass: 'overdue' }
+    : partial
+      ? { label: 'Part paid', chipLabel: 'PART PAID', cssClass: 'partpaid' }
+      : invoiceStateInfo(state);
   const household = entry.kinfolkName || entry.client || 'Unknown';
   const secondary = entry.client && entry.client !== entry.kinfolkName ? entry.client : null;
   const dateLine =

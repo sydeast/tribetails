@@ -19,6 +19,9 @@ Frozen request shapes:
 - Money + state mutations (added 2026-07-21): `createInvoice`, `createQuote`,
   `markInvoicePaid`, `assignTemplate`. Flat shapes, so a top-level key freeze is
   accurate.
+- Billing data repair (added 2026-07-25): `repairInvoicePayments`. Frozen because
+  its `mode` field is what separates a read-only report from a billing mass
+  write.
 - Operator preferences (added 2026-07-25): `saveDashboardLayout`. One field, but
   the VALUE is the contract (a "key:size" token), so the guard freezes the token
   regex alongside the key set.
@@ -177,21 +180,57 @@ caller sent, so classify it through a shared enumerator rather than deciding
 - `sendToKinfolk: true` dispatches the issued-quote notification immediately.
 
 ### markInvoicePaid
-- req `{ invoiceId: string /* 1..200 */, amount?: number /* DOLLARS, defaults to the invoice's current amountDue */, method?: string /* 1..200 */, reference?: string /* 1..200 */, paidAt?: string /* ISO-8601, defaults to now */ }`
-- res `{ ok: true, invoiceId: string, paymentId: string }`
-- Writes an `invoices/{invoiceId}/payments/{paymentId}` entry (amount, method,
-  reference, paidAt, recordedBy) in the SAME batch as the invoice flip, so
-  "marked paid, with no record of who recorded it" is unrepresentable.
-- CAVEAT a mirror author needs: the flip sets `amountDue: 0` unconditionally, even
-  when `amount` is a PARTIAL payment. The payments subcollection keeps the true
-  figure; the scalar on the invoice does not. Sum the subcollection when you need
-  what was actually collected.
-- Error surface, all fail-loud: `not-found` for an unknown id;
-  `failed-precondition` "Invoice is already paid."; `failed-precondition` when the
-  invoice is still a draft or quote ("send it first before recording a payment").
+- req `{ invoiceId: string /* 1..200 */, amount?: number /* DOLLARS, MAY BE PARTIAL; defaults to what the recorded payments leave outstanding */, method?: string /* 1..200 */, reference?: string /* 1..200 */, paidAt?: string /* ISO-8601, defaults to now */ }`
+- res `{ ok: true, invoiceId: string, paymentId: string, state: 'unpaid'|'partial'|'settled'|'overpaid', totalCents: number, paidCents: number, amountDueCents: number, overpaidCents: number }`
+- Writes an `invoices/{invoiceId}/payments/{paymentId}` entry (amount,
+  amountCents, method, reference, paidAt, recordedBy) in the SAME batch as the
+  invoice's money fields, so "marked paid, with no record of who recorded it" is
+  unrepresentable.
+- **THE STATE IS DERIVED FROM THE SUM OF EVERY RECORDED PAYMENT**, not from the
+  `amount` in this request. A partial leaves the invoice `status: 'open'` with a
+  real `amountDue`, so it stays in Outstanding and the balance can still be
+  collected; only a settling payment writes `paid`. Fixed 2026-07-25: the flip
+  used to set `status: 'paid', amountDue: 0` unconditionally, so $20 against a
+  $40 invoice read as settled, dropped out of Outstanding, and the second call
+  was then REFUSED as already-paid, leaving the balance uncollectable.
+- Writes integer cents alongside the legacy float dollars: `totalCents`,
+  `paidCents`, `amountDueCents`, `overpaidCents`. The dollar `amountDue` is a
+  projection of `amountDueCents` written in the same pass, never an input.
+- OVERPAYMENT: settles the invoice, `amountDueCents` CLAMPS AT 0 (never
+  negative, which is this codebase's credit signal and would silently turn an
+  over-collected invoice into a credit owed back to the household), and the
+  excess is reported as `overpaidCents` for the operator to act on. It is never
+  converted into a credit automatically.
+- A PARTIAL stamps `lastPaymentAt`/`lastPaymentBy`; only a settling payment
+  stamps `paidAt`/`paidBy`.
+- Error surface, all fail-loud, with `details.code` for clients to branch on:
+  `not-found` for an unknown id; `failed-precondition` `invoice_already_settled`
+  when the recorded payments already cover the total; `failed-precondition`
+  `invoice_already_paid` when the invoice is marked paid and carries NO recorded
+  payments to reconcile against (the Stripe path records into the ROOT `payments`
+  collection, so believing the label is what stops a double-collection there);
+  `failed-precondition` `invoice_not_payable` for a cancelled invoice or a
+  credit; `failed-precondition` when the invoice is still a draft or quote.
+  An invoice LABELLED paid whose recorded payments fall short is deliberately NOT
+  refused: that is the 2026-07-25 corruption, and it is the invoice whose balance
+  is owed.
 - The `invoice.payment.applied` notification is deliberately NOT enqueued here.
   `onInvoicesWrite` fires it off the resulting Firestore write, so this callable,
-  the Stripe webhook and a direct admin write each notify exactly once.
+  the Stripe webhook and a direct admin write each notify exactly once. It does
+  NOT fire for a partial, because the invoice is not paid.
+- req `{ mode?: 'detect'|'repair' /* default 'detect' */, limit?: number /* int 1..500, default 200 */, startAfterId?: string /* 1..200 */ }`
+- res `{ ok: true, mode, scanned: number, findings: Array<{ invoiceId, invoiceNumber, kinfolkId, totalCents, paidCents, claimedAmountDueCents, correctAmountDueCents, understatedCents, status }>, repaired: number, skipped: Record<reason, number>, nextCursor: string|null }`
+- Finds, and optionally repairs, invoices wrecked by the pre-2026-07-25
+  partial-payment write: a doc claiming less is owed than its own `payments`
+  subcollection says. `detect` READS AND REPORTS ONLY and is the default;
+  `repair` must be named explicitly.
+- IDEMPOTENT, and it NEVER LOWERS A BALANCE: only an understated balance is
+  raised, so re-running is safe and the worst case is that it declines to fix
+  something. An overstated balance is reported (`would_lower_balance`), never
+  silently reduced.
+- Detection is BY ARITHMETIC, not by status, because status casing is unenforced
+  and Firestore equality skips documents missing the field. Pages by document id
+  for the same completeness reason; loop until `nextCursor` is null.
 
 ### updateInvoice
 - req `{ invoiceId: string /* 1..200 */, patch: { invoiceNumber?: string /* 1..60 */, date?: string /* YYYY-MM-DD */, dueDate?: string /* YYYY-MM-DD */, terms?: string /* <=2000 */, lineItems?: Array<{ description: string /* 1..200 */, qty: number /* >0, <=999 */, unitCents: number /* int, 0..10_000_000 */, discountCents?: number /* int, >=0 */ }> /* <=100 */, invoiceDiscountCents?: number /* int, >=0 */ } }`
@@ -349,6 +388,119 @@ back on load:
   share level, and calls out that `notFound` covers both a typo and a share to
   the wrong address.
 - `unavailable` / `gcal_<status>`: any other Google failure.
+
+## Google Calendar over OAuth, the editable half (admin-gated, Task 7.2)
+
+A DIFFERENT FEATURE from the free/busy sync above, sharing nothing but the word
+calendar. That one READS availability off a shared calendar as a service account
+and needs no secret. This one WRITES our visits onto a calendar belonging to a
+Google account the operator signs into, and is the only part of the app gated on
+an external secret.
+
+**Operator setup, in order.** In Google Cloud Console for project
+`auntieos-ttpc`, under APIs and Services, Credentials, create an OAuth client ID
+of type Web application whose authorized redirect URI is EXACTLY
+`https://us-central1-auntieos-ttpc.cloudfunctions.net/googleOAuthCallback`. Then
+from `mytribe/`:
+
+```
+firebase functions:secrets:set GOOGLE_OAUTH_CLIENT_ID --project auntieos-ttpc
+firebase functions:secrets:set GOOGLE_OAUTH_CLIENT_SECRET --project auntieos-ttpc
+firebase deploy --only functions:mytribe
+```
+
+Both names are declared in the `secrets: [...]` of every function that needs them
+and both are READ in `src/lib/googleOAuth.ts`; `test/googleCalendarOAuth.test.ts`
+asserts the declaration on each function, because a secret nothing reads does
+nothing and a secret nothing declares is never mounted.
+
+**Where the refresh token lives.** `integrations_config/googleCalendar`, a
+document `firestore.rules` denies to EVERY client, read and write, including a
+signed-in Auntie. Only these functions read it, through the Admin SDK. No
+callable returns it: every response goes through `publicConnection`, whose key
+set is frozen in `test/callableContract.test.ts`. Disconnect revokes at Google
+BEFORE clearing our copy.
+
+### startGoogleCalendarConnect
+- req `{}`
+- res `{ authUrl: string, expiresAt: string, redirectUri: string }`
+- Mints a one-time `state` nonce in `google_oauth_states/{nonce}` against the
+  caller's uid, valid 15 minutes, and returns the consent URL for the client to
+  open (popup on web, Custom Tab on android). The plan sketched this as an HTTP
+  endpoint; it is a CALLABLE because a browser navigation carries no ID token, so
+  an HTTP start could not tell an Auntie from a stranger.
+- `failed-precondition` with `details { code: 'google_oauth_not_configured' }`
+  when either secret is unset. The message names which one and the exact command.
+
+### googleOAuthCallback (HTTPS, not callable)
+- Google's redirect target. Not authenticated, because Google performs it; the
+  one-time state stands in. An unknown, expired or already-spent state is refused
+  before any code is exchanged, which is what stops a stranger attaching THEIR
+  Google account to this business.
+- Stamps `connectLastAttemptAt` / `connectLastStatus` / `connectLastError` on the
+  connection doc on SUCCESS and on FAILURE, including a declined consent. The
+  window it runs in gets closed, so the receipt is the only report that survives.
+- Never echoes the code, the state or any token into the page it renders.
+
+### getGoogleCalendarConnection
+- req `{}`
+- res `{ connection: PublicGoogleCalendarConnection, freeBusyCalendarId: string, redirectUri: string }`
+- The poll target after the consent window opens, since neither client can read
+  the outcome out of that window.
+- `PublicGoogleCalendarConnection` = `{ connected, googleAccountEmail, connectedAt,
+  scopes, writeCalendarId, enabledCalendarIds, disconnectedAt, disconnectedError,
+  connectLastAttemptAt, connectLastStatus, connectLastError, calendarPushLastRunAt,
+  calendarPushLastStatus, calendarPushLastPushed, calendarPushLastError }`. Key
+  set frozen EXACTLY, not as a superset: an added field is how a token leaks.
+
+### listGoogleCalendars
+- req `{}`
+- res `{ calendars: Array<{ id, summary, accessRole, primary }>, connection, freeBusyCalendarId }`
+- Read-only calendars are returned and marked rather than filtered out, so a
+  calendar missing from the picker means "the connection is broken", never "it
+  was there but you cannot write to it".
+
+### setGoogleCalendarTargets
+- req `{ writeCalendarId: string, enabledCalendarIds: string[] }` (`.strict()`)
+- res `{ connection: PublicGoogleCalendarConnection }`
+- The write target is always forced into `enabledCalendarIds`.
+- `failed-precondition` with `details { code: 'write_calendar_invalid' }` when the
+  pick is empty, not calendar-id shaped, or IS the free/busy calendar. That last
+  case is the ECHO LOOP: visits written into the calendar the free/busy sync
+  imports from come straight back as BLOCKED slots over their own hour.
+  `freebusy.query` returns start and end and nothing else, so no marker on the
+  event could survive the round trip to be filtered on the way back; refusing the
+  overlap is the only guard that works. `primary` is resolved against the
+  connected account address first, so one calendar spelled two ways is caught.
+- The rule lives in `src/lib/googleCalendarTargets.ts` and is MIRRORED in
+  `auntieos-admin/src/lib/googleCalendarTargets.ts` and android's
+  `ui/admin/scheduling/GoogleCalendarTargets.kt`. Those two are a courtesy; this
+  callable is the enforcement. Note it deliberately DIFFERS from the free/busy
+  rule: `primary` is legal here (the operator's own calendar) and refused there
+  (the service account's permanently empty one).
+
+### pushVisitsToGoogleCalendar
+- req `{ lookAheadDays?: number }` (default 30, clamped 1..90, `.strict()`)
+- res `{ pushed: number, removed: number, scanned: number, skipped: Array<{ sessionId, reason }>, ranAt: string }`
+- NO CALENDAR ID IN THE REQUEST, same posture as the free/busy sync: the target
+  comes from the saved connection, so a client cannot aim a household's visits at
+  someone else's calendar.
+- Operator-initiated only. No trigger and no schedule, following Task 7.1: a
+  trigger would start writing to a real person's calendar on the next edit of any
+  visit, once per field change.
+- Idempotent through `kin_care_sessions.googleEventId`; writes back
+  `googleEventId`, `googleCalendarId`, `googleCalendarSyncedAt` and
+  `googleCalendarSource: 'AUNTIEOS_PUSH'`. A cancelled visit is REMOVED from the
+  calendar rather than skipped. A visit with neither an end time nor a duration
+  is skipped and named, never given an invented length. A 404/410 on update
+  clears the stale id so the next run recreates the event.
+- Stamps `calendarPushLastRunAt` / `calendarPushLastStatus` / `calendarPushLastPushed`
+  / `calendarPushLastError` on SUCCESS and on FAILURE, same reasoning as 7.1's
+  receipt. Best-effort: if the stamp write fails, the run's own error is what
+  surfaces.
+- `failed-precondition` / `google_calendar_not_connected` when nothing is
+  connected; `failed-precondition` / `google_oauth_revoked` when Google answers
+  `invalid_grant`, which retrying never fixes and only reconnecting does.
 
 ### mapboxSearch
 - req `{ query: string, sessionToken: string, limit?: number, country?: string }`

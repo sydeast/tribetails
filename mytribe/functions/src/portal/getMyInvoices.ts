@@ -30,6 +30,28 @@ interface InvoiceDto {
   amountDue: number;
   isPaid: boolean;
   status: Status;
+  /**
+   * What has been collected against this invoice, in cents, read from the
+   * `paidCents` field the payment path writes.
+   *
+   * NOT re-derived from `total - amountDue`. Those are float dollars, and on
+   * every invoice touched by the pre-2026-07-25 partial-payment write
+   * `amountDue` reads 0 while a real balance is owed, so that subtraction would
+   * report the entire total as collected on exactly the invoices that are
+   * wrong. 0 on an invoice that predates the field, which is honest rather than
+   * flattering: the portal does not claim a payment it has no record of.
+   */
+  paidCents: number;
+  /**
+   * Money has come in and it does NOT cover this invoice.
+   *
+   * A part-paid invoice is neither paid nor untouched, and rendering it as
+   * either is a lie to the household: "unpaid" hides the $20 they already sent,
+   * "paid" hides the $20 they still owe. `status` stays `open` so the invoice
+   * keeps its payable behaviour and its bucket; this is the flag that lets the
+   * screen say what is actually true about it.
+   */
+  partiallyPaid: boolean;
   date: string | null;
   dueDate: string | null;
   discount: string | null;
@@ -114,6 +136,11 @@ export async function getMyInvoicesHandler(
     );
     const isPaid = status === 'paid';
     const isCredit = status === 'credit';
+    // Integer cents off the doc, never a subtraction of two floats. See the
+    // InvoiceDto field note for why that subtraction is specifically unsafe on
+    // the invoices this exists to describe.
+    const paidCents = integerCentsFrom(data['paidCents']);
+    const partiallyPaid = !isCredit && !isPaid && paidCents > 0 && amountDue > 0;
     return {
       id: d.id,
       kinfolkId,
@@ -123,6 +150,8 @@ export async function getMyInvoicesHandler(
       amountDue,
       isPaid,
       status,
+      paidCents,
+      partiallyPaid,
       date: stringOrNull(data['date']),
       dueDate: stringOrNull(data['dueDate']),
       discount: stringOrNull(data['discount']),
@@ -241,6 +270,16 @@ function numericOrNull(v: unknown): number | null {
     return isNaN(n) ? null : n;
   }
   return null;
+}
+
+/**
+ * An integer count of cents, or 0. Strict about the integer part: `paidCents` is
+ * written only by the server's own settlement pass, so a float or a string in
+ * that field means something wrote it that should not have, and reading it as
+ * money would launder that mistake into the household's screen.
+ */
+function integerCentsFrom(v: unknown): number {
+  return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : 0;
 }
 
 function numericFrom(v: unknown): number {

@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.admin.scheduling
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
+import com.tribetails.auntieos.data.repository.GoogleCalendarConnectionState
 import com.tribetails.auntieos.data.repository.ServiceRepository
 import io.mockk.*
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +62,9 @@ class EnhancedSchedulingViewModelTest {
         every { bookingRepo.bookingTimeSlotsStream() } returns flowOf(Result.success(emptyList()))
         // 16.5: incoming-series stream consumed in init { observeIncomingSeries() }.
         every { bookingRepo.incomingKinCareRequestsStream() } returns flowOf(Result.success(emptyList()))
+        // Task 7.2: init { loadGoogleCalendarState() } reads this on construction too.
+        coEvery { bookingRepo.getGoogleCalendarConnection() } returns
+            Result.success(GoogleCalendarConnectionState(GoogleCalendarConnection(), "", ""))
     }
 
     @After

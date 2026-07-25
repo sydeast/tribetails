@@ -254,3 +254,37 @@ export function localDateIso(now: Date): string {
   const d = String(now.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
+/**
+ * What has been collected against an invoice, and what is left, in cents.
+ * Returns null when the invoice is not part-paid.
+ *
+ * PART-PAID IS A DISPLAY REFINEMENT OF `open`, NOT A NINTH STATE, exactly like
+ * `isInvoiceOverdue` above and for the same reason: it changes the chip and the
+ * copy, it never changes which actions the invoice may be offered. A part-paid
+ * invoice is still an open invoice with a real balance, so it keeps the whole
+ * outstanding action set, which is precisely what makes collecting the rest
+ * possible. Making it a state would have forced `invoiceActionsFor` to enumerate
+ * it, and the first person to write `case 'partPaid': return []` would have
+ * reintroduced the defect this whole change exists to remove.
+ *
+ * READS `paidCents`, NEVER `total - amountDue`. Those are float dollars, and on
+ * every invoice the pre-2026-07-25 write touched `amountDue` reads 0 while a
+ * real balance is owed, so the subtraction would report the whole total as
+ * collected on exactly the rows that are wrong. An invoice with no `paidCents`
+ * at all is not claimed to be part-paid, because we have no record that it is.
+ */
+export interface InvoicePartialPayment {
+  paidCents: number;
+  remainingCents: number;
+}
+export function invoicePartialPayment(
+  state: InvoiceState,
+  row: { paidCents?: number; amountDue: number },
+): InvoicePartialPayment | null {
+  if (state !== 'open') return null;
+  const paidCents = row.paidCents;
+  if (typeof paidCents !== 'number' || !Number.isInteger(paidCents) || paidCents <= 0) return null;
+  const remainingCents = Math.round(financeNumber(row.amountDue) * 100);
+  if (remainingCents <= 0) return null;
+  return { paidCents, remainingCents };
+}

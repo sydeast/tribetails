@@ -39,6 +39,18 @@ function fakeTs(iso: string): Timestamp {
   return { toDate: () => new Date(iso) } as unknown as Timestamp;
 }
 
+/** A settling markInvoicePaid response, the common case. */
+function settledResult() {
+  return {
+    paymentId: 'pay1',
+    state: 'settled' as const,
+    totalCents: 4000,
+    paidCents: 4000,
+    amountDueCents: 0,
+    overpaidCents: 0,
+  };
+}
+
 function entry(over: Partial<InvoiceEntry> = {}): InvoiceEntry {
   return {
     _id: 'inv1',
@@ -76,7 +88,7 @@ beforeEach(() => {
  * than reaching an operator (the AO-19 report: a PAID invoice still offering
  * "Mark paid").
  */
-const ALL_ACTION_LABELS = ['Send reminder', 'Mark paid', 'Generate receipt', 'Review and send'] as const;
+const ALL_ACTION_LABELS = ['Send reminder', 'Record payment', 'Generate receipt', 'Review and send'] as const;
 
 function expectExactActions(expected: readonly string[]) {
   for (const label of ALL_ACTION_LABELS) {
@@ -99,7 +111,7 @@ describe('InvoiceDetail', () => {
   });
 
   describe('actions gated by invoice state', () => {
-    it('PAID: Generate receipt only, no Mark paid and no Send reminder', () => {
+    it('PAID: Generate receipt only, no Record payment and no Send reminder', () => {
       render(<InvoiceDetail invoice={entry({ status: 'paid', amountDue: 0, total: 40 })} onClose={vi.fn()} />);
       expect(screen.getByText('PAID')).toBeInTheDocument();
       expectExactActions(['Generate receipt']);
@@ -113,10 +125,10 @@ describe('InvoiceDetail', () => {
       expectExactActions(['Generate receipt']);
     });
 
-    it('OUTSTANDING: Mark paid and Send reminder, no receipt, no draft send', () => {
+    it('OUTSTANDING: Record payment and Send reminder, no receipt, no draft send', () => {
       render(<InvoiceDetail invoice={entry({ status: '', amountDue: 40, total: 40 })} onClose={vi.fn()} />);
       expect(screen.getByText('OPEN')).toBeInTheDocument();
-      expectExactActions(['Send reminder', 'Mark paid']);
+      expectExactActions(['Send reminder', 'Record payment']);
     });
 
     it('OVERDUE: the same set as outstanding (overdue refines open, it is not its own state)', () => {
@@ -127,7 +139,7 @@ describe('InvoiceDetail', () => {
         />,
       );
       expect(screen.getByText('OVERDUE')).toBeInTheDocument();
-      expectExactActions(['Send reminder', 'Mark paid']);
+      expectExactActions(['Send reminder', 'Record payment']);
     });
 
     it('DRAFT: Review and send only', () => {
@@ -138,7 +150,7 @@ describe('InvoiceDetail', () => {
 
     it('DRAFT past its due date is still a draft, never overdue: no payment actions', () => {
       // The overlap ruling: `dueDate` is ignored on anything that is not open,
-      // so a stale-dated draft can never pick up Mark paid / Send reminder.
+      // so a stale-dated draft can never pick up Record payment / Send reminder.
       render(
         <InvoiceDetail
           invoice={entry({ status: 'draft', amountDue: 40, total: 40, dueDate: '2000-01-01' })}
@@ -235,33 +247,103 @@ describe('InvoiceDetail', () => {
     expect(screen.getByRole('button', { name: /^send reminder$/i })).toBeInTheDocument();
   });
 
-  it('marks paid through markInvoicePaid with no payment details when the fields are left blank', async () => {
-    markInvoicePaid.mockResolvedValue(undefined);
+  it('sends the full outstanding balance when the prefilled amount is left as-is', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
     render(<InvoiceDetail invoice={entry({ _id: 'inv7', kinfolkId: 'kf7' })} onClose={vi.fn()} />);
-    await userEvent.click(screen.getByRole('button', { name: /^mark paid$/i }));
-    await userEvent.click(screen.getByRole('button', { name: /^mark paid$/i }));
-    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith('inv7', {}));
-    expect(await screen.findByText(/marked paid/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith('inv7', { amount: 40 }));
+    expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
   });
 
-  it('marks paid through markInvoicePaid, passing the entered method and reference', async () => {
-    markInvoicePaid.mockResolvedValue(undefined);
+  it('records a PARTIAL amount and reports the balance still owed rather than claiming paid', async () => {
+    // The defect this whole change exists to fix: the panel used to report
+    // "Invoice marked paid." for a payment that covered half the invoice.
+    markInvoicePaid.mockResolvedValue({
+      paymentId: 'pay1',
+      state: 'partial' as const,
+      totalCents: 4000,
+      paidCents: 2000,
+      amountDueCents: 2000,
+      overpaidCents: 0,
+    });
+    render(<InvoiceDetail invoice={entry({ _id: 'inv7' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const amount = screen.getByRole('textbox', { name: /amount collected/i });
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '20');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+
+    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith('inv7', { amount: 20 }));
+    expect(await screen.findByText(/\$20\.00 is still owed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/paid in full/i)).toBeNull();
+  });
+
+  it('reports an overpayment as one, and says it was not turned into a credit', async () => {
+    markInvoicePaid.mockResolvedValue({
+      paymentId: 'pay1',
+      state: 'overpaid' as const,
+      totalCents: 3950,
+      paidCents: 4000,
+      amountDueCents: 0,
+      overpaidCents: 50,
+    });
+    render(<InvoiceDetail invoice={entry({ _id: 'inv7' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/overpaid by \$0\.50/i)).toBeInTheDocument();
+    expect(screen.getByText(/not been turned into a credit/i)).toBeInTheDocument();
+  });
+
+  it('refuses an unparseable amount with a sentence, and never calls the callable', async () => {
+    render(<InvoiceDetail invoice={entry({ _id: 'inv7' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const amount = screen.getByRole('textbox', { name: /amount collected/i });
+    await userEvent.clear(amount);
+    await userEvent.type(amount, 'twenty');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/is not an amount/i)).toBeInTheDocument();
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+  });
+
+  it('passes the entered method and reference alongside the amount', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
     render(<InvoiceDetail invoice={entry({ _id: 'inv8', kinfolkId: 'kf8' })} onClose={vi.fn()} />);
-    await userEvent.click(screen.getByRole('button', { name: /^mark paid$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.type(screen.getByRole('textbox', { name: /payment method/i }), 'check');
     await userEvent.type(screen.getByRole('textbox', { name: /payment reference/i }), 'CK-100');
-    await userEvent.click(screen.getByRole('button', { name: /^mark paid$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await waitFor(() =>
-      expect(markInvoicePaid).toHaveBeenCalledWith('inv8', { method: 'check', reference: 'CK-100' }),
+      expect(markInvoicePaid).toHaveBeenCalledWith('inv8', {
+        amount: 40,
+        method: 'check',
+        reference: 'CK-100',
+      }),
     );
-    expect(await screen.findByText(/marked paid/i)).toBeInTheDocument();
+    expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
   });
 
-  it('no longer claims mark paid records nothing, the confirm copy names the optional fields instead', async () => {
+  it('the confirm copy names the optional fields and warns that a partial stays open', async () => {
     render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
-    await userEvent.click(screen.getByRole('button', { name: /^mark paid$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     expect(screen.queryByText(/does not record a payment method/i)).toBeNull();
     expect(screen.getByText(/method and reference are optional/i)).toBeInTheDocument();
+    expect(screen.getByText(/leaves the invoice open for the rest/i)).toBeInTheDocument();
+  });
+
+  it('shows what has been collected and what is still owed on a PART-PAID invoice', async () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'open', total: 40, amountDue: 20, paidCents: 2000 })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('PART PAID')).toBeInTheDocument();
+    expect(screen.getByText('Paid so far')).toBeInTheDocument();
+    expect(screen.getByText('Still owed')).toBeInTheDocument();
+    // And it keeps the whole outstanding action set, which is what makes
+    // collecting the balance possible at all.
+    expect(screen.getByRole('button', { name: /^record payment$/i })).toBeInTheDocument();
   });
 
   it('issues a receipt through generateReceipt', async () => {

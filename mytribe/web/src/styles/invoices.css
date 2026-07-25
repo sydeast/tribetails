@@ -49,6 +49,9 @@
 .chip.draft { background: rgba(17, 19, 31, .08); color: var(--navy-soft); }
 .chip.pending { background: rgba(223, 132, 49, .16); color: var(--orange); }
 .chip.paid { background: rgba(10, 133, 149, .14); color: var(--teal); }
+/* Part paid: money has come in and it does not cover the invoice. Deliberately
+   not the teal a settled invoice gets, because it is not settled. */
+.chip.partpaid { background: rgba(116, 83, 138, .16); color: var(--purple); }
 .chip.cancelled { background: rgba(213, 83, 90, .14); color: var(--coral); }
 .chip.creditc { background: rgba(213, 92, 135, .14); color: var(--pink); }
 .chip.redeemed { background: rgba(116, 83, 138, .14); color: var(--purple); }

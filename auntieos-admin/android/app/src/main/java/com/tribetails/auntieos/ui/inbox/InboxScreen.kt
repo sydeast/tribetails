@@ -237,6 +237,19 @@ fun InboxScreen(
                 ) { Text("Send Reply") }
             },
             dismissButton = {
+                // Mark read, for a voicemail the operator listened to and does
+                // not need to answer. Without it the only way off `unread` was
+                // to send a text, so a voicemail needing no reply stayed in the
+                // waiting count forever. Rendered only while it IS unread, so
+                // the control is never a no-op.
+                if (entry.channel == Channel.Voicemail && entry.statusHint == "unread") {
+                    AuntieTextBtn(
+                        onClick = {
+                            viewModel.markVoicemailRead(entry.voicemailId)
+                            selectedEntry = null
+                        }
+                    ) { Text("Mark read") }
+                }
                 AuntieTextBtn(onClick = { selectedEntry = null }) { Text("Close") }
             }
         ) {

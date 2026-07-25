@@ -52,10 +52,15 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   if (!allowedIds.includes(kinfolkId)) throw new HttpsError('permission-denied', 'No access to this invoice.');
   await requireKinfolkPrimary(uid, kinfolkId, req.auth?.token?.admin === true, 'payInvoice');
 
-  const amountDue = numericFrom(inv['amountDue']);
-  if (amountDue <= 0) throw new HttpsError('failed-precondition', 'Invoice is fully paid.');
+  // WHAT THE HOUSEHOLD IS CHARGED IS THE REMAINING BALANCE, not the total, and
+  // on a part-paid invoice those differ. `amountDueCents` is the integer figure
+  // the settlement pass writes (`lib/invoiceMath.ts`); the float dollar
+  // `amountDue` is its projection and is all an older invoice carries. Read in
+  // that order so a real card charge is never a re-rounding of a re-rounding.
+  const amountCents =
+    integerCentsOrNull(inv['amountDueCents']) ?? Math.round(numericFrom(inv['amountDue']) * 100);
+  if (amountCents <= 0) throw new HttpsError('failed-precondition', 'Invoice is fully paid.');
 
-  const amountCents = Math.round(amountDue * 100);
   const stripe = getStripe();
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
@@ -104,6 +109,15 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     amountCents,
     currency: 'usd',
   };
+}
+
+/**
+ * An integer count of cents, or null when the field is absent or is not one.
+ * Null rather than 0, so the caller falls back to the dollar field instead of
+ * refusing a real balance as "fully paid".
+ */
+function integerCentsOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isInteger(v) ? v : null;
 }
 
 function numericFrom(v: unknown): number {

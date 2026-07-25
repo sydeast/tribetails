@@ -19,19 +19,16 @@
  *
  * ---
  *
- * COORDINATION NOTE, READ BEFORE EDITING. A concurrent change on
- * `fix/invoice-partial-payments` is adding a THIRD payment state to the SERVER
- * policy, between "no payments" and "settled", so that a PART-PAID invoice stays
- * repairable instead of freezing like a settled one. The server today takes a
- * `hasPayments: boolean`; it will take something three-valued.
+ * THE THREE-VALUED STANDING IS LOAD-BEARING. Do not "simplify" it back to a
+ * boolean. The server took a `hasPayments: boolean` until 2026-07-25, and that
+ * missing distinction is the whole defect: any payment of any size froze the
+ * money, so a $40 invoice with $20 against it could not be repaired by any path.
+ * The server now takes `InvoicePaymentStanding`, and this mirror matches it
+ * branch for branch (`mytribe/functions/src/lib/invoiceEditPolicy.ts`).
  *
- * This mirror is therefore written three-valued FROM THE START
- * (`InvoicePaymentStatus`), so that landing the server change is a change to the
- * MAPPING in `invoiceEditScope` and not a change to this module's shape or to
- * any of its call sites. Until that change lands, `partial` deliberately behaves
- * exactly like `settled`, which is what the server does today. The branch is
- * marked PARTIAL-PAYMENT FOLLOW-UP below. Do not "simplify" it back to a
- * boolean.
+ * The standing must be derived from the sum of the `payments` SUBCOLLECTION,
+ * never from the `amountDue` scalar, because the same defect wrote 0 into that
+ * scalar for a partial payment on every invoice it touched.
  */
 
 /** Every state the classifier will ever return. Mirrors the server enum exactly. */
@@ -87,16 +84,18 @@ export function invoiceEditScope(state: InvoiceState, payments: InvoicePaymentSt
       return 'all';
     case 'open':
     case 'zero':
-      // PARTIAL-PAYMENT FOLLOW-UP. `partial` is grouped with `settled` here
-      // ONLY because that is what the server does today: its `hasPayments`
-      // boolean cannot tell the two apart, so ANY recorded payment freezes the
-      // money. Once `fix/invoice-partial-payments` lands its third state, the
-      // `partial` case moves up to return 'all' (a part-paid invoice stays
-      // repairable) and this comment goes away. Changing it BEFORE the server
-      // does would offer an Edit control the server still refuses, which is the
-      // one direction this mirror must not fail in.
-      return payments === 'none' ? 'all' : 'metadataOnly';
+      // A PART-PAID INVOICE STAYS FULLY EDITABLE. Only a settled one freezes.
+      // Money already in is a fact recorded in the `payments` subcollection and
+      // is not what an edit changes; what an edit changes is what the household
+      // was ASKED for, which is exactly what needs correcting while a bill is
+      // still part-collected.
+      return payments === 'settled' ? 'metadataOnly' : 'all';
     case 'paid':
+      // `paid` DEFERS TO THE STANDING rather than freezing on the label alone. A
+      // doc labelled paid whose recorded payments fall short of its total is not
+      // a settled invoice, it is the corruption the 2026-07-25 fix exists to
+      // undo, and it is the single case that most needs to stay repairable.
+      return payments === 'partial' ? 'all' : 'none';
     case 'cancelled':
     case 'credit':
     case 'redeemed':
@@ -108,29 +107,34 @@ export function invoiceEditScope(state: InvoiceState, payments: InvoicePaymentSt
  * What this CLIENT can honestly conclude about payments from the invoice doc
  * alone, which is less than the server knows.
  *
- * THE HONEST ANSWER IS OFTEN "I CANNOT TELL", and this function says so by
- * answering `none` rather than by guessing. Two facts make that unavoidable:
+ * READ `paidCents`, NEVER `amountDue`. The dollar `amountDue` scalar is a trap:
+ * `markInvoicePaid` set it to 0 UNCONDITIONALLY until 2026-07-25, even for a
+ * partial payment, so on every invoice that write touched a zero balance is not
+ * evidence of settlement. `paidCents` is written from the SUM of the `payments`
+ * subcollection in the same pass that decides the status, so it is the one field
+ * on the doc that answers this. `total - amountDue` is the same trap by
+ * subtraction and would report the whole total as collected.
  *
- *  - the truth lives in the `payments` SUBCOLLECTION, and the admin's invoice
- *    surfaces are fed by a collection listener over `invoices` that does not,
- *    and cheaply cannot, carry a subcollection per row;
- *  - the obvious scalar substitute is a trap. `markInvoicePaid.ts` sets
- *    `amountDue: 0` UNCONDITIONALLY, even for a partial payment, so a zero
- *    balance is not evidence of settlement and a non-zero balance is not
- *    evidence that nothing was paid.
- *
- * So the only sound reading is the explicit one: an invoice the classifier calls
- * `paid` has been settled; anything else is treated as unpaid for the purpose of
- * OFFERING the control, and the server has the last word. An operator who edits
- * a part-paid invoice gets `invoice_money_locked` back with a sentence
- * explaining it, which is a better outcome than a silently missing button.
- *
- * `partial` is never returned today. It is in the type because the server is
- * about to be able to distinguish it, and because a function that cannot express
- * the state would have to be re-shaped rather than re-pointed at that moment.
+ * WHEN `paidCents` IS ABSENT THE ANSWER IS STILL "I CANNOT TELL", and this
+ * function says so by answering `none` rather than by guessing. Absent means a
+ * legacy doc written before the field existed, which is most of the collection
+ * until `repairInvoicePayments` has run. `none` offers the control and lets the
+ * server have the last word, which is the safe direction for a courtesy mirror:
+ * a wrongly-offered Edit ends in a refusal this app prints verbatim, while a
+ * wrongly-hidden one is a dead end with no explanation.
  */
-export function paymentStatusFromDoc(state: InvoiceState): InvoicePaymentStatus {
-  return state === 'paid' ? 'settled' : 'none';
+export function paymentStatusFromDoc(
+  state: InvoiceState,
+  totalCents?: number,
+  paidCents?: number,
+): InvoicePaymentStatus {
+  if (typeof paidCents !== 'number' || !Number.isFinite(paidCents) || paidCents <= 0) {
+    // No recorded figure. Fall back to the label, which is all the old mirror
+    // ever had: a doc the classifier calls `paid` is treated as settled.
+    return state === 'paid' ? 'settled' : 'none';
+  }
+  if (typeof totalCents !== 'number' || !Number.isFinite(totalCents)) return 'settled';
+  return paidCents < totalCents ? 'partial' : 'settled';
 }
 
 export interface InvoiceEditRefusal {

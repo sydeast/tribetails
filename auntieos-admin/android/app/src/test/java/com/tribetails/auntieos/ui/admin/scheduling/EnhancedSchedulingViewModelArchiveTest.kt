@@ -6,6 +6,7 @@ import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.EnhancedBooking
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
+import com.tribetails.auntieos.data.repository.GoogleCalendarConnectionState
 import com.tribetails.auntieos.data.repository.ServiceRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -60,6 +61,9 @@ class EnhancedSchedulingViewModelArchiveTest {
         // Live busy-slots stream consumed in init { observeBusyTimeSlots() }.
         every { bookingRepo.bookingTimeSlotsStream() } returns flowOf(Result.success(emptyList()))
         every { bookingRepo.incomingKinCareRequestsStream() } returns flowOf(Result.success(emptyList()))
+        // Task 7.2: init { loadGoogleCalendarState() } reads this on construction too.
+        coEvery { bookingRepo.getGoogleCalendarConnection() } returns
+            Result.success(GoogleCalendarConnectionState(GoogleCalendarConnection(), "", ""))
     }
 
     @After

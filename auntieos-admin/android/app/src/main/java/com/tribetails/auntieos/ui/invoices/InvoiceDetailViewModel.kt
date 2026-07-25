@@ -7,7 +7,10 @@ import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceSettlement
 import com.tribetails.auntieos.domain.InvoiceState
+import com.tribetails.auntieos.domain.formatCentsUsd
+import com.tribetails.auntieos.domain.invoicePartPaid
 import com.tribetails.auntieos.domain.invoiceStateOf
 import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -125,38 +128,79 @@ class InvoiceDetailViewModel(
     fun openRecordPayment() { _uiState.value = _uiState.value.copy(showRecordPayment = true) }
     fun closeRecordPayment() { _uiState.value = _uiState.value.copy(showRecordPayment = false) }
 
-    /** Record a payment against this invoice (writes Payment.invoiceId so the join populates). */
+    /**
+     * Record a payment against this invoice.
+     *
+     * TWO WRITES, IN THIS ORDER, AND THE ORDER IS THE POINT.
+     *
+     * FIRST the `markInvoicePaid` callable, which is what actually moves the
+     * invoice's money: it writes the audit-grade entry into the invoice's own
+     * `payments` SUBCOLLECTION and derives the invoice's state from the SUM of
+     * everything recorded there. A partial leaves the invoice OPEN with a real
+     * remaining balance, so it stays in Outstanding and the rest can still be
+     * collected. Before this, Android recorded payments ONLY into the legacy
+     * top-level `payments` collection and never touched the invoice at all, so
+     * an invoice paid on the phone stayed fully open forever.
+     *
+     * THEN the legacy top-level `payments` doc, because this screen's payments
+     * list ([InvoiceDetailUiState.linkedPayments], joined on
+     * [Payment.invoiceId]) reads that collection and nothing else. It is a
+     * display record: the server's arithmetic never reads it, so the two cannot
+     * double-count.
+     *
+     * If the callable fails, NOTHING is written anywhere and the operator is
+     * told. A legacy row written against a payment the server refused would be a
+     * record of money the books do not believe was collected.
+     */
     fun recordPayment(payment: Payment) {
         val invoiceId = _uiState.value.invoice?.id ?: return
         _uiState.value = _uiState.value.copy(recordingPayment = true)
         viewModelScope.launch {
+            val settlement = repository.markInvoicePaid(
+                invoiceId = invoiceId,
+                amount = payment.amount,
+                method = payment.paymentMethod,
+                reference = payment.referenceNumber,
+            ).getOrElse { err ->
+                _uiState.value = _uiState.value.copy(
+                    recordingPayment = false,
+                    toastMessage = "Couldn't record payment: ${err.message}",
+                    toastVisible = true,
+                    toastIsError = true,
+                )
+                return@launch
+            }
+
+            // Best-effort: the money has already landed server-side, so a failure
+            // here costs this screen's list row, not the payment. Logged, never
+            // swallowed.
             repository.createPayment(payment)
-                .onSuccess {
-                    com.tribetails.auntieos.data.admin.AuditLog.fire(
-                        scope            = viewModelScope,
-                        repository       = repository,
-                        actionType       = "RECORD_PAYMENT",
-                        description      = "Recorded payment of ${payment.amount} against invoice ${payment.invoiceNumber.ifBlank { invoiceId }}",
-                        targetId         = invoiceId,
-                        targetCollection = "invoices",
-                    )
-                    loadPaymentsForInvoice(invoiceId, _uiState.value.invoice?.kinfolkId.orEmpty())
-                    _uiState.value = _uiState.value.copy(
-                        recordingPayment = false,
-                        showRecordPayment = false,
-                        toastMessage = "Payment recorded.",
-                        toastVisible = true,
-                        toastIsError = false,
-                    )
-                }
-                .onFailure { err ->
-                    _uiState.value = _uiState.value.copy(
-                        recordingPayment = false,
-                        toastMessage = "Couldn't record payment: ${err.message}",
-                        toastVisible = true,
-                        toastIsError = true,
-                    )
-                }
+                .onFailure { AuntieLog.e("Legacy payment row failed for invoice $invoiceId", it) }
+
+            com.tribetails.auntieos.data.admin.AuditLog.fire(
+                scope            = viewModelScope,
+                repository       = repository,
+                actionType       = "RECORD_PAYMENT",
+                description      = recordPaymentAuditDescription(
+                    payment.amount,
+                    payment.invoiceNumber.ifBlank { invoiceId },
+                    settlement,
+                ),
+                targetId         = invoiceId,
+                targetCollection = "invoices",
+            )
+
+            loadPaymentsForInvoice(invoiceId, _uiState.value.invoice?.kinfolkId.orEmpty())
+            // Re-read the invoice so the balance and the chip show what the
+            // server actually decided, not what the dialog assumed.
+            reloadInvoiceQuietly(invoiceId)
+            _uiState.value = _uiState.value.copy(
+                recordingPayment = false,
+                showRecordPayment = false,
+                toastMessage = recordPaymentToast(settlement),
+                toastVisible = true,
+                toastIsError = false,
+            )
         }
     }
 
@@ -605,4 +649,33 @@ internal fun archiveSuccessMessage(restoring: Boolean, force: Boolean): String =
     restoring -> "Invoice restored to the working list."
     force -> "Invoice archived, and the balance written off the outstanding total."
     else -> "Invoice archived."
+}
+/**
+ * WHAT THE SERVER SAYS HAPPENED, in the operator's words. Pure; unit-tested.
+ *
+ * Never "Payment recorded." alone for a partial. Reporting a payment that
+ * covered half an invoice as if the invoice were done is the UI half of the
+ * defect this whole change exists to remove: the operator had no way to tell,
+ * from the screen, that a balance was still owed.
+ */
+internal fun recordPaymentToast(settlement: InvoiceSettlement): String = when {
+    settlement.isPartial ->
+        "Partial payment recorded. ${formatCentsUsd(settlement.amountDueCents)} is still owed, and the invoice stays open."
+    settlement.isOverpaid ->
+        "Payment recorded and the invoice is settled. It was overpaid by ${formatCentsUsd(settlement.overpaidCents)}, which has not been turned into a credit."
+    else -> "Payment recorded. The invoice is paid in full."
+}
+/**
+ * The audit line for one recorded payment. Says whether the invoice was settled
+ * or merely part-paid, so the audit trail cannot claim "paid" about an invoice
+ * that is not. Pure; unit-tested.
+ */
+internal fun recordPaymentAuditDescription(
+    amount: Double,
+    invoiceLabel: String,
+    settlement: InvoiceSettlement,
+): String = if (settlement.isPartial) {
+    "Recorded partial payment of $amount against invoice $invoiceLabel; ${formatCentsUsd(settlement.amountDueCents)} still owed"
+} else {
+    "Recorded payment of $amount against invoice $invoiceLabel; invoice settled"
 }

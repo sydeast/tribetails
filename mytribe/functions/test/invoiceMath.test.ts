@@ -5,6 +5,9 @@ import {
   centsToDollars,
   paidCentsFromPayments,
   validateInvoiceMoney,
+  invoiceTotalCentsOf,
+  settleInvoice,
+  isPartiallyPaid,
   type InvoiceLineItemInput,
 } from '../src/lib/invoiceMath';
 
@@ -148,5 +151,81 @@ describe('validateInvoiceMoney', () => {
 
   it('refuses a blank description', () => {
     expect(validateInvoiceMoney([line({ description: '   ' })], 0)).not.toBeNull();
+  });
+});
+describe('paidCentsFromPayments prefers the integer field', () => {
+  it('uses amountCents when present, so no dollar rounding is re-applied', () => {
+    expect(paidCentsFromPayments([{ amount: 20, amountCents: 2000 }])).toBe(2000);
+  });
+  it('falls back to the dollar amount on payments recorded before amountCents existed', () => {
+    expect(paidCentsFromPayments([{ amount: 20 }, { amount: 0.1 }])).toBe(2010);
+  });
+  it('rounds each dollar payment to cents individually rather than summing floats first', () => {
+    // 0.1 + 0.2 is 0.30000000000000004 in float dollars. Rounded per row it is
+    // exactly 30 cents, which is the whole reason this module is cents-first.
+    expect(paidCentsFromPayments([{ amount: 0.1 }, { amount: 0.2 }])).toBe(30);
+  });
+  it('ignores a row carrying no usable amount rather than reading it as zero-and-valid', () => {
+    expect(paidCentsFromPayments([{ amount: 20 }, {}, { amount: Number.NaN }])).toBe(2000);
+  });
+});
+describe('invoiceTotalCentsOf', () => {
+  it('prefers the stored integer totalCents', () => {
+    expect(invoiceTotalCentsOf({ totalCents: 4000, total: 39.99 })).toBe(4000);
+  });
+  it('projects the float dollar total for an invoice that was never itemized', () => {
+    expect(invoiceTotalCentsOf({ total: 40 })).toBe(4000);
+    expect(invoiceTotalCentsOf({ total: 10.1 })).toBe(1010);
+  });
+  it('reads an invoice carrying neither field as 0, which refuses a payment rather than inventing one', () => {
+    expect(invoiceTotalCentsOf({})).toBe(0);
+    expect(invoiceTotalCentsOf({ total: Number.NaN })).toBe(0);
+  });
+});
+describe('settleInvoice', () => {
+  it('reads an untouched invoice as unpaid with the whole total owing', () => {
+    const s = settleInvoice(4000, 0);
+    expect(s.state).toBe('unpaid');
+    expect(s.amountDueCents).toBe(4000);
+    expect(s.overpaidCents).toBe(0);
+  });
+  it('THE BUG: $20 against a $40 invoice is partial, with $20 still owed', () => {
+    const s = settleInvoice(4000, 2000);
+    expect(s.state).toBe('partial');
+    expect(s.amountDueCents).toBe(2000);
+    expect(isPartiallyPaid(s)).toBe(true);
+  });
+  it('settles on an exact payoff', () => {
+    const s = settleInvoice(4000, 4000);
+    expect(s.state).toBe('settled');
+    expect(s.amountDueCents).toBe(0);
+    expect(s.overpaidCents).toBe(0);
+    expect(isPartiallyPaid(s)).toBe(false);
+  });
+  it('CLAMPS AN OVERPAYMENT AT ZERO and reports the excess separately', () => {
+    // A negative amountDue is this codebase's CREDIT signal. If an overpayment
+    // wrote one, a household who rounded $39.50 up to $40 would have minted
+    // themselves a credit with its own redemption flow. The excess is reported,
+    // never converted.
+    const s = settleInvoice(3950, 4000);
+    expect(s.state).toBe('overpaid');
+    expect(s.amountDueCents).toBe(0);
+    expect(s.amountDueCents).toBeGreaterThanOrEqual(0);
+    expect(s.overpaidCents).toBe(50);
+  });
+  it('reads money against a zero-total invoice as overpaid, not settled', () => {
+    const s = settleInvoice(0, 500);
+    expect(s.state).toBe('overpaid');
+    expect(s.overpaidCents).toBe(500);
+  });
+  it('never returns a negative amountDueCents for any input', () => {
+    for (const [total, paid] of [[4000, 9999], [0, 1], [-500, 100], [100, 100]]) {
+      expect(settleInvoice(total, paid).amountDueCents).toBeGreaterThanOrEqual(0);
+    }
+  });
+  it('reads non-finite figures as no evidence rather than propagating NaN into money', () => {
+    const s = settleInvoice(Number.NaN, Number.NaN);
+    expect(Number.isNaN(s.amountDueCents)).toBe(false);
+    expect(s.state).toBe('unpaid');
   });
 });

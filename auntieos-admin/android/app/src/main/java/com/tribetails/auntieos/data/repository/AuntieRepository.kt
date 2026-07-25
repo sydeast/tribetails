@@ -1599,6 +1599,40 @@ class AuntieRepository(
         Unit
     }.onFailure { AuntieLog.e("unarchiveInvoice failed for $invoiceId", it) }
 
+    /**
+     * Records a payment against an invoice via the `markInvoicePaid` callable,
+     * and returns WHERE THE INVOICE STANDS AFTERWARDS.
+     *
+     * THE SERVER DECIDES, from the sum of every payment recorded against the
+     * invoice, not from the amount sent here. A payment that does not cover the
+     * total leaves the invoice OPEN with a real remaining balance and comes back
+     * `partial`; only a settling payment marks it paid. Until 2026-07-25 that
+     * callable wrote `paid` with a zero balance for ANY amount, which is how $20
+     * against a $40 invoice made the remaining $20 uncollectable.
+     *
+     * Fail-loud: the server's precondition messages (already settled, draft or
+     * quote, cancelled, credit) surface verbatim.
+     */
+    suspend fun markInvoicePaid(
+        invoiceId: String,
+        amount: Double?,
+        method: String,
+        reference: String,
+    ): Result<InvoiceSettlement> = runCatching {
+        ensureAuthenticated()
+        val payload = buildMap<String, Any> {
+            put("invoiceId", invoiceId)
+            if (amount != null) put("amount", amount)
+            if (method.isNotBlank()) put("method", method)
+            if (reference.isNotBlank()) put("reference", reference)
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("markInvoicePaid")
+            .call(payload)
+            .await().data as? Map<String, Any?>
+        decodeInvoiceSettlement(raw)
+    }.onFailure { AuntieLog.e("markInvoicePaid failed for $invoiceId", it) }
+
     /** Slice 2: marks an invoice receipted via the generateReceipt callable. */
     suspend fun generateReceipt(invoiceId: String): Result<Unit> = runCatching {
         ensureAuthenticated()
@@ -2308,6 +2342,40 @@ class AuntieRepository(
     }
 
     /**
+     * Email, as a bounded live stream, matching its three sibling channels.
+     *
+     * Replaces the Inbox's use of [getEmails], which was an UNBOUNDED
+     * `collection("emails").get()`: no orderBy, no limit, the whole collection
+     * on every screen open. That is the AO-29 shape the other three channels
+     * were already written away from, and it was also the reason email was the
+     * one channel that did not update until the screen was reopened.
+     *
+     * Ordered on `timestamp` DESCENDING, an ISO-8601 STRING on this collection
+     * (see `EmailMessage.timestamp` and the Twilio inbound writers), so the sort
+     * is lexical. A Firestore Timestamp bound against this field would match
+     * nothing and would NOT error. Note also that ORDER BY skips documents that
+     * lack the field entirely, so a writer that forgets `timestamp` makes its
+     * rows invisible here rather than raising; every current writer sets it.
+     *
+     * [getEmails] stays for callers that genuinely want one shot; the Inbox is
+     * not one of them.
+     */
+    fun observeEmails(limit: Long = 200): Flow<List<EmailMessage>> = callbackFlow {
+        if (!checkAuthOrCloseFlow("observeEmails")) return@callbackFlow
+        val reg = firestore.collection("emails")
+            .orderBy("timestamp", com.google.firebase.firestore.Query.Direction.DESCENDING)
+            .limit(limit)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                trySend(snapshot?.toObjects(EmailMessage::class.java).orEmpty())
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /**
      * Defense-in-depth auth gate for callbackFlow-based listeners.
      * Returns true (listener may attach) when a user is signed in.
      * Returns false and closes the flow with an error when unauthenticated —
@@ -2385,6 +2453,29 @@ class AuntieRepository(
         docRef.set(msg).await()
         docRef.id
     }.onFailure { AuntieLog.e("Failed to create inbound SMS", it) }
+
+    /**
+     * Marks a voicemail READ: the operator listened to it and is not replying
+     * right now. Parity with the web admin's `markVoicemail` (React
+     * `src/api/inboxChannelsWrite.ts`), which writes the same three keys.
+     *
+     * `repliedAt` is cleared rather than stamped, because reading is not
+     * replying and a reply timestamp on a merely-heard voicemail would make the
+     * field a lie. Without this action the only way off `unread` was to send a
+     * text, so a voicemail that needed no answer stayed in the waiting count
+     * forever.
+     */
+    suspend fun markVoicemailRead(voicemailId: String): Result<Unit> = runCatching {
+        ensureAuthenticated()
+        firestore.collection("voicemails").document(voicemailId).update(
+            mapOf(
+                "replyStatus" to "read",
+                "repliedAt" to "",
+                "replyLogId" to ""
+            )
+        ).await()
+        Unit
+    }.onFailure { AuntieLog.e("Failed to mark voicemail read $voicemailId", it) }
 
     suspend fun markVoicemailReplied(voicemailId: String, replyLogId: String): Result<Unit> = runCatching {
         ensureAuthenticated()
@@ -3415,6 +3506,48 @@ internal fun decodeExternalSuppressResult(raw: Map<String, Any?>?, requestedChan
     val channel = (raw?.get("channel") as? String)?.ifBlank { requestedChannel } ?: requestedChannel
     val recipientRedacted = (raw?.get("recipientRedacted") as? String).orEmpty()
     return ExternalSuppressResult(channel = channel, recipientRedacted = recipientRedacted)
+}
+
+/**
+ * Where an invoice stands after a payment, as the `markInvoicePaid` callable
+ * reports it. Every figure is INTEGER CENTS.
+ *
+ * [amountDueCents] is never negative: an overpayment settles the invoice and
+ * puts the excess in [overpaidCents] instead, because a negative balance is this
+ * codebase's CREDIT signal and would silently turn an over-collected invoice
+ * into a credit owed back to the household.
+ */
+data class InvoiceSettlement(
+    /** One of `unpaid`, `partial`, `settled`, `overpaid`. */
+    val state: String,
+    val totalCents: Long,
+    val paidCents: Long,
+    val amountDueCents: Long,
+    val overpaidCents: Long,
+) {
+    val isPartial: Boolean get() = state == "partial"
+    val isOverpaid: Boolean get() = state == "overpaid"
+}
+
+/**
+ * Pure decode of the markInvoicePaid callable payload into [InvoiceSettlement].
+ *
+ * A MISSING `state` DECODES TO "partial", NOT TO "settled". If the server's
+ * answer cannot be read, the safe reading is that the invoice may still be
+ * owed: that keeps it in Outstanding and keeps the operator able to collect,
+ * which is exactly what the original defect took away. Defaulting the other way
+ * would reproduce the bug in the client. Pure; unit-tested.
+ */
+internal fun decodeInvoiceSettlement(raw: Map<String, Any?>?): InvoiceSettlement {
+    fun cents(key: String): Long = (raw?.get(key) as? Number)?.toLong() ?: 0L
+    val state = (raw?.get("state") as? String)?.takeIf { it.isNotBlank() } ?: "partial"
+    return InvoiceSettlement(
+        state = state,
+        totalCents = cents("totalCents"),
+        paidCents = cents("paidCents"),
+        amountDueCents = cents("amountDueCents"),
+        overpaidCents = cents("overpaidCents"),
+    )
 }
 
 /**

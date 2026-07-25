@@ -184,3 +184,55 @@ describe('invoice lineItem pure mappers', () => {
     expect(sessionIdsFrom({ sessionIds: many })).toHaveLength(MAX_LINE_ITEM_SESSIONS);
   });
 });
+
+describe('getMyInvoices renders a part-paid invoice honestly', () => {
+  async function load(invoice: Record<string, unknown>) {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      queryDocs: { invoices: [{ id: 'inv1', data: { kinfolkId: '3', ...invoice } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    return getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+  }
+  it('flags a part-paid invoice as NEITHER paid NOR untouched', async () => {
+    // $20 collected against $40. Rendering this as "unpaid" hides the $20 the
+    // household already sent; rendering it "paid" hides the $20 they still owe.
+    const res = await load({ status: 'open', total: 40, amountDue: 20, paidCents: 2000 });
+    const inv = res.open[0];
+    expect(inv.partiallyPaid).toBe(true);
+    expect(inv.isPaid).toBe(false);
+    expect(inv.paidCents).toBe(2000);
+    expect(inv.amountDue).toBe(20);
+    // It stays in the open bucket, so it is still payable and still chased.
+    expect(res.open).toHaveLength(1);
+    expect(res.paid).toHaveLength(0);
+  });
+  it('does NOT flag an untouched open invoice', async () => {
+    const res = await load({ status: 'open', total: 40, amountDue: 40 });
+    expect(res.open[0].partiallyPaid).toBe(false);
+    expect(res.open[0].paidCents).toBe(0);
+  });
+  it('does NOT flag a settled invoice', async () => {
+    const res = await load({ status: 'paid', total: 40, amountDue: 0, paidCents: 4000 });
+    expect(res.paid[0].partiallyPaid).toBe(false);
+    expect(res.paid[0].isPaid).toBe(true);
+  });
+  it('reports 0 collected on an invoice predating the field, rather than inferring one', () => {
+    // total - amountDue would report the WHOLE total as collected on exactly the
+    // invoices the pre-fix write zeroed, which is the opposite of the truth.
+    return load({ status: 'paid', total: 40, amountDue: 0 }).then((res) => {
+      expect(res.paid[0].paidCents).toBe(0);
+      expect(res.paid[0].partiallyPaid).toBe(false);
+    });
+  });
+  it('never flags a credit as part-paid', async () => {
+    const res = await load({ status: 'credit', total: -25, amountDue: -25, paidCents: 500 });
+    expect(res.credits[0].partiallyPaid).toBe(false);
+  });
+  it('ignores a non-integer paidCents rather than laundering it onto the household screen', async () => {
+    const res = await load({ status: 'open', total: 40, amountDue: 20, paidCents: 20.5 });
+    expect(res.open[0].paidCents).toBe(0);
+    expect(res.open[0].partiallyPaid).toBe(false);
+  });
+});

@@ -4,6 +4,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.data.model.*
+import com.tribetails.auntieos.ui.admin.scheduling.GoogleCalendarConnection
 import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -369,6 +370,166 @@ class BookingRepository(
         AuntieLog.i("Server imported $imported Google Calendar busy blocks")
         imported
     }.onFailure { AuntieLog.e("Error syncing Google busy events via server", it) }
+
+    // ── Google Calendar over OAuth (Task 7.2), the editable half ────────────
+    //
+    // A DIFFERENT FEATURE from syncGoogleBusyEventsViaServer above, sharing
+    // nothing but the word calendar. That one reads free/busy off a shared
+    // calendar as a service account; these six write our visits onto a
+    // calendar belonging to a Google account the operator signs into. See
+    // `mytribe/functions/CALLABLE_CONTRACT.md`, "Google Calendar over OAuth,
+    // the editable half".
+    //
+    // NO METHOD HERE EVER RETURNS OR STORES A REFRESH TOKEN. The server's own
+    // response never carries one under any key (`publicConnection` in
+    // `googleCalendarConnection.ts` strips it before any callable answers), so
+    // there is nothing here to accidentally log or persist. AuntieLog calls
+    // below log outcomes and counts, never the raw callable payload.
+
+    /**
+     * Mints the Google consent URL. The client opens it (Custom Tab); the
+     * consent screen redirects to Google's own callback, which this app never
+     * sees directly, so the caller must POLL [getGoogleCalendarConnection]
+     * afterward rather than assume success from a return here.
+     */
+    suspend fun startGoogleCalendarConnect(): Result<GoogleCalendarConnectStart> = runCatching {
+        AuntieLog.i("Starting Google Calendar OAuth connect flow")
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("startGoogleCalendarConnect")
+            .call(emptyMap<String, Any?>())
+            .await()
+            .data as? Map<String, Any?>
+            ?: error("startGoogleCalendarConnect: non-map payload")
+        GoogleCalendarConnectStart(
+            authUrl = raw["authUrl"] as? String
+                ?: error("startGoogleCalendarConnect: response missing authUrl"),
+            expiresAt = raw["expiresAt"] as? String ?: "",
+            redirectUri = raw["redirectUri"] as? String ?: "",
+        )
+    }.onFailure { AuntieLog.e("Error starting Google Calendar connect", it) }
+
+    /** The poll target after the consent window opens; see [startGoogleCalendarConnect]. */
+    suspend fun getGoogleCalendarConnection(): Result<GoogleCalendarConnectionState> = runCatching {
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("getGoogleCalendarConnection")
+            .call(emptyMap<String, Any?>())
+            .await()
+            .data as? Map<String, Any?>
+            ?: error("getGoogleCalendarConnection: non-map payload")
+        GoogleCalendarConnectionState(
+            connection = decodeGoogleCalendarConnection(raw["connection"]),
+            freeBusyCalendarId = raw["freeBusyCalendarId"] as? String ?: "",
+            redirectUri = raw["redirectUri"] as? String ?: "",
+        )
+    }.onFailure { AuntieLog.e("Error reading Google Calendar connection", it) }
+
+    /**
+     * Calendars on the connected account, kept even when read-only rather than
+     * filtered out: `accessRole` tells the picker which ones cannot take an
+     * event, so a calendar missing from the list always means "the connection
+     * is broken", never "it was there but you cannot write to it".
+     */
+    suspend fun listGoogleCalendars(): Result<GoogleCalendarListResult> = runCatching {
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listGoogleCalendars")
+            .call(emptyMap<String, Any?>())
+            .await()
+            .data as? Map<String, Any?>
+            ?: error("listGoogleCalendars: non-map payload")
+        @Suppress("UNCHECKED_CAST")
+        val items = raw["calendars"] as? List<Map<String, Any?>> ?: emptyList()
+        GoogleCalendarListResult(
+            calendars = items.mapNotNull { c ->
+                val id = c["id"] as? String
+                if (id.isNullOrBlank()) null
+                else GoogleCalendarSummary(
+                    id = id,
+                    summary = (c["summary"] as? String)?.ifBlank { id } ?: id,
+                    accessRole = c["accessRole"] as? String ?: "",
+                    primary = c["primary"] as? Boolean ?: false,
+                )
+            },
+            connection = decodeGoogleCalendarConnection(raw["connection"]),
+            freeBusyCalendarId = raw["freeBusyCalendarId"] as? String ?: "",
+        )
+    }.onFailure { AuntieLog.e("Error listing Google calendars", it) }
+
+    /**
+     * Saves which calendar visits are pushed to. The server enforces
+     * `writeCalendarProblem` (`GoogleCalendarTargets.kt` mirrors the same rule
+     * so the picker can refuse a bad pick before this round trip); this call
+     * still throws verbatim on `write_calendar_invalid` if the mirror missed a
+     * case the server catches.
+     */
+    suspend fun setGoogleCalendarTargets(
+        writeCalendarId: String,
+        enabledCalendarIds: List<String>,
+    ): Result<GoogleCalendarConnection> = runCatching {
+        AuntieLog.i("Saving Google Calendar write target")
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("setGoogleCalendarTargets")
+            .call(mapOf("writeCalendarId" to writeCalendarId, "enabledCalendarIds" to enabledCalendarIds))
+            .await()
+            .data as? Map<String, Any?>
+            ?: error("setGoogleCalendarTargets: non-map payload")
+        decodeGoogleCalendarConnection(raw["connection"])
+    }.onFailure { AuntieLog.e("Error saving Google Calendar targets", it) }
+
+    /**
+     * Revokes at Google, then clears our copy. [GoogleCalendarDisconnectResult.revoked]
+     * false means Google did not confirm the revoke; the caller must surface
+     * [GoogleCalendarDisconnectResult.revokeError] rather than report a clean
+     * disconnect, because AuntieOS may still be listed as having access on the
+     * operator's Google account. Events already written to Google are NOT
+     * removed by this call; the server holds no delete-on-disconnect step.
+     */
+    suspend fun disconnectGoogleCalendar(): Result<GoogleCalendarDisconnectResult> = runCatching {
+        AuntieLog.i("Disconnecting Google Calendar")
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("disconnectGoogleCalendar")
+            .call(emptyMap<String, Any?>())
+            .await()
+            .data as? Map<String, Any?>
+            ?: error("disconnectGoogleCalendar: non-map payload")
+        GoogleCalendarDisconnectResult(
+            connection = decodeGoogleCalendarConnection(raw["connection"]),
+            revoked = raw["revoked"] as? Boolean ?: false,
+            revokeError = raw["revokeError"] as? String ?: "",
+        )
+    }.onFailure { AuntieLog.e("Error disconnecting Google Calendar", it) }
+
+    /**
+     * Operator-initiated push of upcoming visits onto the connected, chosen
+     * calendar. No calendar id in the request: the target is resolved
+     * server-side from the saved connection, so a client can never aim a
+     * household's visits at someone else's calendar.
+     */
+    suspend fun pushVisitsToGoogleCalendar(lookAheadDays: Int = 30): Result<GoogleCalendarPushResult> = runCatching {
+        AuntieLog.i("Pushing visits to Google Calendar for next $lookAheadDays days")
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("pushVisitsToGoogleCalendar")
+            .call(mapOf("lookAheadDays" to lookAheadDays))
+            .await()
+            .data as? Map<String, Any?>
+            ?: error("pushVisitsToGoogleCalendar: non-map payload")
+        @Suppress("UNCHECKED_CAST")
+        val skippedRaw = raw["skipped"] as? List<Map<String, Any?>> ?: emptyList()
+        val pushed = (raw["pushed"] as? Number)?.toInt() ?: 0
+        val removed = (raw["removed"] as? Number)?.toInt() ?: 0
+        AuntieLog.i("Google Calendar push complete: pushed=$pushed removed=$removed")
+        GoogleCalendarPushResult(
+            pushed = pushed,
+            removed = removed,
+            scanned = (raw["scanned"] as? Number)?.toInt() ?: 0,
+            skipped = skippedRaw.map { s ->
+                GoogleCalendarPushSkip(
+                    sessionId = s["sessionId"] as? String ?: "",
+                    reason = s["reason"] as? String ?: "",
+                )
+            },
+            ranAt = raw["ranAt"] as? String ?: "",
+        )
+    }.onFailure { AuntieLog.e("Error pushing visits to Google Calendar", it) }
 
     private fun bookingTimesOverlap(
         start1: String, end1: String,
@@ -780,3 +941,95 @@ data class MultiDateBookingResult(
     val visitIds: List<String>,
     val visitCount: Int,
 )
+
+// ── Google Calendar over OAuth (Task 7.2) result shapes ─────────────────────
+//
+// Named result data classes rather than reusing raw maps at call sites, same
+// posture as [ManageSeriesResult] and [BatchBookingResult] above: a field the
+// server adds later has exactly one place to be added on this side too.
+
+/** `startGoogleCalendarConnect` response. [authUrl] is the Google consent screen to open. */
+data class GoogleCalendarConnectStart(
+    val authUrl: String,
+    val expiresAt: String,
+    val redirectUri: String,
+)
+
+/** `getGoogleCalendarConnection` response. */
+data class GoogleCalendarConnectionState(
+    val connection: GoogleCalendarConnection,
+    /** `business_settings.calendarSyncId` (Task 7.1's free/busy target), echoed so
+     *  the picker can apply [com.tribetails.auntieos.ui.admin.scheduling.writeCalendarProblem]
+     *  without a second read. */
+    val freeBusyCalendarId: String,
+    val redirectUri: String,
+)
+
+/** One calendar on the connected Google account, as `listGoogleCalendars` reports it. */
+data class GoogleCalendarSummary(
+    val id: String,
+    val summary: String,
+    /** `owner`, `writer`, `reader`, `freeBusyReader`. Only the first two can take an event. */
+    val accessRole: String,
+    val primary: Boolean,
+)
+
+/** `listGoogleCalendars` response. */
+data class GoogleCalendarListResult(
+    val calendars: List<GoogleCalendarSummary>,
+    val connection: GoogleCalendarConnection,
+    val freeBusyCalendarId: String,
+)
+
+/** `disconnectGoogleCalendar` response. [revoked] false means the manual fix must be surfaced. */
+data class GoogleCalendarDisconnectResult(
+    val connection: GoogleCalendarConnection,
+    val revoked: Boolean,
+    /** Empty when [revoked]; otherwise what Google said, verbatim, plus the manual-fix hint. */
+    val revokeError: String,
+)
+
+/** One session `pushVisitsToGoogleCalendar` could not push, and why. */
+data class GoogleCalendarPushSkip(
+    val sessionId: String,
+    val reason: String,
+)
+
+/** `pushVisitsToGoogleCalendar` response. */
+data class GoogleCalendarPushResult(
+    val pushed: Int,
+    val removed: Int,
+    val scanned: Int,
+    val skipped: List<GoogleCalendarPushSkip>,
+    val ranAt: String,
+)
+
+/**
+ * Normalizes a raw `connection` map into [GoogleCalendarConnection], naming
+ * every field rather than trusting the map shape at each call site above.
+ * Never reads a `refreshToken` key: the server projection this decodes never
+ * carries one, so there is nothing here that could accidentally surface it.
+ */
+private fun decodeGoogleCalendarConnection(raw: Any?): GoogleCalendarConnection {
+    @Suppress("UNCHECKED_CAST")
+    val c = raw as? Map<String, Any?> ?: emptyMap()
+    val scopes = (c["scopes"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+    val enabledCalendarIds = (c["enabledCalendarIds"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+    return GoogleCalendarConnection(
+        connected = c["connected"] as? Boolean ?: false,
+        googleAccountEmail = c["googleAccountEmail"] as? String ?: "",
+        connectedAt = c["connectedAt"] as? String ?: "",
+        scopes = scopes,
+        writeCalendarId = c["writeCalendarId"] as? String ?: "",
+        enabledCalendarIds = enabledCalendarIds,
+        disconnectedAt = c["disconnectedAt"] as? String ?: "",
+        disconnectedError = c["disconnectedError"] as? String ?: "",
+        connectLastAttemptAt = c["connectLastAttemptAt"] as? String ?: "",
+        connectLastStatus = c["connectLastStatus"] as? String ?: "",
+        connectLastError = c["connectLastError"] as? String ?: "",
+        calendarPushLastRunAt = c["calendarPushLastRunAt"] as? String ?: "",
+        calendarPushLastStatus = c["calendarPushLastStatus"] as? String ?: "",
+        calendarPushLastPushed = (c["calendarPushLastPushed"] as? Number)?.toInt() ?: 0,
+        calendarPushLastError = c["calendarPushLastError"] as? String ?: "",
+    )
+}

@@ -139,3 +139,44 @@ fun invoiceActionsFor(state: InvoiceState): List<InvoiceAction> = when (state) {
     // Nothing was ever billed, so nothing to collect and nothing to receipt.
     InvoiceState.ZERO -> emptyList()
 }
+/**
+ * What has been collected against an invoice, and what is left, in integer
+ * cents. Null when the invoice is not part-paid.
+ *
+ * PART-PAID IS A DISPLAY REFINEMENT OF [InvoiceState.OPEN], NOT AN EIGHTH
+ * STATE, exactly like [invoiceIsOverdue] and for the same reason: it changes
+ * the chip and the copy, and it never changes which actions the invoice may be
+ * offered. A part-paid invoice is still an open invoice with a real balance, so
+ * it keeps the whole outstanding action set, which is precisely what makes
+ * collecting the rest possible. Making it a state would have forced
+ * [invoiceActionsFor] to enumerate it, and the first person to write
+ * `InvoiceState.PART_PAID -> emptyList()` would have reintroduced the very
+ * defect this exists to remove.
+ *
+ * READS [Invoice.paidCents], NEVER `total - amountDue`. Those are float dollars,
+ * and on every invoice the pre-2026-07-25 write touched `amountDue` reads 0.0
+ * while a real balance is owed, so the subtraction reports the whole total as
+ * collected on exactly the rows that are wrong. An invoice with no `paidCents`
+ * is not claimed to be part-paid, because there is no record that it is.
+ *
+ * Mirrors the web `src/lib/invoiceFormat.ts#invoicePartialPayment` so the two
+ * admin surfaces cannot disagree about what an invoice is.
+ */
+data class InvoicePartPayment(
+    val paidCents: Long,
+    val remainingCents: Long,
+)
+fun invoicePartPaid(invoice: Invoice): InvoicePartPayment? {
+    if (invoiceStateOf(invoice) != InvoiceState.OPEN) return null
+    if (invoice.paidCents <= 0L) return null
+    val amountDue = invoice.amountDue.finiteOrZero()
+    val remainingCents = Math.round(amountDue * 100.0)
+    if (remainingCents <= 0L) return null
+    return InvoicePartPayment(paidCents = invoice.paidCents, remainingCents = remainingCents)
+}
+/** "$20.00" from an integer count of cents. */
+fun formatCentsUsd(cents: Long): String {
+    val sign = if (cents < 0) "-" else ""
+    val abs = kotlin.math.abs(cents)
+    return "$sign$${abs / 100}.${(abs % 100).toString().padStart(2, '0')}"
+}

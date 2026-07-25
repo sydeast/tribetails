@@ -33,16 +33,20 @@ const EXPECTED: ReadonlyArray<{
   { state: 'quote', payments: 'settled', scope: 'all' },
 
   { state: 'open', payments: 'none', scope: 'all' },
-  // PARTIAL-PAYMENT FOLLOW-UP: this row becomes 'all' when the server gains its
-  // third payment state. It asserts today's server behaviour on purpose.
-  { state: 'open', payments: 'partial', scope: 'metadataOnly' },
+  // A part-paid invoice is the one an operator most needs to correct, so it
+  // stays fully editable. Only a settled one freezes its money.
+  { state: 'open', payments: 'partial', scope: 'all' },
   { state: 'open', payments: 'settled', scope: 'metadataOnly' },
 
   { state: 'zero', payments: 'none', scope: 'all' },
-  { state: 'zero', payments: 'partial', scope: 'metadataOnly' },
+  { state: 'zero', payments: 'partial', scope: 'all' },
   { state: 'zero', payments: 'settled', scope: 'metadataOnly' },
 
   { state: 'paid', payments: 'none', scope: 'none' },
+  // A doc LABELLED paid whose payments fall short is not settled, it is the
+  // corruption `invoicePaymentRepair.ts` exists to undo. It stays editable so an
+  // operator is not blocked while waiting for the repair pass.
+  { state: 'paid', payments: 'partial', scope: 'all' },
   { state: 'paid', payments: 'settled', scope: 'none' },
   { state: 'cancelled', payments: 'none', scope: 'none' },
   { state: 'cancelled', payments: 'settled', scope: 'none' },
@@ -82,23 +86,6 @@ describe('invoiceEditScope (web mirror of the server policy)', () => {
   });
 });
 
-describe('paymentStatusFromDoc', () => {
-  it('reads a paid invoice as settled', () => {
-    expect(paymentStatusFromDoc('paid')).toBe('settled');
-  });
-
-  it('reads every other state as none, because the client genuinely cannot tell', () => {
-    // The truth is in the `payments` subcollection, which this client does not
-    // load, and the `amountDue` scalar cannot substitute because markInvoicePaid
-    // zeroes it even for a PARTIAL payment. Answering "none" offers the control
-    // and lets the server refuse, which is the direction this mirror must fail.
-    for (const state of INVOICE_STATES) {
-      if (state === 'paid') continue;
-      expect(paymentStatusFromDoc(state)).toBe('none');
-    }
-  });
-});
-
 describe('invoiceEditRefusal', () => {
   it('allows a money edit on an unpaid open invoice', () => {
     expect(invoiceEditRefusal('open', 'none', true)).toBeNull();
@@ -129,5 +116,51 @@ describe('invoiceEditRefusal', () => {
 
   it('points a credit at the redemption flow rather than at editing', () => {
     expect(invoiceEditRefusal('credit', 'none', true)?.message).toContain('Redeeming');
+  });
+});
+/**
+ * `paymentStatusFromDoc` decides which mirrored branch runs, so it is worth its
+ * own table. The trap it exists to avoid: `amountDue` reads 0 on every invoice
+ * the pre-2026-07-25 partial-payment write touched, so anything derived from it
+ * would call a part-paid invoice settled and hide the Edit control on exactly
+ * the invoice that most needs correcting.
+ */
+describe('paymentStatusFromDoc', () => {
+  it('calls a short payment partial, from paidCents against the total', () => {
+    expect(paymentStatusFromDoc('open', 4000, 2000)).toBe('partial');
+  });
+  it('calls a covering payment settled', () => {
+    expect(paymentStatusFromDoc('open', 4000, 4000)).toBe('settled');
+    expect(paymentStatusFromDoc('open', 4000, 5000)).toBe('settled');
+  });
+  it('reads a doc LABELLED paid whose payments fall short as partial, not settled', () => {
+    // The corrupt shape. Reading the label would freeze it; reading the money
+    // keeps it repairable, which is what the server now does too.
+    expect(paymentStatusFromDoc('paid', 4000, 2000)).toBe('partial');
+    expect(invoiceEditScope('paid', paymentStatusFromDoc('paid', 4000, 2000))).toBe('all');
+  });
+  it('never infers a payment from amountDue reading zero', () => {
+    // A legacy doc with no paidCents. The old write left amountDue at 0 here, so
+    // any answer derived from that scalar would be "settled" and wrong.
+    expect(paymentStatusFromDoc('open')).toBe('none');
+    expect(paymentStatusFromDoc('open', 4000, undefined)).toBe('none');
+  });
+
+  it('answers none for every unlabelled state with no figure, which OFFERS the control', () => {
+    // A legacy doc carries no paidCents, and the server has the last word. A
+    // wrongly-offered Edit ends in a refusal this app prints verbatim; a
+    // wrongly-hidden one is a dead end. Fail toward offering.
+    for (const state of INVOICE_STATES) {
+      if (state === 'paid') continue;
+      expect(paymentStatusFromDoc(state)).toBe('none');
+    }
+  });
+  it('falls back to the label when there is no recorded figure', () => {
+    expect(paymentStatusFromDoc('paid')).toBe('settled');
+    expect(paymentStatusFromDoc('paid', 4000, 0)).toBe('settled');
+  });
+  it('treats an unusable total as settled rather than inventing a balance', () => {
+    expect(paymentStatusFromDoc('open', undefined, 2000)).toBe('settled');
+    expect(paymentStatusFromDoc('open', Number.NaN, 2000)).toBe('settled');
   });
 });

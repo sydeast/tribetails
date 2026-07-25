@@ -158,6 +158,18 @@ export const AUDIT_EVENTS = {
   // service-account key ships in any client bundle.
   INTEGRATION_CALENDAR_SYNC: 'INTEGRATION_CALENDAR_SYNC',
 
+  // Task 7.2, the OAuth half: connecting a Google account AuntieOS may WRITE
+  // to, dropping that connection, and pushing visits onto the chosen calendar.
+  // Kept separate from INTEGRATION_CALENDAR_SYNC above because the blast radius
+  // differs: that one imports availability through a service account, these act
+  // on a real person's calendar under their own consent. The payloads carry the
+  // account address and counts and NEVER the refresh token, because an audit
+  // entry is readable by any Auntie, which is exactly who must not be handed a
+  // standing credential.
+  INTEGRATION_CALENDAR_CONNECTED: 'INTEGRATION_CALENDAR_CONNECTED',
+  INTEGRATION_CALENDAR_DISCONNECTED: 'INTEGRATION_CALENDAR_DISCONNECTED',
+  INTEGRATION_CALENDAR_PUSH: 'INTEGRATION_CALENDAR_PUSH',
+
   // Stage 2 step 5 (Communicate external send): admin sends a one-off email or
   // SMS to an arbitrary recipient. The recipient is REDACTED in the audit
   // payload (masked local-part / middle digits) so the activity_log never

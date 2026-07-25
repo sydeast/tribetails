@@ -232,6 +232,13 @@
   background: color-mix(in srgb, var(--color-error) 18%, transparent);
   color: var(--color-error);
 }
+/* Part paid: money has come in and it does not cover the invoice. Deliberately
+   NOT the success green of a paid invoice, because it is not paid, and not the
+   error red of overdue, because nothing has gone wrong. Its own reading. */
+.invoices__chip--partpaid {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
 .invoices__chip--paid {
   background: color-mix(in srgb, var(--color-success) 18%, transparent);
   color: var(--color-success);

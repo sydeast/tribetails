@@ -7,6 +7,7 @@ import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.MediaEntityType
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
+import com.tribetails.auntieos.data.repository.GoogleCalendarConnectionState
 import com.tribetails.auntieos.data.repository.ServiceRepository
 import com.tribetails.auntieos.data.repository.TemplateRepository
 import com.tribetails.auntieos.media.MediaUploadManager
@@ -28,6 +29,7 @@ import com.tribetails.auntieos.ui.admin.formschemas.FormSchemaEditorScreen
 import com.tribetails.auntieos.ui.admin.formschemas.FormSchemaEditorViewModel
 import com.tribetails.auntieos.ui.admin.formschemas.FormSchemaListScreen
 import com.tribetails.auntieos.ui.admin.scheduling.EnhancedSchedulingViewModel
+import com.tribetails.auntieos.ui.admin.scheduling.GoogleCalendarConnection
 import com.tribetails.auntieos.ui.admin.services.ServiceManagementViewModel
 import com.tribetails.auntieos.ui.communicate.CommunicateScreen
 import com.tribetails.auntieos.ui.communicate.CommunicateViewModel
@@ -194,6 +196,12 @@ class AndroidScreenshotTest {
         coEvery { serviceRepo.getBusinessHours() } returns Result.success(emptyList())
         coEvery { auntieRepo.getKinfolk() } returns Result.success(AndroidDemoFixtures.kinfolk)
         coEvery { auntieRepo.getBusinessSettings() } returns Result.success(BusinessSettings())
+        // Task 7.2: init { loadGoogleCalendarState() } reads this too. Relaxed mocks
+        // still need this stubbed explicitly: Result<T> is a Kotlin inline class, and
+        // an unstubbed relaxed answer for it throws a ClassCastException rather than
+        // quietly returning a default.
+        coEvery { bookingRepo.getGoogleCalendarConnection() } returns
+            Result.success(GoogleCalendarConnectionState(GoogleCalendarConnection(), "", ""))
         // init{} -> loadInitialData() + loadBookingsForDateRange() run inline on Unconfined main.
         val vm = EnhancedSchedulingViewModel(
             bookingRepository = bookingRepo,
@@ -257,6 +265,10 @@ class AndroidScreenshotTest {
         coEvery { auntieRepo.getKinfolk() } returns Result.success(emptyList())
         // Unified settings: booking config (observeUsHolidays etc) now read from BusinessSettings.
         coEvery { auntieRepo.getBusinessSettings() } returns Result.success(AndroidDemoFixtures.businessSettings)
+        // Task 7.2: init { loadGoogleCalendarState() } reads this too; see the note
+        // in manageBookings() above on why a relaxed mock still needs this stubbed.
+        coEvery { bookingRepo.getGoogleCalendarConnection() } returns
+            Result.success(GoogleCalendarConnectionState(GoogleCalendarConnection(), "", ""))
         val vm = EnhancedSchedulingViewModel(
             bookingRepository = bookingRepo,
             serviceRepository = serviceRepo,
@@ -301,7 +313,7 @@ class AndroidScreenshotTest {
         coEvery { repo.observeVoicemails() } returns flowOf(AndroidDemoFixtures.voicemails)
         coEvery { repo.observeCalls() } returns flowOf(AndroidDemoFixtures.calls)
         coEvery { repo.observeSmsMessages() } returns flowOf(AndroidDemoFixtures.sms)
-        coEvery { repo.getEmails() } returns Result.success(AndroidDemoFixtures.emails)
+        every { repo.observeEmails() } returns flowOf(AndroidDemoFixtures.emails)
         coEvery { repo.listConversations() } returns Result.success(emptyList())
         val vm = InboxViewModel(repo) // init auto-collects all four channels inline.
         compose.setContent {

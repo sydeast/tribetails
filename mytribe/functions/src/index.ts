@@ -87,6 +87,9 @@ export { reviewAndSendDraftInvoice } from './admin/reviewAndSendDraftInvoice';
 export { updateInvoice } from './admin/updateInvoice';
 export { archiveInvoice } from './admin/archiveInvoice';
 export { unarchiveInvoice } from './admin/unarchiveInvoice';
+// Detection + repair for invoices wrecked by the pre-2026-07-25 partial-payment
+// write. `detect` mode reports and writes nothing; see the file header.
+export { repairInvoicePayments } from './admin/repairInvoicePayments';
 // Task 5.1 (#18): the read half of turning completed visits into an invoice.
 export { listUninvoicedSessions } from './admin/listUninvoicedSessions';
 export { setKinfolkClaim } from './admin/setKinfolkClaim';
@@ -138,6 +141,24 @@ export { updateTrainingDocument } from './admin/updateTrainingDocument';
 export { deleteTrainingDocument } from './admin/deleteTrainingDocument';
 export { rescheduleBooking } from './admin/rescheduleBooking';
 export { syncGoogleCalendarBusyEvents } from './admin/syncGoogleCalendarBusyEvents';
+// Task 7.2, editable calendars over OAuth. `googleOAuthCallback` is the HTTP
+// redirect target and is exported with the callables it belongs to rather than
+// down in the HTTPS block, because the flow is meaningless split in two: the
+// callable mints the one-time state the callback redeems. Both halves declare
+// GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET and both read them.
+export {
+  startGoogleCalendarConnect,
+  googleOAuthCallback,
+} from './admin/googleCalendar/googleCalendarConnect';
+export {
+  getGoogleCalendarConnection,
+  disconnectGoogleCalendar,
+} from './admin/googleCalendar/googleCalendarAccount';
+export {
+  listGoogleCalendars,
+  setGoogleCalendarTargets,
+} from './admin/googleCalendar/googleCalendarSelection';
+export { pushVisitsToGoogleCalendar } from './admin/googleCalendar/pushVisitsToGoogleCalendar';
 export { sendExternalMessage, suppressExternalRecipient } from './admin/sendExternalMessage';
 export { smtp2goEventWebhook, twilioStatusCallback } from './admin/engagementWebhooks';
 export { listRecentSends } from './admin/listRecentSends';
