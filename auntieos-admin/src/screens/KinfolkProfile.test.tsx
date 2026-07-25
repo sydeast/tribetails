@@ -112,6 +112,42 @@ describe('KinfolkProfile', () => {
   // (the code catches correctly; the sibling test proves the behavior), so it is
   // covered there rather than re-asserted here.
 
+  // Join-date rendering. These read as en-US ("Jul 24, 2026") because the screen
+  // formats in the OPERATOR's locale and this suite runs under an en-US host, the
+  // same assumption the rest of the repo's date assertions make.
+  it('formats an ISO join date instead of printing the stored string', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ joinDate: '2026-07-24' }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    expect(await screen.findByText('Joined Jul 24, 2026')).toBeInTheDocument();
+  });
+
+  it('reads the day out of a legacy UTC timestamp rather than showing the operator raw ISO', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ joinDate: '2026-07-24T12:34:56.789Z' }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    expect(await screen.findByText('Joined Jul 24, 2026')).toBeInTheDocument();
+  });
+
+  it('passes a legacy join date it cannot read straight through, never "Invalid Date"', async () => {
+    // Negative case: existing documents hold whatever Android's old free-text
+    // field accepted. Display tolerates them; it does not throw, and it does not
+    // invent a date.
+    getKinfolkProfile.mockResolvedValue(profile({ joinDate: '07/24/2026' }));
+    const { container } = render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />,
+    );
+    expect(await screen.findByText('Joined 07/24/2026')).toBeInTheDocument();
+    expect(container.textContent).not.toContain('Invalid Date');
+  });
+
+  it('says nothing at all when there is no join date', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ joinDate: '' }));
+    const { container } = render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />,
+    );
+    await screen.findByText('512-555-1000');
+    expect(container.textContent).not.toContain('Joined');
+  });
+
   it('calls onBack from the Back control', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
     const onBack = vi.fn();

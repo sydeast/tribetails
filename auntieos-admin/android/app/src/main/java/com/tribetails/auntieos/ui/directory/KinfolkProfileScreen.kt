@@ -34,6 +34,7 @@ import com.tribetails.auntieos.ui.admin.settingsWithTagVocab
 import com.tribetails.auntieos.ui.admin.tagVocabFor
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.ui.components.*
+import com.tribetails.auntieos.util.formatJoinDate
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
@@ -505,7 +506,9 @@ private fun DossierCard(
             ProfileField("WiFi Network", "${kinfolk.wifiName} / ${kinfolk.wifiPassword}")
             ProfileField("Internal Notes", kinfolk.internalNotes)
             ProfileField("Referral Source", kinfolk.referralSource)
-            ProfileField("Join Date", kinfolk.joinDate)
+            // Read in the operator's locale. A legacy value formatJoinDate cannot
+            // read prints exactly as stored rather than as "Invalid Date".
+            ProfileField("Join Date", formatJoinDate(kinfolk.joinDate))
             if (!dossier?.rawSummary.isNullOrBlank()) {
                 ProfileField("Reconciled Summary", stripDossierSources(dossier!!.rawSummary))
             }

@@ -4,6 +4,7 @@ import { updateKinfolkTags } from '../api/directoryWrite';
 import { kinfolkDisplayName, initialsOf, type Kin } from '../api/directory';
 import { type Async } from '../lib/async';
 import { str } from '../lib/coerce';
+import { formatJoinDate } from '../lib/joinDate';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
@@ -159,8 +160,13 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkP
                     <span className="kprofile__status" data-tone={p.status.toLowerCase()}>
                       {p.status.trim() === '' ? '-' : p.status.toLowerCase()}
                     </span>
+                    {/*
+                      Read in the operator's locale, not in storage's. A legacy
+                      value `formatJoinDate` cannot read prints exactly as stored,
+                      which is honest, and is why this never renders "Invalid Date".
+                    */}
                     {p.joinDate.trim() !== '' && (
-                      <span className="kprofile__since">Joined {p.joinDate}</span>
+                      <span className="kprofile__since">Joined {formatJoinDate(p.joinDate)}</span>
                     )}
                   </div>
                 </div>

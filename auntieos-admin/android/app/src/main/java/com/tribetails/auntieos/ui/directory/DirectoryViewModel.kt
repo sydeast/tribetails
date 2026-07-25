@@ -23,6 +23,7 @@ import com.tribetails.auntieos.domain.invoicesForKinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.util.AuntieLog
+import com.tribetails.auntieos.util.joinDateForEdit
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -123,7 +124,10 @@ data class EditKinfolkUiState(
     // Admin & Relationship
     val internalNotes: String = "",
     val referralSource: String = "",
+    /** `YYYY-MM-DD`, or blank. The editor's date picker cannot hold anything else. */
     val joinDate: String = "",
+    /** What the document actually stored, when the picker could not open it as-is. */
+    val joinDateNote: String? = null,
 
     // Profile photo (preserved through save so an unrelated edit cannot wipe it).
     val profilePictureUrl: String = "",
@@ -592,7 +596,10 @@ class DirectoryViewModel(private val repository: AuntieRepository) : ViewModel()
     fun updateEditEmergencyContactPhone(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(emergencyContactPhone = value) }
     fun updateEditEmergencyContactRelation(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(emergencyContactRelation = value) }
     fun updateEditReferralSource(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(referralSource = value) }
-    fun updateEditJoinDate(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(joinDate = value) }
+    /** Picked from the calendar, so the legacy note has been answered and goes away. */
+    fun updateEditJoinDate(value: String) {
+        _editKinfolkState.value = _editKinfolkState.value.copy(joinDate = value, joinDateNote = null)
+    }
     fun updateEditInternalNotes(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(internalNotes = value) }
     fun updateEditVetClinicName(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(vetClinicName = value) }
     fun updateEditVetClinicPhone(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(vetClinicPhone = value) }
@@ -700,6 +707,12 @@ class DirectoryViewModel(private val repository: AuntieRepository) : ViewModel()
     }
 
     private fun populateEditForm(kinfolk: Kinfolk) {
+        // The join date is a picker now, and a picker can only hold YYYY-MM-DD.
+        // Legacy values (stored ISO instants, free text from when this was a text
+        // field) are coerced or cleared HERE, once, on the way in, and whatever
+        // was stored is carried alongside in `joinDateNote` so the editor can say
+        // so rather than dropping it silently. See util/JoinDate.kt.
+        val opened = joinDateForEdit(kinfolk.joinDate)
         _editKinfolkState.value = EditKinfolkUiState(
             kinfolkId = kinfolk.id,
             firstName = kinfolk.firstName,
@@ -732,7 +745,8 @@ class DirectoryViewModel(private val repository: AuntieRepository) : ViewModel()
 
             internalNotes = kinfolk.internalNotes,
             referralSource = kinfolk.referralSource,
-            joinDate = kinfolk.joinDate,
+            joinDate = opened.value,
+            joinDateNote = opened.note,
 
             profilePictureUrl = kinfolk.profilePictureUrl,
 
