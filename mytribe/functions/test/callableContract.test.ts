@@ -15,6 +15,12 @@ import { Args as CreateInvoiceArgs } from '../src/admin/createInvoice';
 import { Args as CreateQuoteArgs } from '../src/admin/createQuote';
 import { Args as MarkInvoicePaidArgs } from '../src/admin/markInvoicePaid';
 import { Args as AssignTemplateArgs } from '../src/admin/assignTemplate';
+// Task 5.1 invoice slice. `updateInvoice` is NESTED (its `patch` is an object)
+// and carries a `.refine`, so it is frozen by RECURSIVE signature below, not by
+// a top-level key freeze. archive/unarchive are flat.
+import { Args as UpdateInvoiceArgs } from '../src/admin/updateInvoice';
+import { Args as ArchiveInvoiceArgs } from '../src/admin/archiveInvoice';
+import { Args as UnarchiveInvoiceArgs } from '../src/admin/unarchiveInvoice';
 // Shared catalog write reached by BOTH the kinfolk portal and the AuntieOS
 // admin vet-clinic picker (Task 1.8). Two independent clients now build this
 // payload, which is exactly the condition this guard exists for.
@@ -60,7 +66,8 @@ import {
 import { CALENDAR_ID_INVALID_CODE, calendarIdProblem } from '../src/lib/calendarSyncId';
 
 /**
- * AO-8 drift guard (design doc `docs/2026-07-18-AO5-AO8-shared-contract-design.md`
+ * AO-8 drift guard (design doc
+ * `auntieos-admin/docs/2026-07-18-AO5-AO8-shared-contract-design.md`
  * Option C). The AuntieOS admin (React), the Compose app (web + desktop) and the
  * android app each HAND-MIRROR these callable request shapes; nothing but review
  * discipline keeps the four in sync. This test freezes the request field set of
@@ -68,7 +75,8 @@ import { CALENDAR_ID_INVALID_CODE, calendarIdProblem } from '../src/lib/calendar
  * renamed field) trips a red test HERE, forcing a deliberate update + a look at
  * the three mirrors, instead of drifting silently until a client breaks.
  *
- * Canonical request + response shapes live in `docs/CALLABLE_CONTRACT.md` (the
+ * Canonical request + response shapes live in `functions/CALLABLE_CONTRACT.md`,
+ * beside this test at the functions root, NOT under any `docs/` directory (the
  * single human source the mirrors are built from). When you intentionally change
  * a shape: update that doc, update this frozen set, and update all three client
  * mirrors in the same change.
@@ -136,6 +144,8 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
     keys: ['address', 'amountDue', 'client', 'date', 'discount', 'dueDate', 'familyId', 'invoiceNumber', 'kinfolkName', 'sendToKinfolk', 'sessionIds', 'status', 'terms', 'total'],
   },
   markInvoicePaid: { schema: MarkInvoicePaidArgs, keys: ['amount', 'invoiceId', 'method', 'paidAt', 'reference'] },
+  archiveInvoice: { schema: ArchiveInvoiceArgs, keys: ['force', 'invoiceId'] },
+  unarchiveInvoice: { schema: UnarchiveInvoiceArgs, keys: ['invoiceId'] },
   assignTemplate: { schema: AssignTemplateArgs, keys: ['active', 'audience', 'catalogKey', 'templateId', 'triggerKey'] },
   deleteTrainingDocument: { schema: DeleteTrainingDocumentArgs, keys: ['docId'] },
 
@@ -205,6 +215,16 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
       'attachments[].mimeType', 'attachments[].storageUrl',
       'communicationType', 'content', 'notes',
       'targetKinId', 'targetKinfolkId', 'targetType', 'title',
+    ],
+  },
+  updateInvoice: {
+    schema: UpdateInvoiceArgs,
+    signature: [
+      'invoiceId',
+      'patch.date', 'patch.dueDate', 'patch.invoiceDiscountCents', 'patch.invoiceNumber',
+      'patch.lineItems[].description', 'patch.lineItems[].discountCents',
+      'patch.lineItems[].qty', 'patch.lineItems[].unitCents',
+      'patch.terms',
     ],
   },
   updateTrainingDocument: {

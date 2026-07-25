@@ -72,9 +72,21 @@ export const AUDIT_EVENTS = {
   // the invoice doc already existed as a draft; this is the review/publish
   // step, not the mint step.
   BILLING_DRAFT_INVOICE_SENT: 'BILLING_DRAFT_INVOICE_SENT',
+  // Task 5.1: an invoice's fields and/or its line items were edited
+  // (updateInvoice callable). Logged because it can CHANGE WHAT IS OWED after
+  // the household has already seen a figure, which is exactly the kind of
+  // state transition the note above says must be investigable.
+  BILLING_INVOICE_UPDATED: 'BILLING_INVOICE_UPDATED',
+  // Task 5.1: an invoice was archived or restored (archiveInvoice /
+  // unarchiveInvoice). Archiving hides it from the operator's default view and
+  // from the outstanding totals, so it is a deliberate decision to stop
+  // chasing money, not a cosmetic filter.
+  BILLING_INVOICE_ARCHIVED: 'BILLING_INVOICE_ARCHIVED',
+  BILLING_INVOICE_UNARCHIVED: 'BILLING_INVOICE_UNARCHIVED',
 
   THEME_BRAND_TOKENS_UPDATED: 'THEME_BRAND_TOKENS_UPDATED',
   THEME_KINFOLK_OVERRIDES_UPDATED: 'THEME_KINFOLK_OVERRIDES_UPDATED',
+
 
   NOTIFICATION_DISPATCHED: 'NOTIFICATION_DISPATCHED',
   NOTIFICATION_RECEIVED: 'NOTIFICATION_RECEIVED',
