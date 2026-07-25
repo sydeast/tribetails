@@ -3,21 +3,27 @@
  * (Compose), which put a Notifications panel, then a Messages panel, then a
  * Channels panel on ONE screen rather than splitting them across tabs.
  *
- * ── The Channels seam (Task 6.1) ──────────────────────────────────────────
+ * ── The Channels seam, now filled (Task 6.1) ──────────────────────────────
  * The archive's third section rendered the four Twilio streams (voicemails,
- * calls, SMS, email). Those streams do not exist on the React side yet; they
- * are Task 6.1. This module therefore lists TWO sections, not three, and the
- * screen renders exactly what is listed here.
+ * calls, SMS, email). This module listed two sections while those streams did
+ * not exist on the React side, on the reasoning that an empty panel titled
+ * Channels is a dark gate in a quieter voice. Task 6.1 landed the streams
+ * (`api/inboxChannels.ts`), so the third entry is here and the screen renders
+ * the four real listeners behind it.
  *
- * That is a deliberate choice over shipping an empty "Channels" panel: the
- * plan's Definition of DONE forbids a dark gate or a "coming soon" banner for
- * our own code, and an empty panel titled Channels is the same lie in a
- * quieter voice. When 6.1 lands its streams it appends one entry below and
- * renders its panel; `inboxUnreadTotal` already takes N counts, so the header
- * badge needs no change at that point.
+ * ── CHANNELS CONTRIBUTE NOTHING TO `inboxUnreadTotal`, ON PURPOSE ──────────
+ * The badge below counts NOTIFICATIONS and MESSAGE THREADS, the two sections
+ * whose rows carry a server-maintained read flag. Channels are excluded, and
+ * the full reasoning lives in `lib/inboxChannels.ts`: folding them in here but
+ * not into the nav rail (`lib/useUnreadInbox.ts`, one listener, deliberately)
+ * would print two different numbers for the same word on two surfaces, and
+ * folding them into the rail as well means a second app-wide listener on
+ * collections that grow one document per message. A voicemail nobody has
+ * answered is instead counted under its own noun, "waiting on a reply", inside
+ * the Channels panel where the operator can act on it.
  */
 
-export type InboxSectionKey = 'notifications' | 'messages';
+export type InboxSectionKey = 'notifications' | 'messages' | 'channels';
 
 export interface InboxSectionDef {
   readonly key: InboxSectionKey;
@@ -36,6 +42,11 @@ export const INBOX_SECTIONS: readonly InboxSectionDef[] = [
     key: 'messages',
     title: 'Messages',
     subtitle: 'Two-way threads with kinfolk. Open a thread to read and reply.',
+  },
+  {
+    key: 'channels',
+    title: 'Channels',
+    subtitle: 'Voicemails, calls, texts and email, everywhere kinfolk reach out. Open a row to answer it.',
   },
 ];
 

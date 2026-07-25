@@ -2265,6 +2265,40 @@ class AuntieRepository(
     }
 
     /**
+     * Email, as a bounded live stream, matching its three sibling channels.
+     *
+     * Replaces the Inbox's use of [getEmails], which was an UNBOUNDED
+     * `collection("emails").get()`: no orderBy, no limit, the whole collection
+     * on every screen open. That is the AO-29 shape the other three channels
+     * were already written away from, and it was also the reason email was the
+     * one channel that did not update until the screen was reopened.
+     *
+     * Ordered on `timestamp` DESCENDING, an ISO-8601 STRING on this collection
+     * (see `EmailMessage.timestamp` and the Twilio inbound writers), so the sort
+     * is lexical. A Firestore Timestamp bound against this field would match
+     * nothing and would NOT error. Note also that ORDER BY skips documents that
+     * lack the field entirely, so a writer that forgets `timestamp` makes its
+     * rows invisible here rather than raising; every current writer sets it.
+     *
+     * [getEmails] stays for callers that genuinely want one shot; the Inbox is
+     * not one of them.
+     */
+    fun observeEmails(limit: Long = 200): Flow<List<EmailMessage>> = callbackFlow {
+        if (!checkAuthOrCloseFlow("observeEmails")) return@callbackFlow
+        val reg = firestore.collection("emails")
+            .orderBy("timestamp", com.google.firebase.firestore.Query.Direction.DESCENDING)
+            .limit(limit)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                trySend(snapshot?.toObjects(EmailMessage::class.java).orEmpty())
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /**
      * Defense-in-depth auth gate for callbackFlow-based listeners.
      * Returns true (listener may attach) when a user is signed in.
      * Returns false and closes the flow with an error when unauthenticated —
@@ -2342,6 +2376,29 @@ class AuntieRepository(
         docRef.set(msg).await()
         docRef.id
     }.onFailure { AuntieLog.e("Failed to create inbound SMS", it) }
+
+    /**
+     * Marks a voicemail READ: the operator listened to it and is not replying
+     * right now. Parity with the web admin's `markVoicemail` (React
+     * `src/api/inboxChannelsWrite.ts`), which writes the same three keys.
+     *
+     * `repliedAt` is cleared rather than stamped, because reading is not
+     * replying and a reply timestamp on a merely-heard voicemail would make the
+     * field a lie. Without this action the only way off `unread` was to send a
+     * text, so a voicemail that needed no answer stayed in the waiting count
+     * forever.
+     */
+    suspend fun markVoicemailRead(voicemailId: String): Result<Unit> = runCatching {
+        ensureAuthenticated()
+        firestore.collection("voicemails").document(voicemailId).update(
+            mapOf(
+                "replyStatus" to "read",
+                "repliedAt" to "",
+                "replyLogId" to ""
+            )
+        ).await()
+        Unit
+    }.onFailure { AuntieLog.e("Failed to mark voicemail read $voicemailId", it) }
 
     suspend fun markVoicemailReplied(voicemailId: String, replyLogId: String): Result<Unit> = runCatching {
         ensureAuthenticated()

@@ -34,7 +34,7 @@ class InboxViewModelReplyTest {
         every { mockRepo.observeVoicemails() } returns flowOf(emptyList())
         every { mockRepo.observeCalls() } returns flowOf(emptyList())
         every { mockRepo.observeSmsMessages() } returns flowOf(emptyList())
-        coEvery { mockRepo.getEmails() } returns Result.success(emptyList())
+        every { mockRepo.observeEmails() } returns flowOf(emptyList())
         coEvery { mockRepo.listConversations() } returns Result.success(emptyList())
     }
 

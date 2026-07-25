@@ -201,3 +201,87 @@
 .inbox__reload {
   margin-top: var(--space-4);
 }
+/* ── channels section (Task 6.1) ─────────────────────────────────────────── */
+/* The channel list is a single newest-first stream rather than day groups, so
+   it drops the gap the day-grouped message list needs between its groups. */
+.inbox__list--flat {
+  gap: 0;
+}
+.inbox__row-main--channel {
+  grid-template-columns: auto 1.8fr auto;
+}
+/* A short text tag instead of a glyph tile: it names the channel without
+   pulling an icon set in, and it is aria-hidden because the row's accessible
+   name already carries the household and the preview. */
+.inbox__channel-tag {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-dim);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-chip);
+  padding: var(--space-1) var(--space-2);
+  min-width: 3.4rem;
+  text-align: center;
+}
+.inbox__channel-tag[data-channel='voicemail'] {
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+.inbox__channel-tag[data-channel='call'] {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+.inbox__channel-tag[data-channel='sms'] {
+  border-color: var(--color-tertiary);
+  color: var(--color-tertiary);
+}
+.inbox__channel-tag[data-channel='email'] {
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+.inbox__pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+.inbox__pill {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-2);
+  white-space: nowrap;
+  color: var(--color-text-faint);
+  border: var(--border-hairline) solid var(--color-border-soft);
+}
+.inbox__pill[data-tone='error'] {
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+.inbox__pill[data-tone='warning'] {
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+}
+.inbox__pill[data-tone='success'] {
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+/* Per-stream retry, inline inside the failure line, so a single failing
+   collection can be re-subscribed without reloading the other three. */
+.inbox__inline-retry {
+  font: inherit;
+  font-size: var(--type-label-md-size);
+  color: var(--color-primary);
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.inbox__inline-retry:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
