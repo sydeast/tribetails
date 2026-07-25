@@ -38,8 +38,8 @@ Two freeze levels now exist: `shapeKeys` (top-level, for flat shapes) and
 `shapeSignature` (recursive dotted key-paths, for nested/effects shapes). Both
 catch an added / removed / renamed field; neither checks a value-TYPE change
 (string vs number on the same key). See
-`docs/2026-07-18-AO5-AO8-shared-contract-design.md` for the shared-package vs.
-guarded-mirror options.
+`auntieos-admin/docs/2026-07-18-AO5-AO8-shared-contract-design.md` for the
+shared-package vs. guarded-mirror options.
 
 ## Widget callables (admin-gated)
 
@@ -106,6 +106,146 @@ must say "next reconcile pass", never "instantly".
 - Hard-deletes the source note only. Text a prior reconcile pass already folded
   into a Dossier or Kin411 is NOT unmerged; the handler's audit payload records
   that, and every client's delete confirm must state it before committing.
+
+## Invoices (admin-gated)
+
+All three write the FLAT top-level `invoices` collection, the same one the
+kinfolk portal (`portal/getMyInvoices.ts`), the Stripe webhook and the
+`onInvoicesWrite` trigger read.
+
+**MONEY UNITS, read this before mirroring any of them.** `total` and `amountDue`
+on an invoice doc are DOLLARS as floating-point numbers. That is the legacy shape
+of this collection, and it is NOT the convention used elsewhere in this file:
+`logExpense` takes integer `amountCents`. Do not assume one from the other.
+
+`date`, `dueDate`, `status` and `discount` are FREE TEXT (`z.string()`), never
+validated enums and never parsed dates. `status` in particular is whatever the
+caller sent, so classify it through a shared enumerator rather than deciding
+"paid" by ruling out the other states (the AO-12 defect).
+
+### createInvoice
+- req `{ familyId: string, kinfolkName?: string, invoiceNumber: string, client?: string, address?: string, date?: string, terms?: string, dueDate?: string, discount?: string, total: number, amountDue: number, status?: string, sessionIds?: string[] }`
+- res `{ ok: true, invoiceId: string }`
+- Every `?` field above is a zod `.default('')` / `.default([])`, so an omitted key
+  validates. The freeze in `test/callableContract.test.ts` is the full 13-key
+  superset, not the required subset.
+- The SERVER mints the doc id; the composer does not invent one. Stamps
+  `kinfolkId` from `familyId` (this is why the portal can see the invoice at all),
+  plus `_id`, `createdAt`, `updatedAt`.
+- Audit `BILLING_INVOICE_CREATED`. The `invoice.new` notification is best-effort:
+  a dispatch failure is logged and swallowed, so a notification outage cannot
+  fail an invoice that was already written.
+
+### createQuote
+- req: identical to `createInvoice`, plus `sendToKinfolk?: boolean` (default false)
+- res `{ ok: true, invoiceId: string }`
+- A quote is NOT a separate model, it is an invoice in QUOTE status. The caller's
+  `status` is IGNORED: the server always stamps `status: 'QUOTE'`, so no client can
+  mint a quote that fails to read as one.
+- `sendToKinfolk: true` dispatches the issued-quote notification immediately.
+
+### markInvoicePaid
+- req `{ invoiceId: string /* 1..200 */, amount?: number /* DOLLARS, defaults to the invoice's current amountDue */, method?: string /* 1..200 */, reference?: string /* 1..200 */, paidAt?: string /* ISO-8601, defaults to now */ }`
+- res `{ ok: true, invoiceId: string, paymentId: string }`
+- Writes an `invoices/{invoiceId}/payments/{paymentId}` entry (amount, method,
+  reference, paidAt, recordedBy) in the SAME batch as the invoice flip, so
+  "marked paid, with no record of who recorded it" is unrepresentable.
+- CAVEAT a mirror author needs: the flip sets `amountDue: 0` unconditionally, even
+  when `amount` is a PARTIAL payment. The payments subcollection keeps the true
+  figure; the scalar on the invoice does not. Sum the subcollection when you need
+  what was actually collected.
+- Error surface, all fail-loud: `not-found` for an unknown id;
+  `failed-precondition` "Invoice is already paid."; `failed-precondition` when the
+  invoice is still a draft or quote ("send it first before recording a payment").
+- The `invoice.payment.applied` notification is deliberately NOT enqueued here.
+  `onInvoicesWrite` fires it off the resulting Firestore write, so this callable,
+  the Stripe webhook and a direct admin write each notify exactly once.
+
+### updateInvoice
+- req `{ invoiceId: string /* 1..200 */, patch: { invoiceNumber?: string /* 1..60 */, date?: string /* YYYY-MM-DD */, dueDate?: string /* YYYY-MM-DD */, terms?: string /* <=2000 */, lineItems?: Array<{ description: string /* 1..200 */, qty: number /* >0, <=999 */, unitCents: number /* int, 0..10_000_000 */, discountCents?: number /* int, >=0 */ }> /* <=100 */, invoiceDiscountCents?: number /* int, >=0 */ } }`
+- res `{ ok: true, invoiceId: string, totals: { subtotalCents: number, totalCents: number, paidCents: number, amountDueCents: number } }`
+- **There is no `total` or `amountDue` in the request, and `patch` is `.strict()`.**
+  The server recomputes every money field from the stored line items and the
+  recorded payments and IGNORES anything else. A client that tries to assert what
+  an invoice is worth gets `invalid-argument`, not a silently dropped field.
+- An EMPTY patch is `invalid-argument`, not a no-op: it would stamp `updatedAt`
+  and write an audit entry describing a change that never happened.
+- Money is stored in INTEGER CENTS (`unitCents`, `subtotalCents`, `totalCents`,
+  `amountDueCents`). The legacy dollar scalars `total` / `amountDue` are rewritten
+  in the same pass as a PROJECTION of those cents figures. Never send them, never
+  edit one of the two by hand. See `src/lib/invoiceMath.ts`.
+- An invoice with NO line items, patched without any, does NOT get its money
+  recomputed. "Sum of zero lines" is not the same statement as "worth nothing",
+  and every invoice predating this callable is un-itemized.
+- Edit gating, enforced HERE and not in any UI, because `firestore.rules` grants
+  `allow update: if isAuntie()` on this whole collection. Rule in
+  `src/lib/invoiceEditPolicy.ts`:
+  - `draft` / `quote`: fully editable.
+  - `open` / `zero`: fully editable while the `payments` subcollection is EMPTY.
+    Once a payment exists, the money freezes and only metadata may change.
+  - `paid` / `cancelled` / `credit` / `redeemed`: no edits at all.
+- Error surface, all `failed-precondition`, clients branch on `details.code`:
+  `invoice_not_editable` (a settled or withdrawn invoice),
+  `invoice_money_locked` (a payment exists, so lines and discounts are frozen),
+  `invoice_money_invalid` (a discount larger than what it discounts; the message
+  names both figures). Plus `not-found` for an unknown id.
+
+### archiveInvoice
+- req `{ invoiceId: string /* 1..200 */, force?: boolean }`
+- res `{ ok: true, invoiceId: string }`
+- Stamps `archivedAt` (serverTimestamp) + `archivedBy`. Archiving is NOT deletion
+  and NOT cancellation: every field survives, and the kinfolk portal is unaffected.
+  It means the operator has stopped working the invoice, so it drops out of the
+  admin's default list and out of the outstanding / billed totals.
+- `failed-precondition` / `invoice_still_owing` when a SENT invoice still has a
+  balance, because archiving it removes it from the total that would remind anyone
+  to collect it. `draft` and `quote` are exempt (neither was ever claimed from
+  anyone). `force: true` overrides and is audited at `warn` with `forced: true`,
+  since it is a decision to write off real money.
+- `failed-precondition` / `invoice_already_archived` rather than restamping.
+
+### unarchiveInvoice
+- req `{ invoiceId: string /* 1..200 */ }`
+- res `{ ok: true, invoiceId: string }`
+- Writes `archivedAt: null` rather than DELETING the field, so a restored invoice
+  carries the same shape a future backfill would give every legacy invoice, and
+  because the admin's `isArchivedInvoice` already reads null as "not archived".
+- `failed-precondition` / `invoice_not_archived` when it was never archived: that
+  write would look like a no-op but would change which Firestore predicates the
+  document matches.
+- **Why the admin still filters archived rows CLIENT-side.** Every invoice that
+  predates this callable has no `archivedAt` at all, and Firestore's `== null`
+  matches only documents that HAVE the field. A `where('archivedAt','==',null)`
+  predicate would therefore return ZERO invoices, silently. The deployed
+  `invoices (archivedAt ASC, date DESC)` index cannot be used for the exclusion
+  until a backfill stamps the field onto legacy docs. See
+  `src/lib/invoiceArchive.ts`.
+
+### listUninvoicedSessions
+- req `{ from: string /* YYYY-MM-DD, inclusive */, to: string /* YYYY-MM-DD, inclusive */ }`
+- res `{ sessions: Array<{ sessionId: string, kinfolkId: string, serviceType: string, durationMinutes: number, startTime: string /* ISO */, unitCents: number | null }>, unpriceable: Array<{ sessionId: string, serviceType: string }>, rateCardLoaded: boolean, scanned: number, truncated: boolean }`
+- Read only. Completed visits in the window that no invoice has claimed, priced
+  from `business_settings.serviceRates` where that is possible.
+- `unitCents` is NULL, never 0, when the visit cannot be priced, and the session
+  also appears in `unpriceable`. A silent zero would bill a household nothing for
+  real work and look deliberate on the invoice. `rateCardLoaded` separates "this
+  service is not on the card" from "there is no card", which are different
+  operator problems.
+- **The unclaimed test is done IN MEMORY and this is not an optimisation to
+  undo.** `createKinCareSession` and `approveBookingSeriesCore` never write
+  `invoiceId` at all, and Firestore equality SKIPS documents that lack the field,
+  so `where('invoiceId','==','')` would silently miss most sessions. Unlinking
+  writes `''` rather than deleting. Absent, empty and whitespace are one state.
+- **`status` is also filtered in memory**, even though `kin_care_sessions
+  (status ASC, startTime DESC)` is deployed. The field is a raw string with no
+  validator and its casing is unenforced, so a server equality would invisibly
+  drop every visit stored as `completed`, which on this callable means not
+  billing for work that was done.
+- The window is a LEXICAL range on `startTime`, which is an ISO-8601 STRING on
+  this collection, not a Timestamp. Firestore orders every timestamp after every
+  string, so a `Timestamp` bound here returns nothing and does not error.
+- Capped at 500 rows. `scanned` and `truncated` report the page honestly, so an
+  empty result is distinguishable from a truncated one.
 
 ## Shared catalogs
 
@@ -190,6 +330,9 @@ back on load:
   it across every keystroke's `mapboxSearch`, passes the SAME token to
   `mapboxRetrieve`, and only then rotates it. A fresh token per keystroke bills
   each keystroke as its own session.
+
+## Booking notes (admin + kinfolk)
+
 Two threads on one visit, at
 `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`. They are separate
 SUBCOLLECTIONS, not one collection with a flag, because `firestore.rules` draws
@@ -198,15 +341,21 @@ the kinfolk boundary at the path (`notes` is member-readable, `internalNotes` is
 boundary is why these are callables at all.
 Both are mirrored by the React admin (`src/api/bookingsWrite.ts`) and android
 (`BookingNotesRepository`).
+
+### addBookingNote
 - req `{ kinfolkId: string, batchId?: string, visitId?: string, bookingId?: string, body: string }`
   (send `batchId`+`visitId`; `bookingId` is the legacy flat id, resolved
   best-effort by `resolveKinCareRef`)
 - res `{ noteId: string }`
 - writes `.../kinCares/{visitId}/notes`, `authorRole` stamped from the CALLER
   (`'admin'` or `'kinfolk'`), never sent by the client
+
+### addInternalBookingNote
 - req: identical to `addBookingNote`
 - res `{ noteId: string }`
 - writes `.../kinCares/{visitId}/internalNotes`, `authorRole` always `'admin'`
+
+**The 3 hour cutoff, shared by both note callables.**
 BOTH callables enforce it, through `src/lib/bookingNoteCutoff.ts`. Changed
 2026-07-25: it used to be private to `addBookingNote`, so the internal thread
 was guarded by client code alone and any other caller wrote straight past it.
@@ -222,6 +371,10 @@ Clients mirror the rule for a courtesy lock so the operator is not surprised by
 a rejection (`auntieos-admin/src/lib/bookingDetailFormat.ts`,
 `ui/admin/scheduling/BookingNoteCutoff.kt`). Those are conveniences. The
 callable is the enforcement.
+
+## Operator preferences
+
+### saveDashboardLayout
 - req `{ tokens: string[] /* each `^[a-zA-Z]+:(compact|wide)$`, max 30 */ }`
 - res `{ ok: true, tokens: string[] }` (echoes what was stored, so the client
   reconciles its optimistic order against the server instead of assuming)

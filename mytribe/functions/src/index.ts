@@ -84,6 +84,11 @@ export { sendInvoiceReminder } from './admin/sendInvoiceReminder';
 export { generateReceipt } from './admin/generateReceipt';
 export { markInvoicePaid } from './admin/markInvoicePaid';
 export { reviewAndSendDraftInvoice } from './admin/reviewAndSendDraftInvoice';
+export { updateInvoice } from './admin/updateInvoice';
+export { archiveInvoice } from './admin/archiveInvoice';
+export { unarchiveInvoice } from './admin/unarchiveInvoice';
+// Task 5.1 (#18): the read half of turning completed visits into an invoice.
+export { listUninvoicedSessions } from './admin/listUninvoicedSessions';
 export { setKinfolkClaim } from './admin/setKinfolkClaim';
 export { revokeKinfolkClaim } from './admin/revokeKinfolkClaim';
 // `signCloudinaryUpload` is deliberately NOT exported here. AuntieOS owns that

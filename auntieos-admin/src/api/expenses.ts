@@ -7,10 +7,27 @@ import { call } from '../lib/fns';
  * dashboard fan-out contract (WIDGET_FANOUT_SPEC.md) so web, desktop and android
  * all call the same thing; deviating here would break parity.
  *
- * `amountCents` is an integer count of cents (never a float dollar amount), the
- * same money convention the invoice backend uses; format it through
- * `lib/dashboardInsights.ts#formatCents`, never a raw division at the call site.
+ * `amountCents` is an integer count of cents (never a float dollar amount);
+ * format it through `lib/dashboardInsights.ts#formatCents`, never a raw division
+ * at the call site.
  * `occurredAt` is a free-text ISO instant string, not a Firestore Timestamp.
+ *
+ * CORRECTION 2026-07-25. This comment used to call integer cents "the same money
+ * convention the invoice backend uses". That was FALSE, and it was the dangerous
+ * kind of false: `createInvoice.ts` stores `total` and `amountDue` as
+ * floating-point DOLLARS (`z.number().nonnegative()`), and so do the kinfolk
+ * portal, the PDF renderer and the Stripe path that read them. Anyone who wrote
+ * cents into those fields on this comment's authority would have inflated an
+ * invoice by 100x.
+ *
+ * What is actually true today: integer cents is the convention for money added
+ * SINCE (expenses here, and the invoice LINE ITEMS added in Task 5.1, which store
+ * `unitCents` and derive `totalCents` / `amountDueCents`). The legacy
+ * `invoices.total` / `.amountDue` dollar scalars remain the exception, kept in
+ * dollars and rewritten by the server as a projection of the cents figures. See
+ * `src/lib/invoiceMath.ts`. Re-basing `createInvoice` onto cents is a separate
+ * migration and needs a backfill; until it lands, check the units of the exact
+ * field you are writing rather than assuming one convention across the board.
  */
 
 /** The four expense buckets the quick-log offers. Free-text on the doc; one of these. */
