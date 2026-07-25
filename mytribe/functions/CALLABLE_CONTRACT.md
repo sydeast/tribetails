@@ -71,3 +71,26 @@ guarded-mirror options.
 ### upsertExpiration (AO-39)
 - req `{ expirationId?: string, label: string, dateIso: string, kind: 'gateCode'|'vetRecord'|'card'|'license'|'other', kinfolkId?: string }`
 - res `{ id: string }`
+`training_documents` is `allow write: if false` in `firestore.rules`, so these
+three are the ONLY write path. Mirrored by the React admin
+(`auntieos-admin/src/lib/tribalIntelDraftSchema.ts` for the rules,
+`src/api/tribalIntelWrite.ts` for the wire call) and by android
+(`AuntieRepository.createTrainingDocument` and siblings).
+Two `.refine`s ride on both create and update, and both mirrors enforce them
+client-side so the operator sees the failure before the round trip:
+1. `title` OR `content` OR at least one attachment must be non-blank.
+2. `targetKinId` is required when `targetType` is `KIN`.
+A save leaves the doc at `reconcileStatus: 'pending'`. The nightly reconcile pass
+is what folds it into the household Dossier and the pet Kin411, so client copy
+must say "next reconcile pass", never "instantly".
+- req `{ title: string /* <=200 */, content: string /* <=20000 */, notes: string /* <=4000 */, communicationType: string /* <=120, clients send 'note' */, targetType: 'KINFOLK'|'KIN', targetKinfolkId: string /* 1..120 */, targetKinId?: string /* <=120, required when targetType is KIN */, attachments: Array<{ storageUrl: string /* url */, cloudinaryPublicId: string /* 1..300 */, fileType: string /* <=20 */, mimeType: string /* <=120 */, fileName: string /* <=300 */ }> /* <=25 */ }`
+- res `{ ok: true, docId: string }`
+- req: identical to createTrainingDocument plus `docId: string /* 1..200 */`
+- res `{ ok: true, docId: string }`
+- Re-queues `reconcileStatus: 'pending'`. Does NOT re-stamp `uploadedAt`, so an
+  edited row keeps its place in an `uploadedAt desc` list.
+- req `{ docId: string /* 1..200 */ }`
+- res `{ ok: true, docId: string }`
+- Hard-deletes the source note only. Text a prior reconcile pass already folded
+  into a Dossier or Kin411 is NOT unmerged; the handler's audit payload records
+  that, and every client's delete confirm must state it before committing.

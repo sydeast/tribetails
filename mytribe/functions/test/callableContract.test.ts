@@ -22,6 +22,15 @@ import { Args as AssignTemplateArgs } from '../src/admin/assignTemplate';
 import { Args as SaveFormSchemaArgs } from '../src/admin/saveFormSchema';
 import { Args as SaveTemplateArgs } from '../src/admin/saveTemplate';
 import { Args as BroadcastMessageArgs } from '../src/admin/broadcastMessage';
+// Tribal Intel writes (added 2026-07-25). The React admin now hand-mirrors these
+// three client-side (auntieos-admin/src/lib/tribalIntelDraftSchema.ts +
+// src/api/tribalIntelWrite.ts) alongside android's AuntieRepository, so a
+// backend rename here breaks two clients silently. Both create and update wrap a
+// nested `attachments[]` in two `.refine`s, so they need the recursive
+// signature, not a top-level key freeze.
+import { TrainingDocumentArgs as CreateTrainingDocumentArgs } from '../src/admin/createTrainingDocument';
+import { UpdateTrainingDocumentArgs } from '../src/admin/updateTrainingDocument';
+import { DeleteTrainingDocumentArgs } from '../src/admin/deleteTrainingDocument';
 
 /**
  * AO-8 drift guard (design doc `docs/2026-07-18-AO5-AO8-shared-contract-design.md`
@@ -101,6 +110,7 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   },
   markInvoicePaid: { schema: MarkInvoicePaidArgs, keys: ['amount', 'invoiceId', 'method', 'paidAt', 'reference'] },
   assignTemplate: { schema: AssignTemplateArgs, keys: ['active', 'audience', 'catalogKey', 'templateId', 'triggerKey'] },
+  deleteTrainingDocument: { schema: DeleteTrainingDocumentArgs, keys: ['docId'] },
 };
 
 describe('AO-8 callable contract drift guard', () => {
@@ -141,6 +151,24 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
       'body', 'channels[]',
       'criteria.kind', 'criteria.statuses[]', 'criteria.tagMatch', 'criteria.tags[]',
       'segmentId', 'subject',
+    ],
+  },
+  createTrainingDocument: {
+    schema: CreateTrainingDocumentArgs,
+    signature: [
+      'attachments[].cloudinaryPublicId', 'attachments[].fileName', 'attachments[].fileType',
+      'attachments[].mimeType', 'attachments[].storageUrl',
+      'communicationType', 'content', 'notes',
+      'targetKinId', 'targetKinfolkId', 'targetType', 'title',
+    ],
+  },
+  updateTrainingDocument: {
+    schema: UpdateTrainingDocumentArgs,
+    signature: [
+      'attachments[].cloudinaryPublicId', 'attachments[].fileName', 'attachments[].fileType',
+      'attachments[].mimeType', 'attachments[].storageUrl',
+      'communicationType', 'content', 'docId', 'notes',
+      'targetKinId', 'targetKinfolkId', 'targetType', 'title',
     ],
   },
 };

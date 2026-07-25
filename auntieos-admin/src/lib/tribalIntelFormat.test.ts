@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
+  TRIBAL_INTEL_DELETE_CAVEAT,
+  TRIBAL_INTEL_QUEUED_MESSAGE,
   attachmentCountLabel,
+  dropEmptyTribalIntel,
   distinctCommTypes,
   filterByCommType,
   filterTribalIntel,
@@ -188,5 +191,41 @@ describe('reconcileStateInfo', () => {
     ['unknown', 'Unknown', 'UNKNOWN', 'unknown'],
   ] as const)('%s -> label %s / chip %s / css %s', (state, label, chipLabel, cssClass) => {
     expect(reconcileStateInfo(state)).toEqual({ label, chipLabel, cssClass });
+  });
+});
+describe('dropEmptyTribalIntel', () => {
+  it('drops a row with no title, no content, and no attachment so it never shows as "Untitled Document"', () => {
+    const kept = dropEmptyTribalIntel([
+      { title: '', content: '', attachments: [] },
+      { title: 'Gate code', content: '' },
+    ]);
+    expect(kept).toEqual([{ title: 'Gate code', content: '' }]);
+  });
+  it('treats whitespace-only text as empty, matching the archive junk-row filter', () => {
+    expect(dropEmptyTribalIntel([{ title: '   ', content: '\n' }])).toEqual([]);
+  });
+  it('keeps a row that has only attachments (the server allows saving one)', () => {
+    const attachmentOnly = { title: '', content: '', attachments: [{ fileName: 'gate.jpg' }] };
+    expect(dropEmptyTribalIntel([attachmentOnly])).toEqual([attachmentOnly]);
+  });
+  it('tolerates a legacy doc missing every field rather than throwing on it', () => {
+    expect(dropEmptyTribalIntel([{}])).toEqual([]);
+  });
+});
+describe('honesty copy', () => {
+  it('the save confirmation names the next reconcile pass and denies an instant fold outright', () => {
+    expect(TRIBAL_INTEL_QUEUED_MESSAGE).toMatch(/next reconcile pass/i);
+    expect(TRIBAL_INTEL_QUEUED_MESSAGE).toMatch(/not instantly/i);
+    // No completed claim: the dossier and 411 have not changed yet.
+    expect(TRIBAL_INTEL_QUEUED_MESSAGE).not.toMatch(/\b(is|are|now|already|has been|have been)\s+(updated|folded|merged)\b/i);
+  });
+  it('the delete caveat states that already-folded dossier and 411 text is NOT unmerged', () => {
+    expect(TRIBAL_INTEL_DELETE_CAVEAT).toMatch(/does not unmerge/i);
+    expect(TRIBAL_INTEL_DELETE_CAVEAT).toMatch(/dossier/i);
+    expect(TRIBAL_INTEL_DELETE_CAVEAT).toMatch(/411/);
+  });
+  it('neither string uses an em dash or en dash (Den copy rule)', () => {
+    expect(TRIBAL_INTEL_QUEUED_MESSAGE).not.toMatch(/[—–]/);
+    expect(TRIBAL_INTEL_DELETE_CAVEAT).not.toMatch(/[—–]/);
   });
 });

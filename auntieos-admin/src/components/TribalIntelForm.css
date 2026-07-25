@@ -1,0 +1,166 @@
+/**
+ * TribalIntelForm styling. Scoped to this component and imported directly (the
+ * MediaUploadDialog.css / EditProfileDialog.css convention), so nothing here
+ * lands in the shared styles/screens.css. Every value comes from
+ * styles/tokens.css: no literal colours, radii, durations, or px spacing.
+ */
+
+.tribal-form {
+  padding: var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.tribal-form__title {
+  font-family: var(--font-display);
+  font-size: var(--type-headline-sm-size);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.tribal-form__blurb {
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+  margin: var(--space-2) 0 0;
+}
+
+.tribal-form__banner {
+  margin-top: var(--space-3);
+}
+
+.tribal-form__section {
+  font-family: var(--font-mono);
+  font-size: var(--type-mono-size);
+  letter-spacing: var(--tracking-mono);
+  text-transform: uppercase;
+  color: var(--color-primary);
+  margin: var(--space-5) 0 var(--space-2);
+}
+
+.tribal-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-4);
+}
+
+.tribal-form__label {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  font-weight: 500;
+}
+
+.tribal-form__input,
+.tribal-form__select,
+.tribal-form__textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.tribal-form__textarea {
+  resize: vertical;
+  min-height: var(--space-9);
+}
+.tribal-form__input:focus-visible,
+.tribal-form__select:focus-visible,
+.tribal-form__textarea:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.tribal-form__input[aria-invalid='true'],
+.tribal-form__select[aria-invalid='true'],
+.tribal-form__textarea[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+.tribal-form__select:disabled {
+  opacity: 0.6;
+}
+
+.tribal-form__error {
+  color: var(--color-error);
+  font-size: var(--type-body-sm-size);
+  margin: 0;
+}
+
+.tribal-form__hint {
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+  margin: 0;
+}
+
+/* ── target chips ──────────────────────────────────────────────────────── */
+
+.tribal-form__chips {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.tribal-form__chip {
+  font: inherit;
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-text-dim);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  transition:
+    background var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
+}
+.tribal-form__chip:hover {
+  background: var(--color-surface-raised);
+}
+.tribal-form__chip--active {
+  background: var(--color-text-primary);
+  color: var(--color-bg);
+  border-color: transparent;
+}
+
+/* ── attachments ───────────────────────────────────────────────────────── */
+
+.tribal-form__file {
+  font: inherit;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.tribal-form__attachments {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tribal-form__attachment {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.tribal-form__attachment-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+}
+
+/* ── actions ───────────────────────────────────────────────────────────── */
+
+.tribal-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
