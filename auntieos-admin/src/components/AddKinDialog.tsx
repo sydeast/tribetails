@@ -1,5 +1,8 @@
 import { useCallback, useState } from 'react';
 import { createKin, NEW_KIN_SEX_OPTIONS, NEW_KIN_SPECIES_OPTIONS } from '../api/directoryWrite';
+import { useBreedBanks } from '../api/breeds';
+import { breedCatalogForSpecies, speciesWantsBreedBank } from '../lib/breedSearch';
+import { BreedField } from './BreedField';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import './AddKinDialog.css';
@@ -50,6 +53,9 @@ export function AddKinDialog({ kinfolkOptions, initialKinfolkId, onClose, onCrea
   const [sex, setSex] = useState('');
 
   const [saving, setSaving] = useState(false);
+  // Seeded dog / cat bank for the Breed dropdown. Memoized per page load in
+  // api/breeds.ts, so opening this dialog after KinEdit costs no second call.
+  const { banks: breedBanks, failed: breedBanksFailed } = useBreedBanks();
   // AO-44: per-field touched, so a required field's error surfaces the moment
   // the operator LEAVES it (onBlur), not only after a save attempt. Save still
   // marks every field touched, so clicking Add on an empty form reveals all
@@ -174,15 +180,20 @@ export function AddKinDialog({ kinfolkOptions, initialKinfolkId, onClose, onCrea
             </select>
           </div>
           <div className="add-kin__field">
-            <label className="add-kin__label" htmlFor="add-kin-breed">
-              Breed
-            </label>
-            <input
-              id="add-kin-breed"
-              type="text"
-              className="add-kin__input"
+            {/* Type-to-search over the seeded bank the Species select just
+                chose. Free text still passes through, so a mix or a rare breed
+                is enterable at create time exactly as it is in KinEdit. */}
+            <BreedField
+              name="add-kin"
               value={breed}
-              onChange={(e) => setBreed(e.target.value)}
+              onChange={setBreed}
+              catalog={breedCatalogForSpecies(species, breedBanks.dogBreeds, breedBanks.catBreeds)}
+              disabled={saving}
+              note={
+                speciesWantsBreedBank(species) && breedBanksFailed
+                  ? 'Breed list unavailable right now, type it in.'
+                  : null
+              }
             />
           </div>
         </div>

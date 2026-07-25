@@ -11,11 +11,18 @@ const mocks = vi.hoisted(() => ({
   getMyKin: vi.fn<() => Promise<GetMyKinResult>>(),
   updateKin: vi.fn<(kinId: string, kin: unknown, kinfolkId?: string) => Promise<{ ok: true }>>(),
   navigate: vi.fn(),
+  // The seeded breed bank behind the Breed dropdown, stubbed so no test in this
+  // file reaches the `getBreeds` callable.
+  getBreeds: vi.fn<() => Promise<{ dogBreeds: string[]; catBreeds: string[] }>>(),
 }));
 
 vi.mock('../api/portal', () => ({
   getMyKin: () => mocks.getMyKin(),
   updateKin: (kinId: string, kin: unknown, kinfolkId?: string) => mocks.updateKin(kinId, kin, kinfolkId),
+}));
+vi.mock('../api/breeds', async (orig) => ({
+  ...(await orig<typeof import('../api/breeds')>()),
+  BREEDS_QUERY: { queryKey: ['breeds'], queryFn: () => mocks.getBreeds(), staleTime: Infinity },
 }));
 vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'fam1' }));
 vi.mock('../lib/auth', () => ({ useSignOut: () => ({ signOut: vi.fn(), signingOut: false }) }));
@@ -61,6 +68,11 @@ beforeEach(() => {
   mocks.navigate.mockReset();
   mocks.getMyKin.mockResolvedValue({ kin: [kin()] });
   mocks.updateKin.mockResolvedValue({ ok: true });
+  mocks.getBreeds.mockReset();
+  mocks.getBreeds.mockResolvedValue({
+    dogBreeds: ['Border Collie', 'Boxer'],
+    catBreeds: ['Bengal'],
+  });
 });
 
 describe('KinEdit', () => {
@@ -120,5 +132,46 @@ describe('KinEdit', () => {
 
     expect(await screen.findByText('Missing or insufficient permissions.')).toBeInTheDocument();
     expect(mocks.navigate).not.toHaveBeenCalled();
+  });
+
+  describe('breed dropdown', () => {
+    it('offers the seeded dog bank and sends the picked breed', async () => {
+      const user = userEvent.setup();
+      renderScreen();
+      await user.click(await screen.findByLabelText('Breed'));
+      await user.click(await screen.findByRole('option', { name: 'Boxer' }));
+      await user.click(screen.getByRole('button', { name: /Save/i }));
+
+      await waitFor(() => expect(mocks.updateKin).toHaveBeenCalledTimes(1));
+      expect(mocks.updateKin).toHaveBeenCalledWith('k1', { breed: 'Boxer' }, 'fam1');
+    });
+
+    it('follows Species to the cat bank', async () => {
+      mocks.getMyKin.mockResolvedValue({ kin: [kin({ species: 'Cat' })] });
+      const user = userEvent.setup();
+      renderScreen();
+      await user.click(await screen.findByLabelText('Breed'));
+      const options = await screen.findAllByTestId('breedfield-option');
+      expect(options.map((o) => o.textContent)).toEqual(['Bengal']);
+    });
+
+    it('still sends a breed the bank has never heard of', async () => {
+      const user = userEvent.setup();
+      renderScreen();
+      await user.type(await screen.findByLabelText('Breed'), 'Lab / pit mix');
+      await user.click(screen.getByRole('button', { name: /Save/i }));
+      await waitFor(() => expect(mocks.updateKin).toHaveBeenCalledTimes(1));
+      expect(mocks.updateKin).toHaveBeenCalledWith('k1', { breed: 'Lab / pit mix' }, 'fam1');
+    });
+
+    it('discloses a failed bank load instead of showing an empty dropdown', async () => {
+      mocks.getBreeds.mockRejectedValue(new Error('deadline-exceeded'));
+      renderScreen();
+      expect(await screen.findByTestId('breedfield-note')).toHaveTextContent(
+        'Breed list unavailable right now, type it in.',
+      );
+      // The field still works: breed is free text either way.
+      expect(await screen.findByLabelText('Breed')).toBeEnabled();
+    });
   });
 });

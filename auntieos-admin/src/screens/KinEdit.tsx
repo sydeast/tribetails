@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { getKin, type KinDetail } from '../api/kinView';
 import { updateKin, setKinArchived, type KinEditPatch } from '../api/directoryWrite';
+import { useBreedBanks } from '../api/breeds';
+import { breedCatalogForSpecies, speciesWantsBreedBank } from '../lib/breedSearch';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
+import { BreedField } from '../components/BreedField';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import './KinEdit.css';
 
@@ -16,11 +19,18 @@ interface KinEditProps {
   onCancel: () => void;
 }
 
-/** The editable string fields (booleans handled separately). */
+/**
+ * The editable string fields rendered as plain inputs (booleans handled
+ * separately).
+ *
+ * NO `breed` ENTRY HERE: breed is a type-to-search dropdown over the seeded
+ * dog / cat bank, not a text box, so it renders as `<BreedField>` immediately
+ * after Species below. Species is what selects its bank, which is also why the
+ * two must stay adjacent in this list.
+ */
 const TEXT_FIELDS = [
   ['name', 'Name'],
   ['species', 'Species'],
-  ['breed', 'Breed'],
   ['age', 'Age'],
   ['sex', 'Sex'],
   ['weight', 'Weight'],
@@ -103,6 +113,10 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
   const [saving, setSaving] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The seeded dog / cat breed bank behind the Breed dropdown. A failure here is
+  // NOT fatal and NOT silent: banks come back empty, breed degrades to the free
+  // text it already was, and BreedField's note says so.
+  const { banks: breedBanks, failed: breedBanksFailed } = useBreedBanks();
 
   const load = useCallback(() => {
     let live = true;
@@ -224,14 +238,36 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
               <DenPanel title="Basics">
                 <fieldset className="kedit__grid" disabled={busy}>
                   {TEXT_FIELDS.map(([key, label]) => (
-                    <label key={key} className="kedit__field">
-                      <span className="kedit__label">{label}</span>
-                      <input
-                        className="kedit__input"
-                        value={form[key]}
-                        onChange={(e) => set(key, e.target.value)}
-                      />
-                    </label>
+                    <Fragment key={key}>
+                      <label className="kedit__field">
+                        <span className="kedit__label">{label}</span>
+                        <input
+                          className="kedit__input"
+                          value={form[key]}
+                          onChange={(e) => set(key, e.target.value)}
+                        />
+                      </label>
+                      {key === 'species' && (
+                        // Rendered here rather than appended so Breed keeps its
+                        // place beside the Species that chooses its bank.
+                        <BreedField
+                          name="kin-edit"
+                          value={form.breed}
+                          onChange={(next) => set('breed', next)}
+                          catalog={breedCatalogForSpecies(
+                            form.species,
+                            breedBanks.dogBreeds,
+                            breedBanks.catBreeds,
+                          )}
+                          disabled={busy}
+                          note={
+                            speciesWantsBreedBank(form.species) && breedBanksFailed
+                              ? 'Breed list unavailable right now, type it in.'
+                              : null
+                          }
+                        />
+                      )}
+                    </Fragment>
                   ))}
                   <label className="kedit__check">
                     <input

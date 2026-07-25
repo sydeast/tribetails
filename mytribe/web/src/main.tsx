@@ -26,6 +26,7 @@ import './styles/notifications.css';
 import './styles/tribe.css';
 import './styles/account.css';
 import './styles/signedImageUpload.css';
+import './styles/breedfield.css';
 
 import './lib/firebase'; // initialize Firebase before anything else touches auth
 import { ensureRecaptcha } from './lib/auth';
