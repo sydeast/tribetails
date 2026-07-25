@@ -86,6 +86,10 @@ export function ExternalSendPanel({ transactional = true }: ExternalSendPanelPro
     }
     setSending(true);
     try {
+      // No `mirrorToChannel` here, deliberately. This panel texts people who are
+      // not kinfolk, one off, and mirroring those into `sms_messages` would fill
+      // the Inbox Channels list with rows for contacts the operator has no
+      // ongoing thread with. The Inbox reply composer opts in; this does not.
       const res = await sendExternalMessage({ channel, to, subject, body, transactional });
       setSentRedacted({ redacted: res.recipientRedacted, providerId: res.providerMessageId });
     } catch (err) {
