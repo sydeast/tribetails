@@ -102,17 +102,40 @@ export function describeAudience(criteria: BroadcastCriteria): string {
   }
 }
 
-// ── channels this screen ships (see the module doc for why inapp/push wait) ─
+// ── channels ────────────────────────────────────────────────────────────────
 
-export const BROADCAST_CHANNELS = ['email', 'sms', 'push'] as const;
+/**
+ * All four channels `broadcastMessage` dispatches, in the server's own order
+ * (`ALL_BROADCAST_CHANNELS`, broadcastMessage.ts:53).
+ *
+ * `inapp` used to be excluded here as "the one backend channel without a
+ * compose UI". It has one now. It writes a notification doc the MyTribe portal
+ * feed reads, and like email it requires a subject, which becomes the
+ * notification title.
+ *
+ * There is deliberately no KinTale channel. In the archive, KinTale
+ * participates as the "Visit report" MESSAGE TYPE in Personalize, not as a
+ * broadcast destination, and the dispatcher has no KinTale delivery leg. A
+ * KinTale chip here would be a button that cannot deliver.
+ */
+export const BROADCAST_CHANNELS = ['inapp', 'email', 'sms', 'push'] as const;
 export type BroadcastChannel = (typeof BROADCAST_CHANNELS)[number];
 
 // ── send payload / result ───────────────────────────────────────────────────
 
+/**
+ * Exactly one of `segmentId` / `criteria`, never both and never neither. The
+ * server's superRefine requires at least one; sending both would mean shipping
+ * two answers to one question and letting handler precedence pick the audience.
+ * `lib/audienceSegmentEdit.ts#broadcastAudienceArgs` is what builds this half.
+ */
 export interface SendBroadcastArgs {
-  criteria: BroadcastCriteria;
+  /** A saved `audience_segments/{id}`. The server loads its stored criteria. */
+  segmentId?: string;
+  /** An inline filter built in the form. */
+  criteria?: BroadcastCriteria;
   channels: BroadcastChannel[];
-  /** Required by the backend when 'email' is in `channels`; validated by the caller before send. */
+  /** Required by the backend when 'email' or 'inapp' is in `channels`; validated by the caller before send. */
   subject?: string;
   body: string;
 }
@@ -126,12 +149,11 @@ export interface BroadcastChannelCounts {
 
 /**
  * `broadcastMessage`'s response shape (broadcastMessageHandler's return type,
- * broadcastMessage.ts lines 127-131), narrowed to the two channels this screen
- * sends. The live backend also returns `inapp`/`push` entries in `perChannel`
- * (they are always present, just all-zero when the channel wasn't selected);
- * this module only types the two this screen cares about and reads the rest
- * defensively (see `channelCountsOf` below) rather than assuming the wire
- * shape never grows a field this screen doesn't know about yet.
+ * broadcastMessage.ts lines 127-131). All four channels are always present in
+ * `perChannel`, just all-zero when the channel was not selected. `Partial`
+ * anyway, and read through `channelCountsOf`, because this is a callable
+ * response rather than a proof and a screen that renders "undefined skipped"
+ * has told the operator nothing.
  */
 export interface SendBroadcastResult {
   ok: true;
