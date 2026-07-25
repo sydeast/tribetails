@@ -6,6 +6,15 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  /* Every widget body sits in one Home grid track. Without this its own
+     flex/grid children fall back to a content-sized minimum and one long name
+     pushes the card past the track it was given. */
+  min-width: 0;
+}
+
+.dash-widget__list,
+.route-stops {
+  min-width: 0;
 }
 
 .dash-widget__count {
@@ -362,10 +371,20 @@
   white-space: nowrap;
 }
 
-/* AO-41 Supplies Tracker */
+/* AO-41 Supplies Tracker.
+
+   Three columns: an elastic name, then the count and the restock button both
+   sized to content. The name column is `minmax(0, 1fr)` and truncates, which is
+   the half of the Home board misalignment that lived in this widget: with a
+   content-sized name column, one long supply name pushed the count and the +1
+   button out past the card and, before Home.css declared its own tracks, took
+   the whole grid column with it. Home.css fixes the track; this fixes the row.
+
+   The count is right-aligned and tabular so the numbers line up down the list
+   rather than each one starting wherever its name happened to end. */
 .supply-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 0.1rem 0.6rem;
   align-items: center;
   padding: 0.5rem 0;
@@ -376,23 +395,29 @@
   border-bottom: none;
 }
 
-.supply-row__main {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  min-width: 0;
-}
-
 .supply-row__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--type-label-md-size);
   font-weight: 600;
   color: var(--color-text-primary);
 }
 
 .supply-row__count {
+  justify-self: end;
   font-family: var(--font-mono);
   font-size: var(--type-label-sm-size);
+  font-variant-numeric: tabular-nums;
   color: var(--color-text-dim);
+  white-space: nowrap;
+}
+
+/* A rejected restock is about the whole row, so it takes the whole row rather
+   than squeezing into whichever cell it happened to be authored next to. */
+.supply-row__error {
+  grid-column: 1 / -1;
 }
 
 /* AO-35 Route Optimizer */

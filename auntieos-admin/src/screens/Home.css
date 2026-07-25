@@ -1,10 +1,140 @@
-/* Home dashboard grid. Responsive auto-fit so widgets reflow from a single
-   column on narrow viewports up to a multi-column board on wide ones, without a
-   media-query per breakpoint. */
+/* Home dashboard board.
+
+   The old rule was `repeat(auto-fit, minmax(min(100%, 20rem), 1fr))`, which let
+   the browser decide the column count from the available width. That is why the
+   Supply Tracker sat out of line with its neighbours: a track sized to content
+   grew when one supply name was long, and every card in that column moved with
+   it. The board now declares its own columns, so a card can never resize the
+   grid by what is inside it.
+
+   Two explicit columns above the narrow breakpoint, one below. A `wide` widget
+   takes `grid-column: 1 / -1`; compacts take one column each and therefore pair
+   up two to a line, with a lone trailing compact sitting alone. That is exactly
+   the grouping `packRows` in lib/dashboardLayout.ts describes, reproduced by
+   auto-placement rather than by a wrapper element per row: `grid-auto-flow` is
+   the default sparse `row`, so a full-width item never back-fills a gap it was
+   ordered after, and DOM order stays the operator's order. */
 
 .home-dash {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
   align-items: start;
+}
+
+@media (max-width: 60rem) {
+  .home-dash {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.home-dash__cell {
+  /* The fix that keeps a long supply name inside its track. A grid item's
+     default `min-width: auto` is its content's minimum, so one unbreakable
+     string in one card widens the whole column and drags its neighbours out of
+     alignment. `0` lets the track win and the card's own text truncate. */
+  min-width: 0;
+  /* The cell holds the edit bar above the card, so it stacks. */
+  display: flex;
+  flex-direction: column;
+}
+
+.home-dash__cell--wide {
+  grid-column: 1 / -1;
+}
+
+/* Nothing inside a widget may paint outside the track it was given. */
+.home-dash__cell > * {
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* The polite live region that narrates a keyboard reorder. It is always in the
+   DOM (an aria-live region created at the same moment as its text is not
+   announced), so it is hidden visually rather than by `display: none`, which
+   would take it out of the accessibility tree too. */
+.home-dash__announce {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.home-dash__banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border: var(--border-hairline) solid var(--color-error);
+  border-radius: var(--radius-card);
+  background: var(--color-error-container);
+}
+
+.home-dash__banner-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line);
+  color: var(--color-error);
+}
+
+.home-dash__hidden {
+  margin-top: 1rem;
+}
+
+/* The hidden-card strip, per the 2026-05-27 Home concept: a lead line then a
+   wrap of pills. Real buttons, unlike the concept's spans. */
+.home-hidden__pills {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.home-hidden__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.4rem 0.85rem;
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-family: var(--type-label-md-family);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  cursor: pointer;
+}
+
+.home-hidden__pill:hover {
+  border-color: var(--color-primary);
+}
+
+.home-hidden__pill:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.home-hidden__pill-plus {
+  font-family: var(--font-mono);
+  color: var(--color-primary);
+}
+
+/* A card android draws and this admin has not ported yet. Saying so on the pill
+   is the difference between an operator adding a placeholder on purpose and
+   adding one by surprise. */
+.home-hidden__pill-note {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-faint);
 }
