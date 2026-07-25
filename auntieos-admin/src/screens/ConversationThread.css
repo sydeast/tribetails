@@ -83,3 +83,13 @@
 .thread__input:disabled {
   opacity: 0.6;
 }
+/* Why Send is disabled (lib/inboxFormat.ts#replyBlocker). Sits between the
+   textarea and the button so the reason reads before the dead control. */
+.thread__blocker {
+  /* .thread__compose is align-items: flex-end (for the Send button), so the
+     reason has to opt back out or it right-aligns away from the textarea. */
+  align-self: flex-start;
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-warning);
+}

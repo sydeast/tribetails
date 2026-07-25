@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ThreadMessage } from '../api/inboxThread';
 
@@ -93,5 +93,44 @@ describe('ConversationThread', () => {
     render(<ConversationThread kinfolkId="k1" kinfolkName="Alvarez" onBack={onBack} />);
     await userEvent.click(await screen.findByRole('button', { name: /back to inbox/i }));
     expect(onBack).toHaveBeenCalledOnce();
+  });
+});
+/**
+ * Archive parity (Conversations.kt#replyBlocker): the over-long reply is caught
+ * client-side with a real sentence, so the operator never sees the callable's
+ * raw "replyToConversation validation failed" for a case the UI could have
+ * named itself.
+ */
+describe('ConversationThread reply guards', () => {
+  it('blocks an over-long reply before it reaches replyToConversation', async () => {
+    getConversationThread.mockResolvedValue([msg()]);
+    render(<ConversationThread kinfolkId="k1" kinfolkName="The Alvarez Household" onBack={vi.fn()} />);
+    await screen.findByText('hello');
+    // fireEvent.change, not userEvent.type: typing 5001 characters keystroke
+    // by keystroke is needlessly slow, and the guard reads the VALUE anyway.
+    fireEvent.change(screen.getByLabelText(/reply to this household/i), {
+      target: { value: 'x'.repeat(5001) },
+    });
+    expect(await screen.findByText(/Message is too long \(5000 character max\)\./)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /send reply/i })).toBeDisabled();
+    expect(replyToConversation).not.toHaveBeenCalled();
+  });
+  it('keeps the Send control disabled for a whitespace-only draft', async () => {
+    getConversationThread.mockResolvedValue([msg()]);
+    render(<ConversationThread kinfolkId="k1" kinfolkName="The Alvarez Household" onBack={vi.fn()} />);
+    await screen.findByText('hello');
+    await userEvent.type(screen.getByLabelText(/reply to this household/i), '   ');
+    expect(screen.getByRole('button', { name: /send reply/i })).toBeDisabled();
+    expect(replyToConversation).not.toHaveBeenCalled();
+  });
+  it('sends a reply that sits exactly on the server maximum', async () => {
+    getConversationThread.mockResolvedValue([msg()]);
+    replyToConversation.mockResolvedValue('m-new');
+    render(<ConversationThread kinfolkId="k1" kinfolkName="The Alvarez Household" onBack={vi.fn()} />);
+    await screen.findByText('hello');
+    const body = 'x'.repeat(5000);
+    fireEvent.change(screen.getByLabelText(/reply to this household/i), { target: { value: body } });
+    await userEvent.click(screen.getByRole('button', { name: /send reply/i }));
+    await waitFor(() => expect(replyToConversation).toHaveBeenCalledWith('k1', body));
   });
 });

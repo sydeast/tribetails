@@ -13,6 +13,7 @@ import {
   threadMessageCount,
   groupThreadsByDay,
   localDateIso,
+  replyBlocker,
 } from './inboxFormat';
 
 // File-scope TZ pin: several suites below (threadDayKey/threadClock,
@@ -190,5 +191,31 @@ describe('localDateIso re-export', () => {
   it('is the same lib/invoiceFormat helper (via sessionFormat), not a re-derived duplicate', () => {
     expect(typeof localDateIso).toBe('function');
     expect(localDateIso(new Date(2026, 6, 16))).toBe('2026-07-16');
+  });
+});
+/**
+ * Ported from the archive's `Conversations.kt#replyBlocker` (the only pure
+ * chat-side rule the React port dropped). The 5000 cap is the SERVER's
+ * `MAX_MESSAGE_BODY` (mytribe/functions/src/lib/conversations.ts), mirrored
+ * client-side so an over-long reply reads as a real sentence instead of the
+ * callable's "replyToConversation validation failed".
+ */
+describe('replyBlocker', () => {
+  it('blocks a blank body with an instruction, not a validation code', () => {
+    expect(replyBlocker('')).toBe('Write a reply first.');
+    expect(replyBlocker('   \n  ')).toBe('Write a reply first.');
+  });
+  it('allows an ordinary reply', () => {
+    expect(replyBlocker('On my way')).toBeNull();
+  });
+  it('allows a body exactly at the server maximum', () => {
+    expect(replyBlocker('x'.repeat(5000))).toBeNull();
+  });
+  it('blocks a body one character past the server maximum, naming the limit', () => {
+    expect(replyBlocker('x'.repeat(5001))).toBe('Message is too long (5000 character max).');
+  });
+  it('measures the RAW length, matching the server zod max, not the trimmed length', () => {
+    // The server validates `body` as sent; trailing whitespace still counts.
+    expect(replyBlocker(`${'x'.repeat(5000)}   `)).toBe('Message is too long (5000 character max).');
   });
 });
