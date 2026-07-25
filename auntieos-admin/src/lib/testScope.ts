@@ -100,6 +100,18 @@ export const SUPPRESSED_IN_TEST_MODE: ReadonlySet<string> = new Set([
   'emails',
   'sms_messages',
   'voicemails',
+  // Conversation threads, read by the side rail's unread badge
+  // (`lib/useUnreadInbox.ts`). Same shape as the four above:
+  // `mytribe/firestore.rules:798` is `isAuntie() || (isKinfolk() && ...)` with no
+  // isTestAdmin branch, and the docs carry no `kinfolkId` an admin-side query
+  // could scope by. Suppressed rather than scoped, because no predicate grants a
+  // permission the rule withholds.
+  //
+  // This one matters more than the others because the rail is on EVERY screen:
+  // left unsuppressed, a sandbox account takes a denied read and a Sentry event
+  // on every navigation, for a badge. Suppressed, the count resolves empty, no
+  // pill renders, and that is the truth for an account with no conversations.
+  'conversations',
 ]);
 
 /** True when this collection should resolve to an empty list instead of being

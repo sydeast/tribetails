@@ -22,10 +22,44 @@
 }
 
 .shell__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.25rem 0.5rem 1rem;
+}
+
+/* The brand mark from the mock rail. `--gradient-tribe` and its two siblings are
+   all linear; this is the one conic in the app, and it is composed here from the
+   same three role tokens rather than added to tokens.css, because it is one
+   mark in one place and tokens.css owns the system, not this tile. Role tokens,
+   so it brightens with the dark scheme like everything else. The wheel closes
+   back on the teal it opened with: an unclosed conic leaves a hard seam at the
+   start angle. */
+.shell__brand-mark {
+  display: grid;
+  place-items: center;
+  width: 2.125rem;
+  height: 2.125rem;
+  flex: 0 0 auto;
+  border-radius: var(--radius-card-lg);
+  background: conic-gradient(
+    from 200deg,
+    var(--color-accent),
+    var(--color-tertiary),
+    var(--color-primary),
+    var(--color-accent)
+  );
+  font-family: var(--font-fraunces);
+  font-weight: 600;
+  font-size: 1.05rem;
+  color: var(--tt-brand-cream);
+}
+
+.shell__brand-word {
   font-family: var(--font-fraunces);
   font-weight: 600;
   font-size: 1.35rem;
-  padding: 0.25rem 0.5rem 1rem;
+  letter-spacing: -0.01em;
 }
 
 .shell__group {
@@ -49,7 +83,9 @@
    `:focus-visible` at all, which made a list of live destinations read as
    static text and left keyboard users with no idea where focus was. */
 .shell__link {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-card);
   font-size: 0.92rem;
@@ -61,8 +97,25 @@
     color var(--dur-fast) var(--ease-standard);
 }
 
+.shell__link-label {
+  min-width: 0;
+}
+
+/* The icon set is drawn in components/NavGlyphs.tsx; this is the only place it
+   is sized and toned. It carries `currentColor`, so it is one shade quieter than
+   the label at rest and comes up to full strength with the row. */
+.nav-glyph {
+  flex: 0 0 auto;
+  color: var(--color-text-dim);
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
 .shell__link:hover {
   background: var(--color-surface-2);
+}
+
+.shell__link:hover .nav-glyph {
+  color: var(--color-primary);
 }
 
 .shell__link:focus-visible {
@@ -76,6 +129,33 @@
   font-weight: 600;
 }
 
+.shell__link--active .nav-glyph,
+.shell__link--active:hover .nav-glyph {
+  color: inherit;
+}
+
+/* The count pill: mono face, tinted from the brand orange, pushed to the end of
+   the row. Only rendered when there is a real number (see railCount in
+   AppShell.tsx), so this rule never paints a zero. */
+.shell__count {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-pill);
+  font-family: var(--type-mono-family);
+  font-size: 0.68rem;
+  line-height: 1.5;
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  color: var(--color-primary);
+}
+
+/* On the active row the orange tint sits on teal, which is neither legible nor
+   the mock's intent: there the pill inverts against the filled row instead. */
+.shell__link--active .shell__count {
+  background: color-mix(in srgb, var(--tt-brand-navy) 22%, transparent);
+  color: var(--tt-brand-cream);
+}
+
 /* A destination whose screen is not built yet. Still not interactive, and it
    says so with the cursor rather than only with opacity. */
 .shell__link--pending {
@@ -86,6 +166,11 @@
 
 .shell__link--pending:hover {
   background: none;
+}
+
+/* The hover tone belongs to rows you can actually go to. */
+.shell__link--pending:hover .nav-glyph {
+  color: var(--color-text-dim);
 }
 
 .shell__main {

@@ -150,6 +150,9 @@ describe('isSuppressedInTestMode', () => {
         'activity_log',
         'booking_time_slots',
         'calls_log',
+        // Read by the rail's unread badge on every screen, `isAuntie()`-only at
+        // mytribe/firestore.rules:798, and carrying no kinfolkId to scope by.
+        'conversations',
         'emails',
         'sms_messages',
         'training_documents',
