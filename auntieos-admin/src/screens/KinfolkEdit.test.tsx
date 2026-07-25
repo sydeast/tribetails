@@ -23,6 +23,18 @@ vi.mock('../api/kinfolkProfileWrite', async (orig) => ({
   unarchiveKinfolk,
 }));
 
+// Service address is an AddressAutofillField now, which debounces a real
+// `mapboxSearch` callable. Stubbed so this suite never reaches for Firebase.
+const { mapboxSuggest, mapboxRetrieve } = vi.hoisted(() => ({
+  mapboxSuggest: vi.fn(),
+  mapboxRetrieve: vi.fn(),
+}));
+vi.mock('../api/mapbox', async (orig) => ({
+  ...(await orig<typeof import('../api/mapbox')>()),
+  mapboxSuggest,
+  mapboxRetrieve,
+}));
+
 import { KinfolkEdit } from './KinfolkEdit';
 import { mergeKinfolkProfile } from '../api/kinfolkProfile';
 import { KINFOLK_EDIT_FIELDS } from '../api/kinfolkProfileWrite';
@@ -66,6 +78,8 @@ beforeEach(() => {
   updateKinfolkProfile.mockReset();
   archiveKinfolk.mockReset();
   unarchiveKinfolk.mockReset();
+  mapboxSuggest.mockReset().mockResolvedValue([]);
+  mapboxRetrieve.mockReset();
   updateKinfolkProfile.mockResolvedValue(undefined);
   archiveKinfolk.mockResolvedValue(undefined);
   unarchiveKinfolk.mockResolvedValue(undefined);
@@ -96,6 +110,45 @@ describe('KinfolkEdit: rendering from data', () => {
   });
 });
 
+describe('KinfolkEdit: service address autofill (#12)', () => {
+  it('does not spend a Mapbox lookup on the address the household loaded with', async () => {
+    mount();
+    await screen.findByLabelText('First name');
+    expect(mapboxSuggest).not.toHaveBeenCalled();
+  });
+  it('suggests, resolves, and SAVES the picked address', async () => {
+    mapboxSuggest.mockResolvedValue([
+      { name: 'Bark House', fullAddress: '123 Bark Ave, Austin TX 78701', mapboxId: 'id-1', placeFormatted: 'Austin TX' },
+    ]);
+    mapboxRetrieve.mockResolvedValue('123 Bark Ave, Austin TX 78701');
+    mount();
+    await screen.findByLabelText('First name');
+    await userEvent.type(fieldByLabel('Service address'), 'nue');
+    await userEvent.click(await screen.findByRole('button', { name: /Bark House/ }));
+    await waitFor(() => expect(fieldByLabel('Service address')).toHaveValue('123 Bark Ave, Austin TX 78701'));
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() =>
+      expect(updateKinfolkProfile).toHaveBeenCalledWith(
+        'kf1',
+        expect.objectContaining({ serviceAddress: '123 Bark Ave, Austin TX 78701' }),
+      ),
+    );
+  });
+  it('saves a hand-typed address after a failed lookup (autofill never blocks the save)', async () => {
+    mapboxSuggest.mockRejectedValue(new Error('mapbox_502'));
+    mount();
+    await screen.findByLabelText('First name');
+    await userEvent.type(fieldByLabel('Service address'), 'nue, Austin TX');
+    expect(await screen.findByText(/address lookup failed: mapbox_502/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() =>
+      expect(updateKinfolkProfile).toHaveBeenCalledWith(
+        'kf1',
+        expect.objectContaining({ serviceAddress: '123 Bark Avenue, Austin TX' }),
+      ),
+    );
+  });
+});
 describe('KinfolkEdit: join date', () => {
   it('is a date picker, not a free text box', async () => {
     mount({ joinDate: '2026-07-24' });

@@ -17,6 +17,7 @@ import {
 import { joinDateForEdit } from '../lib/joinDate';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+import { AddressAutofillField } from '../components/AddressAutofillField';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { Dialog } from '../components/Dialog';
@@ -40,21 +41,20 @@ import './KinfolkEdit.css';
  * that, because the patch is a fixed key list and `updateDoc` only touches the
  * keys it is given.
  *
- * DEFERRED FROM THE SOURCE, each verified genuinely absent on this surface
- * rather than merely awkward:
+ * RESTORED 2026-07-25 (operator issues #12 and #13), both of which this header
+ * previously recorded as deferred for want of a transport:
  *
- *  - Mapbox address autofill (`AddressAutofillField`, EditKinfolkScreen.kt:660).
- *    Android calls Mapbox DIRECTLY through its own Retrofit client
- *    (data/api/MapboxClient.kt, MapboxGeocodingApi.kt) with a key from
- *    android/local.properties. There is no `queryAddressSuggestions` callable
- *    anywhere in MyTribe/functions/src, so web has no transport at all: shipping
- *    it means either publishing a Mapbox token to the browser or writing a new
- *    Cloud Function. Service address is a plain required field here.
- *  - The vet-clinic catalog picker (:408, :444, :482). The `vet_clinics`
- *    collection exists and is readable (firestore.rules:131), but this repo has
- *    no React api module for it, so there is nothing to search. The three vet
- *    fields are plain inputs; typing a clinic still works, only the suggestions
- *    and "Add to shared catalog" are missing.
+ *  - Mapbox address autofill on Service address. The transport existed after
+ *    all: `mapboxSearch` / `mapboxRetrieve` are deployed MyTribe callables
+ *    holding `MAPBOX_ACCESS_TOKEN` server-side, so no key reaches the browser.
+ *    See `components/AddressAutofillField.tsx`.
+ *  - The vet-clinic catalog picker, now `components/VetClinicPicker.tsx`
+ *    against the `vet_clinics` collection, plus a second instance for the
+ *    household's emergency vet.
+ *
+ * STILL DEFERRED, verified genuinely absent on this surface rather than merely
+ * awkward:
+ *
  *  - Photo upload (:57). `api/mediaUpload.ts` DOES have a working KINFOLK
  *    pipeline, so this one is a real gap rather than a missing capability: its
  *    orchestrator returns the new media_files doc id, not the Cloudinary URL,
@@ -397,15 +397,15 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
 
               <DenPanel title="Home & access" subtitle="Gate codes, parking, and how to get in the door.">
                 <fieldset className="kfedit__grid" disabled={busy}>
-                  <TextField
+                  <AddressAutofillField
                     name="serviceAddress"
                     label="Service address"
                     value={form.serviceAddress}
                     error={errorFor('serviceAddress')}
                     onChange={(v) => set('serviceAddress', v)}
                     onBlur={() => markTouched('serviceAddress')}
+                    disabled={busy}
                     wide
-                    multiline
                   />
                   <SecretField
                     name="gateCode"

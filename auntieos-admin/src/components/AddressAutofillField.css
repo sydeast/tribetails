@@ -1,0 +1,123 @@
+/**
+ * AddressAutofillField: a plain address input with a Mapbox suggestion popover.
+ * Tokens only, and the popover matches TagAssignField's so the two dropdowns on
+ * a Kinfolk form do not look like they came from different apps.
+ */
+
+.addrfield {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.addrfield--wide {
+  grid-column: 1 / -1;
+}
+
+.addrfield__label {
+  font-family: var(--type-label-family);
+  font-size: var(--type-label-size);
+  letter-spacing: var(--type-label-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.addrfield__inputWrap {
+  position: relative;
+}
+
+.addrfield__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+}
+
+.addrfield__input:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.addrfield__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.addrfield__input[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+
+.addrfield__list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  background: var(--color-surface-glass);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.14);
+}
+
+.addrfield__option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.addrfield__option:hover,
+.addrfield__option:focus-visible {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  outline: none;
+}
+
+.addrfield__optionName {
+  color: var(--color-text-primary);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+}
+
+.addrfield__optionAddress {
+  color: var(--color-text-dim);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+
+.addrfield__error {
+  color: var(--color-error);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+
+/**
+ * The lookup banner is a warning, not a validation failure: the field is still
+ * saveable. Toned apart from `__error` so the two never read as the same thing.
+ */
+.addrfield__lookupError {
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid color-mix(in srgb, var(--color-error) 40%, transparent);
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: var(--color-text-primary);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}

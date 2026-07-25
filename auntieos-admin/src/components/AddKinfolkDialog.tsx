@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { createKinfolk, NEW_KINFOLK_STATUS_OPTIONS, type NewKinfolkStatus } from '../api/directoryWrite';
+import { AddressAutofillField } from './AddressAutofillField';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import './AddKinfolkDialog.css';
@@ -184,18 +185,18 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
           </div>
         </div>
 
-        <div className="add-kinfolk__field">
-          <label className="add-kinfolk__label" htmlFor="add-kinfolk-address">
-            Address
-          </label>
-          <input
-            id="add-kinfolk-address"
-            type="text"
-            className="add-kinfolk__input"
-            value={serviceAddress}
-            onChange={(e) => setServiceAddress(e.target.value)}
-          />
-        </div>
+        {/* Mapbox autofill, same field as KinfolkEdit's service address so a
+            household's address is entered the same way whichever door it comes
+            in through. Additive: the input still takes a typed address, and a
+            failed lookup never blocks the create. */}
+        <AddressAutofillField
+          name="add-kinfolk-address"
+          label="Address"
+          value={serviceAddress}
+          error={null}
+          onChange={setServiceAddress}
+          disabled={saving}
+        />
       </fieldset>
 
       {saveError !== null && (
