@@ -27,3 +27,13 @@ export function str(v: unknown): string {
 export function arr<T>(v: unknown): T[] {
   return Array.isArray(v) ? (v as T[]) : [];
 }
+
+/**
+ * A nested-object field that may be absent, null, or the wrong type. Returns a
+ * fresh empty object so `rec(doc.data)['kinfolkId']` is always a safe read.
+ * Arrays read as empty: `notifications.data` is a template-merge bag written by
+ * `enqueueNotification`, and an array there is malformed, not a one-key object.
+ */
+export function rec(v: unknown): Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+}

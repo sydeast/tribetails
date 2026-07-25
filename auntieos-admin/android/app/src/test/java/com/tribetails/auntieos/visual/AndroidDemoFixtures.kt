@@ -341,19 +341,35 @@ object AndroidDemoFixtures {
     )
 
     // === notifications ===
+    // Shaped like real dispatcher.ts output (issue #20): a catalog title +
+    // description, a resolved actorName, a targetType/targetId pair, and the
+    // free-form `data` bag the household reference actually hides in. The last
+    // row deliberately carries NO target, so the screenshot also proves the
+    // no-dead-Open-button case.
     val notifications: List<NotificationEntry> = listOf(
         NotificationEntry(id = "demo-notif-1", key = "kincare.booking.requested", category = "bookings",
             recipientUid = "demo-uid", actorUid = "demo-kf-2", status = "pending", mode = "trigger",
-            channels = listOf("push", "in_app"), createdAt = "2026-05-31T14:02:11Z"),
+            channels = listOf("push", "in_app"), createdAt = "2026-05-31T14:02:11Z",
+            title = "Visit requested", description = "A household asked for a new KinCare visit.",
+            actorName = "Nora Halbrook", targetType = "booking", targetId = "demo-visit-1",
+            data = mapOf("kinfolkId" to "demo-kf-2", "bookingId" to "demo-visit-1")),
         NotificationEntry(id = "demo-notif-2", key = "payment.received", category = "payments",
             recipientUid = "demo-uid", actorUid = "demo-kf-1", status = "dispatched", mode = "trigger",
-            channels = listOf("email"), createdAt = "2026-05-31T10:18:00Z"),
+            channels = listOf("email"), createdAt = "2026-05-31T10:18:00Z",
+            title = "Payment received", description = "An invoice was paid in full.",
+            actorName = "Wanda Thorne", targetType = "invoice", targetId = "demo-inv-1",
+            data = mapOf("kinfolkId" to "demo-kf-1", "invoiceId" to "demo-inv-1")),
         NotificationEntry(id = "demo-notif-3", key = "kintale.comment.added", category = "kintales",
             recipientUid = "demo-uid", actorUid = "demo-kf-3", status = "dispatched", mode = "debounced",
-            channels = listOf("push"), createdAt = "2026-05-30T19:44:00Z"),
+            channels = listOf("push"), createdAt = "2026-05-30T19:44:00Z",
+            title = "New comment on a KinTale", description = "Someone replied on a visit report.",
+            actorName = "Tessa Brooks", targetType = "kintale", targetId = "demo-tale-1",
+            data = mapOf("kinfolkId" to "demo-kf-3", "taleId" to "demo-tale-1")),
         NotificationEntry(id = "demo-notif-4", key = "security.breach_attempt", category = "security",
             recipientUid = "demo-uid", status = "pending", mode = "trigger",
-            channels = listOf("email", "push"), createdAt = "2026-05-30T08:01:00Z"),
+            channels = listOf("email", "push"), createdAt = "2026-05-30T08:01:00Z",
+            title = "Unusual sign-in attempt",
+            description = "A sign-in was blocked from an unrecognized device."),
     )
 
     // === template-bank / template-assignment ===

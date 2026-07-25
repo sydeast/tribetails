@@ -194,6 +194,73 @@
   gap: 0.2rem;
   min-width: 0;
 }
+
+/* Context line: who this is about, and what it points at. The row leads with
+   this because "which household" is the first thing an operator triaging the
+   feed needs, and its absence is what made the feed read like an audit log. */
+.notif-row__context {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: 0.1rem;
+}
+.notif-row__who {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--color-accent, #0a8595);
+}
+.notif-row__target {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.08rem var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-2, #eae6dc);
+  color: var(--color-secondary, #5a5c6a);
+  white-space: nowrap;
+}
+
+.notif-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* Category filter chips. "All", "Unread", then one per category actually
+   present in the feed. */
+.notif-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.notif-chip {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.22rem var(--space-3);
+  border-radius: var(--radius-pill);
+  border: var(--border-hairline) solid var(--color-border-soft, #e7e2d5);
+  background: var(--color-surface, #f4f2ec);
+  color: var(--color-secondary, #5a5c6a);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
+}
+.notif-chip:hover {
+  color: var(--color-text-primary, #11131f);
+}
+.notif-chip--active {
+  border-color: var(--color-accent, #0a8595);
+  color: var(--color-accent, #0a8595);
+  background: color-mix(in srgb, var(--color-accent, #0a8595) 10%, transparent);
+}
+
 .notif-row__key {
   font-weight: 600;
   font-size: 0.92rem;

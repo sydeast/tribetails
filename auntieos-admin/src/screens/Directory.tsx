@@ -241,6 +241,13 @@ interface DirectoryProps {
    * in-screen `KinView` detail. A caller can pass its own handler to take over.
    */
   onSelectKin?: (id: string) => void;
+  /**
+   * Opens this household's profile on mount. Set by the router from the
+   * `/directory/{kinfolkId}` path, which is where the Notifications feed's
+   * "Open" lands for a kinfolk notification. Ignored when `onSelectKinfolk`
+   * takes over selection, since then this screen owns no detail view.
+   */
+  initialKinfolkId?: string;
 }
 
 /**
@@ -257,7 +264,7 @@ interface DirectoryProps {
  * not-yet-built profile/edit screens (KinfolkProfileScreen, KinViewScreen,
  * KinEditScreen), same pattern as FormSchemas' onSelect/onNew.
  */
-export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
+export function Directory({ onSelectKinfolk, onSelectKin, initialKinfolkId }: DirectoryProps) {
   const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
   const kinState = useCollection<Kin>(KIN_QUERY);
 
@@ -267,7 +274,7 @@ export function Directory({ onSelectKinfolk, onSelectKin }: DirectoryProps) {
   // The household profile detail view: a sibling VIEW of this list (the Inbox /
   // Communicate pattern), opened when a card is activated and no external
   // onSelectKinfolk overrides. Holds the id; the profile reads the full doc.
-  const [openKinfolkId, setOpenKinfolkId] = useState<string | null>(null);
+  const [openKinfolkId, setOpenKinfolkId] = useState<string | null>(initialKinfolkId ?? null);
   // Kin (pet) detail: same sibling-view pattern as the household profile.
   const [openKinId, setOpenKinId] = useState<{ id: string; name: string } | null>(null);
 
