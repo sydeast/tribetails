@@ -5,7 +5,15 @@ import { RouterProvider } from '@tanstack/react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Self-hosted brand fonts (Den redesign), no font CDN at runtime.
-import '@fontsource-variable/fraunces'; // variable: all heading weights
+//
+// `/full.css`, not the package default. The default entry ships the wght axis
+// alone; Fraunces also carries SOFT and WONK, and those two are what the Den
+// mocks set ("SOFT" 50, "WONK" 1) to get the friendly editorial serif the brand
+// picked, rather than a generic one. Costs 121 KB for the latin subset against
+// 36 KB for wght alone, woff2, cached, `font-display: swap`. If that trade ever
+// stops being worth it, dropping back to '@fontsource-variable/fraunces' is the
+// only change needed: the variation tokens degrade to no-ops.
+import '@fontsource-variable/fraunces/full.css';
 import '@fontsource/hanken-grotesk/400.css';
 import '@fontsource/hanken-grotesk/500.css';
 import '@fontsource/spline-sans-mono/400.css';
