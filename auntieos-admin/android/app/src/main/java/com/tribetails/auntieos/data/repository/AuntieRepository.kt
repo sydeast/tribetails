@@ -2765,6 +2765,32 @@ class AuntieRepository(
         Unit
     }.onFailure { AuntieLog.e("Failed to save user profile ${profile.uid}", it) }
 
+    /**
+     * 17.3 Dashboard: persist THIS operator's Home widget layout, and nothing else.
+     *
+     * Deliberately not [saveUserProfile]. That writes the WHOLE users/{uid} document,
+     * so a caller has to re-read the profile first and hope no other screen saved a
+     * theme or nav pref in the gap. The saveDashboardLayout callable writes the one
+     * field it owns with merge, validates the token shape server-side, and takes the
+     * uid from req.auth, so there is no read before the write and nothing to clobber.
+     * Same callable and same field the React admin writes, so a board arranged here
+     * opens arranged there (mytribe/functions/src/admin/saveDashboardLayout.ts).
+     *
+     * Returns the tokens the SERVER stored so the caller can reconcile the board
+     * against what actually landed instead of trusting its own optimistic copy. A
+     * reply without them is a failure: a save that cannot be confirmed is not a save.
+     */
+    suspend fun saveDashboardLayout(tokens: List<String>): Result<List<String>> = runCatching {
+        ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("saveDashboardLayout")
+            .call(mapOf("tokens" to tokens)).await().data as? Map<String, Any?>
+            ?: error("saveDashboardLayout: non-map payload")
+        val stored = raw["tokens"] as? List<*>
+            ?: error("saveDashboardLayout answered without the stored layout, so the save cannot be confirmed.")
+        stored.mapNotNull { it as? String }
+    }.onFailure { AuntieLog.e("saveDashboardLayout failed", it) }
+
     // ───────────────────────────────────────────────────────────────────────
     // FormSchemas - admin authoring surface for kinfolk-facing dynamic forms.
     // Backed by `saveFormSchema | listFormSchemas | deleteFormSchema` callables

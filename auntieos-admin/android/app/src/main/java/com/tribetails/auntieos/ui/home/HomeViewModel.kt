@@ -10,7 +10,6 @@ import com.tribetails.auntieos.data.model.Draft
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
-import com.tribetails.auntieos.data.model.UserProfile
 import com.tribetails.auntieos.data.model.VisitStatus
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.google.firebase.auth.FirebaseAuth
@@ -18,6 +17,7 @@ import kotlinx.coroutines.flow.first
 import com.tribetails.auntieos.location.LocationTrackingService
 import com.tribetails.auntieos.notifications.VisitNotifier
 import com.tribetails.auntieos.util.AuntieLog
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -60,6 +60,13 @@ data class HomeUiState(
     // 17.3 Dashboard: this admin's saved widget layout tokens ("key:size"); empty =
     // the shipped default. Resolved for render by DashboardLayout.resolvedDashboard.
     val dashboardWidgets: List<String> = emptyList(),
+    // 17.3 Dashboard: a layout save that FAILED, in the operator's words. Kept apart
+    // from actionError on purpose: the board has already been put back, so this names
+    // something that did not happen rather than a reason to reload the dashboard.
+    val dashboardError: String? = null,
+    // 17.3 Dashboard: the last reorder / hide / add result, narrated to a screen
+    // reader through Home's polite live region. Empty = nothing to announce.
+    val dashboardAnnouncement: String = "",
     // W16/W17 weather widgets: one-shot getLocalWeather result (server-cached). null =
     // not loaded yet. Loaded lazily only when a weather widget is on the dashboard.
     val weather: Result<com.tribetails.auntieos.data.model.LocalWeather>? = null,
@@ -88,9 +95,22 @@ class HomeViewModel(
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
-    // 17.3 Dashboard: the loaded profile snapshot, copied onto for the dashboard save
-    // so theme/branding/etc are never clobbered (saveUserProfile overwrites the doc).
-    private var loadedProfile: UserProfile? = null
+    // 17.3 Dashboard: the layout the SERVER last confirmed. A failed save reverts to
+    // THIS, not to the step before the failed one: with several moves queued, the step
+    // before is itself unsaved, so reverting there would leave the operator looking at
+    // an arrangement that exists nowhere either.
+    private var confirmedWidgets: List<String> = emptyList()
+
+    // 17.3 Dashboard: saves run strictly one after another off this chain. Rapid taps
+    // otherwise race, and two writes settling in either order leaves the stored list
+    // disagreeing with the screen.
+    private var saveChain: Job? = null
+    private var saveSeq = 0
+
+    // 17.3 Dashboard: saves issued at or below this sequence are abandoned. A failure
+    // has already put the board back, so writing the rest of that run would persist an
+    // arrangement nobody is looking at.
+    private var abandonThrough = 0
 
     init {
         AuntieLog.d("HomeViewModel initialized")
@@ -271,7 +291,9 @@ class HomeViewModel(
                         repo.observeUserProfile(uid).first()
                     }
                 }.getOrNull()
-                loadedProfile = profile
+                // Whatever is stored right now IS the server-confirmed layout, and so
+                // is where a later failed save has to put the board back to.
+                confirmedWidgets = profile?.dashboardWidgets ?: emptyList()
 
                 // Hydrate each session with its kinfolk record (parallel)
                 suspend fun hydrateCards(source: List<KinCareSession>) = source.map { session ->
@@ -342,31 +364,68 @@ class HomeViewModel(
     }
 
     /**
-     * 17.3 Dashboard: persist this admin's widget layout. Optimistically updates the
-     * UI, then writes users/{uid} by copying the layout onto the LOADED profile (so
-     * theme/branding/etc are preserved - saveUserProfile overwrites the whole doc).
-     * Fail loud: a write failure surfaces via actionError, never a fake success.
+     * 17.3 Dashboard: persist this admin's widget layout, and narrate what changed.
+     *
+     * Optimistic on screen, then written through the saveDashboardLayout callable,
+     * which merge-writes the ONE field it owns on users/{uid}. Nothing is read back
+     * first: a read followed by a whole-document write is exactly what could clobber
+     * a theme or nav pref another screen saved a moment earlier, and the callable
+     * takes the uid from req.auth, so this can only ever touch the caller's own board.
+     *
+     * Saves are SERIALIZED. Each one waits on the one before it, so a fast run of taps
+     * lands in the order the operator made them. Without that, two writes could settle
+     * in either order and the stored list would quietly stop matching the screen.
+     *
+     * Fail loud, and put the board back. A failure reverts to the last layout the
+     * SERVER confirmed, drops the remainder of that run of saves, and names the
+     * failure in dashboardError. Reverting one step instead would be a lie of a
+     * different shape: with several moves queued, that step was never saved either.
+     *
+     * [announcement] is what a screen reader is told once the change is on screen; it
+     * is cleared again if the save then fails, because the change did not stick.
      */
-    fun saveDashboard(tokens: List<String>) {
-        _uiState.value = _uiState.value.copy(dashboardWidgets = tokens, actionError = null)
-        viewModelScope.launch {
-            // Re-read the latest profile before merging so a pref another screen saved
-            // since this screen loaded (theme / nav / branding) is never clobbered -
-            // saveUserProfile overwrites the whole doc. Falls back to the load snapshot.
-            val uid = runCatching { FirebaseAuth.getInstance().currentUser?.uid }.getOrNull()
-            val base = (uid?.let { runCatching { repo.observeUserProfile(it).first() }.getOrNull() }) ?: loadedProfile
-            if (base == null) {
-                _uiState.value = _uiState.value.copy(actionError = "Can't save dashboard: profile not loaded yet")
-                return@launch
-            }
-            val merged = base.copy(dashboardWidgets = tokens)
-            repo.saveUserProfile(merged).fold(
-                onSuccess = { loadedProfile = merged },
+    fun saveDashboard(tokens: List<String>, announcement: String = "") {
+        val seq = ++saveSeq
+        _uiState.value = _uiState.value.copy(
+            dashboardWidgets = tokens,
+            dashboardAnnouncement = announcement,
+            dashboardError = null,
+        )
+        // Read the chain BEFORE launching: the new job has to wait on the previous one,
+        // not on itself.
+        val previous = saveChain
+        saveChain = viewModelScope.launch {
+            previous?.join()
+            if (seq <= abandonThrough) return@launch
+            repo.saveDashboardLayout(tokens).fold(
+                onSuccess = { stored ->
+                    confirmedWidgets = stored
+                    // Reconcile with what the server actually kept, but only when this
+                    // is the newest save. Reconciling an older one would yank the board
+                    // back over moves the operator has already made on screen.
+                    if (seq == saveSeq) {
+                        _uiState.value = _uiState.value.copy(dashboardWidgets = stored)
+                    }
+                },
                 onFailure = { e ->
-                    _uiState.value = _uiState.value.copy(actionError = "Couldn't save dashboard: ${e.message}")
+                    abandonThrough = saveSeq
+                    _uiState.value = _uiState.value.copy(
+                        dashboardWidgets = confirmedWidgets,
+                        dashboardAnnouncement = "",
+                        dashboardError = "Couldn't save your dashboard: ${e.message ?: "save failed"}." +
+                            " Your board is back the way it was.",
+                    )
                 },
             )
         }
+    }
+
+    /**
+     * Dismisses the dashboard save banner. There is nothing to retry from here: the
+     * board is already back where the server has it, so the next move saves normally.
+     */
+    fun clearDashboardError() {
+        _uiState.value = _uiState.value.copy(dashboardError = null)
     }
 
     // --- Visit lifecycle actions ---

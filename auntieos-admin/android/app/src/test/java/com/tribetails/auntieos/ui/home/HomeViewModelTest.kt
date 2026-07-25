@@ -7,9 +7,12 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.notifications.VisitNotifier
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -317,5 +320,155 @@ class HomeViewModelTest {
         assertFalse(state.gapsLoaded)
         assertTrue(state.visitGaps.isEmpty())
         assertEquals("Other tiles still render", 2, state.kinfolkCount)
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // 17.3 Dashboard save: the failure path and the ordering.
+    //
+    // A save used to be fire and forget, so a write that failed left the operator
+    // looking at an arrangement that existed nowhere and finding out at the next
+    // cold start. And nothing serialized the writes, so a fast run of taps could
+    // settle in either order.
+    //
+    // Nothing here needs a profile: the callable takes the uid from req.auth and
+    // merge-writes its own field, which is why these tests can exist at all.
+    // ───────────────────────────────────────────────────────────────────────
+
+    // Three layouts of the same three cards, so each save is distinguishable.
+    private val layoutA = listOf("stats:wide", "todaysPack:compact", "kintales:compact")
+    private val layoutB = listOf("todaysPack:compact", "stats:wide", "kintales:compact")
+    private val layoutC = listOf("todaysPack:compact", "kintales:compact", "stats:wide")
+
+    @Test
+    fun `a failure mid-run reverts to the server-confirmed layout and drops the rest of the run`() = runTest(testDispatcher) {
+        // A lands, B fails, C was queued behind B. Both writes are slow so all three
+        // taps happen before any of them comes back, which is the situation the
+        // operator actually creates by tapping an arrow three times.
+        coEvery { mockRepo.saveDashboardLayout(layoutA) } coAnswers { delay(10); Result.success(layoutA) }
+        coEvery { mockRepo.saveDashboardLayout(layoutB) } coAnswers { delay(10); Result.failure(RuntimeException("offline")) }
+        coEvery { mockRepo.saveDashboardLayout(layoutC) } returns Result.success(layoutC)
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.saveDashboard(layoutA, "Stats moved down to position 1 of 3.")
+        vm.saveDashboard(layoutB, "Stats moved down to position 2 of 3.")
+        vm.saveDashboard(layoutC, "Stats moved down to position 3 of 3.")
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertEquals(
+            "Must revert to the layout the SERVER confirmed (A), not to the step before the failure (B is unsaved too)",
+            layoutA,
+            state.dashboardWidgets,
+        )
+        assertNotNull("A failed save must be visible", state.dashboardError)
+        assertTrue(
+            "The banner must say the board was put back, not just that something broke: ${state.dashboardError}",
+            state.dashboardError!!.contains("back the way it was"),
+        )
+        assertTrue("The banner names the cause", state.dashboardError!!.contains("offline"))
+        assertEquals("A change that did not stick must not be announced as done", "", state.dashboardAnnouncement)
+        coVerify(exactly = 0) {
+            // C would persist an arrangement nobody is looking at: the board is at A.
+            mockRepo.saveDashboardLayout(layoutC)
+        }
+    }
+
+    @Test
+    fun `a failure with nothing yet confirmed reverts to the shipped default`() = runTest(testDispatcher) {
+        coEvery { mockRepo.saveDashboardLayout(layoutB) } returns Result.failure(RuntimeException("permission denied"))
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.saveDashboard(layoutB, "Stats moved down to position 2 of 3.")
+        advanceUntilIdle()
+
+        // Empty tokens resolve to DEFAULT_DASHBOARD, which is what was on screen
+        // before the tap, and is what is genuinely stored.
+        assertEquals(emptyList<String>(), vm.uiState.value.dashboardWidgets)
+        assertNotNull(vm.uiState.value.dashboardError)
+    }
+
+    @Test
+    fun `rapid saves land in the order the operator made them`() = runTest(testDispatcher) {
+        val landed = mutableListOf<List<String>>()
+        var started = 0
+        coEvery { mockRepo.saveDashboardLayout(any()) } coAnswers {
+            val tokens = firstArg<List<String>>()
+            started += 1
+            // The FIRST write is the slow one. Unserialized, the second would start
+            // alongside it and finish first, leaving the stored list at B while the
+            // screen shows C. That inversion is the whole defect.
+            delay(if (started == 1) 100L else 1L)
+            landed += tokens
+            Result.success(tokens)
+        }
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.saveDashboard(layoutB)
+        vm.saveDashboard(layoutC)
+        advanceUntilIdle()
+
+        assertEquals("Writes must settle in tap order", listOf(layoutB, layoutC), landed)
+        assertEquals("The board ends on the last tap", layoutC, vm.uiState.value.dashboardWidgets)
+        assertNull(vm.uiState.value.dashboardError)
+    }
+
+    @Test
+    fun `save writes the layout field only and never reads the profile first`() = runTest(testDispatcher) {
+        coEvery { mockRepo.saveDashboardLayout(layoutB) } returns Result.success(layoutB)
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.saveDashboard(layoutB)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockRepo.saveDashboardLayout(layoutB) }
+        // A read-then-whole-document-write is what could clobber a theme or nav pref
+        // saved from another screen in the gap. Neither call may happen.
+        coVerify(exactly = 0) { mockRepo.saveUserProfile(any()) }
+        verify(exactly = 0) { mockRepo.observeUserProfile(any()) }
+    }
+
+    @Test
+    fun `the board follows what the server stored, not the optimistic copy`() = runTest(testDispatcher) {
+        // The server is the authority on what landed. Here it keeps a shorter list
+        // than was sent, and the board has to follow it.
+        val kept = listOf("stats:wide", "kintales:compact")
+        coEvery { mockRepo.saveDashboardLayout(layoutB) } returns Result.success(kept)
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.saveDashboard(layoutB)
+        advanceUntilIdle()
+
+        assertEquals(kept, vm.uiState.value.dashboardWidgets)
+    }
+
+    @Test
+    fun `a change that saved is announced, and the banner can be dismissed`() = runTest(testDispatcher) {
+        coEvery { mockRepo.saveDashboardLayout(layoutB) } returns Result.success(layoutB)
+        coEvery { mockRepo.saveDashboardLayout(layoutC) } returns Result.failure(RuntimeException("nope"))
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.saveDashboard(layoutB, "Stats moved down to position 2 of 3.")
+        advanceUntilIdle()
+        assertEquals("Stats moved down to position 2 of 3.", vm.uiState.value.dashboardAnnouncement)
+
+        vm.saveDashboard(layoutC, "Stats moved down to position 3 of 3.")
+        advanceUntilIdle()
+        assertNotNull(vm.uiState.value.dashboardError)
+
+        vm.clearDashboardError()
+        assertNull(vm.uiState.value.dashboardError)
+        assertEquals("Dismissing the banner does not move the board", layoutB, vm.uiState.value.dashboardWidgets)
     }
 }
