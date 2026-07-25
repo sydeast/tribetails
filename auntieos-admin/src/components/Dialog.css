@@ -4,8 +4,13 @@
   z-index: 100;
   display: grid;
   place-items: center;
-  padding: var(--space-4, 16px);
-  background: color-mix(in srgb, var(--color-primary, #11131f) 45%, transparent);
+  padding: var(--space-4);
+  /* `--tt-brand-navy`, the theme-INVARIANT brand constant, not a role token. A
+     scrim has to darken the page in both schemes: `--color-text-primary` is
+     cream in dark and would wash the page out, and `--color-primary` (which
+     this said until 2026-07-25, with an `#11131f` fallback recording that navy
+     was meant) is Kinfolk Orange, so every modal opened over an orange veil. */
+  background: color-mix(in srgb, var(--tt-brand-navy) 45%, transparent);
   backdrop-filter: blur(2px);
 }
 
@@ -15,9 +20,9 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  background: var(--color-surface, #fff);
-  border: 1px solid var(--color-border, #d8d6cf);
-  border-radius: var(--radius-panel, 16px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
 }
 /* The right-side detail sheet (Dialog variant="sheet"). Full height, pinned to
@@ -33,7 +38,7 @@
 .dialog--sheet {
   width: min(100%, 30rem);
   max-height: 100%;
-  border-radius: var(--radius-panel, 16px) 0 0 var(--radius-panel, 16px);
+  border-radius: var(--radius-panel) 0 0 var(--radius-panel);
   border-right: none;
 }
 @media (max-width: 32rem) {
@@ -43,7 +48,7 @@
 }
 
 .dialog:focus-visible {
-  outline: 2px solid var(--color-accent, #e8a06a);
+  outline: 2px solid var(--color-primary);
   outline-offset: -2px;
 }
 
@@ -51,45 +56,45 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-3, 12px);
-  padding: var(--space-4, 16px) var(--space-5, 20px);
-  border-bottom: 1px solid var(--color-border-soft, #e6e4dd);
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border-soft);
 }
 .dialog__title {
   margin: 0;
-  font-family: var(--font-fraunces, serif);
+  font-family: var(--font-fraunces);
   font-size: 1.15rem;
   font-weight: 600;
-  color: var(--color-primary, #1a1c28);
+  color: var(--color-text-primary);
 }
 .dialog__close {
   flex: 0 0 auto;
   width: 2rem;
   height: 2rem;
   border: none;
-  border-radius: var(--radius-card, 8px);
+  border-radius: var(--radius-card);
   background: transparent;
-  color: var(--color-text-dim, #5a5c6a);
+  color: var(--color-text-dim);
   font-size: 1.4rem;
   line-height: 1;
   cursor: pointer;
 }
 .dialog__close:hover {
-  background: var(--color-surface2, #eee);
+  background: var(--color-surface-2);
 }
 .dialog__close:focus-visible {
-  outline: 2px solid var(--color-accent, #e8a06a);
+  outline: 2px solid var(--color-primary);
 }
 
 .dialog__body {
-  padding: var(--space-5, 20px);
-  color: var(--color-primary, #1a1c28);
+  padding: var(--space-5);
+  color: var(--color-text-primary);
 }
 
 .dialog__foot {
   display: flex;
   justify-content: flex-end;
-  gap: var(--space-3, 12px);
-  padding: var(--space-4, 16px) var(--space-5, 20px);
-  border-top: 1px solid var(--color-border-soft, #e6e4dd);
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--color-border-soft);
 }

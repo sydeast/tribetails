@@ -11,7 +11,7 @@
 }
 
 .tribal-form__title {
-  font-family: var(--font-display);
+  font-family: var(--font-fraunces);
   font-size: var(--type-headline-sm-size);
   color: var(--color-text-primary);
   margin: 0;
@@ -30,7 +30,7 @@
 .tribal-form__section {
   font-family: var(--font-mono);
   font-size: var(--type-mono-size);
-  letter-spacing: var(--tracking-mono);
+  letter-spacing: var(--type-label-sm-tracking);
   text-transform: uppercase;
   color: var(--color-primary);
   margin: var(--space-5) 0 var(--space-2);
@@ -117,11 +117,11 @@
     color var(--dur-base) var(--ease-standard);
 }
 .tribal-form__chip:hover {
-  background: var(--color-surface-raised);
+  background: var(--color-surface-2);
 }
 .tribal-form__chip--active {
   background: var(--color-text-primary);
-  color: var(--color-bg);
+  color: var(--color-background);
   border-color: transparent;
 }
 

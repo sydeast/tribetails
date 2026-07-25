@@ -1,0 +1,164 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+
+/**
+ * Guards how the rest of the app CONSUMES the tokens. `tokens.test.ts` guards
+ * what tokens.css declares; this file guards every other stylesheet's
+ * references to them, which is where the 2026-07-25 audit found the real damage.
+ *
+ * Two rules, both learned from bugs that shipped:
+ *
+ * 1. NO REFERENCE TO A TOKEN NOTHING DECLARES. Eleven such tokens were live:
+ *    `--color-surface-raised`, `--color-surface-sunken`, `--color-error-soft`,
+ *    `--color-accent-soft`, `--color-on-primary`, `--color-bg`, `--color-teal`,
+ *    `--font-display`, `--tracking-mono`, and `--type-label-family` / `-size` /
+ *    `-tracking` (the real names carry an `-md`/`-sm` step). Each silently took
+ *    its literal fallback, or nothing at all where there was no fallback, so
+ *    `.tribal-form__chip:hover` had no hover colour and the vet clinic and
+ *    address field labels rendered with no face, size, or tracking.
+ *
+ * 2. NO LITERAL FALLBACK ON A THEME TOKEN. `var(--color-x, #hex)` cannot be
+ *    right in both schemes: the literal is one theme's value at best, and it
+ *    hides a wrong token name behind a plausible colour. That is exactly how
+ *    `body { color: var(--color-primary, #1a1c28) }` survived, painting every
+ *    unstyled element Kinfolk Orange while the fallback recorded that navy was
+ *    intended, and how 20 uses of `var(--color-secondary, #5a5c6a)` rendered
+ *    Pack Pink as muted grey. 146 stale fallbacks were stripped on 2026-07-25.
+ *
+ * Fallbacks on tokens set at RUNTIME per element are fine and are not flagged:
+ * `--den-tone`, `--avatar-gradient` and friends are declared by a component on
+ * itself, so a consumer that has not been given one needs a default.
+ */
+
+const stylesDir = dirname(fileURLToPath(import.meta.url));
+const srcDir = dirname(stylesDir);
+
+function cssFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) return cssFiles(full);
+    return full.endsWith('.css') ? [full] : [];
+  });
+}
+
+const FILES = cssFiles(srcDir);
+const rel = (f: string) => f.slice(srcDir.length + 1);
+
+/** Every custom property declared anywhere in the CSS, plus those set from TS. */
+const declared = new Set<string>();
+for (const f of FILES) {
+  for (const m of readFileSync(f, 'utf8').matchAll(/(--[a-z0-9-]+)\s*:/g)) declared.add(m[1]!);
+}
+for (const f of tsFiles(srcDir)) {
+  // Components set custom properties as string keys, e.g. `'--avatar-size'`.
+  for (const m of readFileSync(f, 'utf8').matchAll(/'(--[a-z0-9-]+)'/g)) declared.add(m[1]!);
+}
+
+function tsFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) return tsFiles(full);
+    return full.endsWith('.ts') || full.endsWith('.tsx') ? [full] : [];
+  });
+}
+
+/** Tokens tokens.css owns: the global design system, as opposed to per-component locals. */
+const globalTokens = new Set(
+  [...readFileSync(join(stylesDir, 'tokens.css'), 'utf8').matchAll(/(--[a-z0-9-]+)\s*:/g)].map(
+    (m) => m[1]!,
+  ),
+);
+
+interface Ref {
+  file: string;
+  line: number;
+  name: string;
+  hasFallback: boolean;
+}
+
+/** Every `var(...)` reference in every stylesheet, with its fallback presence. */
+function references(): Ref[] {
+  const out: Ref[] = [];
+  for (const f of FILES) {
+    readFileSync(f, 'utf8')
+      .split('\n')
+      .forEach((line, i) => {
+        for (const m of line.matchAll(/var\(\s*(--[a-z0-9-]+)\s*(,?)/g)) {
+          out.push({ file: rel(f), line: i + 1, name: m[1]!, hasFallback: m[2] === ',' });
+        }
+      });
+  }
+  return out;
+}
+
+const REFS = references();
+
+describe('token usage across every stylesheet', () => {
+  it('has stylesheets to check (guards the walker itself)', () => {
+    expect(FILES.length).toBeGreaterThan(50);
+    expect(REFS.length).toBeGreaterThan(500);
+  });
+
+  it('never references a custom property nothing declares', () => {
+    const missing = REFS.filter((r) => !declared.has(r.name)).map(
+      (r) => `${r.file}:${String(r.line)} -> ${r.name}`,
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it('never gives a global design token a literal fallback', () => {
+    // A theme token resolves differently per scheme; a baked-in literal can only
+    // ever match one of them, and it disguises a wrong token name as a working
+    // colour. tokens.css itself is exempt: it is where defaults belong.
+    const withFallback = REFS.filter(
+      (r) => r.hasFallback && globalTokens.has(r.name) && r.file !== 'styles/tokens.css',
+    ).map((r) => `${r.file}:${String(r.line)} -> var(${r.name}, ...)`);
+    expect(withFallback).toEqual([]);
+  });
+});
+
+describe('the specific mis-wirings found on 2026-07-25', () => {
+  it('body text follows the text token, never the orange brand token', () => {
+    const base = readFileSync(join(stylesDir, 'base.css'), 'utf8');
+    const body = base.slice(base.indexOf('body {'), base.indexOf('}', base.indexOf('body {')));
+    expect(body).toContain('color: var(--color-text-primary)');
+    expect(body).not.toContain('color: var(--color-primary)');
+  });
+
+  it('never uses --color-secondary as a text colour (it is Pack Pink, not grey)', () => {
+    const offenders: string[] = [];
+    for (const f of FILES) {
+      if (rel(f) === 'styles/tokens.css') continue;
+      readFileSync(f, 'utf8')
+        .split('\n')
+        .forEach((line, i) => {
+          if (/(^|[^-])color:\s*var\(--color-secondary\)/.test(line)) {
+            offenders.push(`${rel(f)}:${String(i + 1)}`);
+          }
+        });
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('leaves the rail links interactive', () => {
+    const shell = readFileSync(join(stylesDir, 'shell.css'), 'utf8');
+    expect(shell).toContain('.shell__link:hover');
+    expect(shell).toContain('.shell__link:focus-visible');
+    // `cursor: default` belongs only on the not-yet-built destinations.
+    expect(shell).toMatch(/\.shell__link--pending\s*\{[^}]*cursor:\s*default/);
+  });
+});
+
+describe('the background orbs are themed', () => {
+  const base = readFileSync(join(stylesDir, 'base.css'), 'utf8');
+  it('tints both orbs from role tokens, and from DIFFERENT ones', () => {
+    // `.orb.b` named `--color-teal`, which nothing declares, so it took a
+    // literal and was the one element on the page that ignored dark mode.
+    const orbs = base.slice(base.indexOf('.orb {'));
+    expect(orbs).toContain('var(--color-tertiary)');
+    expect(orbs).toContain('var(--color-accent)');
+    expect(orbs).not.toContain('--color-teal');
+  });
+});
