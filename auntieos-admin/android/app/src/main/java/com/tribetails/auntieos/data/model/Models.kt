@@ -144,10 +144,22 @@ data class Kinfolk(
     var emergencyContactPhone: String = "",
     var emergencyContactRelation: String = "",
 
-    // Household-level Vet Clinic (lives on Kinfolk, not Kin)
+    // Household-level Vet Clinic (lives on Kinfolk, not Kin).
+    //
+    // `vetClinicId` joins to a `vet_clinics` doc; the three strings stay
+    // denormalized beside it so the clinic phone is on the household record
+    // without a second read, and a clinic renamed in the shared bank cannot
+    // blank the number on file. EVERY household written before 2026-07-25 has
+    // the strings and an empty id, which readers must treat as valid.
+    var vetClinicId: String = "",
     var vetClinicName: String = "",
     var vetClinicPhone: String = "",
     var vetClinicAddress: String = "",
+    // The 24 hour clinic for this household, same id + denormalized shape.
+    var emergencyVetClinicId: String = "",
+    var emergencyVetClinicName: String = "",
+    var emergencyVetClinicPhone: String = "",
+    var emergencyVetClinicAddress: String = "",
 
     // Admin & Relationship
     var internalNotes: String = "",

@@ -23,7 +23,24 @@ vi.mock('../api/kinfolkProfileWrite', async (orig) => ({
   unarchiveKinfolk,
 }));
 
+// Service address is an AddressAutofillField now, which debounces a real
+// `mapboxSearch` callable. Stubbed so this suite never reaches for Firebase.
+const { mapboxSuggest, mapboxRetrieve } = vi.hoisted(() => ({
+  mapboxSuggest: vi.fn(),
+  mapboxRetrieve: vi.fn(),
+}));
+vi.mock('../api/mapbox', async (orig) => ({
+  ...(await orig<typeof import('../api/mapbox')>()),
+  mapboxSuggest,
+  mapboxRetrieve,
+}));
+
+// The vet panel opens a live `vet_clinics` listener. Stubbed so this suite
+// never touches Firestore, and so a test can hand the picker an exact catalog.
+const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
+vi.mock('../lib/firestore', () => ({ useCollection }));
 import { KinfolkEdit } from './KinfolkEdit';
+import type { VetClinic } from '../api/vetClinics';
 import { mergeKinfolkProfile } from '../api/kinfolkProfile';
 import { KINFOLK_EDIT_FIELDS } from '../api/kinfolkProfileWrite';
 import { ToastProvider } from '../components/Toast';
@@ -48,6 +65,24 @@ function household(over: Record<string, unknown> = {}): KinfolkProfile {
   });
 }
 
+const CLINICS: VetClinic[] = [
+  {
+    _id: 'riverside',
+    name: 'Riverside Animal Hospital',
+    phone: '(512) 555-0100',
+    address: '1 Mill St',
+    isEmergency: false,
+    verified: true,
+  },
+  {
+    _id: 'er1',
+    name: 'Austin Pet ER',
+    phone: '(512) 555-0300',
+    address: '4 Night Ln',
+    isEmergency: true,
+    verified: true,
+  },
+];
 function mount(over: Record<string, unknown> = {}, props: Record<string, unknown> = {}) {
   getKinfolkProfile.mockResolvedValue(household(over));
   const onDone = vi.fn();
@@ -66,6 +101,10 @@ beforeEach(() => {
   updateKinfolkProfile.mockReset();
   archiveKinfolk.mockReset();
   unarchiveKinfolk.mockReset();
+  mapboxSuggest.mockReset().mockResolvedValue([]);
+  mapboxRetrieve.mockReset();
+  useCollection.mockReset();
+  useCollection.mockReturnValue({ status: 'ready', data: CLINICS });
   updateKinfolkProfile.mockResolvedValue(undefined);
   archiveKinfolk.mockResolvedValue(undefined);
   unarchiveKinfolk.mockResolvedValue(undefined);
@@ -96,6 +135,160 @@ describe('KinfolkEdit: rendering from data', () => {
   });
 });
 
+describe('KinfolkEdit: service address autofill (#12)', () => {
+  it('does not spend a Mapbox lookup on the address the household loaded with', async () => {
+    mount();
+    await screen.findByLabelText('First name');
+    expect(mapboxSuggest).not.toHaveBeenCalled();
+  });
+  it('suggests, resolves, and SAVES the picked address', async () => {
+    mapboxSuggest.mockResolvedValue([
+      { name: 'Bark House', fullAddress: '123 Bark Ave, Austin TX 78701', mapboxId: 'id-1', placeFormatted: 'Austin TX' },
+    ]);
+    mapboxRetrieve.mockResolvedValue('123 Bark Ave, Austin TX 78701');
+    mount();
+    await screen.findByLabelText('First name');
+    await userEvent.type(fieldByLabel('Service address'), 'nue');
+    await userEvent.click(await screen.findByRole('button', { name: /Bark House/ }));
+    await waitFor(() => expect(fieldByLabel('Service address')).toHaveValue('123 Bark Ave, Austin TX 78701'));
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() =>
+      expect(updateKinfolkProfile).toHaveBeenCalledWith(
+        'kf1',
+        expect.objectContaining({ serviceAddress: '123 Bark Ave, Austin TX 78701' }),
+      ),
+    );
+  });
+  it('saves a hand-typed address after a failed lookup (autofill never blocks the save)', async () => {
+    mapboxSuggest.mockRejectedValue(new Error('mapbox_502'));
+    mount();
+    await screen.findByLabelText('First name');
+    await userEvent.type(fieldByLabel('Service address'), 'nue, Austin TX');
+    expect(await screen.findByText(/address lookup failed: mapbox_502/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() =>
+      expect(updateKinfolkProfile).toHaveBeenCalledWith(
+        'kf1',
+        expect.objectContaining({ serviceAddress: '123 Bark Avenue, Austin TX' }),
+      ),
+    );
+  });
+});
+describe('KinfolkEdit: vet clinic picker (#13)', () => {
+  it('offers a searchable catalog rather than plain clinic text boxes', async () => {
+    mount();
+    await screen.findByLabelText('First name');
+    expect(screen.getByLabelText('Vet clinic')).toHaveAttribute('placeholder', 'Type to search 2 clinics');
+    expect(screen.queryByLabelText('Clinic name')).not.toBeInTheDocument();
+  });
+  it('filters the EMERGENCY picker to emergency-flagged clinics only', async () => {
+    mount();
+    await screen.findByLabelText('First name');
+    // One of the two catalog rows is flagged, so the emergency box says one.
+    expect(screen.getByLabelText('Emergency vet')).toHaveAttribute(
+      'placeholder',
+      'Type to search 1 clinics',
+    );
+    await userEvent.type(screen.getByLabelText('Emergency vet'), 'a');
+    const names = screen.getAllByTestId('vetpick-option').map((el) => el.textContent).join('|');
+    expect(names).toContain('Austin Pet ER');
+    expect(names).not.toContain('Riverside');
+  });
+  it('saves the clinic id ALONGSIDE the denormalized name, phone and address', async () => {
+    mount();
+    await screen.findByLabelText('First name');
+    await userEvent.type(screen.getByLabelText('Vet clinic'), 'riverside');
+    await userEvent.click(screen.getByRole('button', { name: /Riverside Animal Hospital/ }));
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() =>
+      expect(updateKinfolkProfile).toHaveBeenCalledWith(
+        'kf1',
+        expect.objectContaining({
+          vetClinicId: 'riverside',
+          vetClinicName: 'Riverside Animal Hospital',
+          vetClinicPhone: '(512) 555-0100',
+          vetClinicAddress: '1 Mill St',
+        }),
+      ),
+    );
+  });
+  it('saves an emergency vet into its own four fields', async () => {
+    mount();
+    await screen.findByLabelText('First name');
+    await userEvent.type(screen.getByLabelText('Emergency vet'), 'austin');
+    await userEvent.click(screen.getByRole('button', { name: /Austin Pet ER/ }));
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() =>
+      expect(updateKinfolkProfile).toHaveBeenCalledWith(
+        'kf1',
+        expect.objectContaining({
+          emergencyVetClinicId: 'er1',
+          emergencyVetClinicName: 'Austin Pet ER',
+          emergencyVetClinicPhone: '(512) 555-0300',
+          emergencyVetClinicAddress: '4 Night Ln',
+        }),
+      ),
+    );
+  });
+});
+describe('KinfolkEdit: LEGACY string-only vet fields', () => {
+  /**
+   * Every household on file predates `vetClinicId`. The picker has to open,
+   * render the name that is there, and save it back untouched, without ever
+   * treating "no id" as "no vet".
+   */
+  it('renders a legacy household whose vet is a bare string, with no crash', async () => {
+    mount({
+      vetClinicName: 'Old Corner Vet',
+      vetClinicPhone: 'after hours: 512-555-0000',
+      vetClinicAddress: 'behind the feed store',
+    });
+    await screen.findByLabelText('First name');
+    const selected = screen.getAllByTestId('vetpick-selected')[0]!;
+    expect(selected).toHaveTextContent('Old Corner Vet');
+    expect(selected).toHaveTextContent('after hours: 512-555-0000');
+    expect(screen.getByText(/not linked to the shared catalog/i)).toBeInTheDocument();
+  });
+  it('saves a legacy household unchanged, with an empty id rather than a fabricated one', async () => {
+    mount({ vetClinicName: 'Old Corner Vet', vetClinicPhone: '512-555-0000' });
+    await screen.findByLabelText('First name');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() =>
+      expect(updateKinfolkProfile).toHaveBeenCalledWith(
+        'kf1',
+        expect.objectContaining({
+          vetClinicId: '',
+          vetClinicName: 'Old Corner Vet',
+          vetClinicPhone: '512-555-0000',
+        }),
+      ),
+    );
+  });
+  it('renders a household with NO vet at all, and no linkage warning', async () => {
+    mount();
+    await screen.findByLabelText('First name');
+    expect(screen.queryAllByTestId('vetpick-selected')).toHaveLength(0);
+    expect(screen.queryByText(/not linked to the shared catalog/i)).not.toBeInTheDocument();
+  });
+  /**
+   * A catalog outage is not missing household data. The clinic on file must
+   * still be visible and still save; only SEARCHING is unavailable.
+   */
+  it('still shows and saves the vet on file when the clinic catalog fails to load', async () => {
+    useCollection.mockReturnValue({ status: 'error', message: 'permission-denied', retry: vi.fn() });
+    mount({ vetClinicName: 'Old Corner Vet', vetClinicPhone: '512-555-0000' });
+    await screen.findByLabelText('First name');
+    expect(screen.getByText(/shared clinic catalog didn't load/i)).toBeInTheDocument();
+    expect(screen.getAllByTestId('vetpick-selected')[0]).toHaveTextContent('Old Corner Vet');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() =>
+      expect(updateKinfolkProfile).toHaveBeenCalledWith(
+        'kf1',
+        expect.objectContaining({ vetClinicName: 'Old Corner Vet', vetClinicId: '' }),
+      ),
+    );
+  });
+});
 describe('KinfolkEdit: join date', () => {
   it('is a date picker, not a free text box', async () => {
     mount({ joinDate: '2026-07-24' });

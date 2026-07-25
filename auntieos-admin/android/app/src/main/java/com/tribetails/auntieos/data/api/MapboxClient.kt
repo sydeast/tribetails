@@ -1,28 +1,25 @@
 package com.tribetails.auntieos.data.api
 
 import com.tribetails.auntieos.data.repository.AuntieRepository
-import com.tribetails.auntieos.util.AuntieLog
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 
 /**
- * Function-proxied Mapbox Search Box client. Mirrors the web `MapboxClient`
- * shape exactly so the same `/api/mapbox/sign-search` + `/api/mapbox/retrieve`
- * Functions handle both platforms. Secret access token never ships in the
- * Android bundle.
+ * Mapbox Search Box client, backed by the MyTribe `mapboxSearch` /
+ * `mapboxRetrieve` callables. No Mapbox key ships in this app.
  *
- * Session-token rules per Mapbox billing: callers reuse the same
- * [sessionToken] across keystrokes for one search session, then call
- * [retrieve] with the same token when the user picks a suggestion.
+ * MIGRATED 2026-07-25. This class previously POSTed to
+ * `https://auntieos-ttpc.web.app/api/mapbox/sign-search`, a hosting rewrite in
+ * the retired `auntieos-admin/web` tree, with a hand-built bearer header off
+ * `currentAdminIdToken`. Those are now two deployed onCall functions in the
+ * mytribe codebase holding `MAPBOX_ACCESS_TOKEN` as a Functions secret, reached
+ * through the same FirebaseFunctions instance as every other callable, so auth
+ * is the SDK's job rather than a hand-rolled Authorization header.
+ *
+ * Session-token rules per Mapbox billing: one token per search session, reused
+ * across every [suggest] keystroke, handed to [retrieve] for the picked
+ * suggestion, and rotated only after that. A fresh token per keystroke bills
+ * each keystroke as its own session.
  */
 class MapboxClient(private val repository: AuntieRepository) {
-    private val http = OkHttpClient()
-    private val baseUrl = "https://auntieos-ttpc.web.app"
 
     sealed class SuggestResult {
         data class Ok(val suggestions: List<MapboxSuggestion>) : SuggestResult()
@@ -35,95 +32,16 @@ class MapboxClient(private val repository: AuntieRepository) {
     }
 
     suspend fun suggest(query: String, sessionToken: String, limit: Int = 5): SuggestResult =
-        withContext(Dispatchers.IO) {
-            val idToken = repository.currentAdminIdToken(forceRefresh = false).getOrElse {
-                return@withContext SuggestResult.Err("Admin sign-in required")
-            }
-            val payload = JSONObject()
-                .put("query", query)
-                .put("sessionToken", sessionToken)
-                .put("limit", limit)
-                .toString()
-            try {
-                val req = Request.Builder()
-                    .url("$baseUrl/api/mapbox/sign-search")
-                    .header("Authorization", "Bearer $idToken")
-                    .post(payload.toRequestBody("application/json".toMediaTypeOrNull()))
-                    .build()
-                http.newCall(req).execute().use { resp ->
-                    val body = resp.body?.string().orEmpty()
-                    if (!resp.isSuccessful) {
-                        return@withContext SuggestResult.Err("Mapbox lookup failed (HTTP ${resp.code})")
-                    }
-                    SuggestResult.Ok(parseSuggestions(JSONObject(body)))
-                }
-            } catch (t: Throwable) {
-                AuntieLog.e("Mapbox suggest failed", t)
-                SuggestResult.Err(t.message ?: "Mapbox lookup failed")
-            }
-        }
+        repository.mapboxSuggest(query, sessionToken, limit).fold(
+            onSuccess = { SuggestResult.Ok(it) },
+            onFailure = { SuggestResult.Err(it.message ?: "Mapbox lookup failed") },
+        )
 
     suspend fun retrieve(mapboxId: String, sessionToken: String): RetrieveResult =
-        withContext(Dispatchers.IO) {
-            val idToken = repository.currentAdminIdToken(forceRefresh = false).getOrElse {
-                return@withContext RetrieveResult.Err("Admin sign-in required")
-            }
-            val payload = JSONObject()
-                .put("mapboxId", mapboxId)
-                .put("sessionToken", sessionToken)
-                .toString()
-            try {
-                val req = Request.Builder()
-                    .url("$baseUrl/api/mapbox/retrieve")
-                    .header("Authorization", "Bearer $idToken")
-                    .post(payload.toRequestBody("application/json".toMediaTypeOrNull()))
-                    .build()
-                http.newCall(req).execute().use { resp ->
-                    val body = resp.body?.string().orEmpty()
-                    if (!resp.isSuccessful) {
-                        return@withContext RetrieveResult.Err("Mapbox retrieve failed (HTTP ${resp.code})")
-                    }
-                    val featureObj = JSONObject(body).optJSONObject("feature")
-                        ?: return@withContext RetrieveResult.Err("Mapbox returned no feature")
-                    RetrieveResult.Ok(parseFeature(featureObj))
-                }
-            } catch (t: Throwable) {
-                AuntieLog.e("Mapbox retrieve failed", t)
-                RetrieveResult.Err(t.message ?: "Mapbox retrieve failed")
-            }
-        }
-
-    private fun parseSuggestions(json: JSONObject): List<MapboxSuggestion> {
-        val arr = json.optJSONArray("suggestions") ?: return emptyList()
-        val out = ArrayList<MapboxSuggestion>(arr.length())
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            out.add(
-                MapboxSuggestion(
-                    name           = o.optString("name"),
-                    fullAddress    = o.optString("full_address"),
-                    mapboxId       = o.optString("mapbox_id"),
-                    placeFormatted = o.optString("place_formatted"),
-                )
-            )
-        }
-        return out
-    }
-
-    private fun parseFeature(o: JSONObject): MapboxFeature {
-        val geom = o.optJSONObject("geometry")
-        val props = o.optJSONObject("properties")
-        val coords = geom?.optJSONArray("coordinates")
-        val lng = coords?.optDouble(0, 0.0) ?: 0.0
-        val lat = coords?.optDouble(1, 0.0) ?: 0.0
-        return MapboxFeature(
-            name           = props?.optString("name").orEmpty(),
-            fullAddress    = props?.optString("full_address").orEmpty(),
-            placeFormatted = props?.optString("place_formatted").orEmpty(),
-            longitude      = lng,
-            latitude       = lat,
+        repository.mapboxRetrieve(mapboxId, sessionToken).fold(
+            onSuccess = { RetrieveResult.Ok(it) },
+            onFailure = { RetrieveResult.Err(it.message ?: "Mapbox retrieve failed") },
         )
-    }
 }
 
 data class MapboxSuggestion(
@@ -143,6 +61,11 @@ data class MapboxFeature(
     val resolvedAddress: String get() = fullAddress.ifBlank { name }
 }
 
+/**
+ * 32-char hex session token for Mapbox Search Box billing grouping. Only needs
+ * uniqueness within one search session, not crypto strength: it is a billing
+ * key, not a secret.
+ */
 internal fun newMapboxSessionToken(): String {
     val chars = "0123456789abcdef"
     return buildString(32) { repeat(32) { append(chars.random()) } }

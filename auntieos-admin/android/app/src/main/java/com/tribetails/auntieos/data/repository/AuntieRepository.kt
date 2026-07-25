@@ -2601,14 +2601,112 @@ class AuntieRepository(
         awaitClose { reg.remove() }
     }
 
-    suspend fun createVetClinic(clinic: VetClinic): Result<String> = runCatching {
+    /**
+     * Add a clinic to the shared catalog through the deployed `submitVetClinic`
+     * callable rather than a direct `vet_clinics` write.
+     *
+     * The rules would permit the direct write (`write: if isAuntie()`), and this
+     * used to do exactly that. The callable is preferred because it already owns
+     * the piece a client cannot: it dedupes on a NORMALIZED clinic name and
+     * returns the EXISTING id on a match, which is what keeps three spellings of
+     * one hospital out of a bank shared with the kinfolk portal. A direct write
+     * reimplements that check on the client, where it races and drifts. Kinfolk
+     * submissions already flow through this callable; sending the admin's
+     * through it too means one dedupe rule for the whole product.
+     *
+     * A staff caller lands `verified: true` server-side (RULING O-6 `isStaff`),
+     * so a clinic the operator adds is live for households immediately rather
+     * than queued for the operator's own approval.
+     *
+     * Returns the clinic id, whether newly created or matched.
+     */
+    suspend fun submitVetClinic(clinic: VetClinic): Result<String> = runCatching {
         ensureAuthenticated()
-        val ts = getCurrentTimestamp()
-        val ref = firestore.collection("vet_clinics").document()
-        val toWrite = clinic.copy(id = ref.id, createdAt = ts, updatedAt = ts)
-        ref.set(toWrite).await()
-        ref.id
-    }.onFailure { AuntieLog.e("Failed to create vet clinic", it) }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("submitVetClinic")
+            .call(
+                mapOf(
+                    "name" to clinic.name.trim(),
+                    "phone" to clinic.phone.trim(),
+                    "address" to clinic.address.trim(),
+                    "website" to clinic.website.trim(),
+                    "isEmergency" to clinic.isEmergency,
+                )
+            )
+            .await().data as? Map<String, Any?>
+            ?: error("submitVetClinic: non-map payload")
+        (raw["clinicId"] as? String).orEmpty().ifBlank { error("submitVetClinic: no clinicId") }
+    }.onFailure { AuntieLog.e("Failed to submit vet clinic", it) }
+
+    // ---- Mapbox Search Box, proxied (no Mapbox key ships in this app) ----
+
+    /**
+     * Address suggestions via the deployed `mapboxSearch` callable, which holds
+     * MAPBOX_ACCESS_TOKEN as a Functions secret. See [MapboxClient] for the
+     * session-token billing rule callers must honor.
+     */
+    suspend fun mapboxSuggest(
+        query: String,
+        sessionToken: String,
+        limit: Int = 5,
+    ): Result<List<com.tribetails.auntieos.data.api.MapboxSuggestion>> = runCatching {
+        ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("mapboxSearch")
+            .call(
+                mapOf(
+                    "query" to query,
+                    "sessionToken" to sessionToken,
+                    "limit" to limit,
+                    // One metro. Unfiltered results put a same-named street in
+                    // another country at the top of the list.
+                    "country" to "us",
+                )
+            )
+            .await().data as? Map<String, Any?>
+            ?: error("mapboxSearch: non-map payload")
+        (raw["suggestions"] as? List<*>).orEmpty().mapNotNull { row ->
+            val o = row as? Map<*, *> ?: return@mapNotNull null
+            com.tribetails.auntieos.data.api.MapboxSuggestion(
+                name = (o["name"] as? String).orEmpty(),
+                fullAddress = (o["full_address"] as? String).orEmpty(),
+                mapboxId = (o["mapbox_id"] as? String).orEmpty(),
+                placeFormatted = (o["place_formatted"] as? String).orEmpty(),
+            )
+        }
+    }.onFailure { AuntieLog.e("mapboxSearch failed", it) }
+
+    /**
+     * Resolve a picked suggestion via `mapboxRetrieve`. Must carry the SAME
+     * session token the suggests used, or Mapbox bills a second session.
+     *
+     * A feature with no usable address FAILS rather than resolving to blank:
+     * writing an empty string back would erase the address the operator typed.
+     */
+    suspend fun mapboxRetrieve(
+        mapboxId: String,
+        sessionToken: String,
+    ): Result<com.tribetails.auntieos.data.api.MapboxFeature> = runCatching {
+        ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("mapboxRetrieve")
+            .call(mapOf("mapboxId" to mapboxId, "sessionToken" to sessionToken))
+            .await().data as? Map<String, Any?>
+            ?: error("mapboxRetrieve: non-map payload")
+        val feature = raw["feature"] as? Map<*, *> ?: error("Mapbox returned no address for that suggestion.")
+        val props = feature["properties"] as? Map<*, *>
+        val geometry = feature["geometry"] as? Map<*, *>
+        val coords = geometry?.get("coordinates") as? List<*>
+        val parsed = com.tribetails.auntieos.data.api.MapboxFeature(
+            name = (props?.get("name") as? String).orEmpty(),
+            fullAddress = (props?.get("full_address") as? String).orEmpty(),
+            placeFormatted = (props?.get("place_formatted") as? String).orEmpty(),
+            longitude = (coords?.getOrNull(0) as? Number)?.toDouble() ?: 0.0,
+            latitude = (coords?.getOrNull(1) as? Number)?.toDouble() ?: 0.0,
+        )
+        if (parsed.resolvedAddress.isBlank()) error("Mapbox returned no address for that suggestion.")
+        parsed
+    }.onFailure { AuntieLog.e("mapboxRetrieve failed", it) }
 
     /**
      * Walk the activity_log SHA-256 hash chain server-side via the deployed

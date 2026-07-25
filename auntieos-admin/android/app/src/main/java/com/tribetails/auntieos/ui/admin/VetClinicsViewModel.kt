@@ -46,8 +46,17 @@ class VetClinicsViewModel(
         _error.value = result.exceptionOrNull()?.let { "$label: ${it.message}" }
     }
 
+    /**
+     * Adds through `submitVetClinic` rather than the direct `vet_clinics` write
+     * this used to do. That callable dedupes on a NORMALIZED name and returns
+     * the existing id on a match, so adding a clinic the bank already holds
+     * under a different capitalisation no longer creates a second copy of it in
+     * a catalog shared with the kinfolk portal. Staff callers land verified, so
+     * an operator-added clinic is live immediately and does not queue itself for
+     * the operator's own approval below.
+     */
     fun add(clinic: VetClinic) =
-        viewModelScope.launch { report("Couldn't add ${clinic.name}", repository.createVetClinic(clinic)) }
+        viewModelScope.launch { report("Couldn't add ${clinic.name}", repository.submitVetClinic(clinic)) }
 
     fun save(clinic: VetClinic) =
         viewModelScope.launch { report("Couldn't save ${clinic.name}", repository.updateVetClinic(clinic)) }

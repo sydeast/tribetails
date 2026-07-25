@@ -45,4 +45,83 @@ class VetClinicSuggestionsTest {
     @Test fun noMatch_isEmpty() {
         assertEquals(emptyList<VetClinic>(), vetClinicSuggestions("zzzzz", catalog))
     }
+    // ── parity with the web picker (operator issue #13) ──────────────────────
+    @Test fun emergencyFilter_keepsOnlyFlaggedClinics() {
+        val mixed = listOf(
+            VetClinic(name = "Allandale Veterinary Clinic"),
+            VetClinic(name = "Austin Pet ER", isEmergency = true),
+            VetClinic(name = "Night Owl Animal Hospital", isEmergency = true),
+        )
+        assertEquals(
+            listOf("Austin Pet ER", "Night Owl Animal Hospital"),
+            emergencyVetClinics(mixed).map { it.name },
+        )
+    }
+    @Test fun emergencyFilter_onACatalogWithNoneIsEmptyNotEverything() {
+        assertEquals(emptyList<VetClinic>(), emergencyVetClinics(catalog))
+    }
+    /**
+     * The pinned create button quotes the query. It must show the TRIMMED text,
+     * because that is what will be sent as the clinic name.
+     */
+    @Test fun createLabel_quotesTheTrimmedQuery() {
+        assertEquals(
+            "Create \"Barton Springs\" as a new vet clinic",
+            createVetClinicLabel("  Barton Springs  "),
+        )
+    }
+    /**
+     * The button is offered whenever anything is typed, INCLUDING when nothing
+     * matched, which is exactly the case it exists for. Blank query only means
+     * nothing has been typed yet.
+     */
+    @Test fun createButton_isOfferedWheneverSomethingIsTypedEvenWithZeroMatches() {
+        assertTrue(shouldOfferVetClinicCreate("zzzzz", catalog))
+        assertEquals(emptyList<VetClinic>(), vetClinicSuggestions("zzzzz", catalog))
+        assertTrue(shouldOfferVetClinicCreate("an", catalog))
+    }
+    @Test fun createButton_isNotOfferedBeforeAnythingIsTyped() {
+        assertTrue(!shouldOfferVetClinicCreate("", catalog))
+        assertTrue(!shouldOfferVetClinicCreate("   ", catalog))
+    }
+    // ── committed selection (no free text, parity with web) ──────────────────
+    @Test fun selectionOfACatalogClinic_stampsTheIdAndDenormalizesTheRest() {
+        val clinic = VetClinic(
+            id = "riverside",
+            name = "  Riverside Animal Hospital  ",
+            phone = " (512) 555-0100 ",
+            address = " 1 Mill St ",
+        )
+        val sel = vetClinicSelectionOf(clinic)
+        assertEquals("riverside", sel.clinicId)
+        assertEquals("Riverside Animal Hospital", sel.name)
+        assertEquals("(512) 555-0100", sel.phone)
+        assertEquals("1 Mill St", sel.address)
+        assertTrue(sel.hasSelection)
+        assertTrue(!sel.unlinked)
+    }
+    @Test fun emptySelection_hasNothingAndIsNotUnlinked() {
+        val sel = EMPTY_VET_CLINIC_SELECTION
+        assertTrue(!sel.hasSelection)
+        assertTrue(!sel.unlinked)
+        assertEquals("", sel.detail)
+    }
+    /**
+     * Every household written before the picker holds the strings and NO id.
+     * That is a valid, renderable selection, not a broken one.
+     */
+    @Test fun legacySelection_isAValidSelectionMarkedUnlinked() {
+        val sel = VetClinicSelection(name = "Old Corner Vet", phone = "512-555-0000")
+        assertTrue(sel.hasSelection)
+        assertTrue(sel.unlinked)
+        assertEquals("512-555-0000", sel.detail)
+    }
+    @Test fun detail_joinsPhoneAndAddressAndSkipsWhicheverIsMissing() {
+        assertEquals(
+            "(512) 555-0100 · 1 Mill St",
+            VetClinicSelection(clinicId = "c", name = "N", phone = "(512) 555-0100", address = "1 Mill St").detail,
+        )
+        assertEquals("1 Mill St", VetClinicSelection(clinicId = "c", name = "N", address = "1 Mill St").detail)
+        assertEquals("", VetClinicSelection(clinicId = "c", name = "N").detail)
+    }
 }

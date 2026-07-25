@@ -222,12 +222,25 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkP
                 </DenPanel>
               )}
 
+              {/* Keyed on the NAMES, not the ids: a legacy household has the
+                  names with no `vetClinicId`, and gating on the id would hide
+                  the vet on every record that predates the picker. */}
               {any(p.vetClinicName, p.vetClinicAddress, p.vetClinicPhone) && (
                 <DenPanel title="Vet clinic">
                   <dl className="kprofile__facts">
                     <Fact label="Clinic" value={p.vetClinicName} />
                     <Fact label="Address" value={p.vetClinicAddress} />
                     <Fact label="Phone" value={p.vetClinicPhone} mono />
+                  </dl>
+                </DenPanel>
+              )}
+
+              {any(p.emergencyVetClinicName, p.emergencyVetClinicAddress, p.emergencyVetClinicPhone) && (
+                <DenPanel title="Emergency vet" subtitle="The 24 hour clinic for this household.">
+                  <dl className="kprofile__facts">
+                    <Fact label="Clinic" value={p.emergencyVetClinicName} />
+                    <Fact label="Address" value={p.emergencyVetClinicAddress} />
+                    <Fact label="Phone" value={p.emergencyVetClinicPhone} mono />
                   </dl>
                 </DenPanel>
               )}

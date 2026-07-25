@@ -125,9 +125,18 @@ fun AddKinfolkScreen(
                             onSelect = viewModel::updateAddStatus,
                         )
 
+                        // Mapbox lookup runs through the mapboxSearch /
+                        // mapboxRetrieve callables; the view model owns the
+                        // debounce and the session token. No key in this app.
+                        val addressSuggestions by viewModel.addressSuggestions.collectAsState()
+                        val addressError by viewModel.addressError.collectAsState()
                         AddressAutocompleteField(
                             value = state.serviceAddress,
                             onValueChange = viewModel::updateServiceAddress,
+                            suggestions = addressSuggestions,
+                            onQueryChange = viewModel::queryAddressSuggestions,
+                            onPick = viewModel::pickAddressSuggestionForAdd,
+                            errorMessage = addressError,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
