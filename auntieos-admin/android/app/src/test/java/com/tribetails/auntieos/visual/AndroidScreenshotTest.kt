@@ -301,7 +301,7 @@ class AndroidScreenshotTest {
         coEvery { repo.observeVoicemails() } returns flowOf(AndroidDemoFixtures.voicemails)
         coEvery { repo.observeCalls() } returns flowOf(AndroidDemoFixtures.calls)
         coEvery { repo.observeSmsMessages() } returns flowOf(AndroidDemoFixtures.sms)
-        coEvery { repo.getEmails() } returns Result.success(AndroidDemoFixtures.emails)
+        every { repo.observeEmails() } returns flowOf(AndroidDemoFixtures.emails)
         coEvery { repo.listConversations() } returns Result.success(emptyList())
         val vm = InboxViewModel(repo) // init auto-collects all four channels inline.
         compose.setContent {

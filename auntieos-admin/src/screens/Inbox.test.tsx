@@ -34,10 +34,27 @@ vi.mock('../api/inboxThread', async (orig) => ({
   getConversationThread,
 }));
 
-// The Notifications digest strip reads the SAME bounded `notifications` listener
-// the Notifications screen uses (NOTIFICATIONS_QUERY via lib/firestore).
+// FIVE bounded listeners come through this hook now: the Notifications digest
+// strip (NOTIFICATIONS_QUERY, the same one the Notifications screen uses) and
+// the four Channels streams added by Task 6.1. The mock therefore dispatches on
+// `spec.path` rather than answering every call the same way: a single
+// mockReturnValue would hand notification documents to the voicemail mapper.
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+
+// The channel rows open this sheet, whose own behaviour is covered in
+// components/ThreadActionsCard.test.tsx. Stubbed to a marker here so these
+// tests assert the LIST's wiring, not the sheet's internals.
+vi.mock('../components/ThreadActionsCard', () => ({
+  ThreadActionsCard: ({ entry, onClose }: { entry: { id: string }; onClose: () => void }) => (
+    <div data-testid="thread-actions">
+      <span>actions for {entry.id}</span>
+      <button type="button" onClick={onClose}>
+        Dismiss actions
+      </button>
+    </div>
+  ),
+}));
 
 const { bulkMarkNotificationsRead } = vi.hoisted(() => ({ bulkMarkNotificationsRead: vi.fn() }));
 vi.mock('../api/notifications', async (orig) => ({
@@ -63,9 +80,6 @@ function notif(over: Partial<NotificationEntry>): NotificationEntry {
   };
 }
 
-function notifications(data: NotificationEntry[]): Async<NotificationEntry[]> {
-  return { status: 'ready', data };
-}
 
 function thread(over: Partial<ConversationSummary>): ConversationSummary {
   return {
@@ -80,11 +94,29 @@ function thread(over: Partial<ConversationSummary>): ConversationSummary {
   };
 }
 
+/** The five collection paths this screen listens to, keyed for the mock below. */
+type StreamPath = 'notifications' | 'voicemails' | 'calls_log' | 'sms_messages' | 'emails';
+
+/**
+ * Per-path listener states. Anything a test does not name resolves READY AND
+ * EMPTY, which is the honest default: the section then renders its proven-empty
+ * state rather than a spinner that never finishes.
+ */
+function streams(over: Partial<Record<StreamPath, Async<unknown[]>>> = {}) {
+  const empty: Async<unknown[]> = { status: 'ready', data: [] };
+  useCollection.mockImplementation((spec: { path: string }) => {
+    return over[spec.path as StreamPath] ?? empty;
+  });
+}
+
+const ready = (data: unknown[]): Async<unknown[]> => ({ status: 'ready', data });
+
 beforeEach(() => {
   listConversations.mockReset();
-  // Default: the notifications strip resolves empty, so the message-thread
-  // assertions below are unaffected by it unless a test says otherwise.
-  useCollection.mockReset().mockReturnValue(notifications([]));
+  // Default: every listener resolves empty, so the message-thread assertions
+  // below are unaffected by them unless a test says otherwise.
+  useCollection.mockReset();
+  streams();
   bulkMarkNotificationsRead.mockReset().mockResolvedValue(1);
 });
 
@@ -176,7 +208,7 @@ describe('Inbox screen', () => {
       thread({ kinfolkId: 'k1', unreadForAdmin: true }),
       thread({ kinfolkId: 'k2', unreadForAdmin: false }),
     ]);
-    useCollection.mockReturnValue({ status: 'loading' } satisfies Async<NotificationEntry[]>);
+    streams({ notifications: { status: 'loading' } });
     render(<Inbox />);
     // Not present while BOTH sections are still loading (asyncScalar-style: a
     // claim only once something has actually resolved).
@@ -295,32 +327,23 @@ describe('Inbox screen', () => {
 
 /**
  * Task 2.2: the archive stacked Notifications above Messages on one Inbox
- * screen. These pin the section STRUCTURE and the cross-section unread total.
- * The Channels region is deliberately absent until Task 6.1 has real streams to
- * put in it (see the seam note in Inbox.tsx).
+ * screen, with Channels below them (added by Task 6.1). These pin the section
+ * STRUCTURE and the cross-section unread total.
  */
 describe('Inbox sections', () => {
   it('stacks the Notifications digest above Messages', async () => {
     listConversations.mockResolvedValue([thread({})]);
-    useCollection.mockReturnValue(notifications([notif({})]));
+    streams({ notifications: ready([notif({})]) });
     render(<Inbox />);
     await screen.findByText('The Alvarez Household');
 
     const titles = [...document.querySelectorAll('.den-panel-title')].map((n) => n.textContent);
-    expect(titles).toEqual(['Notifications', 'Messages']);
-  });
-
-  it('ships no Channels region while Task 6.1 has nothing to put in it', async () => {
-    listConversations.mockResolvedValue([thread({})]);
-    render(<Inbox />);
-    await screen.findByText('The Alvarez Household');
-    expect(screen.queryByText(/channels/i)).toBeNull();
-    expect(screen.queryByText(/coming soon/i)).toBeNull();
+    expect(titles).toEqual(['Notifications', 'Messages', 'Channels']);
   });
 
   it('renders the unread notifications the digest is given', async () => {
     listConversations.mockResolvedValue([]);
-    useCollection.mockReturnValue(notifications([notif({ _id: 'n1', title: 'Invoice overdue' })]));
+    streams({ notifications: ready([notif({ _id: 'n1', title: 'Invoice overdue' })]) });
     render(<Inbox />);
     expect(await screen.findByText('Invoice overdue')).toBeInTheDocument();
   });
@@ -330,9 +353,7 @@ describe('Inbox sections', () => {
       thread({ kinfolkId: 'k1', unreadForAdmin: true }),
       thread({ kinfolkId: 'k2', unreadForAdmin: true }),
     ]);
-    useCollection.mockReturnValue(
-      notifications([notif({ _id: 'n1' }), notif({ _id: 'n2' }), notif({ _id: 'n3' })]),
-    );
+    streams({ notifications: ready([notif({ _id: 'n1' }), notif({ _id: 'n2' }), notif({ _id: 'n3' })]) });
     render(<Inbox />);
     // 3 unread notifications + 2 unread threads.
     expect(await screen.findByText('5 unread')).toBeInTheDocument();
@@ -340,17 +361,14 @@ describe('Inbox sections', () => {
 
   it('counts a resolved section even while the other is still loading, and never fabricates the missing half', async () => {
     listConversations.mockReturnValue(new Promise(() => {})); // never settles
-    useCollection.mockReturnValue(notifications([notif({ _id: 'n1' }), notif({ _id: 'n2' })]));
+    streams({ notifications: ready([notif({ _id: 'n1' }), notif({ _id: 'n2' })]) });
     render(<Inbox />);
     expect(await screen.findByText('2 unread')).toBeInTheDocument();
   });
 
   it('a failed notifications stream does not blank the Messages section', async () => {
     listConversations.mockResolvedValue([thread({})]);
-    useCollection.mockReturnValue({
-      status: 'error',
-      message: 'notifications listener detached',
-    } satisfies Async<NotificationEntry[]>);
+    streams({ notifications: { status: 'error', message: 'notifications listener detached' } });
     render(<Inbox />);
     expect(await screen.findByText('The Alvarez Household')).toBeInTheDocument();
     expect(screen.getByText(/notifications listener detached/)).toBeInTheDocument();
@@ -358,7 +376,7 @@ describe('Inbox sections', () => {
 
   it('a failed conversations load does not blank the Notifications section', async () => {
     listConversations.mockRejectedValue(new Error('permission-denied'));
-    useCollection.mockReturnValue(notifications([notif({ _id: 'n1', title: 'Still here' })]));
+    streams({ notifications: ready([notif({ _id: 'n1', title: 'Still here' })]) });
     render(<Inbox />);
     expect(await screen.findByText(/listConversations failed: permission-denied/)).toBeInTheDocument();
     expect(screen.getByText('Still here')).toBeInTheDocument();
@@ -374,11 +392,200 @@ describe('Inbox sections', () => {
 
   it('bulk mark-read from the digest reaches bulkMarkNotificationsRead', async () => {
     listConversations.mockResolvedValue([]);
-    useCollection.mockReturnValue(notifications([notif({ _id: 'n1' })]));
+    streams({ notifications: ready([notif({ _id: 'n1' })]) });
     render(<Inbox />);
     const digest = (await screen.findByText('Notifications')).closest('section') as HTMLElement;
     await userEvent.click(within(digest).getAllByRole('checkbox')[0] as HTMLElement);
     await userEvent.click(within(digest).getByRole('button', { name: 'Mark read (1)' }));
     expect(bulkMarkNotificationsRead).toHaveBeenCalledWith(['n1']);
+  });
+});
+/**
+ * Task 6.1: the four external channel streams and the unified list.
+ *
+ * Every listener here comes through `useCollection`, which is the ONLY reason a
+ * Stage-0I sandbox account is safe on this screen: all four collections are
+ * `isAuntie()`-only and already listed in `SUPPRESSED_IN_TEST_MODE`, and that
+ * suppression lives inside the hook. `channelsUseCollectionPaths` below pins
+ * that the screen never reaches around it.
+ */
+describe('Inbox channels', () => {
+  const voicemail = (over: Record<string, unknown> = {}) => ({
+    _id: 'vm1',
+    kinfolkName: 'The Alvarez Household',
+    callerNumber: '+15551234567',
+    transcript: 'Can you come Thursday?',
+    audioUrl: 'https://api.twilio.com/rec1',
+    timestamp: '2026-07-20T14:00:00.000Z',
+    replyStatus: 'unread',
+    ...over,
+  });
+  it('opens exactly the four bounded channel listeners, all through useCollection', async () => {
+    listConversations.mockResolvedValue([]);
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    const specs = useCollection.mock.calls.map((c) => c[0] as { path: string; order: [string, string]; max: number });
+    const channels = specs.filter((s) => s.path !== 'notifications');
+    expect([...new Set(channels.map((s) => s.path))].sort()).toEqual([
+      'calls_log',
+      'emails',
+      'sms_messages',
+      'voicemails',
+    ]);
+    // Bounded and server-ordered by construction (closes AO-29), and ordered on
+    // the ISO-STRING `timestamp` every writer stamps, never on a Timestamp
+    // bound, which would match nothing and would not error.
+    for (const s of channels) {
+      expect(s.order).toEqual(['timestamp', 'desc']);
+      expect(s.max).toBe(200);
+    }
+  });
+  it('merges the four streams into one list, newest first', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({
+      voicemails: ready([voicemail({ _id: 'vm1', timestamp: '2026-07-20T10:00:00.000Z' })]),
+      calls_log: ready([
+        { _id: 'c1', kinfolkName: 'Okafor Household', status: 'missed', timestamp: '2026-07-20T13:00:00.000Z' },
+      ]),
+      sms_messages: ready([
+        { _id: 's1', kinfolkName: 'Bell Household', body: 'See you then', timestamp: '2026-07-20T12:00:00.000Z' },
+      ]),
+      emails: ready([
+        { _id: 'm1', kinfolkName: 'Diaz Household', subject: 'Invoice', timestamp: '2026-07-20T11:00:00.000Z' },
+      ]),
+    });
+    render(<Inbox />);
+    const panel = (await screen.findByText('Channels')).closest('section') as HTMLElement;
+    const names = [...panel.querySelectorAll('.inbox__row-name')].map((n) => n.textContent);
+    expect(names).toEqual(['Okafor Household', 'Bell Household', 'Diaz Household', 'The Alvarez Household']);
+  });
+  it('filters to one channel, and back to all', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({
+      voicemails: ready([voicemail()]),
+      calls_log: ready([{ _id: 'c1', kinfolkName: 'Okafor Household', timestamp: '2026-07-20T13:00:00.000Z' }]),
+    });
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    await userEvent.click(screen.getByRole('tab', { name: 'Voicemails' }));
+    expect(screen.queryByText('Okafor Household')).toBeNull();
+    expect(screen.getByText('Can you come Thursday?')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'All channels' }));
+    expect(screen.getByText('Okafor Household')).toBeInTheDocument();
+  });
+  it('says so honestly when a filtered channel has nothing on it', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({ voicemails: ready([voicemail()]) });
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    await userEvent.click(screen.getByRole('tab', { name: 'Emails' }));
+    expect(screen.getByText('Nothing on this channel yet.')).toBeInTheDocument();
+  });
+  /**
+   * Four streams, four independent outcomes. Collapsing them into one state
+   * would let the worst of them decide what the operator sees.
+   */
+  it('names a single failing stream and still renders the three that loaded', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({
+      voicemails: ready([voicemail()]),
+      emails: { status: 'error', message: 'Missing or insufficient permissions.' },
+    });
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    expect(screen.getByText(/Couldn.t load emails: Missing or insufficient permissions\./)).toBeInTheDocument();
+    expect(screen.getByText('The Alvarez Household')).toBeInTheDocument();
+  });
+  it('offers a per-stream retry that re-subscribes only that listener', async () => {
+    listConversations.mockResolvedValue([]);
+    const retry = vi.fn();
+    streams({ calls_log: { status: 'error', message: 'listener detached', retry } });
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+  it('never claims the channels are empty while a read is still failing', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({ emails: { status: 'error', message: 'permission-denied' } });
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    expect(screen.queryByText(/No voicemails, calls, texts or emails yet/i)).toBeNull();
+  });
+  it('never claims the channels are empty while a read is still in flight', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({ sms_messages: { status: 'loading' } });
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    expect(screen.getByText(/Still loading text messages/)).toBeInTheDocument();
+    expect(screen.queryByText(/No voicemails, calls, texts or emails yet/i)).toBeNull();
+  });
+  it('shows the proven-empty state only once all four have really resolved empty', async () => {
+    listConversations.mockResolvedValue([]);
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    expect(screen.getByText(/No voicemails, calls, texts or emails yet/i)).toBeInTheDocument();
+  });
+  /**
+   * The badge in the Channels header says "waiting on a reply", NOT "unread".
+   * The rail's number (lib/useUnreadInbox.ts) counts message threads off one
+   * listener; a channel count sharing that word would put two numbers behind it.
+   */
+  it('counts voicemails waiting on a reply under their own noun, never as "unread"', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({
+      voicemails: ready([
+        voicemail({ _id: 'a', replyStatus: 'unread' }),
+        voicemail({ _id: 'b', replyStatus: 'UNREAD' }),
+        voicemail({ _id: 'c', replyStatus: 'replied' }),
+      ]),
+    });
+    render(<Inbox />);
+    expect(await screen.findByText('2 waiting on a reply')).toBeInTheDocument();
+  });
+  it('leaves the header unread badge counting notifications and threads only', async () => {
+    listConversations.mockResolvedValue([thread({ kinfolkId: 'k1', unreadForAdmin: true })]);
+    streams({
+      notifications: ready([notif({ _id: 'n1' })]),
+      voicemails: ready([voicemail({ _id: 'a' }), voicemail({ _id: 'b' })]),
+    });
+    render(<Inbox />);
+    // 1 notification + 1 thread. The two unanswered voicemails are NOT added.
+    expect(await screen.findByText('1 unread')).toBeInTheDocument();
+    expect(screen.queryByText('3 unread')).toBeNull();
+  });
+  it('opens the actions sheet for the row that was clicked, and closes it again', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({ voicemails: ready([voicemail({ _id: 'vm-clicked' })]) });
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    await userEvent.click(screen.getByText('The Alvarez Household'));
+    expect(await screen.findByText('actions for vm-clicked')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss actions' }));
+    expect(screen.queryByTestId('thread-actions')).toBeNull();
+  });
+  it('flags a missed call and an unanswered voicemail on their rows', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({
+      voicemails: ready([voicemail()]),
+      // Stored capitalized: normalized in memory, never with a server equality.
+      calls_log: ready([
+        { _id: 'c1', kinfolkName: 'Okafor Household', status: 'Missed', timestamp: '2026-07-20T13:00:00.000Z' },
+      ]),
+    });
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    expect(screen.getByText('missed')).toBeInTheDocument();
+    expect(screen.getByText('waiting on a reply')).toBeInTheDocument();
+  });
+  it('renders a row for a caller who matched no household rather than dropping it', async () => {
+    listConversations.mockResolvedValue([]);
+    // twilioInboundVoicemail writes a literal null kinfolkId on a no-match.
+    streams({
+      voicemails: ready([voicemail({ _id: 'vm9', kinfolkId: null, kinfolkName: '', callerNumber: '+15559998888' })]),
+    });
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    expect(screen.getByText('+15559998888')).toBeInTheDocument();
   });
 });

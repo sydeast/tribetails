@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -83,10 +84,16 @@ class InboxViewModel(private val repository: AuntieRepository) : ViewModel() {
         viewModelScope.launch {
             repository.observeSmsMessages().collect { _sms.value = it }
         }
+        // Email is a LIVE stream now, like its three sibling channels, rather
+        // than an unbounded one-shot `getEmails()`. `catch` is what keeps a
+        // failing listener fail-LOUD rather than fail-fatal: the repository
+        // closes the flow with the Firestore error, and without this the
+        // exception would escape the collect and take the coroutine down,
+        // leaving the screen with no rows and no explanation.
         viewModelScope.launch {
-            repository.getEmails()
-                .onSuccess { _emails.value = it }
-                .onFailure { _error.value = _error.value ?: (it.message ?: "Failed to load emails") }
+            repository.observeEmails()
+                .catch { _error.value = _error.value ?: (it.message ?: "Failed to load emails") }
+                .collect { _emails.value = it }
         }
         loadConversations()
     }
@@ -189,6 +196,27 @@ class InboxViewModel(private val repository: AuntieRepository) : ViewModel() {
                 _actionResult.tryEmit("Reply sent")
             }.onFailure { _error.value = it.message ?: "Failed to send reply" }
             _isLoading.value = false
+        }
+    }
+
+    /**
+     * Marks a voicemail read, for one the operator listened to and does not
+     * need to answer. Parity with the web admin's Mark read action.
+     *
+     * The live `observeVoicemails` listener carries the new state back on its
+     * own, so nothing is refetched here and the row restyles itself. A failure
+     * is surfaced, never swallowed: a voicemail that silently stayed unread
+     * would keep appearing as work that is waiting.
+     */
+    fun markVoicemailRead(voicemailId: String) {
+        if (voicemailId.isBlank()) {
+            _error.value = "Cannot mark read: this voicemail has no id"
+            return
+        }
+        viewModelScope.launch {
+            repository.markVoicemailRead(voicemailId)
+                .onSuccess { _actionResult.tryEmit("Marked read") }
+                .onFailure { _error.value = it.message ?: "Failed to mark this voicemail read" }
         }
     }
 

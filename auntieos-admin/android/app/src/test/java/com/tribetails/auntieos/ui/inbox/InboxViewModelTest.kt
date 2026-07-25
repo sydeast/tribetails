@@ -5,10 +5,12 @@ import com.tribetails.auntieos.data.model.VoicemailLog
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.ExternalSendResult
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -16,6 +18,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -36,7 +39,7 @@ class InboxViewModelTest {
         every { mockRepo.observeVoicemails() } returns flowOf(emptyList())
         every { mockRepo.observeCalls() } returns flowOf(emptyList())
         every { mockRepo.observeSmsMessages() } returns flowOf(emptyList())
-        coEvery { mockRepo.getEmails() } returns Result.success(emptyList())
+        every { mockRepo.observeEmails() } returns flowOf(emptyList())
         // Stage 2 step 7: the VM init now also loads conversations.
         coEvery { mockRepo.listConversations() } returns Result.success(emptyList())
     }
@@ -68,14 +71,67 @@ class InboxViewModelTest {
         assertFalse(inboxVm.voicemails.value.isEmpty())
     }
 
+    /**
+     * Task 6.1: email is a bounded LIVE stream now, not an unbounded one-shot
+     * `getEmails()`. A failing listener closes the flow with the Firestore
+     * error, and the VM must catch it into `error` rather than let it escape
+     * the collect and kill the coroutine, which would leave the screen with no
+     * rows and no explanation.
+     */
     @Test
-    fun `emails error is set when getEmails fails`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getEmails() } returns Result.failure(RuntimeException("Email load failed"))
+    fun `emails error is set when the email stream fails`() = runTest(testDispatcher) {
+        every { mockRepo.observeEmails() } returns flow { throw RuntimeException("Email load failed") }
 
         val vm = buildViewModel()
         advanceUntilIdle()
 
         assertNotNull(vm.error.value)
+    }
+
+    @Test
+    fun `emails are populated from observeEmails`() = runTest(testDispatcher) {
+        every { mockRepo.observeEmails() } returns flowOf(
+            listOf(EmailMessage(id = "m1", subject = "Invoice", fromAddress = "them@example.com"))
+        )
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        assertEquals(1, vm.emails.value.size)
+        assertEquals("m1", vm.emails.value.first().id)
+    }
+
+    @Test
+    fun `markVoicemailRead writes the read state`() = runTest(testDispatcher) {
+        coEvery { mockRepo.markVoicemailRead("vm1") } returns Result.success(Unit)
+
+        val vm = buildViewModel()
+        vm.markVoicemailRead("vm1")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockRepo.markVoicemailRead("vm1") }
+        assertNull(vm.error.value)
+    }
+
+    @Test
+    fun `markVoicemailRead surfaces a write failure rather than swallowing it`() = runTest(testDispatcher) {
+        coEvery { mockRepo.markVoicemailRead("vm1") } returns Result.failure(RuntimeException("permission-denied"))
+
+        val vm = buildViewModel()
+        vm.markVoicemailRead("vm1")
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+    }
+
+    @Test
+    fun `markVoicemailRead refuses a blank id before touching the repository`() = runTest(testDispatcher) {
+        val vm = buildViewModel()
+        vm.markVoicemailRead("   ")
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+        coVerify(exactly = 0) { mockRepo.markVoicemailRead(any()) }
     }
 
     @Test
@@ -152,7 +208,7 @@ class InboxViewModelTest {
 
     @Test
     fun `clearError resets error to null`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getEmails() } returns Result.failure(RuntimeException("fail"))
+        every { mockRepo.observeEmails() } returns flow { throw RuntimeException("fail") }
 
         val vm = buildViewModel()
         advanceUntilIdle()
