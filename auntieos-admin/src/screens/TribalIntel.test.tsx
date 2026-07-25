@@ -8,7 +8,39 @@ import { type TribalIntelEntry } from '../api/tribalIntel';
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
+const { createTrainingDocument, updateTrainingDocument, deleteTrainingDocument, uploadTribalIntelAttachment } =
+  vi.hoisted(() => ({
+    createTrainingDocument: vi.fn(),
+    updateTrainingDocument: vi.fn(),
+    deleteTrainingDocument: vi.fn(),
+    uploadTribalIntelAttachment: vi.fn(),
+  }));
+vi.mock('../api/tribalIntelWrite', () => ({
+  createTrainingDocument,
+  updateTrainingDocument,
+  deleteTrainingDocument,
+  uploadTribalIntelAttachment,
+}));
+
 import { TribalIntel } from './TribalIntel';
+
+/** Roster rows the target picker streams alongside the Tribal Intel list. */
+const ROSTER: Record<string, unknown[]> = {
+  kinfolk: [{ _id: 'kf1', firstName: 'Marla', lastName: 'Whitfield' }],
+  kin: [{ _id: 'kin1', kinfolkId: 'kf1', name: 'Biscuit', status: 'active' }],
+};
+
+/**
+ * The screen streams three collections now (training_documents plus the
+ * kinfolk/kin rosters the target picker needs), so the mock answers per
+ * spec.path. A single mockReturnValue would hand the picker a list of Tribal
+ * Intel rows.
+ */
+function mockTribalIntel(state: unknown) {
+  useCollection.mockImplementation((spec: { path: string }) =>
+    spec.path === 'training_documents' ? state : { status: 'ready', data: ROSTER[spec.path] ?? [] },
+  );
+}
 
 function entry(over: Partial<TribalIntelEntry>): TribalIntelEntry {
   return {
@@ -47,15 +79,20 @@ afterAll(() => {
 const user = userEvent.setup();
 
 beforeEach(() => {
-  useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] } satisfies Async<TribalIntelEntry[]>);
+  useCollection.mockReset();
+  mockTribalIntel({ status: 'ready', data: [] } satisfies Async<TribalIntelEntry[]>);
+  createTrainingDocument.mockReset().mockResolvedValue('td-new');
+  updateTrainingDocument.mockReset().mockResolvedValue('td-1');
+  deleteTrainingDocument.mockReset().mockResolvedValue(undefined);
+  uploadTribalIntelAttachment.mockReset();
 });
 
 describe('TribalIntel screen', () => {
   it('renders a streamed row with its title, comm.-type chip, and content', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
+    mockTribalIntel({ status: 'ready', data: [entry({})] });
     render(<TribalIntel />);
-    // Scope by the row container, not the button: the row is only a <button>
-    // once a detail route wires onSelect; here (unwired) it renders static.
+    // Scope by the row container: the row body is static text, with the
+    // Edit/Delete controls as the only buttons inside it.
     const row = screen.getByText('Feeding schedule').closest('.tribal-intel__row') as HTMLElement;
     expect(within(row).getByText('Feeding schedule')).toBeInTheDocument();
     expect(within(row).getByText('note')).toBeInTheDocument();
@@ -65,7 +102,7 @@ describe('TribalIntel screen', () => {
   });
 
   it('shows an honest "Untitled Document" fallback for a blank title, never a blank row', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ title: '' })] });
+    mockTribalIntel({ status: 'ready', data: [entry({ title: '' })] });
     render(<TribalIntel />);
     expect(screen.getByText('Untitled Document')).toBeInTheDocument();
   });
@@ -73,7 +110,7 @@ describe('TribalIntel screen', () => {
   it('shows the LOCAL uploaded time, not the raw UTC ISO string (AO-18)', () => {
     // 2026-07-16 20:00 America/Chicago (CDT, UTC-5) round-trips as this UTC
     // instant.
-    useCollection.mockReturnValue({
+    mockTribalIntel({
       status: 'ready',
       data: [entry({ uploadedAt: '2026-07-17T01:00:00.000Z' })],
     });
@@ -83,7 +120,7 @@ describe('TribalIntel screen', () => {
   });
 
   it('falls back to "Date TBD" when uploadedAt is blank, never a fabricated time', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ uploadedAt: '' })] });
+    mockTribalIntel({ status: 'ready', data: [entry({ uploadedAt: '' })] });
     render(<TribalIntel />);
     expect(screen.getByText('Date TBD')).toBeInTheDocument();
   });
@@ -94,39 +131,39 @@ describe('TribalIntel screen', () => {
     ['skipped', 'SKIPPED'],
     ['error', 'ERROR'],
   ])('renders the %s reconcile status positively as its own chip', (status, chip) => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ reconcileStatus: status })] });
+    mockTribalIntel({ status: 'ready', data: [entry({ reconcileStatus: status })] });
     render(<TribalIntel />);
     expect(screen.getByText(chip)).toBeInTheDocument();
   });
 
   it('AO-12-style regression guard: an unrecognized reconcileStatus renders UNKNOWN, never a fabricated PENDING', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ reconcileStatus: 'some_new_code' })] });
+    mockTribalIntel({ status: 'ready', data: [entry({ reconcileStatus: 'some_new_code' })] });
     render(<TribalIntel />);
     expect(screen.getByText('UNKNOWN')).toBeInTheDocument();
     expect(screen.queryByText('PENDING')).toBeNull();
   });
 
   it('shows no reconcile chip at all for a pre-spec-23 doc with a blank reconcileStatus', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ reconcileStatus: '' })] });
+    mockTribalIntel({ status: 'ready', data: [entry({ reconcileStatus: '' })] });
     render(<TribalIntel />);
     expect(screen.queryByText('NONE')).toBeNull();
     expect(screen.queryByText('PENDING')).toBeNull();
   });
 
   it('shows a "Related to" line only when kinfolkRef is set', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ kinfolkRef: 'The Whitfields' })] });
+    mockTribalIntel({ status: 'ready', data: [entry({ kinfolkRef: 'The Whitfields' })] });
     render(<TribalIntel />);
     expect(screen.getByText('Related to: The Whitfields')).toBeInTheDocument();
   });
 
   it('omits the "Related to" line entirely when kinfolkRef is blank', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ kinfolkRef: '' })] });
+    mockTribalIntel({ status: 'ready', data: [entry({ kinfolkRef: '' })] });
     render(<TribalIntel />);
     expect(screen.queryByText(/related to/i)).toBeNull();
   });
 
   it('shows an attachment pip only when the doc has attachments', () => {
-    useCollection.mockReturnValue({
+    mockTribalIntel({
       status: 'ready',
       data: [
         entry({
@@ -142,33 +179,33 @@ describe('TribalIntel screen', () => {
   });
 
   it('omits the attachment pip entirely when there are no attachments (never "0 attachments")', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ attachments: [] })] });
+    mockTribalIntel({ status: 'ready', data: [entry({ attachments: [] })] });
     render(<TribalIntel />);
     expect(screen.queryByText(/attachments?/)).toBeNull();
   });
 
   it('surfaces a listener error, never a false empty', () => {
-    useCollection.mockReturnValue({ status: 'error', message: 'permission-denied' });
+    mockTribalIntel({ status: 'error', message: 'permission-denied' });
     render(<TribalIntel />);
     expect(screen.getByText('permission-denied', { selector: '.async-error-detail' })).toBeInTheDocument();
     expect(screen.queryByText(/no tribal intel yet/i)).toBeNull();
   });
 
   it('surfaces a load failure with retry, not a silent spinner', () => {
-    useCollection.mockReturnValue({ status: 'error', message: 'deadline-exceeded', retry: vi.fn() });
+    mockTribalIntel({ status: 'error', message: 'deadline-exceeded', retry: vi.fn() });
     render(<TribalIntel />);
     expect(screen.getByText('deadline-exceeded', { selector: '.async-error-detail' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
   });
 
   it('renders the proven-empty state only when the stream is ready and genuinely empty', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [] });
+    mockTribalIntel({ status: 'ready', data: [] });
     render(<TribalIntel />);
     expect(screen.getByText(/no tribal intel yet/i)).toBeInTheDocument();
   });
 
   it('the search box narrows the visible rows by title, content, or comm. type', async () => {
-    useCollection.mockReturnValue({
+    mockTribalIntel({
       status: 'ready',
       data: [
         entry({ _id: 'a', title: 'Feeding schedule', content: 'kibble', communicationType: 'note' }),
@@ -185,7 +222,7 @@ describe('TribalIntel screen', () => {
   });
 
   it('dynamic comm.-type tabs narrow the visible rows without hiding the others behind a false empty', async () => {
-    useCollection.mockReturnValue({
+    mockTribalIntel({
       status: 'ready',
       data: [
         entry({ _id: 'a', title: 'Feeding schedule', communicationType: 'note' }),
@@ -202,7 +239,7 @@ describe('TribalIntel screen', () => {
   });
 
   it('shows a "no documents match" hint (not the top-level empty state) when the search excludes every row', async () => {
-    useCollection.mockReturnValue({
+    mockTribalIntel({
       status: 'ready',
       data: [entry({ title: 'Feeding schedule', communicationType: 'note' })],
     });
@@ -213,7 +250,7 @@ describe('TribalIntel screen', () => {
   });
 
   it('re-selecting an already-active comm.-type tab clears it back to "All" (a single-select toggle)', async () => {
-    useCollection.mockReturnValue({
+    mockTribalIntel({
       status: 'ready',
       data: [
         entry({ _id: 'a', title: 'Feeding schedule', communicationType: 'note' }),
@@ -230,31 +267,13 @@ describe('TribalIntel screen', () => {
   });
 
   it('does not render comm.-type tabs at all when every row has a blank communicationType', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ communicationType: '' })] });
+    mockTribalIntel({ status: 'ready', data: [entry({ communicationType: '' })] });
     render(<TribalIntel />);
     expect(screen.queryByRole('tablist')).toBeNull();
   });
 
-  it('clicking a row calls onSelect with the document id', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'doc-42', title: 'Feeding schedule' })] });
-    const onSelect = vi.fn();
-    render(<TribalIntel onSelect={onSelect} />);
-    await user.click(screen.getByRole('button', { name: /Feeding schedule/i }));
-    expect(onSelect).toHaveBeenCalledWith('doc-42');
-  });
-
-  it('omitting onSelect renders each row STATIC (not a live no-op button)', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
-    render(<TribalIntel />);
-    // The row content renders, but it is NOT an interactive button when
-    // unwired: a live button that no-ops on click is the dead-control
-    // anti-pattern.
-    expect(screen.getByText('Feeding schedule')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Feeding schedule/i })).toBeNull();
-  });
-
   it('the stat strip counts total docs, distinct comm. types, and docs with content positively (never by negation)', () => {
-    useCollection.mockReturnValue({
+    mockTribalIntel({
       status: 'ready',
       data: [
         entry({ _id: 'a', communicationType: 'note', content: 'has content' }),
@@ -273,5 +292,98 @@ describe('TribalIntel screen', () => {
     expect(within(totalCard as HTMLElement).getByText('3')).toBeInTheDocument();
     expect(within(commCard as HTMLElement).getByText('2')).toBeInTheDocument();
     expect(within(contentCard as HTMLElement).getByText('2')).toBeInTheDocument();
+  });
+
+  // ── junk rows ────────────────────────────────────────────────────────────
+  it('drops a content-less junk row so it never surfaces as "Untitled Document"', () => {
+    mockTribalIntel({
+      status: 'ready',
+      data: [
+        entry({ _id: 'real', title: 'Feeding schedule' }),
+        entry({ _id: 'junk', title: '', content: '', notes: '', attachments: [] }),
+      ],
+    });
+    render(<TribalIntel />);
+    expect(screen.getByText('Feeding schedule')).toBeInTheDocument();
+    expect(screen.queryByText('Untitled Document')).toBeNull();
+  });
+  it('junk rows do not inflate the stat strip either', () => {
+    mockTribalIntel({
+      status: 'ready',
+      data: [
+        entry({ _id: 'real', title: 'Feeding schedule', content: 'kibble', communicationType: 'note' }),
+        entry({ _id: 'junk', title: '', content: '', communicationType: '', attachments: [] }),
+      ],
+    });
+    render(<TribalIntel />);
+    const totalCard = screen
+      .getByText('Total', { selector: '.den-stat-label' })
+      .closest('.den-stat, button.den-stat--button') as HTMLElement;
+    expect(within(totalCard).getByText('1')).toBeInTheDocument();
+  });
+  it('shows the proven-empty state when every streamed row is junk, never a list of blanks', () => {
+    mockTribalIntel({ status: 'ready', data: [entry({ _id: 'junk', title: '', content: '', attachments: [] })] });
+    render(<TribalIntel />);
+    expect(screen.getByText(/no tribal intel yet/i)).toBeInTheDocument();
+  });
+  // ── create ───────────────────────────────────────────────────────────────
+  it('the Add intel button opens the create form', async () => {
+    render(<TribalIntel />);
+    expect(screen.queryByLabelText('Intel')).toBeNull();
+    await user.click(screen.getByRole('button', { name: /add intel/i }));
+    expect(screen.getByLabelText('Intel')).toBeInTheDocument();
+  });
+  it('a successful save closes the form and confirms the fold happens on the NEXT reconcile pass', async () => {
+    render(<TribalIntel />);
+    await user.click(screen.getByRole('button', { name: /add intel/i }));
+    await user.type(screen.getByLabelText('Intel'), 'Side gate code is now 4417.');
+    await user.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await user.click(screen.getByRole('button', { name: 'Save intel' }));
+    expect(await screen.findByText(/next reconcile pass, not instantly/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Intel')).toBeNull();
+  });
+  // ── edit ─────────────────────────────────────────────────────────────────
+  it('Edit on a row opens the form prefilled with that entry', async () => {
+    mockTribalIntel({
+      status: 'ready',
+      data: [entry({ _id: 'td-7', title: 'Feeding schedule', targetKinfolkId: 'kf1' })],
+    });
+    render(<TribalIntel />);
+    await user.click(screen.getByRole('button', { name: /edit/i }));
+    expect(screen.getByLabelText('Title')).toHaveValue('Feeding schedule');
+  });
+  // ── delete ───────────────────────────────────────────────────────────────
+  it('Delete asks first, and the confirm states that already-folded dossier and 411 text is NOT unmerged', async () => {
+    mockTribalIntel({ status: 'ready', data: [entry({ _id: 'td-7' })] });
+    render(<TribalIntel />);
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/does not unmerge/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/dossier/i)).toBeInTheDocument();
+    expect(deleteTrainingDocument).not.toHaveBeenCalled();
+  });
+  it('confirming the delete calls the callable with the document id', async () => {
+    mockTribalIntel({ status: 'ready', data: [entry({ _id: 'td-7' })] });
+    render(<TribalIntel />);
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /delete entry/i }));
+    expect(deleteTrainingDocument).toHaveBeenCalledWith('td-7');
+  });
+  it('cancelling the delete confirm writes nothing', async () => {
+    mockTribalIntel({ status: 'ready', data: [entry({ _id: 'td-7' })] });
+    render(<TribalIntel />);
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /cancel/i }));
+    expect(deleteTrainingDocument).not.toHaveBeenCalled();
+  });
+  it('a failed delete fails loud in a banner rather than silently leaving the row', async () => {
+    deleteTrainingDocument.mockRejectedValueOnce(new Error('not-found: Tribal Intel entry not found.'));
+    mockTribalIntel({ status: 'ready', data: [entry({ _id: 'td-7' })] });
+    render(<TribalIntel />);
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /delete entry/i }));
+    expect(await screen.findByText('not-found: Tribal Intel entry not found.')).toBeInTheDocument();
+    expect(screen.getByText(/could not delete/i)).toBeInTheDocument();
   });
 });

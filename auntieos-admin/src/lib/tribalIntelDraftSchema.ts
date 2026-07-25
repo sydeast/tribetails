@@ -1,0 +1,192 @@
+import { z } from 'zod';
+
+/**
+ * Client-side mirror of the Tribal Intel write contract, executable rather than
+ * described (the `lib/kinTaleDraftSchema.ts` convention).
+ *
+ * The authority is the deployed backend, field for field:
+ *   `MyTribe/functions/src/admin/createTrainingDocument.ts#TrainingDocumentArgs`
+ *   `MyTribe/functions/src/admin/updateTrainingDocument.ts#UpdateTrainingDocumentArgs`
+ * Both carry the same object shape plus the same two `.refine`s, so one schema
+ * covers create and update; update only adds `docId`, which the api layer folds
+ * in rather than the draft carrying it.
+ *
+ * WHY MIRROR AT ALL, given `firestore.rules` makes the callable the only write
+ * path: the server answers a refinement failure with `invalid-argument` and a
+ * `validationErrors` detail array, which surfaces to the operator as a raw
+ * "createTrainingDocument validation failed" after a full round trip. Catching
+ * the same two rules locally turns that into a message beside the field, before
+ * the request leaves. The server still enforces everything; this never becomes
+ * the only check.
+ *
+ * NOTHING HERE IS STRICTER THAN THE SERVER, on purpose (same rule
+ * `lib/audienceSegmentEdit.ts` states): a client rule the server does not
+ * enforce blocks a save the server would have accepted, and the operator has no
+ * way to find out why.
+ */
+
+/** Server: `title: z.string().max(200)`. */
+export const TRIBAL_INTEL_TITLE_MAX = 200;
+/** Server: `content: z.string().max(20000)`. */
+export const TRIBAL_INTEL_CONTENT_MAX = 20000;
+/** Server: `notes: z.string().max(4000)`. */
+export const TRIBAL_INTEL_NOTES_MAX = 4000;
+/** Server: `attachments: z.array(AttachmentSchema).max(25)`. */
+export const TRIBAL_INTEL_ATTACHMENTS_MAX = 25;
+
+/** The two targeting modes the server enum accepts, verbatim. */
+export type TribalIntelTargetType = 'KINFOLK' | 'KIN';
+
+/**
+ * One Cloudinary attachment, mirroring the backend `AttachmentSchema`.
+ *
+ * The field-level rules there (`storageUrl` a URL, `cloudinaryPublicId`
+ * non-blank, the three length caps) are all satisfied by construction: every
+ * attachment on a draft is produced by `api/tribalIntelWrite.ts`'s upload
+ * pipeline off a real Cloudinary response, never typed by the operator. So the
+ * only rule that can actually fire on this side is the array cap, and the
+ * shape below stays a plain structural mirror rather than re-litigating values
+ * a human can never enter wrong.
+ */
+export interface TribalIntelAttachmentDraft {
+  storageUrl: string;
+  cloudinaryPublicId: string;
+  fileType: string;
+  mimeType: string;
+  fileName: string;
+}
+
+const attachmentSchema: z.ZodType<TribalIntelAttachmentDraft> = z.object({
+  storageUrl: z.string(),
+  cloudinaryPublicId: z.string(),
+  fileType: z.string(),
+  mimeType: z.string(),
+  fileName: z.string(),
+});
+
+/** What the form holds while the operator is typing. */
+export interface TribalIntelDraft {
+  title: string;
+  content: string;
+  notes: string;
+  /**
+   * Stamped `'note'` and not exposed as a field, matching the Android screen and
+   * the archive ViewModel, which both hardcode `"note"` on save. Spec 23 item 3
+   * rules that the comm-type source must be a real category list once one
+   * exists, never operator free text, so no free-text input is invented here.
+   */
+  communicationType: string;
+  targetType: TribalIntelTargetType;
+  targetKinfolkId: string;
+  targetKinId: string;
+  attachments: TribalIntelAttachmentDraft[];
+}
+
+/** A fresh, empty draft. Household-targeted by default, same as the archive. */
+export function blankTribalIntelDraft(): TribalIntelDraft {
+  return {
+    title: '',
+    content: '',
+    notes: '',
+    communicationType: 'note',
+    targetType: 'KINFOLK',
+    targetKinfolkId: '',
+    targetKinId: '',
+    attachments: [],
+  };
+}
+
+export const tribalIntelDraftSchema = z
+  .object({
+    title: z.string().max(TRIBAL_INTEL_TITLE_MAX, `Keep the title under ${TRIBAL_INTEL_TITLE_MAX} characters.`),
+    content: z
+      .string()
+      .max(TRIBAL_INTEL_CONTENT_MAX, `Keep the intel under ${TRIBAL_INTEL_CONTENT_MAX} characters.`),
+    notes: z.string().max(TRIBAL_INTEL_NOTES_MAX, `Keep the notes under ${TRIBAL_INTEL_NOTES_MAX} characters.`),
+    communicationType: z.string(),
+    targetType: z.enum(['KINFOLK', 'KIN']),
+    targetKinfolkId: z.string().min(1, 'Pick the household this intel belongs to.'),
+    targetKinId: z.string(),
+    attachments: z
+      .array(attachmentSchema)
+      .max(TRIBAL_INTEL_ATTACHMENTS_MAX, `Attach at most ${TRIBAL_INTEL_ATTACHMENTS_MAX} files to one entry.`),
+  })
+  // Server refinement 1: "Provide a title, content, or at least one attachment".
+  // Reported on `content`, the field the operator is most likely looking at, so
+  // the message lands somewhere rather than floating above the form.
+  .refine((d) => d.title.trim() !== '' || d.content.trim() !== '' || d.attachments.length > 0, {
+    message: 'Add a title, some intel, or an attachment before saving.',
+    path: ['content'],
+  })
+  // Server refinement 2: "targetKinId is required when targetType is KIN".
+  .refine((d) => d.targetType !== 'KIN' || d.targetKinId.trim() !== '', {
+    message: 'Pick which pet this intel is about.',
+    path: ['targetKinId'],
+  });
+
+/** Field name to its first message. An empty object means the draft is saveable. */
+export type TribalIntelDraftErrors = Partial<Record<keyof TribalIntelDraft, string>>;
+
+/**
+ * Validates for inline display. Returns a field-keyed map rather than throwing,
+ * because the form shows each message beside its own field and a thrown
+ * ZodError would have to be caught and flattened by the caller anyway.
+ */
+export function validateTribalIntelDraft(draft: TribalIntelDraft): TribalIntelDraftErrors {
+  const result = tribalIntelDraftSchema.safeParse(draft);
+  if (result.success) return {};
+
+  const errors: TribalIntelDraftErrors = {};
+  for (const issue of result.error.issues) {
+    const field = issue.path[0];
+    // First message per field wins: stacking several under one input is noise,
+    // and the operator fixes them one at a time regardless.
+    if (typeof field === 'string' && !(field in errors)) {
+      errors[field as keyof TribalIntelDraft] = issue.message;
+    }
+  }
+  return errors;
+}
+
+/** Whether Save can run at all. Ports the archive `TribalIntelDraft.canSave`. */
+export function canSaveTribalIntelDraft(draft: TribalIntelDraft): boolean {
+  return tribalIntelDraftSchema.safeParse(draft).success;
+}
+
+/** The wire shape of a create, and of an update once `docId` is folded in. */
+export interface TribalIntelCallableArgs {
+  title: string;
+  content: string;
+  notes: string;
+  communicationType: string;
+  targetType: TribalIntelTargetType;
+  targetKinfolkId: string;
+  targetKinId?: string;
+  attachments: TribalIntelAttachmentDraft[];
+}
+
+/**
+ * Builds the callable payload from a draft.
+ *
+ * `targetKinId` is OMITTED entirely on a household-targeted save rather than
+ * sent blank: the server's own write already coerces it to `''` when
+ * `targetType` is KINFOLK, so shipping a stale pet id would be a value the
+ * server has to throw away, and shipping `undefined` under a present key is a
+ * shape the callable serializer treats differently from an absent one.
+ *
+ * Text is trimmed here, matching the fields the server refinements themselves
+ * `.trim()` before judging.
+ */
+export function tribalIntelCallableArgs(draft: TribalIntelDraft): TribalIntelCallableArgs {
+  const base: TribalIntelCallableArgs = {
+    title: draft.title.trim(),
+    content: draft.content.trim(),
+    notes: draft.notes.trim(),
+    communicationType: draft.communicationType.trim() === '' ? 'note' : draft.communicationType.trim(),
+    targetType: draft.targetType,
+    targetKinfolkId: draft.targetKinfolkId.trim(),
+    attachments: draft.attachments,
+  };
+  if (draft.targetType !== 'KIN') return base;
+  return { ...base, targetKinId: draft.targetKinId.trim() };
+}

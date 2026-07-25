@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.data.model.FormSchemaSummary
+import com.tribetails.auntieos.data.model.TrainingDocAttachment
 import com.tribetails.auntieos.data.model.TrainingDocument
 import com.tribetails.auntieos.data.repository.TemplateRepository
 import com.tribetails.auntieos.ui.admin.formschemas.formSchemaDeleteErrorMessage
@@ -108,6 +109,35 @@ class ClientFilterHelpersTest {
         assertEquals(emptyList<TrainingDocument>(), trainingDocsCommTypeFilter(docs, "Push"))
     }
 
+    // ── Tribal Intel junk-row filter ────────────────────────────────────────
+    @Test fun trainingDocs_dropsRowsWithNoTitleNoContentNoAttachment() {
+        val real = TrainingDocument(id = "real", title = "Gate code", content = "")
+        val junk = TrainingDocument(id = "junk", title = "", content = "")
+        assertEquals(listOf(real), dropEmptyTrainingDocs(listOf(real, junk)))
+    }
+    @Test fun trainingDocs_treatsWhitespaceOnlyTextAsEmpty() {
+        val junk = TrainingDocument(id = "junk", title = "   ", content = "\n")
+        assertEquals(emptyList<TrainingDocument>(), dropEmptyTrainingDocs(listOf(junk)))
+    }
+    @Test fun trainingDocs_keepsAnAttachmentOnlyRow() {
+        // The deployed callable accepts "title OR content OR at least one
+        // attachment", so a photo-only entry is a legitimately saved one.
+        val photoOnly = TrainingDocument(
+            id = "photo",
+            title = "",
+            content = "",
+            attachments = listOf(
+                TrainingDocAttachment(
+                    storageUrl = "https://res.cloudinary.com/x/image/upload/v1/a.jpg",
+                    cloudinaryPublicId = "a",
+                    fileType = "IMAGE",
+                    mimeType = "image/jpeg",
+                    fileName = "a.jpg",
+                ),
+            ),
+        )
+        assertEquals(listOf(photoOnly), dropEmptyTrainingDocs(listOf(photoOnly)))
+    }
     // ── Template assignment trigger-override echo ───────────────────────────
     @Test fun triggerOverride_nullWhenBlankOrAbsent() {
         assertNull(genuineTriggerOverride(null, "booking.confirmed"))

@@ -78,7 +78,51 @@
   justify-content: space-between;
   gap: 1rem;
 }
-.shell__who {
+/* The topbar account chip. Replaces the old .shell__who role label, which named
+   the operator's access and then gave them nowhere to go with it. */
+.shell__account {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 0.7rem 0.3rem 0.3rem;
+  border-radius: var(--radius-pill, 999px);
+  text-decoration: none;
+  color: inherit;
+  transition: background var(--motion-fast, 150ms) ease;
+}
+.shell__account:hover,
+.shell__account--active {
+  background: var(--color-surface-2, rgba(0, 0, 0, 0.05));
+}
+.shell__account:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.shell__account-monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--gradient-teal-purple);
+  color: var(--tt-brand-cream, #f8f6f0);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.shell__account-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.shell__account-name {
   font-size: 0.85rem;
+  color: var(--color-text-primary);
+}
+.shell__account-role {
+  font-size: 0.72rem;
   color: var(--color-secondary, #5a5c6a);
 }

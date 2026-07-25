@@ -374,6 +374,9 @@ class AndroidScreenshotTest {
     fun notifications() {
         val repo = mockk<AuntieRepository>(relaxed = true)
         coEvery { repo.getNotifications() } returns Result.success(AndroidDemoFixtures.notifications)
+        // The feed resolves household names against the directory (issue #20),
+        // so the screen loads it too and the double has to answer.
+        coEvery { repo.getKinfolk() } returns Result.success(AndroidDemoFixtures.kinfolk)
         val vm = AdminDataViewModel(repository = repo)
         vm.loadNotifications()
         compose.setContent {

@@ -99,6 +99,11 @@ fun NotificationsScreen(
     onCreateQuote: (kinfolkId: String) -> Unit = {},
 ) {
     val entries by viewModel.notifications.collectAsState()
+    // Issue #20: notification docs carry a household ID and almost never a
+    // household NAME, so the directory is loaded alongside the feed and the row
+    // resolves against it. Same call the triage and picker surfaces already use;
+    // no new repository work.
+    val directory by viewModel.kinfolkDirectory.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
     val bulkReadMessage by viewModel.bulkReadMessage.collectAsState()
@@ -113,7 +118,18 @@ fun NotificationsScreen(
     var selecting by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
 
-    LaunchedEffect(Unit) { viewModel.loadNotifications() }
+    LaunchedEffect(Unit) {
+        viewModel.loadNotifications()
+        viewModel.loadKinfolkDirectory()
+    }
+    // Household id -> display name. Only REAL names go in: Kinfolk.displayName
+    // answers "Unnamed Kinfolk" for a doc with neither name, and printing that
+    // on a notification row would be a placeholder where honesty says nothing.
+    val householdNames = remember(directory) {
+        directory
+            .filter { it.firstName.isNotBlank() || it.lastName.isNotBlank() }
+            .associate { it.id to it.displayName }
+    }
 
     AuntieScreenScaffold(
         title = "Notifications",
@@ -276,6 +292,7 @@ fun NotificationsScreen(
                             } else {
                                 Feed(
                                     entries = visible,
+                                    householdNames = householdNames,
                                     selecting = selecting,
                                     selectedIds = selectedIds,
                                     onToggleSelect = { id ->
@@ -285,7 +302,7 @@ fun NotificationsScreen(
                                         viewModel.toggleNotificationRead(entry.id, isNotificationUnread(entry))
                                     },
                                     onOpen = { entry -> onOpenTarget(entry.targetType, entry.targetId) },
-                                    onCreateQuote = { entry -> onCreateQuote(entry.targetId) },
+                                    onCreateQuote = { entry -> onCreateQuote(notificationKinfolkId(entry)) },
                                     onDismiss = { entry -> viewModel.archiveNotification(entry.id) },
                                     onApprove = { entry -> viewModel.quickBookingAction(entry.targetId, "APPROVE") },
                                     onDeny = { entry -> viewModel.quickBookingAction(entry.targetId, "REJECT") },
@@ -385,6 +402,7 @@ private fun FilterRow(
 @Composable
 private fun Feed(
     entries: List<NotificationEntry>,
+    householdNames: Map<String, String>,
     selecting: Boolean,
     selectedIds: Set<String>,
     onToggleSelect: (String) -> Unit,
@@ -403,6 +421,7 @@ private fun Feed(
     @Composable
     fun row(entry: NotificationEntry) = NotificationRow(
         entry = entry,
+        householdName = notificationKinfolkName(entry, householdNames),
         selecting = selecting,
         selected = entry.id in selectedIds,
         onToggleSelect = { onToggleSelect(entry.id) },
@@ -455,6 +474,7 @@ private fun DaySeparator(label: String) {
 @Composable
 private fun NotificationRow(
     entry: NotificationEntry,
+    householdName: String,
     selecting: Boolean,
     selected: Boolean,
     onToggleSelect: () -> Unit,
@@ -469,7 +489,7 @@ private fun NotificationRow(
     val dims = AuntieTheme.dims
     val typo = AuntieTheme.typography
     val unread = isNotificationUnread(entry)
-    val actions = applicableNotificationActions(entry.targetType, entry.targetId)
+    val actions = applicableNotificationActions(entry)
 
     val border = if (unread) c.accent.copy(alpha = 0.4f) else c.border
 
@@ -499,13 +519,45 @@ private fun NotificationRow(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
+            // Context first (issue #20): who this is about, and what it points
+            // at. Either half may be absent; neither is faked.
+            val targetLabel = notificationTargetLabel(entry)
+            if (householdName.isNotBlank() || targetLabel.isNotBlank()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (householdName.isNotBlank()) {
+                        Text(
+                            text = householdName,
+                            style = typo.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = c.accent,
+                        )
+                    }
+                    if (targetLabel.isNotBlank()) {
+                        AuntieStatusPill(label = targetLabel, tone = AuntieStatusTone.Neutral)
+                    }
+                }
+            }
             Text(
-                text = entry.key.ifBlank { "(no key)" },
+                text = notificationHeadline(entry),
                 style = typo.titleMedium,
                 color = c.textPrimary,
             )
+            if (entry.description.isNotBlank()) {
+                Text(
+                    text = entry.description,
+                    style = typo.bodySmall,
+                    color = c.textPrimary,
+                )
+            }
             Text(
-                text = "${entry.category.ifBlank { "uncategorized" }} · ${entry.mode.ifBlank { "trigger" }}",
+                text = buildString {
+                    if (entry.actorName.isNotBlank()) append("${entry.actorName} · ")
+                    append(entry.category.ifBlank { "uncategorized" })
+                    append(" · ")
+                    append(entry.mode.ifBlank { "trigger" })
+                },
                 style = typo.bodySmall,
                 color = c.textDim,
             )
@@ -643,6 +695,76 @@ internal fun applicableNotificationActions(targetType: String, targetId: String)
         canCreateQuote = type == "kinfolk" && targetId.isNotBlank(),
     )
 }
+
+// ---- row CONTEXT: which household, and what the row is about (issue #20) -------
+//
+// The notifications feed used to print a catalog key and a timestamp, which is
+// what made it read like a second Activity Log. The household is the missing
+// piece, and it is NOT a column on the notification doc: `dispatcher.ts` writes
+// a free-form `data` bag plus a targetType/targetId pair, and the name-filling
+// enrichment (`enrichTemplateData.ts`) runs on the CHANNEL doc, never back onto
+// the notification. So the id is derived and the name is resolved against the
+// kinfolk directory the screen already loads. Nothing is invented: an
+// unresolvable household renders no name rather than a placeholder.
+//
+// These mirror the web build's `lib/notificationContext.ts` decision for
+// decision, so the two clients cannot disagree about whose notification this is.
+
+/** A `data` value read as a trimmed String; anything non-String reads as blank. */
+private fun dataString(entry: NotificationEntry, key: String): String =
+    (entry.data[key] as? String)?.trim().orEmpty()
+
+/**
+ * The household this notification concerns, or "" when none can be identified.
+ * Precedence matches `dispatcher.resolveTargetRef`: the explicit `data` ids
+ * first, then a kinfolk-typed target. Pure; unit-tested.
+ */
+internal fun notificationKinfolkId(entry: NotificationEntry): String {
+    val fromData = dataString(entry, "kinfolkId").ifBlank { dataString(entry, "familyId") }
+    if (fromData.isNotBlank()) return fromData
+    if (entry.targetType.trim().lowercase() == "kinfolk") return entry.targetId.trim()
+    return ""
+}
+
+/**
+ * The household's display name: a name the emitter already put on the doc, else
+ * the id resolved through [namesById]. "" when neither is available, so the row
+ * shows nothing rather than "Unknown household". Pure; unit-tested.
+ */
+internal fun notificationKinfolkName(entry: NotificationEntry, namesById: Map<String, String>): String {
+    val fromData = dataString(entry, "kinfolkName")
+    if (fromData.isNotBlank()) return fromData
+    val id = notificationKinfolkId(entry)
+    return if (id.isBlank()) "" else namesById[id].orEmpty()
+}
+
+/** Operator-language name for the linked entity, or "" when there is no target. */
+internal fun notificationTargetLabel(entry: NotificationEntry): String {
+    if (entry.targetId.isBlank()) return ""
+    return when (entry.targetType.trim().lowercase()) {
+        "invoice" -> "Invoice"
+        "kintale" -> "KinTale"
+        "kinfolk" -> "Household"
+        "booking" -> "Booking"
+        else -> ""
+    }
+}
+
+/** The row's headline: the catalog title, falling back to the raw key (AO-28). */
+internal fun notificationHeadline(entry: NotificationEntry): String =
+    entry.title.ifBlank { entry.key }.ifBlank { "(no key)" }
+
+/**
+ * Entry-aware overload of [applicableNotificationActions]. Open and Approve/Deny
+ * are unchanged; Create quote WIDENS from the string version's kinfolk-target
+ * rule to the derived household, so an invoice or booking notification that
+ * names its household can also spawn a quote for it. The button still
+ * disappears entirely when no household is identifiable, which is the property
+ * the narrow rule was really protecting. Matches the web build. Pure; unit-tested.
+ */
+internal fun applicableNotificationActions(entry: NotificationEntry): NotificationActions =
+    applicableNotificationActions(entry.targetType, entry.targetId)
+        .copy(canCreateQuote = notificationKinfolkId(entry).isNotBlank())
 
 /** Map status text to a status-pill tone. */
 private fun statusTone(status: String): AuntieStatusTone = when (status.lowercase()) {

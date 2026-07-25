@@ -213,6 +213,31 @@ describe('Invoices screen', () => {
     expect(await screen.findByRole('heading', { name: 'New quote' })).toBeInTheDocument();
   });
 
+  // The landing half of the Notifications feed's "Create quote" (issue #20).
+  // The feed navigates to /invoices?composeQuoteForKinfolkId=<id>; the router
+  // turns that search param into this prop.
+  it('composeQuoteForKinfolkId opens the quote composer seeded with that household', async () => {
+    useCollection.mockImplementation((spec: { path: string }) =>
+      spec.path === 'kinfolk'
+        ? { status: 'ready', data: [{ _id: 'k9', firstName: 'Dana', lastName: 'Ruiz' }] }
+        : { status: 'ready', data: [] },
+    );
+    render(<Invoices composeQuoteForKinfolkId="k9" />);
+    expect(await screen.findByRole('heading', { name: 'New quote' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Household' })).toHaveValue('k9');
+  });
+
+  it('opens no composer without the seed', () => {
+    render(<Invoices />);
+    expect(screen.queryByRole('heading', { name: 'New quote' })).toBeNull();
+  });
+
+  it('initialInvoiceId opens that invoice detail on mount', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'inv1' })] });
+    render(<Invoices initialInvoiceId="inv1" />);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
   it('the summary strip totals outstanding amountDue only across open invoices', () => {
     useCollection.mockReturnValue({
       status: 'ready',

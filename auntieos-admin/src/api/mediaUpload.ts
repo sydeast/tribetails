@@ -37,14 +37,20 @@ import { auth, db } from '../lib/firebase';
 // ── entity target ────────────────────────────────────────────────────────────
 
 /**
- * The three targets this dialog supports, mirroring Android/wasm's
- * `MediaEntityType` enum names (KINFOLK/KIN/BUSINESS) verbatim, the same
- * SCREAMING_SNAKE convention `MediaFile.fileType` already uses (IMAGE/VIDEO).
- * The full Kotlin enum has more members (HOUSEHOLD/VISIT_LOG/INVOICE/
- * TRAINING/TRIBAL_INTEL/USER); only the three a general Gallery upload
- * dialog can target are modeled here.
+ * The targets this pipeline supports, mirroring Android/wasm's
+ * `MediaEntityType` enum names verbatim, the same SCREAMING_SNAKE convention
+ * `MediaFile.fileType` already uses (IMAGE/VIDEO).
+ *
+ * KINFOLK/KIN/BUSINESS are the three the general Gallery upload dialog offers.
+ * TRIBAL_INTEL is added for the Tribal Intel attachment flow
+ * (`api/tribalIntelWrite.ts#uploadTribalIntelAttachment`), which reuses this
+ * exact sign/upload/write pipeline under Android's own entity name so both
+ * clients file into the same Cloudinary folder. It is deliberately NOT offered
+ * in `MediaUploadDialog`: a general gallery upload has no Tribal Intel entry to
+ * attach to. The full Kotlin enum has more members still (HOUSEHOLD/VISIT_LOG/
+ * INVOICE/TRAINING/USER); those stay unmodeled until something uploads to them.
  */
-export type UploadEntityType = 'KINFOLK' | 'KIN' | 'BUSINESS';
+export type UploadEntityType = 'KINFOLK' | 'KIN' | 'BUSINESS' | 'TRIBAL_INTEL';
 
 /**
  * The fixed entityId Android's `AdminSettingsViewModel#uploadLogo` uses for
