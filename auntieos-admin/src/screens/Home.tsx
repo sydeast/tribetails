@@ -34,13 +34,18 @@ export function Home() {
   // exact a11y this rebuild restores. Every screen follows this.
   return (
     <div className="screen">
-      <DenScreenHeading
-        kicker="Overview"
-        title="Home"
-        subtitle="Today across the Den, at a glance."
-      />
+      {/* d1 / d2: the Den entrance stagger (styles/base.css). Blocks settle in
+          reading order, matching the mocks, which stagger BLOCKS and not the
+          cards inside them, so a seven-widget board still arrives as one board. */}
+      <div className="d1">
+        <DenScreenHeading
+          kicker="Overview"
+          title="Home"
+          subtitle="Today across the Den, at a glance."
+        />
+      </div>
 
-      <div className="home-dash">
+      <div className="home-dash d2">
         <SafeboxWidget />
         <UnreadMessagesWidget onOpenInbox={() => void navigate({ to: '/inbox' })} />
         <CareFlagsWidget />

@@ -337,6 +337,11 @@
   --dur-fast: 120ms;
   --dur-base: 180ms;
   --dur-slow: 300ms;
+  /* Screen entrance only (the `rise` keyframe in base.css). Deliberately far
+     longer than --dur-slow: those three are interaction feedback, where 300ms
+     is already sluggish, and this is a once-per-navigation settle. 600ms is the
+     figure all 39 ui-ideas mocks use, and the one the MyTribe portal shipped. */
+  --dur-rise: 600ms;
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
 }

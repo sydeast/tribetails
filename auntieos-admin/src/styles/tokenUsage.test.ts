@@ -195,3 +195,44 @@ describe('Fraunces actually renders', () => {
   });
 });
 
+
+describe('the Den screen entrance', () => {
+  const base = readFileSync(join(stylesDir, 'base.css'), 'utf8');
+
+  it('declares the rise keyframe and all four stagger steps', () => {
+    expect(base).toContain('@keyframes rise');
+    for (const step of ['.d1', '.d2', '.d3', '.d4']) {
+      expect(base).toContain(`${step} {`);
+    }
+  });
+
+  it('fills the rise animation BOTH ways so a delayed block is never mid-flash', () => {
+    // Without `both`, an element sits at full opacity through its own delay and
+    // then snaps back to invisible to start animating.
+    expect(base).toMatch(/animation: rise var\(--dur-rise\)[^;]*both;/);
+  });
+
+  it('guards reduced motion globally rather than per file', () => {
+    // Per-file guards mean every new animation has to remember to opt in, and
+    // before 2026-07-25 only 8 of 79 stylesheets did.
+    const guard = base.slice(base.indexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(guard).toContain('animation: none !important');
+    expect(guard).toMatch(/\*,\s*\*::before,\s*\*::after/);
+  });
+
+
+  it('staggers the three screens the audit called out', () => {
+    // Home, Directory and KinTales are the surfaces the 2026-07-25 audit picked
+    // as worth the entrance. A screen with no `d*` class hard-cuts into place.
+    for (const [screen, steps] of [
+      ['screens/Home.tsx', ['d1', 'd2']],
+      ['screens/Directory.tsx', ['d1', 'd2']],
+      ['screens/KinTales.tsx', ['d1', 'd2', 'd3']],
+    ] as const) {
+      const src = readFileSync(join(srcDir, screen), 'utf8');
+      for (const step of steps) {
+        expect(src, `${screen} is missing .${step}`).toMatch(new RegExp(`["' ]${step}["' ]`));
+      }
+    }
+  });
+});
