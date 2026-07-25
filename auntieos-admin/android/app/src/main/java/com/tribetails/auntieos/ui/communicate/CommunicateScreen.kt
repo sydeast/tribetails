@@ -58,7 +58,6 @@ import com.tribetails.auntieos.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.ui.components.AuntieIconTile
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieSearchField
-import com.tribetails.auntieos.ui.components.AuntieSelectField
 import com.tribetails.auntieos.ui.components.AuntieSpinner
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
@@ -79,23 +78,29 @@ import com.tribetails.auntieos.domain.isoDatePrefixOrNull
 // stacked into a single phone-width column.
 //
 // Backed today (drives off CommunicateViewModel / CommunicateUiState):
-//   - kinfolkList    : the recipient picker resolves a real Kinfolk so a
-//                      kinfolk_id is chosen client-side, not fuzzy-matched.
+//   - kinfolkList    : the recipient picker resolves a real Kinfolk, and the
+//                      generate call now SENDS that kinfolk_id, so the server
+//                      reads the household directly instead of fuzzy-matching
+//                      the display name back into one of possibly several Danas.
+//                      This comment used to make that claim while the id was
+//                      being thrown away; it is true as of this slice.
 //   - VM.generate    : turns recipient + tone + length + notes into an AI draft.
-//   - VM.approveDraft: the backed send-path that promotes the draft + audit log.
+//   - VM.approveDraft: promotes the draft in Firestore and THEN writes the audit
+//                      entry, in that order, the write gating everything after
+//                      it. The audit half also only became real in this slice;
+//                      before it, nothing in ui/communicate ever called
+//                      logActivity while the on-screen caption promised it did.
 //   - dossier / kin / kin411 + VM.synthesizeProfile : the recipient's living
 //                      context panel.
-//
-// Built for real (this slice):
-//   - External / outside-tribe send to a raw email or phone, backed by the deployed
-//     sendExternalMessage + suppressExternalRecipient callables (see ExternalSendSection).
-//
-// NOT backed yet (gated dark behind FF_ flags below, never faked, mirroring web):
-//   - Broadcast (segment + multi-channel fan-out): no broadcast path on the VM.
-//   - Recent sends with open / read engagement metrics: no metrics source.
+//   - External / outside-tribe send to a raw email or phone, backed by the
+//     deployed sendExternalMessage + suppressExternalRecipient callables
+//     (see ExternalSendSection).
+//   - Broadcast: saved segments, ad-hoc criteria, four channels, per-channel
+//     tally. Gated by auntieos.communicate.broadcast, which defaults ON.
+//   - Recent sends with engagement counts, via listRecentSends.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Den compose modes. Only [Personalize] is backend-wired. */
+/** Den compose modes. */
 private enum class ComposeMode(val label: String) {
     Personalize("Personalize"),
     Broadcast("Broadcast"),
@@ -105,19 +110,57 @@ private enum class ComposeMode(val label: String) {
 // registry (read via LocalFeatureFlags.current); it has no backing ViewModel path yet, so
 // it surfaces a Not-wired banner. External send is now built for real (no flag).
 
+// The seven message types the composer offers, in the operator's order.
+//
+// A message type is a COPY FORMAT, not a delivery channel. `push` here asks the
+// generator for a notification-shelf line: front-loaded, no greeting, no signoff,
+// short enough to survive a lock screen. It has nothing to do with the broadcast
+// push channel that actually delivers one, and approving a push draft in
+// Personalize sends nothing.
+//
+// This list was four entries until 2026-07-24, which was two bugs at once. The
+// archive declared `social_post` and `general` on its CommunicationType enum and
+// mapped no UI option to them, so both were accepted by the function and
+// reachable from nothing for that app's whole life. And `push` was not supported
+// by the server at all. The bidirectional drift guard in
+// web/functions/test/generate.test.js now fails if this list and the function's
+// ALLOWED_TYPES disagree in EITHER direction, which is what makes a silently
+// missing format impossible to reintroduce.
+//
+// `visit_report` reads "KinTale" because that is this product's word for a visit
+// report. The WIRE value stays visit_report, because that is what generate.js
+// switches its prompt framing and its training_documents lookup on; renaming it
+// would quietly change the voice. There is still deliberately no KinTale
+// BROADCAST channel: broadcastMessage dispatches inapp/email/sms/push and has no
+// KinTale delivery leg, so such a chip could not deliver.
 private val commTypeDisplayMap = mapOf(
-    "visit_report" to "Visit Report",
-    "sms" to "SMS",
     "email" to "Email",
-    "social_post" to "Social Post",
-    "blog_post" to "Blog Post",
+    "sms" to "SMS",
+    "push" to "Push",
+    "social_post" to "Social",
+    "blog_post" to "Blog",
     "general" to "General",
+    "visit_report" to "KinTale",
 )
 
 private val commTypeOptions =
-    listOf("visit_report", "sms", "email", "social_post", "blog_post", "general")
+    listOf("email", "sms", "push", "social_post", "blog_post", "general", "visit_report")
 
-private val toneOptions = listOf("warm", "casual", "celebratory", "urgent", "professional")
+/** The offered wire values, in order. Exposed for the catalog test. */
+internal fun communicateMessageTypeOptions(): List<String> = commTypeOptions
+
+/**
+ * The operator-facing label for a wire value. An unknown value renders as
+ * itself rather than blank or crashing, which is the honest fallback for a
+ * format this build does not know about yet.
+ */
+internal fun communicateMessageTypeLabel(wire: String): String = commTypeDisplayMap[wire] ?: wire
+
+// The archive's Tone enum, verbatim. The previous Android set
+// (warm/casual/celebratory/urgent/professional) was invented here and shared
+// only one value with the archive and with web, so the same tone chip produced
+// different copy depending on which surface the operator was standing in.
+private val toneOptions = listOf("warm", "cheerful", "professional", "playful")
 private val lengthOptions = listOf("short", "medium", "long")
 
 private fun titleCase(raw: String): String = raw.replaceFirstChar { it.uppercase() }
@@ -280,14 +323,20 @@ private fun ComposePanel(
                 return@Column
             }
 
-            // ── Communication type (spec 19 item 1) ───────────────────────────
-            AuntieSelectField(
-                label = "Communication type",
-                options = commTypeOptions,
-                selected = state.commType,
-                onSelect = viewModel::setCommType,
-                optionLabel = { commTypeDisplayMap[it] ?: it },
-            )
+            // ── Message type (spec 19 item 1) ─────────────────────────────────
+            // Chips, not a dropdown: four options that change what the whole rest
+            // of the form means should be visible at once, and this matches the
+            // archive and the web twin.
+            Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
+                AuntieFieldLabel(text = "Message type")
+                AuntieChipGroup(
+                    options = commTypeOptions,
+                    selected = setOf(state.commType),
+                    onSelectionChange = { next -> next.firstOrNull()?.let(viewModel::setCommType) },
+                    label = { commTypeDisplayMap[it] ?: it },
+                    singleSelect = true,
+                )
+            }
 
             // ── Recipient ── omitted for recipient-less blog/social (spec 19 item 2)
             if (needsRecipient(state.commType)) {
@@ -398,7 +447,7 @@ private fun ComposePanel(
                         },
                     )
                     Text(
-                        text = "approving promotes the draft in Firestore and logs it to the audit trail",
+                        text = "approving promotes the draft in Firestore, then logs it to the audit trail. Nothing runs unless the write lands",
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
                     )

@@ -1,487 +1,502 @@
 import { useId, useState } from 'react';
 import { useCollection } from '../lib/firestore';
 import { str } from '../lib/coerce';
-import { KINFOLK_QUERY, kinfolkDisplayName, kinfolkSurnameSortKey, type Kinfolk } from '../api/directory';
+import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import {
-  generateDraft,
-  sendPersonalizedMessage,
-  draftOpening,
-  type GenerateDraftArgs,
-  type GenerateDraftResult,
-  type PersonalizeChannel,
-  type SendPersonalizedArgs,
-  type SendPersonalizedResult,
-} from '../api/communicateGenerate';
-import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+  PERSONALIZE_MESSAGE_TYPES,
+  PERSONALIZE_TONES,
+  PERSONALIZE_LENGTHS,
+  DEFAULT_MESSAGE_TYPE,
+  DEFAULT_TONE,
+  DEFAULT_LENGTH,
+  messageTypeDef,
+  filterRecipients,
+  generateBlocker,
+  approveBlocker,
+  buildGeneratePayload,
+  draftSubtitle,
+  type PersonalizeFormState,
+} from '../lib/personalizeCompose';
+import { generateDraft, draftOpening, type GenerateDraftResult } from '../api/communicateGenerate';
+import { approveGeneratedDraft, type ApproveDraftResult } from '../api/communicateApprove';
+import { sendExternalMessage } from '../api/externalSend';
+import { DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
+import { RecipientContextPanel } from '../components/RecipientContextPanel';
 import { Banner } from '../components/Banner';
 import './CommunicatePersonalize.css';
 
 const NOTES_MAX = 2000;
-const TONE_MAX = 200;
-const LENGTH_MAX = 60;
-
-interface CommunicatePersonalizeProps {
-  /** Back to the Recent list. Wired by Communicate.tsx's "Personalize a message" toggle. */
-  onClose: () => void;
-}
+const SUBJECT_MAX = 500;
 
 /**
- * Communicate PERSONALIZE: the 1:1 AI-drafted note flow `Communicate.tsx`'s
- * module doc names as "not-yet-built" (see that file, and
- * `api/communicateGenerate.ts`'s header doc for the confirmed `generate` /
- * `sendMessage` backend contract this screen calls).
+ * PERSONALIZE: the Auntie voice generator.
  *
- * Four steps, fail-loud and disabled-while-busy throughout, same shape as
- * `CommunicateCompose.tsx`'s broadcast flow:
- *   1. Pick a recipient (a live `kinfolk` listener) and a channel (email or
- *      text, gated to whichever contact method that kinfolk actually has on
- *      file), then describe what happened.
- *   2. "Generate draft" calls `generateDraft`; the result is an EDITABLE
- *      textarea, never a read-only preview, since the whole point of review
- *      is to let the operator fix it before it goes out.
- *   3. "Regenerate" re-calls with `avoid_opening` set to the current draft's
- *      opening line, so the model does not repeat an opener the operator
- *      rejected by asking again.
- *   4. "Review & send" opens a confirm Dialog naming the recipient, the
- *      channel, and the exact message body, since this goes to a real
- *      kinfolk and is not undoable. A success replaces the form with the
- *      real send result, then offers "Send another".
+ * This is the archived Compose app's `ComposeMode.Personalize` branch
+ * (`screens/communicate/CommunicateScreen.kt`), restored as the default view of
+ * Communicate. It writes brand-voice COPY through `generateAuntieCopy`. It has
+ * never been text to speech.
+ *
+ * The form, in the archive's order: message type, recipient, subject, notes,
+ * tone and length, generate, editable draft, approve.
+ *
+ * ── THE RECIPIENT PICKER RESOLVES AN ID ─────────────────────────────────────
+ * There is deliberately no free-text recipient field. Every send names a
+ * household by its real `kinfolk` doc id, which goes on the wire as
+ * `kinfolk_id`. The archive picked a real Kinfolk object here too and then
+ * transmitted only its display NAME, leaving the server to re-derive it with a
+ * case-folded startsWith scan; two households named Dana and the wrong dossier
+ * fed the model. Nothing typed can reach the generator.
+ *
+ * ── APPROVE ─────────────────────────────────────────────────────────────────
+ * `approveGeneratedDraft` owns the ordering: the Firestore write is a gate, the
+ * audit entry follows it, and the send follows that. See `api/communicateApprove.ts`
+ * for why that order and no other. This screen decides only ONE thing about it,
+ * whether there is a `deliver` step at all: a Text or an Email goes out through
+ * `sendExternalMessage`, while a KinTale report and a Blog post are promoted and
+ * recorded but sent by nothing. A deliverable approve gets a confirm dialog
+ * first, because it reaches a real household and is not undoable.
  */
-export function CommunicatePersonalize({ onClose }: CommunicatePersonalizeProps) {
+export function CommunicatePersonalize() {
   const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
 
-  const [selectedId, setSelectedId] = useState('');
-  const [channel, setChannel] = useState<PersonalizeChannel>('email');
-  const [rawNotes, setRawNotes] = useState('');
-  const [toneHint, setToneHint] = useState('');
-  const [maxLength, setMaxLength] = useState('');
-  // Email subject. sendExternalMessage rejects a blank subject on the email
-  // channel, and an email with no subject line is bad on its own terms. Seeded
-  // from the generated title (see want_title in handleGenerate) unless the
-  // operator has typed their own.
-  const [subject, setSubject] = useState('');
+  const [form, setForm] = useState<PersonalizeFormState>({
+    messageType: DEFAULT_MESSAGE_TYPE,
+    tone: DEFAULT_TONE,
+    length: DEFAULT_LENGTH,
+    subject: '',
+    notes: '',
+    recipientId: '',
+  });
   const [subjectTouched, setSubjectTouched] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [query, setQuery] = useState('');
 
   const [generating, setGenerating] = useState(false);
-  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [draft, setDraft] = useState<GenerateDraftResult | null>(null);
   const [draftText, setDraftText] = useState('');
 
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
-  const [sendResult, setSendResult] = useState<SendPersonalizedResult | null>(null);
+  const [approving, setApproving] = useState(false);
+  const [approveError, setApproveError] = useState<string | null>(null);
+  const [approved, setApproved] = useState<ApproveDraftResult | null>(null);
 
-  const legendId = useId();
-  const recipientSelectId = useId();
+  const typeLegendId = useId();
+  const toneLegendId = useId();
+  const lengthLegendId = useId();
+  const searchId = useId();
+  const subjectId = useId();
+  const notesId = useId();
+  const draftId = useId();
 
-  const busy = generating || sending;
+  const def = messageTypeDef(form.messageType);
+  const busy = generating || approving;
 
-  function selectedKinfolkOf(rows: Kinfolk[]): Kinfolk | undefined {
-    return rows.find((kf) => kf._id === selectedId);
+  function patch(next: Partial<PersonalizeFormState>) {
+    setForm((f) => ({ ...f, ...next }));
   }
 
-  function pickRecipient(id: string, rows: Kinfolk[]) {
-    setSelectedId(id);
+  /** A new draft invalidates the old one; never leave a stale approve button live. */
+  function clearDraft() {
     setDraft(null);
     setDraftText('');
-    setGenerateError(null);
-    setSendResult(null);
-    setSendError(null);
-    const kf = rows.find((r) => r._id === id);
-    if (!kf) return;
-    // Prefer email when the kinfolk has one on file; fall back to sms when
-    // only a phone number is present. Neither present is left as 'email' so
-    // the "no contact method" banner below has something concrete to name.
-    if (str(kf.email).trim() !== '') setChannel('email');
-    else if (str(kf.phoneNumber).trim() !== '') setChannel('sms');
+    setApproved(null);
+    setApproveError(null);
+    setFormError(null);
   }
 
-  async function handleGenerate(kf: Kinfolk, regenerate: boolean) {
+  async function handleGenerate(kf: Kinfolk | undefined, regenerate: boolean) {
+    if (busy) return;
+    const blocker = generateBlocker(form);
+    if (blocker !== null) {
+      setFormError(blocker);
+      return;
+    }
+    setFormError(null);
+    setApproved(null);
+    setApproveError(null);
     setGenerating(true);
-    setGenerateError(null);
-    const args: GenerateDraftArgs = {
-      communication_type: channel,
-      recipient: kinfolkDisplayName(kf),
-      raw_notes: rawNotes.trim(),
-      ...(toneHint.trim() !== '' ? { tone_hint: toneHint.trim() } : {}),
-      ...(maxLength.trim() !== '' ? { max_length: maxLength.trim() } : {}),
-      ...(regenerate && draftText.trim() !== '' ? { avoid_opening: draftOpening(draftText) } : {}),
-      // Only email has somewhere to put a title (the subject line), which is the
-      // condition want_title's own doc sets for paying for the extra model call.
-      ...(channel === 'email' ? { want_title: true } : {}),
-    };
     try {
-      const result = await generateDraft(args);
+      const result = await generateDraft(
+        buildGeneratePayload(form, kf, regenerate && draftText.trim() !== '' ? draftOpening(draftText) : null),
+      );
       setDraft(result);
       setDraftText(result.generated_copy);
       // Never overwrite a subject the operator typed. Same rule the KinTale
-      // composer uses for its Ask Auntie headline.
-      if (channel === 'email' && !subjectTouched && result.generated_title.trim() !== '') {
-        setSubject(result.generated_title.trim());
+      // composer uses for its headline.
+      if (def.wantsTitle && !subjectTouched && result.generated_title.trim() !== '') {
+        patch({ subject: result.generated_title.trim() });
       }
-      setSendResult(null);
     } catch (err) {
-      setGenerateError(err instanceof Error ? err.message : 'Generate failed');
+      setFormError(err instanceof Error ? err.message : 'Generate failed.');
     } finally {
       setGenerating(false);
     }
   }
 
-  /** Email needs a subject; sms does not have one. */
-  const subjectMissing = channel === 'email' && subject.trim() === '';
-
-  function openConfirm() {
-    if (busy || draftText.trim() === '') return;
-    if (subjectMissing) {
-      // Reveal the inline error rather than opening a confirm the send would
-      // only reject server-side.
-      setSubjectTouched(true);
-      return;
-    }
-    setSendError(null);
-    setConfirmOpen(true);
-  }
-
-  async function confirmSend(kf: Kinfolk) {
+  async function runApprove(kf: Kinfolk | undefined) {
     if (busy) return;
-    setSending(true);
-    setSendError(null);
+    setApproving(true);
+    setApproveError(null);
     try {
-      const args: SendPersonalizedArgs = {
-        channel,
-        message_body: draftText.trim(),
-        kinfolk_id: kf._id,
-        ...(channel === 'email'
-          ? { recipient_email: str(kf.email), subject: subject.trim() }
-          : { recipient_phone: str(kf.phoneNumber) }),
-      };
-      const result = await sendPersonalizedMessage(args);
-      setSendResult(result);
+      // The deliver step exists only for a type that actually sends. Passing an
+      // always-present callback that sometimes no-ops would make `delivered`
+      // claim a send that never happened.
+      const deliver =
+        def.deliverable !== false && kf !== undefined
+          ? async () => {
+              const res = await sendExternalMessage({
+                channel: def.deliverable === 'email' ? 'email' : 'sms',
+                to: def.deliverable === 'email' ? str(kf.email) : str(kf.phoneNumber),
+                subject: form.subject,
+                body: draftText,
+                transactional: true,
+              });
+              return res.providerMessageId;
+            }
+          : undefined;
+
+      const result = await approveGeneratedDraft({
+        draftId: draft?.draft_id ?? '',
+        editedCopy: draftText,
+        kinfolkId: draft?.kinfolk_id ?? (form.recipientId !== '' ? form.recipientId : null),
+        subject: def.wantsTitle ? form.subject.trim() : null,
+        ...(deliver ? { deliver } : {}),
+      });
+      setApproved(result);
       setConfirmOpen(false);
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : 'Send failed');
+      setApproveError(err instanceof Error ? err.message : 'Approve failed.');
       setConfirmOpen(false);
     } finally {
-      setSending(false);
+      setApproving(false);
     }
   }
 
-  function sendAnother() {
-    setSelectedId('');
-    setChannel('email');
-    setRawNotes('');
-    setToneHint('');
-    setMaxLength('');
-    setDraft(null);
-    setDraftText('');
-    setGenerateError(null);
-    setSendResult(null);
-    setSendError(null);
+  function handleApproveClick(kf: Kinfolk | undefined) {
+    if (busy) return;
+    const blocker = approveBlocker(form, kf, draft?.draft_id ?? null, draftText);
+    if (blocker !== null) {
+      setApproveError(blocker);
+      return;
+    }
+    setApproveError(null);
+    if (def.deliverable !== false) {
+      setConfirmOpen(true);
+      return;
+    }
+    void runApprove(kf);
   }
 
   return (
-    <div className="screen">
-      <DenScreenHeading
-        kicker="The Den · Communicate"
-        title="Personalize"
-        accentTail="a message"
-        subtitle="Draft a one-to-one note in Auntie's voice for a single kinfolk, then review and send it."
-        trailing={<GhostButton label="Back to Recent" onClick={onClose} />}
-      />
+    <AsyncRegion
+      state={kinfolkState}
+      what="kinfolk"
+      isEmpty={(rows) => rows.length === 0}
+      empty={
+        <Banner tone="warning">
+          No kinfolk on file yet. Add one in Directory before personalizing a message.
+        </Banner>
+      }
+    >
+      {(rows) => {
+        const kf = rows.find((r) => r._id === form.recipientId);
+        const matches = filterRecipients(rows, query);
+        const approveLabel = def.deliverable !== false ? 'Approve and send' : 'Approve draft';
 
-      {sendResult ? (
-        <SendResultPanel
-          channel={channel}
-          providerId={sendResult.providerId}
-          onSendAnother={sendAnother}
-        />
-      ) : (
-        <AsyncRegion
-          state={kinfolkState}
-          what="kinfolk"
-          isEmpty={(rows) => rows.length === 0}
-          empty={<Banner tone="warning">No kinfolk on file yet. Add one in Directory before personalizing a message.</Banner>}
-        >
-          {(rows) => {
-            const sorted = [...rows].sort((a, b) => {
-              const ak = kinfolkSurnameSortKey(a);
-              const bk = kinfolkSurnameSortKey(b);
-              return ak < bk ? -1 : ak > bk ? 1 : 0;
-            });
-            const kf = selectedKinfolkOf(sorted);
-            const hasEmail = kf !== undefined && str(kf.email).trim() !== '';
-            const hasPhone = kf !== undefined && str(kf.phoneNumber).trim() !== '';
-            const noContactMethod = kf !== undefined && !hasEmail && !hasPhone;
-            const channelUsable = kf !== undefined && (channel === 'email' ? hasEmail : hasPhone);
-            const recipientName = kf ? kinfolkDisplayName(kf) : '';
-            const formValid = kf !== undefined && rawNotes.trim() !== '' && channelUsable;
-
-            return (
-              <>
-                <DenPanel title="Recipient" subtitle="Who this message is for, and how to reach them.">
-                  <div className="personalize__form">
-                    <label className="personalize__field" htmlFor={recipientSelectId}>
-                      <span className="personalize__field-label">Recipient</span>
-                      <select
-                        id={recipientSelectId}
-                        className="personalize__select"
-                        value={selectedId}
-                        disabled={busy}
-                        onChange={(e) => pickRecipient(e.target.value, sorted)}
-                      >
-                        <option value="">Choose a kinfolk…</option>
-                        {sorted.map((row) => (
-                          <option key={row._id} value={row._id}>
-                            {kinfolkDisplayName(row)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    {kf && (
-                      <fieldset className="personalize__fieldset" aria-labelledby={`${legendId}-channel`}>
-                        <legend id={`${legendId}-channel`} className="personalize__legend">
-                          Channel
-                        </legend>
-                        <div className="personalize__radio-row" role="radiogroup" aria-labelledby={`${legendId}-channel`}>
-                          <label className="personalize__radio">
-                            <input
-                              type="radio"
-                              name="personalizeChannel"
-                              checked={channel === 'email'}
-                              disabled={!hasEmail || busy}
-                              onChange={() => setChannel('email')}
-                            />
-                            Email{hasEmail ? ` (${kf.email})` : ' (none on file)'}
-                          </label>
-                          <label className="personalize__radio">
-                            <input
-                              type="radio"
-                              name="personalizeChannel"
-                              checked={channel === 'sms'}
-                              disabled={!hasPhone || busy}
-                              onChange={() => setChannel('sms')}
-                            />
-                            Text{hasPhone ? ` (${kf.phoneNumber})` : ' (none on file)'}
-                          </label>
-                        </div>
-                      </fieldset>
-                    )}
-
-                    {noContactMethod && (
-                      <Banner tone="warning" title="No contact method on file">
-                        {recipientName} has no email or phone number on file. Add one in Directory before sending.
-                      </Banner>
-                    )}
-                  </div>
-                </DenPanel>
-
-                <DenPanel title="What's this about" subtitle="A few notes; Auntie turns them into the message.">
-                  <div className="personalize__form">
-                    <label className="personalize__field">
-                      <span className="personalize__field-label">Notes</span>
-                      <textarea
-                        className="personalize__textarea"
-                        value={rawNotes}
-                        disabled={busy}
-                        maxLength={NOTES_MAX}
-                        rows={5}
-                        onChange={(e) => setRawNotes(e.target.value)}
-                        placeholder="What happened, or what you want this message to say."
-                      />
-                      <span className="personalize__char-count">
-                        {rawNotes.length} / {NOTES_MAX}
-                      </span>
-                    </label>
-
-                    <label className="personalize__field">
-                      <span className="personalize__field-label">Tone (optional)</span>
-                      <input
-                        type="text"
-                        className="personalize__text-input"
-                        value={toneHint}
-                        disabled={busy}
-                        maxLength={TONE_MAX}
-                        onChange={(e) => setToneHint(e.target.value)}
-                        placeholder="e.g. reassuring, celebratory"
-                      />
-                    </label>
-
-                    <label className="personalize__field">
-                      <span className="personalize__field-label">Length (optional)</span>
-                      <input
-                        type="text"
-                        className="personalize__text-input"
-                        value={maxLength}
-                        disabled={busy}
-                        maxLength={LENGTH_MAX}
-                        onChange={(e) => setMaxLength(e.target.value)}
-                        placeholder="e.g. short, 2-3 sentences"
-                      />
-                    </label>
-
-                    {generateError !== null && (
-                      <Banner tone="error" title="Generate failed">
-                        {generateError}
-                      </Banner>
-                    )}
-
-                    {/* Once a draft exists, the ONLY generate control is the Draft
-                        panel's own "Regenerate" button below: two buttons both
-                        reading "Regenerate" on screen at once would be a genuine
-                        ambiguity, not just a test-query annoyance. Editing notes/
-                        tone/length here still feeds that same regenerate call. */}
-                    {!draft && (
-                      <div className="personalize__actions">
-                        <PrimaryButton
-                          label="Generate draft"
-                          busy={generating}
-                          disabled={!formValid || generating}
-                          onClick={() => {
-                            if (kf) void handleGenerate(kf, false);
+        return (
+          <>
+            <DenPanel
+              title="Personalize"
+              subtitle="A one-to-one note that uses the recipient's dossier and kin context."
+            >
+              <div className="personalize__form">
+                <fieldset className="personalize__fieldset" aria-labelledby={typeLegendId}>
+                  <legend id={typeLegendId} className="personalize__legend">
+                    Message type
+                  </legend>
+                  <div className="personalize__chip-row" role="radiogroup" aria-labelledby={typeLegendId}>
+                    {PERSONALIZE_MESSAGE_TYPES.map((t) => (
+                      <label key={t.key} className="personalize__chip">
+                        <input
+                          type="radio"
+                          name="personalizeMessageType"
+                          checked={form.messageType === t.key}
+                          disabled={busy}
+                          onChange={() => {
+                            patch({ messageType: t.key });
+                            clearDraft();
                           }}
                         />
+                        {t.label}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+
+                {def.needsRecipient && (
+                  <div className="personalize__field">
+                    <span className="personalize__field-label">Recipient</span>
+                    <div className="personalize__recipient-row">
+                      <span className="personalize__recipient-name">
+                        {kf ? kinfolkDisplayName(kf) : 'No recipient selected'}
+                      </span>
+                      <GhostButton
+                        label={pickerOpen ? 'Close' : kf ? 'Change' : 'Choose'}
+                        disabled={busy}
+                        onClick={() => setPickerOpen((o) => !o)}
+                      />
+                    </div>
+
+                    {pickerOpen && (
+                      <div className="personalize__picker">
+                        <label className="personalize__field" htmlFor={searchId}>
+                          <span className="personalize__field-label">Search kinfolk by name or email</span>
+                          <input
+                            id={searchId}
+                            type="search"
+                            className="personalize__text-input"
+                            value={query}
+                            disabled={busy}
+                            onChange={(e) => setQuery(e.target.value)}
+                            placeholder="Start typing a name"
+                          />
+                        </label>
+
+                        {matches.length === 0 ? (
+                          <EmptyHint>No kinfolk match that search.</EmptyHint>
+                        ) : (
+                          <ul className="personalize__picker-list">
+                            {matches.map((row) => (
+                              <li key={row._id}>
+                                <button
+                                  type="button"
+                                  className="personalize__picker-row"
+                                  aria-pressed={form.recipientId === row._id}
+                                  onClick={() => {
+                                    patch({ recipientId: row._id });
+                                    clearDraft();
+                                    setPickerOpen(false);
+                                    setQuery('');
+                                  }}
+                                >
+                                  <span className="personalize__picker-name">{kinfolkDisplayName(row)}</span>
+                                  <span className="personalize__picker-contact">
+                                    {str(row.email) || str(row.phoneNumber) || 'no contact on file'}
+                                  </span>
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </div>
                     )}
                   </div>
-                </DenPanel>
-
-                {draft && kf && (
-                  <DenPanel
-                    title="Draft"
-                    subtitle={draft.model ? `Generated by ${draft.model}. Edit freely before sending.` : 'Edit freely before sending.'}
-                  >
-                    <div className="personalize__form">
-                      {draft.draftWriteFailed && (
-                        <Banner tone="warning" title="Draft not saved">
-                          {draft.warnings.length > 0
-                            ? draft.warnings.join(' ')
-                            : 'This draft was generated but not saved. Copy the text below before navigating away.'}
-                        </Banner>
-                      )}
-
-                      {channel === 'email' && (
-                        <label className="personalize__field">
-                          <span className="personalize__field-label">Subject</span>
-                          <input
-                            className="personalize__text-input"
-                            type="text"
-                            value={subject}
-                            disabled={busy}
-                            maxLength={500}
-                            onChange={(e) => {
-                              setSubject(e.target.value);
-                              setSubjectTouched(true);
-                            }}
-                            onBlur={() => setSubjectTouched(true)}
-                          />
-                          {subjectTouched && subjectMissing && (
-                            <span className="personalize__field-error" role="alert">
-                              A subject is required for an email.
-                            </span>
-                          )}
-                        </label>
-                      )}
-
-                      <label className="personalize__field">
-                        <span className="personalize__field-label">Message</span>
-                        <textarea
-                          className="personalize__textarea personalize__textarea--draft"
-                          value={draftText}
-                          disabled={busy}
-                          rows={8}
-                          onChange={(e) => setDraftText(e.target.value)}
-                        />
-                      </label>
-
-                      {sendError !== null && (
-                        <Banner tone="error" title="Send failed">
-                          {sendError}
-                        </Banner>
-                      )}
-
-                      <div className="personalize__actions">
-                        <GhostButton
-                          label="Regenerate"
-                          disabled={!formValid || generating || sending}
-                          onClick={() => void handleGenerate(kf, true)}
-                        />
-                        <PrimaryButton
-                          label="Review & send"
-                          disabled={draftText.trim() === '' || busy}
-                          onClick={openConfirm}
-                        />
-                      </div>
-                    </div>
-                  </DenPanel>
                 )}
 
-                {confirmOpen && kf && (
-                  <Dialog
-                    title="Send this message?"
-                    onClose={() => {
-                      if (!sending) setConfirmOpen(false);
+                <label className="personalize__field" htmlFor={subjectId}>
+                  <span className="personalize__field-label">Subject</span>
+                  <input
+                    id={subjectId}
+                    type="text"
+                    className="personalize__text-input"
+                    value={form.subject}
+                    disabled={busy}
+                    maxLength={SUBJECT_MAX}
+                    onChange={(e) => {
+                      patch({ subject: e.target.value });
+                      setSubjectTouched(true);
                     }}
-                    footer={
-                      <>
-                        <GhostButton label="Cancel" onClick={() => setConfirmOpen(false)} disabled={sending} />
-                        <PrimaryButton
-                          label={sending ? 'Sending…' : 'Send now'}
-                          onClick={() => void confirmSend(kf)}
-                          disabled={sending}
-                          busy={sending}
-                        />
-                      </>
-                    }
-                  >
-                    <p className="personalize__confirm-line">
-                      <strong>To:</strong> {recipientName} ({channel === 'email' ? kf.email : kf.phoneNumber})
-                    </p>
-                    <p className="personalize__confirm-line">
-                      <strong>Channel:</strong> {channel === 'email' ? 'Email' : 'Text (SMS)'}
-                    </p>
-                    {channel === 'email' && (
-                      <p className="personalize__confirm-line">
-                        <strong>Subject:</strong> {subject.trim()}
-                      </p>
-                    )}
-                    <p className="personalize__confirm-line">
-                      <strong>Message:</strong> {draftText}
-                    </p>
-                    <p className="personalize__confirm-note">
-                      This sends to {recipientName} right now. It is not undoable.
-                    </p>
-                  </Dialog>
+                    placeholder="What is this about?"
+                  />
+                </label>
+
+                {/* The character count sits OUTSIDE the <label>. Inside it, it
+                    joins the accessible name, so the field announces as "Notes
+                    0 / 2000" and the name changes on every keystroke. */}
+                <div className="personalize__field">
+                  <label className="personalize__field-label" htmlFor={notesId}>
+                    Notes
+                  </label>
+                  <textarea
+                    id={notesId}
+                    className="personalize__textarea"
+                    value={form.notes}
+                    disabled={busy}
+                    maxLength={NOTES_MAX}
+                    rows={6}
+                    onChange={(e) => patch({ notes: e.target.value })}
+                    placeholder="Bullets or free-form. The more honest, the warmer the draft."
+                  />
+                  <span className="personalize__char-count">
+                    {form.notes.length} / {NOTES_MAX}
+                  </span>
+                </div>
+
+                <div className="personalize__chip-columns">
+                  <fieldset className="personalize__fieldset" aria-labelledby={toneLegendId}>
+                    <legend id={toneLegendId} className="personalize__legend">
+                      Tone
+                    </legend>
+                    <div className="personalize__chip-row" role="radiogroup" aria-labelledby={toneLegendId}>
+                      {PERSONALIZE_TONES.map((t) => (
+                        <label key={t.key} className="personalize__chip">
+                          <input
+                            type="radio"
+                            name="personalizeTone"
+                            checked={form.tone === t.key}
+                            disabled={busy}
+                            onChange={() => patch({ tone: t.key })}
+                          />
+                          {t.label}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+
+                  <fieldset className="personalize__fieldset" aria-labelledby={lengthLegendId}>
+                    <legend id={lengthLegendId} className="personalize__legend">
+                      Length
+                    </legend>
+                    <div className="personalize__chip-row" role="radiogroup" aria-labelledby={lengthLegendId}>
+                      {PERSONALIZE_LENGTHS.map((l) => (
+                        <label key={l.key} className="personalize__chip">
+                          <input
+                            type="radio"
+                            name="personalizeLength"
+                            checked={form.length === l.key}
+                            disabled={busy}
+                            onChange={() => patch({ length: l.key })}
+                          />
+                          {l.label}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                </div>
+
+                {formError !== null && (
+                  <Banner tone="error" title="Generate blocked">
+                    {formError}
+                  </Banner>
                 )}
-              </>
-            );
-          }}
-        </AsyncRegion>
-      )}
-    </div>
-  );
-}
 
-interface SendResultPanelProps {
-  channel: PersonalizeChannel;
-  providerId: string | null;
-  onSendAnother: () => void;
-}
+                <div className="personalize__actions">
+                  <PrimaryButton
+                    label={draft === null ? 'Generate draft' : 'Regenerate'}
+                    busy={generating}
+                    disabled={busy}
+                    onClick={() => void handleGenerate(kf, draft !== null)}
+                  />
+                </div>
+              </div>
+            </DenPanel>
 
-function SendResultPanel({ channel, providerId, onSendAnother }: SendResultPanelProps) {
-  return (
-    <DenPanel
-      title="Message sent"
-      subtitle={`Sent by ${channel === 'email' ? 'email' : 'text'}.`}
-    >
-      {providerId !== null && <p className="personalize__result-line">Provider reference: {providerId}</p>}
-      <div className="personalize__actions">
-        <PrimaryButton label="Send another" onClick={onSendAnother} />
-      </div>
-    </DenPanel>
+            {/* The context Auntie reads before drafting. Rendered for the types
+                that address a household; a Blog post has no recipient, so there
+                is no dossier to show and the panel would be a permanent empty
+                state taking up the screen. */}
+            {def.needsRecipient && <RecipientContextPanel kinfolkId={form.recipientId} />}
+            {draft !== null && (
+              <DenPanel title="Auntie AI draft" subtitle={draftSubtitle(draft)}>
+                <div className="personalize__form">
+                  {draft.draftWriteFailed && (
+                    <Banner tone="warning" title="Draft not saved">
+                      {draft.warnings.length > 0
+                        ? draft.warnings.join(' ')
+                        : 'This draft was generated but not saved, so it cannot be approved. Copy the text below before navigating away, then regenerate.'}
+                    </Banner>
+                  )}
+
+                  <label className="personalize__field" htmlFor={draftId}>
+                    <span className="personalize__field-label">Edit before approving</span>
+                    <textarea
+                      id={draftId}
+                      className="personalize__textarea personalize__textarea--draft"
+                      value={draftText}
+                      disabled={busy}
+                      rows={10}
+                      onChange={(e) => setDraftText(e.target.value)}
+                    />
+                  </label>
+
+                  {approveError !== null && (
+                    <Banner tone="error" title="Approve blocked">
+                      {approveError}
+                    </Banner>
+                  )}
+
+                  {approved !== null && (
+                    <Banner tone="success" title="Draft approved">
+                      {approved.delivered
+                        ? `Approved and sent.${approved.providerId !== null ? ` Provider id ${approved.providerId}.` : ''}`
+                        : 'Approved and logged to the audit trail. Nothing was sent, this message type delivers elsewhere.'}
+                      {approved.auditWarning !== null
+                        ? ` The audit entry could not be written: ${approved.auditWarning}`
+                        : ''}
+                    </Banner>
+                  )}
+
+                  <div className="personalize__actions">
+                    <PrimaryButton
+                      label={approveLabel}
+                      busy={approving}
+                      disabled={busy}
+                      onClick={() => handleApproveClick(kf)}
+                    />
+                  </div>
+                  <p className="personalize__note">
+                    Approving promotes the draft in Firestore and logs it to the audit trail. Nothing goes out until
+                    that write succeeds.
+                  </p>
+                </div>
+              </DenPanel>
+            )}
+
+            {confirmOpen && (
+              <Dialog
+                title="Send this message?"
+                onClose={() => {
+                  if (!approving) setConfirmOpen(false);
+                }}
+                footer={
+                  <>
+                    <GhostButton label="Cancel" onClick={() => setConfirmOpen(false)} disabled={approving} />
+                    <PrimaryButton
+                      label={approving ? 'Sending…' : 'Send now'}
+                      onClick={() => void runApprove(kf)}
+                      disabled={approving}
+                      busy={approving}
+                    />
+                  </>
+                }
+              >
+                <p className="personalize__confirm-line">
+                  <strong>To:</strong> {kf ? kinfolkDisplayName(kf) : 'nobody'} (
+                  {def.deliverable === 'email' ? str(kf?.email) : str(kf?.phoneNumber)})
+                </p>
+                <p className="personalize__confirm-line">
+                  <strong>Channel:</strong> {def.deliverable === 'email' ? 'Email' : 'Text'}
+                </p>
+                {def.deliverable === 'email' && (
+                  <p className="personalize__confirm-line">
+                    <strong>Subject:</strong> {form.subject.trim()}
+                  </p>
+                )}
+                <p className="personalize__confirm-line">
+                  <strong>Message:</strong> {draftText}
+                </p>
+                <p className="personalize__confirm-note">
+                  This reaches a real household right now. It is not undoable.
+                </p>
+              </Dialog>
+            )}
+          </>
+        );
+      }}
+    </AsyncRegion>
   );
 }

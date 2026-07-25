@@ -94,8 +94,19 @@ export function sendChannelOf(channel: string): SendChannel {
   }
 }
 
-/** Display label for a channel wire value. Ports the wasm `channelLabel`. */
+/**
+ * Display label for a channel wire value. Ports the wasm `channelLabel`.
+ *
+ * `inapp` is handled here but NOT added to `SendChannel`, and the distinction
+ * matters. `SendChannel` classifies rows that `listRecentSends` reports, and
+ * that callable reads `external_messages`, which only ever holds email and sms.
+ * An in-app broadcast writes a notification doc instead, so it can never appear
+ * in Recent, and widening `SendChannel` would add a filter tab that matches
+ * nothing forever. Broadcast's own channel list does include it, and that is
+ * the only place this branch is reached from.
+ */
 export function channelLabel(channel: string): string {
+  if (channel.trim().toLowerCase() === 'inapp') return 'In-app';
   switch (sendChannelOf(channel)) {
     case 'email':
       return 'Email';

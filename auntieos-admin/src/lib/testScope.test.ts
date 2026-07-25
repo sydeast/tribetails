@@ -130,11 +130,31 @@ describe('isSuppressedInTestMode', () => {
     expect(isSuppressedInTestMode('kinfolk')).toBe(false);
   });
 
+  it('suppresses the four comms logs, which the rules deny a test admin outright', () => {
+    // sms_messages / emails / calls_log / voicemails are each
+    // `allow read, write: if isAuntie()` with NO isTestAdmin branch, so every
+    // read by a sandbox account is denied no matter what predicate the query
+    // carries. The recipient context panel queries all four, so without this a
+    // sandbox login turns the panel into four red permission banners for data
+    // that simply does not apply to that account type.
+    setTestScope('test-kinfolk-001');
+    for (const path of ['sms_messages', 'emails', 'calls_log', 'voicemails']) {
+      expect(isSuppressedInTestMode(path)).toBe(true);
+    }
+  });
   it('suppresses exactly the collections rules deny a test admin outright', () => {
     // Do not diverge without re-auditing firestore.rules: an entry added here
     // by mistake silently blanks a screen the sandbox is allowed to see.
     expect([...SUPPRESSED_IN_TEST_MODE].sort()).toEqual(
-      ['activity_log', 'booking_time_slots', 'training_documents'].sort(),
+      [
+        'activity_log',
+        'booking_time_slots',
+        'calls_log',
+        'emails',
+        'sms_messages',
+        'training_documents',
+        'voicemails',
+      ].sort(),
     );
   });
 });

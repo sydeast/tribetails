@@ -22,6 +22,44 @@
   white-space: nowrap;
 }
 
+/* ── mode tabs (Personalize / Broadcast / Recent) ───────────────────────── */
+/* Shares the filter-tab shape below rather than inventing a second pill style:
+   they are the same affordance at two levels, and two near-identical pill
+   designs on one screen reads as an accident. */
+.communicate__modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.communicate__mode {
+  font: inherit;
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  color: var(--color-text-dim);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  transition:
+    background var(--dur-base) var(--ease-standard),
+    border-color var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
+}
+.communicate__mode:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+.communicate__mode:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.communicate__mode--active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-background);
+}
 /* ── filter tabs (Inbox.css convention) ─────────────────────────────────── */
 
 .communicate__tabs {

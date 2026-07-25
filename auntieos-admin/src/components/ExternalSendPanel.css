@@ -1,0 +1,100 @@
+/**
+ * "Send outside the tribe" panel styling. Scoped to this component and imported
+ * directly by ExternalSendPanel.tsx (the Communicate.css / CommunicateCompose.css
+ * convention), so nothing here needs to land in the shared styles/screens.css.
+ * Every value comes from styles/tokens.css: no literal colours, radii, durations,
+ * or px spacing.
+ */
+
+.external-send__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.external-send__fieldset {
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.external-send__legend {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  padding: 0 var(--space-2);
+}
+
+.external-send__radio-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.external-send__radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+
+.external-send__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.external-send__field-label {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.external-send__text-input,
+.external-send__textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.external-send__text-input:focus-visible,
+.external-send__textarea:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.external-send__text-input::placeholder,
+.external-send__textarea::placeholder {
+  color: var(--color-text-faint);
+}
+.external-send__text-input:disabled,
+.external-send__textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.external-send__textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.external-send__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}

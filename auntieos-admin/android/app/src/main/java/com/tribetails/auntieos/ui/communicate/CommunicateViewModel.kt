@@ -2,11 +2,13 @@ package com.tribetails.auntieos.ui.communicate
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tribetails.auntieos.data.admin.ActivityLogEntry
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.domain.RecentSend
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.isValidEmail
+import com.tribetails.auntieos.util.isValidE164Phone
 import com.tribetails.auntieos.util.isValidPhone
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,7 +45,12 @@ internal fun validateExternalSend(
             if (subject.isBlank()) return "Subject is required for email."
         }
         ExternalChannel.Sms -> {
-            if (!isValidPhone(recipient)) return "Enter a valid phone number."
+            // E.164, not the US Kinfolk-form rule: external send reaches anybody
+            // at all, and the US rule silently blocked every valid international
+            // number before the server saw it.
+            if (!isValidE164Phone(recipient)) {
+                return "Enter a valid phone number, with the country code."
+            }
         }
     }
     if (body.isBlank()) return "Message body is required."
@@ -321,9 +328,14 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         _uiState.value = state.copy(isGenerating = true, error = null, generatedCopy = "")
         viewModelScope.launch {
 
+            val wantsRecipient = needsRecipient(state.commType)
             val request = GenerateRequest(
                 communication_type = state.commType,
-                recipient          = if (needsRecipient(state.commType)) state.selectedKinfolk?.displayName ?: "" else "",
+                recipient          = if (wantsRecipient) state.selectedKinfolk?.displayName ?: "" else "",
+                // The id the picker already resolved, so the server reads the
+                // household directly instead of fuzzy-matching the name back
+                // into one of possibly several Danas.
+                kinfolk_id         = if (wantsRecipient) state.selectedKinfolk?.id?.ifBlank { null } else null,
                 raw_notes          = state.rawNotes,
                 tone_hint          = state.toneHint,
                 max_length         = state.messageLength,
@@ -367,10 +379,62 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
             repo.approveDraft(draftId, state.generatedCopy, state.kinfolkId)
                 .onSuccess {
                     AuntieLog.i("Draft #$draftId saved successfully")
+                    // ORDER MATTERS, and it is the reason this call sits INSIDE
+                    // onSuccess rather than beside it. The Firestore write is a
+                    // gate: an audit entry written after a failed write would
+                    // assert an approval that does not exist. The screen has
+                    // promised "logs it to the audit trail" since this file was
+                    // written, and until now nothing in ui/communicate ever
+                    // called logActivity, so the promise was false.
+                    //
+                    // Non-fatal on its own terms: by this point the draft IS
+                    // approved, so a failed audit write is reported alongside
+                    // the success rather than replacing it with an error that
+                    // would wrongly suggest nothing happened.
+                    // try/catch, not just Result.exceptionOrNull(). The repo
+                    // wraps this call in runCatching, so on paper it returns a
+                    // Result and cannot throw, and the first version of this
+                    // code trusted that. It is the wrong thing to trust: the
+                    // state update that records the approval sits BELOW this
+                    // line, so anything that escapes here skips it. The draft is
+                    // already approved in Firestore at that point, and the
+                    // operator would be left with a spinner that never resolves,
+                    // no message, and every reason to click Approve again.
+                    //
+                    // That is not hypothetical. It is exactly what
+                    // `approveDraft sets savedDraftId on success` caught: a
+                    // MockKException from the audit call escaped into
+                    // viewModelScope, whose SupervisorJob swallowed it without a
+                    // word, and savedDraftId stayed null on a draft that had in
+                    // fact been promoted.
+                    //
+                    // The non-fatal step must not be able to take down the fatal
+                    // one that already succeeded, whatever it throws.
+                    val auditFailure: Throwable? = try {
+                        repo.logActivity(
+                            ActivityLogEntry(
+                                actionType = "DRAFT_APPROVED",
+                                description = "Approved generated_drafts/$draftId (${state.kinfolkId ?: "no kinfolk"})",
+                                status = "SUCCESS",
+                                targetId = draftId,
+                                targetCollection = "generated_drafts",
+                            ),
+                        ).exceptionOrNull()
+                    } catch (t: Throwable) {
+                        t
+                    }
+                    if (auditFailure != null) {
+                        AuntieLog.e("Audit entry for draft $draftId failed", auditFailure)
+                    }
                     _uiState.value = _uiState.value.copy(
                         isSaving       = false,
                         savedDraftId   = draftId,
-                        successMessage = "Draft #$draftId saved."
+                        successMessage = if (auditFailure == null) {
+                            "Draft #$draftId approved and logged to the audit trail."
+                        } else {
+                            "Draft #$draftId approved. The audit entry could not be written: " +
+                                (auditFailure.message ?: "unknown error")
+                        },
                     )
                 }
                 .onFailure { e ->
@@ -441,6 +505,12 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                 to = s.externalTo.trim(),
                 subject = s.externalSubject.takeIf { s.externalChannel == ExternalChannel.Email },
                 body = s.externalBody,
+                // A one-off note an operator wrote and sent by hand is
+                // transactional, not marketing. Left at the false default, a
+                // household that once unsubscribed from a newsletter would never
+                // receive the operator's answer to their own question, and
+                // nothing would say so. Inbox and Messaging already passed true.
+                transactional = true,
             ).onSuccess { result ->
                 AuntieLog.i("External send ok: ${result.recipientRedacted}")
                 _uiState.value = _uiState.value.copy(
@@ -452,7 +522,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                 AuntieLog.e("External send failed", e)
                 _uiState.value = _uiState.value.copy(
                     isSendingExternal = false,
-                    externalError = e.message ?: "External send failed",
+                    externalError = externalSendErrorText(e.message),
                 )
             }
         }
@@ -467,7 +537,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         val recipient = s.externalTo.trim()
         val valid = when (s.externalChannel) {
             ExternalChannel.Email -> isValidEmail(recipient)
-            ExternalChannel.Sms -> isValidPhone(recipient)
+            ExternalChannel.Sms -> isValidE164Phone(recipient)
         }
         if (!valid) {
             val msg = if (s.externalChannel == ExternalChannel.Email)
@@ -494,7 +564,11 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     AuntieLog.e("External suppress failed", e)
                     _uiState.value = _uiState.value.copy(
                         isSuppressing = false,
-                        externalError = e.message ?: "Suppression failed",
+                        // Through the same mapping as the send path. Previously
+                        // only the SEND ran its error through a translator, so an
+                        // opt-out that hit a permissions problem printed a raw
+                        // code at the operator.
+                        externalError = externalSendErrorText(e.message),
                     )
                 }
         }

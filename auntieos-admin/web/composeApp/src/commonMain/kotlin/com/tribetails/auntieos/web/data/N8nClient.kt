@@ -125,6 +125,7 @@ data class GenerateRequest(
 enum class CommunicationType {
     @SerialName("sms") SMS,
     @SerialName("email") EMAIL,
+    @SerialName("push") PUSH,
     @SerialName("visit_report") VISIT_REPORT,
     @SerialName("social_post") SOCIAL_POST,
     @SerialName("blog_post") BLOG_POST,

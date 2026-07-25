@@ -47,6 +47,35 @@ const generateArgs: GenerateDraftArgs = {
 };
 
 describe('generateDraft', () => {
+  it('forwards a resolved kinfolk_id, so the server reads the household directly instead of matching a name', async () => {
+    authState.currentUser = fakeUser('abc.def');
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        generated_copy: 'copy',
+        communication_type: 'email',
+        draft_id: 'd1',
+      }),
+    );
+
+    await generateDraft({ ...generateArgs, kinfolk_id: 'kf-real-id' });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+    expect(body['kinfolk_id']).toBe('kf-real-id');
+    // The name rides along for the draft doc and the 404 copy, but it is no
+    // longer what decides which household the model reads.
+    expect(body['recipient']).toBe('Dana Halbrook');
+  });
+
+  it('omits kinfolk_id entirely when the caller has no resolved household', async () => {
+    authState.currentUser = fakeUser('abc.def');
+    fetchMock.mockResolvedValue(jsonResponse(200, { generated_copy: 'copy', communication_type: 'email' }));
+
+    await generateDraft(generateArgs);
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+    expect('kinfolk_id' in body).toBe(false);
+  });
+
   it('throws without a signed-in admin, and never calls fetch', async () => {
     await expect(generateDraft(generateArgs)).rejects.toThrow(GenerateDraftError);
     await expect(generateDraft(generateArgs)).rejects.toThrow(/sign-in required/i);

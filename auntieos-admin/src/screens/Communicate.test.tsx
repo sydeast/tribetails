@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type RecentSend } from '../api/communicate';
 
@@ -71,6 +71,17 @@ beforeEach(() => {
   listRecentSends.mockReset();
 });
 
+/**
+ * Renders Communicate and switches to the Recent tab.
+ *
+ * Communicate opens on Personalize, the Auntie voice generator, which is what
+ * the archive did and what the screen is for. Recent is the third tab, so every
+ * assertion about the sent-history list has to get there first.
+ */
+function renderRecent() {
+  render(<Communicate />);
+  fireEvent.click(screen.getByRole('tab', { name: 'Recent' }));
+}
 async function withFixedToday(fixedNow: Date, run: () => Promise<void>): Promise<void> {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(fixedNow);
@@ -84,7 +95,7 @@ async function withFixedToday(fixedNow: Date, run: () => Promise<void>): Promise
 describe('Communicate screen', () => {
   it('loads and renders a send row with channel, recipient, subject, and engagement summary', async () => {
     listRecentSends.mockResolvedValue([send({})]);
-    render(<Communicate />);
+    renderRecent();
     expect(await screen.findByText('Email · j***@example.com')).toBeInTheDocument();
     expect(screen.getByText('Your visit recap')).toBeInTheDocument();
     expect(screen.getByText('1 delivered')).toBeInTheDocument();
@@ -94,33 +105,33 @@ describe('Communicate screen', () => {
     listRecentSends.mockResolvedValue([
       send({ counts: { delivered: 0, opened: 0, clicked: 0, bounced: 0, failed: 0 } }),
     ]);
-    render(<Communicate />);
+    renderRecent();
     expect(await screen.findByText('Sent · awaiting delivery events')).toBeInTheDocument();
   });
 
   it('omits the subject line entirely when the row has none (defensive read, no blank line)', async () => {
     listRecentSends.mockResolvedValue([send({ subject: null })]);
-    render(<Communicate />);
+    renderRecent();
     await screen.findByText('Email · j***@example.com');
     expect(screen.queryByText('Your visit recap')).toBeNull();
   });
 
   it('falls back to an honest placeholder when recipientRedacted is blank (defensive read)', async () => {
     listRecentSends.mockResolvedValue([send({ recipientRedacted: '' })]);
-    render(<Communicate />);
+    renderRecent();
     expect(await screen.findByText('Email · (recipient not on file)')).toBeInTheDocument();
   });
 
   it('surfaces a load failure naming the callable, never a false empty list', async () => {
     listRecentSends.mockRejectedValueOnce(new Error('permission-denied'));
-    render(<Communicate />);
+    renderRecent();
     expect(await screen.findByText(/listRecentSends failed: permission-denied/)).toBeInTheDocument();
     expect(screen.queryByText(/no external sends yet/i)).toBeNull();
   });
 
   it('retries the load on demand via AsyncRegion', async () => {
     listRecentSends.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([send({})]);
-    render(<Communicate />);
+    renderRecent();
     await screen.findByText(/listRecentSends failed/i);
     await userEvent.click(screen.getByRole('button', { name: /retry/i }));
     expect(await screen.findByText('Email · j***@example.com')).toBeInTheDocument();
@@ -129,13 +140,13 @@ describe('Communicate screen', () => {
 
   it('renders the proven-empty state only when the load is ready and genuinely empty', async () => {
     listRecentSends.mockResolvedValue([]);
-    render(<Communicate />);
+    renderRecent();
     expect(await screen.findByText(/no external sends yet/i)).toBeInTheDocument();
   });
 
   it('reloads the list via the Reload button', async () => {
     listRecentSends.mockResolvedValue([send({})]);
-    render(<Communicate />);
+    renderRecent();
     await screen.findByText('Email · j***@example.com');
     await userEvent.click(screen.getByRole('button', { name: /^reload$/i }));
     expect(listRecentSends).toHaveBeenCalledTimes(2);
@@ -146,7 +157,7 @@ describe('Communicate screen', () => {
       send({ id: 's-failed', counts: { delivered: 0, opened: 0, clicked: 0, bounced: 0, failed: 1 } }),
       send({ id: 's-ok' }),
     ]);
-    render(<Communicate />);
+    renderRecent();
     // Not present while loading (asyncScalar-style: a claim only once ready).
     expect(screen.queryByText('1 failed', { selector: '.communicate__badge' })).toBeNull();
     // Scoped to the badge selector: a per-row engagement summary can say
@@ -160,7 +171,7 @@ describe('Communicate screen', () => {
       send({ id: 's-email', channel: 'email', recipientRedacted: 'email-recipient@example.com' }),
       send({ id: 's-sms', channel: 'sms', recipientRedacted: '+1***5551212' }),
     ]);
-    render(<Communicate />);
+    renderRecent();
     await screen.findByText('Email · email-recipient@example.com');
     expect(screen.getByText('Text · +1***5551212')).toBeInTheDocument();
 
@@ -171,7 +182,7 @@ describe('Communicate screen', () => {
 
   it('the All tab is selected by default and Email becomes selected on click', async () => {
     listRecentSends.mockResolvedValue([send({})]);
-    render(<Communicate />);
+    renderRecent();
     await screen.findByText('Email · j***@example.com');
     expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Email' })).toHaveAttribute('aria-selected', 'false');
@@ -182,7 +193,7 @@ describe('Communicate screen', () => {
 
   it('shows "Nothing matches this filter" rather than the top-level empty state when a filter empties the list', async () => {
     listRecentSends.mockResolvedValue([send({ channel: 'sms', recipientRedacted: '+1***5551212' })]);
-    render(<Communicate />);
+    renderRecent();
     await screen.findByText('Text · +1***5551212');
     await userEvent.click(screen.getByRole('tab', { name: 'Email' }));
     expect(screen.getByText('Nothing matches this filter.')).toBeInTheDocument();
@@ -196,7 +207,7 @@ describe('Communicate screen', () => {
       // an 8pm-local send. A raw `new Date(ms).toISOString().slice(0, 10)`
       // would wrongly group it under 2026-07-17.
       listRecentSends.mockResolvedValue([send({ sentAtMs: Date.parse('2026-07-17T01:00:00.000Z') })]);
-      render(<Communicate />);
+      renderRecent();
       expect(await screen.findByText('Today', { selector: '.communicate__day-header' })).toBeInTheDocument();
       expect(screen.queryByText('Tomorrow', { selector: '.communicate__day-header' })).toBeNull();
     });
@@ -204,7 +215,7 @@ describe('Communicate screen', () => {
 
   it('shows the LOCAL clock time in the row, not the UTC hour', async () => {
     listRecentSends.mockResolvedValue([send({ sentAtMs: Date.parse('2026-07-17T01:00:00.000Z') })]);
-    render(<Communicate />);
+    renderRecent();
     expect(await screen.findByText('20:00')).toBeInTheDocument();
   });
 
@@ -222,7 +233,7 @@ describe('Communicate screen', () => {
           sentAtMs: Date.parse('2026-07-18T20:00:00.000Z'),
         }),
       ]);
-      render(<Communicate />);
+      renderRecent();
       await screen.findByText('Email · later@example.com');
       // Both dates are >1 day from the fixed "today" (2026-07-20), so both
       // render as "Weekday, Mon DD" labels, never Today/Tomorrow/Yesterday,
@@ -237,7 +248,7 @@ describe('Communicate screen', () => {
       send({ id: 's-failed', recipientRedacted: 'a@example.com', counts: { delivered: 0, opened: 0, clicked: 0, bounced: 0, failed: 1 } }),
       send({ id: 's-delivered', recipientRedacted: 'b@example.com', counts: { delivered: 1, opened: 0, clicked: 0, bounced: 0, failed: 0 } }),
     ]);
-    render(<Communicate />);
+    renderRecent();
     const failedRow = (await screen.findByText('Email · a@example.com')).closest('.communicate__row');
     const deliveredRow = screen.getByText('Email · b@example.com').closest('.communicate__row');
     expect(failedRow).not.toBeNull();
@@ -246,63 +257,46 @@ describe('Communicate screen', () => {
     expect(within(deliveredRow as HTMLElement).getByText('Delivered')).toBeInTheDocument();
   });
 
-  describe('New broadcast wiring', () => {
-    it('shows a "New broadcast" action on the Recent list', async () => {
+  describe('mode switching', () => {
+    it('opens on Personalize, the Auntie voice generator, not on the sent-history list', () => {
       listRecentSends.mockResolvedValue([]);
       render(<Communicate />);
-      await screen.findByText(/no external sends yet/i);
-      expect(screen.getByRole('button', { name: /new broadcast/i })).toBeInTheDocument();
-    });
-
-    it('opens CommunicateCompose in place of the Recent list on click', async () => {
-      listRecentSends.mockResolvedValue([]);
-      render(<Communicate />);
-      await screen.findByText(/no external sends yet/i);
-      await userEvent.click(screen.getByRole('button', { name: /new broadcast/i }));
-      expect(screen.getByTestId('compose-stub')).toBeInTheDocument();
-      expect(screen.queryByText(/no external sends yet/i)).toBeNull();
-    });
-
-    it('returns to the Recent list when compose calls onClose', async () => {
-      listRecentSends.mockResolvedValue([]);
-      render(<Communicate />);
-      await screen.findByText(/no external sends yet/i);
-      await userEvent.click(screen.getByRole('button', { name: /new broadcast/i }));
-      await userEvent.click(screen.getByText('stub-close'));
-      expect(await screen.findByText(/no external sends yet/i)).toBeInTheDocument();
-      expect(screen.queryByTestId('compose-stub')).toBeNull();
-      // listRecentSends only reloads on the initial mount / explicit Reload,
-      // not merely from switching views back and forth.
-      expect(listRecentSends).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('Personalize a message wiring', () => {
-    it('shows a "Personalize a message" action on the Recent list', async () => {
-      listRecentSends.mockResolvedValue([]);
-      render(<Communicate />);
-      await screen.findByText(/no external sends yet/i);
-      expect(screen.getByRole('button', { name: /personalize a message/i })).toBeInTheDocument();
-    });
-
-    it('opens CommunicatePersonalize in place of the Recent list on click', async () => {
-      listRecentSends.mockResolvedValue([]);
-      render(<Communicate />);
-      await screen.findByText(/no external sends yet/i);
-      await userEvent.click(screen.getByRole('button', { name: /personalize a message/i }));
       expect(screen.getByTestId('personalize-stub')).toBeInTheDocument();
-      expect(screen.queryByText(/no external sends yet/i)).toBeNull();
+      expect(screen.getByRole('tab', { name: 'Personalize' })).toHaveAttribute('aria-selected', 'true');
     });
-
-    it('returns to the Recent list when personalize calls onClose', async () => {
+    it('offers Personalize, Broadcast and Recent, in that order', () => {
       listRecentSends.mockResolvedValue([]);
       render(<Communicate />);
-      await screen.findByText(/no external sends yet/i);
-      await userEvent.click(screen.getByRole('button', { name: /personalize a message/i }));
-      await userEvent.click(screen.getByText('stub-close-personalize'));
-      expect(await screen.findByText(/no external sends yet/i)).toBeInTheDocument();
+      const tabs = screen
+        .getAllByRole('tab')
+        .filter((t) => ['Personalize', 'Broadcast', 'Recent'].includes(t.textContent ?? ''));
+      expect(tabs.map((t) => t.textContent)).toEqual(['Personalize', 'Broadcast', 'Recent']);
+    });
+    it('does not touch listRecentSends until Recent is actually shown', () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      expect(listRecentSends).not.toHaveBeenCalled();
+    });
+    it('mounts Broadcast on its tab, and unmounts Personalize', async () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      await userEvent.click(screen.getByRole('tab', { name: 'Broadcast' }));
+      expect(screen.getByTestId('compose-stub')).toBeInTheDocument();
       expect(screen.queryByTestId('personalize-stub')).toBeNull();
+    });
+    it('loads the sent history when Recent is opened', async () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      await userEvent.click(screen.getByRole('tab', { name: 'Recent' }));
+      expect(await screen.findByText(/no external sends yet/i)).toBeInTheDocument();
       expect(listRecentSends).toHaveBeenCalledTimes(1);
+    });
+    it('keeps the heading kicker across every mode', async () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      expect(screen.getByText('The Den · Communicate')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('tab', { name: 'Recent' }));
+      expect(screen.getByText('The Den · Communicate')).toBeInTheDocument();
     });
   });
 });

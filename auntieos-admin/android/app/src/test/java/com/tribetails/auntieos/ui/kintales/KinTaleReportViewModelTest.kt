@@ -533,6 +533,10 @@ class KinTaleReportViewModelTest {
         assertEquals("The", state.lastOpening)
         assertEquals("visit_report", reqSlot.captured.communication_type)
         assertNull(reqSlot.captured.avoid_opening)
+        // The linked household's real id, so the server reads that doc rather
+        // than re-deriving it from the display name and risking a second
+        // household with the same first name.
+        assertEquals("kf1", reqSlot.captured.kinfolk_id)
     }
 
     @Test
