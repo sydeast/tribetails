@@ -154,7 +154,7 @@ class InboxViewModelTest {
     fun `sendSmsReply sets error when sendMessage fails`() = runTest(testDispatcher) {
         // A5 repoint: VM now calls sendExternalMessage (not n8n sendMessage)
         coEvery {
-            mockRepo.sendExternalMessage(any(), any(), any(), any(), any())
+            mockRepo.sendExternalMessage(any(), any(), any(), any(), any(), any())
         } returns Result.failure(RuntimeException("Send failed"))
 
         val vm = buildViewModel()
@@ -171,7 +171,7 @@ class InboxViewModelTest {
     fun `sendSmsReply clears error on success`() = runTest(testDispatcher) {
         // A5 repoint: VM now calls sendExternalMessage returning ExternalSendResult
         coEvery {
-            mockRepo.sendExternalMessage(any(), any(), any(), any(), any())
+            mockRepo.sendExternalMessage(any(), any(), any(), any(), any(), any())
         } returns Result.success(ExternalSendResult("sms", "SMxyz", "+1******0001"))
 
         val vm = buildViewModel()
@@ -190,7 +190,7 @@ class InboxViewModelTest {
     @Test
     fun `sendSmsReply sets error when repo throws unchecked exception`() = runTest(testDispatcher) {
         coEvery {
-            mockRepo.sendExternalMessage(any(), any(), any(), any(), any())
+            mockRepo.sendExternalMessage(any(), any(), any(), any(), any(), any())
         } returns Result.failure(RuntimeException("network timeout"))
 
         val vm = buildViewModel()

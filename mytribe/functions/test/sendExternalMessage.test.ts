@@ -71,6 +71,10 @@ describe('sendExternalMessage happy paths', () => {
       channel: 'email',
       providerMessageId: 'sg-msg-1',
       recipientRedacted: 'j***@example.com',
+      // An email is never mirrored into `sms_messages`. The reason reads as
+      // "nobody asked", not as a refusal.
+      mirrored: false,
+      mirrorSkippedReason: 'not_requested',
     });
     expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(1);
     const sgArgs = mocks.sendTemplatedEmail.mock.calls[0][0];
