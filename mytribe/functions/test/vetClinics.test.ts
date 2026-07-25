@@ -26,6 +26,15 @@ function req(data: unknown, uid: string | null = 'kin1'): CallableRequest<unknow
   } as unknown as CallableRequest<unknown>;
 }
 
+/** A caller carrying the `admin` custom claim, the primary staff signal (RULING O-6). */
+function staffReq(data: unknown, uid = 'auntie1'): CallableRequest<unknown> {
+  return {
+    data,
+    auth: { uid, token: { admin: true } as any } as any,
+    rawRequest: {} as any, instanceIdToken: undefined, acceptsStreaming: false,
+  } as unknown as CallableRequest<unknown>;
+}
+
 /** vet_clinics collection seeded with the given rows. */
 function withClinics(rows: Array<{ id: string; data: Record<string, unknown> }>) {
   const ctx = buildDbMock({ queryDocs: { vet_clinics: rows } });
@@ -110,5 +119,41 @@ describe('submitVetClinic', () => {
     withClinics([{ id: 'p', data: { name: 'Dup', verified: false } }]);
     const res = await submitVetClinicHandler(req({ name: 'dup' }));
     expect(res).toMatchObject({ clinicId: 'p', created: false, pending: true });
+  });
+
+  // ── AO Task 1.8: the AuntieOS vet-clinic picker submits through this same
+  // callable. A clinic an operator types into the household form is curated
+  // data, not a household's guess, so it must not land in the pending queue the
+  // operator would then have to approve for themselves.
+  it('lands VERIFIED (not pending) when the caller is staff', async () => {
+    const ctx = withClinics([]);
+    const res = await submitVetClinicHandler(staffReq({ name: 'Riverside Animal Hospital' }));
+    expect(res).toMatchObject({ created: true, pending: false });
+    expect(ctx.adds[0].data).toMatchObject({ verified: true, submittedBy: 'auntie1' });
+  });
+
+  it('keeps a kinfolk submission pending (the staff branch does not leak)', async () => {
+    const ctx = withClinics([]);
+    const res = await submitVetClinicHandler(req({ name: 'Corner Vet' }));
+    expect(res).toMatchObject({ created: true, pending: true });
+    expect(ctx.adds[0].data).toMatchObject({ verified: false, submittedBy: 'kin1' });
+  });
+
+  it('persists isEmergency when given', async () => {
+    const ctx = withClinics([]);
+    await submitVetClinicHandler(staffReq({ name: '24hr Pet ER', isEmergency: true }));
+    expect(ctx.adds[0].data).toMatchObject({ isEmergency: true });
+  });
+
+  it('accepts a LEGACY payload with no isEmergency and stores false', async () => {
+    const ctx = withClinics([]);
+    const res = await submitVetClinicHandler(req({ name: 'Old Shape', phone: '(512) 5', address: '5 St', website: 'https://o.com' }));
+    expect(res).toMatchObject({ created: true });
+    expect(ctx.adds[0].data).toMatchObject({ isEmergency: false });
+  });
+
+  it('rejects a non-boolean isEmergency rather than coercing it', async () => {
+    withClinics([]);
+    await expect(submitVetClinicHandler(staffReq({ name: 'X', isEmergency: 'yes' }))).rejects.toThrow();
   });
 });

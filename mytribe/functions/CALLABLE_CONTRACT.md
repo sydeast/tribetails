@@ -71,3 +71,28 @@ guarded-mirror options.
 ### upsertExpiration (AO-39)
 - req `{ expirationId?: string, label: string, dateIso: string, kind: 'gateCode'|'vetRecord'|'card'|'license'|'other', kinfolkId?: string }`
 - res `{ id: string }`
+- req `{}`
+- res `{ clinics: Array<{ id: string, name: string, phone: string, address: string, website: string, googleMapsUrl: string, isEmergency: boolean }> }`
+- Returns APPROVED clinics only: a doc is withheld iff `verified === false`. A
+  missing `verified` field reads as approved (legacy curated data). The AuntieOS
+  admin reads `vet_clinics` directly instead, so it still sees pending entries.
+- req `{ name: string, phone?: string, address?: string, website?: string, isEmergency?: boolean }`
+- res `{ clinicId: string, created: boolean, pending: boolean }`
+- Deduped by normalized name (lowercased, whitespace collapsed). A match returns
+  the EXISTING id with `created: false`, so a caller selects that clinic rather
+  than writing a duplicate.
+- `isEmergency` added 2026-07-25 for the AuntieOS picker's emergency-vet field.
+  Optional, defaults false, so every payload the kinfolk portal has ever sent
+  stays valid. Frozen as the superset in `test/callableContract.test.ts`.
+- Staff callers (`isStaff`, RULING O-6) land `verified: true` / `pending: false`:
+  an operator typing a clinic into a household record IS the curation step.
+  Kinfolk submissions still land `verified: false` for operator approval.
+- req `{ query: string, sessionToken: string, limit?: number, country?: string }`
+- res `{ suggestions: Array<{ name: string, full_address: string, mapbox_id: string, place_formatted: string }>, signedBy: 'mapboxSearch' }`
+- A query under 2 characters returns an empty list rather than an error.
+- req `{ mapboxId: string, sessionToken: string }`
+- res `{ feature: unknown | null, signedBy: 'mapboxRetrieve' }` (raw Mapbox GeoJSON feature)
+- Mapbox session billing: the caller generates ONE 32-hex `sessionToken`, reuses
+  it across every keystroke's `mapboxSearch`, passes the SAME token to
+  `mapboxRetrieve`, and only then rotates it. A fresh token per keystroke bills
+  each keystroke as its own session.

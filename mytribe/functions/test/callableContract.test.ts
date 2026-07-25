@@ -15,6 +15,10 @@ import { Args as CreateInvoiceArgs } from '../src/admin/createInvoice';
 import { Args as CreateQuoteArgs } from '../src/admin/createQuote';
 import { Args as MarkInvoicePaidArgs } from '../src/admin/markInvoicePaid';
 import { Args as AssignTemplateArgs } from '../src/admin/assignTemplate';
+// Shared catalog write reached by BOTH the kinfolk portal and the AuntieOS
+// admin vet-clinic picker (Task 1.8). Two independent clients now build this
+// payload, which is exactly the condition this guard exists for.
+import { Args as SubmitVetClinicArgs } from '../src/portal/submitVetClinic';
 // Nested / effects shapes (2026-07-21 next tranche). A top-level key freeze is
 // blind below level 1: saveFormSchema's top level is just `{ schema }`, but the
 // client mirrors 3 levels down (schema.sections[].fields[].required). These get
@@ -101,6 +105,11 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   },
   markInvoicePaid: { schema: MarkInvoicePaidArgs, keys: ['amount', 'invoiceId', 'method', 'paidAt', 'reference'] },
   assignTemplate: { schema: AssignTemplateArgs, keys: ['active', 'audience', 'catalogKey', 'templateId', 'triggerKey'] },
+
+  // Shared vet catalog. `isEmergency` was added 2026-07-25 for the AuntieOS
+  // picker; it is optional, so every legacy portal payload (the four fields
+  // before it) still validates. The freeze is the SUPERSET.
+  submitVetClinic: { schema: SubmitVetClinicArgs, keys: ['address', 'isEmergency', 'name', 'phone', 'website'] },
 };
 
 describe('AO-8 callable contract drift guard', () => {
