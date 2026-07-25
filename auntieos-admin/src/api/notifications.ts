@@ -51,6 +51,15 @@ export interface NotificationEntry {
   readAt?: Timestamp;
   targetType?: string | undefined; // '' | 'booking' | 'invoice' | 'kintale' | 'kinfolk'
   targetId?: string | undefined;
+  /**
+   * The emitter's free-form merge bag, written verbatim by dispatcher.ts as
+   * `data: args.data`. Typed `unknown` on purpose: it is whatever the calling
+   * function passed to `enqueueNotification`, with no schema, so declaring
+   * `Record<string, string>` here would be a promise nothing keeps. Read it
+   * through `lib/coerce`'s `rec`/`str`, which `lib/notificationContext.ts`
+   * does to pull the household reference out of it.
+   */
+  data?: unknown;
   archivedAt?: Timestamp;
 }
 

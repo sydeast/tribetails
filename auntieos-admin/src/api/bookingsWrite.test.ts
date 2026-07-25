@@ -17,6 +17,7 @@ import {
   cancelBooking,
   markBookingCompleted,
   rescheduleBooking,
+  batchUpdateBookings,
 } from './bookingsWrite';
 
 beforeEach(() => {
@@ -105,5 +106,36 @@ describe('rescheduleBooking (admin callable)', () => {
     await expect(rescheduleBooking('ses1', '2026-07-20T09:00', '2026-07-20T10:00')).rejects.toThrow(
       'not found',
     );
+  });
+});
+
+describe('batchUpdateBookings (admin callable, envelope visits)', () => {
+  it('sends exactly { ids, action }, matching the backend Zod contract', async () => {
+    call.mockResolvedValue({ ok: true, action: 'APPROVE', updated: 1, failed: [] });
+    await batchUpdateBookings(['v1'], 'APPROVE');
+    expect(call).toHaveBeenCalledWith('batchUpdateBookings', { ids: ['v1'], action: 'APPROVE' });
+  });
+
+  it('carries REJECT through as REJECT, not a rewritten CANCEL', async () => {
+    call.mockResolvedValue({ ok: true, action: 'REJECT', updated: 1, failed: [] });
+    await batchUpdateBookings(['v1'], 'REJECT');
+    expect(call).toHaveBeenCalledWith('batchUpdateBookings', { ids: ['v1'], action: 'REJECT' });
+  });
+
+  it('returns the per-id failures verbatim so a partial batch is visible', async () => {
+    call.mockResolvedValue({
+      ok: true,
+      action: 'APPROVE',
+      updated: 0,
+      failed: [{ id: 'v1', error: 'not found' }],
+    });
+    const result = await batchUpdateBookings(['v1'], 'APPROVE');
+    expect(result.updated).toBe(0);
+    expect(result.failed).toEqual([{ id: 'v1', error: 'not found' }]);
+  });
+
+  it('propagates a callable rejection fail-loud', async () => {
+    call.mockRejectedValue(new Error('permission-denied'));
+    await expect(batchUpdateBookings(['v1'], 'APPROVE')).rejects.toThrow('permission-denied');
   });
 });
