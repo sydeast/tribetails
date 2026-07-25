@@ -98,24 +98,35 @@ spine; the full callable list is longer (read `index.ts`).
 ### KinTale (visit report) triggers, on the flat `kin_care_reports` collection
 
 - `onKinTaleCreate`, fires `kintale.published` only when a report is created
-  ALREADY `SENT` (kinfolkId is a field on the doc, not a path parameter). Both
-  admin clients create a DRAFT first, and a draft is invisible to the household,
+  ALREADY `SENT` (kinfolkId is a field on the doc, not a path parameter). Every
+  admin client creates a DRAFT first, and a draft is invisible to the household,
   so a DRAFT create is silent.
-- `onKinTaleUpdate`, fires `kintale.published` on the DRAFT → SENT send — the
-  moment the report becomes visible to the household — and `kintale.note.added`
+- `onKinTaleUpdate`, fires `kintale.published` on the DRAFT → SENT send, the
+  moment the report becomes visible to the household, and `kintale.note.added`
   when an already-SENT report gains more body text or more media. One update
   produces at most one of the two. Notes are debounced + content-digest
   idempotent via a parallel `kinTaleNotifications/{reportId}` tracker; the send
   claims `publishedNotifiedAtMs` on that same tracker so it is announced once
   per report however many times a trigger is replayed.
+- `onKinTaleCommentCreate`, fires `kintale.comment.added` for a post in the
+  comment box under a report (the `comments` subcollection). Distinct from
+  `kintale.note.added`, which is the report body growing.
 
 A send reaches the notification system from up to two directions, and the
-household must hear about it once. Android and the wasm admin call the
-`dispatchVisitNotification` callable (`report_sent`) on the send tap and stamp
-`sentVia: 'catalog'` in the same write that flips the status; the trigger sees
-that marker and stays silent. The React admin does not call the callable
-(`sentVia: 'pending'`), so there the trigger is the only announcement.
-- `onKinTaleCommentCreate`, notifies on a new report comment.
+household must hear about it once. Android and the wasm admin `sendReport` path
+call the `dispatchVisitNotification` callable (`report_sent`) on the send tap and
+stamp `sentVia: 'catalog'` in the same write that flips the status; the trigger
+sees that marker and stays silent. The React admin and the wasm compose screen do
+not call the callable (`sentVia: 'pending'`), so there the trigger is the only
+announcement.
+
+The callable enqueues under the retired key `kincare.report.sent`. Since
+2026-07-24 that key is an ALIAS of `kintale.published` (see
+`NOTIFICATION_KEY_ALIASES` in `functions/src/notifications/catalog.ts`): one
+catalog row, one switch, both emitters. Both emitters now fire at the same
+moment, the send, so the alias collapses what used to be two toggles for one
+event. Until 2026-07-24 `onKinTaleCreate` announced on the DRAFT write instead,
+which notified households about drafts they could not open.
 
 ### Kin (pet) mirror triggers
 

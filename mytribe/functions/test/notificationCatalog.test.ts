@@ -130,7 +130,8 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
     'kincare.auntie.on_my_way': { kinfolk: true },
     'kincare.auntie.arrived': { kinfolk: true },
     'kincare.auntie.departed': { kinfolk: true },
-    'kincare.report.sent': { kinfolk: true },
+    // 'kincare.report.sent' was merged into 'kintale.published' on 2026-07-24
+    // and is now an alias, not a row. See notificationKeyAliases.test.ts.
     'kincare.unavailable': { kinfolk: true },
     'kincare.requested': { business: true },
     'kincare.changed': { kinfolk: true, business: true },

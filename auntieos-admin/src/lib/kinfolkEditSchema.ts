@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isIsoDate } from './joinDate';
 
 /**
  * Validation for the Kinfolk (household) editor.
@@ -103,7 +104,24 @@ export const kinfolkEditSchema = z.object({
     .refine((v) => isValidPhone(v), { message: 'Enter a 10 digit phone number, or 11 starting with 1.' }),
   email: z.string().refine((v) => emailOkOrBlank(v), { message: "That email address doesn't look right." }),
   status: z.enum([...KINFOLK_STATUS_OPTIONS, KINFOLK_ARCHIVED_STATUS]),
-  joinDate: z.string(),
+
+  /**
+   * One calendar day, or blank. The field is an `<input type="date">`, so those
+   * are the only two values it can emit, and this rule says so rather than
+   * trusting the control.
+   *
+   * The `status` note above applies in reverse here, so read them together. An
+   * archived household must LOAD with the value it was saved with, because the
+   * form is how it gets unarchived. A legacy join date must NOT, because the
+   * picker cannot render `07/24/2026` and an operator would be left with an
+   * error on a field they never touched, unable to save the phone number they
+   * came in to fix. `joinDateForEdit` therefore coerces or clears the value as
+   * the form loads, and names the stored string beside the field, so this rule
+   * only ever sees something the operator can actually see and change.
+   */
+  joinDate: z
+    .string()
+    .refine((v) => v.trim() === '' || isIsoDate(v.trim()), { message: 'Pick a join date from the calendar.' }),
 
   secondaryPhone: z
     .string()

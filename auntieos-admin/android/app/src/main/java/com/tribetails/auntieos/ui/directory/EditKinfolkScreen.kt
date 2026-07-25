@@ -12,8 +12,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,9 +34,13 @@ import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import com.tribetails.auntieos.util.emailOkOrBlank
+import com.tribetails.auntieos.util.formatJoinDate
 import com.tribetails.auntieos.util.isValidPhone
 import com.tribetails.auntieos.util.phoneOkOrBlank
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlin.coroutines.cancellation.CancellationException
 
 @Composable
@@ -48,6 +56,7 @@ fun EditKinfolkScreen(
     // We guard on the id match so a stale profile never bleeds into the wrong editor.
     val profile by viewModel.profileState.collectAsState()
     var showArchiveDialog by remember { mutableStateOf(false) }
+    var showJoinDatePicker by remember { mutableStateOf(false) }
     var archiveReason     by remember { mutableStateOf("") }
     val isArchived = state.status.equals("archived", ignoreCase = true)
     val context = LocalContext.current
@@ -509,11 +518,21 @@ fun EditKinfolkScreen(
                                     label = "Referral Source",
                                     modifier = Modifier.weight(1f),
                                 )
-                                AuntieField(
+                                JoinDateField(
                                     value = state.joinDate,
-                                    onValueChange = viewModel::updateEditJoinDate,
-                                    label = "Join Date",
+                                    onClick = { showJoinDatePicker = true },
                                     modifier = Modifier.weight(1f),
+                                )
+                            }
+
+                            // What the document still holds, when the picker could
+                            // not open it. Shown rather than swallowed, so clearing
+                            // a legacy value is always a choice, never a surprise.
+                            state.joinDateNote?.let { note ->
+                                Text(
+                                    note,
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = AuntieTheme.colors.textDim,
                                 )
                             }
                         }
@@ -614,6 +633,17 @@ fun EditKinfolkScreen(
         }
     }
 
+    if (showJoinDatePicker) {
+        JoinDatePickerDialog(
+            current = state.joinDate,
+            onDismiss = { showJoinDatePicker = false },
+            onPick = { iso ->
+                viewModel.updateEditJoinDate(iso)
+                showJoinDatePicker = false
+            },
+        )
+    }
+
     // Archive Confirmation Dialog (reversible - matches web ArchiveBlock semantics)
     if (showArchiveDialog) {
         AuntieModal(
@@ -654,6 +684,61 @@ fun EditKinfolkScreen(
             }
         }
     }
+}
+
+/**
+ * The join date as a tappable field: a label, a bordered box, and the stored day
+ * rendered for the operator's locale. Matches the DateField the Coverage Package
+ * builder already uses, so the two date surfaces read the same.
+ *
+ * It is not an [AuntieField] any more, and that is the point of the change: the
+ * field was free text, so the collection filled up with ISO instants and typed
+ * formats nobody can rely on. Tapping opens the calendar; the only value this can
+ * now produce is one real day.
+ */
+@Composable
+private fun JoinDateField(value: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val c = AuntieTheme.colors
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("JOIN DATE", style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, c.border, RoundedCornerShape(8.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+        ) {
+            Text(
+                if (value.isBlank()) "Pick a date" else formatJoinDate(value),
+                style = AuntieTheme.typography.bodyMedium,
+                color = if (value.isBlank()) c.textFaint else c.textPrimary,
+            )
+        }
+    }
+}
+
+/** The calendar itself. Confirming hands back a `YYYY-MM-DD` day, never an instant. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun JoinDatePickerDialog(current: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+    // UTC throughout, in and out: the picker's millis are a UTC midnight, so
+    // reading them back in the device zone is what slides a date to the day
+    // before. Same convention as NewBookingRequestDialog and CoveragePackage.
+    val initial = runCatching { LocalDate.parse(current) }.getOrNull() ?: LocalDate.now()
+    val pickerState = rememberDatePickerState(
+        initialSelectedDateMillis = initial.atStartOfDay(ZoneId.of("UTC")).toInstant().toEpochMilli(),
+    )
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            AuntieTextBtn(onClick = {
+                pickerState.selectedDateMillis?.let { ms ->
+                    onPick(Instant.ofEpochMilli(ms).atZone(ZoneId.of("UTC")).toLocalDate().toString())
+                } ?: onDismiss()
+            }) { Text("OK") }
+        },
+        dismissButton = { AuntieTextBtn(onClick = onDismiss) { Text("Cancel") } },
+    ) { DatePicker(state = pickerState) }
 }
 
 @Composable

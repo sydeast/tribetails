@@ -39,7 +39,7 @@ These change the shape of several numbered issues:
 5. **MapBox needs no new secret**: `mapboxSearch` + `mapboxRetrieve` callables exist in MyTribe with `MAPBOX_ACCESS_TOKEN` configured. Web just never wired them.
 6. **Notification settings (#10):** labels live in `mytribe/functions/src/notifications/catalog.ts`, not the web app. `kincare.report.sent` ("Visit report sent") and `kintale.published` ("New KinTale published") are separate catalog keys describing the same event. "Auntie commented" maps to `kintale.comment.added` (the comment box thread) which is distinct from `kintale.note.added` (a note attached to the KinTale body). Task 0.5 merges/renames.
 7. **Vet clinics (#13) need no new callables.** The `vet_clinics` collection exists, is seeded, is admin-readable per `firestore.rules:131`, and `getVetClinics` + `submitVetClinic` are deployed. The web kinfolk form just never pulls from it. Task 1.8 builds the search dropdown with a pinned create-clinic button at the bottom (operator-specified UX) and extends `submitVetClinic` additively (staff submissions verified, optional emergency flag).
-8. **Incidental live bug:** `scheduled/rotateOldFcmTokens.ts` reads collection `fcmTokens` while writers use `fcm_tokens`; the prune has never deleted a document. Fixed in Task 0.4.
+8. **Incidental live bug. CORRECTION: this audit item was stale when written.** The claim that `scheduled/rotateOldFcmTokens.ts` reads `fcmTokens` while writers use `fcm_tokens` was already false: commit `84c6607` (2026-07-23) fixed the collection name a day before this audit snapshot was taken. That fix is NOT this plan's contribution. What remained genuinely broken is that the sweep took a single `.limit(500)` page with no pagination, so on a collection that has never once been pruned it could not drain the backlog. Task 0.4 was rescoped accordingly.
 
 ## Phase map
 
@@ -105,15 +105,20 @@ Each task below is execution-ready at the epic level: exact files, contracts, an
 - [ ] Android parity: apply same gating in `InvoiceDetailScreen.kt`
 - [ ] Commit
 
-### Task 0.4: Fix rotateOldFcmTokens collection name
+### Task 0.4: Make the rotateOldFcmTokens sweep actually drain
+
+**Not the collection name.** `fcmTokens` to `fcm_tokens` was already fixed in `84c6607` on 2026-07-23; verified before starting. The remaining defect was that the sweep read a single `.limit(500)` page with no `startAfter` pagination, no batching, and no fail-loud cap log, so on a collection that has never been pruned it drained at most 500 docs per week, silently. That violated the WARNING-25 convention `test/cronPagination.test.ts` enforces for the other three crons.
 
 **Files:**
-- Modify: `mytribe/functions/src/scheduled/rotateOldFcmTokens.ts` (`fcmTokens` to `fcm_tokens`)
+- Modify: `mytribe/functions/src/scheduled/rotateOldFcmTokens.ts` (extract `runFcmTokenPruneScan`, paginate, batch the deletes)
 - Test: `mytribe/functions/test/rotateOldFcmTokens.test.ts`
 
-- [ ] Failing emulator test: seed stale doc in `fcm_tokens`, run sweep, assert deletion
-- [ ] Fix, deploy `firebase deploy --only functions:mytribe:rotateOldFcmTokens`
-- [ ] Commit
+- [x] Failing tests first, house mock idiom (`vi.mock` of `firestoreAdmin`), not the emulator (the emulator is used only under `test/rules/`)
+- [x] Extract a testable runner matching the `runInvoiceRemindersScan` / `runKincareReminderScan` / `runScheduleDigestScan` convention
+- [x] `paginateQuery` drain with the CRITICAL `cron.pagination.cap-hit` log; cutoff filtered in-memory because `paginateQuery` orders by `documentId()` and Firestore rejects an inequality on a different field
+- [x] Batch deletes at the 500 cap, with a final flush so the last partial batch is never left staged
+- [ ] Deploy (operator's call): `./scripts/safe-deploy.sh` (see the functions `package.json` `deploy` script)
+- [x] Commit
 
 ### Task 0.5: Notification catalog: merge duplicate keys, disambiguate comment labels (#10)
 

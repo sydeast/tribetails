@@ -48,6 +48,33 @@
   resize: vertical;
 }
 
+.new-booking__services {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.new-booking__service {
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.new-booking__service--active {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-soft);
+}
+
+.new-booking__hint {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
 .new-booking__error {
   font-size: var(--type-label-sm-size);
   color: var(--color-error);

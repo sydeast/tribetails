@@ -6,6 +6,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // startAfter() pages, and assert every doc is processed (none past the cap is
 // dropped). A separate test forces the safety ceiling and asserts a CRITICAL
 // cap log is emitted (fail-loud), not a silent stop.
+//
+// Roster: invoiceRemindersCron (both scans), kincareReminderCron and
+// scheduleDigestCron are covered here. The fourth WARNING-25 cron,
+// rotateOldFcmTokens, is covered in test/rotateOldFcmTokens.test.ts instead:
+// it drains a flat `collection()` rather than a collectionGroup and batches its
+// deletes, so it needs a different db mock than pagedDbMock below.
 
 const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),

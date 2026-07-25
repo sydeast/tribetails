@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +45,7 @@ import com.tribetails.auntieos.data.model.normalizeTagName
 import com.tribetails.auntieos.data.model.removeAssigned
 import com.tribetails.auntieos.data.model.suggestTags
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import kotlinx.coroutines.delay
 
 /**
  * Hybrid tag assign field: the current tags as removable chips, plus a text
@@ -105,6 +107,13 @@ fun tagAssignState(
     )
 }
 
+/**
+ * How long the suggestion list outlives the field losing focus. Long enough for
+ * the tap that stole the focus to reach a suggestion row, short enough that the
+ * list is gone by the time the operator looks back. Matches the React field.
+ */
+const val TAG_SUGGEST_CLOSE_DELAY_MS = 150L
+
 /** The list is worth showing only while the field is active and it has something in it. */
 fun shouldShowSuggestionList(focused: Boolean, state: TagAssignState): Boolean =
     focused && (state.suggestions.isNotEmpty() || state.canCreate)
@@ -149,11 +158,24 @@ fun TagAssignField(
 
     var draft by remember { mutableStateOf("") }
     var focused by remember { mutableStateOf(false) }
-    // The android analogue of React's delayed-blur flag. A suggestion row is
-    // clickable and therefore focusable, so closing the list the instant the
-    // input loses focus would race the tap. The list closes on a selection, or
-    // on losing focus with nothing typed.
+    // The android analogue of React's delayed-blur flag. The list closes on a
+    // selection, and otherwise shortly after focus leaves, see the effect below.
     var listOpen by remember { mutableStateOf(false) }
+
+    // Focus can leave with a draft still typed: the operator taps another field
+    // or dismisses the keyboard. Closing only on an empty draft left the list
+    // sitting open over the form, and nothing else dismisses it, since this list
+    // is an inline column rather than a popup. Close on any focus loss, but not
+    // instantly: a suggestion row is clickable and therefore focusable, so an
+    // immediate close would race the very tap that moved the focus. The effect
+    // is cancelled if focus comes back or the field leaves composition, the
+    // structured-concurrency counterpart of the React field's cleared timer.
+    LaunchedEffect(focused) {
+        if (!focused) {
+            delay(TAG_SUGGEST_CLOSE_DELAY_MS)
+            listOpen = false
+        }
+    }
 
     val state = tagAssignState(
         draft = draft,
@@ -250,11 +272,8 @@ fun TagAssignField(
                     .semantics { contentDescription = inputLabel }
                     .onFocusChanged {
                         focused = it.isFocused
-                        if (it.isFocused) {
-                            listOpen = true
-                        } else if (draft.isEmpty()) {
-                            listOpen = false
-                        }
+                        // The close on focus loss is the delayed one above.
+                        if (it.isFocused) listOpen = true
                     },
                 decorationBox = { inner ->
                     Box(contentAlignment = Alignment.CenterStart) {

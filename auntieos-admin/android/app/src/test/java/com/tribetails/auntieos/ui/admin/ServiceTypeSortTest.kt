@@ -30,4 +30,40 @@ class ServiceTypeSortTest {
             sortServiceTypesByDuration(listOf("Consultation", "30Minute", "Meet & Greet")),
         )
     }
+
+    @Test fun largestStatedDurationWins() {
+        assertEquals(360, serviceDurationMinutes("Half-Day 6Hrs"))
+        assertEquals(45, serviceDurationMinutes("45 min"))
+        assertEquals(null, serviceDurationMinutes("Consultation"))
+    }
+
+    /**
+     * The booking-request dialog reads its services from business_settings.serviceRates
+     * (not the legacy base_services collection). Same fixture as the web
+     * NewBookingDialog test, so both platforms offer the same chips in the same order.
+     */
+    @Test fun serviceOptionsComeFromServiceRatesInDurationOrder() {
+        val options = serviceOptionsFromRates(
+            linkedMapOf(
+                "60Minute" to "40",
+                "Half-Day 6Hrs" to "100",
+                "90Minute" to "55",
+                "30Minute" to "25",
+                "Consultation" to "",
+                "  " to "10",
+            ),
+        )
+        assertEquals(
+            listOf("30Minute", "60Minute", "90Minute", "Half-Day 6Hrs", "Consultation"),
+            options.map { it.name },
+        )
+        assertEquals(
+            listOf("30Minute · \$25", "60Minute · \$40", "90Minute · \$55", "Half-Day 6Hrs · \$100", "Consultation"),
+            options.map { serviceChipLabel(it) },
+        )
+    }
+
+    @Test fun emptyServiceRatesYieldNoOptions() {
+        assertEquals(emptyList<ServiceOption>(), serviceOptionsFromRates(emptyMap()))
+    }
 }

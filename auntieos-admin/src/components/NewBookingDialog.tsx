@@ -1,17 +1,21 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   createMultiDateBookingRequest,
   type CreateMultiDateBookingResult,
 } from '../api/bookingsWrite';
 import { KINFOLK_QUERY, SORT_OPTION_DEFAULT, filterSortKinfolk, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { getBusinessSettings } from '../api/settings';
 import { useCollection } from '../lib/firestore';
 import {
   WEEKDAY_LABELS,
   expandWeekly,
   visitMsFromRows,
   allInFuture,
+  serviceChipLabel,
+  serviceOptionsFromRates,
   type BookingMode,
   type DateRow,
+  type ServiceOption,
 } from '../lib/newBooking';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
@@ -29,6 +33,14 @@ interface NewBookingDialogProps {
  * BookingCreateScreen (household picker + service + date/time), and extends it
  * to what the wasm single-date create could not do: non-consecutive multiple
  * dates, or a weekly recurrence.
+ *
+ * The Service field is a chip row over the operator's OWN KinCare types
+ * (`business_settings.serviceRates`, the map Settings' `KinCareRatesEditor`
+ * edits), shortest visit first. It used to be a free-text box with an
+ * "e.g. Dog Walk" placeholder, which meant every request carried whatever the
+ * operator retyped that day and nothing matched the priced services. A plain
+ * text input survives ONLY for a never-configured install, alongside a hint
+ * pointing at Settings, so a fresh account can still file a request.
  *
  * Writes via `createMultiDateBookingRequest` (admin callable), which stores the
  * ENVELOPE model as `envelopeStatus:'requested'`, i.e. it enters the Incoming-
@@ -60,6 +72,32 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
   const [touched, setTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The operator's KinCare types. `null` while the one-shot settings read is in
+  // flight; `[]` both for a never-configured install and for a failed read, so
+  // either way the fallback text input keeps the dialog usable (a settings
+  // outage must not make booking impossible). A failure also surfaces its own
+  // banner rather than passing as "you have no services".
+  const [serviceOptions, setServiceOptions] = useState<ServiceOption[] | null>(null);
+  const [servicesError, setServicesError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    getBusinessSettings()
+      .then((s) => live && setServiceOptions(serviceOptionsFromRates(s.serviceRates)))
+      .catch((err: unknown) => {
+        if (!live) return;
+        setServiceOptions([]);
+        setServicesError(
+          `Couldn't load your KinCare types: ${err instanceof Error ? err.message : 'Load failed'}. Type the service name instead.`,
+        );
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const hasServiceChips = serviceOptions !== null && serviceOptions.length > 0;
+
   const householdOptions = useMemo(() => {
     if (households.status !== 'ready') return [];
     return filterSortKinfolk(households.data, '', SORT_OPTION_DEFAULT).map((kf) => ({
@@ -75,7 +113,12 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
   }, [mode, dateRows, startDateIso, time, weeklyDays, weeks]);
 
   const kinfolkError = touched && kinfolkId === '' ? 'Pick a household.' : null;
-  const serviceError = touched && serviceName.trim() === '' ? 'A service name is required.' : null;
+  const serviceError =
+    touched && serviceName.trim() === ''
+      ? hasServiceChips
+        ? 'Pick a service.'
+        : 'A service name is required.'
+      : null;
   const visitsError =
     touched && startTimesMs.length === 0
       ? 'Add at least one valid date.'
@@ -192,19 +235,64 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
         </div>
 
         <div className="new-booking__field">
-          <label className="new-booking__label" htmlFor="new-booking-service">
-            Service
-          </label>
-          <input
-            id="new-booking-service"
-            type="text"
-            className="new-booking__input"
-            value={serviceName}
-            onChange={(e) => setServiceName(e.target.value)}
-            onBlur={() => setTouched(true)}
-            placeholder="e.g. Dog Walk"
-            aria-invalid={serviceError !== null}
-          />
+          {hasServiceChips ? (
+            <>
+              <span className="new-booking__label" id="new-booking-service-label">
+                Service
+              </span>
+              <div
+                className="new-booking__services"
+                role="group"
+                aria-labelledby="new-booking-service-label"
+              >
+                {serviceOptions.map((option) => (
+                  <button
+                    key={option.name}
+                    type="button"
+                    className={
+                      serviceName === option.name
+                        ? 'new-booking__service new-booking__service--active'
+                        : 'new-booking__service'
+                    }
+                    aria-pressed={serviceName === option.name}
+                    onClick={() => {
+                      setTouched(true);
+                      setServiceName(option.name);
+                    }}
+                  >
+                    {serviceChipLabel(option)}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <label className="new-booking__label" htmlFor="new-booking-service">
+                Service
+              </label>
+              <input
+                id="new-booking-service"
+                type="text"
+                className="new-booking__input"
+                value={serviceName}
+                onChange={(e) => setServiceName(e.target.value)}
+                onBlur={() => setTouched(true)}
+                placeholder="e.g. Dog Walk"
+                aria-invalid={serviceError !== null}
+              />
+              {serviceOptions !== null && servicesError === null && (
+                <span className="new-booking__hint">
+                  No KinCare types yet. Add them in Settings, under KinCare types, and they show up
+                  here.
+                </span>
+              )}
+            </>
+          )}
+          {servicesError !== null && (
+            <span className="new-booking__error" role="alert">
+              {servicesError}
+            </span>
+          )}
           {serviceError !== null && (
             <span className="new-booking__error" role="alert">
               {serviceError}

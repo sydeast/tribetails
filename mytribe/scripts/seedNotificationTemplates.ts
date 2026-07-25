@@ -1,7 +1,10 @@
 import * as admin from 'firebase-admin';
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { listNotificationKeys } from '../functions/src/notifications/catalog';
+import {
+  listNotificationKeys,
+  NOTIFICATION_KEY_ALIASES,
+} from '../functions/src/notifications/catalog';
 import { parseEmailTxt, parsePushTxt } from '../functions/src/notifications/templateParsers';
 
 interface Args {
@@ -66,6 +69,12 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const seedsRoot = resolve(__dirname, '..', 'seeds', 'notificationTemplates');
   const catalogKeys = new Set(listNotificationKeys());
+  // A retired key (NOTIFICATION_KEY_ALIASES) keeps its on-disk template dir and
+  // its seeded Firestore docs. Live sends resolve through the canonical row's
+  // template ids, so these copies are not what renders any more, but nothing is
+  // deleted out from under an operator-authored binding that still points at
+  // the old id.
+  const aliasKeys = new Set(Object.keys(NOTIFICATION_KEY_ALIASES));
 
   const dirNames = readdirSync(seedsRoot).filter((n) =>
     statSync(join(seedsRoot, n)).isDirectory(),
@@ -76,12 +85,15 @@ async function main(): Promise<void> {
   const skippedKeys: string[] = [];
 
   for (const dirName of dirNames) {
-    if (!catalogKeys.has(dirName)) {
+    if (!catalogKeys.has(dirName) && !aliasKeys.has(dirName)) {
       throw new Error(`seedNotificationTemplates: dir ${dirName} is not a catalog key`);
     }
     if (args.onlyKey && dirName !== args.onlyKey) continue;
     const planned = loadDir(join(seedsRoot, dirName), dirName);
-    console.log(`[plan] ${dirName}: email(subject=${JSON.stringify(planned.emailDoc.subject)}), sms(${planned.smsDoc.text.length}ch), push(title=${JSON.stringify(planned.pushDoc.title)})`);
+    const tag = aliasKeys.has(dirName)
+      ? `[alias -> ${NOTIFICATION_KEY_ALIASES[dirName].canonical}]`
+      : '[plan]';
+    console.log(`${tag} ${dirName}: email(subject=${JSON.stringify(planned.emailDoc.subject)}), sms(${planned.smsDoc.text.length}ch), push(title=${JSON.stringify(planned.pushDoc.title)})`);
     processed += 1;
   }
 
