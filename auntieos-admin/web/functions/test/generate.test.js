@@ -213,18 +213,6 @@ describe('ALLOWED_TYPES (the taxonomy every client mirrors)', () => {
       start: 'enum class CommunicationType',
       end: '}',
     },
-    {
-      // Was bound to auntieos-admin/create_n8n_workflows.py until 2026-07-23.
-      // That script targeted the retired n8n and imported the retired
-      // baserow_auth, so the guard was anchoring a live contract to a file that
-      // was about to be deleted, which would have turned CI red on the delete.
-      // Repointed at the Android picker, which is a shipping surface: it is the
-      // list an operator actually chooses from, so drift there is user-visible.
-      lang: 'Kotlin Android commTypeOptions',
-      path: `${REPO}/auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/ui/communicate/CommunicateScreen.kt`,
-      start: 'private val commTypeOptions',
-      end: ')',
-    },
   ];
   for (const c of CROSS_LANGUAGE_COPIES) {
     it(`${c.lang} carries exactly the six types (drift guard)`, () => {
@@ -235,6 +223,48 @@ describe('ALLOWED_TYPES (the taxonomy every client mirrors)', () => {
         [...gen.ALLOWED_TYPES].sort(),
         `${c.lang} has drifted from generate.js ALLOWED_TYPES. Reconcile the copy.`,
       );
+    });
+  }
+  // The two guards above bind copies of the ACCEPTED taxonomy: they describe
+  // what the server will take, so equality is the right invariant.
+  //
+  // A composer's OPTION LIST is a different thing, and until 2026-07-24 the
+  // Android picker was wrongly held to the equality guard above. It is the
+  // subset an operator is OFFERED, and it has always been legitimately smaller:
+  // `general` was never offered anywhere, and `social_post` was offered on
+  // Android alone with prompt framing no surface had ever exercised. Both
+  // composers now offer the archive's four (visit_report / sms / email /
+  // blog_post), which is what the archive's own MessageType enum offered.
+  //
+  // The real invariant for an option list is CONTAINMENT: a composer must never
+  // offer a type the server would 400 on. That is what catches the mistake this
+  // guard exists to catch, a chip for a `kintale` type the function does not
+  // accept, while leaving each surface free to narrow.
+  const OPTION_LISTS = [
+    {
+      lang: 'Kotlin Android commTypeOptions',
+      path: `${REPO}/auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/ui/communicate/CommunicateScreen.kt`,
+      start: 'private val commTypeOptions',
+      end: ')',
+    },
+    {
+      lang: 'TS admin PERSONALIZE_MESSAGE_TYPES',
+      path: `${REPO}/auntieos-admin/src/lib/personalizeCompose.ts`,
+      start: 'export const PERSONALIZE_MESSAGE_TYPES',
+      end: '];',
+    },
+  ];
+  for (const c of OPTION_LISTS) {
+    it(`${c.lang} offers only types the function accepts`, () => {
+      assert.ok(fs.existsSync(c.path), `option list moved or missing: ${c.path}`);
+      const found = tokensBetween(c.path, c.start, c.end);
+      assert.ok(found.size > 0, `${c.lang} matched no known type; the markers have drifted`);
+      for (const t of found) {
+        assert.ok(
+          gen.ALLOWED_TYPES.has(t),
+          `${c.lang} offers '${t}', which generate.js would reject with a 400.`,
+        );
+      }
     });
   }
   it('gives every allowed type its own tone line in the system framing', () => {
