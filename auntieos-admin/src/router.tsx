@@ -58,12 +58,20 @@ function optionalIdSearch<K extends string>(keys: readonly K[]) {
   };
 }
 
-/** Shared chrome: the two drifting orbs behind every screen (Den background). */
+/**
+ * Shared chrome: the three drifting orbs behind every screen (Den background).
+ *
+ * Three, not two, because the ambient wash in all 39 `ui-ideas/*.html` mocks and
+ * in the shipped MyTribe portal is a purple / orange / teal triad. Two of the
+ * three brand hues cannot read as the Tribe palette. Purely decorative, so
+ * aria-hidden; the drift and the blend live in styles/base.css.
+ */
 function RootLayout() {
   return (
     <>
       <span className="orb a" aria-hidden="true" />
       <span className="orb b" aria-hidden="true" />
+      <span className="orb c" aria-hidden="true" />
       <Outlet />
     </>
   );
