@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { connectAuthEmulator, getAuth } from 'firebase/auth';
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import { getFunctions } from 'firebase/functions';
 
 /**
@@ -46,3 +46,45 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 // us-central1 to match the wasm bridge and every deployed callable.
 export const functions = getFunctions(app, 'us-central1');
+
+/**
+ * Emulator wiring for the e2e harness (`e2e/`), and for nothing else.
+ *
+ * OPT-IN BY AN ENV VAR THAT NOTHING IN THE DEPLOY PATH SETS. `VITE_E2E_EMULATOR`
+ * is written in exactly one place, `e2e/playwright.config.ts`'s `webServer.env`,
+ * and reaches only the dev server that run boots. A hosting build sees no such
+ * variable, so Vite substitutes `undefined` for the whole `import.meta.env`
+ * access at build time, the condition folds to a constant false, and Rollup
+ * drops the branch together with both `connect*Emulator` imports.
+ *
+ * That was CHECKED, not assumed. After `npm run build`, `dist/assets/*.js`
+ * contains zero occurrences of `9399`, `8385`, `VITE_E2E_EMULATOR`,
+ * `EMULATOR MODE` or `connectAuthEmulator` (2026-07-25). The one
+ * `connectFirestoreEmulator` hit is a string inside a Firebase SDK warning
+ * message, not this call site. Redo that grep if this gate is ever rewritten to
+ * read a RUNTIME value: a runtime read cannot be folded, and the emulator path
+ * would then ship to production.
+ *
+ * THE PORTS ARE THE E2E ONES (9399 auth, 8385 firestore), not the defaults, and
+ * not the 9099/8085 pair `web/firebase.json` declares for the wasm tree. A test
+ * run that silently attached to somebody else's already-running emulator would
+ * read their seed data and report a green that meant nothing. Distinct ports
+ * turn that into a connection refused. See `e2e/firebase.json`.
+ *
+ * It reads a HOST, not a boolean, so the harness stays movable: CI can point it
+ * at a service container without this file learning about CI.
+ */
+const emulatorHost = import.meta.env.VITE_E2E_EMULATOR as string | undefined;
+if (emulatorHost !== undefined && emulatorHost !== '') {
+  // Loud, because a real session that somehow reached this branch would be
+  // talking to an empty throwaway database and would otherwise look merely
+  // "logged out" rather than misconfigured.
+  console.warn(`[firebase] EMULATOR MODE: auth + firestore pinned to ${emulatorHost}. Not production data.`);
+  // SYNCHRONOUS, not a dynamic import. Both connect calls have to land before
+  // the first auth or Firestore operation; `firebase/firestore` throws
+  // "Firestore has already been started" if a listener beats it. An
+  // `import().then()` here would win that race most of the time and lose it on
+  // a slow machine, which is the worst kind of flake to own.
+  connectAuthEmulator(auth, `http://${emulatorHost}:9399`, { disableWarnings: true });
+  connectFirestoreEmulator(db, emulatorHost, 8385);
+}

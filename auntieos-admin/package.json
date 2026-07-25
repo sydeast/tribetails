@@ -8,7 +8,10 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2e": "npm run e2e:tsc && firebase emulators:exec --project auntieos-ttpc --only auth,firestore --config e2e.firebase.json \"npx playwright test --config e2e/playwright.config.ts\"",
+    "e2e:tsc": "tsc -p e2e",
+    "e2e:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.2.5",
@@ -23,9 +26,11 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^26.1.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
