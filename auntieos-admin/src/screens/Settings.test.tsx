@@ -81,6 +81,10 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   draftRetentionDays: 30,
   draftRetentionOptions: [30, 60, 90],
   calendarSyncId: '',
+  calendarSyncLastRunAt: '',
+  calendarSyncLastStatus: '',
+  calendarSyncLastImported: 0,
+  calendarSyncLastError: '',
   autoConfirmRepeatKinfolk: false,
   snapRescheduleTo15Min: false,
   logoUrl: '',
@@ -165,16 +169,27 @@ describe('Settings — section nav shell', () => {
   });
 });
 
-describe('Settings — deferred (view-only) sections', () => {
-  it('Calendar sync shows the id read-only with a reason, no editable control', async () => {
+describe('Settings — Calendar sync is a real editor, not a view', () => {
+  // INVERTED on 2026-07-25. This case used to assert the opposite ("shows the id
+  // read-only with a reason, no editable control"), which pinned a wrong belief
+  // rather than a behaviour: the free/busy sync runs as a service account inside
+  // the Cloud Function and never needed the Google sign-in the old hint blamed.
+  it('edits the calendar id and saves it through the shell, from the shell-mounted section', async () => {
     getBusinessSettings.mockResolvedValue(withOverrides({ calendarSyncId: '' }));
+    saveBusinessSettings.mockResolvedValue({ updatedAt: '2026-07-25T10:00:00.000Z', updatedBy: 'a@b.c' });
     render(<Settings />);
     await screen.findByLabelText('Business name');
 
     const panel = await openSection('Calendar sync');
-    expect(within(panel).getByText('Not configured')).toBeInTheDocument();
-    expect(within(panel).getByText(/it stays view-only/i)).toBeInTheDocument();
-    expect(within(panel).queryByRole('textbox')).not.toBeInTheDocument();
+    const field = within(panel).getByLabelText('Calendar ID');
+    await userEvent.type(field, 'team@group.calendar.google.com');
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+
+    // Through the shell's shared `persist`, so it merges onto the same doc every
+    // other section writes, and only this section's field is sent.
+    expect(saveBusinessSettings).toHaveBeenCalledWith({
+      calendarSyncId: 'team@group.calendar.google.com',
+    });
   });
 
   it('MyTribe portal keeps the Home layout view-only while its other fields save', async () => {

@@ -80,11 +80,21 @@ interface ScheduleProps {
  * Reschedule itself is no longer deferred, it lives in the detail sheet.
  *
  * ALSO DEFERRED: the service-type legend orders alphabetically rather than by
- * configured duration, and there is no "Google Calendar sync not configured"
- * gate on the busy-blocks error banner, both would need a single-document
- * read of `business_settings`, and `lib/firestore.ts` only has a bounded
- * COLLECTION listener (`useCollection`) today, no single-doc hook. Flagged
- * rather than bolted on ad hoc; see `lib/scheduleFormat.ts#distinctServiceTypes`.
+ * configured duration. That would need a single-document read of
+ * `business_settings`, and `lib/firestore.ts` only has a bounded COLLECTION
+ * listener (`useCollection`) today, no single-doc hook. Flagged rather than
+ * bolted on ad hoc; see `lib/scheduleFormat.ts#distinctServiceTypes`.
+ *
+ * NOT deferred, DECLINED (2026-07-25, Task 7.1). The superseded Compose screen
+ * hides the busy-blocks error banner unless a calendar id is configured
+ * (`ScheduleScreen.kt#shouldShowBusyBlockError`), and that rule was on the list
+ * to port here. It is not ported, on purpose. `booking_time_slots` is not a
+ * calendar-only collection: `createBlockedTimeSlot` writes operator-blocked
+ * windows into the same place. Suppressing a read failure on that collection
+ * because a DIFFERENT feature is unconfigured would hide a real fault in the
+ * manual blocks, which is the silent degradation this codebase forbids. The
+ * banner names what failed either way; an operator with no calendar sync reads
+ * it as "the blocks did not load", which is exactly true.
  */
 export function Schedule({ onSelect }: ScheduleProps) {
   const sessionsState = useCollection<ScheduleSessionEntry>(SCHEDULE_SESSIONS_QUERY);

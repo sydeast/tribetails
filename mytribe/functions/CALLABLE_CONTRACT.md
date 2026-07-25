@@ -129,6 +129,55 @@ must say "next reconcile pass", never "instantly".
   an operator typing a clinic into a household record IS the curation step.
   Kinfolk submissions still land `verified: false` for operator approval.
 
+## Calendar sync (admin-gated)
+
+### syncGoogleCalendarBusyEvents
+- req `{ lookAheadDays?: number }` (default 30, clamped 1..90)
+- res `{ imported: number, scanned: number, ranAt: string /* ISO-8601 */ }`
+- Reads the SHARED calendar named by `business_settings.calendarSyncId` through
+  the pinned service account
+  `auntieos-admin-calendar-sync@auntieos-ttpc.iam.gserviceaccount.com` (ADC, no
+  OAuth, no token storage, no key in any client bundle) and upserts each busy
+  interval into `booking_time_slots` as a private BLOCKED slot
+  (`hideDetailsFromKinfolk: true`, deduped by `externalEventId`, so re-running
+  is idempotent). There is NO calendar id in the request: the callable resolves
+  it server-side, so a client cannot sync a calendar the operator did not save.
+- `ranAt` added 2026-07-25 alongside the receipt below. Additive: android's
+  `syncGoogleBusyEventsViaServer` reads only `imported` and is unaffected.
+
+**The last-run receipt.** Every run merges four flat fields onto the SAME
+`business_settings` doc the calendar id was read from, and both clients read them
+back on load:
+- `calendarSyncLastRunAt: string` (ISO-8601), `calendarSyncLastStatus: 'ok' | 'error'`,
+  `calendarSyncLastImported: number`, `calendarSyncLastError: string` (`''` when ok)
+- A FAILED run is stamped too, with its cause. Without that, a sync that broke
+  and a sync that never ran look identical after a reload, and the operator
+  presses Run Sync again to find out which it was.
+- The stamp write is best-effort: if it fails, the run's own error is what
+  surfaces (it is the more useful one) and the stamp loss is logged.
+- Field names frozen in `test/callableContract.test.ts`; both clients read them
+  off a document they already load, so a rename here is silent breakage.
+
+**Error surface**, all fail-loud and all naming the fix:
+- `failed-precondition` / `calendar_id_not_configured`: no `calendarSyncId` saved
+  anywhere in `business_settings`.
+- `failed-precondition` with `details { code: 'calendar_id_invalid' }`: the saved
+  id is not address-shaped, or is `primary`. Checked BEFORE the Google call,
+  because Google answers a typo with `notFound` and answers the service
+  account's own `primary` calendar with an empty busy list, and both would reach
+  the operator as "Imported 0 busy blocks", which reads as a clear calendar
+  rather than a wrong id. The rule lives in `src/lib/calendarSyncId.ts` and is
+  MIRRORED client-side so the operator is told before the round trip:
+  `auntieos-admin/src/lib/calendarSyncId.ts` and android's
+  `ui/admin/scheduling/CalendarSyncId.kt`. Those two are a courtesy; this
+  callable is the enforcement.
+- `permission-denied`: the calendar is not shared with the service account, or
+  Google returned a per-calendar `errors` entry. The message names the exact
+  service account, the calendar id, and the "See only free/busy (hide details)"
+  share level, and calls out that `notFound` covers both a typo and a share to
+  the wrong address.
+- `unavailable` / `gcal_<status>`: any other Google failure.
+
 ### mapboxSearch
 - req `{ query: string, sessionToken: string, limit?: number, country?: string }`
 - res `{ suggestions: Array<{ name: string, full_address: string, mapbox_id: string, place_formatted: string }>, signedBy: 'mapboxSearch' }`

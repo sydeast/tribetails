@@ -382,37 +382,8 @@ export function MyTribePortalSection({ data, onSave }: MyTribePortalSectionProps
   );
 }
 
-// ── Google Calendar sync (read-only; no connect/sync action wired here yet) ──
-
-interface CalendarSyncSectionProps {
-  data: BusinessSettings;
-}
-
-/**
- * Read-only, deliberately. The old overview showed the calendar id; the old
- * editor listed Google Calendar sync among its "deferred" sections because the
- * connect/sync action (an OAuth flow against an external calendar provider) has
- * no editor in this repo. That external dependency is exactly the one thing
- * CLAUDE.md says may stay deferred, so this section discloses that in place
- * rather than pretending an editable control that would do nothing.
- */
-export function CalendarSyncSection({ data }: CalendarSyncSectionProps) {
-  const id = data.calendarSyncId.trim();
-  return (
-    <DenPanel
-      title="Google Calendar sync"
-      subtitle="Imports the shared calendar&rsquo;s busy events as private blocks."
-    >
-      <dl className="settings__fields">
-        <div className="settings__field">
-          <dt className="settings__field-label">Calendar ID</dt>
-          <dd className="settings__field-value">{id === '' ? 'Not configured' : id}</dd>
-        </div>
-      </dl>
-      <p className="settingsEdit__hint">
-        Connecting and syncing a calendar needs a Google sign-in that isn&rsquo;t wired into this
-        admin yet, so it stays view-only.
-      </p>
-    </DenPanel>
-  );
-}
+// Google Calendar sync used to live here as a read-only panel whose hint said
+// syncing "needs a Google sign-in that isn't wired into this admin yet". That
+// was wrong: the free/busy import runs as a service account inside the Cloud
+// Function and needs no sign-in from any client. It is now a real editor with a
+// Run Sync action, in its own file, `./CalendarSyncSection.tsx`.
