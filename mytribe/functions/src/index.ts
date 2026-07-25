@@ -87,6 +87,9 @@ export { reviewAndSendDraftInvoice } from './admin/reviewAndSendDraftInvoice';
 export { updateInvoice } from './admin/updateInvoice';
 export { archiveInvoice } from './admin/archiveInvoice';
 export { unarchiveInvoice } from './admin/unarchiveInvoice';
+// Detection + repair for invoices wrecked by the pre-2026-07-25 partial-payment
+// write. `detect` mode reports and writes nothing; see the file header.
+export { repairInvoicePayments } from './admin/repairInvoicePayments';
 // Task 5.1 (#18): the read half of turning completed visits into an invoice.
 export { listUninvoicedSessions } from './admin/listUninvoicedSessions';
 export { setKinfolkClaim } from './admin/setKinfolkClaim';

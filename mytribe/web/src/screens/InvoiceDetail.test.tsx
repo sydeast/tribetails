@@ -55,6 +55,8 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   amountDue: 50,
   isPaid: false,
   status: 'open',
+  paidCents: 0,
+  partiallyPaid: false,
   date: '2026-07-01',
   dueDate: '2026-07-15',
   discount: null,
@@ -128,5 +130,55 @@ describe('InvoiceDetail — mutation error surfacing', () => {
     // target to choose and the CTA names the only outcome.
     await userEvent.click(await screen.findByRole('button', { name: /Save to Account Balance/ }));
     await waitFor(() => expect(screen.getByText(/Credit already redeemed\./)).toBeInTheDocument());
+  });
+});
+/**
+ * The kinfolk portal is the screen a paying household reads, so a part-paid
+ * invoice has to say what it actually is. Neither "PENDING" (which hides the
+ * money already sent) nor "PAID" (which hides the balance still owed).
+ */
+describe('InvoiceDetail — a part-paid invoice reads honestly', () => {
+  const PART_PAID: GetMyInvoicesResult['open'][number] = {
+    ...OPEN_INVOICE,
+    total: 50,
+    amountDue: 30,
+    paidCents: 2000,
+    partiallyPaid: true,
+  };
+  async function renderWith(invoice: GetMyInvoicesResult['open'][number]) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({
+      open: [invoice], paid: [], credits: [], accountBalanceCents: 0,
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+  }
+  it('shows a PART PAID chip and both figures, not a bare PENDING', async () => {
+    await renderWith(PART_PAID);
+    expect(await screen.findByText('PART PAID')).toBeInTheDocument();
+    expect(screen.getByText('$20.00 of $50.00 paid')).toBeInTheDocument();
+    expect(screen.queryByText('PENDING')).toBeNull();
+    expect(screen.queryByText('PAID')).toBeNull();
+  });
+  it('offers to pay the REMAINING balance, not the total', async () => {
+    await renderWith(PART_PAID);
+    expect(await screen.findByRole('button', { name: /Pay remaining \$30\.00/ })).toBeInTheDocument();
+  });
+  it('shows what was collected from paidCents rather than inferring it', async () => {
+    await renderWith(PART_PAID);
+    await screen.findByText('PART PAID');
+    // total - amountDue would also read $20 here; the point is that the figure
+    // comes from the recorded payments, so it stays right on an invoice whose
+    // amountDue was zeroed by the old write.
+    expect(screen.getByText('Paid')).toBeInTheDocument();
+  });
+  it('leaves an ordinary open invoice exactly as it was', async () => {
+    await renderWith(OPEN_INVOICE);
+    expect(await screen.findByRole('button', { name: /Pay \$50\.00/ })).toBeInTheDocument();
+    expect(screen.queryByText('PART PAID')).toBeNull();
   });
 });

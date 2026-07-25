@@ -51,6 +51,8 @@ import com.tribetails.auntieos.domain.InvoiceAction
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.invoiceActionsFor
 import com.tribetails.auntieos.domain.invoiceIsOverdue
+import com.tribetails.auntieos.domain.formatCentsUsd
+import com.tribetails.auntieos.domain.invoicePartPaid
 import com.tribetails.auntieos.domain.invoiceStateOf
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
@@ -263,16 +265,20 @@ private fun invoiceDetailBody(
     // PAID first, which read a draft, a quote, and a credit as paid.
     val state    = invoiceStateOf(invoice)
     val overdue  = invoiceIsOverdue(invoice, todayKey)
+    // Like overdue, a display refinement of OPEN and never its own state, so it
+    // changes the pill and the copy and leaves the action set alone. That is
+    // what keeps "Record payment" available for collecting the rest.
+    val partPaid = invoicePartPaid(invoice)
     val actions  = invoiceActionsFor(state)
 
     // ── Header status bar (accent-tinted full-width) ────────────────────────────
     item {
-        InvoiceHeaderBar(invoice = invoice, state = state, overdue = overdue)
+        InvoiceHeaderBar(invoice = invoice, state = state, overdue = overdue, partPaid = partPaid != null)
     }
 
     // ── Amount stat row ─────────────────────────────────────────────────────────
     item {
-        val (statusTone, _, _) = statusTriple(state, overdue)
+        val (statusTone, _, _) = statusTriple(state, overdue, partPaid != null)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -285,9 +291,12 @@ private fun invoiceDetailBody(
                 modifier = Modifier.weight(1f),
             )
             StatCard(
-                label = "Amount due",
+                label = if (partPaid != null) "Still owed" else "Amount due",
                 value = formatMoney(invoice.amountDue),
                 trend = when {
+                    // Names both figures: a part-paid invoice that only showed
+                    // what is left would hide the payment already collected.
+                    partPaid != null -> "${formatCentsUsd(partPaid.paidCents)} of ${formatMoney(invoice.total)} paid"
                     overdue -> "past due ${invoice.dueDate.trim().take(10)}"
                     state == InvoiceState.OPEN ->
                         "due ${invoice.dueDate.trim().take(10).ifBlank { "soon" }}"
@@ -527,9 +536,9 @@ private fun paymentMethodLines(bs: com.tribetails.auntieos.data.model.BusinessSe
 }
 
 @Composable
-private fun InvoiceHeaderBar(invoice: Invoice, state: InvoiceState, overdue: Boolean) {
+private fun InvoiceHeaderBar(invoice: Invoice, state: InvoiceState, overdue: Boolean, partPaid: Boolean = false) {
     val c = AuntieTheme.colors
-    val (statusTone, statusText, statusIcon) = statusTriple(state, overdue)
+    val (statusTone, statusText, statusIcon) = statusTriple(state, overdue, partPaid)
     val accent = statusTone.color(c)
 
     Row(
@@ -692,6 +701,12 @@ private fun PaymentRow(payment: Payment, showDivider: Boolean) {
 /**
  * Record-payment dialog prefilled from the invoice. Stamps invoiceId/invoiceNumber
  * via [buildInvoicePayment] so the per-invoice join populates (spec 17 item 6).
+ *
+ * The amount is PREFILLED with the outstanding balance and editable, so the
+ * common case is one tap and a partial is one edit away. The server decides what
+ * the payment means (see [InvoiceDetailViewModel.recordPayment]); the copy below
+ * says so, because an operator entering less than the balance needs to know
+ * before they submit that the invoice will stay open rather than be closed out.
  */
 @Composable
 private fun RecordPaymentDialog(
@@ -728,6 +743,11 @@ private fun RecordPaymentDialog(
             AuntieField(value = reference, onValueChange = { reference = it }, label = "Reference #", modifier = Modifier.fillMaxWidth())
             AuntieField(value = date, onValueChange = { date = it }, label = "Date (YYYY-MM-DD)", modifier = Modifier.fillMaxWidth())
             AuntieField(value = notes, onValueChange = { notes = it }, label = "Notes", modifier = Modifier.fillMaxWidth())
+            Text(
+                text  = "A payment smaller than the balance leaves this invoice open for the rest.",
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textDim,
+            )
         }
     }
 }
@@ -817,10 +837,15 @@ private fun DetailRow(
 private fun statusTriple(
     state: InvoiceState,
     overdue: Boolean,
+    partPaid: Boolean = false,
 ): Triple<AuntieStatusTone, String, androidx.compose.ui.graphics.vector.ImageVector> {
     // Overdue outranks the plain OUTSTANDING pill visually. It is a refinement
     // of OPEN, never its own state, so it cannot apply to anything else.
     if (overdue) return Triple(AuntieStatusTone.Error, "OVERDUE", Lucide.CircleAlert)
+    // PART PAID is the same kind of refinement, ranked below overdue: an overdue
+    // invoice that is also part-paid is, first, overdue. It is deliberately not
+    // the Success tone a settled invoice gets, because it is not settled.
+    if (partPaid) return Triple(AuntieStatusTone.Purple, "PART PAID", Lucide.Clock)
     return when (state) {
         InvoiceState.PAID      -> Triple(AuntieStatusTone.Success, "PAID", Lucide.CircleCheckBig)
         InvoiceState.OPEN      -> Triple(AuntieStatusTone.Warning, "OUTSTANDING", Lucide.Clock)

@@ -33,6 +33,25 @@ export interface InvoiceDto {
   amountDue: number;
   isPaid: boolean;
   status: InvoiceStatus;
+  /**
+   * What has been collected against this invoice, in integer cents.
+   *
+   * 0 on an invoice that predates the field, which is honest rather than
+   * flattering. NEVER re-derive it from `total - amountDue`: those are float
+   * dollars, and on every invoice the pre-2026-07-25 partial-payment write
+   * touched `amountDue` reads 0 while a real balance is owed, so that
+   * subtraction reports the entire total as collected on exactly the wrong ones.
+   */
+  paidCents: number;
+  /**
+   * Money has come in and it does NOT cover this invoice.
+   *
+   * `status` stays `open`, so the invoice keeps its payable behaviour and its
+   * bucket; this is the flag that lets the screen say what is actually true.
+   * Showing a part-paid invoice as plain "PENDING" hides the payment already
+   * made; showing it as paid hides the balance still owed.
+   */
+  partiallyPaid: boolean;
   date: string | null;
   dueDate: string | null;
   discount: string | null;

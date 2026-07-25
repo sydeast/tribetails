@@ -105,29 +105,140 @@ export function computeInvoiceTotals(
 
 /** One entry of the `invoices/{id}/payments` subcollection, as far as money goes. */
 export interface PaymentAmount {
-  /** DOLLARS. `markInvoicePaid.ts` writes the callable's `amount` arg verbatim. */
+  /**
+   * DOLLARS. The historical field: `markInvoicePaid.ts` wrote the callable's
+   * `amount` arg verbatim, and every payment recorded before 2026-07-25 carries
+   * only this.
+   */
   amount?: number;
+  /**
+   * CENTS, written alongside `amount` from 2026-07-25 on. Preferred when
+   * present, because it is the figure the settlement was actually computed
+   * from; `amount` is its dollar projection and can only lose precision.
+   */
+  amountCents?: number;
 }
 
 /**
  * What has actually been collected, in cents.
  *
  * Reads the `payments` SUBCOLLECTION rather than the invoice's own `amountDue`
- * scalar, and that is load-bearing: `markInvoicePaid.ts` sets `amountDue: 0`
- * unconditionally, even when the recorded `amount` is a PARTIAL payment. The
- * scalar therefore cannot answer "how much came in"; only the subcollection can.
+ * scalar, and that is load-bearing. Before 2026-07-25 `markInvoicePaid.ts` set
+ * `amountDue: 0` unconditionally, even when the recorded `amount` was a PARTIAL
+ * payment, so on every invoice paid through that path the scalar cannot answer
+ * either "has anyone paid" or "how much came in". Only the subcollection can,
+ * which is why it is also what the repair pass reconstructs the real balance
+ * from (`lib/invoicePaymentRepair.ts`).
  *
- * Each payment is dollar-denominated, so it is rounded to cents individually on
- * the way in and only then added. Rounding after summing floats would reintroduce
- * the drift this module exists to prevent.
+ * `amountCents` wins over `amount` per row. Rows are summed as integers, so a
+ * dollar-only row is rounded to cents individually on the way in and only then
+ * added. Rounding after summing floats would reintroduce the drift this module
+ * exists to prevent.
  */
 export function paidCentsFromPayments(payments: readonly PaymentAmount[]): number {
   let cents = 0;
   for (const p of payments) {
+    if (typeof p.amountCents === 'number' && Number.isInteger(p.amountCents)) {
+      cents += p.amountCents;
+      continue;
+    }
     if (typeof p.amount !== 'number' || !Number.isFinite(p.amount)) continue;
     cents += Math.round(p.amount * 100);
   }
   return cents;
+}
+
+/**
+ * What an invoice is worth, in cents, from a raw doc.
+ *
+ * Two sources, in this order and for this reason:
+ *
+ *   `totalCents`  the integer truth, written by `updateInvoice` on any invoice
+ *                 that has ever been itemized. Exact, so it wins.
+ *   `total`       the float dollar field every invoice carries, including every
+ *                 invoice that predates line items. Rounded once, here.
+ *
+ * There is deliberately no third fallback. An invoice with neither field reads
+ * as 0, which classifies as `zero`/settled and therefore REFUSES a payment
+ * rather than accepting one against an amount nobody has stated.
+ */
+export function invoiceTotalCentsOf(doc: {
+  totalCents?: unknown;
+  total?: unknown;
+}): number {
+  if (typeof doc.totalCents === 'number' && Number.isInteger(doc.totalCents)) return doc.totalCents;
+  if (typeof doc.total === 'number' && Number.isFinite(doc.total)) return Math.round(doc.total * 100);
+  return 0;
+}
+
+/**
+ * Where an invoice stands against its total, once the recorded payments are
+ * summed. THE SINGLE PLACE THIS QUESTION IS ANSWERED.
+ *
+ *   unpaid    nothing recorded
+ *   partial   something recorded, but it does not cover the total
+ *   settled   the payments exactly cover the total
+ *   overpaid  the payments exceed the total
+ *
+ * WHAT AN OVERPAYMENT DOES, stated once so nothing has to guess.
+ *
+ * `amountDueCents` CLAMPS AT ZERO and the excess is reported separately as
+ * `overpaidCents`. It does not go negative, and that is not tidiness: a
+ * negative `amountDue` is this codebase's CREDIT signal, read that way by
+ * `invoiceEditPolicy.ts#invoiceStateOf`, by `getMyInvoices.ts#resolveStatus`,
+ * by the admin's `invoiceFormat.ts#invoiceState` and by the Android
+ * `InvoiceActions.kt`. Letting an overpayment write a negative balance would
+ * silently reclassify a settled invoice as a credit owed BACK to the household,
+ * which is a different financial instrument with its own redemption flow
+ * (`redeemCredit`) and its own account-balance side effects. A household that
+ * rounded a $39.50 bill up to $40 would have minted themselves a credit.
+ *
+ * So an overpayment settles the invoice, and the excess is recorded as a fact
+ * on the doc for the operator to act on deliberately (issue a credit, or refund
+ * it) rather than being converted into one automatically. It is never dropped
+ * and never silently absorbed.
+ *
+ * A ZERO-OR-NEGATIVE TOTAL with money against it is `overpaid`, not `settled`,
+ * for the same reason: every cent of it is excess, and saying so is the honest
+ * reading.
+ */
+export type InvoiceSettlementState = 'unpaid' | 'partial' | 'settled' | 'overpaid';
+
+export interface InvoiceSettlement {
+  totalCents: number;
+  paidCents: number;
+  /** Still owed. NEVER negative, see the note above. */
+  amountDueCents: number;
+  /** Collected beyond the total. Zero unless [state] is 'overpaid'. */
+  overpaidCents: number;
+  state: InvoiceSettlementState;
+}
+
+export function settleInvoice(totalCents: number, paidCents: number): InvoiceSettlement {
+  const total = Math.round(finite(totalCents));
+  const paid = Math.round(finite(paidCents));
+  const remaining = total - paid;
+
+  const state: InvoiceSettlementState =
+    paid <= 0 ? 'unpaid' : remaining > 0 ? 'partial' : remaining < 0 ? 'overpaid' : 'settled';
+
+  return {
+    totalCents: total,
+    paidCents: paid,
+    amountDueCents: Math.max(0, remaining),
+    overpaidCents: Math.max(0, -remaining),
+    state,
+  };
+}
+
+/**
+ * True when the invoice has money against it that does not cover it yet, which
+ * is the state the whole 2026-07-25 fix exists to represent. Kept as a named
+ * predicate so no caller has to re-derive it from two comparisons and get one
+ * of them backwards.
+ */
+export function isPartiallyPaid(settlement: InvoiceSettlement): boolean {
+  return settlement.state === 'partial';
 }
 
 /**

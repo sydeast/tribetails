@@ -8,13 +8,16 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { invoiceStateOf, invoiceEditRefusal } from '../lib/invoiceEditPolicy';
+import { invoiceStateOf, invoiceEditRefusal, paymentStandingOf } from '../lib/invoiceEditPolicy';
 import {
   computeInvoiceTotals,
   paidCentsFromPayments,
+  invoiceTotalCentsOf,
+  settleInvoice,
   validateInvoiceMoney,
   centsToDollars,
   type InvoiceLineItemInput,
+  type PaymentAmount,
 } from '../lib/invoiceMath';
 
 /**
@@ -116,17 +119,22 @@ export async function updateInvoiceHandler(
   if (!snap.exists) throw new HttpsError('not-found', `Invoice '${invoiceId}' not found.`);
   const data = snap.data() as InvoiceDoc;
 
-  // The payments SUBCOLLECTION, not the `amountDue` scalar. markInvoicePaid
-  // zeroes that scalar even for a partial payment, so it cannot answer either
-  // "has anyone paid" or "how much came in".
+  // The payments SUBCOLLECTION, not the `amountDue` scalar. Before 2026-07-25
+  // markInvoicePaid zeroed that scalar even for a partial payment, so on any
+  // invoice it touched the scalar cannot answer either "has anyone paid" or
+  // "how much came in".
   const paymentsSnap = await ref.collection('payments').get();
-  const payments = paymentsSnap.docs.map((d) => d.data() as { amount?: number });
-  const hasPayments = payments.length > 0;
+  const payments = paymentsSnap.docs.map((d) => d.data() as PaymentAmount);
   const paidCents = paidCentsFromPayments(payments);
+
+  // THREE states, not "has payments". A part-paid invoice stays fully editable:
+  // freezing it on the first payment of any size is what left a part-collected
+  // invoice with no repair path at all. See invoiceEditPolicy.ts.
+  const standing = paymentStandingOf(invoiceTotalCentsOf(data), paidCents);
 
   const touchesMoney = patch.lineItems !== undefined || patch.invoiceDiscountCents !== undefined;
 
-  const refusal = invoiceEditRefusal(invoiceStateOf(data), hasPayments, touchesMoney);
+  const refusal = invoiceEditRefusal(invoiceStateOf(data), standing, touchesMoney);
   if (refusal) {
     throw new HttpsError('failed-precondition', refusal.message, { code: refusal.code });
   }
@@ -159,15 +167,28 @@ export async function updateInvoiceHandler(
 
     totals = computeInvoiceTotals(lines, invoiceDiscountCents, paidCents);
 
+    // The PERSISTED balance goes through the same settlement the payment path
+    // uses, so an edit that drops the total below what has already been
+    // collected writes a zero balance plus an explicit `overpaidCents`, not a
+    // negative `amountDue`. A negative `amountDue` is this codebase's CREDIT
+    // signal (invoiceStateOf, getMyInvoices#resolveStatus, the admin and Android
+    // classifiers all read it that way), so writing one here would silently turn
+    // an over-collected invoice into a credit owed back to the household.
+    // `totals` keeps the raw signed arithmetic for the caller; the doc gets the
+    // settled reading.
+    const settled = settleInvoice(totals.totalCents, paidCents);
+
     if (patch.lineItems !== undefined) update['lineItems'] = patch.lineItems;
     update['invoiceDiscountCents'] = invoiceDiscountCents;
     update['subtotalCents'] = totals.subtotalCents;
-    update['totalCents'] = totals.totalCents;
-    update['amountDueCents'] = totals.amountDueCents;
+    update['totalCents'] = settled.totalCents;
+    update['paidCents'] = settled.paidCents;
+    update['amountDueCents'] = settled.amountDueCents;
+    update['overpaidCents'] = settled.overpaidCents;
     // The legacy dollar scalars, written from the SAME cents figures in the same
     // pass so the two can never disagree. A projection, never an input.
-    update['total'] = centsToDollars(totals.totalCents);
-    update['amountDue'] = centsToDollars(totals.amountDueCents);
+    update['total'] = centsToDollars(settled.totalCents);
+    update['amountDue'] = centsToDollars(settled.amountDueCents);
   }
 
   await ref.set(update, { merge: true });

@@ -2,7 +2,16 @@ import { Link } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyInvoices, payInvoice, redeemCredit } from '../api/invoicesApi';
 import type { InvoiceDto } from '../api/invoicesApi';
-import { calTileFor, creditTargetLabel, formatCentsUsd, formatUsd, invoiceStatusInfo, shortDateLabel } from '../lib/invoiceFormat';
+import {
+  calTileFor,
+  creditTargetLabel,
+  formatCentsUsd,
+  formatUsd,
+  invoiceStatusInfo,
+  partPaidStatusInfo,
+  partPaidSummary,
+  shortDateLabel,
+} from '../lib/invoiceFormat';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
@@ -169,7 +178,10 @@ function invoiceTitle(inv: InvoiceDto): string {
 
 function OpenRow(props: { invoice: InvoiceDto; divider: boolean; paying: boolean; onPay: () => void }) {
   const { invoice: inv, paying, onPay } = props;
-  const status = invoiceStatusInfo(inv.status, inv.creditRedeemedAtMs);
+  // Part-paid keeps the open bucket and the Pay button; only what the row SAYS
+  // about itself changes. "PENDING" alone would hide a payment already made.
+  const status = inv.partiallyPaid ? partPaidStatusInfo() : invoiceStatusInfo(inv.status, inv.creditRedeemedAtMs);
+  const partPaid = partPaidSummary(inv);
   const tile = calTileFor(inv.dueDate);
   const dueLabel = inv.status === 'draft' ? 'Not sent yet' : `Due ${shortDateLabel(inv.dueDate) ?? '—'}`;
   const payable = inv.status === 'open' && inv.amountDue > 0;
@@ -194,7 +206,7 @@ function OpenRow(props: { invoice: InvoiceDto; divider: boolean; paying: boolean
       </div>
       <div className="amt">
         <span className="v">{formatUsd(inv.amountDue)}</span>
-        <span className="due">{dueLabel}</span>
+        <span className="due">{partPaid ?? dueLabel}</span>
       </div>
       <div className="end">
         <span className={`chip ${status.cssClass}`}>{status.chipLabel}</span>
