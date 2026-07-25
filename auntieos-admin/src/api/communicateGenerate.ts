@@ -58,8 +58,20 @@ export type GenerateCommunicationType = (typeof GENERATE_COMMUNICATION_TYPES)[nu
 
 export interface GenerateDraftArgs {
   communication_type: GenerateCommunicationType;
-  /** Free-text name the backend resolves against the `kinfolk` collection (`matchKinfolk`). */
+  /**
+   * Display name of the household. The backend still resolves it with
+   * `matchKinfolk` when no `kinfolk_id` is supplied; when one IS supplied this
+   * is carried for the draft doc and the error copy only.
+   */
   recipient: string;
+  /**
+   * The REAL `kinfolk` doc id, when the caller resolved one (the Personalize
+   * typeahead always does). The backend looks the household up directly and
+   * skips the fuzzy name scan entirely, so two households named Dana can no
+   * longer collapse into whichever one `matchKinfolk` reached first.
+   * Optional: the KinTale composer and the no-recipient types omit it.
+   */
+  kinfolk_id?: string;
   raw_notes: string;
   tone_hint?: string;
   max_length?: string;
