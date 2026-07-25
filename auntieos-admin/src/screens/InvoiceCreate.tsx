@@ -15,6 +15,16 @@ interface InvoiceCreateProps {
   onClose: () => void;
   /** Called with the new invoice id once the create callable resolves, before onClose. */
   onCreated?: (invoiceId: string) => void;
+  /**
+   * Pre-selects the household picker. Set when the composer was opened FOR a
+   * household rather than from a blank "New quote" button, e.g. the
+   * Notifications feed's Create quote action, which routes here as
+   * `/invoices?composeQuoteForKinfolkId=<id>`.
+   *
+   * Only the INITIAL value: the operator can still change the household, and
+   * doing so is not undone by a re-render.
+   */
+  seedKinfolkId?: string;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -86,12 +96,12 @@ export function validateInvoiceCreate(v: InvoiceCreateFormValues): string | null
  * disabled while submitting (never a double-submit), and the primary button
  * carries Buttons.tsx's `busy` state.
  */
-export function InvoiceCreate({ mode, onClose, onCreated }: InvoiceCreateProps) {
+export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: InvoiceCreateProps) {
   const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
   const households = kinfolkState.status === 'ready' ? kinfolkState.data : [];
   const isQuote = mode === 'quote';
 
-  const [kinfolkId, setKinfolkId] = useState('');
+  const [kinfolkId, setKinfolkId] = useState(seedKinfolkId ?? '');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [client, setClient] = useState('');
   const [address, setAddress] = useState('');
