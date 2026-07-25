@@ -19,6 +19,10 @@ import { Args as AssignTemplateArgs } from '../src/admin/assignTemplate';
 // admin vet-clinic picker (Task 1.8). Two independent clients now build this
 // payload, which is exactly the condition this guard exists for.
 import { Args as SubmitVetClinicArgs } from '../src/portal/submitVetClinic';
+// 17.3 Home dashboard layout (added 2026-07-25). Three surfaces parse the SAME
+// stored token list: the React admin (auntieos-admin/src/lib/dashboardLayout.ts),
+// android (ui/home/DashboardLayout.kt) and the superseded Compose web build.
+import { Args as SaveDashboardLayoutArgs } from '../src/admin/saveDashboardLayout';
 // Nested / effects shapes (2026-07-21 next tranche). A top-level key freeze is
 // blind below level 1: saveFormSchema's top level is just `{ schema }`, but the
 // client mirrors 3 levels down (schema.sections[].fields[].required). These get
@@ -127,6 +131,10 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // picker; it is optional, so every legacy portal payload (the four fields
   // before it) still validates. The freeze is the SUPERSET.
   submitVetClinic: { schema: SubmitVetClinicArgs, keys: ['address', 'isEmergency', 'name', 'phone', 'website'] },
+
+  // 17.3 operator dashboard layout. One key, so the top-level freeze is thin on
+  // its own; the token-VALUE freeze below is the part that actually matters.
+  saveDashboardLayout: { schema: SaveDashboardLayoutArgs, keys: ['tokens'] },
 };
 
 describe('AO-8 callable contract drift guard', () => {
@@ -223,5 +231,40 @@ describe('AO-8 callable contract drift guard (booking note cutoff error surface)
     expect(NOTE_CUTOFF_MESSAGE).toBe(
       'Notes cannot be edited within 3 hours of booking start window.',
     );
+  });
+});
+/**
+ * VALUE freeze, not a key freeze.
+ *
+ * `saveDashboardLayout` takes one field, so `shapeKeys` alone would pass even if
+ * the token grammar changed completely. The grammar IS the contract here: the
+ * React admin and android each build and parse these strings themselves
+ * (`src/lib/dashboardLayout.ts`, `ui/home/DashboardLayout.kt`), and both read the
+ * same stored list, so a size token renamed on the server would leave layouts
+ * saved by one surface silently unreadable by the other. These cases pin what the
+ * schema accepts and refuses.
+ */
+describe('AO-8 callable contract drift guard (dashboard layout token grammar)', () => {
+  const parse = (tokens: unknown) => SaveDashboardLayoutArgs.safeParse({ tokens });
+  it('accepts the two size tokens every renderer branches on', () => {
+    expect(parse(['stats:wide', 'todaysPack:compact']).success).toBe(true);
+  });
+  it('refuses any third size token', () => {
+    for (const bad of ['stats:huge', 'stats:full', 'stats:WIDE', 'stats:']) {
+      expect(parse([bad]).success, `${bad} must be refused`).toBe(false);
+    }
+  });
+  it('accepts an unrecognized KEY, so an older server cannot reject a newer client', () => {
+    expect(parse(['someFutureWidget:compact']).success).toBe(true);
+  });
+  it('refuses a key that is not plain letters, which no client can produce', () => {
+    for (const bad of ['stats row:wide', 'stats_row:wide', 'stats-row:wide', '2stats:wide', ':wide']) {
+      expect(parse([bad]).success, `${bad} must be refused`).toBe(false);
+    }
+  });
+  it('caps the list at 30, and an empty list stays legal (restore the default)', () => {
+    expect(parse([]).success).toBe(true);
+    expect(parse(Array.from({ length: 30 }, () => 'stats:wide')).success).toBe(true);
+    expect(parse(Array.from({ length: 31 }, () => 'stats:wide')).success).toBe(false);
   });
 });

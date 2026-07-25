@@ -169,6 +169,8 @@ export { optimizeRoute } from './admin/optimizeRoute';
 export { logExpense, listExpenses } from './admin/expenses';
 export { listSupplies, adjustSupply, upsertSupply } from './admin/supplies';
 export { listExpirations, upsertExpiration } from './admin/expirations';
+// 17.3 Home dashboard layout: the operator's own widget order/sizes.
+export { saveDashboardLayout } from './admin/saveDashboardLayout';
 export {
   getBusinessNotificationOverrides,
   saveBusinessNotificationOverride,

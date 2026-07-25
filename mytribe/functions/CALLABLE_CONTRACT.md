@@ -19,6 +19,9 @@ Frozen request shapes:
 - Money + state mutations (added 2026-07-21): `createInvoice`, `createQuote`,
   `markInvoicePaid`, `assignTemplate`. Flat shapes, so a top-level key freeze is
   accurate.
+- Operator preferences (added 2026-07-25): `saveDashboardLayout`. One field, but
+  the VALUE is the contract (a "key:size" token), so the guard freezes the token
+  regex alongside the key set.
 
 Coverage reality, so nobody over-trusts this: the admin invokes ~50 MyTribe
 callables; the above 10 are frozen. The measured surface, not the stale "~26":
@@ -170,3 +173,29 @@ Clients mirror the rule for a courtesy lock so the operator is not surprised by
 a rejection (`auntieos-admin/src/lib/bookingDetailFormat.ts`,
 `ui/admin/scheduling/BookingNoteCutoff.kt`). Those are conveniences. The
 callable is the enforcement.
+- req `{ tokens: string[] /* each `^[a-zA-Z]+:(compact|wide)$`, max 30 */ }`
+- res `{ ok: true, tokens: string[] }` (echoes what was stored, so the client
+  reconciles its optimistic order against the server instead of assuming)
+- Merge-writes `users/{uid}.dashboardWidgets` plus
+  `dashboardWidgetsUpdatedAt`, on the CALLER's own document (`req.auth.uid`);
+  a uid in the payload is ignored.
+- `users/{uid}` is client-writable for an admin (`firestore.rules`:
+  `allow read, write: if isAuntie()`), so this callable is not an access gate.
+  It exists for two other reasons: the rule validates nothing, and the existing
+  clients write the WHOLE user document (android's `saveUserProfile` is a full
+  `set`, which is why `HomeViewModel` re-reads the profile before every layout
+  save so theme and nav prefs are not clobbered). The `{ merge: true }`
+  field-scoped write here removes that hazard.
+- The KEY half of a token is matched loosely (`[a-zA-Z]+`) on purpose: clients
+  ship on different cadences, and every client already drops keys it does not
+  recognize when parsing. The SIZE half is closed, because all three renderers
+  branch on exactly `compact` and `wide`. Frozen in
+  `test/callableContract.test.ts`.
+- Reads need no callable. `users/{uid}` is already admin-readable, so
+  `auntieos-admin/src/api/dashboardLayout.ts` reads the field directly, the same
+  access `src/api/account.ts` uses for the rest of that document. Android reads
+  it through `AuntieRepository.observeUserProfile`.
+- Mirrors: `auntieos-admin/src/lib/dashboardLayout.ts` (the token model, React),
+  `android .../ui/home/DashboardLayout.kt`, and the superseded
+  `web/composeApp/.../screens/home/DashboardLayout.kt`. One field, three
+  parsers, so a layout arranged on any surface opens arranged on the others.
