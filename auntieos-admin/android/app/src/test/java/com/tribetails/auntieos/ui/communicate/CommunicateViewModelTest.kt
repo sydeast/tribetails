@@ -151,6 +151,10 @@ class CommunicateViewModelTest {
         )
         coEvery { mockRepo.generate(any()) } returns Result.success(response)
         coEvery { mockRepo.approveDraft(any(), any(), any()) } returns Result.success(Unit)
+        // Approve writes an audit entry after the promote lands, so the happy
+        // path reaches this call too. Leaving it unstubbed against a strict mockk
+        // is what exposed the swallowed-exception bug this stub now steps past.
+        coEvery { mockRepo.logActivity(any()) } returns Result.success(Unit)
 
         val vm = buildViewModel()
         advanceUntilIdle()
@@ -165,6 +169,7 @@ class CommunicateViewModelTest {
 
         assertEquals("d1", vm.uiState.value.savedDraftId)
         assertNotNull(vm.uiState.value.successMessage)
+        assertFalse(vm.uiState.value.isSaving)
     }
 
     @Test
@@ -436,6 +441,37 @@ class CommunicateViewModelTest {
         coVerify(exactly = 0) { mockRepo.logActivity(any()) }
         assertNull(vm.uiState.value.savedDraftId)
     }
+    // The regression guard for the bug the missing stub above exposed. A Result
+    // failure is the polite case; this is the rude one. The repo wraps the audit
+    // call in runCatching so it should never throw, and trusting that was the
+    // mistake: the state update recording the approval sits below the audit call,
+    // so anything escaping there skips it, and viewModelScope's SupervisorJob
+    // swallows the exception without a word. The operator is then left with a
+    // spinner on a draft that IS approved, no message, and every reason to click
+    // Approve again.
+    @Test
+    fun `approveDraft still reports the approval when the audit call THROWS rather than returning a failure`() =
+        runTest(testDispatcher) {
+            coEvery { mockRepo.generate(any()) } returns
+                Result.success(GenerateResponse(generatedCopy = "copy", draftId = "d1", kinfolkId = "kf1"))
+            coEvery { mockRepo.approveDraft(any(), any(), any()) } returns Result.success(Unit)
+            coEvery { mockRepo.logActivity(any()) } throws IllegalStateException("callable transport died")
+
+            val vm = buildViewModel()
+            advanceUntilIdle()
+            vm.setCommType("blog_post")
+            vm.setRawNotes("notes")
+            vm.generate()
+            advanceUntilIdle()
+            vm.approveDraft()
+            advanceUntilIdle()
+
+            // The draft really was promoted, so the UI must say so.
+            assertEquals("d1", vm.uiState.value.savedDraftId)
+            assertFalse(vm.uiState.value.isSaving)
+            assertTrue(vm.uiState.value.successMessage!!.contains("callable transport died"))
+        }
+
     @Test
     fun `approveDraft still reports success when the audit entry fails, and says the entry is missing`() =
         runTest(testDispatcher) {

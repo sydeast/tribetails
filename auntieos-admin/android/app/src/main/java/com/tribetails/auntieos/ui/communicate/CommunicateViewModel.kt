@@ -391,15 +391,38 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     // approved, so a failed audit write is reported alongside
                     // the success rather than replacing it with an error that
                     // would wrongly suggest nothing happened.
-                    val auditFailure = repo.logActivity(
-                        ActivityLogEntry(
-                            actionType = "DRAFT_APPROVED",
-                            description = "Approved generated_drafts/$draftId (${state.kinfolkId ?: "no kinfolk"})",
-                            status = "SUCCESS",
-                            targetId = draftId,
-                            targetCollection = "generated_drafts",
-                        ),
-                    ).exceptionOrNull()
+                    // try/catch, not just Result.exceptionOrNull(). The repo
+                    // wraps this call in runCatching, so on paper it returns a
+                    // Result and cannot throw, and the first version of this
+                    // code trusted that. It is the wrong thing to trust: the
+                    // state update that records the approval sits BELOW this
+                    // line, so anything that escapes here skips it. The draft is
+                    // already approved in Firestore at that point, and the
+                    // operator would be left with a spinner that never resolves,
+                    // no message, and every reason to click Approve again.
+                    //
+                    // That is not hypothetical. It is exactly what
+                    // `approveDraft sets savedDraftId on success` caught: a
+                    // MockKException from the audit call escaped into
+                    // viewModelScope, whose SupervisorJob swallowed it without a
+                    // word, and savedDraftId stayed null on a draft that had in
+                    // fact been promoted.
+                    //
+                    // The non-fatal step must not be able to take down the fatal
+                    // one that already succeeded, whatever it throws.
+                    val auditFailure: Throwable? = try {
+                        repo.logActivity(
+                            ActivityLogEntry(
+                                actionType = "DRAFT_APPROVED",
+                                description = "Approved generated_drafts/$draftId (${state.kinfolkId ?: "no kinfolk"})",
+                                status = "SUCCESS",
+                                targetId = draftId,
+                                targetCollection = "generated_drafts",
+                            ),
+                        ).exceptionOrNull()
+                    } catch (t: Throwable) {
+                        t
+                    }
                     if (auditFailure != null) {
                         AuntieLog.e("Audit entry for draft $draftId failed", auditFailure)
                     }
