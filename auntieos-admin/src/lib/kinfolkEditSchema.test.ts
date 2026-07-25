@@ -32,6 +32,11 @@ function form(over: Partial<KinfolkEditInput> = {}): KinfolkEditInput {
     vetClinicName: '',
     vetClinicAddress: '',
     vetClinicPhone: '',
+    vetClinicId: '',
+    emergencyVetClinicId: '',
+    emergencyVetClinicName: '',
+    emergencyVetClinicAddress: '',
+    emergencyVetClinicPhone: '',
     ...over,
   };
 }
@@ -107,13 +112,44 @@ describe('validateKinfolkEdit', () => {
   });
 
   it('lets the optional contact fields be blank but not wrong', () => {
-    expect(validateKinfolkEdit(form({ secondaryPhone: '', secondaryEmail: '', vetClinicPhone: '' }))).toEqual({});
-    const errors = validateKinfolkEdit(
-      form({ secondaryPhone: '123', secondaryEmail: 'nope', vetClinicPhone: 'abc' }),
-    );
+    expect(validateKinfolkEdit(form({ secondaryPhone: '', secondaryEmail: '' }))).toEqual({});
+    const errors = validateKinfolkEdit(form({ secondaryPhone: '123', secondaryEmail: 'nope' }));
     expect(errors.secondaryPhone).toBeDefined();
     expect(errors.secondaryEmail).toBeDefined();
-    expect(errors.vetClinicPhone).toBeDefined();
+  });
+  /**
+   * The vet fields stopped being typed by hand: VetClinicPicker writes them
+   * from a catalog row. The rule loosened deliberately, so this pins WHY rather
+   * than leaving the removal looking like an oversight. A legacy household can
+   * hold "after hours line" or a number with an extension in vetClinicPhone,
+   * and that must not become a blocking error on a screen opened to fix a
+   * phone number somewhere else on the form.
+   */
+  it('accepts whatever a legacy household already stored in the vet fields', () => {
+    expect(
+      validateKinfolkEdit(
+        form({
+          vetClinicName: 'Old Corner Vet',
+          vetClinicPhone: 'after hours: 512-555-0000 x2',
+          vetClinicAddress: 'behind the feed store',
+          vetClinicId: '',
+        }),
+      ),
+    ).toEqual({});
+  });
+  it('accepts a household linked to a catalog clinic, with an emergency vet too', () => {
+    expect(
+      validateKinfolkEdit(
+        form({
+          vetClinicId: 'riverside',
+          vetClinicName: 'Riverside Animal Hospital',
+          vetClinicPhone: '(512) 555-0100',
+          emergencyVetClinicId: 'er1',
+          emergencyVetClinicName: 'Austin Pet ER',
+          emergencyVetClinicPhone: '(512) 555-0300',
+        }),
+      ),
+    ).toEqual({});
   });
 
   it('does not enforce the no-dashes voice rule on household facts', () => {

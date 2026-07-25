@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getKinfolkProfile, type KinfolkProfile } from '../api/kinfolkProfile';
+import { VET_CLINICS_QUERY, type VetClinic } from '../api/vetClinics';
+import { useCollection } from '../lib/firestore';
 import {
   archiveKinfolk,
   unarchiveKinfolk,
@@ -18,6 +20,7 @@ import { joinDateForEdit } from '../lib/joinDate';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AddressAutofillField } from '../components/AddressAutofillField';
+import { VetClinicPicker } from '../components/VetClinicPicker';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { Dialog } from '../components/Dialog';
@@ -78,6 +81,9 @@ interface KinfolkEditProps {
 type FormState = KinfolkEditInput;
 type Touched = Partial<Record<keyof KinfolkEditInput, boolean>>;
 
+/** Stable empty, so the emergency filter's memo does not rerun every render. */
+const EMPTY_CLINICS: VetClinic[] = [];
+
 /** The loaded household as the form's shape. Fields the form does not own are dropped. */
 function toForm(p: KinfolkProfile): FormState {
   return {
@@ -107,9 +113,18 @@ function toForm(p: KinfolkProfile): FormState {
     emergencyContactName: p.emergencyContactName,
     emergencyContactPhone: p.emergencyContactPhone,
     emergencyContactRelation: p.emergencyContactRelation,
+    // Legacy households carry the three strings and NO id. That is loaded as-is:
+    // the picker renders the name it finds and says it is not linked yet, rather
+    // than dropping a clinic on file because it cannot be matched to a catalog
+    // row. See VetClinicPicker's header.
     vetClinicName: p.vetClinicName,
     vetClinicAddress: p.vetClinicAddress,
     vetClinicPhone: p.vetClinicPhone,
+    vetClinicId: p.vetClinicId,
+    emergencyVetClinicId: p.emergencyVetClinicId,
+    emergencyVetClinicName: p.emergencyVetClinicName,
+    emergencyVetClinicAddress: p.emergencyVetClinicAddress,
+    emergencyVetClinicPhone: p.emergencyVetClinicPhone,
   };
 }
 
@@ -140,11 +155,6 @@ const EMERGENCY_FIELDS = [
   ['emergencyContactRelation', 'Relationship'],
 ] as const;
 
-const VET_FIELDS = [
-  ['vetClinicName', 'Clinic name'],
-  ['vetClinicPhone', 'Clinic phone'],
-] as const;
-
 export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: KinfolkEditProps) {
   const [loaded, setLoaded] = useState<Async<KinfolkProfile>>({ status: 'loading' });
   const [form, setForm] = useState<FormState | null>(null);
@@ -156,6 +166,16 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
   const [archiveReason, setArchiveReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const { showToast } = useToast();
+
+  // The shared vet bank, live. Read directly rather than through
+  // `getVetClinics`: that callable withholds pending kinfolk submissions, and
+  // the operator is the person who approves them. See api/vetClinics.ts.
+  const clinics = useCollection<VetClinic>(VET_CLINICS_QUERY);
+  const clinicRows = clinics.status === 'ready' ? clinics.data : EMPTY_CLINICS;
+  const emergencyClinics = useMemo(
+    () => clinicRows.filter((c) => c.isEmergency === true),
+    [clinicRows],
+  );
 
   const load = useCallback(() => {
     let live = true;
@@ -258,6 +278,11 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
         vetClinicName: form.vetClinicName,
         vetClinicAddress: form.vetClinicAddress,
         vetClinicPhone: form.vetClinicPhone,
+        vetClinicId: form.vetClinicId,
+        emergencyVetClinicId: form.emergencyVetClinicId,
+        emergencyVetClinicName: form.emergencyVetClinicName,
+        emergencyVetClinicAddress: form.emergencyVetClinicAddress,
+        emergencyVetClinicPhone: form.emergencyVetClinicPhone,
       };
       await updateKinfolkProfile(kinfolkId, patch);
       setSaving(false);
@@ -471,29 +496,84 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
               </DenPanel>
 
               <DenPanel title="Vet clinic" subtitle="Held for the household, shared by every Kin in it.">
-                <fieldset className="kfedit__grid" disabled={busy}>
-                  {VET_FIELDS.map(([key, label]) => (
-                    <TextField
-                      key={key}
-                      name={key}
-                      label={label}
-                      value={form[key]}
-                      error={errorFor(key)}
-                      onChange={(v) => set(key, v)}
-                      onBlur={() => markTouched(key)}
-                    />
-                  ))}
-                  <TextField
-                    name="vetClinicAddress"
-                    label="Clinic address"
-                    value={form.vetClinicAddress}
-                    error={errorFor('vetClinicAddress')}
-                    onChange={(v) => set('vetClinicAddress', v)}
-                    onBlur={() => markTouched('vetClinicAddress')}
-                    wide
-                    multiline
-                  />
-                </fieldset>
+                {/* The catalog read is NOT wrapped in AsyncRegion, deliberately.
+                    AsyncRegion swaps the whole region out for a banner on error,
+                    and this household's own vet fields did not come from that
+                    read. Hiding a legacy clinic name because the shared bank was
+                    unreachable would make a catalog outage look like missing
+                    household data, and would block editing the vet on file. So
+                    the failure is stated, loudly, ABOVE a picker that still
+                    renders. An empty catalog is likewise not an empty state: the
+                    create button is exactly how the first clinic gets into an
+                    empty bank. */}
+                {clinics.status === 'error' && (
+                  <Banner tone="warning" title="The shared clinic catalog didn't load">
+                    {clinics.message} Searching is unavailable, and the clinic already on file is
+                    shown below and still saves.
+                  </Banner>
+                )}
+                {clinics.status === 'loading' && (
+                  <p className="kfedit__hint">Loading the shared clinic catalog…</p>
+                )}
+                    <fieldset className="kfedit__grid" disabled={busy}>
+                      <VetClinicPicker
+                        name="vetClinic"
+                        label="Vet clinic"
+                        clinics={clinicRows}
+                        value={{
+                          clinicId: form.vetClinicId,
+                          name: form.vetClinicName,
+                          phone: form.vetClinicPhone,
+                          address: form.vetClinicAddress,
+                        }}
+                        onChange={(sel) =>
+                          setForm((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  vetClinicId: sel.clinicId,
+                                  vetClinicName: sel.name,
+                                  vetClinicPhone: sel.phone,
+                                  vetClinicAddress: sel.address,
+                                }
+                              : prev,
+                          )
+                        }
+                        disabled={busy}
+                        wide
+                      />
+
+                      <VetClinicPicker
+                        name="emergencyVetClinic"
+                        label="Emergency vet"
+                        // Filtered to the 24-hour clinics. A daytime practice in
+                        // this slot is worse than a blank one: it reads as an
+                        // answer at 2am and is not.
+                        clinics={emergencyClinics}
+                        value={{
+                          clinicId: form.emergencyVetClinicId,
+                          name: form.emergencyVetClinicName,
+                          phone: form.emergencyVetClinicPhone,
+                          address: form.emergencyVetClinicAddress,
+                        }}
+                        onChange={(sel) =>
+                          setForm((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  emergencyVetClinicId: sel.clinicId,
+                                  emergencyVetClinicName: sel.name,
+                                  emergencyVetClinicPhone: sel.phone,
+                                  emergencyVetClinicAddress: sel.address,
+                                }
+                              : prev,
+                          )
+                        }
+                        disabled={busy}
+                        createAsEmergency
+                        wide
+                      />
+                    </fieldset>
               </DenPanel>
 
               <div className="kfedit__actions">

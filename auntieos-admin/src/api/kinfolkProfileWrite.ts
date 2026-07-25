@@ -89,6 +89,12 @@ export interface KinfolkEditPatch {
   vetClinicName: string;
   vetClinicAddress: string;
   vetClinicPhone: string;
+  /** The `vet_clinics` doc id, or '' for a household not linked to the catalog. */
+  vetClinicId: string;
+  emergencyVetClinicId: string;
+  emergencyVetClinicName: string;
+  emergencyVetClinicAddress: string;
+  emergencyVetClinicPhone: string;
 }
 
 /**
@@ -121,6 +127,11 @@ export const KINFOLK_EDIT_FIELDS = [
   'vetClinicName',
   'vetClinicAddress',
   'vetClinicPhone',
+  'vetClinicId',
+  'emergencyVetClinicId',
+  'emergencyVetClinicName',
+  'emergencyVetClinicAddress',
+  'emergencyVetClinicPhone',
 ] as const satisfies readonly (keyof KinfolkEditPatch)[];
 
 /** Trimmed on the way out, matching `createKinfolk`'s treatment of the same fields. */
@@ -136,6 +147,8 @@ const TRIMMED: ReadonlySet<keyof KinfolkEditPatch> = new Set<keyof KinfolkEditPa
   'emergencyContactPhone',
   'vetClinicName',
   'vetClinicPhone',
+  'emergencyVetClinicName',
+  'emergencyVetClinicPhone',
 ]);
 
 /**

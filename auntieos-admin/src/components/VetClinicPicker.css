@@ -1,0 +1,300 @@
+/**
+ * VetClinicPicker: a catalog search box with a pinned create action, plus the
+ * inline create form. Tokens only; the popover matches TagAssignField and
+ * AddressAutofillField so a Kinfolk form has one dropdown language.
+ */
+
+.vetpick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.vetpick--wide {
+  grid-column: 1 / -1;
+}
+
+.vetpick__label {
+  font-family: var(--type-label-family);
+  font-size: var(--type-label-size);
+  letter-spacing: var(--type-label-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+/* ── the current selection ────────────────────────────────────────────────── */
+
+.vetpick__selected {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+
+.vetpick__selectedText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.vetpick__selectedName {
+  color: var(--color-text-primary);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+}
+
+.vetpick__selectedDetail,
+.vetpick__selectedNote,
+.vetpick__note {
+  color: var(--color-text-dim);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+
+.vetpick__clear {
+  flex: none;
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--color-text-dim);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  cursor: pointer;
+}
+
+.vetpick__clear:hover:not(:disabled) {
+  color: var(--color-text-primary);
+}
+
+.vetpick__clear:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── search box + dropdown ────────────────────────────────────────────────── */
+
+.vetpick__inputWrap {
+  position: relative;
+}
+
+.vetpick__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+}
+
+.vetpick__input:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.vetpick__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.vetpick__input[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+
+.vetpick__list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  background: var(--color-surface-glass);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.14);
+}
+
+/* Only the matches scroll. The create button below stays put, which is the
+   whole point of pinning it. */
+.vetpick__options {
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.vetpick__option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vetpick__option:hover,
+.vetpick__option:focus-visible {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  outline: none;
+}
+
+.vetpick__optionName {
+  color: var(--color-text-primary);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+}
+
+.vetpick__optionDetail,
+.vetpick__noMatch {
+  color: var(--color-text-dim);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+
+.vetpick__noMatch {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+}
+
+.vetpick__create {
+  width: 100%;
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-top: var(--border-hairline) solid var(--color-border);
+  border-radius: 0 0 var(--radius-card) var(--radius-card);
+  background: transparent;
+  color: var(--color-accent);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  text-align: left;
+  cursor: pointer;
+}
+
+.vetpick__create:hover,
+.vetpick__create:focus-visible {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  outline: none;
+}
+
+/* ── inline create form ───────────────────────────────────────────────────── */
+
+.vetpick__createForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  background: var(--color-surface);
+}
+
+.vetpick__createTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+}
+
+.vetpick__createGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+@media (max-width: 640px) {
+  .vetpick__createGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.vetpick__createField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.vetpick__createField--wide {
+  grid-column: 1 / -1;
+}
+
+.vetpick__toggle {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-primary);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+
+.vetpick__createActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.vetpick__ghost,
+.vetpick__primary {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-chip);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  cursor: pointer;
+}
+
+.vetpick__ghost {
+  border: var(--border-hairline) solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-dim);
+}
+
+.vetpick__primary {
+  border: var(--border-hairline) solid var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-surface);
+}
+
+.vetpick__ghost:disabled,
+.vetpick__primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.vetpick__error {
+  color: var(--color-error);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+
+.vetpick__banner {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid color-mix(in srgb, var(--color-error) 40%, transparent);
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: var(--color-text-primary);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+
+.vetpick__note {
+  margin: 0;
+}
