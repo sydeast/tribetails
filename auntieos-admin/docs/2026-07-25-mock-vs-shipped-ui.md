@@ -2,12 +2,23 @@
 
 Written 2026-07-25, on branch `feat/breed-dropdowns-and-flavor-audit`.
 
-> **Status, updated 2026-07-25.** Items 1 through 4 of the suggested order are
-> DONE, across four stacked branches (`fix/den-token-references`,
-> `fix/fraunces-actually-renders`, `feat/den-screen-entrance`,
-> `feat/den-ambient-wash`), and one of them turned out to be considerably worse
-> than this document first said. See "What acting on this found" at the bottom.
-> Items 5 through 7 (rail, brand gradient, card lift) are in flight separately.
+> **Status, updated 2026-07-25. ALL SEVEN ITEMS ARE DONE AND ON `main`.**
+>
+> | Item | Landed as |
+> |---|---|
+> | 1 ambient wash | #60 |
+> | 2 entrance | #59 |
+> | 3 brand gradient | #62 |
+> | 4 Fraunces | #58 |
+> | 5 rail | #61 |
+> | 6 gradient surfaces | #62 |
+> | 7 card lift | #62 |
+>
+> The four token bugs in the section below went out as #57. Two of the seven
+> turned out to be considerably worse than this document first said, and one of
+> those two was not in the list at all. See "What acting on this found" at the
+> bottom, which is the honest record and should be read before the numbers above
+> are taken at face value.
 
 The operator's report is that pages which used to feel alive now feel flat, and
 that the React port is where it happened. This checks that report against the
@@ -223,9 +234,22 @@ with it rather than conflict.
 
 ## What acting on this found
 
-Items 1 through 4 shipped as four stacked branches, one per concern. Two of the
-four were worse than this document estimated, and both were found only by
-trying to fix the smaller thing next to them.
+All seven items shipped, one concern per PR. Three findings were worse than this
+document estimated, and every one of them was found only by trying to fix the
+smaller thing next to it. That is the pattern worth remembering: none of these
+were visible from the audit, only from the repair.
+
+**The rail count pill was nearly shipped dark.** Item 5's first pass built a
+working count pill with a permanently empty source, on the reasoning that no
+count was reachable without a new read. That is precisely the "gate dark"
+`CLAUDE.md` forbids for our own code. The reasoning was also wrong: the obvious
+fix (the `listConversations` callable) is a one-shot, and reading a thread clears
+`unreadForAdmin` server-side, so a page-load snapshot pinned to the chrome would
+have sat in the corner of every screen claiming four unread after the operator
+had read all four. It ships instead as one bounded live listener projected
+through the EXISTING `unreadThreadCount`, so the rail counts the same flag the
+Inbox screen does. `firestore.rules:798` already granted the read, so no backend
+change was needed. A number that is wrong everywhere is worse than no number.
 
 **Fraunces has never rendered in this admin.** `@fontsource-variable/fraunces`
 registers its `@font-face` under the family name `Fraunces Variable`.
