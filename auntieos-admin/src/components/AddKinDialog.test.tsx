@@ -9,6 +9,16 @@ vi.mock('../api/directoryWrite', async () => {
   return { ...actual, createKin };
 });
 
+// Seeded breed bank, stubbed at the hook so the dialog never reaches a callable.
+const { breedBanks, breedsFailed } = vi.hoisted(() => ({
+  breedBanks: { current: { dogBreeds: ['Border Collie', 'Boxer'], catBreeds: ['Bengal'] } },
+  breedsFailed: { current: false },
+}));
+vi.mock('../api/breeds', async (orig) => ({
+  ...(await orig<typeof import('../api/breeds')>()),
+  useBreedBanks: () => ({ banks: breedBanks.current, loading: false, failed: breedsFailed.current }),
+}));
+
 import { AddKinDialog, type KinfolkOption } from './AddKinDialog';
 
 const OPTIONS: KinfolkOption[] = [
@@ -18,6 +28,8 @@ const OPTIONS: KinfolkOption[] = [
 
 beforeEach(() => {
   createKin.mockReset();
+  breedBanks.current = { dogBreeds: ['Border Collie', 'Boxer'], catBreeds: ['Bengal'] };
+  breedsFailed.current = false;
 });
 
 describe('AddKinDialog', () => {
@@ -128,5 +140,31 @@ describe('AddKinDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
     expect(onClose).toHaveBeenCalledOnce();
     expect(createKin).not.toHaveBeenCalled();
+  });
+
+  describe('breed dropdown', () => {
+    it('creates the kin with a breed picked from the bank', async () => {
+      createKin.mockResolvedValue('new-kin');
+      const onCreated = vi.fn();
+      render(<AddKinDialog kinfolkOptions={OPTIONS} onClose={vi.fn()} onCreated={onCreated} />);
+
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      await userEvent.type(screen.getByLabelText('Name'), 'Willow');
+      await userEvent.selectOptions(screen.getByLabelText('Gender'), 'Female');
+      await userEvent.click(screen.getByLabelText('Breed'));
+      await userEvent.click(await screen.findByRole('option', { name: 'Border Collie' }));
+      await userEvent.click(screen.getByRole('button', { name: /^add kin$/i }));
+
+      await waitFor(() => expect(createKin).toHaveBeenCalledTimes(1));
+      expect(createKin.mock.calls[0]![0].breed).toBe('Border Collie');
+    });
+
+    it('switches banks when the Species select changes', async () => {
+      render(<AddKinDialog kinfolkOptions={OPTIONS} onClose={vi.fn()} onCreated={vi.fn()} />);
+      await userEvent.selectOptions(screen.getByLabelText('Species'), 'Cat');
+      await userEvent.click(screen.getByLabelText('Breed'));
+      const options = await screen.findAllByTestId('breedfield-option');
+      expect(options.map((o) => o.textContent)).toEqual(['Bengal']);
+    });
   });
 });

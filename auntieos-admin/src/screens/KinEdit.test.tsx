@@ -15,6 +15,17 @@ vi.mock('../api/directoryWrite', async (orig) => ({
   updateKin,
   setKinArchived,
 }));
+// The seeded breed bank, stubbed at the hook so these tests never reach a
+// callable. `breedBanks` is what the Breed dropdown will offer; `breedsFailed`
+// drives the disclosed-degradation note.
+const { breedBanks, breedsFailed } = vi.hoisted(() => ({
+  breedBanks: { current: { dogBreeds: ['Border Collie', 'Boxer'], catBreeds: ['Bengal'] } },
+  breedsFailed: { current: false },
+}));
+vi.mock('../api/breeds', async (orig) => ({
+  ...(await orig<typeof import('../api/breeds')>()),
+  useBreedBanks: () => ({ banks: breedBanks.current, loading: false, failed: breedsFailed.current }),
+}));
 
 import { KinEdit } from './KinEdit';
 import { mergeKinDetail } from '../api/kinView';
@@ -27,6 +38,8 @@ beforeEach(() => {
   getKin.mockReset();
   updateKin.mockReset();
   setKinArchived.mockReset();
+  breedBanks.current = { dogBreeds: ['Border Collie', 'Boxer'], catBreeds: ['Bengal'] };
+  breedsFailed.current = false;
 });
 
 describe('KinEdit', () => {
@@ -136,5 +149,60 @@ describe('KinEdit vet rule (fix-backlog 5.4: vets attach to the Kinfolk)', () =>
     // The rest of the Health panel still saves normally.
     expect('vaccinations' in patch).toBe(true);
     expect('medicationHealthNotes' in patch).toBe(true);
+  });
+
+  describe('breed dropdown', () => {
+    it('offers the dog bank for a Dog and saves the picked breed', async () => {
+      getKin.mockResolvedValue(kin({ species: 'Dog', breed: '' }));
+      updateKin.mockResolvedValue(undefined);
+      render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+
+      await userEvent.click(await screen.findByLabelText('Breed'));
+      await userEvent.click(await screen.findByRole('option', { name: 'Boxer' }));
+      await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
+      expect(updateKin.mock.calls[0]![1].breed).toBe('Boxer');
+    });
+
+    it('follows Species to the cat bank', async () => {
+      getKin.mockResolvedValue(kin({ species: 'Cat', breed: '' }));
+      render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+      await userEvent.click(await screen.findByLabelText('Breed'));
+      const options = await screen.findAllByTestId('breedfield-option');
+      expect(options.map((o) => o.textContent)).toEqual(['Bengal']);
+    });
+
+    it('offers no bank for a species that has none, and stays a plain free-text field', async () => {
+      getKin.mockResolvedValue(kin({ species: 'Reptile', breed: '' }));
+      render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+      const input = await screen.findByLabelText('Breed');
+      await userEvent.click(input);
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+      // No note either: an unseeded species is expected, not a fault.
+      expect(screen.queryByTestId('breedfield-note')).not.toBeInTheDocument();
+      await userEvent.type(input, 'Ball python');
+      expect(input).toHaveValue('Ball python');
+    });
+
+    it('discloses a failed bank load for a species that should have one', async () => {
+      breedBanks.current = { dogBreeds: [], catBreeds: [] };
+      breedsFailed.current = true;
+      getKin.mockResolvedValue(kin({ species: 'Dog', breed: '' }));
+      render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+      expect(await screen.findByTestId('breedfield-note')).toHaveTextContent(
+        'Breed list unavailable right now, type it in.',
+      );
+    });
+
+    it('still saves a breed the bank has never heard of', async () => {
+      getKin.mockResolvedValue(kin({ species: 'Dog', breed: '' }));
+      updateKin.mockResolvedValue(undefined);
+      render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+      await userEvent.type(await screen.findByLabelText('Breed'), 'Lab / pit mix');
+      await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+      await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
+      expect(updateKin.mock.calls[0]![1].breed).toBe('Lab / pit mix');
+    });
   });
 });

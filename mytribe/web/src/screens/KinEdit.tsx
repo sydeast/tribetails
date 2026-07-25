@@ -2,9 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyKin, updateKin } from '../api/portal';
+import { BREEDS_QUERY, EMPTY_BREED_BANKS } from '../api/breeds';
 import type { KinPayloadPartial } from '../api/types';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
+import { breedCatalogForSpecies, speciesWantsBreedBank } from '../lib/breedSearch';
+import { BreedField } from '../components/BreedField';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { buildKinChanges, hasErrors, kinFormFromDto, validateKinForm, type KinEditForm } from '../lib/kinEditForm';
@@ -27,6 +30,12 @@ export function KinEdit() {
 
   const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
   const found = kin.data?.kin.find((k) => k.id === kinId) ?? null;
+
+  // The seeded dog / cat bank behind the Breed dropdown. Its failure is NOT the
+  // screen's failure: breed is free text either way, so a bank that will not
+  // load degrades the field rather than the page, and BreedField's note says so.
+  const breeds = useQuery(BREEDS_QUERY);
+  const breedBanks = breeds.data ?? EMPTY_BREED_BANKS;
 
   // Seed the editable copy once, the first time this kin resolves, so a
   // background refetch of the list query can't clobber in-progress edits.
@@ -143,7 +152,22 @@ export function KinEdit() {
             <div className="grid2">
               {textField('name', 'Name', { full: true, required: true })}
               {textField('species', 'Species')}
-              {textField('breed', 'Breed')}
+              {/* Beside Species on purpose: Species is what picks the bank. */}
+              <BreedField
+                value={current.breed}
+                onChange={(next) => set('breed', next)}
+                catalog={breedCatalogForSpecies(
+                  current.species,
+                  breedBanks.dogBreeds,
+                  breedBanks.catBreeds,
+                )}
+                error={errors.breed}
+                note={
+                  speciesWantsBreedBank(current.species) && breeds.isError
+                    ? 'Breed list unavailable right now, type it in.'
+                    : null
+                }
+              />
               {textField('ageYears', 'Age (years)', { type: 'text' })}
               {textField('photoUrl', 'Photo URL', { full: true, type: 'url' })}
             </div>
