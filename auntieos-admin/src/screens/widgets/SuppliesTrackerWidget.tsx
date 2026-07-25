@@ -80,16 +80,25 @@ function SupplyRowItem({ supply, onAdjusted }: SupplyRowItemProps) {
       });
   };
 
+  // Name, on-hand count and the restock control are three SIBLING cells, not a
+  // stacked pair plus a button. The name is the only elastic one, so it is the
+  // only one that truncates, and the counts line up in a column of their own
+  // down the list instead of each starting wherever its name ended. `title`
+  // keeps the full name reachable when it is cut.
   return (
     <li className="supply-row">
-      <span className="supply-row__main">
-        <span className="supply-row__name">{supply.name}</span>
-        <span className="supply-row__count">
-          {supply.onHand} / {supply.par} {supply.unit}
-        </span>
+      <span className="supply-row__name" title={supply.name}>
+        {supply.name}
+      </span>
+      <span className="supply-row__count">
+        {supply.onHand} / {supply.par} {supply.unit}
       </span>
       <GhostButton label={busy ? '…' : '+1'} onClick={bump} disabled={busy} />
-      {error !== null && <ErrorHint>{error}</ErrorHint>}
+      {error !== null && (
+        <span className="supply-row__error">
+          <ErrorHint>{error}</ErrorHint>
+        </span>
+      )}
     </li>
   );
 }
