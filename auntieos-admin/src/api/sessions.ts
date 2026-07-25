@@ -78,6 +78,42 @@ export interface SessionEntry {
   /** '' until COMPLETED; stamped by the admin's `patchKinCare` write. Same free-text caveat as `startTime`. */
   completedAt?: string | undefined;
   notes?: string | undefined;
+  /**
+   * Expected visit length. Stamped by `approveBookingSeriesCore.ts`
+   * (`durationMinutes(startIso, endIso)`) on every session it creates, and
+   * ABSENT on ad-hoc sessions, `createKinCareSession.ts` never sets it. The
+   * booking detail sheet uses it to recompute a reschedule's end time; see
+   * `lib/bookingDetailFormat.ts#visitDurationMinutes` for the fallbacks.
+   */
+  serviceDurationMinutes?: number | undefined;
+  /**
+   * BACK-REFERENCES TO THE ENVELOPE MODEL, both stamped by
+   * `approveBookingSeriesCore.ts` when it turns an approved booking request
+   * into this session. Together they address
+   * `families/{kinfolkId}/bookings/{kinCareBatchId}/kinCares/{kinCareVisitId}`,
+   * which is where the assignment and both note subcollections live.
+   *
+   * ABSENT on a legacy flat session (one created directly rather than through
+   * an approved request). A screen must therefore treat "assignable" and
+   * "has note threads" as CONDITIONAL on both being present, and say so when
+   * they are not, rather than silently omitting those controls.
+   */
+  kinCareBatchId?: string | undefined;
+  kinCareVisitId?: string | undefined;
+  /** The originating visit doc id, kept for the mid-migration legacy lookups
+   *  `resolveKinCareRef.ts` still accepts. */
+  sourceBookingId?: string | undefined;
+  /**
+   * KinTale (`kin_care_reports`) ids sent for this visit. Maintained by the
+   * send transition alone (`api/kinTalesWrite.ts#markKinTaleReportSent` does
+   * `reportIds: arrayUnion(...)` in the same batch that flips the report to
+   * SENT), so an UNSENT draft attached to this session is not listed here.
+   * That is the honest boundary: a draft has nothing to show a household yet.
+   * Preferred over a `kin_care_reports where sessionId ==` lookup because the
+   * back-reference is already on the doc the agenda holds, so linking costs no
+   * extra listener and no composite index.
+   */
+  reportIds?: string[] | undefined;
 }
 
 /**
