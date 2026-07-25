@@ -1,8 +1,13 @@
 import { useState } from 'react';
 import { TRIBAL_INTEL_QUERY, type TribalIntelEntry } from '../api/tribalIntel';
+import { KINFOLK_QUERY, KIN_QUERY, type Kin, type Kinfolk } from '../api/directory';
+import { deleteTrainingDocument } from '../api/tribalIntelWrite';
 import {
+  TRIBAL_INTEL_DELETE_CAVEAT,
+  TRIBAL_INTEL_QUEUED_MESSAGE,
   attachmentCountLabel,
   distinctCommTypes,
+  dropEmptyTribalIntel,
   filterByCommType,
   filterTribalIntel,
   isTribalIntelTitleFallback,
@@ -18,21 +23,11 @@ import { str } from '../lib/coerce';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { Banner } from '../components/Banner';
+import { Dialog } from '../components/Dialog';
+import { GhostButton, PrimaryButton } from '../components/Buttons';
+import { TribalIntelForm, messageOf } from '../components/TribalIntelForm';
 import './TribalIntel.css';
-
-interface TribalIntelProps {
-  /**
-   * Placeholder: the per-document detail/editor (the wasm's `AddDocumentForm`
-   * create/edit panel, attachment upload, and delete confirm) is a separate,
-   * not-yet-built surface: this port is LIST ONLY, per the fan-out brief.
-   * Omitting this renders every row as a real, focusable STATIC element,
-   * never a live `<button>` that silently no-ops (the dead-control
-   * anti-pattern; see the `KinTales.tsx`/`Invoices.tsx` `onSelect`-is-optional
-   * convention this mirrors). Wiring a real detail route later touches only
-   * the router, not this file.
-   */
-  onSelect?: (docId: string) => void;
-}
 
 /**
  * Admin Tribal Intel list ("The Den · Tribal Intel", nav slug `tribal-intel`,
@@ -48,33 +43,74 @@ interface TribalIntelProps {
  * already-streamed page (the FormSchemas.tsx / KinTales.tsx conventions
  * combined, since this collection genuinely needs both).
  *
- * List only: creating or editing a Tribal Intel entry (the wasm's
- * `AddDocumentForm`: free text + Cloudinary attachments + a Kinfolk/Kin
- * target picker, saved via the createTrainingDocument/updateTrainingDocument
- * admin callables) and the delete confirm are separate, not-yet-built
- * surfaces. `onSelect` is this screen's only hook into that later work.
+ * FULL CRUD, all of it server-bound. `firestore.rules` keeps
+ * `training_documents` at `allow write: if false`, so create, edit, and delete
+ * all route through the deployed admin callables via `api/tribalIntelWrite.ts`.
+ * The create/edit panel is `components/TribalIntelForm.tsx`; delete is a
+ * confirm dialog that states the caveat the server's own handler documents.
+ *
+ * NEITHER WRITE MAKES A CLAIM THE BACKEND DOES NOT HONOR. A save queues the
+ * entry for the NEXT nightly reconcile pass and says so; a delete removes the
+ * source note only, and says that already-folded dossier and 411 text is not
+ * unmerged.
  */
-export function TribalIntel({ onSelect }: TribalIntelProps) {
+export function TribalIntel() {
   const rows = useCollection<TribalIntelEntry>(TRIBAL_INTEL_QUERY);
+  // The target picker's rosters. Streamed here rather than inside the form so
+  // opening the panel is instant instead of showing an empty household list
+  // while a fresh listener warms up.
+  const kinfolkRows = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinRows = useCollection<Kin>(KIN_QUERY);
+
   const [query, setQuery] = useState('');
   const [commTypeFilter, setCommTypeFilter] = useState<string | null>(null);
 
-  // Computed off the same streamed page the list itself renders (the
-  // Invoices.tsx convention), never re-fetched, never a separate `?? 0`.
-  const totalCount = asyncScalar(rows, (data) => data.length);
-  const commTypeCount = asyncScalar(rows, (data) => distinctCommTypes(data).length);
-  const withContentCount = asyncScalar(rows, (data) => data.filter((d) => str(d.content).trim() !== '').length);
+  // null = panel closed. 'new' = create. Otherwise the entry being edited.
+  const [editing, setEditing] = useState<TribalIntelEntry | 'new' | null>(null);
+  const [queued, setQueued] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<TribalIntelEntry | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteFailure, setDeleteFailure] = useState<string | null>(null);
+
+  // Junk rows are dropped ONCE, here, so the stat strip and the list can never
+  // describe different sets. See `dropEmptyTribalIntel` for what counts as junk
+  // and why an attachment-only entry is not.
+  const totalCount = asyncScalar(rows, (data) => dropEmptyTribalIntel(data).length);
+  const commTypeCount = asyncScalar(rows, (data) => distinctCommTypes(dropEmptyTribalIntel(data)).length);
+  const withContentCount = asyncScalar(
+    rows,
+    (data) => dropEmptyTribalIntel(data).filter((d) => str(d.content).trim() !== '').length,
+  );
 
   // Same derivation as commTypeCount above, kept as the actual array (not
   // just its length) so the roving-tabindex hook below has a real tab count
   // to call unconditionally at the top level, per the Rules of Hooks: the
   // tabs themselves render inside AsyncRegion's conditionally-invoked render
   // prop, where `rows.data` isn't in scope.
-  const commTypesForTabs = rows.status === 'ready' ? distinctCommTypes(rows.data) : [];
+  const commTypesForTabs = rows.status === 'ready' ? distinctCommTypes(dropEmptyTribalIntel(rows.data)) : [];
   const { getTabProps } = useRovingTabs({
     count: commTypesForTabs.length > 0 ? commTypesForTabs.length + 1 : 0,
     activeIndex: commTypeFilter === null ? 0 : 1 + commTypesForTabs.indexOf(commTypeFilter),
   });
+
+  const kinfolk = kinfolkRows.status === 'ready' ? kinfolkRows.data : [];
+  const kin = kinRows.status === 'ready' ? kinRows.data : [];
+
+  async function confirmDelete(doc: TribalIntelEntry) {
+    setDeleting(true);
+    setDeleteFailure(null);
+    try {
+      await deleteTrainingDocument(doc._id);
+      setPendingDelete(null);
+      // If the deleted entry was open in the editor, close it: editing a row
+      // that no longer exists would fail on save with a bare "not-found".
+      setEditing((cur) => (cur !== null && cur !== 'new' && cur._id === doc._id ? null : cur));
+    } catch (err) {
+      setDeleteFailure(messageOf(err));
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
     <div className="screen">
@@ -83,7 +119,44 @@ export function TribalIntel({ onSelect }: TribalIntelProps) {
         title="Tribal"
         accentTail="Intel."
         subtitle="Guides and educational resources for care delivery, newest first."
+        trailing={
+          editing === null ? (
+            <PrimaryButton
+              label="Add intel"
+              onClick={() => {
+                setQueued(null);
+                setDeleteFailure(null);
+                setEditing('new');
+              }}
+            />
+          ) : undefined
+        }
       />
+
+      {queued !== null && (
+        <Banner tone="suggestion" title="Queued for reconcile" pillLabel="QUEUED" onDismiss={() => setQueued(null)}>
+          {queued}
+        </Banner>
+      )}
+
+      {deleteFailure !== null && pendingDelete === null && (
+        <Banner tone="error" title="Could not delete" onDismiss={() => setDeleteFailure(null)}>
+          {deleteFailure}
+        </Banner>
+      )}
+
+      {editing !== null && (
+        <TribalIntelForm
+          editing={editing === 'new' ? null : editing}
+          kinfolk={kinfolk}
+          kin={kin}
+          onCancel={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            setQueued(TRIBAL_INTEL_QUEUED_MESSAGE);
+          }}
+        />
+      )}
 
       <div className="tribal-intel__summary">
         <StatCard label="Total" value={totalCount} trend="documents on file" tone="orange" feature />
@@ -95,15 +168,16 @@ export function TribalIntel({ onSelect }: TribalIntelProps) {
         <AsyncRegion
           state={rows}
           what="Tribal Intel"
-          isEmpty={(data) => data.length === 0}
+          isEmpty={(data) => dropEmptyTribalIntel(data).length === 0}
           loading={<p className="tribal-intel__hint">Loading Tribal Intel…</p>}
           empty={
             <EmptyHint>No Tribal Intel yet. Training materials and guides will appear here once uploaded.</EmptyHint>
           }
         >
           {(data) => {
-            const commTypes = distinctCommTypes(data);
-            const searched = filterTribalIntel(data, query);
+            const real = dropEmptyTribalIntel(data);
+            const commTypes = distinctCommTypes(real);
+            const searched = filterTribalIntel(real, query);
             const visible = filterByCommType(searched, commTypeFilter);
 
             return (
@@ -167,7 +241,19 @@ export function TribalIntel({ onSelect }: TribalIntelProps) {
                 ) : (
                   <ul className="tribal-intel__list">
                     {visible.map((doc) => (
-                      <TribalIntelRow key={doc._id} doc={doc} onSelect={onSelect} />
+                      <TribalIntelRow
+                        key={doc._id}
+                        doc={doc}
+                        onEdit={() => {
+                          setQueued(null);
+                          setDeleteFailure(null);
+                          setEditing(doc);
+                        }}
+                        onDelete={() => {
+                          setDeleteFailure(null);
+                          setPendingDelete(doc);
+                        }}
+                      />
                     ))}
                   </ul>
                 )}
@@ -176,16 +262,51 @@ export function TribalIntel({ onSelect }: TribalIntelProps) {
           }}
         </AsyncRegion>
       </DenPanel>
+
+      {pendingDelete !== null && (
+        <Dialog
+          title="Delete this Tribal Intel entry?"
+          onClose={() => {
+            if (!deleting) setPendingDelete(null);
+          }}
+          footer={
+            <>
+              <GhostButton
+                label="Cancel"
+                onClick={() => setPendingDelete(null)}
+                disabled={deleting}
+              />
+              <PrimaryButton
+                label="Delete entry"
+                onClick={() => void confirmDelete(pendingDelete)}
+                disabled={deleting}
+                busy={deleting}
+              />
+            </>
+          }
+        >
+          {/* The caveat the server's own handler documents, shown BEFORE the
+              operator can commit. Deleting the note does not walk back a fold
+              the reconcile pipeline already made. */}
+          <p className="tribal-intel__confirm">{TRIBAL_INTEL_DELETE_CAVEAT}</p>
+          {deleteFailure !== null && (
+            <Banner tone="error" title="Could not delete">
+              {deleteFailure}
+            </Banner>
+          )}
+        </Dialog>
+      )}
     </div>
   );
 }
 
 interface TribalIntelRowProps {
   doc: TribalIntelEntry;
-  onSelect?: ((docId: string) => void) | undefined;
+  onEdit: () => void;
+  onDelete: () => void;
 }
 
-function TribalIntelRow({ doc, onSelect }: TribalIntelRowProps) {
+function TribalIntelRow({ doc, onEdit, onDelete }: TribalIntelRowProps) {
   // Defensive reads: useCollection casts raw doc.data() with no normalization,
   // so a legacy training_documents doc missing a field must not throw and blank
   // the screen. Default every field this row touches.
@@ -240,17 +361,17 @@ function TribalIntelRow({ doc, onSelect }: TribalIntelRowProps) {
     </>
   );
 
-  // Static, non-interactive row unless a detail handler is wired (see
-  // TribalIntelProps): a live no-op button is the dead-control anti-pattern.
+  // The row body stays static text; Edit and Delete are the only controls in
+  // it. Wrapping the whole card in a button and then nesting two more buttons
+  // inside it is invalid, and a card that both navigates and holds a
+  // destructive control is how accidental deletes happen.
   return (
     <li className="tribal-intel__row">
-      {onSelect ? (
-        <button type="button" className="tribal-intel__row-main" onClick={() => onSelect(doc._id)}>
-          {body}
-        </button>
-      ) : (
-        <div className="tribal-intel__row-main tribal-intel__row-main--static">{body}</div>
-      )}
+      <div className="tribal-intel__row-main tribal-intel__row-main--static">{body}</div>
+      <div className="tribal-intel__row-actions">
+        <GhostButton label="Edit" onClick={onEdit} />
+        <GhostButton label="Delete" onClick={onDelete} />
+      </div>
     </li>
   );
 }

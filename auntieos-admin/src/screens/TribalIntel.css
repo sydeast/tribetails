@@ -252,3 +252,15 @@
   background: color-mix(in srgb, var(--color-warning) 18%, transparent);
   color: var(--color-warning);
 }
+/* ── row actions + delete confirm ───────────────────────────────────────── */
+.tribal-intel__row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-3);
+}
+.tribal-intel__confirm {
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+  margin: 0 0 var(--space-3);
+}

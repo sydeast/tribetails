@@ -96,6 +96,78 @@ export function attachmentCountLabel(count: number): string | null {
   return `${count} attachment${count === 1 ? '' : 's'}`;
 }
 
+// ── junk-row filtering ────────────────────────────────────────────────────
+
+/**
+ * The subset `dropEmptyTribalIntel` reads: a `Pick`, not the full entry, and
+ * every field optional for the same reason as `TribalIntelEntry` itself. The
+ * rows this filter exists to catch are precisely the ones missing every field.
+ */
+export interface EmptyCheckInput {
+  title?: string | undefined;
+  content?: string | undefined;
+  attachments?: readonly unknown[] | undefined;
+}
+
+/**
+ * Drops content-less junk rows: leftover all-null import/seed documents with
+ * nothing in them. Without this they render as "Untitled Document" with a blank
+ * body and inflate the Total / Comm. types / With content counts, so the
+ * operator sees documents that are not documents.
+ *
+ * Ports the archive's own filter (`TrainingDocumentsViewModel.kt`:
+ * `result.value.filter { it.title.isNotBlank() || it.content.isNotBlank() }`,
+ * which spec 23 item 4 records as already-correct behavior) and the identical
+ * line in Android's `TrainingDocumentsScreen.kt`.
+ *
+ * ONE DELIBERATE WIDENING of the archive rule: an entry with attachments but no
+ * text is KEPT. When the archive was written, `createTrainingDocument` did not
+ * exist and attachments were not part of the model, so a row could only be real
+ * if it carried text. The deployed callable now accepts "title OR content OR at
+ * least one attachment", so an attachment-only entry is a legitimately saved
+ * one. The narrower rule would hide the operator's own photo-only note the
+ * moment it was saved, which is a worse failure than the junk it was written
+ * to catch.
+ *
+ * Applied ONCE, before both the stat strip and the list, so the counts can
+ * never describe a different set of rows than the ones on screen (the parity
+ * bug the Android summary row had: it filtered the list but counted the raw
+ * stream).
+ */
+export function dropEmptyTribalIntel<T extends EmptyCheckInput>(docs: readonly T[]): T[] {
+  return docs.filter(
+    (d) => str(d.title).trim() !== '' || str(d.content).trim() !== '' || (d.attachments?.length ?? 0) > 0,
+  );
+}
+
+// ── honesty copy (shared by the form, the screen banner, and the confirm) ──
+
+/**
+ * Shown after a successful create or update.
+ *
+ * The reconcile pipeline is a NIGHTLY pass. A saved entry lands with
+ * `reconcileStatus: 'pending'` and nothing about the dossier or the 411 has
+ * changed yet, so this copy names the next pass and refuses the word
+ * "instantly". Wording carried over verbatim from the archive ViewModel and
+ * Android's `AdminDataViewModel`, so all three clients make the same promise.
+ */
+export const TRIBAL_INTEL_QUEUED_MESSAGE =
+  'Queued for reconcile. The dossier and 411 update on the next reconcile pass, not instantly.';
+
+/**
+ * Shown in the delete confirm, before the operator can commit.
+ *
+ * `deleteTrainingDocument` removes the source note and nothing else. Its own
+ * audit payload records the caveat: "Already-folded dossier/411 text is not
+ * retroactively unmerged." Deleting an entry that a prior pass already folded
+ * therefore leaves that text in the summaries until they are regenerated, and
+ * an operator deleting something they regret writing needs to know that BEFORE
+ * they confirm, not after.
+ */
+export const TRIBAL_INTEL_DELETE_CAVEAT =
+  'This removes the source note. It does not unmerge any text the reconcile pipeline has already folded ' +
+  'into the dossier or the 411. Those summaries keep the earlier wording until they are regenerated.';
+
 // ── comm. type distinct list + filtering ─────────────────────────────────
 
 /**

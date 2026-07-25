@@ -54,17 +54,18 @@ import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.StatCard
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
-// ── feature flags (ship dark) ────────────────────────────────────────────────
-// Mirrors the redesigned web Tribal Intel screen, which ships READ-ONLY.
-// Anything that would write, or that is not driven by the AdminDataViewModel's
-// loaded list, ships dark behind a local flag with a fail-loud Not-wired banner
-// so it can never pretend to persist. Flip these on centrally once the matching
-// VM hook is exercised by the redesign.
-
-// auntieos.trainingDocs.create. The "Add intel" trigger + Add/Edit form. Now LIVE
-// (spec 23): backed by the createTrainingDocument / updateTrainingDocument /
-// deleteTrainingDocument admin callables, with attachments via the TRIBAL_INTEL
-// media pipeline and a real Kinfolk/Kin target picker. Matches the web parity flip.
+// ── feature flag ─────────────────────────────────────────────────────────────
+// auntieos.trainingDocs.create. The "Add intel" trigger + Add/Edit form + the
+// per-row Edit/Delete controls. LIVE (spec 23): backed by the
+// createTrainingDocument / updateTrainingDocument / deleteTrainingDocument admin
+// callables, with attachments via the TRIBAL_INTEL media pipeline and a real
+// Kinfolk/Kin target picker.
+//
+// The header comment here used to say this mirrored a READ-ONLY web screen and
+// that anything writing ships dark. Both halves are now stale: the web Tribal
+// Intel screen has the same create/edit/delete surface (auntieos-admin/src/
+// screens/TribalIntel.tsx + components/TribalIntelForm.tsx), and this flag has
+// been on since the callables deployed.
 private const val FF_TRAINING_DOC_CREATE = true
 
 /**
@@ -79,12 +80,33 @@ internal fun trainingDocsCommTypeFilter(
 ): List<TrainingDocument> =
     if (selected == null) docs else docs.filter { it.communicationType == selected }
 
+/**
+ * Drops content-less junk rows: leftover all-null import/seed documents with
+ * nothing in them, which would otherwise render as "Untitled Document" with a
+ * blank body and inflate the summary counts.
+ *
+ * Extracted so the SUMMARY and the LIST run the same filter. They did not: the
+ * list filtered inline while `SummaryRow(trainingDocs)` counted the raw loaded
+ * set, so Total could claim more documents than the screen showed.
+ *
+ * An attachment-only row is KEPT. The archive rule was title-or-content, written
+ * before attachments existed on the model; the deployed callable now accepts
+ * "title OR content OR at least one attachment", so a photo-only entry is a
+ * legitimately saved one and hiding it would lose the operator's own note. Same
+ * rule as the web `dropEmptyTribalIntel`.
+ */
+internal fun dropEmptyTrainingDocs(docs: List<TrainingDocument>): List<TrainingDocument> =
+    docs.filter { it.title.isNotBlank() || it.content.isNotBlank() || it.attachments.isNotEmpty() }
+
 @Composable
 fun TrainingDocumentsScreen(
     viewModel: AdminDataViewModel = viewModel(),
     onBack: () -> Unit,
 ) {
-    val trainingDocs by viewModel.trainingDocuments.collectAsState()
+    val loadedDocs by viewModel.trainingDocuments.collectAsState()
+    // Junk rows dropped ONCE, here, so the summary counts and the list can never
+    // describe different sets (they did: the list filtered, the summary did not).
+    val trainingDocs = remember(loadedDocs) { dropEmptyTrainingDocs(loadedDocs) }
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
     val queuedMessage by viewModel.trainingDocQueuedMessage.collectAsState()
@@ -238,9 +260,6 @@ fun TrainingDocumentsScreen(
                             // list, then the optional comm-type narrowing (only when the
                             // filter chips are live).
                             val docs = trainingDocs
-                                // Drop content-less junk docs (leftover all-null import/seed
-                                // rows): would render as "Untitled Document" and inflate totals.
-                                .filter { it.title.isNotBlank() || it.content.isNotBlank() }
                                 .filter { doc ->
                                     searchQuery.isBlank() ||
                                         doc.title.contains(searchQuery, ignoreCase = true) ||
