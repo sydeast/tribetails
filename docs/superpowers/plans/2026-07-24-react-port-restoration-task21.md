@@ -88,11 +88,11 @@ export function approveBlocker(s: PersonalizeFormState, draftId: string | null, 
 export function buildGeneratePayload(s: PersonalizeFormState, kf: Kinfolk | undefined, avoidOpening: string | null): GenerateDraftArgs;
 ```
 
-- [ ] Step 1: failing tests, chip label/wire tables, `filterRecipients` (archived excluded, name+email case-insensitive match, sorted, capped), `generateBlocker` (blank notes first, then missing recipient, only for `needsRecipient` types), `approveBlocker` (no draft id, empty body, deliverable-type missing contact, email missing subject), `buildGeneratePayload` (includes `kinfolk_id`, omits `recipient` for Blog, omits empty optionals, `want_title` only for email).
-- [ ] Step 2: `npx vitest run src/lib/personalizeCompose.test.ts`: FAIL (module not found).
-- [ ] Step 3: implement.
-- [ ] Step 4: rerun, PASS.
-- [ ] Step 5: commit.
+- [x] Step 1: failing tests, chip label/wire tables, `filterRecipients` (archived excluded, name+email case-insensitive match, sorted, capped), `generateBlocker` (blank notes first, then missing recipient, only for `needsRecipient` types), `approveBlocker` (no draft id, empty body, deliverable-type missing contact, email missing subject), `buildGeneratePayload` (includes `kinfolk_id`, omits `recipient` for Blog, omits empty optionals, `want_title` only for email).
+- [x] Step 2: `npx vitest run src/lib/personalizeCompose.test.ts`: FAIL (module not found).
+- [x] Step 3: implement.
+- [x] Step 4: rerun, PASS.
+- [x] Step 5: commit.
 
 ## Task 2: Pure external-send logic
 
@@ -111,11 +111,11 @@ export function isOptedOutError(message: string): boolean;     // case-insensiti
 export function externalSendErrorText(message: string): string;
 ```
 
-- [ ] Step 1: failing tests, including `+447700900123` accepted (12 digits), `555 1234` rejected (7 digits), `FAILED_PRECONDITION: recipient_opted_out` recognised, non-opt-out messages passed through verbatim.
-- [ ] Step 2: run, FAIL.
-- [ ] Step 3: implement.
-- [ ] Step 4: run, PASS.
-- [ ] Step 5: commit.
+- [x] Step 1: failing tests, including `+447700900123` accepted (12 digits), `555 1234` rejected (7 digits), `FAILED_PRECONDITION: recipient_opted_out` recognised, non-opt-out messages passed through verbatim.
+- [x] Step 2: run, FAIL.
+- [x] Step 3: implement.
+- [x] Step 4: run, PASS.
+- [x] Step 5: commit.
 
 ## Task 3: `generateAuntieCopy` learns `kinfolk_id`
 
@@ -126,13 +126,13 @@ Server change, additive and backwards compatible:
 - `resolveContext`: when `kinfolk_id` is present, `db.collection('kinfolk').doc(id).get()`. Missing doc is a 404 `No Kinfolk with id "<id>"`. When absent, the existing full-scan `matchKinfolk` path is unchanged.
 - `generated_drafts` write is unchanged in shape.
 
-- [ ] Step 1: failing server tests, direct lookup used, no roster scan; 404 on unknown id; name path unchanged when no id; id wins over a conflicting name.
-- [ ] Step 2: `cd auntieos-admin/web/functions && npm test`: FAIL.
-- [ ] Step 3: implement in `generate.js`.
-- [ ] Step 4: rerun, PASS.
-- [ ] Step 5: failing client test, `generateDraft` forwards `kinfolk_id` in the POST body.
-- [ ] Step 6: add the field to `GenerateDraftArgs`. Run web suite, PASS.
-- [ ] Step 7: commit.
+- [x] Step 1: failing server tests, direct lookup used, no roster scan; 404 on unknown id; name path unchanged when no id; id wins over a conflicting name.
+- [x] Step 2: `cd auntieos-admin/web/functions && npm test`: FAIL.
+- [x] Step 3: implement in `generate.js`.
+- [x] Step 4: rerun, PASS.
+- [x] Step 5: failing client test, `generateDraft` forwards `kinfolk_id` in the POST body.
+- [x] Step 6: add the field to `GenerateDraftArgs`. Run web suite, PASS.
+- [x] Step 7: commit.
 
 ## Task 4: The ordered approve
 
@@ -159,12 +159,12 @@ Order, non-negotiable:
 2. `call('logActivity', { actionType:'DRAFT_APPROVED', description, status:'SUCCESS', targetId: draftId, targetCollection:'generated_drafts' })`. Failure is non-fatal and surfaces as `auditWarning`.
 3. `deliver?.()`. Failure throws `ApproveDeliveryError` (the draft IS approved; the message did not go out).
 
-- [ ] Step 1: failing tests, happy path call order asserted via a shared `calls[]` log; write failure means zero audit calls and zero deliver calls; audit failure still delivers and returns a warning; deliver failure throws `ApproveDeliveryError` after a successful write; no `deliver` means `delivered:false`.
-- [ ] Step 2: run, FAIL.
-- [ ] Step 3: implement.
-- [ ] Step 4: run, PASS.
-- [ ] Step 5: **mutation check.** Temporarily move `deliver?.()` above the `updateDoc`. Rerun: the "write failure delivers nothing" test MUST fail. Revert.
-- [ ] Step 6: commit.
+- [x] Step 1: failing tests, happy path call order asserted via a shared `calls[]` log; write failure means zero audit calls and zero deliver calls; audit failure still delivers and returns a warning; deliver failure throws `ApproveDeliveryError` after a successful write; no `deliver` means `delivered:false`.
+- [x] Step 2: run, FAIL.
+- [x] Step 3: implement.
+- [x] Step 4: run, PASS.
+- [x] Step 5: **mutation check.** Temporarily move `deliver?.()` above the `updateDoc`. Rerun: the "write failure delivers nothing" test MUST fail. Revert.
+- [x] Step 6: commit.
 
 ## Task 5: Audience segments + external send api layers
 
@@ -172,11 +172,11 @@ Order, non-negotiable:
 
 `communicateWrite.ts` changes: `BROADCAST_CHANNELS = ['inapp','email','sms','push']`; `SendBroadcastArgs` gains optional `segmentId` and makes `criteria` optional; `SendBroadcastResult.perChannel` typed over all four; `describeAudience` unchanged.
 
-- [ ] Step 1: failing tests for all four modules (payload shapes, decode defensiveness, `segmentSaveBlocker`, criteria/segmentId mutual exclusion, in-app requires a subject).
-- [ ] Step 2: run, FAIL.
-- [ ] Step 3: implement.
-- [ ] Step 4: run, PASS.
-- [ ] Step 5: commit.
+- [x] Step 1: failing tests for all four modules (payload shapes, decode defensiveness, `segmentSaveBlocker`, criteria/segmentId mutual exclusion, in-app requires a subject).
+- [x] Step 2: run, FAIL.
+- [x] Step 3: implement.
+- [x] Step 4: run, PASS.
+- [x] Step 5: commit.
 
 ## Task 6: `ExternalSendPanel` component
 
@@ -184,11 +184,11 @@ Order, non-negotiable:
 
 Renders: channel radio (Email default / Text), recipient input, subject (email only), body, "Send" and "Opt out recipient". Blocked sends never hit the network. `transactional` is a prop, defaulting to `true` so a 1:1 reply cannot be dropped by a marketing opt-out.
 
-- [ ] Step 1: failing tests, blocked send does not call the api; opt-out error renders the dedicated copy; opt-out button calls `suppressExternalRecipient` and confirms with the redacted recipient; success renders provider id + redacted recipient; `transactional:true` is on the payload.
-- [ ] Step 2: run, FAIL.
-- [ ] Step 3: implement.
-- [ ] Step 4: run, PASS.
-- [ ] Step 5: commit.
+- [x] Step 1: failing tests, blocked send does not call the api; opt-out error renders the dedicated copy; opt-out button calls `suppressExternalRecipient` and confirms with the redacted recipient; success renders provider id + redacted recipient; `transactional:true` is on the payload.
+- [x] Step 2: run, FAIL.
+- [x] Step 3: implement.
+- [x] Step 4: run, PASS.
+- [x] Step 5: commit.
 
 ## Task 7: Personalize composer rewrite
 
@@ -196,21 +196,21 @@ Renders: channel radio (Email default / Text), recipient input, subject (email o
 
 Render order: message-type chips → recipient typeahead (hidden for Blog) → Subject → Notes → Tone chips + Length chips → Generate/Regenerate → draft callout + editable draft → Approve. Approve opens a confirm Dialog for deliverable types.
 
-- [ ] Step 1: failing tests, default type is "KinTale report"; typeahead search resolves and the payload carries the real `kinfolk_id`; blockers surface before any fetch; Approve calls `approveGeneratedDraft` and, on a write failure, shows the failure and does not claim a send; the audit warning renders; the tone/length chips reach the payload as `tone_hint`/`max_length`.
-- [ ] Step 2: run, FAIL.
-- [ ] Step 3: implement.
-- [ ] Step 4: run, PASS.
-- [ ] Step 5: commit.
+- [x] Step 1: failing tests, default type is "KinTale report"; typeahead search resolves and the payload carries the real `kinfolk_id`; blockers surface before any fetch; Approve calls `approveGeneratedDraft` and, on a write failure, shows the failure and does not claim a send; the audit warning renders; the tone/length chips reach the payload as `tone_hint`/`max_length`.
+- [x] Step 2: run, FAIL.
+- [x] Step 3: implement.
+- [x] Step 4: run, PASS.
+- [x] Step 5: commit.
 
 ## Task 8: Broadcast gets segments, in-app, and a tally table
 
 **Files:** Modify `src/screens/CommunicateCompose.tsx`, `.css`, `.test.tsx`.
 
-- [ ] Step 1: failing tests, segments load and render; picking one hides the ad-hoc builder and sends `segmentId` with no `criteria`; "Ad-hoc" sends `criteria` with no `segmentId`; save + delete round-trip; in-app requires a subject; the result renders one row per channel with sent/skipped/failed.
-- [ ] Step 2: run, FAIL.
-- [ ] Step 3: implement.
-- [ ] Step 4: run, PASS.
-- [ ] Step 5: commit.
+- [x] Step 1: failing tests, segments load and render; picking one hides the ad-hoc builder and sends `segmentId` with no `criteria`; "Ad-hoc" sends `criteria` with no `segmentId`; save + delete round-trip; in-app requires a subject; the result renders one row per channel with sent/skipped/failed.
+- [x] Step 2: run, FAIL.
+- [x] Step 3: implement.
+- [x] Step 4: run, PASS.
+- [x] Step 5: commit.
 
 ## Task 9: Three-mode Communicate, Personalize default
 
@@ -218,11 +218,11 @@ Render order: message-type chips → recipient typeahead (hidden for Blog) → S
 
 `COMMUNICATE_MODES = [Personalize, Broadcast, Recent]`, default `personalize`. Recent keeps its All/Email/Text/Push filter tablist. `listRecentSends` only loads when Recent is showing.
 
-- [ ] Step 1: failing tests, Personalize renders on mount; the mode tablist has the three tabs in order with Personalize selected; switching to Recent loads sends; the channel filter still works.
-- [ ] Step 2: run, FAIL.
-- [ ] Step 3: implement.
-- [ ] Step 4: run, PASS; then `npx tsc --noEmit && npx vitest run && npx vite build`.
-- [ ] Step 5: commit.
+- [x] Step 1: failing tests, Personalize renders on mount; the mode tablist has the three tabs in order with Personalize selected; switching to Recent loads sends; the channel filter still works.
+- [x] Step 2: run, FAIL.
+- [x] Step 3: implement.
+- [x] Step 4: run, PASS; then `npx tsc --noEmit && npx vitest run && npx vite build`.
+- [x] Step 5: commit.
 
 ## Task 10: Android parity
 
@@ -237,15 +237,15 @@ Genuine gaps versus the web slice, all closed here:
 6. Tone chips are `warm/casual/celebratory/urgent/professional`; the archive and web are `warm/cheerful/professional/playful`. Align.
 7. Message type is a dropdown over six types including two the composer cannot use; make it chips over the four real ones with "KinTale report" as the label for `visit_report`.
 
-- [ ] Step 1: write the Kotlin tests first (payload carries `kinfolk_id`; approve emits an audit entry only after a successful write; opt-out copy; E.164 acceptance; chip tables).
-- [ ] Step 2: implement.
-- [ ] Step 3: commit. Report the Kotlin file list; do not run gradle.
+- [x] Step 1: write the Kotlin tests first (payload carries `kinfolk_id`; approve emits an audit entry only after a successful write; opt-out copy; E.164 acceptance; chip tables).
+- [x] Step 2: implement.
+- [x] Step 3: commit. Report the Kotlin file list; do not run gradle.
 
 ## Task 11: Ship
 
-- [ ] `npx tsc --noEmit && npx vitest run && npx vite build` from `auntieos-admin/`.
-- [ ] `cd auntieos-admin/web/functions && npm test`.
-- [ ] Push, open the PR with the operator deploy command for `generateAuntieCopy`.
+- [x] `npx tsc --noEmit && npx vitest run && npx vite build` from `auntieos-admin/`.
+- [x] `cd auntieos-admin/web/functions && npm test`.
+- [x] Push, open the PR with the operator deploy command for `generateAuntieCopy`.
 
 ---
 
