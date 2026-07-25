@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type ConversationSummary } from '../api/inbox';
+import { type NotificationEntry } from '../api/notifications';
+import { type Async } from '../lib/async';
+import type { Timestamp } from 'firebase/firestore';
 
 // TZ pinned to a west-of-UTC zone so the AO-18 day-grouping assertions below
 // are meaningful on any CI runner (the identical rationale in
@@ -31,7 +34,38 @@ vi.mock('../api/inboxThread', async (orig) => ({
   getConversationThread,
 }));
 
+// The Notifications digest strip reads the SAME bounded `notifications` listener
+// the Notifications screen uses (NOTIFICATIONS_QUERY via lib/firestore).
+const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
+vi.mock('../lib/firestore', () => ({ useCollection }));
+
+const { bulkMarkNotificationsRead } = vi.hoisted(() => ({ bulkMarkNotificationsRead: vi.fn() }));
+vi.mock('../api/notifications', async (orig) => ({
+  ...(await orig<typeof import('../api/notifications')>()),
+  bulkMarkNotificationsRead,
+}));
+
 import { Inbox } from './Inbox';
+
+function fakeTs(iso: string): Timestamp {
+  return { toDate: () => new Date(iso) } as unknown as Timestamp;
+}
+
+function notif(over: Partial<NotificationEntry>): NotificationEntry {
+  return {
+    _id: 'n1',
+    key: 'kincare.booking.confirm',
+    title: 'Booking confirmed',
+    category: 'bookings',
+    status: 'dispatched',
+    createdAt: fakeTs('2026-07-16T09:30:00Z'),
+    ...over,
+  };
+}
+
+function notifications(data: NotificationEntry[]): Async<NotificationEntry[]> {
+  return { status: 'ready', data };
+}
 
 function thread(over: Partial<ConversationSummary>): ConversationSummary {
   return {
@@ -48,6 +82,10 @@ function thread(over: Partial<ConversationSummary>): ConversationSummary {
 
 beforeEach(() => {
   listConversations.mockReset();
+  // Default: the notifications strip resolves empty, so the message-thread
+  // assertions below are unaffected by it unless a test says otherwise.
+  useCollection.mockReset().mockReturnValue(notifications([]));
+  bulkMarkNotificationsRead.mockReset().mockResolvedValue(1);
 });
 
 /**
@@ -138,9 +176,11 @@ describe('Inbox screen', () => {
       thread({ kinfolkId: 'k1', unreadForAdmin: true }),
       thread({ kinfolkId: 'k2', unreadForAdmin: false }),
     ]);
+    useCollection.mockReturnValue({ status: 'loading' } satisfies Async<NotificationEntry[]>);
     render(<Inbox />);
-    // Not present while loading (asyncScalar-style: a claim only once ready).
-    expect(screen.queryByText(/unread/)).toBeNull();
+    // Not present while BOTH sections are still loading (asyncScalar-style: a
+    // claim only once something has actually resolved).
+    expect(screen.queryByText(/\d+ unread/)).toBeNull();
     expect(await screen.findByText('1 unread')).toBeInTheDocument();
   });
 
@@ -250,5 +290,95 @@ describe('Inbox screen', () => {
     await screen.findByText('The Alvarez Household');
     const row = screen.getByText('The Alvarez Household').closest('.inbox__row-main');
     expect(row?.tagName).toBe('BUTTON');
+  });
+});
+
+/**
+ * Task 2.2: the archive stacked Notifications above Messages on one Inbox
+ * screen. These pin the section STRUCTURE and the cross-section unread total.
+ * The Channels region is deliberately absent until Task 6.1 has real streams to
+ * put in it (see the seam note in Inbox.tsx).
+ */
+describe('Inbox sections', () => {
+  it('stacks the Notifications digest above Messages', async () => {
+    listConversations.mockResolvedValue([thread({})]);
+    useCollection.mockReturnValue(notifications([notif({})]));
+    render(<Inbox />);
+    await screen.findByText('The Alvarez Household');
+
+    const titles = [...document.querySelectorAll('.den-panel-title')].map((n) => n.textContent);
+    expect(titles).toEqual(['Notifications', 'Messages']);
+  });
+
+  it('ships no Channels region while Task 6.1 has nothing to put in it', async () => {
+    listConversations.mockResolvedValue([thread({})]);
+    render(<Inbox />);
+    await screen.findByText('The Alvarez Household');
+    expect(screen.queryByText(/channels/i)).toBeNull();
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
+  });
+
+  it('renders the unread notifications the digest is given', async () => {
+    listConversations.mockResolvedValue([]);
+    useCollection.mockReturnValue(notifications([notif({ _id: 'n1', title: 'Invoice overdue' })]));
+    render(<Inbox />);
+    expect(await screen.findByText('Invoice overdue')).toBeInTheDocument();
+  });
+
+  it('sums the header badge across BOTH sections', async () => {
+    listConversations.mockResolvedValue([
+      thread({ kinfolkId: 'k1', unreadForAdmin: true }),
+      thread({ kinfolkId: 'k2', unreadForAdmin: true }),
+    ]);
+    useCollection.mockReturnValue(
+      notifications([notif({ _id: 'n1' }), notif({ _id: 'n2' }), notif({ _id: 'n3' })]),
+    );
+    render(<Inbox />);
+    // 3 unread notifications + 2 unread threads.
+    expect(await screen.findByText('5 unread')).toBeInTheDocument();
+  });
+
+  it('counts a resolved section even while the other is still loading, and never fabricates the missing half', async () => {
+    listConversations.mockReturnValue(new Promise(() => {})); // never settles
+    useCollection.mockReturnValue(notifications([notif({ _id: 'n1' }), notif({ _id: 'n2' })]));
+    render(<Inbox />);
+    expect(await screen.findByText('2 unread')).toBeInTheDocument();
+  });
+
+  it('a failed notifications stream does not blank the Messages section', async () => {
+    listConversations.mockResolvedValue([thread({})]);
+    useCollection.mockReturnValue({
+      status: 'error',
+      message: 'notifications listener detached',
+    } satisfies Async<NotificationEntry[]>);
+    render(<Inbox />);
+    expect(await screen.findByText('The Alvarez Household')).toBeInTheDocument();
+    expect(screen.getByText(/notifications listener detached/)).toBeInTheDocument();
+  });
+
+  it('a failed conversations load does not blank the Notifications section', async () => {
+    listConversations.mockRejectedValue(new Error('permission-denied'));
+    useCollection.mockReturnValue(notifications([notif({ _id: 'n1', title: 'Still here' })]));
+    render(<Inbox />);
+    expect(await screen.findByText(/listConversations failed: permission-denied/)).toBeInTheDocument();
+    expect(screen.getByText('Still here')).toBeInTheDocument();
+  });
+
+  it('an empty-looking inbox with a failing load reads as a failure, not as "no messages"', async () => {
+    listConversations.mockRejectedValue(new Error('deadline-exceeded'));
+    render(<Inbox />);
+    await screen.findByRole('alert');
+    expect(screen.queryByText(/no messages yet/i)).toBeNull();
+    expect(screen.getByText(/Messages unavailable while the load is failing/i)).toBeInTheDocument();
+  });
+
+  it('bulk mark-read from the digest reaches bulkMarkNotificationsRead', async () => {
+    listConversations.mockResolvedValue([]);
+    useCollection.mockReturnValue(notifications([notif({ _id: 'n1' })]));
+    render(<Inbox />);
+    const digest = (await screen.findByText('Notifications')).closest('section') as HTMLElement;
+    await userEvent.click(within(digest).getAllByRole('checkbox')[0] as HTMLElement);
+    await userEvent.click(within(digest).getByRole('button', { name: 'Mark read (1)' }));
+    expect(bulkMarkNotificationsRead).toHaveBeenCalledWith(['n1']);
   });
 });

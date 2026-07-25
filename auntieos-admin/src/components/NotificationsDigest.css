@@ -1,0 +1,70 @@
+/**
+ * Inbox Notifications digest strip. Scoped to this component and imported by
+ * NotificationsDigest.tsx (the Inbox.css / Sessions.css convention). Every
+ * value comes from styles/tokens.css: no literal colours, radii, or px
+ * spacing. Deliberately lighter than the Notifications screen's `.notif-row`
+ * (styles/screens.css): this is a scannable strip, not the full feed, so it
+ * carries no channel list, no status pill, and no per-row read toggle.
+ */
+
+.notif-digest__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.notif-digest__row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-2);
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+.notif-digest__row:last-child {
+  border-bottom: none;
+}
+
+.notif-digest__select {
+  accent-color: var(--color-primary);
+  width: 1rem;
+  height: 1rem;
+  cursor: pointer;
+}
+
+.notif-digest__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.notif-digest__title {
+  font-family: var(--font-hanken);
+  font-size: var(--type-title-md-size);
+  font-weight: var(--type-title-md-weight);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notif-digest__meta {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.notif-digest__time {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+  white-space: nowrap;
+}
+
+.notif-digest__more {
+  margin: var(--space-3) 0 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}

@@ -14,10 +14,15 @@ import {
   localDateIso,
   type ThreadReadState,
 } from '../lib/inboxFormat';
+import { NOTIFICATIONS_QUERY, type NotificationEntry } from '../api/notifications';
+import { useCollection } from '../lib/firestore';
+import { unreadNotificationCount } from '../lib/notificationsFeed';
+import { inboxSection, inboxUnreadTotal } from '../lib/inboxSections';
 import { type Async } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { NotificationsDigest } from '../components/NotificationsDigest';
 import { GhostButton } from '../components/Buttons';
 import { ConversationThread } from './ConversationThread';
 import './Inbox.css';
@@ -53,9 +58,26 @@ interface InboxProps {
 }
 
 /**
- * Admin Inbox: the kinfolk<->auntie message thread list ("The Den · Inbox").
- * Loads once via the one-shot `listConversations` callable (see
- * `api/inbox.ts` for why this is a callable, not a `useCollection` stream),
+ * Admin Inbox ("The Den · Inbox"), STACKED SECTIONS per the archive's
+ * `InboxScreen.kt`: a Notifications digest above the kinfolk<->auntie message
+ * threads. `lib/inboxSections.ts` owns the order and the cross-section unread
+ * total; the header badge is the sum of every section that has actually
+ * resolved, never a fabricated number for one that has not.
+ *
+ * ── Where Channels went ───────────────────────────────────────────────────
+ * The archive had a third section for the Twilio streams (voicemails, calls,
+ * SMS, email). Those streams are Task 6.1 and do not exist here yet, so this
+ * screen ships two sections rather than an empty panel titled "Channels": a
+ * placeholder that never fills is the same dead surface as a "coming soon"
+ * banner, which the plan forbids for our own code. The seam is
+ * `INBOX_SECTIONS` plus `inboxUnreadTotal`'s N-count signature; 6.1 appends
+ * its section and its panel with no change to the badge logic. (Android is
+ * already ahead here: `ui/inbox/InboxScreen.kt` has the full channel enum,
+ * because the Android app has the streams.)
+ *
+ * The message list loads once via the one-shot `listConversations` callable
+ * (see `api/inbox.ts` for why this is a callable, not a `useCollection`
+ * stream),
  * classifies every row's read state (`threadReadState`) and last sender
  * (`threadSender`) through positive enumerations, never negation (the
  * `sessionFormat.ts` / AO-12 convention), and groups the FILTERED rows by
@@ -64,12 +86,16 @@ interface InboxProps {
  * and newest thread first, the activity-feed order Notifications.tsx also
  * uses (the inverse of Sessions.tsx's chronological schedule order).
  *
- * List only: opening a thread to read and reply is a separate, not-yet-built
- * screen (see `InboxProps.onSelectThread`). No compose, no reply box, no
- * thread view ships here.
+ * Opening a row hands off to the sibling `ConversationThread` view, which
+ * reads the thread and sends the reply (unless a caller overrides selection
+ * via `InboxProps.onSelectThread`).
  */
 export function Inbox({ onSelectThread }: InboxProps) {
   const [threads, setThreads] = useState<Async<ConversationSummary[]>>({ status: 'loading' });
+  // The SAME bounded listener the Notifications screen uses (createdAt desc,
+  // capped 200). Subscribed here rather than inside NotificationsDigest so the
+  // header badge can read its unread count without a second copy of the query.
+  const notifications = useCollection<NotificationEntry>(NOTIFICATIONS_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
   // The thread/detail view: a sibling VIEW of this list (the Communicate.tsx /
   // Templates.tsx pattern), not a route. Opening a row sets it; ConversationThread
@@ -113,10 +139,16 @@ export function Inbox({ onSelectThread }: InboxProps) {
 
   useEffect(() => load(), [load]);
 
-  // Only claimed once the load has actually resolved, never a fabricated 0
-  // while loading/erroring (the StatCard / AsyncRegion policy this app
-  // follows throughout; see lib/async.ts).
-  const unreadCount = threads.status === 'ready' ? unreadThreadCount(threads.data) : 0;
+  // Per-section unread counts. `null` means "not resolved", NOT zero: a count
+  // is a claim, and a failed or in-flight read cannot support one (the
+  // StatCard / AsyncRegion policy this app follows throughout, see
+  // lib/async.ts). `inboxUnreadTotal` sums only what is genuinely known.
+  const unreadCount = inboxUnreadTotal([
+    notifications.status === 'ready' ? unreadNotificationCount(notifications.data) : null,
+    threads.status === 'ready' ? unreadThreadCount(threads.data) : null,
+  ]);
+
+  const messagesSection = inboxSection('messages');
 
   // Thread detail takes over the whole screen when a row is opened (and no
   // external onSelectThread overrides selection). Reading a thread clears its
@@ -139,11 +171,17 @@ export function Inbox({ onSelectThread }: InboxProps) {
       <DenScreenHeading
         kicker="The Den · Inbox"
         title="Inbox"
-        subtitle="Two-way message threads with kinfolk, newest first."
-        trailing={unreadCount > 0 ? <span className="inbox__badge">{unreadCount} unread</span> : undefined}
+        subtitle="Business alerts and two-way message threads with kinfolk, newest first."
+        trailing={
+          unreadCount !== null && unreadCount > 0 ? (
+            <span className="inbox__badge">{unreadCount} unread</span>
+          ) : undefined
+        }
       />
 
-      <DenPanel title="Messages" subtitle="Every household thread on the books.">
+      <NotificationsDigest state={notifications} />
+
+      <DenPanel title={messagesSection.title} subtitle={messagesSection.subtitle}>
         <AsyncRegion
           state={threads}
           what="messages"
