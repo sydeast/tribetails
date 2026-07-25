@@ -1,0 +1,22 @@
+{
+  "//": "The specs are TypeScript and Playwright transpiles them WITHOUT type-checking, so nothing would ever tell us a selector helper or a fixture import had rotted. `npm run e2e:tsc` runs this, and `npm run e2e` runs that first. Same strictness as the app's tsconfig; it does not extend it because that one's `include` is src-only and its `types` array pulls in jest-dom, which does not belong in a Playwright file.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["."]
+}

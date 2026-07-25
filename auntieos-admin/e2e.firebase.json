@@ -1,0 +1,18 @@
+{
+  "_comment": "Emulator config for the e2e harness ONLY (see e2e/). Kept separate from firebase.json, which is hosting-only and is what deploys the React admin, and from web/firebase.json, which serves the wasm tree on ports 9099/8085. It sits at the package root rather than inside e2e/ because firebase-tools refuses a rules path outside the config's own directory, and pointing at the existing web/firestore.rules mirror is worth more than tidiness: mytribe/firestore.rules keeps that file byte-identical under a test and a pre-commit hook, so the harness runs against the real isAuntie() gate. A third copy of the rules under e2e/ would drift, and a permissive stand-in would make every authenticated spec prove nothing. THE PORTS ARE DELIBERATELY NOT THE DEFAULTS: an e2e run must never silently attach to a dev emulator somebody left running and then report a green earned against their data.",
+  "firestore": {
+    "rules": "web/firestore.rules"
+  },
+  "emulators": {
+    "auth": {
+      "port": 9399
+    },
+    "firestore": {
+      "port": 8385
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true
+  }
+}

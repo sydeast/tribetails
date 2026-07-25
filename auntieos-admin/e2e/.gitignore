@@ -1,0 +1,5 @@
+# Emulator-only session state, rewritten by auth.setup.ts on every run.
+.auth/
+# Playwright traces, screenshots and the HTML report.
+.artifacts/
+playwright-report/
