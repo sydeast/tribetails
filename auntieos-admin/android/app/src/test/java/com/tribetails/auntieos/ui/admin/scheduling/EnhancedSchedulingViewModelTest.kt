@@ -51,6 +51,8 @@ class EnhancedSchedulingViewModelTest {
         coEvery { auntieRepo.isTestAdminActive() } returns false
         // Unified settings: booking config + timeBlocks now come from BusinessSettings.
         coEvery { auntieRepo.getBusinessSettings() } returns Result.success(BusinessSettings())
+        // Server-stamped calendar-sync receipt; nothing has run in these fixtures.
+        coEvery { auntieRepo.getCalendarSyncRun() } returns Result.success(null)
         coEvery { auntieRepo.saveBusinessSettings(any(), any()) } returns Result.success(Unit)
         coEvery { auntieRepo.logActivity(any()) } returns Result.success(Unit)
         coEvery { bookingRepo.getBookings(any(), any(), any(), any()) } returns Result.success(emptyList())
@@ -163,6 +165,12 @@ class EnhancedSchedulingViewModelTest {
 
     @Test
     fun `importGoogleBusyEvents success sets calendarSyncMessage and clears loading`() = runTest(testDispatcher) {
+        // A SAVED, usable calendar id. The callable resolves the id server-side
+        // from this same field, so the VM refuses to call it without one.
+        coEvery { auntieRepo.getBusinessSettings() } returns
+            Result.success(BusinessSettings(calendarSyncId = "team@group.calendar.google.com"))
+        coEvery { auntieRepo.getCalendarSyncRun() } returns
+            Result.success(CalendarSyncRun("2026-07-25T14:30:00.000Z", true, 2, ""))
         coEvery { bookingRepo.syncGoogleBusyEventsViaServer(any()) } returns Result.success(2)
         // loadBookingsForDateRange re-fires after a successful import
         coEvery { bookingRepo.getBookings(any(), any(), any(), any()) } returns Result.success(emptyList())
@@ -183,6 +191,10 @@ class EnhancedSchedulingViewModelTest {
         val serverMsg =
             "calendar_not_shared: share calendar team-cal with " +
                 "auntieos-admin-calendar-sync@auntieos-ttpc.iam.gserviceaccount.com at \"See only free/busy (hide details)\" so the sync service account can read availability."
+        coEvery { auntieRepo.getBusinessSettings() } returns
+            Result.success(BusinessSettings(calendarSyncId = "team@group.calendar.google.com"))
+        coEvery { auntieRepo.getCalendarSyncRun() } returns
+            Result.success(CalendarSyncRun("2026-07-25T14:30:00.000Z", false, 0, serverMsg))
         coEvery { bookingRepo.syncGoogleBusyEventsViaServer(any()) } returns
             Result.failure(RuntimeException(serverMsg))
 
@@ -198,6 +210,62 @@ class EnhancedSchedulingViewModelTest {
             "error must name the sync service account verbatim",
             state.errorMessage!!.contains("auntieos-admin-calendar-sync@auntieos-ttpc.iam.gserviceaccount.com")
         )
+    }
+
+    @Test
+    fun `importGoogleBusyEvents re-reads the server receipt, including after a failure`() = runTest(testDispatcher) {
+        // The stamp, not the transient banner, is what still says "the sync is
+        // broken" once this screen is left and reopened.
+        coEvery { auntieRepo.getBusinessSettings() } returns
+            Result.success(BusinessSettings(calendarSyncId = "team@group.calendar.google.com"))
+        coEvery { auntieRepo.getCalendarSyncRun() } returns
+            Result.success(CalendarSyncRun("2026-07-25T14:30:00.000Z", false, 0, "calendar_not_shared"))
+        coEvery { bookingRepo.syncGoogleBusyEventsViaServer(any()) } returns
+            Result.failure(RuntimeException("calendar_not_shared"))
+
+        val vm = buildViewModel()
+        vm.importGoogleBusyEvents()
+        advanceUntilIdle()
+
+        val run = vm.state.value.calendarSyncRun
+        assertNotNull("the server receipt must be re-read after a failed run", run)
+        assertFalse("a failed run must not read as a success", run!!.succeeded)
+    }
+
+    @Test
+    fun `importGoogleBusyEvents refuses a saved id that could only import nothing`() = runTest(testDispatcher) {
+        // "team-cal" is not address-shaped. Google answers a typo with notFound
+        // and an empty calendar with an empty list, so sending it would come
+        // back as "Imported 0 busy blocks", which reads as a clear calendar.
+        coEvery { auntieRepo.getBusinessSettings() } returns
+            Result.success(BusinessSettings(calendarSyncId = "team-cal"))
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.importGoogleBusyEvents()
+        advanceUntilIdle()
+
+        val state = vm.state.value
+        assertNotNull("the operator must be told why", state.errorMessage)
+        assertTrue(state.errorMessage!!.contains("import nothing"))
+        assertNull("no fabricated success line", state.calendarSyncMessage)
+        coVerify(exactly = 0) { bookingRepo.syncGoogleBusyEventsViaServer(any()) }
+    }
+
+    @Test
+    fun `saveCalendarSyncId refuses a mistyped id before it reaches the doc`() = runTest(testDispatcher) {
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.saveCalendarSyncId("primary")
+        advanceUntilIdle()
+
+        val state = vm.state.value
+        assertTrue(
+            "primary is the sync account's own empty calendar and must be refused",
+            state.errorMessage!!.contains("always empty")
+        )
+        assertFalse("nothing was saved", state.calendarSyncIdSaved)
+        coVerify(exactly = 0) { auntieRepo.saveBusinessSettings(any(), any()) }
     }
 
     // ─── 16.5 incoming series approve/cancel ──────────────────────────────────

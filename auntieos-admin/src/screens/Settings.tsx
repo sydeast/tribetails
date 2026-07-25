@@ -10,12 +10,12 @@ import {
   TextFieldsSection,
   BookingBehaviorSection,
   MyTribePortalSection,
-  CalendarSyncSection,
   BUSINESS_PROFILE_FIELDS,
   WEATHER_AREA_FIELDS,
   PAYMENT_FIELDS,
   BRANDING_FIELDS,
 } from './settings/sections';
+import { CalendarSyncSection } from './settings/CalendarSyncSection';
 import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
 import { TimeOffEditor } from './settings/TimeOffEditor';
 import { KinCareRatesEditor } from './settings/KinCareRatesEditor';
@@ -34,10 +34,15 @@ import './Settings.css';
  * every section, and the right column renders only the selected one, editable
  * in place. There is no separate view/edit mode any more.
  *
- * Two sections stay view-only, and say so on their own panel rather than behind
- * a global banner: Google Calendar sync (its connect/sync needs an external
- * Google sign-in not wired into this admin) and the MyTribe Home layout (no
- * drag-reorder editor in this repo yet). Everything else saves for real.
+ * ONE section stays view-only, and says so on its own panel rather than behind a
+ * global banner: the MyTribe Home layout (no drag-reorder editor in this repo
+ * yet). Everything else saves for real.
+ *
+ * Google Calendar sync used to be the second one, on the grounds that syncing
+ * needed a Google sign-in this admin lacks. It does not: the free/busy import
+ * authenticates as a service account inside the Cloud Function, and its callable
+ * was deployed the whole time. It is now a full editor with a Run Sync action
+ * and a last-run receipt (`settings/CalendarSyncSection.tsx`).
  *
  * Loads `business_settings/business_settings` once via the one-shot
  * `getBusinessSettings` (a direct Firestore `getDoc`, not a callable — see
@@ -257,7 +262,7 @@ function renderDataSection(
     case 'mytribe':
       return <MyTribePortalSection data={data} onSave={persist} />;
     case 'calendar':
-      return <CalendarSyncSection data={data} />;
+      return <CalendarSyncSection data={data} onSave={persist} />;
     default:
       return null;
   }

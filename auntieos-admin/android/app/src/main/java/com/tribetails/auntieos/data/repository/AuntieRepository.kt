@@ -17,6 +17,8 @@ import com.tribetails.auntieos.domain.TestMode
 import com.tribetails.auntieos.domain.allowsKinfolkDoc
 import com.tribetails.auntieos.domain.kinfolkScopeFilter
 import com.tribetails.auntieos.domain.scopedKinfolkId
+import com.tribetails.auntieos.ui.admin.scheduling.CalendarSyncRun
+import com.tribetails.auntieos.ui.admin.scheduling.calendarSyncRunFrom
 import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.ProducerScope
@@ -1057,6 +1059,31 @@ class AuntieRepository(
             BusinessSettings()
         }
     }.onFailure { AuntieLog.e("Failed to get business settings", it) }
+
+    /**
+     * The Google Calendar sync's last-run receipt, read straight off the same
+     * business_settings doc. Null when no sync has ever been stamped.
+     *
+     * Read from the RAW snapshot rather than through [BusinessSettings], on
+     * purpose: [saveBusinessSettings] writes that model back as a whole object,
+     * so a receipt field living on it could be rewritten from stale in-memory
+     * state, silently replacing a newer stamp. Only
+     * `syncGoogleCalendarBusyEvents` writes these four fields. See
+     * `mytribe/functions/CALLABLE_CONTRACT.md`.
+     */
+    suspend fun getCalendarSyncRun(): Result<CalendarSyncRun?> = runCatching {
+        ensureAuthenticated()
+        val snapshot = firestore.collection("business_settings")
+            .document("business_settings")
+            .get()
+            .await()
+        calendarSyncRunFrom(
+            ranAt = snapshot.getString("calendarSyncLastRunAt"),
+            status = snapshot.getString("calendarSyncLastStatus"),
+            imported = snapshot.getLong("calendarSyncLastImported")?.toInt(),
+            error = snapshot.getString("calendarSyncLastError"),
+        )
+    }.onFailure { AuntieLog.e("Failed to read calendar sync receipt", it) }
 
     suspend fun saveBusinessSettings(
         settings: BusinessSettings,

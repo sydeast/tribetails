@@ -46,6 +46,18 @@ import {
   NOTE_CUTOFF_CODE,
   NOTE_CUTOFF_MESSAGE,
 } from '../src/lib/bookingNoteCutoff';
+// Google Calendar free/busy sync (Task 7.1, 2026-07-25). The React admin
+// (src/api/calendarSync.ts) and android (BookingRepository) both call it, and
+// both READ the four receipt fields back off business_settings, so the field
+// NAMES are as much a contract as the request shape. The calendar-id rule is
+// mirrored in both clients too; its detail code is frozen at the foot of this
+// file.
+import {
+  Args as SyncGoogleCalendarBusyEventsArgs,
+  calendarSyncStamp,
+  CALENDAR_SYNC_SA_EMAIL,
+} from '../src/admin/syncGoogleCalendarBusyEvents';
+import { CALENDAR_ID_INVALID_CODE, calendarIdProblem } from '../src/lib/calendarSyncId';
 
 /**
  * AO-8 drift guard (design doc `docs/2026-07-18-AO5-AO8-shared-contract-design.md`
@@ -135,6 +147,15 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // 17.3 operator dashboard layout. One key, so the top-level freeze is thin on
   // its own; the token-VALUE freeze below is the part that actually matters.
   saveDashboardLayout: { schema: SaveDashboardLayoutArgs, keys: ['tokens'] },
+
+  // Task 7.1 calendar sync. One optional key, and it must STAY one: the calendar
+  // id is resolved server-side from business_settings, never sent by a client,
+  // so adding a `calendarId` here would let any admin client sync a calendar the
+  // operator never saved. The receipt + error freezes below carry the rest.
+  syncGoogleCalendarBusyEvents: {
+    schema: SyncGoogleCalendarBusyEventsArgs,
+    keys: ['lookAheadDays'],
+  },
 };
 
 describe('AO-8 callable contract drift guard', () => {
@@ -233,6 +254,58 @@ describe('AO-8 callable contract drift guard (booking note cutoff error surface)
     );
   });
 });
+/**
+ * STORED-FIELD + ERROR-SURFACE freeze for the calendar sync.
+ *
+ * `syncGoogleCalendarBusyEvents` has a one-key request, so the shape freeze
+ * above barely says anything. What two clients actually mirror is everything
+ * around it: the four receipt fields they READ off `business_settings` to render
+ * "last sync" without a callable of their own, the detail code they branch on to
+ * tell a bad calendar id apart from a broken sync, and the service account
+ * address they PRINT in their own setup copy. Rename any of those on the server
+ * and the panels go quietly blank or start naming an account that cannot help.
+ */
+describe('AO-8 callable contract drift guard (calendar sync stored fields + errors)', () => {
+  it('the receipt field names are unchanged (both clients read these off the settings doc)', () => {
+    expect(Object.keys(calendarSyncStamp({ status: 'ok', imported: 1 }, 'now')).sort()).toEqual([
+      'calendarSyncLastError',
+      'calendarSyncLastImported',
+      'calendarSyncLastRunAt',
+      'calendarSyncLastStatus',
+    ]);
+  });
+
+  it('the status values are the two both clients branch on', () => {
+    expect(calendarSyncStamp({ status: 'ok', imported: 1 }, 'now').calendarSyncLastStatus).toBe('ok');
+    expect(calendarSyncStamp({ status: 'error', error: 'x' }, 'now').calendarSyncLastStatus).toBe(
+      'error',
+    );
+  });
+
+  it('the bad-calendar-id detail code is unchanged', () => {
+    expect(CALENDAR_ID_INVALID_CODE).toBe('calendar_id_invalid');
+  });
+
+  it('the service account the operator must share with is unchanged', () => {
+    // Printed verbatim in the React panel's setup copy and android's field hint.
+    expect(CALENDAR_SYNC_SA_EMAIL).toBe(
+      'auntieos-admin-calendar-sync@auntieos-ttpc.iam.gserviceaccount.com',
+    );
+  });
+
+  it('the id rule agrees with the two client mirrors on the cases that matter', () => {
+    // These five are the exact cases `auntieos-admin/src/lib/calendarSyncId.test.ts`
+    // and `CalendarSyncIdTest.kt` assert. A server rule that drifts looser than
+    // the clients blocks a legal id; drifting tighter lets one through to a
+    // "0 imported" that reads as an empty calendar.
+    expect(calendarIdProblem('abc@group.calendar.google.com')).toBeNull();
+    expect(calendarIdProblem('auntie@tribetails.com')).toBeNull();
+    expect(calendarIdProblem('primary')).not.toBeNull();
+    expect(calendarIdProblem('team-cal')).not.toBeNull();
+    expect(calendarIdProblem('')).not.toBeNull();
+  });
+});
+
 /**
  * VALUE freeze, not a key freeze.
  *

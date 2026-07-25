@@ -155,6 +155,22 @@ export interface BusinessSettings {
   draftRetentionDays: number;
   draftRetentionOptions: number[];
   calendarSyncId: string;
+  /**
+   * The last-run receipt the `syncGoogleCalendarBusyEvents` callable merges onto
+   * this doc after EVERY run, success or failure (see `CALLABLE_CONTRACT.md`).
+   * Server-written only: nothing in this app writes these, because a client
+   * cannot know whether a sync happened.
+   *
+   * They are read rather than derived because the callable's return value dies
+   * with the page. Without them the panel cannot tell a sync that worked from
+   * one that never ran, which is a Run Sync button the operator presses twice.
+   * A doc predating the feature reads blank / 'ok' / 0, which
+   * `calendarSyncRunLabel` renders as "never run", not as a zero-import success.
+   */
+  calendarSyncLastRunAt: string;
+  calendarSyncLastStatus: string;
+  calendarSyncLastImported: number;
+  calendarSyncLastError: string;
   autoConfirmRepeatKinfolk: boolean;
   snapRescheduleTo15Min: boolean;
   logoUrl: string;
@@ -248,6 +264,10 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   draftRetentionDays: 30,
   draftRetentionOptions: [30, 60, 90],
   calendarSyncId: '',
+  calendarSyncLastRunAt: '',
+  calendarSyncLastStatus: '',
+  calendarSyncLastImported: 0,
+  calendarSyncLastError: '',
   autoConfirmRepeatKinfolk: false,
   snapRescheduleTo15Min: false,
   logoUrl: '',
@@ -412,6 +432,19 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
     draftRetentionDays: (r.draftRetentionDays as number) ?? d.draftRetentionDays,
     draftRetentionOptions: pickList<number>(r.draftRetentionOptions, d.draftRetentionOptions),
     calendarSyncId: pickString(r.calendarSyncId, d.calendarSyncId),
+    calendarSyncLastRunAt: pickString(r.calendarSyncLastRunAt, d.calendarSyncLastRunAt),
+    calendarSyncLastStatus: pickString(r.calendarSyncLastStatus, d.calendarSyncLastStatus),
+    // Checked inline rather than through the `as number` cast the older numeric
+    // fields use, and without adding a general `pickNumber` (the note above
+    // this block explains why numbers are deliberately absent from the helper
+    // set). This one value is interpolated straight into a sentence the
+    // operator reads as fact, so a non-number must land on 0, which the panel
+    // only ever shows next to a real `calendarSyncLastRunAt`.
+    calendarSyncLastImported:
+      typeof r.calendarSyncLastImported === 'number' && Number.isFinite(r.calendarSyncLastImported)
+        ? r.calendarSyncLastImported
+        : d.calendarSyncLastImported,
+    calendarSyncLastError: pickString(r.calendarSyncLastError, d.calendarSyncLastError),
     autoConfirmRepeatKinfolk: (r.autoConfirmRepeatKinfolk as boolean) ?? d.autoConfirmRepeatKinfolk,
     snapRescheduleTo15Min: (r.snapRescheduleTo15Min as boolean) ?? d.snapRescheduleTo15Min,
     logoUrl: pickString(r.logoUrl, d.logoUrl),

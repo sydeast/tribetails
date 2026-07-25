@@ -28,7 +28,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tribetails.auntieos.data.model.BookingStatus
 import com.tribetails.auntieos.data.model.BookingTimeSlot
 import com.tribetails.auntieos.data.model.TimeSlotSource
+import com.tribetails.auntieos.ui.admin.scheduling.CALENDAR_ID_EXAMPLE
+import com.tribetails.auntieos.ui.admin.scheduling.CALENDAR_SYNC_SA_EMAIL
+import com.tribetails.auntieos.ui.admin.scheduling.CalendarSyncRun
 import com.tribetails.auntieos.ui.admin.scheduling.EnhancedSchedulingViewModel
+import com.tribetails.auntieos.ui.admin.scheduling.calendarIdProblem
+import com.tribetails.auntieos.ui.admin.scheduling.calendarSyncRunLabel
 import com.tribetails.auntieos.ui.admin.services.ServiceManagementViewModel
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
@@ -76,6 +81,7 @@ fun SchedulingOptionsScreen(
                         successMessage = schedulingState.calendarSyncMessage,
                         calendarSyncId = schedulingState.businessSettings.calendarSyncId,
                         calendarSyncIdSaved = schedulingState.calendarSyncIdSaved,
+                        lastRun = schedulingState.calendarSyncRun,
                         onSaveCalendarSyncId = { schedulingViewModel.saveCalendarSyncId(it) },
                         onRunSync = { schedulingViewModel.importGoogleBusyEvents() },
                         onDismissError = { schedulingViewModel.clearCalendarSyncFeedback() },
@@ -207,9 +213,17 @@ private fun BlockedEntriesList(entries: List<BookingTimeSlot>, onUnblock: (Strin
 
 /**
  * Slice 8: the Google Calendar Sync card body. Extracted as a stateless,
- * parameter-driven composable so its three states (dark/not-enabled,
- * idle Run Sync, syncing spinner, error banner with the server message) are
- * unit-testable under Robolectric without standing up the full screen + VMs.
+ * parameter-driven composable so its states (dark/not-enabled, idle Run Sync,
+ * syncing spinner, error banner with the server message, the last-run receipt)
+ * are unit-testable under Robolectric without standing up the full screen + VMs.
+ *
+ * TWO STEPS, NOT ONE (2026-07-25, parity with the React admin's
+ * `CalendarSyncSection.tsx`). The callable takes no calendar id: it resolves the
+ * SAVED `business_settings.calendarSyncId` server-side, so Run Sync acts on what
+ * was saved, not on what is in the text box. The button therefore stays disabled
+ * while the field is edited, and while the saved id cannot work at all, and says
+ * which it is. A Run Sync that quietly used the old id after an edit is exactly
+ * the "did that even work?" confusion this card exists to end.
  */
 @Composable
 internal fun GoogleCalendarSyncCard(
@@ -219,10 +233,18 @@ internal fun GoogleCalendarSyncCard(
     successMessage: String?,
     calendarSyncId: String,
     calendarSyncIdSaved: Boolean,
+    lastRun: CalendarSyncRun?,
     onSaveCalendarSyncId: (String) -> Unit,
     onRunSync: () -> Unit,
     onDismissError: () -> Unit,
 ) {
+    // Hoisted out of CalendarSyncIdField so the Run Sync gate below can see an
+    // unsaved edit. Re-seeds when the persisted value changes.
+    var draft by remember(calendarSyncId) { mutableStateOf(calendarSyncId) }
+    val draftProblem = if (draft.isBlank()) null else calendarIdProblem(draft)
+    val savedProblem = calendarIdProblem(calendarSyncId)
+    val dirty = draft.trim() != calendarSyncId.trim()
+
     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(Lucide.RefreshCw, contentDescription = null, tint = AuntieTheme.colors.kinfolkOrange)
@@ -235,11 +257,13 @@ internal fun GoogleCalendarSyncCard(
         )
 
         // Front-facing Calendar ID setup. Admin enters the shared calendar id here
-        // (saved to business_settings.calendarSyncId); the server reads it first and
-        // only falls back to the GOOGLE_CALENDAR_ID secret when empty. Auth stays a
-        // service account the admin shares the calendar with (no OAuth entry).
+        // (saved to business_settings.calendarSyncId), which is the ONLY source the
+        // server reads. Auth stays a service account the admin shares the calendar
+        // with (no OAuth entry).
         CalendarSyncIdField(
-            calendarSyncId = calendarSyncId,
+            draft = draft,
+            onDraftChange = { draft = it },
+            draftProblem = draftProblem,
             calendarSyncIdSaved = calendarSyncIdSaved,
             isSaving = isSyncing,
             onSave = onSaveCalendarSyncId,
@@ -275,6 +299,15 @@ internal fun GoogleCalendarSyncCard(
                 Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary)
             }
 
+            // What the LAST run actually did, from the server's own stamp. It
+            // outlives this screen, so a sync that failed days ago still says so
+            // instead of looking like a sync that was never attempted.
+            Text(
+                calendarSyncRunLabel(lastRun) ?: "This calendar has never been synced.",
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textDim
+            )
+
             if (isSyncing) {
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     AuntieSpinner(
@@ -285,6 +318,22 @@ internal fun GoogleCalendarSyncCard(
                     Spacer(Modifier.width(8.dp))
                     Text("Syncing...", color = AuntieTheme.colors.kinfolkOrange, style = AuntieTheme.typography.bodySmall)
                 }
+            } else if (dirty) {
+                Text(
+                    "Save the calendar ID first. The sync runs on the server and reads the saved value, not what is in the box.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim
+                )
+            } else if (savedProblem != null) {
+                Text(
+                    // The full explanation only when the field above is not
+                    // already showing it. Printing the same three lines twice
+                    // makes the shorter one look like a second, different fault.
+                    if (draftProblem == null) "Nothing to sync yet. $savedProblem"
+                    else "Nothing to sync yet. Fix the calendar ID above.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim
+                )
             } else {
                 GhostButton(label = "Run Sync", onClick = onRunSync)
             }
@@ -295,37 +344,49 @@ internal fun GoogleCalendarSyncCard(
 /**
  * Front-facing Google Calendar ID setup field. The admin types the shared
  * calendar id here and Saves; it persists to business_settings.calendarSyncId
- * (round-trips via AuntieRepository) and the server-side sync reads it first.
- * The hint names the exact service account the admin must share the calendar
- * with. Auth stays a service account, no OAuth/token entry. Stateless/testable:
- * the persisted value seeds the local edit buffer.
+ * (round-trips via AuntieRepository) and the server-side sync reads that saved
+ * value. The hint names the exact service account the admin must share the
+ * calendar with. Auth stays a service account, no OAuth/token entry.
+ *
+ * Fully stateless as of 2026-07-25: the draft lives in the parent card, which
+ * needs it to gate Run Sync on an unsaved edit. The shape check runs before
+ * Save, so an id that could only ever import nothing is refused here rather than
+ * saved and then reported by the server as an empty calendar.
  */
 @Composable
 internal fun CalendarSyncIdField(
-    calendarSyncId: String,
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    draftProblem: String?,
     calendarSyncIdSaved: Boolean,
     isSaving: Boolean,
     onSave: (String) -> Unit,
 ) {
-    var draft by remember(calendarSyncId) { mutableStateOf(calendarSyncId) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         AuntieField(
             value = draft,
-            onValueChange = { draft = it },
+            onValueChange = onDraftChange,
             label = "Google Calendar ID",
-            placeholder = "name@group.calendar.google.com",
+            placeholder = CALENDAR_ID_EXAMPLE,
             enabled = !isSaving,
             modifier = Modifier.fillMaxWidth()
         )
         Text(
-            "Share this calendar with auntieos-admin-calendar-sync@auntieos-ttpc.iam.gserviceaccount.com at See only free/busy (hide details), then save the calendar id here.",
+            "Share this calendar with $CALENDAR_SYNC_SA_EMAIL at See only free/busy (hide details), then save the calendar id here.",
             style = AuntieTheme.typography.bodySmall,
             color = AuntieTheme.colors.textDim
         )
+        if (draftProblem != null) {
+            Text(
+                draftProblem,
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.error
+            )
+        }
         PrimaryButton(
             label = "Save Calendar ID",
             onClick = { onSave(draft) },
-            enabled = !isSaving,
+            enabled = !isSaving && draftProblem == null,
             modifier = Modifier.fillMaxWidth()
         )
         if (calendarSyncIdSaved) {

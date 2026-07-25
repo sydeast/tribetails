@@ -52,6 +52,11 @@ data class SchedulingState(
     // success [calendarSyncMessage] reads "Imported N busy blocks"; on failure
     // [errorMessage] carries the raw server message (which names the sync SA).
     val calendarSyncMessage: String? = null,
+    // The last-run receipt the callable stamps on business_settings, re-read
+    // after every sync attempt and on load. Server-written, so this survives the
+    // screen: without it a sync that failed yesterday and one that never ran
+    // look identical, and the operator finds out by pressing the button again.
+    val calendarSyncRun: CalendarSyncRun? = null,
     // Front-facing Google Calendar id setup. Round-trips to business_settings via
     // AuntieRepository. [businessSettings] is the persisted source of truth;
     // [calendarSyncIdSaved] is a transient confirmation after a successful save.
@@ -246,6 +251,10 @@ class EnhancedSchedulingViewModel(
                 // live on business_settings, read via AuntieRepository.
                 val businessSettingsResult = auntieRepository.getBusinessSettings()
                 val businessSettings = businessSettingsResult.getOrNull() ?: BusinessSettings()
+                // Server-written calendar-sync receipt, read separately from the
+                // settings model so a settings save can never write a stale one
+                // back (see AuntieRepository.getCalendarSyncRun).
+                val calendarSyncRun = auntieRepository.getCalendarSyncRun().getOrNull()
 
                 _state.value = _state.value.copy(
                     baseServices = servicesResult.getOrNull() ?: emptyList(),
@@ -253,6 +262,7 @@ class EnhancedSchedulingViewModel(
                     allKinfolk = kinfolkResult.getOrDefault(emptyList()),
                     businessHours = businessHoursResult.getOrNull() ?: emptyList(),
                     businessSettings = businessSettings,
+                    calendarSyncRun = calendarSyncRun,
                     bookingMode = businessSettings.defaultBookingModeEnum
                 )
 
@@ -870,19 +880,39 @@ class EnhancedSchedulingViewModel(
      */
     fun importGoogleBusyEvents(lookAheadDays: Int = 30) {
         viewModelScope.launch {
+            // The callable resolves the calendar id server-side from the SAVED
+            // business_settings value, so this checks the saved one, not a draft
+            // still in the field. Refusing here means a typo can never come back
+            // as "Imported 0 busy blocks", which reads as an empty calendar.
+            // The callable enforces the same rule; this only saves a round trip.
+            val problem = calendarIdProblem(_state.value.businessSettings.calendarSyncId)
+            if (problem != null) {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    calendarSyncMessage = null,
+                    errorMessage = problem
+                )
+                return@launch
+            }
             _state.value = _state.value.copy(isLoading = true, errorMessage = null, calendarSyncMessage = null)
             val result = bookingRepository.syncGoogleBusyEventsViaServer(lookAheadDays)
+            // Re-read the receipt either way: the server stamps a FAILED run too,
+            // and that stamp is what the card shows after the transient banner is
+            // dismissed or the screen is left and reopened.
+            val run = auntieRepository.getCalendarSyncRun().getOrNull()
             if (result.isSuccess) {
                 val importedCount = result.getOrNull() ?: 0
                 loadBookingsForDateRange()
                 _state.value = _state.value.copy(
                     isLoading = false,
+                    calendarSyncRun = run,
                     calendarSyncMessage = "Imported $importedCount busy blocks."
                 )
                 Log.d("EnhancedSchedulingViewModel", "Server imported $importedCount busy events")
             } else {
                 _state.value = _state.value.copy(
                     isLoading = false,
+                    calendarSyncRun = run,
                     errorMessage = result.exceptionOrNull()?.message
                         ?: "Failed to import Google busy events."
                 )
@@ -904,6 +934,19 @@ class EnhancedSchedulingViewModel(
      */
     fun saveCalendarSyncId(calendarSyncId: String) {
         viewModelScope.launch {
+            // Refuse a shape that cannot work before it reaches the doc. Saving
+            // it would leave the sync pointed at nothing and reporting success
+            // with zero imports, which is indistinguishable from a clear
+            // calendar. Mirrors the callable's own rule (CalendarSyncId.kt).
+            val problem = calendarIdProblem(calendarSyncId)
+            if (problem != null) {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    calendarSyncIdSaved = false,
+                    errorMessage = problem
+                )
+                return@launch
+            }
             _state.value = _state.value.copy(isLoading = true, errorMessage = null, calendarSyncIdSaved = false)
             val updated = _state.value.businessSettings.copy(calendarSyncId = calendarSyncId.trim())
             val result = auntieRepository.saveBusinessSettings(updated)

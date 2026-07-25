@@ -30,12 +30,14 @@ vi.mock('googleapis', () => ({
 import {
   syncGoogleCalendarBusyEventsHandler,
   busyIntervalToSlot,
+  calendarSyncStamp,
   clampLookAheadDays,
   pickCalendarIdFromDocs,
   calendarFreebusyErrorMessage,
   CALENDAR_SYNC_SA_EMAIL,
   SettingsDocLike,
 } from '../src/admin/syncGoogleCalendarBusyEvents';
+import { calendarIdProblem, CALENDAR_ID_INVALID_CODE } from '../src/lib/calendarSyncId';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 
 function req(data: unknown = {}, uid: string | undefined = 'admin1'): CallableRequest<unknown> {
@@ -130,11 +132,12 @@ function settingsDoc(id: string, calendarSyncId?: unknown): SettingsDocLike {
 }
 
 describe('pickCalendarIdFromDocs', () => {
-  it('picks calendarSyncId (trimmed) from a settings doc when present', () => {
+  it('picks calendarSyncId (trimmed) from a settings doc when present, with its doc id', () => {
     const docs = [settingsDoc('business_settings', '  ui-cal@group.calendar.google.com  ')];
-    expect(pickCalendarIdFromDocs(docs)).toBe(
-      'ui-cal@group.calendar.google.com',
-    );
+    expect(pickCalendarIdFromDocs(docs)).toEqual({
+      docId: 'business_settings',
+      calendarId: 'ui-cal@group.calendar.google.com',
+    });
   });
 
   it('returns undefined when no doc carries a value', () => {
@@ -153,12 +156,68 @@ describe('pickCalendarIdFromDocs', () => {
       settingsDoc('admin_settings', '   '),
       settingsDoc('business_settings', 'real-cal'),
     ];
-    expect(pickCalendarIdFromDocs(docs)).toBe('real-cal');
+    expect(pickCalendarIdFromDocs(docs)).toEqual({
+      docId: 'business_settings',
+      calendarId: 'real-cal',
+    });
   });
 
   it('ignores a non-string calendarSyncId', () => {
     const docs = [settingsDoc('business_settings', 12345)];
     expect(pickCalendarIdFromDocs(docs)).toBeUndefined();
+  });
+});
+
+// ── Calendar id shape (pure unit) ────────────────────────────────────────────
+
+describe('calendarIdProblem', () => {
+  it('accepts the two shapes Google actually issues', () => {
+    expect(calendarIdProblem('abc123@group.calendar.google.com')).toBeNull();
+    expect(calendarIdProblem('  auntie@tribetails.com  ')).toBeNull();
+  });
+
+  it('refuses "primary", which is the SA\'s own permanently empty calendar', () => {
+    const msg = calendarIdProblem('primary');
+    expect(msg).toContain('always empty');
+    // Case is not a way around it.
+    expect(calendarIdProblem('PRIMARY')).not.toBeNull();
+  });
+
+  it('refuses anything not address-shaped, naming what a real one looks like', () => {
+    for (const bad of ['team calendar', 'team-cal@group', 'group.calendar.google.com', 'a@b']) {
+      const msg = calendarIdProblem(bad);
+      expect(msg, `${bad} must be refused`).not.toBeNull();
+      expect(msg).toContain('name@group.calendar.google.com');
+    }
+  });
+
+  it('says a typo would look like an empty calendar, which is the whole point', () => {
+    expect(calendarIdProblem('team-cal')).toContain('import nothing');
+  });
+
+  it('refuses blank without pretending it is a typo', () => {
+    expect(calendarIdProblem('   ')).toContain('Enter the shared');
+  });
+});
+
+describe('calendarSyncStamp', () => {
+  it('records an ok run with its count and no error text', () => {
+    expect(calendarSyncStamp({ status: 'ok', imported: 4 }, '2026-07-25T10:00:00.000Z')).toEqual({
+      calendarSyncLastRunAt: '2026-07-25T10:00:00.000Z',
+      calendarSyncLastStatus: 'ok',
+      calendarSyncLastImported: 4,
+      calendarSyncLastError: '',
+    });
+  });
+  it('records a failed run with its cause and a zero count, never the last good count', () => {
+    expect(
+      calendarSyncStamp({ status: 'error', error: 'calendar_not_shared: ...' }, '2026-07-25T10:00:00.000Z'),
+    ).toEqual({
+      calendarSyncLastRunAt: '2026-07-25T10:00:00.000Z',
+      calendarSyncLastStatus: 'error',
+      calendarSyncLastImported: 0,
+      calendarSyncLastError: 'calendar_not_shared: ...',
+    });
   });
 });
 
@@ -188,7 +247,8 @@ describe('syncGoogleCalendarBusyEvents handler', () => {
     });
 
     const res = await syncGoogleCalendarBusyEventsHandler(req({ lookAheadDays: 14 }));
-    expect(res).toEqual({ imported: 2, scanned: 2 });
+    expect(res).toMatchObject({ imported: 2, scanned: 2 });
+    expect(Number.isNaN(Date.parse(res.ranAt))).toBe(false);
 
     const slotWrites = ctx.writes.filter((w) => w.path.startsWith('booking_time_slots/'));
     expect(slotWrites).toHaveLength(2);
@@ -216,7 +276,7 @@ describe('syncGoogleCalendarBusyEvents handler', () => {
     });
 
     const res = await syncGoogleCalendarBusyEventsHandler(req());
-    expect(res).toEqual({ imported: 0, scanned: 0 });
+    expect(res).toMatchObject({ imported: 0, scanned: 0 });
     expect(ctx.writes.filter((w) => w.path.startsWith('booking_time_slots/'))).toHaveLength(0);
   });
 
@@ -270,7 +330,7 @@ describe('syncGoogleCalendarBusyEvents handler', () => {
     });
 
     const res = await syncGoogleCalendarBusyEventsHandler(req());
-    expect(res).toEqual({ imported: 1, scanned: 1 });
+    expect(res).toMatchObject({ imported: 1, scanned: 1 });
     const queryArg = mocks.freebusyQuery.mock.calls[0][0];
     expect(queryArg.requestBody.items).toEqual([
       { id: 'ui-cal@group.calendar.google.com' },
@@ -354,6 +414,96 @@ describe('syncGoogleCalendarBusyEvents handler', () => {
     expect(errLog).toBeTruthy();
     expect(errLog.extra.calendarId).toBe('team-cal@group.calendar.google.com');
     expect(errLog.extra.reasons).toEqual(['notFound']);
+  });
+
+  it('RECEIPT: a successful run stamps when/ok/count onto the settings doc it read the id from', async () => {
+    const ctx = buildDbMock({
+      queryDocs: {
+        business_settings: [
+          { id: 'business_settings', data: { calendarSyncId: 'team-cal@group.calendar.google.com' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.freebusyQuery.mockResolvedValue({
+      data: {
+        calendars: {
+          'team-cal@group.calendar.google.com': {
+            busy: [{ start: '2026-06-10T14:00:00.000Z', end: '2026-06-10T15:00:00.000Z' }],
+          },
+        },
+      },
+    });
+
+    const res = await syncGoogleCalendarBusyEventsHandler(req());
+    const stamped = ctx.writes.find((w) => w.path === 'business_settings/business_settings');
+    expect(stamped).toBeTruthy();
+    expect(stamped!.merge).toBe(true);
+    expect(stamped!.data.calendarSyncLastStatus).toBe('ok');
+    expect(stamped!.data.calendarSyncLastImported).toBe(1);
+    expect(stamped!.data.calendarSyncLastError).toBe('');
+    // The response carries the same timestamp, so a client renders the receipt
+    // without a second read.
+    expect(stamped!.data.calendarSyncLastRunAt).toBe(res.ranAt);
+  });
+
+  it('RECEIPT: a FAILED run is stamped with its cause, so the panel still says so after a reload', async () => {
+    const ctx = buildDbMock({
+      queryDocs: {
+        business_settings: [
+          { id: 'business_settings', data: { calendarSyncId: 'team-cal@group.calendar.google.com' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.freebusyQuery.mockRejectedValue({ code: 403, message: 'forbidden' });
+
+    await expect(syncGoogleCalendarBusyEventsHandler(req())).rejects.toBeInstanceOf(HttpsError);
+    const stamped = ctx.writes.find((w) => w.path === 'business_settings/business_settings');
+    expect(stamped).toBeTruthy();
+    expect(stamped!.data.calendarSyncLastStatus).toBe('error');
+    expect(stamped!.data.calendarSyncLastImported).toBe(0);
+    expect(stamped!.data.calendarSyncLastError).toContain(CALENDAR_SYNC_SA_EMAIL);
+  });
+
+  it('BAD ID: a mistyped calendar id is refused BEFORE the Google call, not reported as an empty calendar', async () => {
+    const ctx = buildDbMock({
+      queryDocs: {
+        business_settings: [{ id: 'business_settings', data: { calendarSyncId: 'team-cal' } }],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    let thrown: unknown;
+    try {
+      await syncGoogleCalendarBusyEventsHandler(req());
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(HttpsError);
+    expect((thrown as HttpsError).code).toBe('failed-precondition');
+    expect((thrown as HttpsError).details).toEqual({ code: CALENDAR_ID_INVALID_CODE });
+    // The whole point: Google was never asked, so there is no empty answer to
+    // mistake for a clear calendar, and no busy slot was written.
+    expect(mocks.freebusyQuery).not.toHaveBeenCalled();
+    expect(ctx.writes.filter((w) => w.path.startsWith('booking_time_slots/'))).toHaveLength(0);
+    const stamped = ctx.writes.find((w) => w.path === 'business_settings/business_settings');
+    expect(stamped!.data.calendarSyncLastStatus).toBe('error');
+  });
+
+  it('BAD ID: "primary" is refused too, since it would sync forever and import nothing', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        queryDocs: {
+          business_settings: [{ id: 'business_settings', data: { calendarSyncId: 'primary' } }],
+        },
+      }).db,
+    );
+    await expect(syncGoogleCalendarBusyEventsHandler(req())).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: CALENDAR_ID_INVALID_CODE },
+    });
+    expect(mocks.freebusyQuery).not.toHaveBeenCalled();
   });
 
   it('ERROR: other googleapis failure surfaces unavailable', async () => {
