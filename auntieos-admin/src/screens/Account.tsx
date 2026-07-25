@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useRouteContext } from '@tanstack/react-router';
+import { useNavigate, useRouteContext } from '@tanstack/react-router';
 import { useAuth } from '../lib/auth';
 import { getUserProfile, type UserProfile } from '../api/account';
 import { type Async } from '../lib/async';
@@ -9,6 +9,7 @@ import { Banner } from '../components/Banner';
 import { Avatar } from '../components/Avatar';
 import { PrimaryButton } from '../components/Buttons';
 import { EditProfileDialog } from '../components/EditProfileDialog';
+import { SecurityPanel } from '../components/SecurityPanel';
 import {
   profileDisplayName,
   profileFullName,
@@ -22,20 +23,32 @@ import './Account.css';
 
 interface AccountProps {
   /**
-   * Placeholder: My Notifications is a separate screen. Omitting this renders
-   * the "Open my notification settings" control as a STATIC span (no button
-   * role), via ControlShell, rather than a live no-op button (the dead-control
-   * anti-pattern). Wiring the real nav later touches only the router.
+   * My Notifications is a separate screen, so the nav lives with the caller.
+   * [AccountRouteView] below is the one the router mounts and it always passes
+   * this. Omitting it (a bare `<Account />`, which only tests do now) still
+   * renders the "Open my notification settings" control as a STATIC span, no
+   * button role, via ControlShell, rather than a live no-op button.
    */
   onOpenNotifications?: () => void;
 }
 
 /**
- * Account (contextual: reachable by URL, never pinned in the rail). A READ-ONLY
- * overview of the signed-in operator's own account: their `users/{uid}` profile
- * (one-shot getUserProfile), their Firebase Auth sign-in facts, and the admin
- * role the AppShell already resolved. The wasm AccountSettingsScreen is an
- * editor (profile + security + notification prefs); create/edit/save is deferred.
+ * What `/account` actually mounts. A thin wrapper purely so the navigation is
+ * a prop the screen receives rather than a router import the screen makes,
+ * which keeps Account itself renderable in a test with no router at all, and
+ * makes "does that button navigate" a unit test instead of a full route mount.
+ */
+export function AccountRouteView() {
+  const navigate = useNavigate();
+  return <Account onOpenNotifications={() => void navigate({ to: '/my-notifications' })} />;
+}
+
+/**
+ * Account (contextual: reachable from the AppShell topbar chip, never pinned in
+ * the rail). The signed-in operator's own account: their `users/{uid}` profile
+ * (one-shot getUserProfile, edited through EditProfileDialog), their Firebase
+ * Auth sign-in facts, the admin role the AppShell already resolved, and the
+ * Security panel that changes the login email and password.
  */
 export function Account({ onOpenNotifications }: AccountProps) {
   const authState = useAuth();
@@ -132,6 +145,8 @@ export function Account({ onOpenNotifications }: AccountProps) {
                     <Field label="User ID" value={uid} mono />
                   </dl>
                 </DenPanel>
+
+                <SecurityPanel email={user.email ?? ''} />
 
                 <DenPanel title="Access">
                   <dl className="account__fields">

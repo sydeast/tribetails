@@ -28,7 +28,7 @@ import { CoveragePackageBuilder } from './screens/CoveragePackageBuilder';
 import { Inbox } from './screens/Inbox';
 import { Settings } from './screens/Settings';
 import { Communicate } from './screens/Communicate';
-import { Account } from './screens/Account';
+import { AccountRouteView } from './screens/Account';
 import { MyNotificationsEdit } from './screens/MyNotificationsEdit';
 import { NotificationGate } from './screens/NotificationGate';
 import { Media } from './screens/Media';
@@ -271,10 +271,14 @@ const communicateRoute = createRoute({
   component: Communicate,
 });
 
+// AccountRouteView (not Account) so the screen's "Open my notification
+// settings" control is a live button that lands on /my-notifications. Mounting
+// Account bare left that control as a dead static span, which is how the
+// operator's own notification settings became unreachable except by URL.
 const accountRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'account',
-  component: Account,
+  component: AccountRouteView,
 });
 
 const myNotificationsRoute = createRoute({

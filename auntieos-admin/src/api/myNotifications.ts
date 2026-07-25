@@ -25,10 +25,11 @@ import { arr, str } from '../lib/coerce';
  * callable derives it server-side from `req.auth.uid`, so there is no
  * uid-filter for this module to get wrong.
  *
- * This port is READ-ONLY: it fetches and decodes; it deliberately does not
- * wire `saveMyAdminNotificationPrefs` or the override-save/delete callables.
- * Editing is the deferred surface, exactly like `Settings.tsx`'s read-only
- * overview.
+ * This module is the READ half only. The writes it once deferred now ship in
+ * their own modules: `api/myNotificationsWrite.ts`
+ * (`saveMyAdminNotificationPrefs`, used by `screens/MyNotificationsEdit.tsx`)
+ * and `api/notificationOverridesWrite.ts` (the override save/delete, used by
+ * `screens/NotificationGate.tsx`).
  */
 
 export type NotificationChannel = 'email' | 'sms' | 'push';

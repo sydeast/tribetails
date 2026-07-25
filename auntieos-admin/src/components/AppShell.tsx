@@ -1,6 +1,7 @@
 import { Link, Outlet, linkOptions, useRouteContext } from '@tanstack/react-router';
-import { signOut } from '../lib/auth';
+import { signOut, useAuth } from '../lib/auth';
 import { NAV_GROUP_LABEL, railGroup, type NavGroup } from '../lib/nav';
+import { profileDisplayName, profileInitials } from '../lib/accountFormat';
 import { GhostButton } from './Buttons';
 import { Banner } from './Banner';
 
@@ -51,6 +52,21 @@ export function AppShell() {
   // briefly rendered as "Operator" with no sandbox banner.
   const { access } = useRouteContext({ from: '/admin' });
 
+  // The chip has only Firebase Auth to name the operator: the `users/{uid}`
+  // profile is the Account screen's own load, and duplicating it here would put
+  // a second read on every screen in the app. profileDisplayName's later
+  // fallbacks (auth display name, email local-part, then "Operator") are
+  // exactly the ones that apply, so the empty profile is passed deliberately,
+  // not as a stub.
+  const authState = useAuth();
+  const user = authState.status === 'signedIn' ? authState.user : null;
+  const chipName = profileDisplayName(
+    { displayName: '', firstName: '', lastName: '' },
+    user?.displayName ?? null,
+    user?.email ?? null,
+  );
+  const roleText = access.status === 'testAdmin' ? 'Test admin, sandbox' : 'Operator';
+
   return (
     <div className="shell">
       <aside className="shell__rail" aria-label="Primary navigation">
@@ -87,9 +103,25 @@ export function AppShell() {
 
       <main className="shell__main">
         <header className="shell__topbar">
-          <div className="shell__who">
-            {access.status === 'testAdmin' ? 'Test admin, sandbox' : 'Operator'}
-          </div>
+          {/* The operator's way into their own account: phone, email, password.
+              Account is a contextual destination (nav.ts), so it is deliberately
+              absent from the rail; this chip is its entry point, which is where
+              an account link belongs anyway. The role line stays on the chip so
+              a sandbox session still announces itself in the topbar. */}
+          <Link
+            to="/account"
+            className="shell__account"
+            activeProps={{ className: 'shell__account shell__account--active' }}
+            aria-label="Your account"
+          >
+            <span className="shell__account-monogram" aria-hidden="true">
+              {profileInitials(chipName)}
+            </span>
+            <span className="shell__account-text">
+              <span className="shell__account-name">{chipName}</span>
+              <span className="shell__account-role">{roleText}</span>
+            </span>
+          </Link>
           <GhostButton label="Sign out" onClick={() => void signOut()} />
         </header>
 
