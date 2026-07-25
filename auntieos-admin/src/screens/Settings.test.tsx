@@ -154,7 +154,10 @@ describe('Settings — section nav shell', () => {
     expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
 
     const tabs = within(tablist).getAllByRole('tab');
-    expect(tabs).toHaveLength(12);
+    // 13 since Task 7.2 added "Google Calendar (editable)" beside "Calendar sync".
+    // Two tabs on purpose: one reads busy time as a service account, the other
+    // writes visits as a signed-in Google account, and they fail separately.
+    expect(tabs).toHaveLength(13);
     expect(screen.getByRole('tab', { name: 'Business profile' })).toHaveAttribute('aria-selected', 'true');
   });
 

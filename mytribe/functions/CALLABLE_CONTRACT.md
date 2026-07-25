@@ -357,6 +357,119 @@ back on load:
   the wrong address.
 - `unavailable` / `gcal_<status>`: any other Google failure.
 
+## Google Calendar over OAuth, the editable half (admin-gated, Task 7.2)
+
+A DIFFERENT FEATURE from the free/busy sync above, sharing nothing but the word
+calendar. That one READS availability off a shared calendar as a service account
+and needs no secret. This one WRITES our visits onto a calendar belonging to a
+Google account the operator signs into, and is the only part of the app gated on
+an external secret.
+
+**Operator setup, in order.** In Google Cloud Console for project
+`auntieos-ttpc`, under APIs and Services, Credentials, create an OAuth client ID
+of type Web application whose authorized redirect URI is EXACTLY
+`https://us-central1-auntieos-ttpc.cloudfunctions.net/googleOAuthCallback`. Then
+from `mytribe/`:
+
+```
+firebase functions:secrets:set GOOGLE_OAUTH_CLIENT_ID --project auntieos-ttpc
+firebase functions:secrets:set GOOGLE_OAUTH_CLIENT_SECRET --project auntieos-ttpc
+firebase deploy --only functions:mytribe
+```
+
+Both names are declared in the `secrets: [...]` of every function that needs them
+and both are READ in `src/lib/googleOAuth.ts`; `test/googleCalendarOAuth.test.ts`
+asserts the declaration on each function, because a secret nothing reads does
+nothing and a secret nothing declares is never mounted.
+
+**Where the refresh token lives.** `integrations_config/googleCalendar`, a
+document `firestore.rules` denies to EVERY client, read and write, including a
+signed-in Auntie. Only these functions read it, through the Admin SDK. No
+callable returns it: every response goes through `publicConnection`, whose key
+set is frozen in `test/callableContract.test.ts`. Disconnect revokes at Google
+BEFORE clearing our copy.
+
+### startGoogleCalendarConnect
+- req `{}`
+- res `{ authUrl: string, expiresAt: string, redirectUri: string }`
+- Mints a one-time `state` nonce in `google_oauth_states/{nonce}` against the
+  caller's uid, valid 15 minutes, and returns the consent URL for the client to
+  open (popup on web, Custom Tab on android). The plan sketched this as an HTTP
+  endpoint; it is a CALLABLE because a browser navigation carries no ID token, so
+  an HTTP start could not tell an Auntie from a stranger.
+- `failed-precondition` with `details { code: 'google_oauth_not_configured' }`
+  when either secret is unset. The message names which one and the exact command.
+
+### googleOAuthCallback (HTTPS, not callable)
+- Google's redirect target. Not authenticated, because Google performs it; the
+  one-time state stands in. An unknown, expired or already-spent state is refused
+  before any code is exchanged, which is what stops a stranger attaching THEIR
+  Google account to this business.
+- Stamps `connectLastAttemptAt` / `connectLastStatus` / `connectLastError` on the
+  connection doc on SUCCESS and on FAILURE, including a declined consent. The
+  window it runs in gets closed, so the receipt is the only report that survives.
+- Never echoes the code, the state or any token into the page it renders.
+
+### getGoogleCalendarConnection
+- req `{}`
+- res `{ connection: PublicGoogleCalendarConnection, freeBusyCalendarId: string, redirectUri: string }`
+- The poll target after the consent window opens, since neither client can read
+  the outcome out of that window.
+- `PublicGoogleCalendarConnection` = `{ connected, googleAccountEmail, connectedAt,
+  scopes, writeCalendarId, enabledCalendarIds, disconnectedAt, disconnectedError,
+  connectLastAttemptAt, connectLastStatus, connectLastError, calendarPushLastRunAt,
+  calendarPushLastStatus, calendarPushLastPushed, calendarPushLastError }`. Key
+  set frozen EXACTLY, not as a superset: an added field is how a token leaks.
+
+### listGoogleCalendars
+- req `{}`
+- res `{ calendars: Array<{ id, summary, accessRole, primary }>, connection, freeBusyCalendarId }`
+- Read-only calendars are returned and marked rather than filtered out, so a
+  calendar missing from the picker means "the connection is broken", never "it
+  was there but you cannot write to it".
+
+### setGoogleCalendarTargets
+- req `{ writeCalendarId: string, enabledCalendarIds: string[] }` (`.strict()`)
+- res `{ connection: PublicGoogleCalendarConnection }`
+- The write target is always forced into `enabledCalendarIds`.
+- `failed-precondition` with `details { code: 'write_calendar_invalid' }` when the
+  pick is empty, not calendar-id shaped, or IS the free/busy calendar. That last
+  case is the ECHO LOOP: visits written into the calendar the free/busy sync
+  imports from come straight back as BLOCKED slots over their own hour.
+  `freebusy.query` returns start and end and nothing else, so no marker on the
+  event could survive the round trip to be filtered on the way back; refusing the
+  overlap is the only guard that works. `primary` is resolved against the
+  connected account address first, so one calendar spelled two ways is caught.
+- The rule lives in `src/lib/googleCalendarTargets.ts` and is MIRRORED in
+  `auntieos-admin/src/lib/googleCalendarTargets.ts` and android's
+  `ui/admin/scheduling/GoogleCalendarTargets.kt`. Those two are a courtesy; this
+  callable is the enforcement. Note it deliberately DIFFERS from the free/busy
+  rule: `primary` is legal here (the operator's own calendar) and refused there
+  (the service account's permanently empty one).
+
+### pushVisitsToGoogleCalendar
+- req `{ lookAheadDays?: number }` (default 30, clamped 1..90, `.strict()`)
+- res `{ pushed: number, removed: number, scanned: number, skipped: Array<{ sessionId, reason }>, ranAt: string }`
+- NO CALENDAR ID IN THE REQUEST, same posture as the free/busy sync: the target
+  comes from the saved connection, so a client cannot aim a household's visits at
+  someone else's calendar.
+- Operator-initiated only. No trigger and no schedule, following Task 7.1: a
+  trigger would start writing to a real person's calendar on the next edit of any
+  visit, once per field change.
+- Idempotent through `kin_care_sessions.googleEventId`; writes back
+  `googleEventId`, `googleCalendarId`, `googleCalendarSyncedAt` and
+  `googleCalendarSource: 'AUNTIEOS_PUSH'`. A cancelled visit is REMOVED from the
+  calendar rather than skipped. A visit with neither an end time nor a duration
+  is skipped and named, never given an invented length. A 404/410 on update
+  clears the stale id so the next run recreates the event.
+- Stamps `calendarPushLastRunAt` / `calendarPushLastStatus` / `calendarPushLastPushed`
+  / `calendarPushLastError` on SUCCESS and on FAILURE, same reasoning as 7.1's
+  receipt. Best-effort: if the stamp write fails, the run's own error is what
+  surfaces.
+- `failed-precondition` / `google_calendar_not_connected` when nothing is
+  connected; `failed-precondition` / `google_oauth_revoked` when Google answers
+  `invalid_grant`, which retrying never fixes and only reconnecting does.
+
 ### mapboxSearch
 - req `{ query: string, sessionToken: string, limit?: number, country?: string }`
 - res `{ suggestions: Array<{ name: string, full_address: string, mapbox_id: string, place_formatted: string }>, signedBy: 'mapboxSearch' }`

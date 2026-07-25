@@ -66,6 +66,31 @@ import {
   CALENDAR_SYNC_SA_EMAIL,
 } from '../src/admin/syncGoogleCalendarBusyEvents';
 import { CALENDAR_ID_INVALID_CODE, calendarIdProblem } from '../src/lib/calendarSyncId';
+// Google Calendar over OAuth (Task 7.2, 2026-07-25). The same mirroring problem
+// as 7.1 and a heavier one: the React admin (src/api/googleCalendar.ts,
+// src/lib/googleCalendarTargets.ts) and android (AuntieRepository,
+// ui/admin/scheduling/GoogleCalendarTargets.kt) both build these payloads, both
+// read the connection projection field by field, and both mirror the
+// write-target rule. The redirect URI is frozen too because it is
+// OPERATOR-facing: it has to match, character for character, what is registered
+// on the OAuth client in Google Cloud Console, and Google refuses the whole flow
+// on any difference including a trailing slash.
+import { SetTargetsArgs } from '../src/admin/googleCalendar/googleCalendarSelection';
+import { Args as PushVisitsArgs } from '../src/admin/googleCalendar/pushVisitsToGoogleCalendar';
+import {
+  calendarPushStamp,
+  connectStamp,
+  connectionFromDoc,
+  publicConnection,
+} from '../src/lib/googleCalendarConnection';
+import {
+  GOOGLE_CALENDAR_NOT_CONNECTED_CODE,
+  GOOGLE_OAUTH_NOT_CONFIGURED_CODE,
+  GOOGLE_OAUTH_REVOKED_CODE,
+  WRITE_CALENDAR_INVALID_CODE,
+  writeCalendarProblem,
+} from '../src/lib/googleCalendarTargets';
+import { GOOGLE_OAUTH_REDIRECT_URI, GOOGLE_OAUTH_SECRETS } from '../src/lib/googleOAuth';
 
 /**
  * AO-8 drift guard (design doc
@@ -175,6 +200,16 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
     schema: SyncGoogleCalendarBusyEventsArgs,
     keys: ['lookAheadDays'],
   },
+
+  // Task 7.2 OAuth calendars. `setGoogleCalendarTargets` is the only request in
+  // this feature that names a calendar, and it must stay the only one: the push
+  // takes no calendar id at all, so a client cannot aim our households' visits
+  // at a calendar the operator never picked.
+  setGoogleCalendarTargets: {
+    schema: SetTargetsArgs,
+    keys: ['enabledCalendarIds', 'writeCalendarId'],
+  },
+  pushVisitsToGoogleCalendar: { schema: PushVisitsArgs, keys: ['lookAheadDays'] },
 };
 
 describe('AO-8 callable contract drift guard', () => {
@@ -332,6 +367,101 @@ describe('AO-8 callable contract drift guard (calendar sync stored fields + erro
     expect(calendarIdProblem('primary')).not.toBeNull();
     expect(calendarIdProblem('team-cal')).not.toBeNull();
     expect(calendarIdProblem('')).not.toBeNull();
+  });
+});
+
+/**
+ * STORED-FIELD + ERROR-SURFACE + OPERATOR-SETUP freeze for the OAuth calendar
+ * (Task 7.2).
+ *
+ * Three separate contracts hang off this feature and none of them is the request
+ * shape frozen above:
+ *   1. THE PROJECTION. Both clients render the connection panel straight off
+ *      `publicConnection`, field by field. A rename blanks both panels, and,
+ *      worse, an ADDED field could carry the refresh token out to a client, so
+ *      the key set is frozen exactly rather than as a superset.
+ *   2. THE DETAIL CODES. Both clients branch on `details.code` to tell "never
+ *      set up" from "not connected" from "the grant was revoked", which are
+ *      three different operator actions.
+ *   3. THE OPERATOR SETUP STRINGS. The two secret names and the redirect URI are
+ *      typed by a human into Google Cloud Console and into
+ *      `firebase functions:secrets:set`. A change here is a change to an
+ *      instruction someone already followed.
+ */
+describe('AO-8 callable contract drift guard (Google Calendar OAuth)', () => {
+  it('the client projection carries every field the panels read and NO token', () => {
+    const view = publicConnection(
+      connectionFromDoc({ connected: true, refreshToken: '1//tok', googleAccountEmail: 'a@b.com' }),
+    );
+    expect(Object.keys(view).sort()).toEqual([
+      'calendarPushLastError',
+      'calendarPushLastPushed',
+      'calendarPushLastRunAt',
+      'calendarPushLastStatus',
+      'connectLastAttemptAt',
+      'connectLastError',
+      'connectLastStatus',
+      'connected',
+      'connectedAt',
+      'disconnectedAt',
+      'disconnectedError',
+      'enabledCalendarIds',
+      'googleAccountEmail',
+      'scopes',
+      'writeCalendarId',
+    ]);
+    expect(JSON.stringify(view)).not.toContain('1//tok');
+  });
+
+  it('the two receipt shapes are unchanged (both clients read them off the projection)', () => {
+    expect(Object.keys(connectStamp({ status: 'ok' }, 'now')).sort()).toEqual([
+      'connectLastAttemptAt',
+      'connectLastError',
+      'connectLastStatus',
+    ]);
+    expect(Object.keys(calendarPushStamp({ status: 'ok', pushed: 1 }, 'now')).sort()).toEqual([
+      'calendarPushLastError',
+      'calendarPushLastPushed',
+      'calendarPushLastRunAt',
+      'calendarPushLastStatus',
+    ]);
+  });
+
+  it('the status values are the two both clients branch on', () => {
+    expect(connectStamp({ status: 'error', error: 'x' }, 'now').connectLastStatus).toBe('error');
+    expect(calendarPushStamp({ status: 'ok', pushed: 0 }, 'now').calendarPushLastStatus).toBe('ok');
+  });
+
+  it('the four detail codes are unchanged', () => {
+    expect(GOOGLE_OAUTH_NOT_CONFIGURED_CODE).toBe('google_oauth_not_configured');
+    expect(GOOGLE_CALENDAR_NOT_CONNECTED_CODE).toBe('google_calendar_not_connected');
+    expect(GOOGLE_OAUTH_REVOKED_CODE).toBe('google_oauth_revoked');
+    expect(WRITE_CALENDAR_INVALID_CODE).toBe('write_calendar_invalid');
+  });
+
+  it('the operator-typed setup strings are unchanged', () => {
+    // Both are printed in the React panel and android card setup copy, and both
+    // are typed by hand into Google Cloud Console / the firebase CLI.
+    expect(GOOGLE_OAUTH_SECRETS).toEqual(['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET']);
+    expect(GOOGLE_OAUTH_REDIRECT_URI).toBe(
+      'https://us-central1-auntieos-ttpc.cloudfunctions.net/googleOAuthCallback',
+    );
+  });
+
+  it('the write-target rule agrees with the two client mirrors on the cases that matter', () => {
+    // These six are the exact cases `auntieos-admin/src/lib/googleCalendarTargets.test.ts`
+    // and `GoogleCalendarTargetsTest.kt` assert. Note the deliberate DIFFERENCE
+    // from the free/busy rule above: `primary` is legal here, because under
+    // OAuth it means the operator's own real calendar rather than a robot's
+    // permanently empty one.
+    const account = 'auntie@tribetails.com';
+    expect(writeCalendarProblem('primary', '', account)).toBeNull();
+    expect(writeCalendarProblem('work@group.calendar.google.com', '', account)).toBeNull();
+    expect(writeCalendarProblem('', '', account)).not.toBeNull();
+    expect(writeCalendarProblem('team-cal', '', account)).not.toBeNull();
+    // The echo loop, in both spellings of the same calendar.
+    expect(writeCalendarProblem('shared@g.calendar.google.com', 'shared@g.calendar.google.com', account)).not.toBeNull();
+    expect(writeCalendarProblem('primary', account, account)).not.toBeNull();
   });
 });
 
