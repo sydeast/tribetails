@@ -17,9 +17,9 @@
 }
 
 .breedfield__label {
-  font-family: var(--type-label-family);
-  font-size: var(--type-label-size);
-  letter-spacing: var(--type-label-tracking);
+  font-family: var(--type-label-md-family);
+  font-size: var(--type-label-md-size);
+  letter-spacing: var(--type-label-md-tracking);
   text-transform: uppercase;
   color: var(--color-text-dim);
 }

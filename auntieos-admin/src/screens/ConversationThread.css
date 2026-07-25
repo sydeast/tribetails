@@ -45,8 +45,8 @@
 }
 
 .thread__msg--mine .thread__bubble {
-  background: var(--color-accent-soft, var(--color-surface-2));
-  border-color: var(--color-accent, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border-color: var(--color-accent);
 }
 
 .thread__body {

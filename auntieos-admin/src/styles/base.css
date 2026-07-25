@@ -18,11 +18,22 @@ body,
 }
 
 body {
-  font-family: var(--font-hanken, system-ui, sans-serif);
-  color: var(--color-primary, #1a1c28);
-  background: var(--color-background, #fbfbf9);
+  font-family: var(--font-hanken);
+  /* `--color-text-primary`, NOT `--color-primary`. Until 2026-07-25 this said
+     the latter, whose `#1a1c28` fallback records that navy was meant. The token
+     it actually names is Kinfolk Orange, so every element whose own CSS omits
+     `color` inherited orange body text. `.screen` sets no colour, so the ones
+     that showed it were the plain, unstyled ones: bare `<p>`, `<li>`, dialog
+     copy. Well styled components masked the bug by overriding it. */
+  color: var(--color-text-primary);
+  background: var(--color-background);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Inherited by everything, and ignored by any face without these axes, so
+     this one declaration reaches all 26 Fraunces rules and Hanken and Spline
+     Sans Mono are untouched. See --type-serif-variation in tokens.css. */
+  font-variation-settings: var(--type-serif-variation);
+  font-optical-sizing: auto;
 }
 
 #root {
@@ -35,32 +46,137 @@ body {
      document flow and cannot extend the scroll area. */
 }
 
-/* The two drifting Den orbs behind every screen. Purely decorative; the RootLayout
-   marks them aria-hidden. Kept subtle so foreground text stays legible. */
+/* ── The Den ambient wash ────────────────────────────────────────────────────
+   Three drifting orbs behind every screen. Purely decorative; RootLayout marks
+   them aria-hidden. Kept subtle so foreground text stays legible.
+
+   Restored 2026-07-25 to what all 39 `ui-ideas/*.html` mocks specify and the
+   MyTribe portal already ships (`mytribe/web/src/styles/base.css:18`). Three
+   things were missing, and each one is why the background read as a flat wash
+   rather than as atmosphere:
+
+     - They did not move. The class comment said "drifting" and nothing drifted.
+     - They were FLAT fills, so each was a hard-edged disc softened only by the
+       blur, instead of a radial falloff that fades into the page.
+     - They did not blend, so the two overlapped by occlusion rather than mixing
+       into a third hue.
+
+   Colours are role tokens, so the wash re-tints itself in dark mode with no
+   second rule. `.orb.b` previously named `--color-teal`, which no file declares,
+   so it silently took an `#6ab0a6` literal and was the one element on the page
+   that ignored the theme entirely. */
 .orb {
   position: fixed;
   z-index: -1;
   border-radius: 50%;
   filter: blur(80px);
-  opacity: 0.5;
+  opacity: 0.45;
   pointer-events: none;
+  /* Additive-ish mixing where two orbs overlap, which is what produces the
+     third colour the mocks show at the seams. */
+  mix-blend-mode: screen;
+  /* Negative delays start the three mid-cycle so they are permanently out of
+     phase; without them all three turn at the same instant and the wash
+     pulses instead of drifting. */
+  animation: orb-drift 29s var(--ease-standard) infinite alternate;
 }
+
+/* `screen` lightens, which is right on the dark navy but washes out the cream
+   page. Light mode multiplies instead, so the orbs deepen the cream rather than
+   bleaching it. */
+:root:not([data-theme='dark']) .orb {
+  mix-blend-mode: multiply;
+  opacity: 0.25;
+}
+
 .orb.a {
   width: 42vw;
   height: 42vw;
   top: -12vw;
   left: -8vw;
-  background: var(--color-accent, #e8a06a);
+  background: radial-gradient(circle, var(--color-tertiary), transparent 62%);
 }
 .orb.b {
-  width: 38vw;
-  height: 38vw;
-  bottom: -14vw;
+  width: 40vw;
+  height: 40vw;
+  top: 10vw;
   right: -10vw;
-  background: var(--color-teal, #6ab0a6);
+  background: radial-gradient(circle, var(--color-primary), transparent 60%);
+  animation-delay: -10s;
+}
+.orb.c {
+  width: 34vw;
+  height: 34vw;
+  bottom: -14vw;
+  left: 30vw;
+  background: radial-gradient(circle, var(--color-accent), transparent 60%);
+  animation-delay: -16s;
+}
+
+@keyframes orb-drift {
+  to {
+    transform: translate3d(-4vmax, 3vmax, 0) scale(1.1) rotate(-9deg);
+  }
 }
 
 code {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.9em;
+}
+
+/* ── Entrance ────────────────────────────────────────────────────────────────
+   All 39 mocks open a screen by settling its blocks into place from below, on a
+   per-block delay, so the page assembles top to bottom instead of hard-cutting
+   into existence. The MyTribe portal shipped exactly this as `.d1` through
+   `.d4` (`mytribe/web/src/styles/base.css:132`); the admin had no entrance
+   animation on any screen. These four classes are the whole mechanism: put one
+   on each top-level block of a screen, in reading order.
+
+   `both` fill matters. Without it the element is at full opacity for the length
+   of its own delay and then jumps back to invisible to start animating. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.d1,
+.d2,
+.d3,
+.d4 {
+  animation: rise var(--dur-rise) var(--ease-emphasized) both;
+}
+.d1 {
+  animation-delay: 0.06s;
+}
+.d2 {
+  animation-delay: 0.12s;
+}
+.d3 {
+  animation-delay: 0.18s;
+}
+.d4 {
+  animation-delay: 0.24s;
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────────
+   GLOBAL, and deliberately blunt. Until now this was honoured per file in 8 of
+   79 stylesheets, which means every new animation had to remember to opt in and
+   the ones that forgot were invisible until someone with the preference set hit
+   them. The portal takes the same global approach. `animation: none` on a `both`
+   fill leaves the element at its natural resting state, so nothing that relies
+   on `rise` to become visible can be stranded at opacity 0. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

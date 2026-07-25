@@ -9,13 +9,13 @@
   padding: 0;
   border: none;
   border-radius: var(--radius-pill);
-  background: var(--color-border, #d8d6cf);
+  background: var(--color-border);
   cursor: pointer;
   transition: background var(--dur-base) var(--ease-standard);
 }
 
 .toggle--on {
-  background: var(--color-accent, #e8a06a);
+  background: var(--color-primary);
 }
 
 .toggle:disabled {
@@ -24,7 +24,7 @@
 }
 
 .toggle:focus-visible {
-  outline: 2px solid var(--color-accent, #e8a06a);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 

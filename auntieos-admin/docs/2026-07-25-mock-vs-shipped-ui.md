@@ -2,6 +2,12 @@
 
 Written 2026-07-25, on branch `feat/breed-dropdowns-and-flavor-audit`.
 
+> **Status, updated 2026-07-25 on `fix/den-token-wiring-and-motion`.** Items 1
+> through 4 of the suggested order are DONE, and one of them turned out to be
+> considerably worse than this document first said. See "What acting on this
+> found" at the bottom. Items 5 through 7 (rail, brand gradient, card lift) are
+> still open and still belong with Phase 3.
+
 The operator's report is that pages which used to feel alive now feel flat, and
 that the React port is where it happened. This checks that report against the
 files rather than against memory, and it holds up. What follows is the measured
@@ -111,6 +117,9 @@ brand picked it for rather than as a generic serif.
 
 Cost to close: three lines in `tokens.css`.
 
+**Correction, found while fixing this:** the axes were the smaller half of the
+problem. Fraunces was not rendering AT ALL. See below.
+
 ### 5. The side rail is not interactive
 
 `src/styles/shell.css:52` sets `cursor: default` on `.shell__link`, and the file
@@ -210,6 +219,46 @@ not have.
 Items 1 through 4 are independent of the React Port Restoration plan and can
 land as their own branch. Items 5 through 7 overlap Phase 3, so they should ride
 with it rather than conflict.
+
+## What acting on this found
+
+Items 1 through 4 shipped on `fix/den-token-wiring-and-motion`. Two of the four
+were worse than this document estimated, and both were found only by trying to
+fix the smaller thing next to them.
+
+**Fraunces has never rendered in this admin.** `@fontsource-variable/fraunces`
+registers its `@font-face` under the family name `Fraunces Variable`.
+`tokens.css` asked for `Fraunces`, which nothing declares. So every serif
+heading in the app, the page titles, the panel titles, the stat values, the
+wordmark, fell straight through to `ui-serif` / Georgia, while the real face
+downloaded on every page load and went unused. This is almost certainly the
+single largest contributor to the "feels flat" report: the brand's editorial
+display face was simply absent, and no amount of correct color or spacing
+substitutes for that. Verified fixed by driving the running app: the sign-in
+wordmark now computes to `"Fraunces Variable"` with
+`"SOFT" 50, "WONK" 1` applied, in both schemes.
+
+The package default also ships the `wght` axis alone. Getting SOFT and WONK
+meant importing `@fontsource-variable/fraunces/full.css`, which is 121 KB for
+the latin subset against 36 KB. That trade is stated at the import so it can be
+reversed in one line.
+
+**The undefined-token count was eleven, not three.** The audit found `--color-surface2`,
+`--motion-fast` and `--color-teal` by grepping for names it already suspected. A
+full walk of all 79 stylesheets found ELEVEN tokens referenced but never
+declared, including `--type-label-family` / `-size` / `-tracking` (the real names
+carry an `-md` or `-sm` step), which meant the vet clinic picker and the address
+autofill field had been rendering their labels with no face, no size and no
+tracking at all. `--color-surface-raised` was used with no fallback in
+`TribalIntelForm.css`, so that chip had no hover colour.
+
+The same walk found 146 stale literal fallbacks, `var(--color-x, #hex)` where the
+hex was a copy of one theme's value taken at some point in the past. None of them
+rendered, because the tokens are always defined, but they are how all of this
+hid: a wrong token name reads as correct when a plausible colour sits next to it.
+They are gone, and `src/styles/tokenUsage.test.ts` now fails the build on a new
+one, on a reference to an undeclared token, and on the specific mis-wirings
+above.
 
 `prefers-reduced-motion` is honored per-file in 8 admin CSS files, which means
 every new animation has to remember to opt in. The portal took the safer route:

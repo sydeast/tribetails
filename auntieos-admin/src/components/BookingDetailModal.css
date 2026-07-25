@@ -5,7 +5,7 @@
 .bdm {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4, 16px);
+  gap: var(--space-4);
 }
 
 /* ── fact rows ─────────────────────────────────────────────────────────── */
@@ -14,14 +14,14 @@
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2, 8px);
+  gap: var(--space-2);
 }
 
 .bdm__fact {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--space-3, 12px);
+  gap: var(--space-3);
 }
 
 .bdm__fact-label {
@@ -29,7 +29,7 @@
   font-size: 0.75rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--color-text-dim, #5a5c6a);
+  color: var(--color-text-dim);
 }
 
 .bdm__fact-value {
@@ -40,7 +40,7 @@
   /* Addresses and request notes are free text and can be long. Wrap rather
      than push the sheet into a horizontal scroll. */
   overflow-wrap: anywhere;
-  color: var(--color-primary, #1a1c28);
+  color: var(--color-text-primary);
 }
 
 /* The kinfolk name as a link. A real <button> (it routes in-app, it is not an
@@ -50,16 +50,16 @@
   border: none;
   background: none;
   font: inherit;
-  color: var(--color-accent, #e8a06a);
+  color: var(--color-primary);
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
 }
 .bdm__link:hover {
-  color: var(--color-primary, #1a1c28);
+  color: var(--color-text-primary);
 }
 .bdm__link:focus-visible {
-  outline: 2px solid var(--color-accent, #e8a06a);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
   border-radius: 2px;
 }
@@ -70,7 +70,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: var(--space-3, 12px);
+  gap: var(--space-3);
 }
 
 .bdm__kintales,
@@ -78,7 +78,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: var(--space-2, 8px);
+  gap: var(--space-2);
 }
 
 .bdm__field {
@@ -95,17 +95,17 @@
   font-size: 0.75rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--color-text-dim, #5a5c6a);
+  color: var(--color-text-dim);
 }
 
 .bdm__field-input,
 .bdm__composer {
   width: 100%;
-  padding: var(--space-2, 8px);
-  border: 1px solid var(--color-border, #d8d6cf);
-  border-radius: var(--radius-card, 8px);
-  background: var(--color-surface, #fff);
-  color: var(--color-primary, #1a1c28);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
   font: inherit;
 }
 .bdm__composer {
@@ -113,13 +113,13 @@
 }
 .bdm__field-input:disabled,
 .bdm__composer:disabled {
-  background: var(--color-surface2, #f1efe9);
-  color: var(--color-text-dim, #5a5c6a);
+  background: var(--color-surface-2);
+  color: var(--color-text-dim);
   cursor: not-allowed;
 }
 .bdm__field-input:focus-visible,
 .bdm__composer:focus-visible {
-  outline: 2px solid var(--color-accent, #e8a06a);
+  outline: 2px solid var(--color-primary);
   outline-offset: 1px;
 }
 
@@ -131,18 +131,18 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2, 8px);
+  gap: var(--space-2);
 }
 
 .bdm__note {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--space-3, 12px);
-  padding: var(--space-2, 8px) var(--space-3, 12px);
-  border: 1px solid var(--color-border-soft, #e6e4dd);
-  border-radius: var(--radius-card, 8px);
-  background: var(--color-surface2, #f7f5f0);
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
 }
 
 .bdm__note-body {
@@ -156,5 +156,5 @@
   font-size: 0.75rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--color-text-dim, #5a5c6a);
+  color: var(--color-text-dim);
 }
