@@ -13,6 +13,7 @@ import com.tribetails.auntieos.data.model.UserProfile
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.ui.branding.withBranding
+import com.tribetails.auntieos.ui.branding.nextLogoRemovedAt
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
@@ -327,6 +328,16 @@ class AdminSettingsViewModel(
                 tagline = tagline,
                 greeting = greeting,
                 accentTail = accentTail,
+                // Stamped so a removal made HERE reads as a removal on the web
+                // Settings screen too, rather than as "no logo set yet". Without
+                // it the two surfaces would disagree about what an empty logo
+                // means, which is the whole point of the field.
+                logoRemovedAt = nextLogoRemovedAt(
+                    previousLogoUrl = current.logoUrl,
+                    previousRemovedAt = current.logoRemovedAt,
+                    nextLogoUrl = effectiveLogo,
+                    nowIso = java.time.Instant.now().toString(),
+                ),
             )
             _uiState.value = _uiState.value.copy(saveSuccess = false)
             repository.saveBusinessSettings(merged, "admin").fold(

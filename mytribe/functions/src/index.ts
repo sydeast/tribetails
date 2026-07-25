@@ -100,6 +100,12 @@ export { revokeKinfolkClaim } from './admin/revokeKinfolkClaim';
 // back "Invalid Signature" (Sentry AUNTIEOS-ADMIN-1D, verified bit-exactly).
 // Portal uploads use `signKinPhotoUpload` / `signKinfolkAvatar`, which keep
 // sharing `lib/cloudinary.ts`.
+//
+// Brand logos obey the same rule and go further: they add NO signer at all.
+// Both admin clients already upload the workspace logo through AuntieOS's
+// deployed `/api/cloudinary/sign-upload`, so `confirmBrandAssetUpload` only
+// validates and persists the URL that upload produced. See `lib/brandAsset.ts`.
+export { confirmBrandAssetUpload } from './admin/confirmBrandAssetUpload';
 export { dispatchVisitNotification } from './admin/dispatchVisitNotification';
 export { scheduleMarketingBlast } from './admin/scheduleMarketingBlast';
 export { addInternalBookingNote } from './admin/addInternalBookingNote';

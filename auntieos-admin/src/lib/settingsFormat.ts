@@ -182,6 +182,23 @@ function isoToFsTime(iso: string): FsTime {
  * convention `mediaFormat.ts`/`sessionFormat.ts`/`kinTaleFormat.ts` use for
  * this collection's free-text ISO fields.
  */
+/**
+ * What to say where a logo is not showing. Three states, deliberately three
+ * different sentences: a logo that is set, one the operator CLEARED, and one
+ * that was never configured.
+ *
+ * The last two are both `logoUrl === ''` on the doc, which is exactly why
+ * `logoRemovedAt` exists. Collapsing them into one "No logo set" would mean an
+ * operator who just pressed Remove sees the same panel a fresh install shows
+ * and has no confirmation the removal actually landed.
+ */
+export function logoStateLabel(logoUrl: string, logoRemovedAt: string): string {
+  if (logoUrl.trim() !== '') return 'Logo set';
+  const when = isoToFsTime(logoRemovedAt);
+  if (!when) return 'No logo set yet';
+  return `Logo removed ${formatWhen(when)}`;
+}
+
 export function lastSavedLabel(updatedAt: string, updatedBy: string): string {
   const when = isoToFsTime(updatedAt);
   if (!when) return 'Never saved yet';

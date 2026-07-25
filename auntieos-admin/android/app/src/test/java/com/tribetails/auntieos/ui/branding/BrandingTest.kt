@@ -120,4 +120,80 @@ class BrandingTest {
         val loaded = BusinessSettings()
         assertFalse(brandingDirty(loaded, loaded.copy(businessName = "changed")))
     }
+
+    // ── Task 5.2: the removal stamp ────────────────────────────────────────
+    // `logoUrl == ""` covers TWO different situations. These pin that the app
+    // can still tell them apart, which is the entire reason the field exists.
+    @Test
+    fun logoState_distinguishes_removed_from_never_set() {
+        assertEquals(LogoState.SET, logoState("https://res.cloudinary.com/x/image/upload/a.png", ""))
+        assertEquals(LogoState.REMOVED, logoState("", "2026-07-25T10:00:00Z"))
+        assertEquals(LogoState.NEVER_SET, logoState("", ""))
+    }
+    @Test
+    fun logoState_treats_a_blank_url_as_no_logo_even_with_whitespace() {
+        assertEquals(LogoState.NEVER_SET, logoState("   ", ""))
+    }
+    @Test
+    fun nextLogoRemovedAt_stamps_the_save_that_actually_removes_the_logo() {
+        assertEquals(
+            "2026-07-25T12:00:00Z",
+            nextLogoRemovedAt(
+                previousLogoUrl = "https://res.cloudinary.com/x/image/upload/a.png",
+                previousRemovedAt = "",
+                nextLogoUrl = "",
+                nowIso = "2026-07-25T12:00:00Z",
+            ),
+        )
+    }
+    @Test
+    fun nextLogoRemovedAt_does_not_restamp_a_logo_that_was_already_gone() {
+        // Otherwise every unrelated text edit would keep pushing the removal
+        // date forward, and the operator could never tell when it actually went.
+        assertEquals(
+            "2026-07-01T09:00:00Z",
+            nextLogoRemovedAt(
+                previousLogoUrl = "",
+                previousRemovedAt = "2026-07-01T09:00:00Z",
+                nextLogoUrl = "",
+                nowIso = "2026-07-25T12:00:00Z",
+            ),
+        )
+    }
+    @Test
+    fun nextLogoRemovedAt_clears_the_stamp_when_a_logo_is_set_again() {
+        assertEquals(
+            "",
+            nextLogoRemovedAt(
+                previousLogoUrl = "",
+                previousRemovedAt = "2026-07-01T09:00:00Z",
+                nextLogoUrl = "https://res.cloudinary.com/x/image/upload/b.png",
+                nowIso = "2026-07-25T12:00:00Z",
+            ),
+        )
+    }
+    @Test
+    fun withBranding_carries_the_stamp_and_still_isolates_sibling_fields() {
+        val loaded = BusinessSettings(businessName = "Tribe Tails", logoUrl = "old", logoRemovedAt = "")
+        val saved = loaded.withBranding(
+            logoUrl = "",
+            wordmark = "W",
+            tagline = "T",
+            greeting = "G",
+            accentTail = "A",
+            logoRemovedAt = "2026-07-25T12:00:00Z",
+        )
+        assertEquals("", saved.logoUrl)
+        assertEquals("2026-07-25T12:00:00Z", saved.logoRemovedAt)
+        // The merge write sends this whole object, so a sibling must survive it.
+        assertEquals("Tribe Tails", saved.businessName)
+    }
+    @Test
+    fun withBranding_leaves_the_stamp_untouched_when_the_caller_omits_it() {
+        // Every pre-existing call site omits the argument; none of them should
+        // start clearing a removal record they know nothing about.
+        val loaded = BusinessSettings(logoRemovedAt = "2026-07-01T09:00:00Z")
+        val saved = loaded.withBranding(logoUrl = "", wordmark = "", tagline = "", greeting = "", accentTail = "")
+        assertEquals("2026-07-01T09:00:00Z", saved.logoRemovedAt)
+    }
 }

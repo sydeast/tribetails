@@ -88,6 +88,18 @@ export interface PortalChat {
 /** Mirrors `MyTribePortalConfig`, the shared MyTribe kinfolk-portal wire contract. */
 export interface MyTribePortalConfig {
   logoUrl: string;
+  /**
+   * ISO instant of the last time an operator CLEARED this logo, or '' if one is
+   * currently set or was never set. Server-written only, by
+   * `confirmBrandAssetUpload`.
+   *
+   * It exists because `logoUrl === ''` alone cannot tell "I removed this" from
+   * "this was never configured", and those want different words on screen: the
+   * first is a state the operator chose, the second is a feature they have not
+   * used yet. Without it, an operator who removes a logo sees the identical
+   * empty panel a fresh install shows and cannot confirm the removal took.
+   */
+  logoRemovedAt: string;
   themeId: string;
   banner: PortalBanner;
   home: PortalHome;
@@ -174,6 +186,8 @@ export interface BusinessSettings {
   autoConfirmRepeatKinfolk: boolean;
   snapRescheduleTo15Min: boolean;
   logoUrl: string;
+  /** ISO instant of the last clear of `logoUrl`, or ''. See `MyTribePortalConfig.logoRemovedAt` for why this exists. */
+  logoRemovedAt: string;
   brandWordmark: string;
   brandTagline: string;
   homeGreeting: string;
@@ -214,6 +228,7 @@ const DEFAULT_PORTAL_CHAT: PortalChat = {
 
 const DEFAULT_MYTRIBE_PORTAL: MyTribePortalConfig = {
   logoUrl: '',
+  logoRemovedAt: '',
   themeId: 'default',
   banner: DEFAULT_PORTAL_BANNER,
   home: DEFAULT_PORTAL_HOME,
@@ -271,6 +286,7 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   autoConfirmRepeatKinfolk: false,
   snapRescheduleTo15Min: false,
   logoUrl: '',
+  logoRemovedAt: '',
   brandWordmark: '',
   brandTagline: '',
   homeGreeting: '',
@@ -367,6 +383,7 @@ function mergeMyTribePortal(raw: unknown): MyTribePortalConfig {
   const r = (raw ?? {}) as Partial<MyTribePortalConfig>;
   return {
     logoUrl: pickString(r.logoUrl, DEFAULT_MYTRIBE_PORTAL.logoUrl),
+    logoRemovedAt: pickString(r.logoRemovedAt, DEFAULT_MYTRIBE_PORTAL.logoRemovedAt),
     themeId: pickString(r.themeId, DEFAULT_MYTRIBE_PORTAL.themeId),
     banner: mergePortalBanner(r.banner),
     home: mergePortalHome(r.home),
@@ -448,6 +465,7 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
     autoConfirmRepeatKinfolk: (r.autoConfirmRepeatKinfolk as boolean) ?? d.autoConfirmRepeatKinfolk,
     snapRescheduleTo15Min: (r.snapRescheduleTo15Min as boolean) ?? d.snapRescheduleTo15Min,
     logoUrl: pickString(r.logoUrl, d.logoUrl),
+    logoRemovedAt: pickString(r.logoRemovedAt, d.logoRemovedAt),
     brandWordmark: pickString(r.brandWordmark, d.brandWordmark),
     brandTagline: pickString(r.brandTagline, d.brandTagline),
     homeGreeting: pickString(r.homeGreeting, d.homeGreeting),

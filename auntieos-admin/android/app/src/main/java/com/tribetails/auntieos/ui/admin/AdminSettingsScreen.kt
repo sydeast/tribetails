@@ -85,6 +85,8 @@ import com.tribetails.auntieos.data.model.TrackingAccuracy
 import com.tribetails.auntieos.ui.NavigationSettingsPanel
 import com.tribetails.auntieos.ui.branding.brandingDirty
 import com.tribetails.auntieos.ui.branding.withBranding
+import com.tribetails.auntieos.ui.branding.logoState
+import com.tribetails.auntieos.ui.branding.LogoState
 import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
@@ -704,6 +706,17 @@ private fun BrandingPanel(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(dims.space2),
             ) {
+                // Names WHICH empty state this is. A cleared logo and one that was
+                // never set are both a blank url, so without this the operator who
+                // just pressed Remove sees exactly what a fresh install shows.
+                Text(
+                    when (logoState(effectiveLogo, settings.logoRemovedAt)) {
+                        LogoState.SET -> "Logo set"
+                        LogoState.REMOVED -> "Logo removed"
+                        LogoState.NEVER_SET -> "No logo set yet"
+                    },
+                    color = c.textDim,
+                )
                 AuntieTextBtn(onClick = onPickLogo, enabled = !isUploadingLogo) {
                     AuntieIconTile(icon = Lucide.Camera, tone = AuntieStatusTone.Orange, size = 22.dp)
                     Spacer(Modifier.width(dims.space2))

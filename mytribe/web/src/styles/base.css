@@ -27,6 +27,19 @@ body {
   background: rgba(251, 251, 249, .72); border-bottom: 1px solid var(--hairline); }
 .nav .in { max-width: var(--maxw); margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; gap: 20px; }
 .wordmark { font-family: var(--serif); font-size: 23px; letter-spacing: -.01em; line-height: 1; white-space: nowrap; }
+/* Operator-supplied logo, left of the wordmark. Every dimension here is a CEILING,
+   because the file is uploaded by an operator and this header is client-facing:
+   nothing about the asset may decide the height of the nav. `height` pins it to
+   the wordmark's cap height, `width: auto` + `object-fit: contain` preserve the
+   aspect ratio so a tall logo gets narrow rather than stretching, and `max-width`
+   stops a wide banner-shaped logo pushing the nav links off the row. A
+   transparent background is expected and fine: the nav is a light cream wash, so
+   the admin previews the logo on that exact colour before saving. */
+.brandlogo { height: 26px; width: auto; max-width: 132px; object-fit: contain; display: block; flex: none;
+  /* `.nav .in` sets gap: 20px for the nav's top-level groups. The logo and the
+     wordmark are one brand lockup, not two groups, so this pulls them together. */
+  margin-right: -9px; }
+@media (max-width: 560px) { .brandlogo { max-width: 84px; } }
 .wordmark .grad { background: var(--tribe-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .navlinks { display: flex; gap: 4px; margin-left: 8px; }
 .navlinks a, .navlinks .navlink-inert { padding: 9px 14px; border-radius: 11px; text-decoration: none; color: var(--navy-soft); font-weight: 600;

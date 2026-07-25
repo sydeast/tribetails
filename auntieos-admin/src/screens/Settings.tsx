@@ -13,8 +13,8 @@ import {
   BUSINESS_PROFILE_FIELDS,
   WEATHER_AREA_FIELDS,
   PAYMENT_FIELDS,
-  BRANDING_FIELDS,
 } from './settings/sections';
+import { BrandingSection } from './settings/BrandingSection';
 import { CalendarSyncSection } from './settings/CalendarSyncSection';
 import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
 import { TimeOffEditor } from './settings/TimeOffEditor';
@@ -132,6 +132,16 @@ export function Settings() {
     );
   }, []);
 
+  // The same fold as `persist`, WITHOUT the write. Used by the logo fields,
+  // whose value was already stored server-side by `confirmBrandAssetUpload`:
+  // sending it back through `persist` would issue a second write of a value the
+  // server just wrote, and stamp `updatedBy` from this client over the stamp the
+  // callable made. No `updatedAt` fold either, for the same reason: the server
+  // owns that stamp on this path.
+  const applyServerChange = useCallback((patch: Partial<BusinessSettings>) => {
+    setSettings((prev) => (prev.status === 'ready' ? { status: 'ready', data: { ...prev.data, ...patch } } : prev));
+  }, []);
+
   const selectSection = useCallback((id: SectionId) => {
     setSelected(id);
     setVisited((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
@@ -167,7 +177,7 @@ export function Settings() {
                 tabIndex={0}
                 hidden={!active}
               >
-                {renderSection(section.id, settings, persist)}
+                {renderSection(section.id, settings, persist, applyServerChange)}
               </div>
             );
           })}
@@ -187,6 +197,7 @@ function renderSection(
   id: SectionId,
   settings: Async<BusinessSettings>,
   persist: (patch: Partial<BusinessSettings>) => Promise<void>,
+  applyServerChange: (patch: Partial<BusinessSettings>) => void,
 ): ReactNode {
   if (id === 'notifications') return <NotificationGate />;
   if (id === 'tags') return <TagsEditor />;
@@ -199,7 +210,7 @@ function renderSection(
       loading={<p className="settings__hint">Loading business settings…</p>}
       empty={<p className="settings__hint">No settings found.</p>}
     >
-      {(data) => renderDataSection(id, data, persist)}
+      {(data) => renderDataSection(id, data, persist, applyServerChange)}
     </AsyncRegion>
   );
 }
@@ -209,6 +220,7 @@ function renderDataSection(
   id: SectionId,
   data: BusinessSettings,
   persist: (patch: Partial<BusinessSettings>) => Promise<void>,
+  applyServerChange: (patch: Partial<BusinessSettings>) => void,
 ): ReactNode {
   switch (id) {
     case 'businessProfile':
@@ -250,17 +262,9 @@ function renderDataSection(
         />
       );
     case 'branding':
-      return (
-        <TextFieldsSection
-          title="Branding"
-          subtitle="Logo, app name, and Home greeting. Leave any field blank to keep the shipped default."
-          data={data}
-          fields={BRANDING_FIELDS}
-          onSave={persist}
-        />
-      );
+      return <BrandingSection data={data} onSave={persist} onServerChanged={applyServerChange} />;
     case 'mytribe':
-      return <MyTribePortalSection data={data} onSave={persist} />;
+      return <MyTribePortalSection data={data} onSave={persist} onServerChanged={applyServerChange} />;
     case 'calendar':
       return <CalendarSyncSection data={data} onSave={persist} />;
     default:

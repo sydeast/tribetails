@@ -88,6 +88,7 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   autoConfirmRepeatKinfolk: false,
   snapRescheduleTo15Min: false,
   logoUrl: '',
+  logoRemovedAt: '',
   brandWordmark: '',
   brandTagline: '',
   homeGreeting: '',
@@ -96,6 +97,7 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   petTags: [],
   mytribePortal: {
     logoUrl: '',
+    logoRemovedAt: '',
     themeId: 'default',
     banner: { enabled: false, message: '', tone: 'info', dismissMode: 'none', id: '' },
     home: { sections: [] },
