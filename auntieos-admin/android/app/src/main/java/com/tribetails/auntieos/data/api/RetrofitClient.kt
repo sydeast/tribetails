@@ -74,20 +74,11 @@ object RetrofitClient {
             .create(TwilioApi::class.java)
     }
 
-    private const val MAPBOX_BASE_URL = "https://api.mapbox.com/"
-
-    fun buildMapboxGeocoding(): MapboxGeocodingApi {
-        val client = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
-            .build()
-        return Retrofit.Builder()
-            .baseUrl(MAPBOX_BASE_URL)
-            .client(client)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(MapboxGeocodingApi::class.java)
-    }
+    // No Mapbox client here any more. `buildMapboxGeocoding` used to hand back
+    // a Retrofit binding to api.mapbox.com that callers authenticated with
+    // MapboxConfig.ACCESS_TOKEN, which meant a live Mapbox key sat in the APK.
+    // Address lookup now goes through the `mapboxSearch` / `mapboxRetrieve`
+    // callables (AuntieRepository), which hold the token as a Functions secret.
 
     private fun loggingInterceptor() = HttpLoggingInterceptor().apply {
         level = resolveHttpLogLevel(BuildConfig.DEBUG)

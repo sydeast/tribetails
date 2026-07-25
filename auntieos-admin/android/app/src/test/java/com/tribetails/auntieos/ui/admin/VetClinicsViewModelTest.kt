@@ -70,25 +70,30 @@ class VetClinicsViewModelTest {
         assertTrue("got: $err", err != null && err.contains("Creekside") && err.contains("permission-denied"))
     }
 
+    /**
+     * `add` routes through submitVetClinic, not a direct vet_clinics write, so
+     * the shared bank's normalized-name dedupe applies to operator-added clinics
+     * too. See the ViewModel's note.
+     */
     @Test
     fun `add and save reach the repo`() = runTest {
-        coEvery { repo.createVetClinic(any()) } returns Result.success("new-id")
+        coEvery { repo.submitVetClinic(any()) } returns Result.success("new-id")
         coEvery { repo.updateVetClinic(any()) } returns Result.success(Unit)
         val vm = VetClinicsViewModel(repo)
         vm.add(clinic).join()
         vm.save(clinic).join()
-        coVerify { repo.createVetClinic(clinic) }
+        coVerify { repo.submitVetClinic(clinic) }
         coVerify { repo.updateVetClinic(clinic) }
         assertNull(vm.error.value)
     }
 
     @Test
     fun `add failure then later success clears the error`() = runTest {
-        coEvery { repo.createVetClinic(any()) } returns Result.failure(Exception("boom"))
+        coEvery { repo.submitVetClinic(any()) } returns Result.failure(Exception("boom"))
         val vm = VetClinicsViewModel(repo)
         vm.add(clinic).join()
         assertTrue(vm.error.value != null)
-        coEvery { repo.createVetClinic(any()) } returns Result.success("ok")
+        coEvery { repo.submitVetClinic(any()) } returns Result.success("ok")
         vm.add(clinic).join()
         assertNull(vm.error.value)
     }

@@ -116,10 +116,24 @@ data class EditKinfolkUiState(
     val emergencyContactPhone: String = "",
     val emergencyContactRelation: String = "",
 
-    // Household-level Vet Clinic
+    // Household-level Vet Clinic.
+    //
+    // `vetClinicId` joins the household to a `vet_clinics` row; the three
+    // strings stay DENORMALIZED beside it so an Auntie at a door has the clinic
+    // phone off the household record without a second read, and a clinic
+    // renamed in the shared bank cannot blank the number on file. Every
+    // household that predates the picker has the strings and an EMPTY id, which
+    // is a valid state the form renders rather than treating as broken.
+    val vetClinicId: String = "",
     val vetClinicName: String = "",
     val vetClinicPhone: String = "",
     val vetClinicAddress: String = "",
+
+    // The 24 hour clinic, same id + denormalized shape.
+    val emergencyVetClinicId: String = "",
+    val emergencyVetClinicName: String = "",
+    val emergencyVetClinicPhone: String = "",
+    val emergencyVetClinicAddress: String = "",
 
     // Admin & Relationship
     val internalNotes: String = "",
@@ -607,23 +621,69 @@ class DirectoryViewModel(private val repository: AuntieRepository) : ViewModel()
 
     fun selectVetClinic(clinic: com.tribetails.auntieos.data.model.VetClinic) {
         _editKinfolkState.value = _editKinfolkState.value.copy(
+            vetClinicId      = clinic.id,
             vetClinicName    = clinic.name,
             vetClinicPhone   = clinic.phone,
             vetClinicAddress = clinic.address,
         )
     }
 
-    fun saveCurrentVetClinicAsCatalogEntry() {
-        val s = _editKinfolkState.value
-        if (s.vetClinicName.isBlank()) return
+    fun updateEditEmergencyVetClinicName(value: String) {
+        _editKinfolkState.value = _editKinfolkState.value.copy(emergencyVetClinicName = value)
+    }
+
+    fun selectEmergencyVetClinic(clinic: com.tribetails.auntieos.data.model.VetClinic) {
+        _editKinfolkState.value = _editKinfolkState.value.copy(
+            emergencyVetClinicId      = clinic.id,
+            emergencyVetClinicName    = clinic.name,
+            emergencyVetClinicPhone   = clinic.phone,
+            emergencyVetClinicAddress = clinic.address,
+        )
+    }
+
+    /**
+     * The pinned "create this clinic" action under the search dropdown.
+     *
+     * Goes through `submitVetClinic` rather than the old direct
+     * `createVetClinic` write, because that callable dedupes on a NORMALIZED
+     * name and hands back the EXISTING id on a match. So a double tap, or a
+     * clinic the bank already holds under a different capitalisation, SELECTS
+     * that record instead of writing a second copy of it. Staff callers land
+     * `verified: true`, so the clinic is live for households at once.
+     *
+     * `isEmergency` is stamped at creation for the emergency instance, so the
+     * new clinic is already flagged and appears in that picker next time.
+     */
+    fun createVetClinicFromSearch(
+        name: String,
+        phone: String = "",
+        address: String = "",
+        website: String = "",
+        isEmergency: Boolean = false,
+        forEmergencySlot: Boolean = false,
+    ) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
         viewModelScope.launch {
-            repository.createVetClinic(
+            repository.submitVetClinic(
                 com.tribetails.auntieos.data.model.VetClinic(
-                    name = s.vetClinicName.trim(),
-                    phone = s.vetClinicPhone.trim(),
-                    address = s.vetClinicAddress.trim(),
+                    name = trimmed,
+                    phone = phone.trim(),
+                    address = address.trim(),
+                    website = website.trim(),
+                    isEmergency = isEmergency,
                 )
-            )
+            ).onSuccess { clinicId ->
+                val selected = com.tribetails.auntieos.data.model.VetClinic(
+                    id = clinicId,
+                    name = trimmed,
+                    phone = phone.trim(),
+                    address = address.trim(),
+                    website = website.trim(),
+                    isEmergency = isEmergency,
+                )
+                if (forEmergencySlot) selectEmergencyVetClinic(selected) else selectVetClinic(selected)
+            }
         }
     }
 
@@ -664,12 +724,41 @@ class DirectoryViewModel(private val repository: AuntieRepository) : ViewModel()
     }
 
     fun pickAddressSuggestion(s: com.tribetails.auntieos.data.api.MapboxSuggestion) {
+        retrieveAddress(s) { resolved ->
+            _editKinfolkState.value = _editKinfolkState.value.copy(serviceAddress = resolved)
+        }
+    }
+
+    /**
+     * The ADD path's picker. Same retrieve and the same session-token rotation,
+     * writing into the add form instead of the edit form. Split rather than
+     * parameterised on a flag so neither screen can accidentally write the
+     * other's state.
+     */
+    fun pickAddressSuggestionForAdd(s: com.tribetails.auntieos.data.api.MapboxSuggestion) {
+        retrieveAddress(s) { resolved ->
+            _addKinfolkState.value = _addKinfolkState.value.copy(serviceAddress = resolved)
+        }
+    }
+
+    /**
+     * Resolve a picked suggestion, then ROTATE the Mapbox session token. The
+     * token must be the same one every suggest in this search used, or Mapbox
+     * bills the suggests and the retrieve as separate sessions; it must be a
+     * fresh one for the NEXT search, or the retired session keeps being charged.
+     *
+     * A failure leaves the typed address exactly as it is. Overwriting what the
+     * operator typed with a blank on a failed lookup would be the worst possible
+     * response to "we could not resolve that".
+     */
+    private fun retrieveAddress(
+        s: com.tribetails.auntieos.data.api.MapboxSuggestion,
+        write: (String) -> Unit,
+    ) {
         viewModelScope.launch {
             when (val r = mapboxClient.retrieve(s.mapboxId, mapboxSession)) {
                 is com.tribetails.auntieos.data.api.MapboxClient.RetrieveResult.Ok -> {
-                    _editKinfolkState.value = _editKinfolkState.value.copy(
-                        serviceAddress = r.feature.resolvedAddress
-                    )
+                    write(r.feature.resolvedAddress)
                     _addressSuggestions.value = emptyList()
                     _addressError.value = null
                     mapboxSession = com.tribetails.auntieos.data.api.newMapboxSessionToken()
@@ -739,9 +828,14 @@ class DirectoryViewModel(private val repository: AuntieRepository) : ViewModel()
             emergencyContactPhone = kinfolk.emergencyContactPhone,
             emergencyContactRelation = kinfolk.emergencyContactRelation,
 
+            vetClinicId      = kinfolk.vetClinicId,
             vetClinicName    = kinfolk.vetClinicName,
             vetClinicPhone   = kinfolk.vetClinicPhone,
             vetClinicAddress = kinfolk.vetClinicAddress,
+            emergencyVetClinicId      = kinfolk.emergencyVetClinicId,
+            emergencyVetClinicName    = kinfolk.emergencyVetClinicName,
+            emergencyVetClinicPhone   = kinfolk.emergencyVetClinicPhone,
+            emergencyVetClinicAddress = kinfolk.emergencyVetClinicAddress,
 
             internalNotes = kinfolk.internalNotes,
             referralSource = kinfolk.referralSource,
@@ -891,9 +985,14 @@ class DirectoryViewModel(private val repository: AuntieRepository) : ViewModel()
         emergencyContactPhone = state.emergencyContactPhone,
         emergencyContactRelation = state.emergencyContactRelation,
 
+        vetClinicId      = state.vetClinicId,
         vetClinicName    = state.vetClinicName,
         vetClinicPhone   = state.vetClinicPhone,
         vetClinicAddress = state.vetClinicAddress,
+        emergencyVetClinicId      = state.emergencyVetClinicId,
+        emergencyVetClinicName    = state.emergencyVetClinicName,
+        emergencyVetClinicPhone   = state.emergencyVetClinicPhone,
+        emergencyVetClinicAddress = state.emergencyVetClinicAddress,
 
         internalNotes = state.internalNotes,
         referralSource = state.referralSource,

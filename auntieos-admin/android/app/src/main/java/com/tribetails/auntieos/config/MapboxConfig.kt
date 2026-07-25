@@ -1,8 +1,16 @@
 package com.tribetails.auntieos.config
 
 object MapboxConfig {
-    // Replace with your actual Mapbox public token from your account
-    const val ACCESS_TOKEN = "pk.eyJ1IjoidHJpYmVhZG1pbiIsImEiOiJjbW41NXE4bG8wNnkxMnBweG1vdXozZTkyIn0.CTaKFpJN8NzuKfTHyXyBjw"
+    // ACCESS_TOKEN was here until 2026-07-25. It was a live Mapbox key compiled
+    // into the APK, read by exactly one caller (AddressAutocompleteField's
+    // direct geocoding request). Anyone with the APK could extract it and spend
+    // the account's quota. Address lookup now goes through the `mapboxSearch` /
+    // `mapboxRetrieve` callables, which hold the token as a Functions secret, so
+    // no Mapbox key ships in any client. What is left in this file is display
+    // config, not credentials.
+    //
+    // The token itself should still be ROTATED in the Mapbox console: it was in
+    // git history, so deleting the constant does not un-publish it.
 
     // Style configurations for different map styles
     const val DEFAULT_STYLE = "mapbox://styles/mapbox/streets-v12"

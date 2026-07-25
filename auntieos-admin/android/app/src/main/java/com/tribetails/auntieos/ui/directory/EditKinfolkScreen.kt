@@ -425,50 +425,15 @@ fun EditKinfolkScreen(
                                 style = AuntieTheme.typography.labelSmall,
                                 color = AuntieTheme.colors.kinfolkOrange
                             )
-
-                            AuntieField(
-                                value = state.vetClinicName,
-                                onValueChange = viewModel::updateEditVetClinicName,
-                                label = if (vetClinics.isEmpty()) "Clinic Name"
-                                        else "Clinic Name (type to search ${vetClinics.size})",
-                                modifier = Modifier.fillMaxWidth(),
+                            VetClinicSearchField(
+                                query = state.vetClinicName,
+                                onQueryChange = viewModel::updateEditVetClinicName,
+                                clinics = vetClinics,
+                                onPick = viewModel::selectVetClinic,
+                                onCreate = { name ->
+                                    viewModel.createVetClinicFromSearch(name = name)
+                                },
                             )
-                            val vetMatches = vetClinicSuggestions(state.vetClinicName, vetClinics)
-                            val vetExact = vetClinics.any {
-                                it.name.equals(state.vetClinicName.trim(), ignoreCase = true)
-                            }
-                            if (vetMatches.isNotEmpty() && !vetExact) {
-                                Column(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 6.dp)
-                                        .background(AuntieTheme.colors.surface2, RoundedCornerShape(12.dp)),
-                                ) {
-                                    vetMatches.forEach { clinic ->
-                                        val detail = listOf(clinic.phone, clinic.address)
-                                            .filter { it.isNotBlank() }.joinToString(" · ")
-                                        Column(
-                                            Modifier
-                                                .fillMaxWidth()
-                                                .clickable { viewModel.selectVetClinic(clinic) }
-                                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                                        ) {
-                                            Text(
-                                                clinic.name,
-                                                style = AuntieTheme.typography.bodyMedium,
-                                                color = AuntieTheme.colors.textPrimary,
-                                            )
-                                            if (detail.isNotBlank()) {
-                                                Text(
-                                                    detail,
-                                                    style = AuntieTheme.typography.bodySmall,
-                                                    color = AuntieTheme.colors.textDim,
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
                             AuntieField(
                                 value = state.vetClinicPhone,
                                 onValueChange = viewModel::updateEditVetClinicPhone,
@@ -483,13 +448,51 @@ fun EditKinfolkScreen(
                                 singleLine = false,
                                 minLines = 2,
                             )
-
-                            val notInCatalog = state.vetClinicName.isNotBlank() &&
-                                vetClinics.none { it.name.equals(state.vetClinicName, ignoreCase = true) }
-                            if (notInCatalog) {
-                                AuntieTextBtn(
-                                    onClick = { viewModel.saveCurrentVetClinicAsCatalogEntry() },
-                                ) { Text("Add to shared catalog") }
+                        }
+                    }
+                }
+                // Emergency vet (24 hour), a SECOND picker over the same bank
+                // filtered to the flagged clinics. A daytime practice in this
+                // slot is worse than a blank one: it reads as an answer at 2am
+                // and is not.
+                item {
+                    val vetClinics by viewModel.vetClinicsFlow.collectAsState()
+                    val erClinics = emergencyVetClinics(vetClinics)
+                    AuntieCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                "EMERGENCY VET",
+                                style = AuntieTheme.typography.labelSmall,
+                                color = AuntieTheme.colors.kinfolkOrange
+                            )
+                            VetClinicSearchField(
+                                query = state.emergencyVetClinicName,
+                                onQueryChange = viewModel::updateEditEmergencyVetClinicName,
+                                clinics = erClinics,
+                                onPick = viewModel::selectEmergencyVetClinic,
+                                onCreate = { name ->
+                                    // Created already flagged, so it shows up in
+                                    // this picker for the next household too.
+                                    viewModel.createVetClinicFromSearch(
+                                        name = name,
+                                        isEmergency = true,
+                                        forEmergencySlot = true,
+                                    )
+                                },
+                                emptyCatalogLabel = "Clinic Name (no 24 hour clinics yet)",
+                            )
+                            if (state.emergencyVetClinicPhone.isNotBlank() ||
+                                state.emergencyVetClinicAddress.isNotBlank()
+                            ) {
+                                Text(
+                                    listOf(state.emergencyVetClinicPhone, state.emergencyVetClinicAddress)
+                                        .filter { it.isNotBlank() }.joinToString(" · "),
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = AuntieTheme.colors.textDim,
+                                )
                             }
                         }
                     }
@@ -832,3 +835,101 @@ internal fun editTagsFromField(csv: String): List<String> =
  */
 internal fun editTagsToField(names: List<String>): String =
     names.joinToString(", ") { normalizeTagName(it.replace(',', ' ')) }
+/**
+ * The vet-clinic search field: a text box whose dropdown lists matches from the
+ * shared `vet_clinics` bank, with a CREATE button pinned at the very bottom.
+ *
+ * The pinned button is the point (operator issue #13: "there is a button at the
+ * very bottom of the dropdown for them to create a vet clinic"). It is present
+ * whenever anything has been typed, INCLUDING when nothing matched, which is
+ * exactly when an operator needs it. The old panel only offered "Add to shared
+ * catalog" below the address field, well past the fold, and only after the whole
+ * form had been filled in, so the moment the operator discovered the clinic was
+ * missing was not the moment they could do anything about it.
+ *
+ * The create path goes through `submitVetClinic`, which dedupes on a normalized
+ * name and returns the existing id on a match, so pressing it for a clinic the
+ * bank already holds selects that record rather than writing a duplicate.
+ *
+ * Divergence from the web picker, deliberate: web forbids free text entirely
+ * (its value is always a catalog row). Here the text box still doubles as the
+ * stored clinic name, because every household on this app's Firestore holds
+ * exactly that and Compose has no equivalent of the web chip-plus-clear
+ * affordance on this screen yet. Selecting a suggestion or creating one stamps
+ * `vetClinicId`; typing alone leaves it blank, which readers already treat as
+ * "not linked to the catalog".
+ */
+@Composable
+internal fun VetClinicSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    clinics: List<com.tribetails.auntieos.data.model.VetClinic>,
+    onPick: (com.tribetails.auntieos.data.model.VetClinic) -> Unit,
+    onCreate: (String) -> Unit,
+    emptyCatalogLabel: String = "Clinic Name",
+) {
+    val matches = vetClinicSuggestions(query, clinics)
+    val exact = clinics.any { it.name.equals(query.trim(), ignoreCase = true) }
+    val offerCreate = shouldOfferVetClinicCreate(query, clinics) && !exact
+    AuntieField(
+        value = query,
+        onValueChange = onQueryChange,
+        label = if (clinics.isEmpty()) emptyCatalogLabel
+                else "Clinic Name (type to search ${clinics.size})",
+        modifier = Modifier.fillMaxWidth(),
+    )
+    if (matches.isNotEmpty() || offerCreate) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .background(AuntieTheme.colors.surface2, RoundedCornerShape(12.dp)),
+        ) {
+            if (!exact) {
+                matches.forEach { clinic ->
+                    val detail = listOf(clinic.phone, clinic.address)
+                        .filter { it.isNotBlank() }.joinToString(" · ")
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(clinic) }
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                    ) {
+                        Text(
+                            clinic.name,
+                            style = AuntieTheme.typography.bodyMedium,
+                            color = AuntieTheme.colors.textPrimary,
+                        )
+                        if (detail.isNotBlank()) {
+                            Text(
+                                detail,
+                                style = AuntieTheme.typography.bodySmall,
+                                color = AuntieTheme.colors.textDim,
+                            )
+                        }
+                    }
+                }
+                if (matches.isEmpty()) {
+                    Text(
+                        "No clinic in the catalog matches that.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.textDim,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                }
+            }
+            if (offerCreate) {
+                // LAST, always. Below every match, never above one.
+                Text(
+                    createVetClinicLabel(query),
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.kinfolkOrange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onCreate(query) }
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                )
+            }
+        }
+    }
+}

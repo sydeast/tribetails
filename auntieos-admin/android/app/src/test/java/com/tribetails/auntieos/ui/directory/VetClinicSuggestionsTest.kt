@@ -45,4 +45,43 @@ class VetClinicSuggestionsTest {
     @Test fun noMatch_isEmpty() {
         assertEquals(emptyList<VetClinic>(), vetClinicSuggestions("zzzzz", catalog))
     }
+    // ── parity with the web picker (operator issue #13) ──────────────────────
+    @Test fun emergencyFilter_keepsOnlyFlaggedClinics() {
+        val mixed = listOf(
+            VetClinic(name = "Allandale Veterinary Clinic"),
+            VetClinic(name = "Austin Pet ER", isEmergency = true),
+            VetClinic(name = "Night Owl Animal Hospital", isEmergency = true),
+        )
+        assertEquals(
+            listOf("Austin Pet ER", "Night Owl Animal Hospital"),
+            emergencyVetClinics(mixed).map { it.name },
+        )
+    }
+    @Test fun emergencyFilter_onACatalogWithNoneIsEmptyNotEverything() {
+        assertEquals(emptyList<VetClinic>(), emergencyVetClinics(catalog))
+    }
+    /**
+     * The pinned create button quotes the query. It must show the TRIMMED text,
+     * because that is what will be sent as the clinic name.
+     */
+    @Test fun createLabel_quotesTheTrimmedQuery() {
+        assertEquals(
+            "Create \"Barton Springs\" as a new vet clinic",
+            createVetClinicLabel("  Barton Springs  "),
+        )
+    }
+    /**
+     * The button is offered whenever anything is typed, INCLUDING when nothing
+     * matched, which is exactly the case it exists for. Blank query only means
+     * nothing has been typed yet.
+     */
+    @Test fun createButton_isOfferedWheneverSomethingIsTypedEvenWithZeroMatches() {
+        assertTrue(shouldOfferVetClinicCreate("zzzzz", catalog))
+        assertEquals(emptyList<VetClinic>(), vetClinicSuggestions("zzzzz", catalog))
+        assertTrue(shouldOfferVetClinicCreate("an", catalog))
+    }
+    @Test fun createButton_isNotOfferedBeforeAnythingIsTyped() {
+        assertTrue(!shouldOfferVetClinicCreate("", catalog))
+        assertTrue(!shouldOfferVetClinicCreate("   ", catalog))
+    }
 }
