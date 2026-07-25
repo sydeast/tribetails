@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { SESSIONS_QUERY, type SessionEntry } from '../api/sessions';
+import { sessionsArchiveQuery, sessionsWindowQuery, type SessionEntry } from '../api/sessions';
 import {
   sessionState,
   sessionStateInfo,
@@ -8,8 +8,15 @@ import {
   sessionDayKey,
   sessionDayLabel,
   groupSessionsByDay,
+  groupSessionsByPhase,
   isSessionActive,
   localDateIso,
+  shiftDayIso,
+  FETCH_DAYS_BACK,
+  RECENT_WINDOW_DAYS,
+  UPCOMING_WINDOW_DAYS,
+  type SessionDayGroup,
+  type SessionSort,
   type SessionState,
 } from '../lib/sessionFormat';
 import { useCollection } from '../lib/firestore';
@@ -17,6 +24,7 @@ import { asyncScalar } from '../lib/async';
 import { str } from '../lib/coerce';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint } from '../components/DenScreenKit';
+import { GhostButton } from '../components/Buttons';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { SessionDetail } from './SessionDetail';
 import './Sessions.css';
@@ -42,6 +50,14 @@ const FILTERS: readonly FilterDef[] = [
   { key: 'cancelled', label: 'Cancelled', test: (s) => s === 'cancelled' },
 ];
 
+/** Which body of data the screen is showing: the day-of window, or older history. */
+type ViewMode = 'window' | 'archive';
+
+const SORTS: readonly { key: SessionSort; label: string }[] = [
+  { key: 'soonest', label: 'Soonest first' },
+  { key: 'latest', label: 'Latest first' },
+];
+
 interface SessionsProps {
   /**
    * Row-select override. The router mounts this screen propless, and by default
@@ -56,13 +72,31 @@ interface SessionsProps {
 }
 
 /**
- * Admin Sessions list ("The Den · Auntie Time", nav slug `sessions`, 
+ * Admin Sessions list ("The Den · Auntie Time", nav slug `sessions`,
  * `lib/nav.ts` is explicit that the rail label and the slug are not the same
- * word). Streams the flat `kin_care_sessions` collection through the bounded,
- * server-ordered listener (SESSIONS_QUERY, startTime desc, capped 300), then
- * classifies every row through the enumerated `sessionState` (never by
- * negation) and groups the FILTERED rows by LOCAL calendar day
- * (`groupSessionsByDay`, the AO-18 fix) for display.
+ * word). Streams the flat `kin_care_sessions` collection through a bounded,
+ * server-ordered, DATE-RANGED listener, classifies every row through the
+ * enumerated `sessionState` (never by negation), then groups the FILTERED rows
+ * into Active / Upcoming / Recent, each still sub-grouped by LOCAL calendar day
+ * (the AO-18 fix).
+ *
+ * OPERATOR ISSUE #17, and what changed. The sub-header has always promised
+ * "Every Kin Care today and coming up, plus what wrapped recently", but the
+ * screen read `SESSIONS_QUERY`: a flat 300 rows by startTime desc, no date
+ * predicate, day-grouped and nothing else. A visit from March sat in the same
+ * list as tomorrow's, so the copy and the data disagreed. Now:
+ *  - `sessionsWindowQuery` fetches a bounded date range, and
+ *    `groupSessionsByPhase` narrows it to the three phases the copy describes
+ *    (see `lib/sessionFormat.ts` for each boundary and why it sits where it
+ *    does).
+ *  - Day headers carry the YEAR when it is not the current one, so a visit
+ *    from last January can no longer read as this January.
+ *  - A Sort control (soonest / latest first) reverses days and rows WITHIN a
+ *    phase; the phases themselves keep the archive's fixed order.
+ *  - The filter tabs are unchanged, and now operate inside the window.
+ *  - Older history moved behind an Archive toggle, which swaps in
+ *    `sessionsArchiveQuery` over an operator-chosen range and drops the phase
+ *    rules (escaping them is the point of opening it).
  *
  * Selecting a row opens `SessionDetail`, a read-only detail view of that one
  * session (status/service, timing, household/kin, notes), resolved from this
@@ -72,8 +106,9 @@ interface SessionsProps {
  * `KinTaleComposeScreen` in the wasm reference), which are a separate surface.
  */
 export function Sessions({ onSelect }: SessionsProps) {
-  const rows = useCollection<SessionEntry>(SESSIONS_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [sort, setSort] = useState<SessionSort>('soonest');
+  const [mode, setMode] = useState<ViewMode>('window');
   // The detail view's own selection state, used only when no external onSelect
   // is supplied (see SessionsProps's doc above).
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -91,6 +126,25 @@ export function Sessions({ onSelect }: SessionsProps) {
   // Computed once per render pass, not per keystroke/tick, same rationale as
   // Invoices.tsx's todayIso: "today" doesn't change mid-session.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
+
+  // The Archive's default range is the month immediately BEFORE the day-of
+  // window's own fetch reaches, so opening it never re-shows what the list was
+  // already showing.
+  const [archiveFrom, setArchiveFrom] = useState(() =>
+    shiftDayIso(todayIso, -(FETCH_DAYS_BACK + 30)),
+  );
+  const [archiveTo, setArchiveTo] = useState(() => shiftDayIso(todayIso, -(FETCH_DAYS_BACK + 1)));
+
+  // One bounded listener either way. The spec is memoized on its inputs so a
+  // re-render cannot churn the subscription (see CollectionSpec's own note).
+  const spec = useMemo(
+    () =>
+      mode === 'archive'
+        ? sessionsArchiveQuery(archiveFrom, archiveTo)
+        : sessionsWindowQuery(todayIso),
+    [mode, archiveFrom, archiveTo, todayIso],
+  );
+  const rows = useCollection<SessionEntry>(spec);
 
   // Every field below is read through `str()`: `SessionEntry` is a cast over raw
   // Firestore data, not a validation of it (see api/sessions.ts), so a doc can
@@ -138,25 +192,71 @@ export function Sessions({ onSelect }: SessionsProps) {
         subtitle="Every Kin Care today and coming up, plus what wrapped recently."
       />
 
-      <div className="sessions__summary">
-        <StatCard
-          label="In flight"
-          value={activeCount}
-          trend="on the way, arrived, or departed"
-          tone="teal"
-          feature={activeCount.kind === 'value' && activeCount.value > 0}
-        />
-        <StatCard label="Today" value={todayCount} trend="on today's calendar" tone="orange" />
-        <StatCard label="Wrapped today" value={wrappedTodayCount} trend="completed Kin Cares" tone="success" />
-      </div>
+      {mode === 'window' && (
+        <div className="sessions__summary">
+          <StatCard
+            label="In flight"
+            value={activeCount}
+            trend="on the way, arrived, or departed"
+            tone="teal"
+            feature={activeCount.kind === 'value' && activeCount.value > 0}
+          />
+          <StatCard label="Today" value={todayCount} trend="on today's calendar" tone="orange" />
+          <StatCard label="Wrapped today" value={wrappedTodayCount} trend="completed Kin Cares" tone="success" />
+        </div>
+      )}
 
-      <DenPanel title="Kin Care sessions" subtitle="Grouped by day, earliest first (today, then coming up), from the latest 300 on the books.">
+      <DenPanel
+        title={mode === 'archive' ? 'Archive' : 'Kin Care sessions'}
+        subtitle={
+          mode === 'archive'
+            ? 'Older history, by day. Pick a range; the year shows on any day outside this one.'
+            : `In flight now, the next ${UPCOMING_WINDOW_DAYS} days, and what wrapped in the last ${RECENT_WINDOW_DAYS}.`
+        }
+        trailing={
+          <GhostButton
+            label={mode === 'archive' ? 'Back to Auntie Time' : 'Archive'}
+            onClick={() => setMode(mode === 'archive' ? 'window' : 'archive')}
+          />
+        }
+      >
+        {mode === 'archive' && (
+          <div className="sessions__range">
+            <label className="sessions__range-field">
+              <span className="sessions__control-label">From</span>
+              <input
+                type="date"
+                className="sessions__range-input"
+                value={archiveFrom}
+                max={archiveTo}
+                onChange={(e) => setArchiveFrom(e.target.value)}
+              />
+            </label>
+            <label className="sessions__range-field">
+              <span className="sessions__control-label">To</span>
+              <input
+                type="date"
+                className="sessions__range-input"
+                value={archiveTo}
+                min={archiveFrom}
+                onChange={(e) => setArchiveTo(e.target.value)}
+              />
+            </label>
+          </div>
+        )}
+
         <AsyncRegion
           state={rows}
           what="Kin Care sessions"
           isEmpty={(data) => data.length === 0}
           loading={<p className="sessions__hint">Loading Kin Care sessions…</p>}
-          empty={<EmptyHint>Nothing on the books yet.</EmptyHint>}
+          empty={
+            <EmptyHint>
+              {mode === 'archive'
+                ? 'No Kin Cares in this range.'
+                : 'Nothing on the books in this window. Older visits are in the Archive.'}
+            </EmptyHint>
+          }
         >
           {(data) => {
             // Non-null: FILTERS lists all five FilterKey members above, and
@@ -164,38 +264,77 @@ export function Sessions({ onSelect }: SessionsProps) {
             // that same array (Invoices.tsx's identical .find()! comment).
             const activeFilter = FILTERS.find((f) => f.key === filter)!;
             const visible = data.filter((e) => activeFilter.test(sessionState(str(e.status))));
-            const groups = groupSessionsByDay(visible);
+
+            // The window view groups by PHASE (each phase still sub-grouped by
+            // day); the Archive is plain history, so it groups by day alone,
+            // deliberately WITHOUT the window rules, since escaping them is the
+            // whole point of opening it.
+            const phases =
+              mode === 'archive' ? [] : groupSessionsByPhase(visible, todayIso, sort);
+            const archiveDays = mode === 'archive' ? orderDays(groupSessionsByDay(visible), sort) : [];
+            const shown = mode === 'archive' ? archiveDays.length : phases.length;
+
+            // Two different empties, told apart rather than merged: a filter
+            // that matches nothing, versus a window that holds nothing.
+            const unfilteredShown =
+              mode === 'archive'
+                ? data.length
+                : groupSessionsByPhase(data, todayIso, sort).length;
 
             return (
               <>
-                <div className="sessions__tabs" role="tablist" aria-label="Filter Kin Care sessions">
-                  {FILTERS.map((f, index) => (
-                    <button
-                      key={f.key}
-                      type="button"
-                      role="tab"
-                      aria-selected={filter === f.key}
-                      className={filter === f.key ? 'sessions__tab sessions__tab--active' : 'sessions__tab'}
-                      onClick={() => setFilter(f.key)}
-                      {...getTabProps(index)}
+                <div className="sessions__controls">
+                  <div className="sessions__tabs" role="tablist" aria-label="Filter Kin Care sessions">
+                    {FILTERS.map((f, index) => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        role="tab"
+                        aria-selected={filter === f.key}
+                        className={filter === f.key ? 'sessions__tab sessions__tab--active' : 'sessions__tab'}
+                        onClick={() => setFilter(f.key)}
+                        {...getTabProps(index)}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <label className="sessions__sort">
+                    <span className="sessions__control-label">Sort</span>
+                    <select
+                      className="sessions__sort-select"
+                      value={sort}
+                      onChange={(e) => setSort(e.target.value as SessionSort)}
                     >
-                      {f.label}
-                    </button>
-                  ))}
+                      {SORTS.map((s) => (
+                        <option key={s.key} value={s.key}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
 
-                {groups.length === 0 ? (
-                  <EmptyHint>Nothing matches this filter.</EmptyHint>
+                {shown === 0 ? (
+                  <EmptyHint>
+                    {unfilteredShown === 0
+                      ? mode === 'archive'
+                        ? 'No Kin Cares in this range.'
+                        : 'Nothing on the books in this window. Older visits are in the Archive.'
+                      : 'Nothing matches this filter.'}
+                  </EmptyHint>
+                ) : mode === 'archive' ? (
+                  <DayList days={archiveDays} todayIso={todayIso} onSelect={handleSelect} />
                 ) : (
-                  <ul className="sessions__list">
-                    {groups.map((g) => (
-                      <li key={g.dayKeyValue} className="sessions__day-group">
-                        <h3 className="sessions__day-header">{sessionDayLabel(g.dayKeyValue, todayIso)}</h3>
-                        <ul className="sessions__day-rows">
-                          {g.rows.map((entry) => (
-                            <SessionRow key={entry._id} entry={entry} onSelect={handleSelect} />
-                          ))}
-                        </ul>
+                  <ul className="sessions__phases">
+                    {phases.map((p) => (
+                      <li key={p.phase} className={`sessions__phase sessions__phase--${p.phase}`}>
+                        <h3 className="sessions__phase-header">
+                          {p.label}
+                          <span className="sessions__phase-count">{p.count}</span>
+                        </h3>
+                        <DayList days={p.days} todayIso={todayIso} onSelect={handleSelect} />
                       </li>
                     ))}
                   </ul>
@@ -206,6 +345,41 @@ export function Sessions({ onSelect }: SessionsProps) {
         </AsyncRegion>
       </DenPanel>
     </div>
+  );
+}
+
+/**
+ * Day groups read in the operator's chosen direction. `groupSessionsByDay`
+ * always returns days ascending with rows ascending inside each, so "latest
+ * first" is that same ordering reversed on both axes (the identical rule
+ * `groupSessionsByPhase` applies within a phase).
+ */
+function orderDays<T>(days: SessionDayGroup<T>[], sort: SessionSort): SessionDayGroup<T>[] {
+  if (sort === 'soonest') return days;
+  return [...days].reverse().map((d) => ({ ...d, rows: [...d.rows].reverse() }));
+}
+
+interface DayListProps {
+  days: SessionDayGroup<SessionEntry>[];
+  todayIso: string;
+  onSelect: (sessionId: string) => void;
+}
+
+/** The day-header + rows list, shared by the phase groups and the Archive. */
+function DayList({ days, todayIso, onSelect }: DayListProps) {
+  return (
+    <ul className="sessions__list">
+      {days.map((g) => (
+        <li key={g.dayKeyValue} className="sessions__day-group">
+          <h4 className="sessions__day-header">{sessionDayLabel(g.dayKeyValue, todayIso)}</h4>
+          <ul className="sessions__day-rows">
+            {g.rows.map((entry) => (
+              <SessionRow key={entry._id} entry={entry} onSelect={onSelect} />
+            ))}
+          </ul>
+        </li>
+      ))}
+    </ul>
   );
 }
 

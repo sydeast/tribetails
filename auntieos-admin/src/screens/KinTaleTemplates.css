@@ -212,6 +212,51 @@
   flex-direction: column;
 }
 
+/* ── shared checklist bank quick-add ─────────────────────────────────────── */
+
+.ktt__bank {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.ktt__bank-title {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.ktt__bank-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ktt__bank-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--type-body-sm-size);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+.ktt__bank-item:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
 /* ── conditions ──────────────────────────────────────────────────────────── */
 
 .ktt__conditions {

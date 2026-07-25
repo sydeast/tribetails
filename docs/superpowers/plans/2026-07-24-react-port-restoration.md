@@ -256,9 +256,60 @@ Each task below is execution-ready at the epic level: exact files, contracts, an
 
 **Behavior:** "Add from bank" row on each checklist editor (pulls from and saves to the shared bank, archive `ChecklistBank.kt` behavior). Setting `isDefault` on one template unsets it on others in the same service scope, in one batched write.
 
-- [ ] Failing tests: nav renders live link (no "(coming soon)" text for this slug); quick-add inserts bank item; saving default unsets prior default (batched)
-- [ ] Grep both apps for `coming soon` and enumerate remaining instances; any hit on our own features becomes a follow-up task in this plan, not a banner
-- [ ] Implement; commit
+- [x] Failing tests: nav renders live link (no "(coming soon)" text for this slug); quick-add inserts bank item; saving default unsets prior default (batched)
+- [x] Grep both apps for `coming soon` and enumerate remaining instances; any hit on our own features becomes a follow-up task in this plan, not a banner
+- [x] Implement; commit
+
+**FOUND (2026-07-25), and it was not where the audit guessed.** The literal was
+`AppShell.tsx:77`'s fallback, exactly as reality-correction 1 predicted, but the
+cause was not a stale nav entry: `kintale-templates` was the ONE rail slug missing
+from `LIVE_LINKS`, while `router.tsx:234` had registered the route and the
+756-line screen had shipped. So the rail advertised a finished screen as
+"KinTale templates (coming soon)". Fixed by adding the link; `AppShell.test.tsx`
+now asserts `railPendingSlugs()` is empty, which guards every entry, not just this one.
+
+Android was clean: `KinTaleTemplatesScreen.kt` and `ChecklistEditorScreen.kt`
+carry no such literal (the only Android hits are the Settings add-on rows below).
+
+**Full inventory of every remaining `coming soon` in both apps, with disposition:**
+
+| Where | Reachable by | Disposition |
+|---|---|---|
+| `auntieos-admin/src/components/AppShell.tsx:77` | operator, rail | FIXED. The fallback stays for a rail entry added ahead of its route; the test proves no shipped screen hits it. |
+| `web/.../settings/SettingsScreen.kt:2449-2451`, `android/.../AdminSettingsScreen.kt:1626-1628` | operator, Settings → Add-ons | LEAVE. Third-party integrations, none built. Zapier, Make and Google Tasks each need an external credential the operator does not have yet (a Zapier/Make app registration plus its API key, and `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET` for Google Tasks, the same pair Task 7.2 is blocked on). Shown honestly as unbuilt, never faked as connected. |
+| `mytribe/web/src/screens/Kin.tsx:35,47,77` | kinfolk portal | FOLLOW-UP 1.6a. Add-kin from the portal. |
+| `mytribe/web/src/screens/TribeHub.tsx:102,116` | kinfolk portal | FOLLOW-UP 1.6b. "All photos" / "All tales" index links. |
+| `mytribe/web/src/screens/Account.tsx:284` | kinfolk portal | Already backlogged: card payments, `AuntieOS_Fix_Backlog_2026-06-02.md`. |
+| `mytribe/web/src/screens/Account.tsx:322` | kinfolk portal | Already backlogged as 16.4 (Message Auntie). |
+| `mytribe/web/src/screens/KinTales.tsx:254,257` | kinfolk portal | FOLLOW-UP 1.6c. Share a tale; reply to Auntie (the reply half is 16.4). |
+| `mytribe/web/src/components/PortalNav.tsx:65` | nobody | DEAD BRANCH. Every entry in `NAV_LINKS` has a non-null `to`, so the inert span never renders. Left as the same "entry ahead of its route" affordance AppShell keeps. |
+| `mytribe/src/.../AccountSettingsScreen.kt:263` | kinfolk portal (Compose) | Same card-payments item as `Account.tsx:284`. |
+| `mytribe/seeds/notificationTemplates/kincare.auntie.departed/sms.txt:1` | kinfolk, SMS | NOT A GATE. "KinTale coming soon!" is Auntie telling a client their recap is on its way. Copy, not a stub. |
+| test assertions in `Inbox.test.tsx:318`, `ScheduleScreenTest.kt:151`, `InvoiceDetailScreenTest.kt:91` | nobody | These assert the stub is GONE. Keep. |
+
+The MyTribe portal follow-ups are listed below rather than folded into Task 1.6:
+they are the kinfolk app, not the admin restoration this plan scopes, and each is
+a vertical slice of its own.
+
+### Task 1.6a: MyTribe portal, add a Kin from the roster (follow-up)
+
+`mytribe/web/src/screens/Kin.tsx:35,47,77` render three inert "+ Add New" affordances.
+AuntieOS already has `AddKinDialog.tsx`; the portal needs the kinfolk-side equivalent
+plus a callable that lets a kinfolk create a kin on their own household (rules keep
+`kin` callable-only for non-admins).
+
+### Task 1.6b: MyTribe portal, "All photos" and "All tales" index screens (follow-up)
+
+`mytribe/web/src/screens/TribeHub.tsx:102,116`. The hub shows a truncated strip of each
+with an inert link to the full list. Both indexes need a bounded, paginated screen
+(reuses Task 4.1's pagination hook once it lands).
+
+### Task 1.6c: MyTribe portal, share a KinTale (follow-up)
+
+`mytribe/web/src/screens/KinTales.tsx:254`. A share affordance needs a decision first:
+a public share link is a new unauthenticated read path on `kin_care_reports` and wants
+a signed, expiring token, not a rules loosening. The "Reply to Auntie" button beside it
+(`:257`) is item 16.4, already backlogged.
 
 ### Task 1.7: Auntie Time scope, year display, sorting, filtering (#17)
 

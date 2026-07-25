@@ -16,6 +16,12 @@ vi.mock('../lib/firestore', () => ({ useCollection }));
 const { saveKinTaleTemplate } = vi.hoisted(() => ({ saveKinTaleTemplate: vi.fn() }));
 vi.mock('../api/kinTaleTemplatesWrite', () => ({ saveKinTaleTemplate }));
 
+const { listChecklistBank, saveChecklistBankItem } = vi.hoisted(() => ({
+  listChecklistBank: vi.fn(),
+  saveChecklistBankItem: vi.fn(),
+}));
+vi.mock('../api/checklistBank', () => ({ listChecklistBank, saveChecklistBankItem }));
+
 import { KinTaleTemplates } from './KinTaleTemplates';
 
 /** A minimal, valid template doc (raw shape, as it arrives from useCollection). */
@@ -51,6 +57,11 @@ const user = userEvent.setup();
 beforeEach(() => {
   useCollection.mockReset();
   saveKinTaleTemplate.mockReset().mockResolvedValue('t1');
+  listChecklistBank.mockReset().mockResolvedValue([
+    { id: 'fresh-water', text: 'Fresh water provided', scope: 'PER_PET' },
+    { id: 'home-secured', text: 'Home secured on departure', scope: 'PER_VISIT' },
+  ]);
+  saveChecklistBankItem.mockReset().mockResolvedValue({ id: 'meds', text: 'Meds', scope: 'PER_PET' });
   mockStream({ status: 'ready', data: [tpl()] });
 });
 
@@ -217,6 +228,137 @@ describe('KinTaleTemplates: editing the sections + items round-trips into the sa
     await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
     const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
     expect(arg.moodOptions).toHaveLength(2);
+  });
+});
+
+/**
+ * The shared checklist bank (`listChecklistBank` / `saveChecklistBankItem`, both
+ * deployed admin callables) backs a quick-add row under each checklist scope, so
+ * the common items are two clicks instead of retyped per template. Ported from
+ * the archive's `BankAddRow`.
+ */
+describe('KinTaleTemplates: checklist bank quick-add', () => {
+  /**
+   * The quick-add row of one checklist section. Scoped deliberately: once an
+   * item is added, its own row actions ("Move X up", "Remove X") also match a
+   * name query for that text, so an unscoped query would find the row it was
+   * meant to prove had disappeared.
+   */
+  function bankRow(sectionTitle: string): HTMLElement {
+    const panel = screen.getByText(sectionTitle).closest('.den-panel') as HTMLElement;
+    return panel.querySelector('.ktt__bank') as HTMLElement;
+  }
+
+  it('offers the bank items for a scope, and only that scope', async () => {
+    render(<KinTaleTemplates />);
+    await screen.findByDisplayValue('Walk recap');
+    await waitFor(() => expect(bankRow('Per-pet items')).not.toBeNull());
+
+    const perPet = bankRow('Per-pet items');
+    expect(within(perPet).getByRole('button', { name: /fresh water provided/i })).toBeInTheDocument();
+    expect(within(perPet).queryByRole('button', { name: /home secured/i })).toBeNull();
+
+    const perVisit = bankRow('Per-visit items');
+    expect(within(perVisit).getByRole('button', { name: /home secured/i })).toBeInTheDocument();
+  });
+
+  it('clicking a bank item inserts it as a real checklist row that survives the save', async () => {
+    render(<KinTaleTemplates />);
+    await screen.findByDisplayValue('Walk recap');
+    await waitFor(() => expect(bankRow('Per-pet items')).not.toBeNull());
+
+    await user.click(within(bankRow('Per-pet items')).getByRole('button', { name: /fresh water provided/i }));
+
+    expect(screen.getByDisplayValue('Fresh water provided')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
+    const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
+    const added = arg.checklistItems.find((i) => i.text === 'Fresh water provided');
+    expect(added).toMatchObject({ scope: 'PER_PET' });
+    // Appended after the existing item, with its own fresh key.
+    expect(added!.key).not.toBe('meds');
+  });
+
+  it('stops offering an item once it is in the checklist, so it cannot be added twice', async () => {
+    // The per-pet bank holds exactly one item in this fixture, so adding it
+    // leaves nothing to offer and the whole row goes away rather than sitting
+    // there as an empty "Add from bank" heading (the archive's rule).
+    render(<KinTaleTemplates />);
+    await screen.findByDisplayValue('Walk recap');
+    await waitFor(() => expect(bankRow('Per-pet items')).not.toBeNull());
+    await user.click(within(bankRow('Per-pet items')).getByRole('button', { name: /fresh water provided/i }));
+    expect(bankRow('Per-pet items')).toBeNull();
+    // The per-visit row is untouched: exhausting one scope never hides another.
+    expect(within(bankRow('Per-visit items')).getByRole('button', { name: /home secured/i })).toBeInTheDocument();
+  });
+
+  it('saves a hand-written item to the shared bank and offers it back', async () => {
+    render(<KinTaleTemplates />);
+    await screen.findByDisplayValue('Walk recap');
+
+    listChecklistBank.mockResolvedValue([
+      { id: 'fresh-water', text: 'Fresh water provided', scope: 'PER_PET' },
+      { id: 'meds', text: 'Meds', scope: 'PER_PET' },
+    ]);
+    await user.click(screen.getByRole('button', { name: /save "meds" to the bank/i }));
+
+    await waitFor(() => expect(saveChecklistBankItem).toHaveBeenCalledWith('Meds', 'PER_PET'));
+    expect(await screen.findByText(/saved to the bank/i)).toBeInTheDocument();
+  });
+
+  it('names the reason when the bank fails to load, never a silently empty picker', async () => {
+    listChecklistBank.mockRejectedValue(new Error('permission-denied'));
+    render(<KinTaleTemplates />);
+    await screen.findByDisplayValue('Walk recap');
+    expect(await screen.findByText(/couldn't load the checklist bank: permission-denied/i)).toBeInTheDocument();
+  });
+
+  it('names the reason when saving to the bank rejects', async () => {
+    saveChecklistBankItem.mockRejectedValue(new Error('unavailable'));
+    render(<KinTaleTemplates />);
+    await screen.findByDisplayValue('Walk recap');
+    await user.click(screen.getByRole('button', { name: /save "meds" to the bank/i }));
+    expect(await screen.findByText(/couldn't save to the bank: unavailable/i)).toBeInTheDocument();
+  });
+});
+
+describe('KinTaleTemplates: default exclusivity', () => {
+  it('hands the writer the streamed siblings, so setting default can unset the others', async () => {
+    mockStream({
+      status: 'ready',
+      data: [tpl({ _id: 't1', name: 'Walk recap', isDefault: true }), tpl({ _id: 't2', name: 'Sit recap', isDefault: false })],
+    });
+    render(<KinTaleTemplates />);
+    await screen.findByDisplayValue('Walk recap');
+    await user.click(screen.getByRole('button', { name: /sit recap/i }));
+    await screen.findByDisplayValue('Sit recap');
+    await user.click(screen.getByRole('switch', { name: 'Make default template' }));
+
+    await user.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
+    const [saved, siblings] = saveKinTaleTemplate.mock.calls[0] as [
+      KinTaleTemplate,
+      ReadonlyArray<{ _id: string; isDefault: boolean }>,
+    ];
+    expect(saved).toMatchObject({ _id: 't2', isDefault: true });
+    expect(siblings).toEqual([
+      { _id: 't1', isDefault: true },
+      { _id: 't2', isDefault: false },
+    ]);
+  });
+
+  it('tells the operator the flag moved, rather than leaving the picker to explain it', async () => {
+    mockStream({
+      status: 'ready',
+      data: [tpl({ _id: 't1', name: 'Walk recap', isDefault: true }), tpl({ _id: 't2', name: 'Sit recap', isDefault: false })],
+    });
+    render(<KinTaleTemplates />);
+    await screen.findByDisplayValue('Walk recap');
+    await user.click(screen.getByRole('button', { name: /sit recap/i }));
+    await screen.findByDisplayValue('Sit recap');
+    await user.click(screen.getByRole('switch', { name: 'Make default template' }));
+    expect(screen.getByText(/only one template can be the default/i)).toBeInTheDocument();
   });
 });
 

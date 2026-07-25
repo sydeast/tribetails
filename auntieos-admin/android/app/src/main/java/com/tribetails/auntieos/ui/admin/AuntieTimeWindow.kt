@@ -1,0 +1,153 @@
+package com.tribetails.auntieos.ui.admin
+
+import com.tribetails.auntieos.data.model.KinCareSession
+
+/**
+ * Auntie Time's window, sort and date labels: the pure half of
+ * [KinCareSessionsScreen], and the Kotlin twin of the web admin's
+ * `src/lib/sessionFormat.ts`. Extracted so the rules that decide what an
+ * operator sees are unit-tested rather than buried in a Composable.
+ *
+ * OPERATOR ISSUE #17 brought three changes here, all matching web:
+ *
+ *  RECENT IS SEVEN DAYS, not "since yesterday". The old bound was a day-of run
+ *  sheet; the operator asked for recent, and a week is how long "did that one
+ *  get wrapped?" stays a live question. Measured on the WRAP day, which is
+ *  completedAt when there is one and startTime otherwise, because a CANCELLED
+ *  visit never gets a completedAt and dropping it would quietly empty the
+ *  Cancelled view.
+ *
+ *  UPCOMING keeps the fourteen-day horizon and the one-day look-back it always
+ *  had. Forward so a long approved recurring series cannot bury today under
+ *  next month; backward because a visit still sitting at SCHEDULED after its
+ *  slot passed is the row an operator most needs to see.
+ *
+ *  ACTIVE has no date bound at all. In flight is in flight whatever the
+ *  startTime says, so a clock-in nobody closed can never fall out of the list.
+ *
+ * DRAFT / PENDING / REJECTED stay hidden and are matched POSITIVELY by name
+ * (the archive's AO-60: the Bookings screen owns that queue). A status code no
+ * writer produces today is therefore not swept in with them; it lands in
+ * Upcoming carrying its own honest status pill.
+ */
+
+const val RECENT_WINDOW_DAYS = 7
+const val UPCOMING_WINDOW_DAYS = 14
+
+/** Sort direction the operator picks. Applied WITHIN a phase, never across phases. */
+enum class AuntieTimeSort(val label: String) {
+    Soonest("Soonest first"),
+    Latest("Latest first"),
+}
+
+/** The booking-queue states the Bookings screen owns; never shown on Auntie Time. */
+private val BOOKING_QUEUE_STATUSES = setOf("DRAFT", "PENDING", "REJECTED")
+
+internal fun isBookingQueueStatus(status: String): Boolean =
+    status.trim().uppercase() in BOOKING_QUEUE_STATUSES
+
+private val ACTIVE_STATUSES = setOf("ON_MY_WAY", "ARRIVED", "DEPARTED")
+
+private val WRAPPED_STATUSES = setOf("COMPLETED", "CANCELLED")
+
+/**
+ * The day a wrapped visit is dated by: completedAt when present, else the start
+ * it was scheduled for. Returns "" when neither parses to a date.
+ */
+internal fun wrapDayOf(session: KinCareSession): String {
+    val completed = session.completedAt.orEmpty().take(10)
+    if (completed.length == 10) return completed
+    return session.startTime.take(10).takeIf { it.length == 10 }.orEmpty()
+}
+
+/**
+ * Whether [session] belongs in the day-of list at all, given [today] as
+ * "YYYY-MM-DD" (a LOCAL date; see the AO-18 note in [KinCareSessionsScreen]).
+ * Everything else is older history and belongs behind an archive view.
+ */
+internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Boolean {
+    val status = session.status.uppercase()
+    if (isBookingQueueStatus(status)) return false
+    if (status in ACTIVE_STATUSES) return true
+
+    if (status in WRAPPED_STATUSES) {
+        val wrapDay = wrapDayOf(session)
+        if (wrapDay.isEmpty()) return false
+        return wrapDay in dateAddDays(today, -RECENT_WINDOW_DAYS)..today
+    }
+
+    // SCHEDULED, plus any code no writer produces today: placed by its date,
+    // which we do know, rather than dropped over a word we do not.
+    val date = session.startTime.take(10)
+    if (date.length < 10) return false
+    return date in dateAddDays(today, -1)..dateAddDays(today, UPCOMING_WINDOW_DAYS)
+}
+
+/**
+ * One phase's sessions in the operator's chosen direction. Ascending by
+ * startTime is the natural order; "latest first" is that same order reversed,
+ * so the two are always exact mirrors.
+ */
+internal fun sortSessions(
+    sessions: List<KinCareSession>,
+    sort: AuntieTimeSort,
+): List<KinCareSession> {
+    val ascending = sessions.sortedBy { it.startTime }
+    return if (sort == AuntieTimeSort.Latest) ascending.reversed() else ascending
+}
+
+private val MONTHS =
+    listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+/**
+ * "Jul 16 · 14:00", and "Jan 16, 2025 · 14:00" once the year is not [todayIso]'s.
+ *
+ * Without the year a visit from last January read exactly like this January,
+ * which is the one thing a dated label must never be ambiguous about. Omitted
+ * in the current year so the common case stays short.
+ */
+internal fun auntieTimeDate(iso: String, todayIso: String): String =
+    runCatching {
+        if (iso.length < 16) return@runCatching iso
+        val year = iso.substring(0, 4)
+        val month = MONTHS[iso.substring(5, 7).toInt() - 1]
+        val day = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
+        val time = iso.substring(11, 16)
+        val yearSuffix = if (year == todayIso.take(4)) "" else ", $year"
+        "$month $day$yearSuffix · $time"
+    }.getOrDefault(iso)
+
+internal fun auntieTimeClock(iso: String): String =
+    runCatching { if (iso.length >= 16) iso.substring(11, 16) else iso }.getOrDefault(iso)
+
+/** "09:00 to 17:00", with the start's date (and year, when it needs one). */
+internal fun sessionWindow(session: KinCareSession, todayIso: String): String {
+    val start = auntieTimeDate(session.startTime, todayIso)
+    val end = auntieTimeClock(session.endTime)
+    return when {
+        start.isBlank() && end.isBlank() -> "Time TBD"
+        end.isBlank() -> start
+        else -> "$start to $end"
+    }
+}
+
+/** Add [days] days to an ISO date string "YYYY-MM-DD". Handles month/year rollover. */
+internal fun dateAddDays(iso: String, days: Int): String = runCatching {
+    if (iso.length < 10) return@runCatching iso
+    var y = iso.substring(0, 4).toInt()
+    var m = iso.substring(5, 7).toInt()
+    var d = iso.substring(8, 10).toInt() + days
+    while (d < 1) { m--; if (m < 1) { m = 12; y-- }; d += daysInMonth(y, m) }
+    while (d > daysInMonth(y, m)) { d -= daysInMonth(y, m); m++; if (m > 12) { m = 1; y++ } }
+    val ys = y.toString().padStart(4, '0')
+    val ms = m.toString().padStart(2, '0')
+    val ds = d.toString().padStart(2, '0')
+    "$ys-$ms-$ds"
+}.getOrDefault(iso)
+
+private fun daysInMonth(y: Int, m: Int) = when (m) {
+    1, 3, 5, 7, 8, 10, 12 -> 31
+    4, 6, 9, 11 -> 30
+    2 -> if (y % 400 == 0 || (y % 4 == 0 && y % 100 != 0)) 29 else 28
+    else -> 30
+}

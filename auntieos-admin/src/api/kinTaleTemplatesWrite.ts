@@ -1,4 +1,4 @@
-import { addDoc, collection, doc, setDoc } from 'firebase/firestore';
+import { addDoc, collection, doc, setDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { type KinTaleTemplate } from '../lib/kinTale/model';
 
@@ -79,20 +79,73 @@ function templateFields(t: KinTaleTemplate) {
 }
 
 /**
+ * The minimum a sibling template has to tell us for default exclusivity. The
+ * editor already streams the whole collection, so it passes what it has rather
+ * than making this module re-read a list it is holding.
+ */
+export interface TemplateDefaultFlag {
+  _id: string;
+  isDefault: boolean;
+}
+
+/**
  * Create (blank `_id`) or update (real `_id`) a `kintale_templates` doc, and
  * return the id. CREATE stamps `createdAt` + `updatedAt`; UPDATE restamps only
  * `updatedAt` (a merge write, so the stored `createdAt` is preserved untouched).
  * Both use a client-computed ISO string, mirroring the Compose `nowIsoUtc()`.
  *
- * Fail-loud: any Firestore rejection (permission-denied, offline) propagates to
- * the caller unchanged; nothing is swallowed, no partial/fake success is
- * reported.
+ * `isDefault` IS EXCLUSIVE, and that is a deliberate divergence from Compose,
+ * which let the flag pile up on any number of docs. `isDefault` is the GLOBAL
+ * fallback the composer falls back to when no template's `serviceTypeKeys`
+ * matches the visit's service: android's
+ * `AuntieRepository.getActiveTemplateForService` ends in
+ * `match ?: templates.firstOrNull { it.isDefault }`, and `pickInitialTemplate`
+ * here does the same. With two flagged docs, which one wins is whatever order
+ * the snapshot happened to arrive in. Exclusivity therefore has to be global
+ * rather than per service scope; scoping it would preserve exactly the
+ * ambiguity the flag exists to resolve.
+ *
+ * So a save that sets the flag goes through ONE `writeBatch`: this doc's write
+ * plus an `isDefault: false` on every other flagged sibling, committed
+ * together. No observer ever sees two defaults, or none. A save that does NOT
+ * set the flag has no cross-document work to do and keeps the plain single-doc
+ * path.
+ *
+ * Fail-loud: any Firestore rejection (permission-denied, offline, a batch that
+ * aborts) propagates to the caller unchanged; nothing is swallowed, no
+ * partial/fake success is reported.
  */
-export async function saveKinTaleTemplate(template: KinTaleTemplate): Promise<string> {
+export async function saveKinTaleTemplate(
+  template: KinTaleTemplate,
+  siblings: readonly TemplateDefaultFlag[] = [],
+): Promise<string> {
   const now = new Date().toISOString();
   const fields = templateFields(template);
+  const isCreate = template._id.trim() === '';
 
-  if (template._id.trim() === '') {
+  // Setting the default is a multi-document change; see the note on
+  // `TemplateDefaultFlag` for why the flag has to be exclusive and why one
+  // batch is the whole point.
+  if (template.isDefault) {
+    const batch = writeBatch(db);
+    const coll = collection(db, 'kintale_templates');
+    const ref = isCreate ? doc(coll) : doc(db, 'kintale_templates', template._id);
+
+    if (isCreate) batch.set(ref, { ...fields, createdAt: now, updatedAt: now });
+    else batch.set(ref, { ...fields, updatedAt: now }, { merge: true });
+
+    const savedId = isCreate ? (ref as { id: string }).id : template._id;
+    for (const other of siblings) {
+      if (!other.isDefault) continue;
+      if (other._id === savedId || other._id.trim() === '') continue;
+      batch.update(doc(db, 'kintale_templates', other._id), { isDefault: false });
+    }
+
+    await batch.commit();
+    return savedId;
+  }
+
+  if (isCreate) {
     const ref = await addDoc(collection(db, 'kintale_templates'), {
       ...fields,
       createdAt: now,
