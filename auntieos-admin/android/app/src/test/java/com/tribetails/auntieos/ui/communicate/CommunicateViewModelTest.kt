@@ -8,6 +8,7 @@ import com.tribetails.auntieos.data.repository.RecentComms
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.slot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -352,5 +353,155 @@ class CommunicateViewModelTest {
         assertTrue(needsRecipient("visit_report"))
         assertTrue(needsRecipient("email"))
         assertTrue(needsRecipient("sms"))
+    }
+
+    // ── kinfolk_id on the generate request ──────────────────────────────────
+    // The picker has always resolved a real Kinfolk; until this slice the id was
+    // thrown away and the server re-derived the household from the display name
+    // by a case-folded startsWith scan, so two Danas could feed the model the
+    // wrong dossier.
+    @Test
+    fun `generate sends the resolved kinfolk id, not just the display name`() = runTest(testDispatcher) {
+        val captured = slot<com.tribetails.auntieos.data.model.GenerateRequest>()
+        coEvery { mockRepo.generate(capture(captured)) } returns
+            Result.success(GenerateResponse(generatedCopy = "copy", draftId = "d1"))
+        coEvery { mockRepo.getDossier(any()) } returns Result.success(null)
+        coEvery { mockRepo.getKin(any()) } returns Result.success(emptyList())
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        val kf = TestFixtures.allKinfolk.first()
+        vm.selectKinfolk(kf)
+        vm.setCommType("email")
+        vm.setRawNotes("notes")
+        vm.generate()
+        advanceUntilIdle()
+        assertEquals(kf.id, captured.captured.kinfolk_id)
+        assertEquals(kf.displayName, captured.captured.recipient)
+    }
+    @Test
+    fun `generate sends no kinfolk id for a recipient-less type`() = runTest(testDispatcher) {
+        val captured = slot<com.tribetails.auntieos.data.model.GenerateRequest>()
+        coEvery { mockRepo.generate(capture(captured)) } returns
+            Result.success(GenerateResponse(generatedCopy = "copy", draftId = "d1"))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.setCommType("blog_post")
+        vm.setRawNotes("notes")
+        vm.generate()
+        advanceUntilIdle()
+        assertNull(captured.captured.kinfolk_id)
+        assertEquals("", captured.captured.recipient)
+    }
+    // ── approve writes an audit entry, AFTER the Firestore write ────────────
+    // The screen has printed "logs it to the audit trail" since it was written,
+    // and nothing in ui/communicate ever called logActivity. Ordering matters:
+    // an entry written after a FAILED promote would assert an approval that does
+    // not exist.
+    @Test
+    fun `approveDraft writes a DRAFT_APPROVED audit entry naming the draft and the household`() =
+        runTest(testDispatcher) {
+            val entry = slot<com.tribetails.auntieos.data.admin.ActivityLogEntry>()
+            coEvery { mockRepo.generate(any()) } returns
+                Result.success(GenerateResponse(generatedCopy = "copy", draftId = "d1", kinfolkId = "kf1"))
+            coEvery { mockRepo.approveDraft(any(), any(), any()) } returns Result.success(Unit)
+            coEvery { mockRepo.logActivity(capture(entry)) } returns Result.success(Unit)
+            val vm = buildViewModel()
+            advanceUntilIdle()
+            vm.setCommType("blog_post")
+            vm.setRawNotes("notes")
+            vm.generate()
+            advanceUntilIdle()
+            vm.approveDraft()
+            advanceUntilIdle()
+            assertEquals("DRAFT_APPROVED", entry.captured.actionType)
+            assertEquals("d1", entry.captured.targetId)
+            assertEquals("generated_drafts", entry.captured.targetCollection)
+            assertEquals("SUCCESS", entry.captured.status)
+            assertTrue(entry.captured.description.contains("kf1"))
+        }
+    @Test
+    fun `approveDraft writes NO audit entry when the Firestore promote fails`() = runTest(testDispatcher) {
+        coEvery { mockRepo.generate(any()) } returns
+            Result.success(GenerateResponse(generatedCopy = "copy", draftId = "d1", kinfolkId = "kf1"))
+        coEvery { mockRepo.approveDraft(any(), any(), any()) } returns Result.failure(RuntimeException("denied"))
+        coEvery { mockRepo.logActivity(any()) } returns Result.success(Unit)
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.setCommType("blog_post")
+        vm.setRawNotes("notes")
+        vm.generate()
+        advanceUntilIdle()
+        vm.approveDraft()
+        advanceUntilIdle()
+        coVerify(exactly = 0) { mockRepo.logActivity(any()) }
+        assertNull(vm.uiState.value.savedDraftId)
+    }
+    @Test
+    fun `approveDraft still reports success when the audit entry fails, and says the entry is missing`() =
+        runTest(testDispatcher) {
+            coEvery { mockRepo.generate(any()) } returns
+                Result.success(GenerateResponse(generatedCopy = "copy", draftId = "d1", kinfolkId = "kf1"))
+            coEvery { mockRepo.approveDraft(any(), any(), any()) } returns Result.success(Unit)
+            coEvery { mockRepo.logActivity(any()) } returns Result.failure(RuntimeException("audit chain busy"))
+            val vm = buildViewModel()
+            advanceUntilIdle()
+            vm.setCommType("blog_post")
+            vm.setRawNotes("notes")
+            vm.generate()
+            advanceUntilIdle()
+            vm.approveDraft()
+            advanceUntilIdle()
+            assertEquals("d1", vm.uiState.value.savedDraftId)
+            assertTrue(vm.uiState.value.successMessage!!.contains("audit chain busy"))
+        }
+    // ── external send ───────────────────────────────────────────────────────
+    @Test
+    fun `sendExternal marks the message transactional, so a marketing opt-out cannot drop it`() =
+        runTest(testDispatcher) {
+            val transactional = slot<Boolean>()
+            coEvery {
+                mockRepo.sendExternalMessage(any(), any(), any(), any(), capture(transactional))
+            } returns Result.success(
+                com.tribetails.auntieos.data.repository.ExternalSendResult("email", "p1", "d***@example.com"),
+            )
+            val vm = buildViewModel()
+            advanceUntilIdle()
+            vm.setExternalTo("dana@example.com")
+            vm.setExternalSubject("Nova")
+            vm.setExternalBody("She had a big day.")
+            vm.sendExternal()
+            advanceUntilIdle()
+            assertTrue(transactional.captured)
+        }
+    @Test
+    fun `sendExternal replaces the opt-out sentinel with copy the operator can act on`() =
+        runTest(testDispatcher) {
+            coEvery { mockRepo.sendExternalMessage(any(), any(), any(), any(), any()) } returns
+                Result.failure(RuntimeException("FAILED_PRECONDITION: recipient_opted_out"))
+            val vm = buildViewModel()
+            advanceUntilIdle()
+            vm.setExternalTo("dana@example.com")
+            vm.setExternalSubject("Nova")
+            vm.setExternalBody("Body")
+            vm.sendExternal()
+            advanceUntilIdle()
+            assertEquals(
+                "This recipient has opted out. Nothing was sent. Remove their suppression before sending again.",
+                vm.uiState.value.externalError,
+            )
+        }
+    @Test
+    fun `sendExternal accepts an international number the old US-only rule blocked`() = runTest(testDispatcher) {
+        coEvery { mockRepo.sendExternalMessage(any(), any(), any(), any(), any()) } returns
+            Result.success(com.tribetails.auntieos.data.repository.ExternalSendResult("sms", "p1", "+4****0123"))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.setExternalChannel(ExternalChannel.Sms)
+        vm.setExternalTo("+447700900123")
+        vm.setExternalBody("Body")
+        vm.sendExternal()
+        advanceUntilIdle()
+        assertNull(vm.uiState.value.externalError)
+        assertEquals("+4****0123", vm.uiState.value.externalSentRedacted)
     }
 }

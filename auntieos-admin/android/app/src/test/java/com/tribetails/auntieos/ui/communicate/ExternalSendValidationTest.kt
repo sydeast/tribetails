@@ -54,11 +54,18 @@ class ExternalSendValidationTest {
         )
     }
 
-    @Test fun `invalid phone is rejected`() {
+    @Test fun `invalid phone is rejected, and the copy says what is missing`() {
         assertEquals(
-            "Enter a valid phone number.",
+            "Enter a valid phone number, with the country code.",
             validateExternalSend(ExternalChannel.Sms, "12345", "", "B"),
         )
+    }
+    // External send reaches anybody, not only the Austin-area Kinfolk roster, so
+    // it validates on the E.164 shape rather than the US 10-or-11-digit rule.
+    // The US rule silently blocked every valid international recipient before
+    // the server ever saw the number.
+    @Test fun `an international number is accepted`() {
+        assertNull(validateExternalSend(ExternalChannel.Sms, "+447700900123", "", "B"))
     }
 
     @Test fun `blank body is rejected for email`() {

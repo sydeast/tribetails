@@ -188,6 +188,13 @@ class KinTaleReportViewModel(
                 GenerateRequest(
                     communication_type = "visit_report",
                     recipient = recipient,
+                    // The linked household is already resolved here, so send its
+                    // id and let the server read that doc directly. Without it
+                    // the server re-derives the household from the display name
+                    // by a case-folded startsWith scan, and a second household
+                    // with the same first name gets the wrong dossier read into
+                    // a tale that goes out under this one's name.
+                    kinfolk_id = state.kinfolk?.id?.ifBlank { null },
                     raw_notes = notes,
                     tone_hint = "",
                     max_length = "",

@@ -864,7 +864,27 @@ data class GenerateResponse(
 @Keep
 data class GenerateRequest(
     val communication_type: String,
+    /**
+     * Display name of the household. Still sent, for the draft doc and the
+     * server's 404 copy, but no longer what decides WHICH household the model
+     * reads about. See [kinfolk_id].
+     */
     val recipient: String,
+    /**
+     * The real `kinfolk` doc id the picker resolved.
+     *
+     * Without it, the server re-derives the household from [recipient] by
+     * case-folded compares against firstName / lastName / "First Last" and then
+     * a startsWith fallback. Two households named Dana, or one entered as
+     * "Dana M.", and the wrong dossier, kin and 411s feed the model. The picker
+     * has held the real object the whole time and threw the id away; the
+     * `RecipientPicker` doc claiming "a kinfolk_id is chosen client-side, not
+     * fuzzy-matched" was aspirational until this field existed.
+     *
+     * Null for the recipient-less types (blog, social), where there is no
+     * household to name.
+     */
+    val kinfolk_id: String? = null,
     val raw_notes: String,
     val tone_hint: String,
     val max_length: String,
