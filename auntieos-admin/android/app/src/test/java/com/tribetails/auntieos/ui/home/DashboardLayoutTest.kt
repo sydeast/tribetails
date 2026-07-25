@@ -98,4 +98,54 @@ class DashboardLayoutTest {
         assertTrue(shown.any { it.key == DashKey.KINTALES })
         assertEquals(DashKey.KINTALES, shown.last().key)
     }
+
+    // ── Screen-reader announcements ──────────────────────────────────────────
+    // The controls always had a contentDescription; nothing said what the tap DID.
+    // The exact strings are asserted rather than their shape, because the point of
+    // them is that this surface and the React admin read identically, and only a
+    // literal comparison catches the two drifting apart.
+
+    @Test
+    fun every_key_has_a_label() {
+        DashKey.entries.forEach {
+            assertTrue("${it.name} has no label, so it cannot be named to a screen reader", dashLabel(it).isNotBlank())
+        }
+        assertEquals("Key & code safebox", dashLabel(DashKey.SAFEBOX))
+        assertEquals("Expense quick-log", dashLabel(DashKey.EXPENSE_LOG))
+    }
+
+    @Test
+    fun move_announcement_names_the_card_and_the_seat_it_landed_in() {
+        // Stats down one: [TODAYS_PACK, STATS, KINTALES].
+        val next = moveWidgetDown(DEFAULT_DASHBOARD, 0)
+        assertEquals(
+            "Stats moved down to position 2 of 3.",
+            widgetMovedAnnouncement(next, DashKey.STATS, movedUp = false),
+        )
+        // The other card moved too, and reads from the same result.
+        assertEquals(
+            "Today's Pack moved up to position 1 of 3.",
+            widgetMovedAnnouncement(next, DashKey.TODAYS_PACK, movedUp = true),
+        )
+    }
+
+    @Test
+    fun move_announcement_stays_silent_when_the_card_is_not_in_the_result() {
+        // A card that is not there did not move; announcing "position 0" would be
+        // worse than saying nothing.
+        assertEquals(
+            "",
+            widgetMovedAnnouncement(hideWidget(DEFAULT_DASHBOARD, DashKey.STATS), DashKey.STATS, movedUp = true),
+        )
+    }
+
+    @Test
+    fun remove_and_add_announcements_say_where_the_card_went() {
+        assertEquals("Key & code safebox removed from Home.", widgetRemovedAnnouncement(DashKey.SAFEBOX))
+        val next = showWidget(DEFAULT_DASHBOARD, DashKey.SUPPLIES)
+        assertEquals(
+            "Supplies tracker added to Home at position 4 of 4.",
+            widgetAddedAnnouncement(next, DashKey.SUPPLIES),
+        )
+    }
 }

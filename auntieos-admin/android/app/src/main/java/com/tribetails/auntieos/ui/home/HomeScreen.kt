@@ -19,6 +19,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tribetails.auntieos.data.model.Draft
@@ -38,6 +43,8 @@ import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.ServicePill
 import com.tribetails.auntieos.ui.components.StatCard
+import com.tribetails.auntieos.ui.components.StatusToast
+import com.tribetails.auntieos.ui.components.ToastKind
 import com.tribetails.auntieos.ui.components.SlideInCard
 import com.tribetails.auntieos.ui.components.denCurrentHour
 import com.tribetails.auntieos.ui.components.formatTime
@@ -209,9 +216,30 @@ fun HomeScreen(
                                 label = dashLabel(w.key),
                                 canMoveUp = idx > 0,
                                 canMoveDown = idx in 0 until dashboard.lastIndex,
-                                onUp = { viewModel.saveDashboard(moveWidgetUp(dashboard, idx).toTokens()) },
-                                onDown = { viewModel.saveDashboard(moveWidgetDown(dashboard, idx).toTokens()) },
-                                onHide = { viewModel.saveDashboard(hideWidget(dashboard, w.key).toTokens()) },
+                                // Every change carries the sentence Home announces for
+                                // it. The transform runs once and both the tokens and
+                                // the wording come off that one result, so the position
+                                // read out is always the position saved.
+                                onUp = {
+                                    val next = moveWidgetUp(dashboard, idx)
+                                    viewModel.saveDashboard(
+                                        next.toTokens(),
+                                        widgetMovedAnnouncement(next, w.key, movedUp = true),
+                                    )
+                                },
+                                onDown = {
+                                    val next = moveWidgetDown(dashboard, idx)
+                                    viewModel.saveDashboard(
+                                        next.toTokens(),
+                                        widgetMovedAnnouncement(next, w.key, movedUp = false),
+                                    )
+                                },
+                                onHide = {
+                                    viewModel.saveDashboard(
+                                        hideWidget(dashboard, w.key).toTokens(),
+                                        widgetRemovedAnnouncement(w.key),
+                                    )
+                                },
                             )
                             Spacer(Modifier.height(8.dp))
                         }
@@ -519,7 +547,13 @@ fun HomeScreen(
                                 hidden.forEach { k ->
                                     GhostButton(
                                         label = dashLabel(k),
-                                        onClick = { viewModel.saveDashboard(showWidget(dashboard, k).toTokens()) },
+                                        onClick = {
+                                            val next = showWidget(dashboard, k)
+                                            viewModel.saveDashboard(
+                                                next.toTokens(),
+                                                widgetAddedAnnouncement(next, k),
+                                            )
+                                        },
                                         modifier = Modifier.fillMaxWidth(),
                                     )
                                 }
@@ -532,31 +566,46 @@ fun HomeScreen(
 
         }
         }
+
+        // 17.3 Dashboard: the live region that narrates reorder / hide / add. It sits
+        // OUTSIDE the LazyColumn on purpose, so it is mounted from the first frame and
+        // is never recycled away mid-announcement.
+        DashboardAnnouncer(state.dashboardAnnouncement)
+
+        // 17.3 Dashboard: a save that did not land. The board has already been put back
+        // to the layout the server confirmed, so this only has to say so; there is no
+        // retry, because the next move saves normally.
+        StatusToast(
+            visible   = state.dashboardError != null,
+            message   = state.dashboardError.orEmpty(),
+            kind      = ToastKind.Error,
+            onDismiss = viewModel::clearDashboardError,
+            modifier  = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 16.dp, start = 16.dp, end = 16.dp),
+        )
     }
     }
 }
 
-/** Human label for a dashboard widget key (17.3 edit chrome + hidden strip). */
-private fun dashLabel(key: DashKey): String = when (key) {
-    DashKey.STATS -> "Stats"
-    DashKey.TODAYS_PACK -> "Today's Pack"
-    DashKey.KINTALES -> "KinTales"
-    DashKey.CASH_FLOW -> "Cash Flow"
-    DashKey.GATEKEEPER -> "Gatekeeper"
-    DashKey.WEATHER_WATCHDOG -> "Weather Watchdog"
-    DashKey.HEAT_INDEX -> "Heat Stroke Index"
-    DashKey.WEEKLY_CAPACITY -> "Weekly capacity"
-    DashKey.OVERDUE_TRACKER -> "Overdue visits"
-    DashKey.PET_BREAKDOWN -> "Pets by type"
-    DashKey.FREQUENT_FLYERS -> "Frequent flyers"
-    DashKey.HOLIDAY_RUNWAY -> "Holiday runway"
-    DashKey.UNREAD_MESSAGES -> "Unread messages"
-    DashKey.SAFEBOX -> "Key & code safebox"
-    DashKey.CARE_FLAGS -> "Care flags"
-    DashKey.EXPIRATIONS -> "Expiration countdown"
-    DashKey.ROUTE_OPTIMIZER -> "Route optimizer"
-    DashKey.EXPENSE_LOG -> "Expense quick-log"
-    DashKey.SUPPLIES -> "Supplies tracker"
+/**
+ * 17.3 Dashboard: the polite live region Home narrates layout changes through.
+ *
+ * Present from the first frame and never conditional, because a live region added
+ * at the same moment its text arrives is not announced: TalkBack has nothing to
+ * observe a change against. It draws nothing. The contentDescription is the whole
+ * point of it, and an empty one says nothing, which is the resting state.
+ */
+@Composable
+internal fun DashboardAnnouncer(announcement: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(1.dp)
+            .semantics {
+                liveRegion = LiveRegionMode.Polite
+                contentDescription = announcement
+            },
+    )
 }
 
 /** Den tone for a [WeatherRisk] level. */
@@ -652,9 +701,20 @@ private fun WeatherRiskRow(label: String, risk: WeatherRisk) {
     }
 }
 
-/** 17.3 edit-mode header on each dashboard widget: reorder / hide (phone has no resize). */
+/**
+ * 17.3 edit-mode header on each dashboard widget: reorder / hide.
+ *
+ * No resize control, deliberately: a phone board is one column, so compact versus
+ * wide is a wide-screen concern. The size still round-trips through the model, so
+ * a size set on the web is preserved here rather than flattened.
+ *
+ * The bounds arrive as [canMoveUp] / [canMoveDown] rather than being worked out
+ * here, and a control that cannot act is genuinely disabled. The model's move
+ * helpers are no-ops out of bounds, so a live button at the top of the board would
+ * announce a move that never happened.
+ */
 @Composable
-private fun WidgetEditBar(
+internal fun WidgetEditBar(
     label: String,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
@@ -680,14 +740,25 @@ private fun WidgetEditBar(
     }
 }
 
+/**
+ * One control in the widget edit bar.
+ *
+ * `clickable(enabled = ...)` rather than dropping the modifier when unavailable.
+ * Omitting it only removed the tap: the node stayed focusable and TalkBack still
+ * read it as a live button, so the top card's "move up" announced itself as
+ * something the operator could do and then did nothing. Passing `enabled` makes it
+ * genuinely disabled: Compose marks the node disabled, so it is announced as
+ * unavailable, and drops it from focus traversal, so keyboard and D-pad skip it.
+ * The 35% alpha stays, as the visual half of the same statement.
+ */
 @Composable
-private fun EditCtl(icon: ImageVector, desc: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun EditCtl(icon: ImageVector, desc: String, enabled: Boolean, onClick: () -> Unit) {
     val c = AuntieTheme.colors
     Box(
         modifier = Modifier
             .size(32.dp)
             .clip(RoundedCornerShape(8.dp))
-            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .alpha(if (enabled) 1f else 0.35f),
         contentAlignment = Alignment.Center,
     ) {
