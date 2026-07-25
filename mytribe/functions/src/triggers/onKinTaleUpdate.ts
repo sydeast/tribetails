@@ -7,6 +7,7 @@ import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { claimKinTalePublish, clientAlreadyAnnouncedSend } from '../lib/kinTalePublishClaim';
 
 /**
  * Debounce window. Multiple rapid writes inside this window (e.g. backfill,
@@ -28,16 +29,25 @@ type KinCareReportDoc = {
   bodyCopy?: string;
   mediaFileIds?: string[];
   status?: string;
+  sentVia?: string;
 };
 
 /**
- * Fires `kintale.note.added` when an already-SENT KinTale gets edited with
- * more body text or additional media (e.g. 12hr boarding visit where auntie
- * posts arrival, midway, and end-of-visit updates to the same report).
+ * Two distinct kinfolk-facing moments live on this one collection, and a single
+ * update produces at most ONE of them:
+ *
+ *  1. THE SEND. `status` goes DRAFT → SENT: the KinTale becomes visible to the
+ *     household, and `kintale.published` announces it. This is the only place a
+ *     web send is ever announced — `onKinTaleCreate` sees only a draft.
+ *  2. A POST-PUBLISH NOTE. An already-SENT KinTale gains more body text or more
+ *     media (e.g. a 12hr boarding visit where the auntie posts arrival, midway,
+ *     and end-of-visit updates to the same report): `kintale.note.added`.
  *
  * Skip cases:
- *  - DRAFT updates (no kinfolk-visible state yet, they only see SENT)
- *  - Initial DRAFT → SENT transition (covered by `kintale.published`)
+ *  - DRAFT-side updates (no kinfolk-visible state yet, they only see SENT)
+ *  - An unsend, SENT → DRAFT
+ *  - A send the publishing client already announced itself (see
+ *    `clientAlreadyAnnouncedSend`)
  *  - Status-only flips, triage updates, field-response edits without body/media growth
  */
 export async function onKinTaleUpdateHandler(event: any): Promise<void> {
@@ -46,8 +56,15 @@ export async function onKinTaleUpdateHandler(event: any): Promise<void> {
   const after = event.data?.after?.data() as KinCareReportDoc | undefined;
   if (!before || !after) return;
 
-  // Only fire for post-publish edits. Skip DRAFT-side updates entirely.
-  if (before.status !== 'SENT' || after.status !== 'SENT') return;
+  // Nothing the household can see. Covers DRAFT → DRAFT and any unsend.
+  if (after.status !== 'SENT') return;
+
+  // THE SEND. Announce it and stop — a send is never also a "note added",
+  // however much body or media the same write happened to bring with it.
+  if (before.status !== 'SENT') {
+    await publishKinTale(reportId, after);
+    return;
+  }
 
   const bodyChanged = (before.bodyCopy ?? '') !== (after.bodyCopy ?? '');
   const beforeMediaCount = Array.isArray(before.mediaFileIds) ? before.mediaFileIds.length : 0;
@@ -169,6 +186,66 @@ export async function onKinTaleUpdateHandler(event: any): Promise<void> {
       extra: { reportId, err: (err as Error)?.message },
     });
   });
+}
+
+/**
+ * The DRAFT → SENT moment: the household can now open this KinTale, so tell
+ * them. Silent when the publishing client already announced the send itself, or
+ * when another trigger invocation has already claimed this report.
+ */
+async function publishKinTale(reportId: string, after: KinCareReportDoc): Promise<void> {
+  if (clientAlreadyAnnouncedSend(after.sentVia)) {
+    logEvent({
+      severity: 'info',
+      function: 'onKinTaleUpdate',
+      event: 'trigger.kintale.skipped.client_dispatched',
+      extra: { reportId, sentVia: after.sentVia },
+    });
+    return;
+  }
+
+  const kinfolkId = after.kinfolkId;
+  if (!kinfolkId) {
+    logEvent({
+      severity: 'warn',
+      function: 'onKinTaleUpdate',
+      event: 'trigger.kintale.missing_kinfolk_id',
+      extra: { reportId },
+    });
+    return;
+  }
+
+  if (!(await claimKinTalePublish(reportId))) {
+    logEvent({
+      severity: 'info',
+      function: 'onKinTaleUpdate',
+      event: 'trigger.kintale.skipped.already_published',
+      extra: { reportId },
+    });
+    return;
+  }
+
+  const recipientUid = await resolveKinfolkUid(kinfolkId);
+  try {
+    await enqueueNotification({
+      key: 'kintale.published',
+      recipientUid: recipientUid ?? '',
+      data: {
+        kinfolkId,
+        taleId: reportId,
+        authorDisplayName: after.authorDisplayName ?? null,
+      },
+      targetType: 'kintale',
+      targetId: reportId,
+    });
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'onKinTaleUpdate',
+      event: 'notification.dispatch.failed',
+      extra: { kinfolkId, taleId: reportId, err: (err as Error)?.message },
+    });
+  }
 }
 
 export const onKinTaleUpdate = onDocumentUpdated(

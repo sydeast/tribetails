@@ -53,7 +53,7 @@ Legend: ✓ wired catalog path, ⚪ Firebase-native (no catalog dispatch by desi
 
 | Key | Resolver(s) | Audience | Channels | Mode | Status | Call Site |
 |---|---|---|---|---|---|---|
-| `kintale.published` | kinfolkAcct | kinfolk | e,s,p | trigger | ✓ | `onKinTaleCreate.ts` (catalog-routed) |
+| `kintale.published` | kinfolkAcct | kinfolk | e,s,p | trigger | ✓ | `onKinTaleUpdate.ts` on the DRAFT → SENT send; `onKinTaleCreate.ts` only for a straight-to-SENT create. Suppressed when the client already announced the send itself via `dispatchVisitNotification` (`sentVia: 'catalog'`), so a KinTale is announced once |
 | `kintale.comment.added` | kinfolkAcct | kinfolk | e,p | batched 5min | ✓ | `onKinTaleCommentCreate.ts` — callable: `addKinTaleComment` |
 
 ### 1.4 Invoice (Quote = Invoice status)
@@ -105,7 +105,8 @@ Legend: ✓ wired catalog path, ⚪ Firebase-native (no catalog dispatch by desi
 | `onFamilyKinWrite` | `families/{id}/kin/{id}` | `pets.updated`, `pet.marked.inactive` |
 | `onFamilyProfileWrite` | `families/{id}` | `profile.updated` |
 | `onInvoicesWrite` | `families/{id}/invoices/{id}` | `quote.accepted`, `quote.denied` |
-| `onKinTaleCreate` | `families/{id}/kinTales/{id}` | `kintale.published` |
+| `onKinTaleCreate` | `kin_care_reports/{reportId}` | `kintale.published`, only when the report is created already `SENT` (a DRAFT create is silent) |
+| `onKinTaleUpdate` | `kin_care_reports/{reportId}` | `kintale.published` on the DRAFT → SENT send; `kintale.note.added` on a post-publish body/media edit. Never both from one write |
 | `onKinTaleCommentCreate` | `families/{id}/kinTales/{id}/comments/{cid}` | `kintale.comment.added` (batched) |
 | `onRatingCreate` | `families/{id}/ratings/{ratingId}` | `rating.submitted.bad` / `good` (branched on score) |
 | `onAuthUserCreate`, `onClientsWrite`, `onInviteRequestCreate`, `onMembersWrite` | various | — (no notification dispatch) |
