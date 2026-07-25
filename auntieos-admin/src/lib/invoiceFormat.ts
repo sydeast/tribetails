@@ -112,6 +112,71 @@ export function invoiceStateInfo(state: InvoiceState): InvoiceStateInfo {
   }
 }
 
+/**
+ * The consequential actions the invoice detail panel can offer. Keys match
+ * InvoiceDetail.tsx's ACTIONS metadata one for one.
+ */
+export type InvoiceAction = 'reminder' | 'markPaid' | 'receipt' | 'reviewSend';
+
+/**
+ * Which actions an invoice in [state] may be offered. Lives HERE, beside the
+ * classifier the Invoices list already filters and chips off, so the list and
+ * the detail panel can never disagree about what an invoice is (the archive's
+ * deliberate design: InvoiceFilters.kt decided both the row chip and the row's
+ * available actions from one set of predicates).
+ *
+ * AO-19, the operator report this closes: the detail panel rendered its whole
+ * ACTIONS array unconditionally, so a PAID invoice still offered "Mark paid"
+ * (the server rejects it with failed-precondition) and "Send reminder" (which
+ * would have nagged a household that already paid).
+ *
+ * TOTAL and NON-OVERLAPPING by construction:
+ *   - Total: the switch enumerates all eight InvoiceState members with no
+ *     `default`, so adding a ninth state is a compile error here rather than a
+ *     silent "no actions" (or, worse, a silent "all actions") at runtime.
+ *   - Non-overlapping: the argument is the single enumerated state, not a bag
+ *     of independent booleans, so an invoice cannot be in two buckets at once.
+ *
+ * The OVERDUE edge case, ruled explicitly: overdue is NOT a state, it is a
+ * display refinement of `open` (see `isInvoiceOverdue`, which returns false for
+ * every other state by design). So "overdue AND draft" and "overdue AND quote"
+ * are unrepresentable, not merely unhandled: a stale `dueDate` on a draft or a
+ * quote is ignored, and neither can pick up a payment action. An overdue
+ * invoice therefore gets exactly the outstanding set, which is why this takes
+ * `state` alone and not an `overdue` flag.
+ */
+export function invoiceActionsFor(state: InvoiceState): readonly InvoiceAction[] {
+  switch (state) {
+    // A real, unpaid, non-draft/quote/credit balance: collect it.
+    case 'open':
+      return ['reminder', 'markPaid'];
+    // Settled. A receipt is the only thing left to issue, and re-collecting is
+    // exactly the bug this function exists to prevent.
+    case 'paid':
+      return ['receipt'];
+    // Not sent yet, so there is nothing to remind about and nothing to collect.
+    case 'draft':
+      return ['reviewSend'];
+    // A quote is not a bill. It gains payment actions only once it is converted
+    // into an invoice, which is a different flow (createInvoice), not an action
+    // on this row.
+    case 'quote':
+      return [];
+    // Withdrawn: acting on it would contradict the withdrawal.
+    case 'cancelled':
+      return [];
+    // Money owed TO the household. "Mark paid" and "Send reminder" would point
+    // the wrong way; redemption is its own flow (redeemCredit), not this panel.
+    case 'credit':
+    case 'redeemed':
+      return [];
+    // Nothing was ever billed, so there is nothing to collect and nothing to
+    // receipt. Deliberately NOT folded into `paid` (see invoiceState's note).
+    case 'zero':
+      return [];
+  }
+}
+
 /** "$36.00" / "-$12.50" from a dollars-denominated amount. Ported verbatim from MyTribe's invoiceFormat.ts. */
 export function formatUsd(dollars: number): string {
   const n = financeNumber(dollars);

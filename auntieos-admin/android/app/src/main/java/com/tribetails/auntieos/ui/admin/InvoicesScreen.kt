@@ -37,6 +37,11 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.ReceiptText
 import com.tribetails.auntieos.data.model.Invoice
+import com.tribetails.auntieos.domain.InvoiceAction
+import com.tribetails.auntieos.domain.InvoiceState
+import com.tribetails.auntieos.domain.invoiceActionsFor
+import com.tribetails.auntieos.domain.invoiceIsOverdue
+import com.tribetails.auntieos.domain.invoiceStateOf
 import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
@@ -84,30 +89,26 @@ private enum class InvoiceFilter(val label: String) {
     Drafts("Drafts"),
 }
 
-// ── local invoice classifiers (no shared helper module on Android) ───────────
-// Computed from real Invoice fields only (status / amountDue / total / dueDate).
+// ── invoice facets, all resolved through the SHARED classifier ───────────────
+// domain/InvoiceActions.kt is the single source of truth for what an invoice is
+// and what may be done to it, so this list and the detail screen can never
+// disagree. These stay as named facets because the filter row and the row chip
+// read more clearly this way; each is now a positive equality test against the
+// enumerated state rather than the old "not draft and not quote, so paid"
+// negation (the AO-12 shape, which read an unredeemed credit as PAID).
 
-private fun invoiceIsDraft(i: Invoice): Boolean = i.status.equals("draft", ignoreCase = true)
+private fun invoiceIsDraft(i: Invoice): Boolean = invoiceStateOf(i) == InvoiceState.DRAFT
 
 /** A quote is an invoice in QUOTE status (PART B). Pure; unit-tested. */
-internal fun invoiceIsQuote(i: Invoice): Boolean = i.status.equals("quote", ignoreCase = true)
+internal fun invoiceIsQuote(i: Invoice): Boolean = invoiceStateOf(i) == InvoiceState.QUOTE
 
-private fun invoiceIsPaid(i: Invoice): Boolean =
-    !invoiceIsDraft(i) && !invoiceIsQuote(i) && i.amountDue <= 0.0 && i.total > 0.0
+private fun invoiceIsPaid(i: Invoice): Boolean = invoiceStateOf(i) == InvoiceState.PAID
 
-private fun invoiceIsOutstanding(i: Invoice): Boolean =
-    !invoiceIsDraft(i) && !invoiceIsQuote(i) && i.amountDue > 0.0
+private fun invoiceIsOutstanding(i: Invoice): Boolean = invoiceStateOf(i) == InvoiceState.OPEN
 
 /** A date prefix in YYYY-MM-DD shape, or null if the field isn't usable. */
 private fun isoDatePrefixOrNull(date: String): String? =
     date.trim().take(10).takeIf { it.length == 10 && it[4] == '-' && it[7] == '-' }
-
-/** Outstanding AND past its due date (lexical compare on fixed YYYY-MM-DD shape). */
-private fun invoiceIsOverdue(i: Invoice, todayIso: String): Boolean {
-    if (!invoiceIsOutstanding(i)) return false
-    val due = isoDatePrefixOrNull(i.dueDate) ?: return false
-    return due < todayIso
-}
 
 /** Whole days the invoice is past due, or null if not computable. */
 private fun daysOverdue(i: Invoice, todayIso: String): Int? {
@@ -142,7 +143,9 @@ private fun nowDateIso(): String =
 
 private fun matchesFilter(i: Invoice, filter: InvoiceFilter, todayIso: String): Boolean = when (filter) {
     InvoiceFilter.All -> true
-    InvoiceFilter.Unpaid -> invoiceIsOutstanding(i) && !invoiceIsDraft(i)
+    // OPEN already excludes drafts and quotes, so the old `&& !invoiceIsDraft(i)`
+    // guard is gone: it was compensating for the negation-based helper.
+    InvoiceFilter.Unpaid -> invoiceIsOutstanding(i)
     InvoiceFilter.Paid -> invoiceIsPaid(i)
     InvoiceFilter.Overdue -> invoiceIsOverdue(i, todayIso)
     InvoiceFilter.Drafts -> invoiceIsDraft(i)
@@ -505,17 +508,27 @@ private fun InvoiceRow(
     onSendDraft: (Invoice) -> Unit,
 ) {
     val c = AuntieTheme.colors
-    val quote = invoiceIsQuote(invoice)
-    val draft = invoiceIsDraft(invoice)
+    val state = invoiceStateOf(invoice)
+    val quote = state == InvoiceState.QUOTE
+    val draft = state == InvoiceState.DRAFT
     val overdue = invoiceIsOverdue(invoice, todayIso)
-    val unpaid = invoiceIsOutstanding(invoice)
+    val unpaid = state == InvoiceState.OPEN
 
-    val (statusLabel, statusTone) = when {
-        quote -> "Quote" to AuntieStatusTone.Purple
-        draft -> "Draft" to AuntieStatusTone.Muted
-        overdue -> "Overdue" to AuntieStatusTone.Error
-        unpaid -> "Unpaid" to AuntieStatusTone.Orange
-        else -> "Paid" to AuntieStatusTone.Success
+    // Every chip is a positive read of the enumerated state. The old `else ->
+    // "Paid"` fallback labelled a credit, a cancelled invoice, and a $0 row as
+    // PAID, which is the same negation defect the gating below fixes.
+    val (statusLabel, statusTone) = if (overdue) {
+        "Overdue" to AuntieStatusTone.Error
+    } else {
+        when (state) {
+            InvoiceState.QUOTE -> "Quote" to AuntieStatusTone.Purple
+            InvoiceState.DRAFT -> "Draft" to AuntieStatusTone.Muted
+            InvoiceState.CANCELLED -> "Cancelled" to AuntieStatusTone.Muted
+            InvoiceState.CREDIT -> "Credit" to AuntieStatusTone.Teal
+            InvoiceState.ZERO -> "Zero" to AuntieStatusTone.Muted
+            InvoiceState.OPEN -> "Unpaid" to AuntieStatusTone.Orange
+            InvoiceState.PAID -> "Paid" to AuntieStatusTone.Success
+        }
     }
     val amountColor = statusTone.color(c)
 
@@ -612,9 +625,7 @@ private fun InvoiceRow(
             AuntieStatusPill(label = statusLabel, tone = statusTone, mono = true)
             Spacer(Modifier.weight(1f))
             RowAction(
-                quote = quote,
-                draft = draft,
-                unpaid = unpaid,
+                actions = invoiceActionsFor(state),
                 onReceipt = { onReceipt(invoice) },
                 onSendReminder = { onSendReminder(invoice) },
                 onSendDraft = { onSendDraft(invoice) },
@@ -624,27 +635,34 @@ private fun InvoiceRow(
 }
 
 /**
- * Per-row action button. Every variant fires a live callable: a draft reviews and
- * sends (postInvoiceEvent), an unpaid invoice sends an on-demand reminder
- * (sendInvoiceReminder), and a paid one generates a receipt (generateReceipt).
- * No control is a dead button.
+ * Per-row action button, chosen from the SHARED action set (domain/
+ * InvoiceActions.kt) so a row can never offer an action the detail screen
+ * withholds, or the reverse. Every variant fires a live callable: a draft
+ * reviews and sends (reviewAndSendDraftInvoice), an unpaid invoice sends an
+ * on-demand reminder (sendInvoiceReminder), and a paid one generates a receipt
+ * (generateReceipt). No control is a dead button.
+ *
+ * The old version branched on three booleans with `else -> Receipt`, so a
+ * quote was the only row without an action and everything unclassified, a
+ * credit, a cancelled invoice, a $0 row, got a Receipt button it had no
+ * business offering. A state with no available action now renders nothing;
+ * the row itself is still tappable through to the detail screen.
+ *
+ * RECORD_PAYMENT is intentionally absent here: recording a payment needs the
+ * amount/method/reference dialog, which lives on the detail screen.
  */
 @Composable
 private fun RowAction(
-    quote: Boolean,
-    draft: Boolean,
-    unpaid: Boolean,
+    actions: List<InvoiceAction>,
     onReceipt: () -> Unit,
     onSendReminder: () -> Unit,
     onSendDraft: () -> Unit,
 ) {
     val c = AuntieTheme.colors
     when {
-        // A quote's accept/deny is handled in the kinfolk portal, not here; the admin
-        // row offers no transition action (tap the row to open the quote detail).
-        quote -> Unit
-        draft -> PrimaryButton(label = "Review & send", onClick = onSendDraft)
-        unpaid -> PrimaryButton(
+        InvoiceAction.REVIEW_AND_SEND in actions ->
+            PrimaryButton(label = "Review & send", onClick = onSendDraft)
+        InvoiceAction.SEND_REMINDER in actions -> PrimaryButton(
             label = "Send reminder",
             onClick = onSendReminder,
             leading = {
@@ -656,7 +674,9 @@ private fun RowAction(
                 )
             },
         )
-        else -> GhostButton(label = "Receipt", onClick = onReceipt)
+        InvoiceAction.GENERATE_RECEIPT in actions -> GhostButton(label = "Receipt", onClick = onReceipt)
+        // Quote, cancelled, credit, zero: nothing to offer from a list row.
+        else -> Unit
     }
 }
 

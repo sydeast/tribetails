@@ -5,16 +5,20 @@ import userEvent from '@testing-library/user-event';
 import type { Timestamp } from 'firebase/firestore';
 import { type InvoiceEntry } from '../api/invoices';
 
-const { sendInvoiceReminder, markInvoicePaid, generateReceipt } = vi.hoisted(() => ({
-  sendInvoiceReminder: vi.fn(),
-  markInvoicePaid: vi.fn(),
-  generateReceipt: vi.fn(),
-}));
+const { sendInvoiceReminder, markInvoicePaid, generateReceipt, reviewAndSendDraftInvoice } = vi.hoisted(
+  () => ({
+    sendInvoiceReminder: vi.fn(),
+    markInvoicePaid: vi.fn(),
+    generateReceipt: vi.fn(),
+    reviewAndSendDraftInvoice: vi.fn(),
+  }),
+);
 vi.mock('../api/invoicesWrite', async (orig) => ({
   ...(await orig<typeof import('../api/invoicesWrite')>()),
   sendInvoiceReminder,
   markInvoicePaid,
   generateReceipt,
+  reviewAndSendDraftInvoice,
 }));
 
 import { InvoiceDetail } from './InvoiceDetail';
@@ -45,7 +49,25 @@ beforeEach(() => {
   sendInvoiceReminder.mockReset();
   markInvoicePaid.mockReset();
   generateReceipt.mockReset();
+  reviewAndSendDraftInvoice.mockReset();
 });
+
+/**
+ * Every action label the panel can ever render. The per-state cases below
+ * assert the EXACT set: each expected label present, every other label
+ * absent, so a future action leaking into the wrong state fails here rather
+ * than reaching an operator (the AO-19 report: a PAID invoice still offering
+ * "Mark paid").
+ */
+const ALL_ACTION_LABELS = ['Send reminder', 'Mark paid', 'Generate receipt', 'Review and send'] as const;
+
+function expectExactActions(expected: readonly string[]) {
+  for (const label of ALL_ACTION_LABELS) {
+    const button = screen.queryByRole('button', { name: new RegExp(`^${label}$`, 'i') });
+    if (expected.includes(label)) expect(button, `expected "${label}" to render`).not.toBeNull();
+    else expect(button, `expected "${label}" NOT to render`).toBeNull();
+  }
+}
 
 describe('InvoiceDetail', () => {
   it('renders the household, invoice number, chip, and money facts', () => {
@@ -59,11 +81,118 @@ describe('InvoiceDetail', () => {
     expect(screen.getByText('Amount due').nextElementSibling).toHaveTextContent('$25.00');
   });
 
-  it('lists all three actions before any is chosen', () => {
-    render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
-    expect(screen.getByRole('button', { name: /send reminder/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /mark paid/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /generate receipt/i })).toBeInTheDocument();
+  describe('actions gated by invoice state', () => {
+    it('PAID: Generate receipt only, no Mark paid and no Send reminder', () => {
+      render(<InvoiceDetail invoice={entry({ status: 'paid', amountDue: 0, total: 40 })} onClose={vi.fn()} />);
+      expect(screen.getByText('PAID')).toBeInTheDocument();
+      expectExactActions(['Generate receipt']);
+    });
+
+    it('PAID with no status label, retired balance: still receipt only', () => {
+      // amountDue <= 0 with a real billed total is the money-field read of paid
+      // (invoiceState's last branch), and it must gate identically to the label.
+      render(<InvoiceDetail invoice={entry({ status: '', amountDue: 0, total: 40 })} onClose={vi.fn()} />);
+      expect(screen.getByText('PAID')).toBeInTheDocument();
+      expectExactActions(['Generate receipt']);
+    });
+
+    it('OUTSTANDING: Mark paid and Send reminder, no receipt, no draft send', () => {
+      render(<InvoiceDetail invoice={entry({ status: '', amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+      expect(screen.getByText('OPEN')).toBeInTheDocument();
+      expectExactActions(['Send reminder', 'Mark paid']);
+    });
+
+    it('OVERDUE: the same set as outstanding (overdue refines open, it is not its own state)', () => {
+      render(
+        <InvoiceDetail
+          invoice={entry({ status: '', amountDue: 40, total: 40, dueDate: '2000-01-01' })}
+          onClose={vi.fn()}
+        />,
+      );
+      expect(screen.getByText('OVERDUE')).toBeInTheDocument();
+      expectExactActions(['Send reminder', 'Mark paid']);
+    });
+
+    it('DRAFT: Review and send only', () => {
+      render(<InvoiceDetail invoice={entry({ status: 'draft', amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+      expect(screen.getByText('DRAFT')).toBeInTheDocument();
+      expectExactActions(['Review and send']);
+    });
+
+    it('DRAFT past its due date is still a draft, never overdue: no payment actions', () => {
+      // The overlap ruling: `dueDate` is ignored on anything that is not open,
+      // so a stale-dated draft can never pick up Mark paid / Send reminder.
+      render(
+        <InvoiceDetail
+          invoice={entry({ status: 'draft', amountDue: 40, total: 40, dueDate: '2000-01-01' })}
+          onClose={vi.fn()}
+        />,
+      );
+      expect(screen.getByText('DRAFT')).toBeInTheDocument();
+      expectExactActions(['Review and send']);
+    });
+
+    it('QUOTE: no payment actions at all', () => {
+      render(<InvoiceDetail invoice={entry({ status: 'quote', amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+      expect(screen.getByText('QUOTE')).toBeInTheDocument();
+      expectExactActions([]);
+      expect(screen.getByText(/no actions available for a quote invoice/i)).toBeInTheDocument();
+    });
+
+    it('QUOTE past its due date is still a quote: no payment actions', () => {
+      render(
+        <InvoiceDetail
+          invoice={entry({ status: 'quote', amountDue: 40, total: 40, dueDate: '2000-01-01' })}
+          onClose={vi.fn()}
+        />,
+      );
+      expect(screen.getByText('QUOTE')).toBeInTheDocument();
+      expectExactActions([]);
+    });
+
+    it('CREDIT: no payment actions (money is owed TO the household, not by them)', () => {
+      render(<InvoiceDetail invoice={entry({ status: 'credit', amountDue: -20, total: -20 })} onClose={vi.fn()} />);
+      expectExactActions([]);
+    });
+
+    it('CANCELLED: no actions', () => {
+      render(<InvoiceDetail invoice={entry({ status: 'cancelled', amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+      expectExactActions([]);
+    });
+
+    it('ZERO: nothing was billed, so nothing to collect or receipt', () => {
+      render(<InvoiceDetail invoice={entry({ status: '', amountDue: 0, total: 0 })} onClose={vi.fn()} />);
+      expect(screen.getByText('ZERO')).toBeInTheDocument();
+      expectExactActions([]);
+    });
+  });
+
+  it('sends a draft through reviewAndSendDraftInvoice, behind the same confirm step', async () => {
+    reviewAndSendDraftInvoice.mockResolvedValue(undefined);
+    render(
+      <InvoiceDetail invoice={entry({ _id: 'inv4', status: 'draft', total: 40, amountDue: 40 })} onClose={vi.fn()} />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+    expect(reviewAndSendDraftInvoice).not.toHaveBeenCalled();
+    expect(screen.getByText(/sends the draft/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+    await waitFor(() => expect(reviewAndSendDraftInvoice).toHaveBeenCalledWith('inv4'));
+    expect(await screen.findByText(/draft sent/i)).toBeInTheDocument();
+  });
+
+  it('fails loud, naming the callable, when reviewAndSendDraftInvoice rejects', async () => {
+    reviewAndSendDraftInvoice.mockRejectedValue(
+      new Error('Draft invoice is missing: total. Complete it before sending.'),
+    );
+    render(
+      <InvoiceDetail invoice={entry({ _id: 'inv5', status: 'draft', total: 40, amountDue: 40 })} onClose={vi.fn()} />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+    expect(
+      await screen.findByText(/reviewAndSendDraftInvoice failed:.*missing: total/i),
+    ).toBeInTheDocument();
   });
 
   it('gates Send reminder behind an inline confirm before calling the callable', async () => {
@@ -117,7 +246,8 @@ describe('InvoiceDetail', () => {
 
   it('issues a receipt through generateReceipt', async () => {
     generateReceipt.mockResolvedValue(undefined);
-    render(<InvoiceDetail invoice={entry({ _id: 'inv9' })} onClose={vi.fn()} />);
+    // Receipt is a PAID-only action now, so this exercises it on a paid invoice.
+    render(<InvoiceDetail invoice={entry({ _id: 'inv9', status: 'paid', amountDue: 0 })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /generate receipt/i }));
     await userEvent.click(screen.getByRole('button', { name: /^generate receipt$/i }));
     await waitFor(() => expect(generateReceipt).toHaveBeenCalledWith('inv9'));

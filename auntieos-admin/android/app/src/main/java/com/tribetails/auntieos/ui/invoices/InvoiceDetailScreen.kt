@@ -47,6 +47,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Payment
+import com.tribetails.auntieos.domain.InvoiceAction
+import com.tribetails.auntieos.domain.InvoiceState
+import com.tribetails.auntieos.domain.invoiceActionsFor
+import com.tribetails.auntieos.domain.invoiceIsOverdue
+import com.tribetails.auntieos.domain.invoiceStateOf
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChip
@@ -251,16 +256,23 @@ private fun invoiceDetailBody(
     onDownloadPdf: () -> Unit,
 ) = with(scope) {
     val todayKey = runCatching { LocalDate.now().toString() }.getOrDefault("")
-    val status   = invoiceStatusFor(invoice, todayKey)
+    // AO-19: state, overdue flag, and the offered actions all come from the
+    // SHARED classifier (domain/InvoiceActions.kt) that the Den invoices list
+    // reads, so the two screens can never disagree about what this invoice is.
+    // The screen's old private invoiceStatusFor resolved `amountDue <= 0` to
+    // PAID first, which read a draft, a quote, and a credit as paid.
+    val state    = invoiceStateOf(invoice)
+    val overdue  = invoiceIsOverdue(invoice, todayKey)
+    val actions  = invoiceActionsFor(state)
 
     // ── Header status bar (accent-tinted full-width) ────────────────────────────
     item {
-        InvoiceHeaderBar(invoice = invoice, status = status)
+        InvoiceHeaderBar(invoice = invoice, state = state, overdue = overdue)
     }
 
     // ── Amount stat row ─────────────────────────────────────────────────────────
     item {
-        val (statusTone, _, _) = statusTriple(status)
+        val (statusTone, _, _) = statusTriple(state, overdue)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -275,10 +287,16 @@ private fun invoiceDetailBody(
             StatCard(
                 label = "Amount due",
                 value = formatMoney(invoice.amountDue),
-                trend = when (status) {
-                    InvoiceStatus.PAID        -> "paid in full"
-                    InvoiceStatus.OVERDUE     -> "past due ${invoice.dueDate.trim().take(10)}"
-                    InvoiceStatus.OUTSTANDING -> "due ${invoice.dueDate.trim().take(10).ifBlank { "soon" }}"
+                trend = when {
+                    overdue -> "past due ${invoice.dueDate.trim().take(10)}"
+                    state == InvoiceState.OPEN ->
+                        "due ${invoice.dueDate.trim().take(10).ifBlank { "soon" }}"
+                    state == InvoiceState.PAID -> "paid in full"
+                    state == InvoiceState.DRAFT -> "not sent yet"
+                    state == InvoiceState.QUOTE -> "quoted, not billed"
+                    state == InvoiceState.CANCELLED -> "cancelled"
+                    state == InvoiceState.CREDIT -> "credit owed to the household"
+                    else -> "nothing billed"
                 },
                 tone     = statusTone,
                 feature  = true,
@@ -287,19 +305,25 @@ private fun invoiceDetailBody(
         }
     }
 
-    // Header actions (Stage 2 tail): Generate receipt + Send reminder, wired to the
-    // generateReceipt / sendInvoiceReminder callables. Reminder is suppressed once the
-    // invoice is paid (the server rejects a reminder on a paid invoice anyway).
+    // Header actions, gated by the shared action set. Generate receipt is a PAID-only
+    // action and Send reminder an OPEN-only one, so a paid invoice no longer offers a
+    // reminder the server would reject, and a quote, a credit, or a $0 row no longer
+    // offers a receipt for a bill that was never collected.
+    //
+    // Download PDF is deliberately UNGATED: it reads the invoice, it does not act on
+    // it or reach the household, so every state can produce one.
     item {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            GhostButton(
-                label   = if (generatingReceipt) "Generating…" else "Generate receipt",
-                onClick = onGenerateReceipt,
-                enabled = !generatingReceipt,
-            )
+            if (InvoiceAction.GENERATE_RECEIPT in actions) {
+                GhostButton(
+                    label   = if (generatingReceipt) "Generating…" else "Generate receipt",
+                    onClick = onGenerateReceipt,
+                    enabled = !generatingReceipt,
+                )
+            }
             // Stage 3 / 16.2: render + open a real invoice PDF (generateInvoicePdf
             // callable -> Cloud Storage download URL -> system viewer).
             GhostButton(
@@ -310,7 +334,7 @@ private fun invoiceDetailBody(
                     Icon(Lucide.FileText, contentDescription = null, modifier = Modifier.size(14.dp))
                 },
             )
-            if (status != InvoiceStatus.PAID) {
+            if (InvoiceAction.SEND_REMINDER in actions) {
                 GhostButton(
                     label   = if (sendingReminder) "Sending…" else "Send reminder",
                     onClick = onSendReminder,
@@ -327,10 +351,10 @@ private fun invoiceDetailBody(
         }
     }
 
-    // Draft review-and-send (Stage 2 tail): only on a DRAFT invoice, wired to the
-    // postInvoiceEvent callable (status -> "sent"). Fail-loud if the invoice has no
-    // client: the action stays present but the VM surfaces the precondition.
-    if (isDraftInvoice(invoice)) {
+    // Draft review-and-send: only on a DRAFT invoice, wired to the
+    // reviewAndSendDraftInvoice callable. Fail-loud if the draft is incomplete:
+    // the action stays present and the VM surfaces the server's precondition.
+    if (InvoiceAction.REVIEW_AND_SEND in actions) {
         item {
             AuntieBanner(
                 tone      = AuntieBannerTone.Warning,
@@ -371,7 +395,7 @@ private fun invoiceDetailBody(
     // ── Amounts panel ─────────────────────────────────────────────────────────────
     item {
         val amountTone =
-            if (status == InvoiceStatus.PAID) KeyValueStyle.AccentSuccess else KeyValueStyle.AccentError
+            if (state == InvoiceState.PAID) KeyValueStyle.AccentSuccess else KeyValueStyle.AccentError
         DenPanel(title = "Amounts") {
             Column {
                 DetailRow(
@@ -400,7 +424,16 @@ private fun invoiceDetailBody(
     item {
         DenPanel(
             title = "Payments",
-            trailing = { GhostButton(label = "Record payment", onClick = onRecordPayment) },
+            // Record payment is Android's "Mark paid": the same transition, through
+            // the dialog that also writes the Payment.invoiceId audit link. Gated to
+            // the states that can actually take a payment, so a paid, cancelled, or
+            // quoted invoice cannot collect twice or collect early. Already-recorded
+            // payments still render below in every state.
+            trailing = {
+                if (InvoiceAction.RECORD_PAYMENT in actions) {
+                    GhostButton(label = "Record payment", onClick = onRecordPayment)
+                }
+            },
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (!invoice.paymentsHistory.isNullOrBlank()) {
@@ -444,7 +477,13 @@ private fun invoiceDetailBody(
                     }
 
                     invoice.paymentsHistory.isNullOrBlank() ->
-                        EmptyHint("No payment recorded against this invoice yet. Use Record payment to log one.")
+                        EmptyHint(
+                            if (InvoiceAction.RECORD_PAYMENT in actions) {
+                                "No payment recorded against this invoice yet. Use Record payment to log one."
+                            } else {
+                                "No payment recorded against this invoice."
+                            },
+                        )
                 }
             }
         }
@@ -488,9 +527,9 @@ private fun paymentMethodLines(bs: com.tribetails.auntieos.data.model.BusinessSe
 }
 
 @Composable
-private fun InvoiceHeaderBar(invoice: Invoice, status: InvoiceStatus) {
+private fun InvoiceHeaderBar(invoice: Invoice, state: InvoiceState, overdue: Boolean) {
     val c = AuntieTheme.colors
-    val (statusTone, statusText, statusIcon) = statusTriple(status)
+    val (statusTone, statusText, statusIcon) = statusTriple(state, overdue)
     val accent = statusTone.color(c)
 
     Row(
@@ -764,41 +803,34 @@ private fun DetailRow(
 
 // ── Pure helpers (ported from the web spec so both surfaces resolve identically) ──
 
-/** Resolves an [InvoiceStatus] to its (tone, label, leadingIcon) triple. */
-private fun statusTriple(status: InvoiceStatus): Triple<AuntieStatusTone, String, androidx.compose.ui.graphics.vector.ImageVector> =
-    when (status) {
-        InvoiceStatus.PAID        -> Triple(AuntieStatusTone.Success, "PAID", Lucide.CircleCheckBig)
-        InvoiceStatus.OVERDUE     -> Triple(AuntieStatusTone.Error, "OVERDUE", Lucide.CircleAlert)
-        InvoiceStatus.OUTSTANDING -> Triple(AuntieStatusTone.Warning, "OUTSTANDING", Lucide.Clock)
-    }
-
-enum class InvoiceStatus { PAID, OVERDUE, OUTSTANDING }
-
 /**
- * Pure status resolver, mirrored from the web InvoiceDetailState helper.
- * [todayKey] is an ISO date prefix (YYYY-MM-DD) for "today" so the comparison
- * stays testable and clock-free.
+ * Resolves the SHARED [InvoiceState] (plus the overdue refinement) to its
+ * (tone, label, leadingIcon) triple. Pure; unit-tested.
  *
- * - amountDue <= 0  -> PAID
- * - still owed AND dueDate parses to a date strictly before today -> OVERDUE
- * - otherwise -> OUTSTANDING
+ * This screen used to own a private three-member `InvoiceStatus` enum and an
+ * `invoiceStatusFor` resolver whose first line was `amountDue <= 0 -> PAID`,
+ * so a draft, a quote, and an unredeemed credit all rendered a confident PAID
+ * pill while the Den list showed them correctly. Both are gone: the state and
+ * the overdue flag now come from domain/InvoiceActions.kt, the same classifier
+ * the list reads.
  */
-private fun invoiceStatusFor(invoice: Invoice, todayKey: String): InvoiceStatus {
-    if (invoice.amountDue <= 0.0) return InvoiceStatus.PAID
-    val due = invoice.dueDate.trim().take(10)
-    return if (isIsoDateBefore(due, todayKey)) InvoiceStatus.OVERDUE else InvoiceStatus.OUTSTANDING
+private fun statusTriple(
+    state: InvoiceState,
+    overdue: Boolean,
+): Triple<AuntieStatusTone, String, androidx.compose.ui.graphics.vector.ImageVector> {
+    // Overdue outranks the plain OUTSTANDING pill visually. It is a refinement
+    // of OPEN, never its own state, so it cannot apply to anything else.
+    if (overdue) return Triple(AuntieStatusTone.Error, "OVERDUE", Lucide.CircleAlert)
+    return when (state) {
+        InvoiceState.PAID      -> Triple(AuntieStatusTone.Success, "PAID", Lucide.CircleCheckBig)
+        InvoiceState.OPEN      -> Triple(AuntieStatusTone.Warning, "OUTSTANDING", Lucide.Clock)
+        InvoiceState.DRAFT     -> Triple(AuntieStatusTone.Muted, "DRAFT", Lucide.Clock)
+        InvoiceState.QUOTE     -> Triple(AuntieStatusTone.Purple, "QUOTE", Lucide.FileText)
+        InvoiceState.CANCELLED -> Triple(AuntieStatusTone.Muted, "CANCELLED", Lucide.X)
+        InvoiceState.CREDIT    -> Triple(AuntieStatusTone.Teal, "CREDIT", Lucide.CircleAlert)
+        InvoiceState.ZERO      -> Triple(AuntieStatusTone.Muted, "ZERO", Lucide.FileText)
+    }
 }
-
-/** True only when both look like YYYY-MM-DD and [a] is strictly before [b]. */
-private fun isIsoDateBefore(a: String, b: String): Boolean {
-    if (!looksLikeIsoDate(a) || !looksLikeIsoDate(b)) return false
-    return a < b // lexicographic compare is correct for zero-padded YYYY-MM-DD
-}
-
-private fun looksLikeIsoDate(s: String): Boolean =
-    s.length == 10 && s[4] == '-' && s[7] == '-' &&
-        s[0].isDigit() && s[1].isDigit() && s[2].isDigit() && s[3].isDigit() &&
-        s[5].isDigit() && s[6].isDigit() && s[8].isDigit() && s[9].isDigit()
 
 /** Two-decimal currency formatting, mirrored from the web InvoiceFilters helper. */
 private fun formatMoney(amount: Double): String {
