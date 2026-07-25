@@ -2036,7 +2036,7 @@ fun BookingDetailsDialog(
                 AuntieField(
                     value         = specialInstructions,
                     onValueChange = { specialInstructions = it },
-                    placeholder   = if (locked) "Locked - visit within 3 hours" else "Notes the kinfolk sees on the booking",
+                    placeholder   = if (locked) "Locked until after the visit" else "Notes the kinfolk sees on the booking",
                     enabled       = !locked && !isArchived,
                     singleLine    = false,
                     minLines      = 2,
@@ -2048,8 +2048,12 @@ fun BookingDetailsDialog(
                 AuntieField(
                     value         = notes,
                     onValueChange = { notes = it },
-                    placeholder   = "Internal-only - not shown to kinfolk",
-                    enabled       = !isArchived,
+                    placeholder   = if (locked) "Locked until after the visit" else "Internal-only - not shown to kinfolk",
+                    // Locked on the same cutoff as the kinfolk-facing field
+                    // above. Both threads freeze before a visit, and both
+                    // callables enforce it server-side; see
+                    // scheduling/BookingNoteCutoff.kt.
+                    enabled       = !locked && !isArchived,
                     singleLine    = false,
                     minLines      = 2,
                     modifier      = Modifier.fillMaxWidth(),

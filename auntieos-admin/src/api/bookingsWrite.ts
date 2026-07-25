@@ -1,4 +1,4 @@
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { call } from '../lib/fns';
 
@@ -38,6 +38,15 @@ import { call } from '../lib/fns';
  *      callable (not a direct client patch) because it is the one write on this
  *      doc the backend wraps with its own audited before/after read, shared by
  *      both Schedule's drag-to-reschedule and this screen's Reschedule action.
+ *
+ *   3. CALLABLE, ON THE ENVELOPE VISIT DOC (assignAuntie / addBookingNote /
+ *      addInternalBookingNote at the foot of this file, added for the Schedule
+ *      booking detail sheet). These act on
+ *      `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`, NOT on the
+ *      flat `kin_care_sessions` row, because that is where the assignment and
+ *      both note subcollections actually live. A session only reaches them when
+ *      it carries the `kinCareBatchId`/`kinCareVisitId` back-references
+ *      `approveBookingSeriesCore.ts` stamps; see `getVisitAssignment`.
  *
  * STILL OUT OF SCOPE for the Bookings LIST: `manageBookingSeries`
  * (MyTribe/functions/src/admin/manageBookingSeries.ts). It acts on the SEPARATE
@@ -214,4 +223,141 @@ export async function rescheduleBooking(
     'rescheduleBooking',
     { sessionId, startTime, endTime },
   );
+}
+
+// ── Envelope visit doc: assignment + notes ───────────────────────────────────
+
+export interface VisitAssignment {
+  assignedAuntieUid: string | null;
+  auntieDisplayName: string | null;
+}
+
+/**
+ * Read the CANONICAL assignment straight off
+ * `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`.
+ *
+ * A direct client read, not a callable, and deliberately: `firestore.rules`
+ * grants `allow read: if activeMember(fid) || isAuntie()` on that doc, and no
+ * `getKinCareAssignment` callable exists. Android does the same thing
+ * (`AuntieRepository#getKinCareAssignment`).
+ *
+ * It lives next to `assignAuntie` below on purpose. The write is optimistic in
+ * the UI, so this read is what the optimistic value SETTLES against; splitting
+ * them across modules is how the two drift into disagreeing about which field
+ * carries the name.
+ *
+ * NOT read off the `kin_care_sessions` row: assignment is never mirrored onto
+ * that collection, so the session doc the Schedule agenda already holds cannot
+ * answer this question.
+ */
+export async function getVisitAssignment(
+  kinfolkId: string,
+  batchId: string,
+  visitId: string,
+): Promise<VisitAssignment> {
+  const snap = await getDoc(
+    doc(db, 'families', kinfolkId, 'bookings', batchId, 'kinCares', visitId),
+  );
+  const data = (snap.data() ?? {}) as Record<string, unknown>;
+  return {
+    assignedAuntieUid: typeof data.assignedAuntieUid === 'string' ? data.assignedAuntieUid : null,
+    auntieDisplayName: typeof data.auntieDisplayName === 'string' ? data.auntieDisplayName : null,
+  };
+}
+
+export interface AssignAuntieResult {
+  ok: true;
+  visitId: string;
+  auntieUid: string | null;
+}
+
+/**
+ * assignAuntie (admin callable): set or clear the Auntie on one KinCare visit.
+ *
+ * Matches the backend's Zod contract exactly:
+ * `{ kinfolkId, batchId, visitId, auntieUid }` where `auntieUid` is NULLABLE,
+ * not optional, so unassigning sends an explicit `null` (the server turns that
+ * into a `FieldValue.delete()` on `assignedAuntieUid`). Omitting the key would
+ * fail validation rather than unassign.
+ *
+ * The server resolves the display name from `staff/{uid}` itself and rejects an
+ * unknown uid with `failed-precondition`, which is why the UI treats its own
+ * optimistic name as provisional until `getVisitAssignment` confirms it.
+ *
+ * Throws (via lib/fns.call) on `not-found` / `failed-precondition` /
+ * `invalid-argument` / auth errors; the caller reverts and surfaces the message.
+ */
+export async function assignAuntie(
+  kinfolkId: string,
+  batchId: string,
+  visitId: string,
+  auntieUid: string | null,
+): Promise<AssignAuntieResult> {
+  return call<
+    { kinfolkId: string; batchId: string; visitId: string; auntieUid: string | null },
+    AssignAuntieResult
+  >('assignAuntie', { kinfolkId, batchId, visitId, auntieUid });
+}
+
+export interface AddNoteResult {
+  noteId: string;
+}
+
+/**
+ * addBookingNote (portal callable, staff-or-member gated): append a
+ * KINFOLK-FACING note to `.../kinCares/{visitId}/notes`.
+ *
+ * NOTE the codebase this lives in: it is the one note verb that is NOT under
+ * `functions/src/admin/`, because the household writes it too
+ * (`functions/src/portal/addBookingNote.ts`). Consequences that matter here:
+ *  - the SERVER enforces the 3-hour cutoff (`lib/bookingNoteCutoff.ts`),
+ *    rejecting with `failed-precondition` + `{ code: 'booking_note_cutoff' }`.
+ *    The client lock in `lib/bookingDetailFormat.ts` is a courtesy so the
+ *    operator is not surprised; this rejection is the real gate and is
+ *    surfaced verbatim.
+ *  - `authorRole` is stamped from the CALLER, never sent, so an admin's note
+ *    lands as `'admin'` and a household's as `'kinfolk'`.
+ *
+ * `batchId`+`visitId` are sent (not the legacy flat `bookingId`) so the server
+ * writes under the nested visit, which is the only path the client can read
+ * back; see `api/bookingNotes.ts` for the archive bug this avoids.
+ */
+export async function addBookingNote(
+  kinfolkId: string,
+  batchId: string,
+  visitId: string,
+  body: string,
+): Promise<AddNoteResult> {
+  return call<
+    { kinfolkId: string; batchId: string; visitId: string; body: string },
+    AddNoteResult
+  >('addBookingNote', { kinfolkId, batchId, visitId, body: body.trim() });
+}
+
+/**
+ * addInternalBookingNote (admin callable): append a STAFF-ONLY note to
+ * `.../kinCares/{visitId}/internalNotes`, a separate subcollection whose read
+ * rule is `isAuntie()` alone.
+ *
+ * SAME 3-HOUR CUTOFF as `addBookingNote`, enforced SERVER-SIDE since
+ * 2026-07-25 through the shared `functions/src/lib/bookingNoteCutoff.ts`. Both
+ * threads reject identically: `failed-precondition` with
+ * `details.code === 'booking_note_cutoff'`.
+ *
+ * It did not always: the rule was private to `addBookingNote`, so this thread
+ * was guarded by client code alone and any other caller, a stale bundle, or a
+ * direct invocation wrote straight past it. The composer lock in the sheet is
+ * now a courtesy so the operator is not surprised by a rejection, not the
+ * enforcement.
+ */
+export async function addInternalBookingNote(
+  kinfolkId: string,
+  batchId: string,
+  visitId: string,
+  body: string,
+): Promise<AddNoteResult> {
+  return call<
+    { kinfolkId: string; batchId: string; visitId: string; body: string },
+    AddNoteResult
+  >('addInternalBookingNote', { kinfolkId, batchId, visitId, body: body.trim() });
 }

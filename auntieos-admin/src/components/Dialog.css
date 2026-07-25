@@ -20,6 +20,28 @@
   border-radius: var(--radius-panel, 16px);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
 }
+/* The right-side detail sheet (Dialog variant="sheet"). Full height, pinned to
+   the trailing edge, 480px like the archive's BookingDetailModal. Below the
+   phone breakpoint it becomes a full-bleed panel rather than a 480px column
+   squeezed off the edge. */
+.dialog__backdrop--sheet {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  padding: 0;
+}
+.dialog--sheet {
+  width: min(100%, 30rem);
+  max-height: 100%;
+  border-radius: var(--radius-panel, 16px) 0 0 var(--radius-panel, 16px);
+  border-right: none;
+}
+@media (max-width: 32rem) {
+  .dialog--sheet {
+    border-radius: 0;
+  }
+}
+
 .dialog:focus-visible {
   outline: 2px solid var(--color-accent, #e8a06a);
   outline-offset: -2px;

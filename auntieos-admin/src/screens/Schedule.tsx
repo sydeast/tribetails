@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import { SCHEDULE_SESSIONS_QUERY, SCHEDULE_BUSY_SLOTS_QUERY, type ScheduleSessionEntry, type BusySlotEntry } from '../api/schedule';
 import {
   type ScheduleViewMode,
@@ -27,6 +28,7 @@ import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { BookingDetailModal } from '../components/BookingDetailModal';
 import './Schedule.css';
 
 const VIEW_MODES: readonly { key: ScheduleViewMode; label: string }[] = [
@@ -37,14 +39,15 @@ const VIEW_MODES: readonly { key: ScheduleViewMode; label: string }[] = [
 
 interface ScheduleProps {
   /**
-   * Placeholder: the per-session detail (the wasm's `BookingDetailModal`) is a
-   * separate, not-yet-built screen; this port is READ ONLY, see the module
-   * doc comment below for the full list of write/edit surfaces intentionally
-   * left out. The router mounts this screen propless, so `onSelect` is
-   * undefined in production, see `AgendaRow`: when unwired the row is a
-   * STATIC <div>, not a <button> (a handler-less <button> is still a
-   * focusable dead control, the Sessions.tsx/Invoices.tsx/KinTales.tsx
-   * convention).
+   * Row-open OVERRIDE. Propless (the router default), a row opens the
+   * in-screen `BookingDetailModal` detail sheet, exactly the way a Directory
+   * card opens `KinfolkProfile` and a KinTales row opens `KinTaleDetail`. A
+   * caller can pass its own handler (a test, or a future route) to take over
+   * selection; then the sheet never opens.
+   *
+   * Before 2026-07-25 this prop was the ONLY thing that made a row
+   * interactive, and nothing ever passed it, so every agenda row rendered as
+   * a static div and the screen had no detail view at all (operator issue 16).
    */
   onSelect?: (sessionId: string) => void;
 }
@@ -63,12 +66,18 @@ interface ScheduleProps {
  * day/week/month arithmetic and the busy-slot classification, both with
  * direct unit coverage.
  *
- * OUT OF SCOPE (write/edit or detail-navigation surfaces, not this list
- * port): drag-to-reschedule (`rescheduleBooking`), the "Block time" dialog
- * (`createBlockedTimeSlot`), the New Visit / `createKinCareSession` flow, and
- * the per-session `BookingDetailModal` detail view. `onSelect` is this
- * screen's only hook into that later work, same convention as
- * Sessions.tsx/Invoices.tsx/KinTales.tsx.
+ * THE DETAIL SHEET: clicking an agenda row opens `BookingDetailModal`, the
+ * port of the archive's per-visit info card (facts, both note threads, inline
+ * reschedule, assigned Auntie, and the links out to the household record and
+ * the visit's KinTale). It is a sibling VIEW of this list, opened from the
+ * row and closed back to it, the Directory/KinTales convention, so this screen
+ * owns the open state rather than the router: the sheet needs the whole
+ * session row, which only this screen's live stream has.
+ *
+ * STILL OUT OF SCOPE (write/edit surfaces, not this list port):
+ * drag-to-reschedule physics, the "Block time" dialog
+ * (`createBlockedTimeSlot`), and the New Visit / `createKinCareSession` flow.
+ * Reschedule itself is no longer deferred, it lives in the detail sheet.
  *
  * ALSO DEFERRED: the service-type legend orders alphabetically rather than by
  * configured duration, and there is no "Google Calendar sync not configured"
@@ -80,10 +89,15 @@ interface ScheduleProps {
 export function Schedule({ onSelect }: ScheduleProps) {
   const sessionsState = useCollection<ScheduleSessionEntry>(SCHEDULE_SESSIONS_QUERY);
   const busyState = useCollection<BusySlotEntry>(SCHEDULE_BUSY_SLOTS_QUERY);
+  const navigate = useNavigate();
 
   const [view, setView] = useState<ScheduleViewMode>('week');
   const todayIso = useMemo(() => localDateIso(new Date()), []);
   const [selected, setSelected] = useState<string>(todayIso);
+  // The open detail sheet, held as an ID rather than the row object so the
+  // sheet always re-reads from the live stream (a reschedule that lands while
+  // it is open re-renders it with the new window instead of a stale copy).
+  const [openSessionId, setOpenSessionId] = useState<string | null>(null);
 
   const daysInView = useMemo(() => {
     switch (view) {
@@ -152,6 +166,11 @@ export function Schedule({ onSelect }: ScheduleProps) {
             const legend = distinctServiceTypes(sessions);
             const selectedSessions = (byDay.get(selected) ?? []).slice().sort((a, b) => str(a.startTime).localeCompare(str(b.startTime)));
             const selectedBusy = busyByDate.get(selected) ?? [];
+            // Re-resolved from the stream every render, so the sheet closes on
+            // its own if the session leaves the page (deleted, or pushed out of
+            // the bounded 300) rather than showing a row that no longer exists.
+            const openSession =
+              openSessionId === null ? undefined : sessions.find((s) => s._id === openSessionId);
 
             return (
               <>
@@ -203,7 +222,11 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   ) : (
                     <ul className="schedule__agenda-list">
                       {selectedSessions.map((entry) => (
-                        <AgendaRow key={entry._id} entry={entry} onSelect={onSelect} />
+                        <AgendaRow
+                          key={entry._id}
+                          entry={entry}
+                          onSelect={onSelect ?? setOpenSessionId}
+                        />
                       ))}
                       {selectedBusy.map((slot) => (
                         <BusyRow key={slot._id} slot={slot} />
@@ -211,6 +234,22 @@ export function Schedule({ onSelect }: ScheduleProps) {
                     </ul>
                   )}
                 </DenPanel>
+
+                {openSession !== undefined && (
+                  <BookingDetailModal
+                    entry={openSession}
+                    onClose={() => setOpenSessionId(null)}
+                    onOpenKinfolk={(kinfolkId) =>
+                      void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })
+                    }
+                    onOpenKinTale={(kinTaleId) =>
+                      // Search param, not a path: `lib/notificationActions.ts`
+                      // set that convention for invoice and kintale deep links,
+                      // and one convention beats two that drift.
+                      void navigate({ to: '/kintales', search: { kinTaleId } })
+                    }
+                  />
+                )}
               </>
             );
           }}
@@ -372,6 +411,8 @@ function dayCellClass(day: string, today: string, selected: string): string {
 
 interface AgendaRowProps {
   entry: ScheduleSessionEntry;
+  /** Always wired now (the screen falls back to its own sheet opener), kept
+   *  optional so the static branch below stays reachable if that ever changes. */
   onSelect?: ((sessionId: string) => void) | undefined;
 }
 
@@ -411,6 +452,15 @@ function AgendaRow({ entry, onSelect }: AgendaRowProps) {
   );
 }
 
+/**
+ * A busy block. STATIC ON PURPOSE, and it must stay that way: these rows are
+ * read-only overlays from `booking_time_slots` (Google Calendar free/busy
+ * imports and admin-blocked windows). They are not visits. There is no
+ * kinfolk, no service, no note thread, no KinTale, nothing a detail sheet
+ * could show, and `firestore.rules` denies every client write to that
+ * collection anyway. Making this a button to match `AgendaRow` would produce
+ * exactly the dead control the Buttons.tsx convention exists to prevent.
+ */
 function BusyRow({ slot }: { slot: BusySlotEntry }) {
   return (
     <li className="schedule__row schedule__row--busy">

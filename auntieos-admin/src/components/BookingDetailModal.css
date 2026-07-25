@@ -1,0 +1,160 @@
+/* The Schedule visit detail sheet. The sheet SHAPE (full-height, right edge,
+   scrim) lives on Dialog's `variant="sheet"`; everything here is the stacked
+   content inside it. */
+
+.bdm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4, 16px);
+}
+
+/* ── fact rows ─────────────────────────────────────────────────────────── */
+
+.bdm__facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+}
+
+.bdm__fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+}
+
+.bdm__fact-label {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-dim, #5a5c6a);
+}
+
+.bdm__fact-value {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  /* Addresses and request notes are free text and can be long. Wrap rather
+     than push the sheet into a horizontal scroll. */
+  overflow-wrap: anywhere;
+  color: var(--color-primary, #1a1c28);
+}
+
+/* The kinfolk name as a link. A real <button> (it routes in-app, it is not an
+   href), styled as a link so it reads as one. */
+.bdm__link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--color-accent, #e8a06a);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.bdm__link:hover {
+  color: var(--color-primary, #1a1c28);
+}
+.bdm__link:focus-visible {
+  outline: 2px solid var(--color-accent, #e8a06a);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ── controls ──────────────────────────────────────────────────────────── */
+
+.bdm__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3, 12px);
+}
+
+.bdm__kintales,
+.bdm__picker {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2, 8px);
+}
+
+.bdm__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 10rem;
+}
+.bdm__field--wide {
+  flex-basis: 100%;
+}
+
+.bdm__field-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-dim, #5a5c6a);
+}
+
+.bdm__field-input,
+.bdm__composer {
+  width: 100%;
+  padding: var(--space-2, 8px);
+  border: 1px solid var(--color-border, #d8d6cf);
+  border-radius: var(--radius-card, 8px);
+  background: var(--color-surface, #fff);
+  color: var(--color-primary, #1a1c28);
+  font: inherit;
+}
+.bdm__composer {
+  resize: vertical;
+}
+.bdm__field-input:disabled,
+.bdm__composer:disabled {
+  background: var(--color-surface2, #f1efe9);
+  color: var(--color-text-dim, #5a5c6a);
+  cursor: not-allowed;
+}
+.bdm__field-input:focus-visible,
+.bdm__composer:focus-visible {
+  outline: 2px solid var(--color-accent, #e8a06a);
+  outline-offset: 1px;
+}
+
+/* ── note threads ──────────────────────────────────────────────────────── */
+
+.bdm__notes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+}
+
+.bdm__note {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  border: 1px solid var(--color-border-soft, #e6e4dd);
+  border-radius: var(--radius-card, 8px);
+  background: var(--color-surface2, #f7f5f0);
+}
+
+.bdm__note-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.bdm__note-author {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-dim, #5a5c6a);
+}

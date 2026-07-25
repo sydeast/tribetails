@@ -57,4 +57,19 @@ class BookingNoteCutoffTest {
         val msg = noteCutoffWarning(locked = true)
         assertTrue("must contain '3 hours' or equivalent", msg!!.contains("3"))
     }
+
+    /**
+     * The copy must say WHY, not just that something is off, and it must read
+     * the same on both surfaces. Two hand-written strings ("Notes locked -
+     * visit is within 3 hours" here, "Notes locked - visit starts in <3hr." in
+     * KinCareDetailScreen) is how the same rule came to be explained two
+     * different ways, one of them in error red rather than warning.
+     */
+    @Test
+    fun `noteCutoffWarning names the lock and the window in full words`() {
+        val msg = noteCutoffWarning(locked = true)!!
+        assertTrue("must say it is locked", msg.contains("locked", ignoreCase = true))
+        assertTrue("must spell out the window", msg.contains("3 hours"))
+        assertFalse("no em dashes in operator copy", msg.contains("—"))
+    }
 }

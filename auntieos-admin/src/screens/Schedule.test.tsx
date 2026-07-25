@@ -9,6 +9,40 @@ import { localDateIso, weekDays } from '../lib/scheduleFormat';
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
+// Schedule navigates on the detail sheet's kinfolk / KinTale links. No suite in
+// this tree mounts a RouterProvider (Home.tsx has the same dependency and no
+// suite of its own), so the hook is stubbed rather than the whole router stood up.
+const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
+vi.mock('@tanstack/react-router', () => ({ useNavigate: () => navigate }));
+
+/**
+ * The detail sheet is stubbed here on purpose: its own behaviour (fact rows,
+ * the 3h note lock, reschedule, optimistic assign) is covered directly in
+ * `components/BookingDetailModal.test.tsx`. What this suite owns is the
+ * WIRING: that a row opens the sheet for the right session, and that the
+ * sheet's navigation callbacks reach the router.
+ */
+vi.mock('../components/BookingDetailModal', () => ({
+  BookingDetailModal: (props: {
+    entry: { _id: string; kinfolkId?: string | undefined };
+    onClose: () => void;
+    onOpenKinfolk?: (id: string) => void;
+    onOpenKinTale?: (id: string) => void;
+  }) => (
+    <div data-testid="booking-detail-modal" data-entry-id={props.entry._id}>
+      <button type="button" onClick={() => props.onOpenKinfolk?.(props.entry.kinfolkId ?? '')}>
+        stub open kinfolk
+      </button>
+      <button type="button" onClick={() => props.onOpenKinTale?.('rep1')}>
+        stub open kintale
+      </button>
+      <button type="button" onClick={props.onClose}>
+        stub close
+      </button>
+    </div>
+  ),
+}));
+
 import { Schedule } from './Schedule';
 
 function sessionEntry(over: Partial<ScheduleSessionEntry>): ScheduleSessionEntry {
@@ -76,6 +110,7 @@ const user = userEvent.setup();
 
 beforeEach(() => {
   useCollection.mockReset();
+  navigate.mockReset();
   mockCollections({});
 });
 
@@ -305,13 +340,62 @@ describe('Schedule screen', () => {
     expect(onSelect).toHaveBeenCalledWith('sess-42');
   });
 
-  it('omitting onSelect renders each session row STATIC (not a live no-op button)', () => {
-    withFixedToday(() => {
-      mockCollections({ sessions: { status: 'ready', data: [sessionEntry({})] } });
-      render(<Schedule />);
-      expect(screen.getByText('The Whitfields')).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /The Whitfields/i })).toBeNull();
+  /** One session stamped on the REAL today, for the click-driven tests below. */
+  function todaySession(over: Partial<ScheduleSessionEntry> = {}) {
+    const todayIsoReal = localDateIso(new Date());
+    return sessionEntry({
+      _id: 'sess-42',
+      startTime: `${todayIsoReal}T14:00:00.000Z`,
+      endTime: `${todayIsoReal}T15:00:00.000Z`,
+      ...over,
     });
+  }
+
+  it('propless (the router default), clicking a row OPENS the booking detail sheet', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [todaySession()] } });
+    render(<Schedule />);
+    expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
+    await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    expect(screen.getByTestId('booking-detail-modal')).toHaveAttribute('data-entry-id', 'sess-42');
+  });
+
+  it('closing the detail sheet returns to the agenda', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [todaySession()] } });
+    render(<Schedule />);
+    await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    await user.click(screen.getByRole('button', { name: 'stub close' }));
+    expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
+  });
+
+  it('the sheet routes to the kinfolk detail (operator issue 16, the hyperlink half)', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [todaySession({ kinfolkId: 'kf-7' })] } });
+    render(<Schedule />);
+    await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    await user.click(screen.getByRole('button', { name: 'stub open kinfolk' }));
+    expect(navigate).toHaveBeenCalledWith({
+      to: '/directory/$kinfolkId',
+      params: { kinfolkId: 'kf-7' },
+    });
+  });
+
+  it('the sheet routes to the KinTale detail', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [todaySession()] } });
+    render(<Schedule />);
+    await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    await user.click(screen.getByRole('button', { name: 'stub open kintale' }));
+    // Search param, not a path: lib/notificationActions.ts set that convention
+    // for kintale and invoice deep links, and this sheet follows it.
+    expect(navigate).toHaveBeenCalledWith({
+      to: '/kintales',
+      search: { kinTaleId: 'rep1' },
+    });
+  });
+
+  it('an onSelect override takes over and the sheet never opens', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [todaySession()] } });
+    render(<Schedule onSelect={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
   });
 
   it('a busy-slot row is always static (never a dead-control button), regardless of onSelect', () => {

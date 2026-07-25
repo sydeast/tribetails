@@ -242,12 +242,17 @@ interface DirectoryProps {
    */
   onSelectKin?: (id: string) => void;
   /**
-   * Opens this household's profile on mount. Set by the router from the
-   * `/directory/{kinfolkId}` path, which is where the Notifications feed's
-   * "Open" lands for a kinfolk notification. Ignored when `onSelectKinfolk`
-   * takes over selection, since then this screen owns no detail view.
+   * Open straight onto one household's profile, for the `/directory/{id}`
+   * deep link. The list is still mounted underneath, so closing the profile
+   * lands on it exactly as it would after a card click.
    */
   initialKinfolkId?: string;
+  /**
+   * Called when the household profile is closed. The deep-link route uses it
+   * to navigate back to `/directory`, so the URL never keeps pointing at a
+   * profile the operator has already left.
+   */
+  onProfileClose?: () => void;
 }
 
 /**
@@ -264,7 +269,12 @@ interface DirectoryProps {
  * not-yet-built profile/edit screens (KinfolkProfileScreen, KinViewScreen,
  * KinEditScreen), same pattern as FormSchemas' onSelect/onNew.
  */
-export function Directory({ onSelectKinfolk, onSelectKin, initialKinfolkId }: DirectoryProps) {
+export function Directory({
+  onSelectKinfolk,
+  onSelectKin,
+  initialKinfolkId,
+  onProfileClose,
+}: DirectoryProps) {
   const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
   const kinState = useCollection<Kin>(KIN_QUERY);
 
@@ -338,7 +348,10 @@ export function Directory({ onSelectKinfolk, onSelectKin, initialKinfolkId }: Di
         kinfolkId={openKinfolkId}
         kinfolkName={kf ? kinfolkDisplayName(kf) : ''}
         kin={kinByKinfolk.get(openKinfolkId) ?? []}
-        onBack={() => setOpenKinfolkId(null)}
+        onBack={() => {
+          setOpenKinfolkId(null);
+          onProfileClose?.();
+        }}
       />
     );
   }

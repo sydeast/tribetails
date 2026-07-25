@@ -1,5 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -9,6 +9,7 @@ import { resolveKinCareRef } from '../lib/resolveKinCareRef';
 import { isStaff } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { sanitizeRichText } from '../lib/richText';
+import { assertNoteWindowOpen } from '../lib/bookingNoteCutoff';
 
 const Args = z
   .object({
@@ -27,19 +28,10 @@ const Args = z
     message: 'Provide batchId+visitId (preferred) or a legacy bookingId.',
   });
 
-const CUTOFF_MS = 3 * 60 * 60 * 1000;
-
-function startTimeMsOf(visitData: FirebaseFirestore.DocumentData): number | null {
-  const raw = visitData.startTime;
-  if (raw instanceof Timestamp) return raw.toMillis();
-  if (raw instanceof Date) return raw.getTime();
-  if (typeof raw === 'number') return raw;
-  if (typeof raw === 'string') {
-    const parsed = Date.parse(raw);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
+// The 3-hour cutoff, its comparison and its typed rejection now live in
+// `lib/bookingNoteCutoff.ts`, shared with `admin/addInternalBookingNote.ts`.
+// Behaviour here is unchanged; the rule simply stopped being private to this
+// file, which is what let the internal thread go unguarded.
 
 export async function addBookingNoteHandler(
   req: CallableRequest<unknown>,
@@ -87,14 +79,7 @@ export async function addBookingNoteHandler(
   const visitSnap = await resolved.ref.get();
   if (!visitSnap.exists) throw new HttpsError('not-found', 'booking not found');
 
-  const startMs = startTimeMsOf(visitSnap.data() ?? {});
-  if (startMs !== null && Date.now() >= startMs - CUTOFF_MS) {
-    throw new HttpsError(
-      'failed-precondition',
-      'Notes cannot be edited within 3 hours of booking start window.',
-      { code: 'booking_note_cutoff' },
-    );
-  }
+  assertNoteWindowOpen(visitSnap.data() ?? {});
 
   const ref = await resolved.ref.collection('notes').add({
     authorUid: uid,

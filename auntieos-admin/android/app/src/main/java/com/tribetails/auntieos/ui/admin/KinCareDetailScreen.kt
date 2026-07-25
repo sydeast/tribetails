@@ -29,6 +29,10 @@ import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.BookingNotesRepository
+import com.tribetails.auntieos.ui.admin.scheduling.assignUnavailableReason
+import com.tribetails.auntieos.ui.admin.scheduling.canAssignAuntie
+import com.tribetails.auntieos.ui.admin.scheduling.isNoteEditLocked
+import com.tribetails.auntieos.ui.admin.scheduling.noteCutoffWarning
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
@@ -115,17 +119,26 @@ fun KinCareDetailScreen(
                 window(s),
             ).joinToString(" · ")) }
 
-            // Assigned Auntie lives on the MyTribe kinCare visit doc, so the
-            // section only renders when the session carries the envelope FKs.
+            // Assigned Auntie lives on the MyTribe kinCare visit doc, so it can
+            // only be set when the session carries the envelope FKs. When it
+            // cannot, the section still renders and SAYS SO: hiding it outright
+            // (the old behaviour) left an operator unable to tell "nobody is
+            // assigned" from "this visit cannot be assigned".
             val assignBatchId = s.kinCareBatchId.orEmpty()
             val assignVisitId = s.kinCareVisitId.orEmpty()
-            if (s.kinfolkId.isNotBlank() && assignBatchId.isNotBlank() && assignVisitId.isNotBlank()) {
+            if (canAssignAuntie(s.kinfolkId, assignBatchId, assignVisitId)) {
                 item {
                     AssignedAuntieSection(
                         kinfolkId = s.kinfolkId,
                         batchId = assignBatchId,
                         visitId = assignVisitId,
                     )
+                }
+            } else {
+                item {
+                    DetailSection("Assigned Auntie") {
+                        EmptyHint(assignUnavailableReason())
+                    }
                 }
             }
 
@@ -686,8 +699,6 @@ private fun shortIsoTimeOnly(iso: String): String =
 
 private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
 
-private const val NOTE_CUTOFF_MS: Long = 3L * 60L * 60L * 1000L
-
 @Composable
 private fun BookingNotesSection(
     session: KinCareSession,
@@ -706,6 +717,9 @@ private fun BookingNotesSection(
         else flowOf(emptyList<BookingNotesRepository.BookingNote>())
     }.collectAsState(initial = emptyList())
 
+    // Through the shared helper, not a re-implementation: this screen used to
+    // carry its own private NOTE_CUTOFF_MS and its own inline comparison, which
+    // could drift from the copy the Schedule dialog uses.
     val locked = remember(session.startTime) {
         val startMs = runCatching {
             LocalDateTime.parse(session.startTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
@@ -713,7 +727,7 @@ private fun BookingNotesSection(
                 .toInstant()
                 .toEpochMilli()
         }.getOrNull()
-        startMs != null && System.currentTimeMillis() >= (startMs - NOTE_CUTOFF_MS)
+        isNoteEditLocked(System.currentTimeMillis(), startMs)
     }
 
     var kinfolkInput by remember(bookingId) { mutableStateOf("") }
@@ -748,11 +762,11 @@ private fun BookingNotesSection(
                 minLines = 3,
                 enabled = canStream && !locked,
             )
-            if (locked) {
+            noteCutoffWarning(locked)?.let { msg ->
                 Text(
-                    text = "Notes locked - visit starts in <3hr.",
+                    text = msg,
                     style = AuntieTheme.typography.labelSmall,
-                    color = AuntieTheme.colors.error,
+                    color = AuntieTheme.colors.warning,
                 )
             }
             PrimaryButton(
@@ -793,11 +807,22 @@ private fun BookingNotesSection(
                 placeholder = "Hidden from kinfolk. Visible to staff on every session of this booking.",
                 singleLine = false,
                 minLines = 3,
-                enabled = canStream,
+                // Locked on the same 3-hour cutoff as the kinfolk-facing thread.
+                // addInternalBookingNote enforces it server-side too, so this is
+                // a mirror that closes the composer early, not the guard itself;
+                // see BookingNoteCutoff.kt.
+                enabled = canStream && !locked,
             )
+            noteCutoffWarning(locked)?.let { msg ->
+                Text(
+                    text = msg,
+                    style = AuntieTheme.typography.labelSmall,
+                    color = AuntieTheme.colors.warning,
+                )
+            }
             PrimaryButton(
                 label = if (savingInternal) "Saving…" else "Save internal note",
-                enabled = canStream && !savingInternal && internalInput.isNotBlank(),
+                enabled = canStream && !locked && !savingInternal && internalInput.isNotBlank(),
                 onClick = {
                     scope.launch {
                         savingInternal = true

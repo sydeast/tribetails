@@ -193,22 +193,30 @@ const directoryRoute = createRoute({
   component: Directory,
 });
 
-/** Adapts the `directory/$kinfolkId` param to Directory's initial-profile prop. */
-function DirectoryProfileView() {
+/**
+ * Deep link to ONE household's profile, `/directory/{kinfolkId}`.
+ *
+ * Directory already owns the profile as a sibling view of its list; this route
+ * just opens the list on that view, and closing it navigates back to the bare
+ * list so the URL and the screen never disagree. Added for the Schedule detail
+ * sheet's kinfolk link (operator issue 16), which needs somewhere real to
+ * point: a link to a route that does not exist is worse than no link.
+ */
+function DirectoryProfileRouteView() {
   const { kinfolkId } = directoryProfileRoute.useParams();
-  return <Directory initialKinfolkId={kinfolkId} />;
+  const navigate = useNavigate();
+  return (
+    <Directory
+      initialKinfolkId={kinfolkId}
+      onProfileClose={() => void navigate({ to: '/directory' })}
+    />
+  );
 }
 
-/**
- * The household profile as a real URL. Directory already renders the profile as
- * an in-screen sibling view; this route just opens it directly, which is what
- * lets a kinfolk notification link to a household instead of dumping the
- * operator on an unfiltered directory.
- */
 const directoryProfileRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'directory/$kinfolkId',
-  component: DirectoryProfileView,
+  component: DirectoryProfileRouteView,
 });
 
 const bookingsRoute = createRoute({
@@ -250,15 +258,26 @@ function KinTalesView() {
   // kintale notification's "Open". Initial state only, so closing the detail
   // returns to the list rather than bouncing back off a stale URL.
   const { kinTaleId } = kinTalesRoute.useSearch();
+  const navigate = useNavigate();
   const [mode, setMode] = useState<KinTalesMode>(
     kinTaleId ? { kind: 'detail', kinTaleId } : { kind: 'list' },
   );
+
+  /**
+   * Back to the list, and drop `?kinTaleId=` on the way out. Without clearing
+   * the search param the URL keeps naming a report the operator has closed, and
+   * a reload would reopen it.
+   */
+  function closeToList() {
+    setMode({ kind: 'list' });
+    if (kinTaleId) void navigate({ to: '/kintales', search: {} });
+  }
 
   if (mode.kind === 'compose') {
     return (
       <KinTaleCompose
         {...(mode.kinTaleId ? { kinTaleId: mode.kinTaleId } : {})}
-        onClose={() => setMode({ kind: 'list' })}
+        onClose={closeToList}
       />
     );
   }
@@ -267,7 +286,7 @@ function KinTalesView() {
       <KinTaleDetail
         kinTaleId={mode.kinTaleId}
         onEdit={(id) => setMode({ kind: 'compose', kinTaleId: id })}
-        onClose={() => setMode({ kind: 'list' })}
+        onClose={closeToList}
       />
     );
   }
@@ -285,6 +304,7 @@ const kinTalesRoute = createRoute({
   validateSearch: optionalIdSearch(['kinTaleId'] as const),
   component: KinTalesView,
 });
+
 
 const galleryRoute = createRoute({
   getParentRoute: () => adminRoute,
