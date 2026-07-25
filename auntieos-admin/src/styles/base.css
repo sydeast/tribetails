@@ -29,6 +29,11 @@ body {
   background: var(--color-background);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Inherited by everything, and ignored by any face without these axes, so
+     this one declaration reaches all 26 Fraunces rules and Hanken and Spline
+     Sans Mono are untouched. See --type-serif-variation in tokens.css. */
+  font-variation-settings: var(--type-serif-variation);
+  font-optical-sizing: auto;
 }
 
 #root {
@@ -41,38 +46,207 @@ body {
      document flow and cannot extend the scroll area. */
 }
 
-/* The two Den orbs behind every screen. Purely decorative; the RootLayout marks
+/* ── The Den ambient wash ────────────────────────────────────────────────────
+   Three drifting orbs behind every screen. Purely decorative; RootLayout marks
    them aria-hidden. Kept subtle so foreground text stays legible.
 
-   `.orb.b` named `--color-teal`, which no file declares, so it took an
-   `#6ab0a6` literal and was the one element on the page that ignored the theme
-   entirely. Both now carry role tokens, and they carry DIFFERENT ones: with
-   `.orb.a` already on `--color-accent`, pointing b at the same token would have
-   traded a themeless orb for a monochrome wash. */
+   Restored 2026-07-25 to what all 39 `ui-ideas/*.html` mocks specify and the
+   MyTribe portal already ships (`mytribe/web/src/styles/base.css:18`). Three
+   things were missing, and each one is why the background read as a flat wash
+   rather than as atmosphere:
+
+     - They did not move. The class comment said "drifting" and nothing drifted.
+     - They were FLAT fills, so each was a hard-edged disc softened only by the
+       blur, instead of a radial falloff that fades into the page.
+     - They did not blend, so the two overlapped by occlusion rather than mixing
+       into a third hue.
+
+   Colours are role tokens, so the wash re-tints itself in dark mode with no
+   second rule. `.orb.b` previously named `--color-teal`, which no file declares,
+   so it silently took an `#6ab0a6` literal and was the one element on the page
+   that ignored the theme entirely. */
 .orb {
   position: fixed;
   z-index: -1;
   border-radius: 50%;
   filter: blur(80px);
-  opacity: 0.5;
+  opacity: 0.45;
   pointer-events: none;
+  /* Additive-ish mixing where two orbs overlap, which is what produces the
+     third colour the mocks show at the seams. */
+  mix-blend-mode: screen;
+  /* Negative delays start the three mid-cycle so they are permanently out of
+     phase; without them all three turn at the same instant and the wash
+     pulses instead of drifting. */
+  animation: orb-drift 29s var(--ease-standard) infinite alternate;
 }
+
+/* `screen` lightens, which is right on the dark navy but washes out the cream
+   page. Light mode multiplies instead, so the orbs deepen the cream rather than
+   bleaching it. */
+:root:not([data-theme='dark']) .orb {
+  mix-blend-mode: multiply;
+  opacity: 0.25;
+}
+
 .orb.a {
   width: 42vw;
   height: 42vw;
   top: -12vw;
   left: -8vw;
-  background: var(--color-tertiary);
+  background: radial-gradient(circle, var(--color-tertiary), transparent 62%);
 }
 .orb.b {
-  width: 38vw;
-  height: 38vw;
-  bottom: -14vw;
+  width: 40vw;
+  height: 40vw;
+  top: 10vw;
   right: -10vw;
-  background: var(--color-accent);
+  background: radial-gradient(circle, var(--color-primary), transparent 60%);
+  animation-delay: -10s;
+}
+.orb.c {
+  width: 34vw;
+  height: 34vw;
+  bottom: -14vw;
+  left: 30vw;
+  background: radial-gradient(circle, var(--color-accent), transparent 60%);
+  animation-delay: -16s;
+}
+
+@keyframes orb-drift {
+  to {
+    transform: translate3d(-4vmax, 3vmax, 0) scale(1.1) rotate(-9deg);
+  }
 }
 
 code {
   font-family: var(--font-mono);
   font-size: 0.9em;
+}
+
+/* ── Entrance ────────────────────────────────────────────────────────────────
+   All 39 mocks open a screen by settling its blocks into place from below, on a
+   per-block delay, so the page assembles top to bottom instead of hard-cutting
+   into existence. The MyTribe portal shipped exactly this as `.d1` through
+   `.d4` (`mytribe/web/src/styles/base.css:132`); the admin had no entrance
+   animation on any screen. These four classes are the whole mechanism: put one
+   on each top-level block of a screen, in reading order.
+
+   `both` fill matters. Without it the element is at full opacity for the length
+   of its own delay and then jumps back to invisible to start animating. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.d1,
+.d2,
+.d3,
+.d4 {
+  animation: rise var(--dur-rise) var(--ease-emphasized) both;
+}
+.d1 {
+  animation-delay: 0.06s;
+}
+.d2 {
+  animation-delay: 0.12s;
+}
+.d3 {
+  animation-delay: 0.18s;
+}
+.d4 {
+  animation-delay: 0.24s;
+}
+
+/* ── Lift ────────────────────────────────────────────────────────────────────
+   The mock idiom for a clickable card: it rises 3px, takes a tone-coloured
+   border, and casts one long soft shadow. All 39 mocks put it on every
+   clickable card on every screen. Shipped, the rise existed in exactly one
+   stylesheet (`DenScreenKit.css`, on the stat card and the panel) and
+   `box-shadow` reached 8 of 79 files, so most of the app's cards changed
+   colour on hover and nothing else.
+
+   The three values live here ONCE, and `.lift` is the only rule that reads
+   them. Everything that lifts wears the class: the stat card, the hover-lift
+   panel, and the clickable row or card on Directory, KinTales, Sessions,
+   Invoices, Bookings and Schedule. A surface that is NOT clickable does not get
+   the class rather than getting it and cancelling it, because a card that rises
+   under the pointer is a promise that clicking it does something.
+
+   Colour is the one part a card keeps for itself: set `--lift-border-color` on
+   the card and the hover border follows its tone (the stat card points it at
+   `--den-tone`). Unset, it falls back to the brand orange.
+
+   These four properties stay HERE and not in tokens.css, deliberately. That
+   file is a strict port of the live Compose theme, file by file, and its header
+   says so: every value in it answers to AuntieColors.kt, AuntieTypography.kt,
+   AuntieShapes.kt or AuntieDimensions.kt. There is no lift in the Compose
+   source to port. These are utility values for one web interaction, not design
+   system roles, and moving them into tokens.css would make that file claim a
+   provenance it does not have. Do not "tidy" them over.
+
+   Reduced motion is handled by re-pointing the properties at `none` in the
+   guard at the bottom of this file, so an adopter needs no guard of its own.
+   That guard is necessary and not redundant: a hover lift is a TRANSITION, and
+   the blanket `animation: none` rule below does not reach a transform. */
+:root {
+  --lift-rise: translateY(-3px);
+  /* Long, soft, and thrown down and back, per the mocks' `0 16px 36px -22px`.
+     Tinted with brand navy rather than pure black so it deepens the cream page
+     instead of dirtying it. Theme-invariant on purpose: a shadow is an absence
+     of light in both schemes, not a colour role. */
+  --lift-shadow: 0 16px 36px -22px color-mix(in srgb, var(--tt-brand-navy) 80%, transparent);
+  --lift-transition:
+    transform var(--dur-base) var(--ease-emphasized),
+    box-shadow var(--dur-base) var(--ease-emphasized),
+    border-color var(--dur-base) var(--ease-standard),
+    background-color var(--dur-base) var(--ease-standard);
+}
+
+.lift {
+  transition: var(--lift-transition);
+}
+
+.lift:hover,
+.lift:focus-visible {
+  transform: var(--lift-rise);
+  box-shadow: var(--lift-shadow);
+  /* The fallback lives in the `var()` rather than as a `--lift-border-color`
+     declaration on `.lift`, so that a card setting its own tone wins outright
+     instead of tying on specificity with this rule and being decided by which
+     stylesheet the bundler happened to emit second. */
+  border-color: var(--lift-border-color, var(--color-primary));
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────────
+   GLOBAL, and deliberately blunt. Until now this was honoured per file in 8 of
+   79 stylesheets, which means every new animation had to remember to opt in and
+   the ones that forgot were invisible until someone with the preference set hit
+   them. The portal takes the same global approach. `animation: none` on a `both`
+   fill leaves the element at its natural resting state, so nothing that relies
+   on `rise` to become visible can be stranded at opacity 0. */
+@media (prefers-reduced-motion: reduce) {
+  /* The card lift is the one thing the blanket rule below cannot reach: killing
+     the transition still leaves the hover `transform` applied, instantly. Both
+     lift properties are neutralised at the root instead, which covers `.lift`
+     and every surface composing from it without any of them naming a media
+     query. `transform: none` is the resting state, so nothing is stranded. */
+  :root {
+    --lift-rise: none;
+    --lift-transition: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

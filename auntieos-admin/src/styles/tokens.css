@@ -162,9 +162,29 @@
      Hanken Grotesk  UI + body, smaller titles, most labels
      Spline Sans Mono  mono AND the uppercase tracked kicker (labelSmall) */
 :root {
-  --font-fraunces: 'Fraunces', ui-serif, Georgia, serif;
+  /* 'Fraunces Variable' FIRST, and this is a fix, not a preference.
+     `@fontsource-variable/fraunces` registers its @font-face under the family
+     name 'Fraunces Variable'. This token asked for 'Fraunces', which nothing
+     declares, so from the port until 2026-07-25 every serif heading in the
+     admin silently fell through to ui-serif / Georgia. The brand's display face
+     was loaded on every page load and never once rendered. 'Fraunces' is kept
+     second so a static (non-variable) build would still be picked up. */
+  --font-fraunces: 'Fraunces Variable', 'Fraunces', ui-serif, Georgia, serif;
   --font-hanken: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'Spline Sans Mono', ui-monospace, 'SF Mono', monospace;
+
+  /* Fraunces variable axes, from the mocks (all 39 set exactly this pair on
+     their display headings). SOFT rounds the terminals; WONK swaps in the
+     single-storey g and the cocked-leg R, which is the whole reason this face
+     reads as warm rather than as a stock serif.
+
+     Applied ONCE, on `body` in base.css, rather than at each of the 26 rules
+     that name a Fraunces family. `font-variation-settings` INHERITS, and an
+     axis a face does not carry is ignored, so Hanken Grotesk and Spline Sans
+     Mono are unaffected and no future serif rule can forget to opt in. Note it
+     deliberately does not set `wght`: leaving that axis out is what keeps
+     ordinary `font-weight` in charge of weight. */
+  --type-serif-variation: 'SOFT' 50, 'WONK' 1;
 
   /* Fraunces. Weight is the EFFECTIVE one from rememberDenTypography, which
      overrides the Bold in AuntieTypography's base declarations. */
@@ -319,6 +339,11 @@
   --dur-fast: 120ms;
   --dur-base: 180ms;
   --dur-slow: 300ms;
+  /* Screen entrance only (the `rise` keyframe in base.css). Deliberately far
+     longer than --dur-slow: those three are interaction feedback, where 300ms
+     is already sluggish, and this is a once-per-navigation settle. 600ms is the
+     figure all 39 ui-ideas mocks use, and the one the MyTribe portal shipped. */
+  --dur-rise: 600ms;
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
 }

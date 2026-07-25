@@ -127,6 +127,34 @@ describe('StatCard', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
+  it('wears the shared lift when it is clickable', () => {
+    render(<StatCard label="Open bookings" value={{ kind: 'value', value: 2 }} trend="t" tone="orange" onClick={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /Open bookings/ })).toHaveClass('lift');
+  });
+
+  it('does NOT lift when there is nothing to click', () => {
+    // The lift is a promise that clicking does something. A display-only stat
+    // that rises under the pointer makes that promise and then breaks it, which
+    // is the dead-control anti-pattern the Buttons.tsx convention exists for.
+    const { container } = renderStat({ kind: 'value', value: 2 });
+    expect(container.querySelector('.den-stat')).not.toHaveClass('lift');
+  });
+
+  it('marks the hero variant with the class that carries the brand gradient', () => {
+    // `.den-stat--feature` is the hook the Tribe Gradient hangs on (see
+    // DenScreenKit.css). The gradient is a mark, reserved for a hero moment, so
+    // which cards claim to be one is a component decision and belongs pinned
+    // here rather than only in a stylesheet nothing asserts against.
+    const { container } = renderStat({ kind: 'value', value: 3 }, true);
+    expect(container.querySelector('.den-stat--feature')).toBeInTheDocument();
+  });
+
+  it('does not mark an ordinary stat as the hero', () => {
+    const { container } = renderStat({ kind: 'value', value: 3 });
+    expect(container.querySelector('.den-stat--feature')).not.toBeInTheDocument();
+    expect(container.querySelector('.den-stat')).toBeInTheDocument();
+  });
+
   it('keeps the same honesty in the feature variant', () => {
     // The hero stat is the biggest number on the page, so a fabricated one there
     // is the most convincing. Same branch, same dash.
@@ -206,6 +234,26 @@ describe('DenPanel', () => {
     );
     expect(screen.queryByText('content')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Business Settings/ })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('takes the shared lift class only when hoverLift is asked for', () => {
+    // `den-panel--lift` is gone: the panel wears the same `lift` utility as
+    // every other card that rises, so there is one definition and one
+    // reduced-motion guard rather than a private copy per component.
+    const { container: plain } = render(
+      <DenPanel title="Today's Pack">
+        <p>c</p>
+      </DenPanel>,
+    );
+    expect(plain.querySelector('.den-panel')).not.toHaveClass('lift');
+
+    const { container: lifted } = render(
+      <DenPanel title="Today's Pack" hoverLift>
+        <p>c</p>
+      </DenPanel>,
+    );
+    expect(lifted.querySelector('.den-panel')).toHaveClass('lift');
+    expect(lifted.querySelector('.den-panel--lift')).toBeNull();
   });
 
   it('keeps the trailing slot out of the toggle, so its buttons stay clickable', async () => {

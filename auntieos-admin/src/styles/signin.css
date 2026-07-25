@@ -3,14 +3,65 @@
   display: grid;
   place-items: center;
   padding: 2rem;
+  /* Positions the gradient layer below without creating a stacking context, so
+     that layer's negative z-index still resolves against #root and can sit
+     UNDER the drifting orbs rather than over them. */
+  position: relative;
 }
 
-.signin__card {
+/* THE Tribe Gradient, full bleed, on the one screen the design system leaves
+   room for it. `tokens.css` reserves the mark for "hero and CTA moments" and
+   rules out page backgrounds; a sign-in screen has no page to speak of, it is
+   the hero, and it is the only screen in the app with no data on it to compete.
+
+   It is CHROME and nothing more. It is fixed behind the whole viewport at a
+   sixth strength, and the card above it is opaque (see below), so not one
+   label, input, hint or error line is ever set on top of a gradient. z-index -2
+   puts it beneath the orbs, which are at -1, so the orbs drift THROUGH the
+   brand wash instead of a flat sheet being laid over the top of them. */
+.signin::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background: var(--gradient-tribe);
+  opacity: 0.16;
+  pointer-events: none;
+}
+
+/* TWO classes, and that is load-bearing rather than habit. `.glass-surface`
+   sets the fill and the radius at one class, and Vite emits GlassSurface.css
+   after this file (component CSS follows the entry's own imports), so a bare
+   `.signin__card` ties on specificity and LOSES on order. Verified in
+   dist/assets/index-*.css, not assumed. Two classes wins it without reaching
+   for !important. */
+.signin .signin__card {
   width: min(100%, 26rem);
   padding: 2.25rem 2rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  position: relative;
+  /* Clips the gradient cap below to the card's corners. */
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  /* Opaque, deliberately, and the only place GlassSurface's translucent fill is
+     overridden. `--color-surface-glass` is 0.8 alpha in light and 0.6 in dark:
+     read through it, the wash behind this screen would tint every field label
+     and both inputs, which is exactly the "gradient under body text" this
+     screen has to avoid. The card stops it dead. */
+  background: var(--color-surface);
+  box-shadow: var(--lift-shadow);
+}
+
+/* The mark at FULL strength, once, across the head of the card. Everything else
+   on this screen sees it at a sixth. */
+.signin .signin__card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: var(--gradient-tribe);
 }
 
 .signin__title {

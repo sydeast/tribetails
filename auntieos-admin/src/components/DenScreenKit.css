@@ -101,13 +101,16 @@
   background: var(--color-surface-glass);
   border: var(--border-hairline) solid var(--color-border);
   border-radius: var(--radius-card-lg);
-  transition:
-    transform 140ms ease,
-    border-color 140ms ease,
-    background-color 140ms ease;
 }
 
+/* This card is where the lift idiom was written, and it no longer owns any of
+   it: the clickable branch of StatCard wears `lift` (styles/base.css), which
+   brings the transition, the rise, the shadow and the reduced-motion guard.
+   All that is left here is the two things that are this card's own, the fill it
+   takes on hover and the tone its border goes to. The hand-rolled `140ms ease`
+   went with the rest: `--dur-base` is 180ms, from the source's tween(180). */
 .den-stat--button {
+  --lift-border-color: var(--den-tone);
   cursor: pointer;
   font: inherit;
   color: inherit;
@@ -115,8 +118,6 @@
 
 .den-stat--button:hover {
   background: var(--color-surface);
-  border-color: var(--den-tone);
-  transform: translateY(-3px);
 }
 
 .den-stat--button:focus-visible {
@@ -124,18 +125,13 @@
   outline-offset: 2px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .den-stat {
-    transition: none;
-  }
-  .den-stat--button:hover {
-    transform: none;
-  }
-}
-
 /* The hero stat: a tone wash from the top-right corner over the glass base,
    matching the Compose radial drawBehind. */
 .den-stat--feature {
+  position: relative;
+  /* Own stacking context, so the gradient below lands between this card's
+     background and its text and cannot escape behind the page. */
+  isolation: isolate;
   border-color: var(--den-tone);
   background:
     radial-gradient(
@@ -144,6 +140,30 @@
       transparent 70%
     ),
     var(--color-surface-glass);
+}
+
+/* THE Tribe Gradient, on the second of the two surfaces the 2026-07-25 audit
+   picked for it. `tokens.css` calls it "the primary brand mark", reserves it
+   for "hero and CTA moments", and until now it rendered in exactly one place in
+   the whole app: the seed array in `Avatar.tsx`, which is to say at 42px behind
+   somebody's initials.
+
+   A screen has at most one feature stat, and only when its number is worth
+   featuring, so this stays a mark rather than becoming wallpaper. It is a
+   separate layer rather than a fourth entry in the `background` stack above
+   because a layer can be given an opacity and a background stop cannot, and
+   composing the same three role tokens by hand here would mean the token still
+   rendered nowhere. Held low: this sits under the value and the label, and it
+   must never fight them. */
+.den-stat--feature::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--gradient-tribe);
+  opacity: 0.16;
+  pointer-events: none;
 }
 
 .den-stat-body {
@@ -206,20 +226,16 @@
   border: var(--border-hairline) solid var(--color-border-soft);
   border-radius: var(--radius-card-lg);
   padding: 20px;
-  transition: transform 140ms ease;
-}
+  /* `hoverLift` puts `lift` on the section (styles/base.css), which is where the
+     rise, the shadow and the transition now come from; `den-panel--lift` is
+     gone. A panel that rose 3px with no shadow read as a jump rather than as
+     depth, and it gets the shadow now for free.
 
-.den-panel--lift:hover {
-  transform: translateY(-3px);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .den-panel {
-    transition: none;
-  }
-  .den-panel--lift:hover {
-    transform: none;
-  }
+     Its hover border firms up to `--color-border` instead of going brand
+     orange. A panel is a container, not a control: the seven Home widgets ask
+     for the lift to feel alive under the pointer, and a coloured rim on
+     something you cannot click would promise a click. */
+  --lift-border-color: var(--color-border);
 }
 
 .den-panel-header {

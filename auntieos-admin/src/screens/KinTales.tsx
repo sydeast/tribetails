@@ -111,17 +111,21 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
 
   return (
     <div className="screen">
-      <DenScreenHeading
-        kicker="The Den · KinTales"
-        title="Every recap that goes"
-        accentTail="home."
-        subtitle="Every KinTale a Kinfolk receives after care, newest first."
-        trailing={
-          <PrimaryButton label="New KinTale" {...(onNew ? { onClick: () => onNew() } : {})} leading={<PlusGlyph />} />
-        }
-      />
+      {/* d1 / d2 / d3: the Den entrance stagger (styles/base.css). Three blocks
+          in reading order, which is the shape the mocks were drawn around. */}
+      <div className="d1">
+        <DenScreenHeading
+          kicker="The Den · KinTales"
+          title="Every recap that goes"
+          accentTail="home."
+          subtitle="Every KinTale a Kinfolk receives after care, newest first."
+          trailing={
+            <PrimaryButton label="New KinTale" {...(onNew ? { onClick: () => onNew() } : {})} leading={<PlusGlyph />} />
+          }
+        />
+      </div>
 
-      <div className="kintales__summary">
+      <div className="kintales__summary d2">
         <StatCard label="Sent" value={sentCount} trend="delivered to a Kinfolk" tone="success" />
         <StatCard label="Drafts" value={draftCount} trend="not yet sent" tone="teal" />
         <StatCard
@@ -133,7 +137,7 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
         />
       </div>
 
-      <DenPanel title="KinTales" subtitle="Newest first, capped at 200.">
+      <DenPanel title="KinTales" subtitle="Newest first, capped at 200." className="d3">
         <AsyncRegion
           state={rows}
           what="KinTales"
@@ -246,7 +250,7 @@ function KinTaleRow({ entry, onSelect }: KinTaleRowProps) {
   return (
     <li className="kintales__row">
       {onSelect ? (
-        <button type="button" className="kintales__row-main" onClick={() => onSelect(entry._id)}>
+        <button type="button" className="kintales__row-main lift" onClick={() => onSelect(entry._id)}>
           {body}
         </button>
       ) : (

@@ -1,0 +1,124 @@
+/**
+ * ListToolbar: search + date-range chips + facet selects above a paged list.
+ *
+ * Tokens only, and no reduced-motion block of its own: `styles/base.css` carries
+ * the one global guard, so a per-file copy here would only be another place to
+ * forget. The chips deliberately do NOT take the `.lift` class either. A lift is
+ * the app's signal for "this card opens something"; these narrow the list in
+ * place, so they answer with colour rather than with height.
+ */
+
+.list-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.list-toolbar__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.list-toolbar__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.list-toolbar__field--search {
+  flex: 1 1 240px;
+}
+
+.list-toolbar__label {
+  font-family: var(--type-label-md-family);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  color: var(--color-text-dim);
+}
+
+.list-toolbar__input,
+.list-toolbar__select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+
+.list-toolbar__select {
+  /* A select sized by its own longest option jumps the row width around as the
+     facet list loads. Pin the floor and let flex do the rest. */
+  min-width: 160px;
+}
+
+.list-toolbar__input:hover,
+.list-toolbar__select:hover {
+  border-color: var(--color-primary);
+}
+
+.list-toolbar__input:focus-visible,
+.list-toolbar__select:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* ── date-range chips ────────────────────────────────────────────────────── */
+
+.list-toolbar__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.list-toolbar__chip {
+  font-family: var(--type-label-md-family);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  color: var(--color-text-dim);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  transition:
+    background var(--dur-base) var(--ease-standard),
+    border-color var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
+}
+
+.list-toolbar__chip:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+
+.list-toolbar__chip:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.list-toolbar__chip--active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-background);
+}
+
+/* The scope line. Dim, but never hidden: it is the difference between "there is
+   nothing" and "there is nothing in the last 7 days". */
+.list-toolbar__note {
+  margin: 0;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line);
+  color: var(--color-text-dim);
+}

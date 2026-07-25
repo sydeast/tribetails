@@ -93,17 +93,28 @@
   color: inherit;
   padding: var(--space-3) var(--space-2);
   border-radius: var(--radius-card);
-  transition: background var(--dur-base) var(--ease-standard);
+  /* No `transition` here: the clickable branch of this row wears `lift`
+     (styles/base.css), which brings the transition, the rise, the shadow and
+     the reduced-motion guard. All 39 ui-ideas mocks lift every clickable card
+     on every screen; this row only changed colour until 2026-07-25. */
 }
+.bookings__row-main:hover,
+.bookings__row-main:focus-visible {
+  background: var(--color-surface-2);
+}
+/* Unwired: a plain, non-interactive row, and it does not carry `lift`, so
+   nothing here has to cancel one.
+
+   ORDER MATTERS and this block used to be above the rule it is cancelling.
+   `.bookings__row-main--static:hover` and `.bookings__row-main:hover` are both
+   one class plus a pseudo-class, so they tie on specificity and the later one
+   wins: the static row took the hover fill anyway. Sessions.css and
+   Schedule.css already had these two the right way round. */
 .bookings__row-main--static {
   cursor: default;
 }
 .bookings__row-main--static:hover {
   background: none;
-}
-.bookings__row-main:hover,
-.bookings__row-main:focus-visible {
-  background: var(--color-surface-2);
 }
 .bookings__row-main:focus-visible {
   outline: 2px solid var(--color-primary);

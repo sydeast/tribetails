@@ -162,7 +162,7 @@ function KinfolkCard({ kf, kin, kinPending, onClick }: KinfolkCardProps) {
   return (
     <li className="directory__cell">
       {onClick ? (
-        <button type="button" className="directory__card" onClick={onClick}>
+        <button type="button" className="directory__card lift" onClick={onClick}>
           {body}
         </button>
       ) : (
@@ -218,7 +218,7 @@ function KinCard({ kin, onClick }: KinCardProps) {
   return (
     <li className="directory__cell">
       {onClick ? (
-        <button type="button" className="directory__card" onClick={onClick}>
+        <button type="button" className="directory__card lift" onClick={onClick}>
           {body}
         </button>
       ) : (
@@ -362,24 +362,34 @@ export function Directory({
 
   return (
     <div className="screen">
-      <DenScreenHeading
-        kicker="The Den · Directory"
-        title="Your"
-        accentTail="kinfolk"
-        subtitle="Every household and kin on file, streamed live from Firestore."
-        trailing={
-          <div className="directory__header-actions">
-            <PrimaryButton
-              label="Add kinfolk"
-              onClick={() => setShowAddKinfolk(true)}
-              leading={<PlusGlyph />}
-            />
-            <GhostButton label="Add kin" onClick={() => setShowAddKin(true)} leading={<PlusGlyph />} />
-          </div>
-        }
-      />
+      {/* d1 / d2: the Den entrance stagger (styles/base.css), heading then
+          controls. The list itself is deliberately NOT staggered: it arrives
+          from a live Firestore stream, so its rows are already appearing on
+          their own schedule and a second animation on top reads as a glitch. */}
+      <div className="d1">
+        <DenScreenHeading
+          kicker="The Den · Directory"
+          title="Your"
+          accentTail="kinfolk"
+          subtitle="Every household and kin on file, streamed live from Firestore."
+          trailing={
+            <div className="directory__header-actions">
+              <PrimaryButton
+                label="Add kinfolk"
+                onClick={() => setShowAddKinfolk(true)}
+                leading={<PlusGlyph />}
+              />
+              <GhostButton
+                label="Add kin"
+                onClick={() => setShowAddKin(true)}
+                leading={<PlusGlyph />}
+              />
+            </div>
+          }
+        />
+      </div>
 
-      <div className="directory__controls">
+      <div className="directory__controls d2">
         <div className="directory__tabs" role="tablist" aria-label="Directory view">
           <button
             type="button"
