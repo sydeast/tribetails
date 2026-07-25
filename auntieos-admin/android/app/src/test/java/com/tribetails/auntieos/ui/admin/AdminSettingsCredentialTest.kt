@@ -84,4 +84,28 @@ class AdminSettingsCredentialTest {
         coVerify(exactly = 0) { repo.updateLoginEmail(any(), any()) }
         assertTrue(vm.uiState.value.error!!.contains("valid new login email"))
     }
+
+    @Test
+    fun `change email repo failure surfaces fail-loud error, no verification claim`() = runTest {
+        coEvery { repo.updateLoginEmail(any(), any()) } returns
+            Result.failure(Exception("that address is taken"))
+        vm.changeLoginEmail("pw", "new@x.com")
+        val err = vm.uiState.value.error
+        assertTrue("got: $err", err != null && err.contains("that address is taken"))
+        assertNull(vm.uiState.value.credentialMessage)
+    }
+
+    @Test
+    fun `blank current password blocks the email change before any repo call`() = runTest {
+        vm.changeLoginEmail("   ", "new@x.com")
+        coVerify(exactly = 0) { repo.updateLoginEmail(any(), any()) }
+        assertTrue(vm.uiState.value.error!!.contains("current password"))
+    }
+
+    @Test
+    fun `blank current password blocks the password change before any repo call`() = runTest {
+        vm.changeLoginPassword("", "newpass1", "newpass1")
+        coVerify(exactly = 0) { repo.updateLoginPassword(any(), any()) }
+        assertTrue(vm.uiState.value.error!!.contains("current password"))
+    }
 }
