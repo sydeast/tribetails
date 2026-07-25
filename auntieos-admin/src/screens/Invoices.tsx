@@ -291,7 +291,7 @@ function InvoiceRow({ view, todayIso, onSelect }: InvoiceRowProps) {
 
   return (
     <li className="invoices__row">
-      <button type="button" className="invoices__row-main" onClick={() => onSelect(entry._id)}>
+      <button type="button" className="invoices__row-main lift" onClick={() => onSelect(entry._id)}>
         {body}
       </button>
     </li>

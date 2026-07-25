@@ -297,7 +297,7 @@ function BookingRow({ view, onSelectBooking }: BookingRowProps) {
   return (
     <li className="bookings__row">
       {onSelectBooking ? (
-        <button type="button" className="bookings__row-main" onClick={() => onSelectBooking(entry._id)}>
+        <button type="button" className="bookings__row-main lift" onClick={() => onSelectBooking(entry._id)}>
           {body}
         </button>
       ) : (

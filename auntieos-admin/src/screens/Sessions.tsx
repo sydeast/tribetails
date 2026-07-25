@@ -411,7 +411,7 @@ function SessionRow({ entry, onSelect }: SessionRowProps) {
   return (
     <li className="sessions__row">
       {onSelect ? (
-        <button type="button" className="sessions__row-main" onClick={() => onSelect(entry._id)}>
+        <button type="button" className="sessions__row-main lift" onClick={() => onSelect(entry._id)}>
           {body}
         </button>
       ) : (

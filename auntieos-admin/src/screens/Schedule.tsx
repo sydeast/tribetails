@@ -442,7 +442,7 @@ function AgendaRow({ entry, onSelect }: AgendaRowProps) {
   return (
     <li className="schedule__row">
       {onSelect ? (
-        <button type="button" className="schedule__row-main" onClick={() => onSelect(entry._id)}>
+        <button type="button" className="schedule__row-main lift" onClick={() => onSelect(entry._id)}>
           {body}
         </button>
       ) : (

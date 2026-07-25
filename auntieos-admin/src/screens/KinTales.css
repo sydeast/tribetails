@@ -93,14 +93,20 @@
   color: inherit;
   padding: var(--space-3) var(--space-2);
   border-radius: var(--radius-card);
-  transition: background var(--dur-base) var(--ease-standard);
+  /* No `transition` here: the clickable branch wears `lift` (styles/base.css),
+     which brings the transition, the rise, the shadow and the reduced-motion
+     guard. A row rather than a card, so the lift does the work the colour
+     change alone could not: it separates the row from its divider and names it
+     as the one thing under the pointer. The row draws no border, so it sets no
+     `--lift-border-color`. */
 }
 .kintales__row-main:hover,
 .kintales__row-main:focus-visible {
   background: var(--color-surface-2);
 }
 /* Unwired (no detail route yet): a plain, non-interactive row, no hand
-   cursor, no hover, so it never reads as a clickable control that no-ops. */
+   cursor, no hover, so it never reads as a clickable control that no-ops. It
+   does not carry `lift` either, which is why nothing here has to cancel one. */
 .kintales__row-main--static {
   cursor: default;
 }

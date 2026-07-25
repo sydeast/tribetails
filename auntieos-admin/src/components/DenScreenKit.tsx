@@ -128,9 +128,13 @@ export function StatCard({
 
   // A real <button> when it acts like one. The wasm card is a clickable Box, which
   // is why the canvas exposes no role, no focus ring, and no keyboard path (AO-15).
+  //
+  // `lift` (styles/base.css) rides on THIS branch only. The lift is a promise
+  // that clicking does something, so the plain <div> card below must not carry
+  // it: not clickable, does not rise.
   if (onClick) {
     return (
-      <button type="button" className={`${classes} den-stat--button`} data-tone={tone} onClick={onClick}>
+      <button type="button" className={`${classes} den-stat--button lift`} data-tone={tone} onClick={onClick}>
         {body}
       </button>
     );
@@ -228,9 +232,10 @@ export function DenPanel({
   const contentId = useId();
   const showContent = !collapsible || expanded;
 
-  const classes = ['den-panel', hoverLift ? 'den-panel--lift' : null, className]
-    .filter(Boolean)
-    .join(' ');
+  // `lift` is the shared utility in styles/base.css, and it replaces the old
+  // `den-panel--lift` modifier: one class, one definition, one reduced-motion
+  // guard for every card in the app that rises.
+  const classes = ['den-panel', hoverLift ? 'lift' : null, className].filter(Boolean).join(' ');
 
   const heading = (
     <span className="den-panel-heading">

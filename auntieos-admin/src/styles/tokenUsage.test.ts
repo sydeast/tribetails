@@ -255,3 +255,189 @@ describe('the Den entrance and ambient wash', () => {
     expect(orbs).toContain('var(--color-accent)');
   });
 });
+
+describe('the brand gradient renders somewhere real', () => {
+  const signin = readFileSync(join(stylesDir, 'signin.css'), 'utf8');
+  const kit = readFileSync(join(srcDir, 'components', 'DenScreenKit.css'), 'utf8');
+
+  /** `var(--gradient-tribe)` uses only, so a mention inside a comment never counts. */
+  const uses = (css: string) => [...css.matchAll(/var\(--gradient-tribe\)/g)].length;
+
+  it('renders THE Tribe Gradient full bleed behind the sign-in screen', () => {
+    // Before 2026-07-25 the primary brand mark appeared in exactly ONE place in
+    // the app: the seed array in Avatar.tsx, which is 42px behind a set of
+    // initials. tokens.css has called it "the primary brand mark" the whole time.
+    expect(signin).toMatch(/\.signin::before\s*\{[^}]*position:\s*fixed;[^}]*/);
+    expect(signin).toMatch(/\.signin::before\s*\{[^}]*background:\s*var\(--gradient-tribe\)/);
+  });
+
+  it('keeps the sign-in form OFF the gradient by making the card opaque', () => {
+    // The gradient is chrome. GlassSurface fills with `--color-surface-glass`,
+    // 0.8 alpha in light and 0.6 in dark; left translucent over a brand gradient
+    // it tints both field labels and both inputs.
+    expect(signin).toMatch(/\.signin__card\s*\{[^}]*background:\s*var\(--color-surface\);/);
+    // And the override has to WIN. `.glass-surface` sets that fill at one class,
+    // and Vite emits GlassSurface.css after this file, so a one-class selector
+    // ties and loses on order. The card was translucent over the gradient until
+    // the built bundle was read.
+    expect(signin).toMatch(/\.signin \.signin__card\s*\{/);
+  });
+
+  // NO HOME HERO, and that is settled, not missing. The 2026-07-25 audit named
+  // "the sign-in panel and the Home hero stat" as the pair. `Home.tsx` renders
+  // no StatCard at all: it is a heading plus seven DenPanel widgets. Adding one
+  // is the React Port Restoration plan's Phase 3 Task 3.2, which owns the Home
+  // layout rewrite. `.den-stat--feature` IS the hero-stat moment, it renders on
+  // seven screens, one card per screen and only when the number is worth
+  // featuring, so the audit's intent is met. Do not go looking for a Home hero.
+  it('renders it on the hero stat, over the tone wash already there', () => {
+    expect(kit).toMatch(/\.den-stat--feature::before\s*\{[^}]*background:\s*var\(--gradient-tribe\)/);
+    // The radial tone wash is the hook, not the replacement. Both must survive.
+    expect(kit).toMatch(/\.den-stat--feature\s*\{[^}]*radial-gradient/);
+  });
+
+  it('holds the hero-stat layer under the value rather than over it', () => {
+    const layer = kit.slice(kit.indexOf('.den-stat--feature::before'));
+    expect(layer).toMatch(/z-index:\s*-1;/);
+    expect(layer).toMatch(/opacity:\s*0\.\d+;/);
+    // A stacking context on the card, or the negative layer escapes to the page.
+    expect(kit).toMatch(/\.den-stat--feature\s*\{[^}]*isolation:\s*isolate/);
+  });
+
+  it('stays a MARK: two surfaces, and no ordinary screen stylesheet', () => {
+    // "Reserved for hero and CTA moments" (tokens.css). A brand gradient on
+    // every panel is wallpaper, not a mark. Sign-in carries it twice, the
+    // full-bleed wash and the card's cap; the hero stat carries it once.
+    expect(uses(signin)).toBe(2);
+    expect(uses(kit)).toBe(1);
+
+    const screens = FILES.filter((f) => rel(f).startsWith('screens/'));
+    expect(screens.length).toBeGreaterThan(5);
+    expect(screens.filter((f) => uses(readFileSync(f, 'utf8')) > 0).map(rel)).toEqual([]);
+  });
+});
+
+describe('the shared card lift', () => {
+  const base = readFileSync(join(stylesDir, 'base.css'), 'utf8');
+
+  /** Every stylesheet whose cards lift. None of them may re-state the lift. */
+  const adopters = [
+    'components/DenScreenKit.css',
+    'screens/Directory.css',
+    'screens/KinTales.css',
+    'screens/Sessions.css',
+    'screens/Invoices.css',
+    'screens/Bookings.css',
+    'screens/Schedule.css',
+  ] as const;
+
+  /** The markup that wears the class, and the element it goes on. */
+  const wearers = [
+    ['components/DenScreenKit.tsx', 'den-stat--button lift'],
+    ['screens/Directory.tsx', 'directory__card lift'],
+    ['screens/KinTales.tsx', 'kintales__row-main lift'],
+    ['screens/Sessions.tsx', 'sessions__row-main lift'],
+    ['screens/Invoices.tsx', 'invoices__row-main lift'],
+    ['screens/Bookings.tsx', 'bookings__row-main lift'],
+    ['screens/Schedule.tsx', 'schedule__row-main lift'],
+  ] as const;
+
+  const read = (f: string) => readFileSync(join(srcDir, ...f.split('/')), 'utf8');
+
+  it('declares the lift once, as a utility class, with both the rise and the shadow', () => {
+    expect(base).toMatch(/\.lift:hover,\s*\.lift:focus-visible\s*\{[^}]*transform:\s*var\(--lift-rise\)/);
+    expect(base).toMatch(/\.lift:hover,\s*\.lift:focus-visible\s*\{[^}]*box-shadow:\s*var\(--lift-shadow\)/);
+    expect(base).toMatch(/--lift-rise:\s*translateY\(-3px\)/);
+    // The mocks' shadow geometry, which shipped in 8 of 79 stylesheets and on no
+    // card at all.
+    expect(base).toMatch(/--lift-shadow:\s*0 16px 36px -22px/);
+  });
+
+  it('carries its own reduced-motion guard, since a hover lift is not an animation', () => {
+    // The global rule kills `animation` and shortens `transition-duration`.
+    // Neither removes a `transform` applied on :hover: without this the card
+    // still jumps 3px, it just does it instantly.
+    const guard = base.slice(base.indexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(guard).toMatch(/--lift-rise:\s*none/);
+    expect(guard).toMatch(/--lift-transition:\s*none/);
+  });
+
+  it('is the only place the distance and the shadow are written down', () => {
+    const offenders = FILES.filter((f) => rel(f) !== 'styles/base.css')
+      .filter((f) => /translateY\(-3px\)|36px -22px/.test(readFileSync(f, 'utf8')))
+      .map(rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('is worn as a CLASS by every clickable card, not copied into each stylesheet', () => {
+    // The first pass at this had the values in one place and the RULES in four,
+    // which is most of what the utility was for. The class is now on the
+    // element, so `.lift:hover` is the only rule in the app that lifts anything.
+    for (const [file, className] of wearers) {
+      expect(read(file), `${file} does not wear the lift`).toContain(className);
+    }
+  });
+
+  it('leaves no stylesheet re-stating the lift by hand', () => {
+    // `signin.css` is the one legitimate reader outside base.css: it uses
+    // `--lift-shadow` as a resting shadow on the sign-in card, which is depth,
+    // not a hover response. Nothing anywhere else may name `--lift-rise`.
+    const offenders = FILES.filter((f) => rel(f) !== 'styles/base.css')
+      .filter((f) => readFileSync(f, 'utf8').includes('var(--lift-rise)'))
+      .map(rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('leaves no adopter carrying a reduced-motion guard of its own', () => {
+    // Per-file guards are how the admin ended up honouring the preference in 8
+    // of 79 stylesheets. The properties are neutralised once, at the root.
+    for (const file of adopters) {
+      expect(read(file), `${file} still guards reduced motion itself`).not.toContain(
+        'prefers-reduced-motion',
+      );
+    }
+  });
+
+  it('never puts the class on a card that is not clickable', () => {
+    // A card that rises under the pointer is the loudest claim that clicking it
+    // does something. Every `--static` variant renders a plain div with no
+    // handler (Schedule's BusyRow too: `booking_time_slots` overlays have no
+    // detail to open and firestore.rules denies every client write to them).
+    // Withholding the class is the whole mechanism; there is nothing to cancel.
+    for (const [file] of wearers) {
+      const statics = read(file)
+        .split('\n')
+        .filter((line) => line.includes('--static'));
+      expect(statics.filter((line) => /\blift\b/.test(line)), `${file} lifts a static row`).toEqual(
+        [],
+      );
+    }
+  });
+
+  it('lets a card choose its own hover border without a specificity fight', () => {
+    // The default is the `var()` fallback, not a declaration on `.lift`, so a
+    // card that sets `--lift-border-color` wins outright rather than tying with
+    // base.css and being decided by bundler emit order. That tie is not
+    // hypothetical: `.signin__card` lost exactly that fight against
+    // `.glass-surface` earlier on this branch.
+    expect(base).toMatch(/border-color:\s*var\(--lift-border-color,\s*var\(--color-primary\)\)/);
+    expect(base).not.toMatch(/\.lift\s*\{[^}]*--lift-border-color:/);
+    // The stat card follows its tone; a panel is a container and firms up to
+    // the ordinary border rather than lighting up brand orange.
+    const kit = readFileSync(join(srcDir, 'components', 'DenScreenKit.css'), 'utf8');
+    expect(kit).toMatch(/\.den-stat--button\s*\{[^}]*--lift-border-color:\s*var\(--den-tone\)/);
+    expect(kit).toMatch(/\.den-panel\s*\{[^}]*--lift-border-color:\s*var\(--color-border\)/);
+  });
+
+  it('keeps the lift values out of tokens.css on purpose', () => {
+    // tokens.css is a file-by-file port of the Compose theme and its header says
+    // so. There is no lift in AuntieColors.kt / AuntieShapes.kt / anywhere else
+    // in that source to port, so these are utility values, not system roles.
+    // This pins the decision so a later tidy-up does not quietly move them.
+    const tokens = readFileSync(join(stylesDir, 'tokens.css'), 'utf8');
+    expect(tokens).not.toContain('--lift-');
+    for (const prop of ['--lift-rise', '--lift-shadow', '--lift-transition']) {
+      expect(base, `${prop} left base.css`).toContain(`${prop}:`);
+    }
+  });
+});

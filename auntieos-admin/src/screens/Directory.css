@@ -143,23 +143,24 @@
   border-radius: var(--radius-card-lg);
   padding: var(--space-4);
   cursor: pointer;
-  transition:
-    background var(--dur-base) var(--ease-standard),
-    border-color var(--dur-base) var(--ease-standard);
+  /* The rise, the shadow, the transition and the reduced-motion guard all come
+     from `lift` (styles/base.css), which Directory.tsx puts on the clickable
+     branch of the card. Only the two screen-specific values are left here: the
+     fill it takes on hover, and the tone its border goes to. */
+  --lift-border-color: var(--color-primary);
 }
 .directory__card:hover,
 .directory__card:focus-visible {
   background: var(--color-surface-2);
-  border-color: var(--color-primary);
 }
 /* Unwired (no profile route yet): a plain, non-interactive card, no hand
-   cursor, no hover, so it never reads as a clickable control that no-ops. */
+   cursor, no hover, so it never reads as a clickable control that no-ops. It
+   does not carry `lift` either, which is why nothing here has to cancel one. */
 .directory__card--static {
   cursor: default;
 }
 .directory__card--static:hover {
   background: var(--color-surface-glass);
-  border-color: var(--color-border);
 }
 .directory__card:focus-visible {
   outline: 2px solid var(--color-primary);
