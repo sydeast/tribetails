@@ -97,18 +97,52 @@ async function generate(user: ReturnType<typeof userEvent.setup>, notes = 'Nova 
 }
 
 describe('the composer form', () => {
-  it('opens on the KinTale report type, the archive default', () => {
+  it('opens on KinTale, the archive default, unchanged by the wider chip set', () => {
     setup();
     render(<CommunicatePersonalize />);
-    expect(screen.getByRole('radio', { name: 'KinTale report' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'KinTale' })).toBeChecked();
   });
 
-  it('offers the four archive message types, KinTale report standing in for "Visit report"', () => {
+  it('offers all seven message types, in the operator’s order', () => {
     setup();
     render(<CommunicatePersonalize />);
-    for (const label of ['KinTale report', 'Text', 'Email', 'Blog']) {
-      expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
-    }
+    const chips = screen
+      .getAllByRole('radio')
+      .filter((r) => r.getAttribute('name') === 'personalizeMessageType');
+    expect(chips.map((c) => c.closest('label')?.textContent?.trim())).toEqual([
+      'Email',
+      'SMS',
+      'Push',
+      'Social',
+      'Blog',
+      'General',
+      'KinTale',
+    ]);
+  });
+
+  it('sends the exact wire value for a type the composer could not previously reach', async () => {
+    const user = setup();
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'push' }));
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'Push' }));
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+
+    await waitFor(() => expect(generateDraft).toHaveBeenCalled());
+    expect(generateDraft.mock.calls[0]?.[0]?.communication_type).toBe('push');
+    // A push has no title slot, so no second model call is bought for it.
+    expect('want_title' in (generateDraft.mock.calls[0]?.[0] ?? {})).toBe(false);
+  });
+
+  it('asks for a title on a KinTale, which is what TITLE_INSTRUCTION was written for', async () => {
+    const user = setup();
+    generateDraft.mockResolvedValue(draftResult());
+    render(<CommunicatePersonalize />);
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+
+    await waitFor(() => expect(generateDraft).toHaveBeenCalled());
+    expect(generateDraft.mock.calls[0]?.[0]?.want_title).toBe(true);
   });
 
   it('opens on Warm and Medium', () => {
@@ -131,6 +165,9 @@ describe('the composer form', () => {
     render(<CommunicatePersonalize />);
     expect(screen.getByText('Recipient')).toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: 'Blog' }));
+    expect(screen.queryByText('Recipient')).not.toBeInTheDocument();
+    // Social addresses nobody either.
+    await user.click(screen.getByRole('radio', { name: 'Social' }));
     expect(screen.queryByText('Recipient')).not.toBeInTheDocument();
   });
 });

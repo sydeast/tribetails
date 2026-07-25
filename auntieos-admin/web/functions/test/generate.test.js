@@ -185,16 +185,33 @@ function tokensBetween(absPath, startMarker, endMarker) {
   const end = src.indexOf(endMarker, start + startMarker.length);
   assert.notStrictEqual(end, -1, `end marker '${endMarker}' not found in ${absPath}`);
   const slice = src.slice(start, end);
-  const KNOWN = ['sms', 'email', 'visit_report', 'social_post', 'blog_post', 'general'];
+  const KNOWN = ['sms', 'email', 'push', 'visit_report', 'social_post', 'blog_post', 'general'];
   return new Set(KNOWN.filter((t) => new RegExp(`["']${t}["']`).test(slice)));
 }
 
 describe('ALLOWED_TYPES (the taxonomy every client mirrors)', () => {
-  it('is exactly the six documented types', () => {
+  it('is exactly the seven documented types', () => {
     assert.deepStrictEqual(
       [...gen.ALLOWED_TYPES].sort(),
-      ['blog_post', 'email', 'general', 'sms', 'social_post', 'visit_report'],
+      ['blog_post', 'email', 'general', 'push', 'sms', 'social_post', 'visit_report'],
     );
+  });
+  // push is a COPY FORMAT here, a notification-shelf line, and is unrelated to
+  // the broadcast push channel that delivers one. It is the one type the server
+  // did not previously accept, so an un-deployed function 400s on it while the
+  // other six keep working.
+  it('accepts push', () => {
+    assert.ok(gen.ALLOWED_TYPES.has('push'));
+    assert.strictEqual(gen.validateRequest({ ...VALID, communication_type: 'push' }).communication_type, 'push');
+  });
+  it('gives push real guidance and not a copy of the sms line', () => {
+    const line = gen.SYSTEM_FRAMING.split('\n').find((l) => l.trim().startsWith('- push:'));
+    assert.ok(line, 'no push tone line in SYSTEM_FRAMING');
+    // The four properties that make a notification different from a short text.
+    assert.match(line, /one sentence/i);
+    assert.match(line, /10 to 18 words/i);
+    assert.match(line, /no greeting/i);
+    assert.match(line, /clip/i);
   });
 
   // The cross-language binds. Each reads the real other-tree file; edit any copy
@@ -215,7 +232,7 @@ describe('ALLOWED_TYPES (the taxonomy every client mirrors)', () => {
     },
   ];
   for (const c of CROSS_LANGUAGE_COPIES) {
-    it(`${c.lang} carries exactly the six types (drift guard)`, () => {
+    it(`${c.lang} carries exactly the seven types (drift guard)`, () => {
       assert.ok(fs.existsSync(c.path), `copy moved or missing: ${c.path}`);
       const found = tokensBetween(c.path, c.start, c.end);
       assert.deepStrictEqual(
@@ -225,21 +242,19 @@ describe('ALLOWED_TYPES (the taxonomy every client mirrors)', () => {
       );
     });
   }
-  // The two guards above bind copies of the ACCEPTED taxonomy: they describe
-  // what the server will take, so equality is the right invariant.
+  // The composers' OPTION LISTS, held to full BIDIRECTIONAL agreement with
+  // ALLOWED_TYPES. Both directions have now actually gone wrong, which is why
+  // both are asserted separately with their own message:
   //
-  // A composer's OPTION LIST is a different thing, and until 2026-07-24 the
-  // Android picker was wrongly held to the equality guard above. It is the
-  // subset an operator is OFFERED, and it has always been legitimately smaller:
-  // `general` was never offered anywhere, and `social_post` was offered on
-  // Android alone with prompt framing no surface had ever exercised. Both
-  // composers now offer the archive's four (visit_report / sms / email /
-  // blog_post), which is what the archive's own MessageType enum offered.
-  //
-  // The real invariant for an option list is CONTAINMENT: a composer must never
-  // offer a type the server would 400 on. That is what catches the mistake this
-  // guard exists to catch, a chip for a `kintale` type the function does not
-  // accept, while leaving each surface free to narrow.
+  //   1. A chip the server would 400 on. The obvious candidate is a `kintale`
+  //      wire value, since the UI calls that format KinTale while the server
+  //      calls it visit_report.
+  //   2. A server type no composer offers. This is the one that bit: for the
+  //      whole life of the archive, `social_post` and `general` were accepted by
+  //      the function and reachable from no UI, and the React port shipped
+  //      offering four of six. Nothing failed, nothing warned, the formats were
+  //      simply invisible. A containment-only guard is blind to exactly this,
+  //      so it is not enough.
   const OPTION_LISTS = [
     {
       lang: 'Kotlin Android commTypeOptions',
@@ -259,12 +274,23 @@ describe('ALLOWED_TYPES (the taxonomy every client mirrors)', () => {
       assert.ok(fs.existsSync(c.path), `option list moved or missing: ${c.path}`);
       const found = tokensBetween(c.path, c.start, c.end);
       assert.ok(found.size > 0, `${c.lang} matched no known type; the markers have drifted`);
-      for (const t of found) {
-        assert.ok(
-          gen.ALLOWED_TYPES.has(t),
-          `${c.lang} offers '${t}', which generate.js would reject with a 400.`,
-        );
-      }
+      const rejected = [...found].filter((t) => !gen.ALLOWED_TYPES.has(t));
+      assert.deepStrictEqual(
+        rejected,
+        [],
+        `${c.lang} offers ${JSON.stringify(rejected)}, which generate.js would reject with a 400.`,
+      );
+    });
+    it(`${c.lang} offers EVERY type the function accepts`, () => {
+      const found = tokensBetween(c.path, c.start, c.end);
+      const missing = [...gen.ALLOWED_TYPES].filter((t) => !found.has(t));
+      assert.deepStrictEqual(
+        missing,
+        [],
+        `${c.lang} does not offer ${JSON.stringify(missing)}, so the operator cannot reach ` +
+          'a format the function supports. This is the direction that let social_post and ' +
+          'general stay invisible for the life of the archive.',
+      );
     });
   }
   it('gives every allowed type its own tone line in the system framing', () => {

@@ -110,26 +110,51 @@ private enum class ComposeMode(val label: String) {
 // registry (read via LocalFeatureFlags.current); it has no backing ViewModel path yet, so
 // it surfaces a Not-wired banner. External send is now built for real (no flag).
 
-// The four message types the composer can actually produce, in the archive's
-// order. `social_post` and `general` are dropped: the archive declared them on
-// its CommunicationType enum but mapped no UI option to them, so they were
-// unreachable there, and offering them here means offering two chips nobody
-// asked for whose prompt framing has never been exercised.
+// The seven message types the composer offers, in the operator's order.
 //
-// `visit_report` reads "KinTale report" because that is this product's word for
-// a visit report. The WIRE value stays visit_report, because that is what
-// generate.js switches its prompt framing and its training_documents lookup on;
-// renaming it would quietly change the voice. KinTale is a message TYPE here and
-// never a broadcast channel: broadcastMessage dispatches inapp/email/sms/push
-// and has no KinTale delivery leg, so such a channel could not deliver.
+// A message type is a COPY FORMAT, not a delivery channel. `push` here asks the
+// generator for a notification-shelf line: front-loaded, no greeting, no signoff,
+// short enough to survive a lock screen. It has nothing to do with the broadcast
+// push channel that actually delivers one, and approving a push draft in
+// Personalize sends nothing.
+//
+// This list was four entries until 2026-07-24, which was two bugs at once. The
+// archive declared `social_post` and `general` on its CommunicationType enum and
+// mapped no UI option to them, so both were accepted by the function and
+// reachable from nothing for that app's whole life. And `push` was not supported
+// by the server at all. The bidirectional drift guard in
+// web/functions/test/generate.test.js now fails if this list and the function's
+// ALLOWED_TYPES disagree in EITHER direction, which is what makes a silently
+// missing format impossible to reintroduce.
+//
+// `visit_report` reads "KinTale" because that is this product's word for a visit
+// report. The WIRE value stays visit_report, because that is what generate.js
+// switches its prompt framing and its training_documents lookup on; renaming it
+// would quietly change the voice. There is still deliberately no KinTale
+// BROADCAST channel: broadcastMessage dispatches inapp/email/sms/push and has no
+// KinTale delivery leg, so such a chip could not deliver.
 private val commTypeDisplayMap = mapOf(
-    "visit_report" to "KinTale report",
-    "sms" to "Text",
     "email" to "Email",
+    "sms" to "SMS",
+    "push" to "Push",
+    "social_post" to "Social",
     "blog_post" to "Blog",
+    "general" to "General",
+    "visit_report" to "KinTale",
 )
 
-private val commTypeOptions = listOf("visit_report", "sms", "email", "blog_post")
+private val commTypeOptions =
+    listOf("email", "sms", "push", "social_post", "blog_post", "general", "visit_report")
+
+/** The offered wire values, in order. Exposed for the catalog test. */
+internal fun communicateMessageTypeOptions(): List<String> = commTypeOptions
+
+/**
+ * The operator-facing label for a wire value. An unknown value renders as
+ * itself rather than blank or crashing, which is the honest fallback for a
+ * format this build does not know about yet.
+ */
+internal fun communicateMessageTypeLabel(wire: String): String = commTypeDisplayMap[wire] ?: wire
 
 // The archive's Tone enum, verbatim. The previous Android set
 // (warm/casual/celebratory/urgent/professional) was invented here and shared

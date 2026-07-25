@@ -22,7 +22,7 @@ class GenerateError extends Error {
   }
 }
 
-const ALLOWED_TYPES = new Set(['sms', 'email', 'visit_report', 'social_post', 'blog_post', 'general']);
+const ALLOWED_TYPES = new Set(['sms', 'email', 'push', 'visit_report', 'social_post', 'blog_post', 'general']);
 
 /**
  * VERBATIM COPY of TITLE_INSTRUCTION from MyTribe
@@ -78,6 +78,11 @@ const SYSTEM_FRAMING = [
   '- Tone and length adapt to communication_type:',
   '  - sms: conversational, 2 to 4 sentences max',
   '  - email: warm opener, full body, closing',
+  // A push is NOT a short SMS. It lands on a notification shelf, gets one line,
+  // and is cut mid-word by the phone if it runs long, so the news has to be in
+  // front. The length target matches the Push row of the Channel Playbook's
+  // Channel & Length Guide (section 2); keep the two in step if either moves.
+  '  - push: one sentence, 10 to 18 words. Lead with the news, no greeting, no signoff; a lock screen clips the rest',
   "  - visit_report: one flowing paragraph narrative (Auntie's KinTale format)",
   '  - social_post: punchy brand voice, emoji sparingly',
   '  - blog_post: longer storytelling, multiple paragraphs ok',

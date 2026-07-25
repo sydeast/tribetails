@@ -49,6 +49,7 @@ const GENERATE_ENDPOINT = '/api/generate';
 export const GENERATE_COMMUNICATION_TYPES = [
   'sms',
   'email',
+  'push',
   'visit_report',
   'social_post',
   'blog_post',

@@ -12,56 +12,95 @@ import type { GenerateCommunicationType, GenerateDraftArgs } from '../api/commun
  * `ComposeMode.Personalize` branch). It generates brand-voice COPY through
  * `generateAuntieCopy`. It is not text to speech, and never was.
  *
- * ── THE CHIP TABLES ARE THE ARCHIVE'S, WITH ONE RENAME ──────────────────────
- * The archive's `MessageType` enum is Visit report / Text / Email / Blog, over
- * `communication_type` values visit_report / sms / email / blog_post. The only
- * change here is the LABEL on the first one: this product calls a visit report
- * a KinTale, so the chip reads "KinTale report" while the wire value stays
- * `visit_report`. The wire value is what `generate.js` switches its prompt
- * framing and its `training_documents` lookup on, so renaming it would silently
- * change the voice.
+ * ── MESSAGE TYPE IS A COPY FORMAT, NOT A DELIVERY CHANNEL ───────────────────
+ * This is the axis that caused the most confusion, so it is worth being blunt:
+ * every entry in the table below describes HOW THE TEXT IS WRITTEN, not how it
+ * travels. `push` asks for a notification-shelf line and delivers nothing.
+ * `email` asks for a warm opener and a closing, and happens also to be
+ * deliverable from this screen. The two facts are tracked separately, on
+ * `key` and on `deliverable`.
  *
- * KinTale is a message TYPE here, never a broadcast channel. `broadcastMessage`
+ * The archive surfaced only four of these (Visit report / Text / Email / Blog)
+ * while declaring `social_post` and `general` with no way to reach them, so two
+ * of the server's supported formats were unreachable for the whole life of that
+ * app and a third, `push`, was never supported at all. The full seven are here
+ * now, in the operator's order, and the bidirectional drift guard in
+ * `web/functions/test/generate.test.js` is what stops any of them going quietly
+ * missing again.
+ *
+ * KinTale is one of these formats, never a broadcast channel. `broadcastMessage`
  * accepts inapp/email/sms/push and has no KinTale delivery leg, so a KinTale
- * broadcast chip would be a button that cannot deliver.
+ * broadcast chip would be a button that cannot deliver. That ruling is unchanged
+ * and its test still stands.
  *
- * The archive also declared `social_post` and `general` on its
- * `CommunicationType` enum with no `MessageType` mapping to them, i.e. they
- * were unreachable from the UI. They stay unreachable rather than being
- * surfaced as two chips nobody asked for.
+ * Labels are the operator's words; wire values are the server's. `visit_report`
+ * shows as "KinTale" and stays `visit_report` on the wire, because that value is
+ * what `generate.js` switches its prompt framing and its `training_documents`
+ * lookup on. Renaming it would quietly change the voice.
  */
 
-/** A message-type chip: what it says, whether it needs a household, and whether approving it can deliver. */
+/** A message-type chip: what it says, whether it needs a household, whether approving it delivers, and whether a title is worth paying for. */
 export interface PersonalizeMessageType {
   key: GenerateCommunicationType;
   label: string;
   /**
-   * A Blog post addresses nobody. Everything else is written FOR a household,
-   * and the dossier/Kin/411 context the generator reads is keyed off that
-   * household, so without one the copy is generic.
+   * A Blog post and a Social post address nobody. Everything else is written FOR
+   * a household, and the dossier/Kin/411 context the generator reads is keyed off
+   * that household, so without one the copy is generic.
    */
   needsRecipient: boolean;
   /**
    * The channel approving this type actually sends over, or `false` when
-   * approving only promotes the draft. A KinTale report is written into the
-   * KinTale flow rather than texted, and a Blog post has no recipient at all,
-   * so neither delivers from this screen.
+   * approving only promotes the draft and writes the audit entry.
+   *
+   * Only email and sms are ever true, because `sendExternalMessage` speaks those
+   * two and nothing else. `push` in this table is a COPY FORMAT, not a delivery
+   * route: there is no 1:1 push callable, so a push draft is written here and
+   * carried elsewhere. A KinTale goes out through the KinTale flow, and a Blog,
+   * Social or General post has no single destination at all.
    */
   deliverable: false | 'email' | 'sms';
+  /**
+   * Whether to spend the second model call on a title.
+   *
+   * Opt-in per type, on the merits, because the call is not free and a title
+   * nothing can hold is waste. True only where a real title slot exists: an
+   * email subject line, a blog headline, and a KinTale title. That last one is
+   * the strongest case of the three and was previously the one NOT asking:
+   * `TITLE_INSTRUCTION` in generate.js is literally "write a title for the
+   * pet-visit tale below", and `aiBackfillTaleTitles` exists to backfill exactly
+   * these.
+   *
+   * False for sms and push, which have no title field and, in push's case, a
+   * budget better spent on the one line it gets. False for a social post,
+   * whose first line IS the hook, so a separate headline has nowhere to live.
+   * False for `general`, a catch-all with no known slot.
+   */
+  wantsTitle: boolean;
 }
 
-const KINTALE_REPORT_TYPE: PersonalizeMessageType = {
-  key: 'visit_report',
-  label: 'KinTale report',
-  needsRecipient: true,
-  deliverable: false,
-};
 
+/**
+ * The operator's required set, in the operator's order.
+ *
+ * These are COPY FORMATS the Auntie voice generator writes in, which is a
+ * different axis from how a message is delivered. `push` here asks for a
+ * notification-shelf line; it has nothing to do with the broadcast push channel
+ * that sends one, and there is still deliberately no KinTale BROADCAST channel,
+ * because the dispatcher has no KinTale leg.
+ *
+ * Every wire value below is the one `generate.js` already switches its prompt
+ * framing and its `training_documents` lookup on. The labels are the operator's
+ * words; the values are the server's, and they are not the same thing.
+ */
 export const PERSONALIZE_MESSAGE_TYPES: readonly PersonalizeMessageType[] = [
-  KINTALE_REPORT_TYPE,
-  { key: 'sms', label: 'Text', needsRecipient: true, deliverable: 'sms' },
-  { key: 'email', label: 'Email', needsRecipient: true, deliverable: 'email' },
-  { key: 'blog_post', label: 'Blog', needsRecipient: false, deliverable: false },
+  { key: 'email', label: 'Email', needsRecipient: true, deliverable: 'email', wantsTitle: true },
+  { key: 'sms', label: 'SMS', needsRecipient: true, deliverable: 'sms', wantsTitle: false },
+  { key: 'push', label: 'Push', needsRecipient: true, deliverable: false, wantsTitle: false },
+  { key: 'social_post', label: 'Social', needsRecipient: false, deliverable: false, wantsTitle: false },
+  { key: 'blog_post', label: 'Blog', needsRecipient: false, deliverable: false, wantsTitle: true },
+  { key: 'general', label: 'General', needsRecipient: true, deliverable: false, wantsTitle: false },
+  { key: 'visit_report', label: 'KinTale', needsRecipient: true, deliverable: false, wantsTitle: true },
 ];
 
 /** Archive `Tone` enum, wire keys verbatim (they reach the model as `tone_hint`). */
@@ -80,6 +119,19 @@ export const PERSONALIZE_LENGTHS: readonly { key: string; label: string }[] = [
 ];
 
 export const DEFAULT_MESSAGE_TYPE: GenerateCommunicationType = 'visit_report';
+/**
+ * The chip an unknown key degrades to. Derived from the table rather than held
+ * as a separate literal: the drift guard in web/functions/test/generate.test.js
+ * reads this file as TEXT and matches wire values between the array's markers,
+ * so an entry parked in a const outside the array is invisible to it. That is
+ * not hypothetical, it is how `visit_report` briefly went missing from the
+ * guard's view while being perfectly present in the app.
+ *
+ * Non-null: DEFAULT_MESSAGE_TYPE is one of the keys literally above.
+ */
+const FALLBACK_TYPE: PersonalizeMessageType = PERSONALIZE_MESSAGE_TYPES.find(
+  (t) => t.key === DEFAULT_MESSAGE_TYPE,
+)!;
 export const DEFAULT_TONE = 'warm';
 export const DEFAULT_LENGTH = 'medium';
 
@@ -93,7 +145,7 @@ export const RECIPIENT_LIMIT = 40;
  * screen through the error boundary.
  */
 export function messageTypeDef(key: string): PersonalizeMessageType {
-  return PERSONALIZE_MESSAGE_TYPES.find((t) => t.key === key) ?? KINTALE_REPORT_TYPE;
+  return PERSONALIZE_MESSAGE_TYPES.find((t) => t.key === key) ?? FALLBACK_TYPE;
 }
 
 /** Everything the composer's rules read. The screen holds this as component state. */
@@ -204,9 +256,9 @@ export function buildGeneratePayload(
     ...(s.tone.trim() !== '' ? { tone_hint: s.tone.trim() } : {}),
     ...(s.length.trim() !== '' ? { max_length: s.length.trim() } : {}),
     ...(avoidOpening !== null && avoidOpening.trim() !== '' ? { avoid_opening: avoidOpening.trim() } : {}),
-    // The second model call is only worth paying for when there is a subject
-    // line to put the result in.
-    ...(def.deliverable === 'email' ? { want_title: true } : {}),
+    // Per-type, on the merits: see `wantsTitle` on the table above for why each
+    // of the seven is or is not worth a second model call.
+    ...(def.wantsTitle ? { want_title: true } : {}),
   };
 }
 

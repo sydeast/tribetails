@@ -127,7 +127,7 @@ export function CommunicatePersonalize() {
       setDraftText(result.generated_copy);
       // Never overwrite a subject the operator typed. Same rule the KinTale
       // composer uses for its headline.
-      if (def.deliverable === 'email' && !subjectTouched && result.generated_title.trim() !== '') {
+      if (def.wantsTitle && !subjectTouched && result.generated_title.trim() !== '') {
         patch({ subject: result.generated_title.trim() });
       }
     } catch (err) {
@@ -163,7 +163,7 @@ export function CommunicatePersonalize() {
         draftId: draft?.draft_id ?? '',
         editedCopy: draftText,
         kinfolkId: draft?.kinfolk_id ?? (form.recipientId !== '' ? form.recipientId : null),
-        subject: def.deliverable === 'email' ? form.subject.trim() : null,
+        subject: def.wantsTitle ? form.subject.trim() : null,
         ...(deliver ? { deliver } : {}),
       });
       setApproved(result);
