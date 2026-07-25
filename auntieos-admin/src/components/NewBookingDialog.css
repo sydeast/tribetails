@@ -113,14 +113,66 @@
   gap: var(--space-2);
 }
 
-.new-booking__date-row {
+.new-booking__time {
+  flex: 0 0 auto;
+  max-width: 12rem;
+}
+
+/* The picked days, echoed as removable chips under the calendar. The calendar
+ * shows WHICH cells are on; this row is the answer to "what did I actually
+ * choose", which a 42-cell grid cannot give at a glance once a month is off
+ * screen. */
+.new-booking__chips {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
 }
 
-.new-booking__date-row .new-booking__input {
-  flex: 1 1 auto;
+.new-booking__chip {
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-size: var(--type-body-sm-size);
+  cursor: pointer;
+}
+
+.new-booking__chip:hover {
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
+.new-booking__weeks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.new-booking__week {
+  min-width: 2.25rem;
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--color-text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.new-booking__week--active {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-soft);
+}
+
+.new-booking__warnings {
+  margin: 0 0 var(--space-2);
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
 }
 
 .new-booking__weekly {

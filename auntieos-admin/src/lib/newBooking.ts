@@ -12,19 +12,31 @@
 
 export type BookingMode = 'dates' | 'weekly';
 
-/** A single specific-date visit row in the form (before it becomes a visit). */
-export interface DateRow {
-  /** `<input type="datetime-local">` value, e.g. "2026-08-03T09:00". */
-  dateTimeLocal: string;
-}
-
 /** Weekday indices JS Date#getDay uses: 0 = Sunday … 6 = Saturday. */
 export const WEEKDAY_LABELS: readonly string[] = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-/** Parses a `datetime-local` string to epoch ms in LOCAL time; null if unparseable/blank. */
-export function localDateTimeToMs(value: string): number | null {
-  if (value.trim() === '') return null;
-  const ms = new Date(value).getTime();
+/** The number of weeks a weekly recurrence may run for, per the archive's chip row. */
+export const WEEKS_OPTIONS: readonly number[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+/**
+ * Combines a calendar DAY with the shared start TIME into epoch ms, LOCAL.
+ * Null when either half is blank or unparseable.
+ *
+ * The specific-dates mode used to be N `<input type="datetime-local">` rows, so
+ * each row carried its own time and this was a single `new Date(string)` parse.
+ * The calendar picker separates the two: the operator chooses a SET of days and
+ * one time that applies to all of them, which is also what the Android twin and
+ * the archive both do. Building the date from numeric parts rather than from a
+ * concatenated string keeps the AO-18 guarantee explicit: `new Date(y, m-1, d,
+ * hh, mm)` is unambiguously the local constructor, where a string form depends
+ * on the engine's parsing rules.
+ */
+export function localDayTimeToMs(dayIso: string, timeHHmm: string): number | null {
+  if (dayIso.trim() === '' || timeHHmm.trim() === '') return null;
+  const [y, m, d] = dayIso.split('-').map((n) => Number.parseInt(n, 10));
+  const [hh, mm] = timeHHmm.split(':').map((n) => Number.parseInt(n, 10));
+  if ([y, m, d, hh, mm].some((n) => !Number.isFinite(n))) return null;
+  const ms = new Date(y!, m! - 1, d!, hh!, mm!, 0, 0).getTime();
   return Number.isNaN(ms) ? null : ms;
 }
 
@@ -62,12 +74,24 @@ export function expandWeekly(opts: {
 }
 
 /**
- * Turns specific-date rows into ascending, de-duplicated visit start times.
- * Blank/invalid rows are dropped (the form validates emptiness separately).
+ * Turns the picked SET of local days plus one shared time into ascending,
+ * de-duplicated visit start times. Unparseable days are dropped (the form
+ * validates emptiness separately).
+ *
+ * Takes an iterable rather than an array so the dialog can hand its `Set`
+ * straight in: a set is the model the calendar actually has, and converting it
+ * to an array only to re-de-dupe here would be theatre.
  */
-export function visitMsFromRows(rows: DateRow[]): number[] {
-  const ms = rows.map((r) => localDateTimeToMs(r.dateTimeLocal)).filter((v): v is number => v !== null);
+export function visitMsFromDays(days: Iterable<string>, timeHHmm: string): number[] {
+  const ms = [...days]
+    .map((day) => localDayTimeToMs(day, timeHHmm))
+    .filter((v): v is number => v !== null);
   return [...new Set(ms)].sort((a, b) => a - b);
+}
+
+/** Ascending list of the selected local days, so chips and warnings read in date order. */
+export function sortedDays(days: Iterable<string>): string[] {
+  return [...days].sort();
 }
 
 /** True when every non-empty startTime is strictly in the future (with a 1-min grace). */

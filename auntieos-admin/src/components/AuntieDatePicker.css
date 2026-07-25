@@ -1,0 +1,145 @@
+/*
+ * The booking calendar. No `.lift` on a day cell, on purpose: `.schedule__day-cell`
+ * skipped it for the same reason, since 42 tiles each rising under a 36px shadow
+ * is noise rather than depth. A cell responds with colour and its focus ring.
+ */
+
+.datepicker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  padding: var(--space-3);
+}
+
+.datepicker__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.datepicker__month {
+  flex: 1 1 auto;
+  text-align: center;
+  font-family: var(--type-title-sm-family);
+  font-size: var(--type-title-sm-size);
+  font-weight: var(--type-title-sm-weight);
+  color: var(--color-text-primary);
+}
+
+.datepicker__nav {
+  width: 2rem;
+  height: 2rem;
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.datepicker__nav:hover {
+  background: var(--color-surface-2);
+  border-color: var(--color-border-soft);
+}
+
+.datepicker__weekdays,
+.datepicker__row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--space-1);
+}
+
+.datepicker__grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.datepicker__weekday {
+  text-align: center;
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-faint);
+}
+
+.datepicker__day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-height: 2.75rem;
+  padding: var(--space-1);
+  border: var(--border-hairline) solid transparent;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.datepicker__day:hover {
+  background: var(--color-surface-2);
+}
+
+.datepicker__daynum {
+  font-size: var(--type-body-sm-size);
+  line-height: 1;
+}
+
+.datepicker__badge {
+  font-size: var(--type-label-sm-size);
+  line-height: 1;
+  color: var(--color-text-faint);
+}
+
+.datepicker__day--outside .datepicker__daynum {
+  color: var(--color-text-faint);
+}
+
+.datepicker__day--past {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.datepicker__day--past:hover {
+  background: transparent;
+}
+
+/* Closed and blocked days stay pickable. The operator IS the business and can
+ * decide to work a Sunday; what they must not get is a cell that looks ordinary. */
+.datepicker__day--closed {
+  background: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 5px,
+    var(--color-surface-2) 5px,
+    var(--color-surface-2) 10px
+  );
+}
+
+.datepicker__day--blocked {
+  border-color: var(--color-warning);
+}
+
+.datepicker__day--blocked .datepicker__badge {
+  color: var(--color-warning);
+}
+
+.datepicker__day--selected,
+.datepicker__day--selected:hover {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--tt-brand-cream);
+}
+
+.datepicker__day--selected .datepicker__daynum,
+.datepicker__day--selected .datepicker__badge {
+  color: var(--tt-brand-cream);
+  font-weight: var(--type-label-lg-weight);
+}

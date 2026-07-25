@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin.scheduling
 
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -16,6 +17,32 @@ object NewBookingMath {
     /** Epoch ms in the system (local) zone for a wall-clock date + time. */
     fun localMs(date: LocalDate, hour: Int, minute: Int): Long =
         date.atTime(hour, minute).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    /**
+     * The zone Material3's `DatePickerState` speaks in, which is NOT the device's.
+     *
+     * `rememberDatePickerState(initialSelectedDateMillis = …)` and
+     * `selectedDateMillis` are both UTC MIDNIGHT of the calendar day, by M3's own
+     * contract: the picker shows a bare calendar with no clock, so it has no
+     * wall-clock time to be local about.
+     *
+     * The dialog used to seed that state through `ZoneId.systemDefault()` and read
+     * it back through UTC. The two disagree everywhere east of Greenwich: seeding
+     * 2027-08-16 in Auckland (UTC+12) produces 2027-08-15T12:00Z, whose UTC day is
+     * the 15th, so the picker opened on the day BEFORE the one it was given, and
+     * an operator who accepted the highlighted day got a visit 24 hours early.
+     * The fix is not to pick a zone, it is to use the SAME one on both sides, and
+     * `pickerRoundTrip` in NewBookingMathTest pins that.
+     */
+    private val PICKER_ZONE: ZoneId = ZoneId.of("UTC")
+
+    /** The `initialSelectedDateMillis` that makes an M3 DatePicker open on [date]. */
+    fun pickerSeedMs(date: LocalDate): Long =
+        date.atStartOfDay(PICKER_ZONE).toInstant().toEpochMilli()
+
+    /** The calendar day an M3 DatePicker's `selectedDateMillis` names. */
+    fun pickerPickedDate(ms: Long): LocalDate =
+        Instant.ofEpochMilli(ms).atZone(PICKER_ZONE).toLocalDate()
 
     /** java.time weekday (Mon=1..Sun=7) mapped to the JS convention (Sun=0..Sat=6). */
     fun jsWeekday(date: LocalDate): Int = date.dayOfWeek.value % 7

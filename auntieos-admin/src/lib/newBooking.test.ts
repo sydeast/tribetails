@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
-  localDateTimeToMs,
+  localDayTimeToMs,
   expandWeekly,
-  visitMsFromRows,
+  visitMsFromDays,
+  sortedDays,
   allInFuture,
   serviceDurationMinutes,
   sortServiceTypesByDuration,
@@ -19,20 +20,26 @@ afterAll(() => {
   process.env.TZ = ORIG_TZ;
 });
 
-describe('localDateTimeToMs', () => {
-  it('parses a datetime-local string as local time', () => {
-    const ms = localDateTimeToMs('2026-08-03T09:00');
+describe('localDayTimeToMs', () => {
+  it('combines a calendar day and a wall-clock time as LOCAL, never UTC', () => {
+    const ms = localDayTimeToMs('2026-08-03', '09:00');
     expect(ms).not.toBeNull();
     const d = new Date(ms!);
     expect(d.getFullYear()).toBe(2026);
     expect(d.getMonth()).toBe(7); // August, 0-based
     expect(d.getDate()).toBe(3);
     expect(d.getHours()).toBe(9);
+    // The zone is pinned to America/Chicago above, so the local reading and the
+    // UTC reading must actually differ. Without this the test would pass just as
+    // well against a UTC-parsing implementation, which is the AO-18 bug.
+    expect(new Date(ms!).getUTCHours()).not.toBe(9);
   });
-  it('returns null for blank or garbage', () => {
-    expect(localDateTimeToMs('')).toBeNull();
-    expect(localDateTimeToMs('   ')).toBeNull();
-    expect(localDateTimeToMs('not-a-date')).toBeNull();
+  it('returns null for a blank or garbage half', () => {
+    expect(localDayTimeToMs('', '09:00')).toBeNull();
+    expect(localDayTimeToMs('2026-08-03', '')).toBeNull();
+    expect(localDayTimeToMs('   ', '   ')).toBeNull();
+    expect(localDayTimeToMs('not-a-date', '09:00')).toBeNull();
+    expect(localDayTimeToMs('2026-08-03', 'noon')).toBeNull();
   });
 });
 
@@ -59,16 +66,33 @@ describe('expandWeekly', () => {
   });
 });
 
-describe('visitMsFromRows', () => {
-  it('drops blank/invalid rows and de-dupes, ascending', () => {
-    const ms = visitMsFromRows([
-      { dateTimeLocal: '2026-08-10T09:00' },
-      { dateTimeLocal: '' },
-      { dateTimeLocal: '2026-08-03T09:00' },
-      { dateTimeLocal: '2026-08-03T09:00' }, // dup
-    ]);
+describe('visitMsFromDays', () => {
+  it('applies the one shared time to every picked day, ascending', () => {
+    const ms = visitMsFromDays(['2026-08-10', '2026-08-03'], '14:30');
     expect(ms).toHaveLength(2);
     expect(ms[0]).toBeLessThan(ms[1]!);
+    for (const m of ms) {
+      const d = new Date(m);
+      expect(d.getHours()).toBe(14);
+      expect(d.getMinutes()).toBe(30);
+    }
+  });
+  it('takes a Set straight from the calendar and drops unparseable days', () => {
+    const ms = visitMsFromDays(new Set(['2026-08-10', '', 'not-a-day', '2026-08-03']), '09:00');
+    expect(ms).toHaveLength(2);
+  });
+  it('is empty when the time is blank, since no day has an instant without one', () => {
+    expect(visitMsFromDays(['2026-08-03'], '')).toEqual([]);
+  });
+});
+
+describe('sortedDays', () => {
+  it('orders local YYYY-MM-DD days ascending, whatever order the Set iterates in', () => {
+    expect(sortedDays(new Set(['2026-09-01', '2026-08-31', '2026-08-03']))).toEqual([
+      '2026-08-03',
+      '2026-08-31',
+      '2026-09-01',
+    ]);
   });
 });
 

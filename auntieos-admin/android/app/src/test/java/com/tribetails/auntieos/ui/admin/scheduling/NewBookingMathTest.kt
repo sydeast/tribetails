@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
+import java.util.TimeZone
 
 /**
  * AO-25: pure date math for the New-booking-request form. Assertions are
@@ -54,5 +55,44 @@ class NewBookingMathTest {
         assertTrue(NewBookingMath.allInFuture(listOf(now + 1000, now + 5000), now))
         assertTrue(NewBookingMath.allInFuture(listOf(now - 30_000), now))   // within grace
         assertFalse(NewBookingMath.allInFuture(listOf(now + 5000, now - 120_000), now))
+    }
+
+    /**
+     * The M3 DatePicker round trip, IN EVERY ZONE, not just the one the CI box
+     * happens to sit in. The dialog seeded the picker through the device zone and
+     * read the answer back through UTC; the two agree only at or west of
+     * Greenwich, so in Auckland the picker opened on the day BEFORE the one it
+     * was handed, and confirming without moving booked a visit 24 hours early.
+     * Pinning both directions to one zone is the fix, and this is what holds it.
+     */
+    @Test
+    fun `picker seed and read round-trip to the same day in every zone`() {
+        val original = TimeZone.getDefault()
+        try {
+            for (zone in listOf("Pacific/Auckland", "Asia/Tokyo", "UTC", "America/Chicago", "Pacific/Honolulu")) {
+                TimeZone.setDefault(TimeZone.getTimeZone(zone))
+                for (date in listOf(
+                    LocalDate.of(2027, 8, 16),
+                    LocalDate.of(2027, 1, 1),
+                    LocalDate.of(2027, 12, 31),
+                    LocalDate.of(2028, 2, 29),
+                )) {
+                    assertEquals(
+                        "round trip broke in $zone",
+                        date,
+                        NewBookingMath.pickerPickedDate(NewBookingMath.pickerSeedMs(date)),
+                    )
+                }
+            }
+        } finally {
+            TimeZone.setDefault(original)
+        }
+    }
+
+    @Test
+    fun `picker seed really is UTC midnight, which is the contract M3 states`() {
+        // 2027-08-16T00:00:00Z. A seed computed in any other zone lands on a
+        // different UTC calendar day and is what caused the off-by-one.
+        assertEquals(1_818_374_400_000L, NewBookingMath.pickerSeedMs(LocalDate.of(2027, 8, 16)))
     }
 }
