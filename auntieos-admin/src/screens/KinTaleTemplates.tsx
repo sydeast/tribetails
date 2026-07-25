@@ -6,6 +6,13 @@ import {
   pickInitialTemplate,
 } from '../api/kinTaleTemplates';
 import { saveKinTaleTemplate } from '../api/kinTaleTemplatesWrite';
+import { listChecklistBank, saveChecklistBankItem } from '../api/checklistBank';
+import {
+  bankItemsForScope,
+  normalizeBankScope,
+  checklistItemFromBank,
+  type ChecklistBankItem,
+} from '../lib/checklistBank';
 import { type ChecklistItem, type FieldCondition, type KinTaleTemplate } from '../lib/kinTale/model';
 import {
   conditionSourceOptions,
@@ -19,7 +26,9 @@ import {
   addMood,
   attributeCatalogForSource,
   changeConditionSource,
+  freshChecklistKey,
   newTemplateDraft,
+  nextOrderForScope,
   opLabel,
   perPetItems,
   perVisitItems,
@@ -63,13 +72,15 @@ import './KinTaleTemplates.css';
  *    affordance `FormSchemaEditor` uses for select options.
  *  - Checklist item `key` is auto-managed (`item_N`), exactly as Compose does it;
  *    it is never a hand-typed field, so it round-trips without an input.
- *  - The shared "checklist bank" quick-add (its own `listChecklistBank` /
- *    `saveChecklistBankItem` callables) is out of scope here and omitted; every
- *    item is still fully authorable by hand.
- *  - Setting one template default does NOT unset the flag on others (no
- *    cross-doc transaction), matching Compose + the composer's own
- *    "first default wins" selection. `isActive` / `isDefault` are editor toggles
- *    persisted on Save.
+ *  - The shared "checklist bank" quick-add is WIRED (`listChecklistBank` /
+ *    `saveChecklistBankItem`, both deployed admin callables). Each checklist
+ *    section gets an "Add from bank" row of items it does not already carry, and
+ *    each hand-written item gets a "Save to bank" action, ports of the archive's
+ *    `BankAddRow` / `onSaveToBank`.
+ *  - `isDefault` is EXCLUSIVE: setting it here clears the flag on every other
+ *    template in one batched write (see `api/kinTaleTemplatesWrite.ts` for why
+ *    global, not per service scope). Compose let the flag pile up, which left
+ *    "the default" meaning whichever flagged doc the snapshot listed first.
  */
 
 type ScreenBanner = { tone: 'error' | 'success'; text: string };
@@ -84,6 +95,46 @@ export function KinTaleTemplates() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState<ScreenBanner | null>(null);
+  const [bank, setBank] = useState<readonly ChecklistBankItem[]>([]);
+
+  // The shared bank, loaded once (the archive's `LaunchedEffect(Unit)`). A read
+  // failure names itself in the banner rather than leaving an empty quick-add
+  // row that reads as "the bank is empty".
+  useEffect(() => {
+    let cancelled = false;
+    void listChecklistBank()
+      .then((items) => {
+        if (!cancelled) setBank(items);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setBanner({
+          tone: 'error',
+          text: `Couldn't load the checklist bank: ${err instanceof Error ? err.message : 'unknown error'}`,
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSaveToBank(text: string, scope: string) {
+    const trimmed = text.trim();
+    if (trimmed === '') {
+      setBanner({ tone: 'error', text: 'Give the item some text before saving it to the bank.' });
+      return;
+    }
+    try {
+      await saveChecklistBankItem(trimmed, scope);
+      setBank(await listChecklistBank());
+      setBanner({ tone: 'success', text: `"${trimmed}" saved to the bank.` });
+    } catch (err) {
+      setBanner({
+        tone: 'error',
+        text: `Couldn't save to the bank: ${err instanceof Error ? err.message : 'unknown error'}`,
+      });
+    }
+  }
 
   // Seed a sensible draft once data lands, and never again: this only fires while
   // nothing is loaded yet (`draft === null`), so a later stream tick (e.g. our
@@ -132,7 +183,12 @@ export function KinTaleTemplates() {
     setSaving(true);
     setBanner(null);
     try {
-      const id = await saveKinTaleTemplate(d);
+      // The streamed list doubles as the sibling set for default exclusivity, so
+      // the writer needn't re-read a collection this screen is already holding.
+      const id = await saveKinTaleTemplate(
+        d,
+        templates.map((t) => ({ _id: t._id, isDefault: t.isDefault })),
+      );
       setSaving(false);
       if (id !== d._id) {
         setDraft({ ...d, _id: id });
@@ -194,7 +250,15 @@ export function KinTaleTemplates() {
         )}
       </AsyncRegion>
 
-      {draft && <TemplateEditor draft={draft} patch={patch} />}
+      {draft && (
+        <TemplateEditor
+          draft={draft}
+          patch={patch}
+          bank={bank}
+          onSaveToBank={(text, scope) => void handleSaveToBank(text, scope)}
+          displacesDefault={draft.isDefault && templates.some((t) => t.isDefault && t._id !== draft._id)}
+        />
+      )}
     </div>
   );
 }
@@ -249,9 +313,13 @@ function TemplatePicker({ templates, selectedId, onSelect, onAddNew }: TemplateP
 interface TemplateEditorProps {
   draft: KinTaleTemplate;
   patch: (p: Partial<KinTaleTemplate>) => void;
+  bank: readonly ChecklistBankItem[];
+  onSaveToBank: (text: string, scope: string) => void;
+  /** True when saving this draft as default will clear the flag on another template. */
+  displacesDefault: boolean;
 }
 
-function TemplateEditor({ draft, patch }: TemplateEditorProps) {
+function TemplateEditor({ draft, patch, bank, onSaveToBank, displacesDefault }: TemplateEditorProps) {
   return (
     <>
       <DenPanel title="Basic settings" subtitle="Name it, and say when it applies.">
@@ -307,6 +375,12 @@ function TemplateEditor({ draft, patch }: TemplateEditorProps) {
           checked={draft.isDefault}
           onChange={(v) => patch({ isDefault: v })}
         />
+        {displacesDefault && (
+          <p className="ktt__note">
+            Only one template can be the default. Saving this one clears the flag on the template that
+            holds it now.
+          </p>
+        )}
         <ToggleRow
           label="Active"
           description="Inactive templates are never picked by the composer."
@@ -363,6 +437,8 @@ function TemplateEditor({ draft, patch }: TemplateEditorProps) {
             addLabel="Add per-pet item"
             items={draft.checklistItems}
             onItems={(items) => patch({ checklistItems: items })}
+            bank={bank}
+            onSaveToBank={onSaveToBank}
           />
           <ChecklistSection
             title="Per-visit items"
@@ -371,6 +447,8 @@ function TemplateEditor({ draft, patch }: TemplateEditorProps) {
             addLabel="Add per-visit item"
             items={draft.checklistItems}
             onItems={(items) => patch({ checklistItems: items })}
+            bank={bank}
+            onSaveToBank={onSaveToBank}
           />
         </>
       )}
@@ -412,9 +490,20 @@ interface ChecklistSectionProps {
   addLabel: string;
   items: ChecklistItem[];
   onItems: (items: ChecklistItem[]) => void;
+  bank: readonly ChecklistBankItem[];
+  onSaveToBank: (text: string, scope: string) => void;
 }
 
-function ChecklistSection({ title, subtitle, scope, addLabel, items, onItems }: ChecklistSectionProps) {
+function ChecklistSection({
+  title,
+  subtitle,
+  scope,
+  addLabel,
+  items,
+  onItems,
+  bank,
+  onSaveToBank,
+}: ChecklistSectionProps) {
   const rows = scope === 'PER_PET' ? perPetItems(items) : perVisitItems(items);
   return (
     <DenPanel
@@ -434,11 +523,58 @@ function ChecklistSection({ title, subtitle, scope, addLabel, items, onItems }: 
               isFirst={idx === 0}
               isLast={idx === rows.length - 1}
               onItems={onItems}
+              onSaveToBank={onSaveToBank}
             />
           ))}
         </ul>
       )}
+      <BankAddRow bank={bank} items={items} scope={scope} onItems={onItems} />
     </DenPanel>
+  );
+}
+
+interface BankAddRowProps {
+  bank: readonly ChecklistBankItem[];
+  items: ChecklistItem[];
+  scope: string;
+  onItems: (items: ChecklistItem[]) => void;
+}
+
+/**
+ * "Add from bank": the shared-bank items for this scope that the checklist does
+ * not already carry, one click each. Ported from the archive's `BankAddRow`,
+ * including its rule that the row hides entirely when nothing is left to offer,
+ * rather than sitting there as an empty heading.
+ */
+function BankAddRow({ bank, items, scope, onItems }: BankAddRowProps) {
+  const available = bankItemsForScope(bank, items, scope);
+  if (available.length === 0) return null;
+  return (
+    <div className="ktt__bank">
+      <span className="ktt__bank-title">Add from bank</span>
+      <ul className="ktt__bank-list">
+        {available.map((b) => (
+          <li key={b.id || b.text}>
+            <button
+              type="button"
+              className="ktt__bank-item"
+              onClick={() =>
+                onItems([
+                  ...items,
+                  checklistItemFromBank(
+                    b,
+                    freshChecklistKey(items),
+                    nextOrderForScope(items, normalizeBankScope(b.scope)),
+                  ),
+                ])
+              }
+            >
+              <span aria-hidden="true">+</span> {b.text}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -448,9 +584,10 @@ interface ChecklistItemCardProps {
   isFirst: boolean;
   isLast: boolean;
   onItems: (items: ChecklistItem[]) => void;
+  onSaveToBank: (text: string, scope: string) => void;
 }
 
-function ChecklistItemCard({ item, items, isFirst, isLast, onItems }: ChecklistItemCardProps) {
+function ChecklistItemCard({ item, items, isFirst, isLast, onItems, onSaveToBank }: ChecklistItemCardProps) {
   const label = item.text.trim() || 'this item';
 
   function update(patch: Partial<ChecklistItem>) {
@@ -474,6 +611,15 @@ function ChecklistItemCard({ item, items, isFirst, isLast, onItems }: ChecklistI
           />
         </label>
         <div className="ktt__item-actions">
+          {/* Promotes a hand-written item into the shared bank, so the next
+              template gets it as a one-click add (archive `onSaveToBank`). */}
+          <IconButton
+            icon={<BankGlyph />}
+            label={`Save "${label}" to the bank`}
+            onClick={() => onSaveToBank(item.text, item.scope)}
+            disabled={item.text.trim() === ''}
+            size={32}
+          />
           <IconButton
             icon={<UpGlyph />}
             label={`Move ${label} up`}
@@ -743,6 +889,16 @@ function DownGlyph() {
   return (
     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
+/** Bookmark with a plus: "put this item in the shared bank". */
+function BankGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 4H7a1 1 0 0 0-1 1v15l5-3.5 5 3.5v-7" />
+      <path d="M18 3v6M15 6h6" />
     </svg>
   );
 }
