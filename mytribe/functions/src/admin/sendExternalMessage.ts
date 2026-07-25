@@ -12,6 +12,12 @@ import { sendTemplatedEmail } from '../lib/email';
 import { getTwilio, getTwilioFromNumber } from '../lib/twilio';
 import { normalizeE164, isValidPhone } from '../lib/phoneNormalize';
 import { zeroCounters } from '../lib/engagement';
+import {
+  MIRROR_SKIPPED,
+  findExistingThread,
+  writeOutboundMirror,
+  type MirrorSkippedReason,
+} from '../lib/smsChannelMirror';
 
 /**
  * Stage 2 step 5 (Communicate external send). Admin sends a one-off email or
@@ -37,6 +43,15 @@ import { zeroCounters } from '../lib/engagement';
  *
  * On provider failure we throw 'unavailable' with the provider error surfaced
  * (fail loud), never a silent success.
+ *
+ * `mirrorToChannel` (opt-in, sms only) additionally mirrors the send into
+ * `sms_messages` with `direction: 'outbound'`, so an Inbox Channels thread reads
+ * as a conversation rather than one-sided. It is OFF by default, so the one-off
+ * sends from ExternalSendPanel (people who are not kinfolk) never enter that
+ * list. The redaction posture above is UNCHANGED by it: the audit entry and the
+ * `external_messages` record still store only the masked recipient, and the
+ * mirror is refused unless the number is already a known channel counterpart.
+ * The full reasoning is in `src/lib/smsChannelMirror.ts` and is load-bearing.
  */
 
 // Plain functional unsubscribe footer. No marketing copy (operator authors all
@@ -45,15 +60,33 @@ import { zeroCounters } from '../lib/engagement';
 export const UNSUBSCRIBE_FOOTER =
   '\n\n---\nTo stop receiving these messages, reply STOP or contact Tribe Tails to be removed from this list.';
 
-const Args = z
+export const Args = z
   .object({
     channel: z.enum(['email', 'sms']),
     to: z.string().min(1).max(320),
     subject: z.string().min(1).max(500).optional(),
     body: z.string().min(1).max(5000),
     transactional: z.boolean().default(false),
+    /**
+     * Opt-in: also record this send in `sms_messages` as an outbound row, so the
+     * Inbox Channels thread shows the reply. Defaults FALSE, which is what keeps
+     * ExternalSendPanel's non-kinfolk one-offs out of that list. Asking for it is
+     * a request, not an instruction: the server still refuses unless the number
+     * already has a row in that collection. See lib/smsChannelMirror.ts.
+     */
+    mirrorToChannel: z.boolean().default(false),
   })
   .superRefine((val, ctx) => {
+    // Refuse rather than silently ignore. `emails` is a different collection with
+    // a different schema, and quietly dropping the flag would tell the operator's
+    // banner a reply was mirrored when nothing was written.
+    if (val.mirrorToChannel && val.channel !== 'sms') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['mirrorToChannel'],
+        message: 'mirrorToChannel is supported on the sms channel only',
+      });
+    }
     if (val.channel === 'email') {
       // RFC-ish email shape check; deliberately conservative (one @, dotted host).
       const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.to.trim());
@@ -121,9 +154,14 @@ export function redactRecipient(channel: 'email' | 'sms', normalized: string): s
   return `${plus}${cc}${masked}${last4}`;
 }
 
-export async function sendExternalMessageHandler(
-  req: CallableRequest<unknown>,
-): Promise<{ ok: true; channel: 'email' | 'sms'; providerMessageId: string; recipientRedacted: string }> {
+export async function sendExternalMessageHandler(req: CallableRequest<unknown>): Promise<{
+  ok: true;
+  channel: 'email' | 'sms';
+  providerMessageId: string;
+  recipientRedacted: string;
+  mirrored: boolean;
+  mirrorSkippedReason: MirrorSkippedReason | null;
+}> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -195,6 +233,49 @@ export async function sendExternalMessageHandler(
     });
   }
 
+  // Mirror into the Channels thread, if asked AND if the server agrees the number
+  // is already a known counterpart. This runs AFTER a successful provider send
+  // and can never fail the call: the text really did go out, and reporting a
+  // failure to an operator who has already sent it is how the same text gets sent
+  // twice. Same reasoning the Inbox uses for its voicemail reply stamp.
+  let mirrored = false;
+  let mirrorSkippedReason: MirrorSkippedReason | null = MIRROR_SKIPPED.NOT_REQUESTED;
+  if (args.mirrorToChannel && args.channel === 'sms') {
+    try {
+      const thread = await findExistingThread(normalized);
+      if (!thread) {
+        // No prior row, so the plaintext number is genuinely new and the
+        // redaction posture applies. Write nothing and say why.
+        mirrorSkippedReason = MIRROR_SKIPPED.NO_EXISTING_THREAD;
+      } else if (!providerMessageId) {
+        // Without a SID there is no idempotent key, and a retry would duplicate
+        // the reply in the operator's own thread.
+        mirrorSkippedReason = MIRROR_SKIPPED.WRITE_FAILED;
+      } else {
+        await writeOutboundMirror({
+          counterpartNumber: normalized,
+          body: args.body,
+          providerMessageId,
+          actorUid: uid,
+          thread,
+          nowIso: new Date().toISOString(),
+        });
+        mirrored = true;
+        mirrorSkippedReason = null;
+      }
+    } catch (err) {
+      mirrorSkippedReason = MIRROR_SKIPPED.WRITE_FAILED;
+      logEvent({
+        severity: 'warn',
+        function: 'sendExternalMessage',
+        event: 'channel.mirror.failed',
+        uid,
+        errorMessage: (err as Error)?.message,
+        extra: { recipientRedacted, providerMessageId },
+      });
+    }
+  }
+
   const now = Date.now();
   // Record every send. Store redacted recipient in the audit-facing doc too so
   // a plaintext one-off contact never lands in long-lived logs.
@@ -222,7 +303,15 @@ export async function sendExternalMessageHandler(
     actorUid: uid,
     targetCollection: 'external_messages',
     description: `External ${args.channel} sent to ${recipientRedacted}`,
-    payload: { channel: args.channel, recipientRedacted, providerMessageId, transactional: args.transactional },
+    // `mirrored` records that an outbound row was written, NOT who it went to.
+    // The recipient stays redacted here exactly as before.
+    payload: {
+      channel: args.channel,
+      recipientRedacted,
+      providerMessageId,
+      transactional: args.transactional,
+      mirrored,
+    },
   }).catch((err) => {
     logEvent({
       severity: 'warn',
@@ -238,10 +327,10 @@ export async function sendExternalMessageHandler(
     function: 'sendExternalMessage',
     event: 'admin.external.message.sent',
     uid,
-    extra: { channel: args.channel, recipientRedacted, providerMessageId },
+    extra: { channel: args.channel, recipientRedacted, providerMessageId, mirrored, mirrorSkippedReason },
   });
 
-  return { ok: true, channel: args.channel, providerMessageId, recipientRedacted };
+  return { ok: true, channel: args.channel, providerMessageId, recipientRedacted, mirrored, mirrorSkippedReason };
 }
 
 export const sendExternalMessage = onCall(

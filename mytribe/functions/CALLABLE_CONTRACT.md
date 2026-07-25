@@ -445,3 +445,48 @@ callable is the enforcement.
   every Home and Account load; the portal was simply discarding it. Limits are
   duplicated in `auntieos-admin/src/lib/brandAssetFile.ts` (5 MB, PNG/JPEG/WebP,
   48px..4000px) and enforced there BEFORE upload; SVG is refused on both sides.
+- req `{ channel: 'email'|'sms', to: string, subject?: string /* required on email */, body: string, transactional?: boolean /* default false */, mirrorToChannel?: boolean /* default false, sms only */ }`
+- res `{ ok: true, channel: 'email'|'sms', providerMessageId: string, recipientRedacted: string, mirrored: boolean, mirrorSkippedReason: 'not_requested'|'no_existing_thread'|'write_failed'|null }`
+Mirrored by `auntieos-admin/src/api/externalSend.ts` and android's
+`AuntieRepository.sendExternalMessage` / `decodeExternalSendResult`.
+- `mirrorToChannel` asks the server to ALSO record the send in `sms_messages`
+  with `direction: 'outbound'`, so an Inbox Channels thread reads as a
+  conversation rather than one-sided. Without it the reply lives only in
+  `external_messages` and never appears in that list.
+- **It is a request, not an instruction.** The server refuses unless the number
+  ALREADY has a row in `sms_messages`, and the reason is a privacy posture, not a
+  performance one: every other thing this callable writes stores the recipient
+  REDACTED (`activity_log` via `writeAuditEntry`, and the `external_messages`
+  record itself), while an `sms_messages` row stores `counterpartNumber` in the
+  CLEAR. Mirroring into an existing thread adds no contact the collection did not
+  already hold, put there by the person texting in through the
+  signature-verified Twilio webhook. Mirroring to a new number would not. Full
+  reasoning in `src/lib/smsChannelMirror.ts`.
+- A caller therefore CANNOT smuggle a plaintext one-off contact into
+  `sms_messages` by passing the flag. `ExternalSendPanel` (web) and
+  `CommunicateViewModel` (android) send one-off texts to people who are not
+  kinfolk and deliberately do not pass it at all.
+- `invalid-argument` on `mirrorToChannel: true` with `channel: 'email'`. Refused
+  rather than ignored: `emails` is a different collection with a different
+  schema, and silently dropping the flag would let the operator's banner claim a
+  row that was never written.
+- **A mirror failure NEVER fails the call.** The provider send already happened,
+  and reporting a failure to an operator who has already sent a text is how the
+  same text gets sent twice. The mirror is attempted after the send and reported
+  through `mirrored` / `mirrorSkippedReason`, which both clients render honestly.
+- Clients branch on `mirrorSkippedReason` codes, never on message text. Absent
+  `mirrored` (an older deployed function) reads as `false` in both mirrors, so a
+  version skew understates rather than lies.
+- The mirror row is keyed by the Twilio message SID, exactly as
+  `twilioInboundSms` keys its own, so a retried send upserts one row instead of
+  duplicating the reply in the operator's thread. Its schema is field-for-field
+  the inbound one, because the Inbox readers, android's `observeSmsMessages` and
+  `reconcile_comms.py` all parse that single shape.
+- `reconcileStatus` is `'skipped'` when the row inherited a kinfolk link from the
+  thread (already linked, so an LLM pass would re-derive a copied fact) and
+  `'pending'` when it did not, so an unlinked reply still reaches the dossier by
+  the same phone match every inbound row gets.
+- Needs the composite index `sms_messages(counterpartNumber ASC, timestamp DESC)`
+  added in `mytribe/firestore.indexes.json`. Without it deployed, the existing
+  thread lookup fails and every mirror reports `write_failed` while the texts
+  still send.

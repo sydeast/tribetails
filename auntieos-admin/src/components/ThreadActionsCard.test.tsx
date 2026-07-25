@@ -13,7 +13,7 @@ vi.mock('../api/inboxChannelsWrite', async (orig) => ({
   markVoicemail,
 }));
 
-import { ThreadActionsCard } from './ThreadActionsCard';
+import { ThreadActionsCard, mirrorDisclosure } from './ThreadActionsCard';
 
 function entry(over: Partial<InboxEntry> = {}): InboxEntry {
   return {
@@ -41,6 +41,8 @@ beforeEach(() => {
     channel: 'sms',
     providerMessageId: 'SM123',
     recipientRedacted: '+1******4567',
+    mirrored: true,
+    mirrorSkippedReason: null,
   });
   markVoicemail.mockReset().mockResolvedValue(undefined);
 });
@@ -102,6 +104,7 @@ describe('ThreadActionsCard', () => {
       to: '+15551234567',
       body: 'Thursday works!',
       transactional: true,
+      mirrorToChannel: true,
     });
     expect(markVoicemail).toHaveBeenCalledWith({
       voicemailId: 'vm1',
@@ -111,15 +114,56 @@ describe('ThreadActionsCard', () => {
   });
 
   /**
-   * `sendExternalMessage` records into `external_messages`, not `sms_messages`,
-   * so the reply does NOT come back as a row in the channel list. Saying so is
-   * the difference between an honest fallback and a silent one.
+   * The banner reports what the SERVER did, not what the client asked for. The
+   * server refuses to mirror a number with no existing thread, so a card that
+   * always claimed the happy path would send the operator hunting for a row
+   * that was never written. Each branch is the difference between an honest
+   * disclosure and a silent one.
    */
-  it('discloses that the reply is not going to appear as a row in this list', async () => {
+  it('says the reply is now in the thread when the server really mirrored it', async () => {
     render(<ThreadActionsCard entry={entry()} onClose={() => {}} />);
     await userEvent.type(screen.getByLabelText('Reply by text'), 'On my way');
     await userEvent.click(screen.getByRole('button', { name: 'Send text' }));
-    expect(await screen.findByText(/external message log/i)).toBeInTheDocument();
+    expect(await screen.findByText(/listed below as your reply/i)).toBeInTheDocument();
+  });
+
+  it('discloses that a reply to a new number is NOT added to this list', async () => {
+    sendExternalMessage.mockResolvedValueOnce({
+      ok: true,
+      channel: 'sms',
+      providerMessageId: 'SM123',
+      recipientRedacted: '+1******4567',
+      mirrored: false,
+      mirrorSkippedReason: 'no_existing_thread',
+    });
+    render(<ThreadActionsCard entry={entry()} onClose={() => {}} />);
+    await userEvent.type(screen.getByLabelText('Reply by text'), 'Hello');
+    await userEvent.click(screen.getByRole('button', { name: 'Send text' }));
+    expect(await screen.findByText(/has not texted in before/i)).toBeInTheDocument();
+  });
+
+  it('still reports a SENT reply when only the mirror failed, so it is not sent twice', async () => {
+    sendExternalMessage.mockResolvedValueOnce({
+      ok: true,
+      channel: 'sms',
+      providerMessageId: 'SM123',
+      recipientRedacted: '+1******4567',
+      mirrored: false,
+      mirrorSkippedReason: 'write_failed',
+    });
+    render(<ThreadActionsCard entry={entry()} onClose={() => {}} />);
+    await userEvent.type(screen.getByLabelText('Reply by text'), 'Running late');
+    await userEvent.click(screen.getByRole('button', { name: 'Send text' }));
+    // Title still says sent. Only the placement is qualified.
+    expect(await screen.findByText('Reply sent')).toBeInTheDocument();
+    expect(screen.getByText(/could not be added to this channel list/i)).toBeInTheDocument();
+  });
+
+  it('never words a skipped mirror as a failed send', () => {
+    for (const reason of ['not_requested', 'no_existing_thread', 'write_failed'] as const) {
+      const text = mirrorDisclosure(false, reason);
+      expect(text.toLowerCase()).not.toMatch(/reply failed|not sent|could not send/);
+    }
   });
 
   it('blocks an empty reply before any network call is made', async () => {

@@ -7,7 +7,7 @@ import {
   type InboxEntry,
 } from '../lib/inboxChannels';
 import { externalSendBlocker, externalSendErrorText } from '../lib/externalSend';
-import { sendExternalMessage } from '../api/externalSend';
+import { sendExternalMessage, type MirrorSkippedReason } from '../api/externalSend';
 import { markVoicemail } from '../api/inboxChannelsWrite';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
@@ -38,24 +38,58 @@ export interface ThreadActionsCardProps {
  * composer that always fails is worse than a launcher that always works.
  *
  * ── WHAT THE SENT-REPLY BANNER DISCLOSES, AND WHY IT HAS TO ─────────────────
- * `sendExternalMessage` records every send in `external_messages` and NOT in
- * `sms_messages` (mytribe/functions/src/admin/sendExternalMessage.ts:202), so a
- * reply sent from here does not come back as a row in the SMS channel below.
- * Left unsaid, the list would look as though the reply never happened, which is
- * the silent degradation this codebase bans. So the banner says where the reply
- * went. The alternative, mirroring outbound sends into `sms_messages`, is a
- * server change with a real privacy question attached (the audit entry redacts
- * the recipient on purpose), and it is not smuggled into this slice.
+ * A reply is sent with `mirrorToChannel: true`, which asks the server to also
+ * write an outbound row into `sms_messages` so the thread below reads as a
+ * conversation instead of one-sided.
+ *
+ * ASKING IS NOT THE SAME AS GETTING, and the banner has to carry that
+ * difference. The server refuses to mirror unless the number is ALREADY a
+ * counterpart in that collection, because an `sms_messages` row holds the number
+ * in the clear while everything else this callable writes holds it redacted (the
+ * reasoning is in mytribe/functions/src/lib/smsChannelMirror.ts). So a reply to a
+ * number that has never texted in is sent and NOT mirrored, and so is one whose
+ * mirror write failed after the text really went out.
+ *
+ * The banner therefore reports what the server actually did, off
+ * `mirrorSkippedReason`, instead of asserting the happy path. Claiming a row
+ * that is not in the list is the same silent degradation as the old copy
+ * claiming a reply could never be listed.
  *
  * A voicemail replied to IS stamped `replied` on its own document, so the row
  * the operator just acted on does visibly change state.
  */
+/**
+ * The one sentence in the success banner that says where the reply actually
+ * went. Exported so it is tested directly: every branch here is a claim about
+ * whether a row exists in the list the operator is looking at, and the wrong
+ * sentence sends somebody hunting for a row that was never written.
+ *
+ * The send itself succeeded in ALL of these cases. None of this text may read as
+ * a failed reply, because an operator who believes a reply failed sends it again.
+ */
+export function mirrorDisclosure(mirrored: boolean, reason: MirrorSkippedReason | null): string {
+  if (mirrored) return 'It is listed below as your reply.';
+  switch (reason) {
+    case 'no_existing_thread':
+      return 'This number has not texted in before, so the reply is kept in the external message log and is not added to this channel list.';
+    case 'write_failed':
+      return 'The text went out, but it could not be added to this channel list, so the thread below still reads as one-sided.';
+    default:
+      return 'It is recorded in the external message log, so it will not appear as a row in this channel list.';
+  }
+}
+
 export function ThreadActionsCard({ entry, onClose }: ThreadActionsCardProps) {
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [marking, setMarking] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
-  const [sent, setSent] = useState<{ redacted: string; voicemailStamped: boolean } | null>(null);
+  const [sent, setSent] = useState<{
+    redacted: string;
+    voicemailStamped: boolean;
+    mirrored: boolean;
+    mirrorSkippedReason: MirrorSkippedReason | null;
+  } | null>(null);
   const [markedRead, setMarkedRead] = useState(false);
 
   const bodyId = useId();
@@ -79,6 +113,9 @@ export function ThreadActionsCard({ entry, onClose }: ThreadActionsCardProps) {
         to: entry.replyPhone,
         body,
         transactional: true,
+        // Ask for the outbound row. The server decides whether it is allowed;
+        // the banner below reports what it actually did.
+        mirrorToChannel: true,
       });
       // The send SUCCEEDED. A failure to stamp the voicemail afterwards must not
       // be reported as a failed reply, or the operator sends it twice. It is
@@ -101,7 +138,12 @@ export function ThreadActionsCard({ entry, onClose }: ThreadActionsCardProps) {
           );
         }
       }
-      setSent({ redacted: res.recipientRedacted, voicemailStamped });
+      setSent({
+        redacted: res.recipientRedacted,
+        voicemailStamped,
+        mirrored: res.mirrored,
+        mirrorSkippedReason: res.mirrorSkippedReason,
+      });
       setBody('');
     } catch (err) {
       setErrorText(externalSendErrorText(err instanceof Error ? err.message : ''));
@@ -180,9 +222,8 @@ export function ThreadActionsCard({ entry, onClose }: ThreadActionsCardProps) {
         )}
 
         {sent !== null && (
-          <Banner tone="success" title="Reply sent">
-            Sent to {sent.redacted}. It is recorded in the external message log, so it will not appear as a
-            row in this channel list.
+          <Banner tone={sent.mirrored ? 'success' : 'warning'} title="Reply sent">
+            Sent to {sent.redacted}. {mirrorDisclosure(sent.mirrored, sent.mirrorSkippedReason)}
             {entry.voicemailId !== '' && sent.voicemailStamped
               ? ' This voicemail is now marked replied.'
               : ''}

@@ -622,6 +622,7 @@ class AuntieRepository(
         subject: String?,
         body: String,
         transactional: Boolean = false,
+        mirrorToChannel: Boolean = false,
     ): Result<ExternalSendResult> = runCatching {
         ensureAuthenticated()
         val payload = buildMap<String, Any?> {
@@ -630,6 +631,10 @@ class AuntieRepository(
             put("body", body)
             if (channel == "email" && !subject.isNullOrBlank()) put("subject", subject)
             put("transactional", transactional)
+            // Sent only when asked AND only on sms: the server REJECTS this flag on
+            // the email channel with invalid-argument rather than ignoring it, so
+            // passing it there would fail a send that would otherwise work.
+            if (mirrorToChannel && channel == "sms") put("mirrorToChannel", true)
         }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("sendExternalMessage")
@@ -3395,6 +3400,21 @@ data class ExternalSendResult(
     val channel: String,
     val providerMessageId: String,
     val recipientRedacted: String,
+    /**
+     * True only when the server really wrote an outbound row into `sms_messages`,
+     * so the Inbox thread now shows this reply. Requesting the mirror does not
+     * make it true: the server refuses unless the number is already a known
+     * channel counterpart, because that row holds the number in the clear while
+     * everything else this callable writes holds it redacted. Defaults false,
+     * which is also how an older deployed function that omits the field reads.
+     */
+    val mirrored: Boolean = false,
+    /**
+     * Why no row was written: `not_requested`, `no_existing_thread` or
+     * `write_failed`. Empty when [mirrored] is true. A code, never message text,
+     * so a caller branches on it rather than on wording.
+     */
+    val mirrorSkippedReason: String = "",
 )
 
 /** Result of the suppressExternalRecipient callable: channel + server-REDACTED recipient. */
@@ -3413,10 +3433,17 @@ internal fun decodeExternalSendResult(raw: Map<String, Any?>?, requestedChannel:
     val channel = (raw?.get("channel") as? String)?.ifBlank { requestedChannel } ?: requestedChannel
     val providerMessageId = (raw?.get("providerMessageId") as? String).orEmpty()
     val recipientRedacted = (raw?.get("recipientRedacted") as? String).orEmpty()
+    // Believed only on a literal `true`. Anything else, including the field being
+    // absent because the deployed function predates it, means no row was written,
+    // and the UI must keep telling the operator the reply is not in the list.
+    val mirrored = raw?.get("mirrored") == true
+    val mirrorSkippedReason = if (mirrored) "" else (raw?.get("mirrorSkippedReason") as? String).orEmpty()
     return ExternalSendResult(
         channel = channel,
         providerMessageId = providerMessageId,
         recipientRedacted = recipientRedacted,
+        mirrored = mirrored,
+        mirrorSkippedReason = mirrorSkippedReason,
     )
 }
 
