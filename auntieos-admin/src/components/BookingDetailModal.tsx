@@ -177,7 +177,7 @@ export function BookingDetailModal({
         <DenPanel title="KinTale" subtitle="The recap this visit sent home.">
           {reportIds.length === 0 ? (
             <EmptyHint>
-              No KinTale for this visit yet. A draft appears here once it has been sent.
+              No KinTale for this visit yet. One appears here once a recap has been sent.
             </EmptyHint>
           ) : (
             <div className="bdm__kintales">
@@ -616,7 +616,7 @@ function NotesPanel({ kinfolkId, batchId, visitId, internal, locked }: NotesPane
         ))}
 
       {locked && (
-        <Banner tone="warning" title="Notes are closed for this visit">
+        <Banner tone="warning" title="Notes are closed">
           {noteLockReason()}
         </Banner>
       )}
