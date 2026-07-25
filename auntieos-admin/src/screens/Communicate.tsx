@@ -20,18 +20,70 @@ import { type Async } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { GhostButton, PrimaryButton } from '../components/Buttons';
+import { GhostButton } from '../components/Buttons';
 import { CommunicateCompose } from './CommunicateCompose';
 import { CommunicatePersonalize } from './CommunicatePersonalize';
 import './Communicate.css';
 
 /**
- * The Den filter tabs. Every predicate is a POSITIVE membership test against
- * `sendChannelOf`'s enumerated `SendChannel` (the Inbox.tsx / Sessions.tsx /
- * Invoices.tsx / AO-12 convention), never a negation of the other channels.
- * `unknown` rows (a channel none of 'email', 'sms', 'push') stay visible under
- * All, honestly, rather than being force-fit into one of the named tabs.
+ * Communicate.
+ *
+ * ── WHAT THE DEFAULT VIEW IS, AND WHY ───────────────────────────────────────
+ * Personalize, the Auntie voice generator. That is what the archived Compose
+ * app opened on (`ComposeMode.Personalize`, the initial value of its `mode`
+ * state), and it is what the screen is FOR: writing to kinfolk in Auntie's
+ * voice. The React port had made Recent, a read-only sent-history list, the
+ * landing view, with the two compose surfaces behind heading buttons. Opening a
+ * writing tool on a list of things already written is backwards.
+ *
+ * ── THREE MODES, WHERE THE ARCHIVE HAD TWO ──────────────────────────────────
+ * The archive's picker was Personalize / Broadcast, and its "Recent" was a
+ * collapsible panel down the right-hand column beside a live preview. This port
+ * had already built Recent as a full screen with its own channel filter and day
+ * grouping, which is more than the archive's panel ever did, so it becomes the
+ * third mode rather than being demoted back into a sidebar. That is a
+ * deliberate divergence, not a restoration.
+ *
+ * Recent's own channel filter stays exactly as it was: a tablist over
+ * `sendChannelOf`'s enumerated `SendChannel`, every predicate a POSITIVE
+ * membership test rather than a negation of the others, so an `unknown` row
+ * stays visible under All instead of being force-fit into a named tab.
  */
+
+type Mode = 'personalize' | 'broadcast' | 'recent';
+
+interface ModeDef {
+  key: Mode;
+  label: string;
+  title: string;
+  accentTail?: string;
+  subtitle: string;
+}
+
+const MODES: readonly ModeDef[] = [
+  {
+    key: 'personalize',
+    label: 'Personalize',
+    title: 'Talk to your',
+    accentTail: 'kinfolk.',
+    subtitle:
+      'Give Auntie the notes, pick a tone and a length, then read the draft and approve it before it goes home.',
+  },
+  {
+    key: 'broadcast',
+    label: 'Broadcast',
+    title: 'One message,',
+    accentTail: 'many homes.',
+    subtitle: 'Send to a saved audience or one you build here, across in-app, email, text, and push.',
+  },
+  {
+    key: 'recent',
+    label: 'Recent',
+    title: 'Recent',
+    subtitle: 'Sent messages to kinfolk, with delivery and open counts as providers report them.',
+  },
+];
+
 type FilterKey = 'all' | 'email' | 'sms' | 'push';
 
 interface FilterDef {
@@ -47,63 +99,68 @@ const FILTERS: readonly FilterDef[] = [
   { key: 'push', label: 'Push', test: (c) => c === 'push' },
 ];
 
-/**
- * Communicate "Recent": the sent-message history the wasm Communicate
- * screen's "Recent" panel shows (`RecentPanel` in
- * screens/communicate/CommunicateScreen.kt), ported here as its own
- * full screen since this is a READ-ONLY port (see the module doc below for
- * scope).
- *
- * ── WHAT THE WASM Communicate SCREEN ACTUALLY IS ──────────────────────────
- * Investigated before porting: Communicate is primarily a COMPOSE hub (a
- * "Personalize" 1:1 AI-drafted note flow, and a "Broadcast" segment +
- * multichannel send form, both backed by real write callables). Alongside
- * compose, it has exactly one genuine READ-ONLY list: the "Recent" panel,
- * which loads `listRecentSends` and shows sent external messages (email/sms)
- * with delivery/open/click engagement counts. That is what this file ports.
- * Everything else on the wasm screen (draft compose + generate, the
- * recipient/dossier "411" context panel, the live preview, the broadcast
- * compose form, the template bank) is compose/write surface and is
- * deliberately OUT of scope here, per the port brief.
- *
- * (A `broadcasts` Firestore collection also exists server-side, written by
- * `broadcastMessage` with a genuine admin-read rule in MyTribe/firestore.rules,
- * but the wasm app has never built a UI that reads it; inventing one here
- * would be adding a screen that doesn't exist anywhere today, not porting
- * one, so it is intentionally left alone.)
- *
- * Loads once via the one-shot `listRecentSends` callable (see
- * `api/communicate.ts` for why this is a callable, not a `useCollection`
- * stream: `external_messages` has no client Firestore read rule at all).
- * Classifies every row's channel (`sendChannelOf`) and engagement state
- * (`sendStateOf`) through positive enumerations, never negation, and groups
- * the FILTERED rows by LOCAL calendar day (`groupSendsByDay`, the AO-18 fix
- * applied to this callable's epoch-ms `sentAtMs`), newest day and newest send
- * first, the activity-feed order Inbox.tsx/Notifications.tsx also use.
- *
- * Read-only itself, but no longer the screen's only surface: the "New
- * broadcast" trailing button below opens `CommunicateCompose`, the send
- * surface this file used to defer (see `api/communicateWrite.ts` for the
- * confirmed `broadcastMessage` payload and why it ships audience+channel+
- * subject/body compose without a live pre-send recipient count). The
- * "Personalize a message" trailing button opens `CommunicatePersonalize`,
- * the 1:1 AI-drafted note flow (see `api/communicateGenerate.ts` for the
- * confirmed `generate`/`sendMessage` `onRequest` backend contract). Resending
- * a past send remains not-yet-built.
- */
 export function Communicate() {
+  const [mode, setMode] = useState<Mode>('personalize');
+
+  const { getTabProps } = useRovingTabs({
+    count: MODES.length,
+    activeIndex: MODES.findIndex((m) => m.key === mode),
+  });
+
+  // Non-null: MODES lists every Mode member and `mode` only ever holds a key
+  // set from that same array.
+  const active = MODES.find((m) => m.key === mode)!;
+
+  return (
+    <div className="screen">
+      <DenScreenHeading
+        kicker="The Den · Communicate"
+        title={active.title}
+        {...(active.accentTail !== undefined ? { accentTail: active.accentTail } : {})}
+        subtitle={active.subtitle}
+        trailing={
+          <div className="communicate__modes" role="tablist" aria-label="Communicate mode">
+            {MODES.map((m, index) => (
+              <button
+                key={m.key}
+                type="button"
+                role="tab"
+                aria-selected={mode === m.key}
+                className={mode === m.key ? 'communicate__mode communicate__mode--active' : 'communicate__mode'}
+                onClick={() => setMode(m.key)}
+                {...getTabProps(index)}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        }
+      />
+
+      {/* Mounted per mode rather than hidden with CSS: Recent's `listRecentSends`
+          call belongs to Recent, and a hidden-but-mounted Recent would fetch on
+          every visit to a compose surface that never shows it. */}
+      {mode === 'personalize' && <CommunicatePersonalize />}
+      {mode === 'broadcast' && <CommunicateCompose />}
+      {mode === 'recent' && <RecentSends />}
+    </div>
+  );
+}
+
+/**
+ * The sent-message history. Loads once via the one-shot `listRecentSends`
+ * callable (see `api/communicate.ts` for why this is a callable and not a
+ * `useCollection` stream: `external_messages` has no client Firestore read rule
+ * at all). Groups the FILTERED rows by LOCAL calendar day, newest day and
+ * newest send first.
+ */
+function RecentSends() {
   const [sends, setSends] = useState<Async<RecentSend[]>>({ status: 'loading' });
   const [filter, setFilter] = useState<FilterKey>('all');
-  // Local view toggle, not a route: the compose/personalize surfaces are
-  // sibling views of this same screen (Directory.tsx's tab convention), not a
-  // new URL. Kept out of router.tsx/nav.ts on purpose, this is a same-screen
-  // mode switch.
-  const [view, setView] = useState<'recent' | 'compose' | 'personalize'>('recent');
 
-  // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
-  // Home/End, roving tabIndex); called unconditionally at the top level per
-  // the Rules of Hooks, since the tabs themselves render inside AsyncRegion's
-  // conditionally-invoked render prop.
+  // Roving-tabindex keyboard nav for the filter tablist below. Called
+  // unconditionally at the top level per the Rules of Hooks, since the tabs
+  // themselves render inside AsyncRegion's conditionally-invoked render prop.
   const { getTabProps } = useRovingTabs({
     count: FILTERS.length,
     activeIndex: FILTERS.findIndex((f) => f.key === filter),
@@ -137,99 +194,77 @@ export function Communicate() {
   useEffect(() => load(), [load]);
 
   // Only claimed once the load has actually resolved, never a fabricated 0
-  // while loading/erroring (the StatCard / AsyncRegion / Inbox.tsx policy
-  // this app follows throughout; see lib/async.ts).
+  // while loading/erroring (the StatCard / AsyncRegion / Inbox.tsx policy this
+  // app follows throughout; see lib/async.ts).
   const failedCount =
     sends.status === 'ready'
       ? sends.data.filter((s) => sendStateOf(sendCountsOf(s.counts), s.channel) === 'failed').length
       : 0;
 
-  // Compose/personalize are sibling views of this same screen, not a route:
-  // swap the whole tree rather than growing an if/else through the JSX below.
-  if (view === 'compose') {
-    return <CommunicateCompose onClose={() => setView('recent')} />;
-  }
-  if (view === 'personalize') {
-    return <CommunicatePersonalize onClose={() => setView('recent')} />;
-  }
-
   return (
-    <div className="screen">
-      <DenScreenHeading
-        kicker="The Den · Communicate"
-        title="Recent"
-        subtitle="Sent messages to kinfolk, with delivery and open counts as providers report them."
-        trailing={
-          <>
-            {failedCount > 0 ? <span className="communicate__badge">{failedCount} failed</span> : null}
-            <GhostButton label="Personalize a message" onClick={() => setView('personalize')} />
-            <PrimaryButton label="New broadcast" onClick={() => setView('compose')} />
-          </>
+    <DenPanel title="Sent messages" subtitle="Every external send on the books, newest first.">
+      {failedCount > 0 ? <span className="communicate__badge">{failedCount} failed</span> : null}
+
+      <AsyncRegion
+        state={sends}
+        what="recent sends"
+        isEmpty={(data) => data.length === 0}
+        loading={<p className="communicate__hint">Loading recent sends…</p>}
+        empty={
+          <EmptyHint>
+            No external sends yet. Sends from Communicate show here with delivery and open counts.
+          </EmptyHint>
         }
-      />
+      >
+        {(data) => {
+          // Non-null: FILTERS lists all four FilterKey members above, and
+          // `filter` only ever holds a key set via setFilter(f.key) from that
+          // same array (the Inbox.tsx/Sessions.tsx .find()! comment).
+          const activeFilter = FILTERS.find((f) => f.key === filter)!;
+          const visible = data.filter((row) => activeFilter.test(sendChannelOf(row.channel)));
+          const groups = groupSendsByDay(visible);
 
-      <DenPanel title="Sent messages" subtitle="Every external send on the books, newest first.">
-        <AsyncRegion
-          state={sends}
-          what="recent sends"
-          isEmpty={(data) => data.length === 0}
-          loading={<p className="communicate__hint">Loading recent sends…</p>}
-          empty={
-            <EmptyHint>
-              No external sends yet. Sends from Communicate show here with delivery and open counts.
-            </EmptyHint>
-          }
-        >
-          {(data) => {
-            // Non-null: FILTERS lists all three FilterKey members above, and
-            // `filter` only ever holds a key set via setFilter(f.key) from
-            // that same array (the Inbox.tsx/Sessions.tsx .find()! comment).
-            const activeFilter = FILTERS.find((f) => f.key === filter)!;
-            const visible = data.filter((row) => activeFilter.test(sendChannelOf(row.channel)));
-            const groups = groupSendsByDay(visible);
+          return (
+            <>
+              <div className="communicate__tabs" role="tablist" aria-label="Filter recent sends by channel">
+                {FILTERS.map((f, index) => (
+                  <button
+                    key={f.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={filter === f.key}
+                    className={filter === f.key ? 'communicate__tab communicate__tab--active' : 'communicate__tab'}
+                    onClick={() => setFilter(f.key)}
+                    {...getTabProps(index)}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
 
-            return (
-              <>
-                <div className="communicate__tabs" role="tablist" aria-label="Filter recent sends by channel">
-                  {FILTERS.map((f, index) => (
-                    <button
-                      key={f.key}
-                      type="button"
-                      role="tab"
-                      aria-selected={filter === f.key}
-                      className={filter === f.key ? 'communicate__tab communicate__tab--active' : 'communicate__tab'}
-                      onClick={() => setFilter(f.key)}
-                      {...getTabProps(index)}
-                    >
-                      {f.label}
-                    </button>
+              {groups.length === 0 ? (
+                <EmptyHint>Nothing matches this filter.</EmptyHint>
+              ) : (
+                <ul className="communicate__list">
+                  {groups.map((g) => (
+                    <li key={g.dayKeyValue} className="communicate__day-group">
+                      <h3 className="communicate__day-header">{sendDayLabel(g.dayKeyValue, todayIso)}</h3>
+                      <ul className="communicate__day-rows">
+                        {g.rows.map((row) => (
+                          <SendRow key={row.id} row={row} />
+                        ))}
+                      </ul>
+                    </li>
                   ))}
-                </div>
+                </ul>
+              )}
 
-                {groups.length === 0 ? (
-                  <EmptyHint>Nothing matches this filter.</EmptyHint>
-                ) : (
-                  <ul className="communicate__list">
-                    {groups.map((g) => (
-                      <li key={g.dayKeyValue} className="communicate__day-group">
-                        <h3 className="communicate__day-header">{sendDayLabel(g.dayKeyValue, todayIso)}</h3>
-                        <ul className="communicate__day-rows">
-                          {g.rows.map((row) => (
-                            <SendRow key={row.id} row={row} />
-                          ))}
-                        </ul>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-
-                <GhostButton label="Reload" onClick={load} className="communicate__reload" />
-              </>
-            );
-          }}
-        </AsyncRegion>
-      </DenPanel>
-    </div>
+              <GhostButton label="Reload" onClick={load} className="communicate__reload" />
+            </>
+          );
+        }}
+      </AsyncRegion>
+    </DenPanel>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import {
   sendBroadcast,
   describeAudience,
@@ -7,8 +7,15 @@ import {
   type BroadcastChannel,
   type SendBroadcastResult,
 } from '../api/communicateWrite';
+import {
+  listAudienceSegments,
+  saveAudienceSegment,
+  deleteAudienceSegment,
+  type AudienceSegment,
+} from '../api/audienceSegments';
+import { segmentSaveBlocker, broadcastBlocker, broadcastAudienceArgs } from '../lib/audienceSegmentEdit';
 import { channelLabel } from '../lib/communicateFormat';
-import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+import { DenPanel } from '../components/DenScreenKit';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
 import { Dialog } from '../components/Dialog';
@@ -34,7 +41,12 @@ export function splitList(raw: string): string[] {
  * chosen with no statuses typed). `null` is the honest "not ready", never a
  * fabricated `{ kind: 'all' }` fallback that would silently broaden the send.
  */
-export function buildCriteria(kind: AudienceKind, statusesRaw: string, tagsRaw: string, tagMatch: 'any' | 'all'): BroadcastCriteria | null {
+export function buildCriteria(
+  kind: AudienceKind,
+  statusesRaw: string,
+  tagsRaw: string,
+  tagMatch: 'any' | 'all',
+): BroadcastCriteria | null {
   if (kind === 'all') return { kind: 'all' };
   if (kind === 'status') {
     const statuses = splitList(statusesRaw);
@@ -44,35 +56,49 @@ export function buildCriteria(kind: AudienceKind, statusesRaw: string, tagsRaw: 
   return tags.length > 0 ? { kind: 'tags', tags, tagMatch } : null;
 }
 
-interface CommunicateComposeProps {
-  /** Back to the Recent list. Wired by Communicate.tsx's "New broadcast" toggle. */
-  onClose: () => void;
-}
-
 /**
- * Communicate COMPOSE / BROADCAST: the send surface `Communicate.tsx` ("Recent")
- * deliberately left out (see that file's module doc). Sends one admin-authored
- * message to an audience of kinfolk over email and/or sms via the `broadcastMessage`
- * callable (see `api/communicateWrite.ts` for the confirmed payload, the channel
- * scope, and why no live pre-send recipient count is shown).
+ * Communicate BROADCAST: one admin-authored message to an audience of kinfolk,
+ * over any of the four channels `broadcastMessage` dispatches.
  *
- * Three steps, same shape as `FormSchemas.tsx`'s delete flow (fail-loud, disabled-
- * while-busy, a confirm before the consequential action):
- *   1. Fill the form (audience, channels, subject, body). Client-side validation
- *      mirrors the backend's zod `Args` exactly (broadcastMessage.ts lines 56-79)
- *      so a doomed request never reaches the network.
- *   2. "Review broadcast" opens a confirm Dialog naming the audience, channels,
- *      and message, since sending to real kinfolk is not undoable.
- *   3. "Send now" calls `sendBroadcast`, busy + disabled throughout. A failure
- *      surfaces inline, named, with the form left exactly as typed (no data
- *      loss on a failed send). A success replaces the form with the REAL
- *      per-channel result the callable returned, then offers "Send another".
+ * ── WHAT THIS SLICE ADDED ───────────────────────────────────────────────────
+ * Saved segments, the in-app channel, and a per-channel result table.
+ *
+ * `listAudienceSegments` / `saveAudienceSegment` / `deleteAudienceSegment` were
+ * deployed and admin-gated the whole time; nothing on web had ever called them,
+ * so the operator rebuilt the same audience by hand on every send. Picking a
+ * saved segment sends `segmentId` and NO `criteria`, and ad-hoc sends `criteria`
+ * and no `segmentId`. They are mutually exclusive because the server resolves
+ * `segmentId` by loading the stored criteria, so sending both would ship two
+ * answers to one question.
+ *
+ * In-app is now a channel rather than a documented omission. Like email it
+ * requires a subject, which becomes the notification title in the MyTribe
+ * portal feed.
+ *
+ * There is deliberately no KinTale channel. KinTale participates as a message
+ * TYPE in Personalize, and the dispatcher has no KinTale delivery leg, so the
+ * chip would be a button that cannot deliver.
+ *
+ * ── STILL NO PRE-SEND RECIPIENT COUNT ───────────────────────────────────────
+ * The confirm step shows an audience DESCRIPTION rather than a live "N
+ * recipients" figure, because no such figure exists to show honestly:
+ * `broadcastMessageHandler` only computes `recipientCount` AFTER it has sent,
+ * and MyTribe has no preview/count/dry-run callable anywhere. The REAL count
+ * appears in the result, once it is real.
  */
-export function CommunicateCompose({ onClose }: CommunicateComposeProps) {
+export function CommunicateCompose() {
+  const [segments, setSegments] = useState<AudienceSegment[]>([]);
+  const [segmentsError, setSegmentsError] = useState<string | null>(null);
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+  const [segmentName, setSegmentName] = useState('');
+  const [segmentBusy, setSegmentBusy] = useState(false);
+  const [segmentNotice, setSegmentNotice] = useState<string | null>(null);
+
   const [audienceKind, setAudienceKind] = useState<AudienceKind>('all');
   const [statusesRaw, setStatusesRaw] = useState('');
   const [tagsRaw, setTagsRaw] = useState('');
   const [tagMatch, setTagMatch] = useState<'any' | 'all'>('any');
+  const [inappOn, setInappOn] = useState(false);
   const [emailOn, setEmailOn] = useState(true);
   const [smsOn, setSmsOn] = useState(false);
   const [pushOn, setPushOn] = useState(false);
@@ -86,8 +112,35 @@ export function CommunicateCompose({ onClose }: CommunicateComposeProps) {
 
   const legendId = useId();
 
-  const criteria = buildCriteria(audienceKind, statusesRaw, tagsRaw, tagMatch);
+  const loadSegments = useCallback(() => {
+    let live = true;
+    listAudienceSegments()
+      .then((rows) => {
+        if (!live) return;
+        setSegments(rows);
+        setSegmentsError(null);
+      })
+      .catch((err: unknown) => {
+        if (!live) return;
+        // Fail loud but non-blocking: saved segments are an accelerator, and an
+        // ad-hoc broadcast is still perfectly sendable without them.
+        setSegmentsError(
+          `listAudienceSegments failed: ${err instanceof Error ? err.message : 'Load failed'}. You can still build an audience below.`,
+        );
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  useEffect(() => loadSegments(), [loadSegments]);
+
+  const adhocCriteria = buildCriteria(audienceKind, statusesRaw, tagsRaw, tagMatch);
+  const audienceArgs = broadcastAudienceArgs(selectedSegmentId, adhocCriteria);
+  const selectedSegment = segments.find((s) => s.id === selectedSegmentId);
+
   const channels: BroadcastChannel[] = [
+    ...(inappOn ? (['inapp'] as const) : []),
     ...(emailOn ? (['email'] as const) : []),
     ...(smsOn ? (['sms'] as const) : []),
     ...(pushOn ? (['push'] as const) : []),
@@ -95,23 +148,15 @@ export function CommunicateCompose({ onClose }: CommunicateComposeProps) {
   const trimmedSubject = subject.trim();
   const trimmedBody = body.trim();
 
-  // Mirrors broadcastMessage's zod Args exactly (superRefine, lines 64-79):
-  // a segmentId or criteria (this screen always supplies criteria), at least
-  // one channel, subject required when email is selected, body required.
-  //
   // Push deliberately does NOT make the subject required, because the backend
-  // does not either: it falls back to "Tribe Tails" as the notification title
-  // (broadcastMessage.ts:264). Adding a rule the server does not enforce would
-  // block a send the server would happily accept, so this is a hint instead.
-  const subjectRequired = channels.includes('email');
-  const subjectIsPushTitle = pushOn && trimmedSubject.length === 0;
-  const formErrors: string[] = [];
-  if (!criteria) formErrors.push('Pick an audience (or fill in the status/tags you chose).');
-  if (channels.length === 0) formErrors.push('Pick at least one channel.');
-  if (subjectRequired && trimmedSubject.length === 0) formErrors.push('Subject is required for email.');
-  if (trimmedBody.length === 0) formErrors.push('Message body is required.');
-  if (trimmedBody.length > BODY_MAX) formErrors.push(`Message body must be ${BODY_MAX} characters or fewer.`);
-  const formValid = formErrors.length === 0 && criteria !== null;
+  // does not either: it falls back to "Tribe Tails" as the notification title.
+  // Adding a rule the server does not enforce would block a send the server
+  // would happily accept, so this is a hint instead.
+  const subjectRequired = emailOn || inappOn;
+  const subjectIsPushTitle = pushOn && !subjectRequired && trimmedSubject.length === 0;
+  const audienceMissing = audienceArgs === null;
+  const formBlocker = broadcastBlocker(channels, subject, body);
+  const formValid = !audienceMissing && formBlocker === null && trimmedBody.length <= BODY_MAX;
 
   function openConfirm() {
     if (!formValid || sending) return;
@@ -121,12 +166,12 @@ export function CommunicateCompose({ onClose }: CommunicateComposeProps) {
   }
 
   async function confirmSend() {
-    if (!formValid || !criteria || sending) return;
+    if (!formValid || audienceArgs === null || sending) return;
     setSending(true);
     setSendError(null);
     try {
       const res = await sendBroadcast({
-        criteria,
+        ...audienceArgs,
         channels,
         ...(subjectRequired || trimmedSubject.length > 0 ? { subject: trimmedSubject } : {}),
         body: trimmedBody,
@@ -141,6 +186,46 @@ export function CommunicateCompose({ onClose }: CommunicateComposeProps) {
     }
   }
 
+  async function handleSaveSegment() {
+    if (segmentBusy || adhocCriteria === null) return;
+    setSegmentNotice(null);
+    const blocker = segmentSaveBlocker(segmentName, adhocCriteria);
+    if (blocker !== null) {
+      setSegmentsError(blocker);
+      return;
+    }
+    setSegmentsError(null);
+    setSegmentBusy(true);
+    try {
+      const id = await saveAudienceSegment({ name: segmentName, criteria: adhocCriteria });
+      setSegmentNotice(`Saved "${segmentName.trim()}".`);
+      setSegmentName('');
+      setSelectedSegmentId(id);
+      loadSegments();
+    } catch (err) {
+      setSegmentsError(`saveAudienceSegment failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+    } finally {
+      setSegmentBusy(false);
+    }
+  }
+
+  async function handleDeleteSegment(segment: AudienceSegment) {
+    if (segmentBusy) return;
+    setSegmentNotice(null);
+    setSegmentBusy(true);
+    try {
+      await deleteAudienceSegment(segment.id);
+      setSelectedSegmentId(null);
+      setSegmentNotice(`Deleted "${segment.name}".`);
+      setSegmentsError(null);
+      loadSegments();
+    } catch (err) {
+      setSegmentsError(`deleteAudienceSegment failed: ${err instanceof Error ? err.message : 'Delete failed'}`);
+    } finally {
+      setSegmentBusy(false);
+    }
+  }
+
   function sendAnother() {
     setResult(null);
     setSendError(null);
@@ -148,27 +233,68 @@ export function CommunicateCompose({ onClose }: CommunicateComposeProps) {
     setBody('');
   }
 
+  if (result) {
+    return <BroadcastResultPanel result={result} channels={channels} onSendAnother={sendAnother} />;
+  }
+
   return (
-    <div className="screen">
-      <DenScreenHeading
-        kicker="The Den · Communicate"
-        title="New"
-        accentTail="broadcast"
-        subtitle="Send one message to an audience of kinfolk over email and text."
-        trailing={<GhostButton label="Back to Recent" onClick={onClose} />}
-      />
+    <>
+      <DenPanel title="Compose" subtitle="Every field below is validated the same way the send itself will be.">
+        <div className="compose__form">
+          {sendError !== null && (
+            <Banner tone="error" title="Broadcast failed">
+              {sendError}
+            </Banner>
+          )}
 
-      {result ? (
-        <BroadcastResultPanel result={result} channels={channels} onSendAnother={sendAnother} />
-      ) : (
-        <DenPanel title="Compose" subtitle="Every field below is validated the same way the send itself will be.">
-          <div className="compose__form">
-            {sendError !== null && (
-              <Banner tone="error" title="Broadcast failed">
-                {sendError}
-              </Banner>
+          <fieldset className="compose__fieldset" aria-labelledby={`${legendId}-segment`}>
+            <legend id={`${legendId}-segment`} className="compose__legend">
+              Saved audience
+            </legend>
+
+            {segmentsError !== null && <Banner tone="warning">{segmentsError}</Banner>}
+            {segmentNotice !== null && <Banner tone="success">{segmentNotice}</Banner>}
+
+            <div className="compose__radio-row" role="radiogroup" aria-labelledby={`${legendId}-segment`}>
+              <label className="compose__radio">
+                <input
+                  type="radio"
+                  name="audienceSegment"
+                  checked={selectedSegmentId === null}
+                  disabled={sending || segmentBusy}
+                  onChange={() => setSelectedSegmentId(null)}
+                />
+                Ad-hoc
+              </label>
+              {segments.map((s) => (
+                <label key={s.id} className="compose__radio">
+                  <input
+                    type="radio"
+                    name="audienceSegment"
+                    checked={selectedSegmentId === s.id}
+                    disabled={sending || segmentBusy}
+                    onChange={() => setSelectedSegmentId(s.id)}
+                  />
+                  {s.name}
+                </label>
+              ))}
+            </div>
+
+            {selectedSegment !== undefined && (
+              <>
+                <p className="compose__hint">{selectedSegment.description}</p>
+                <div className="compose__actions">
+                  <GhostButton
+                    label="Delete this segment"
+                    disabled={sending || segmentBusy}
+                    onClick={() => void handleDeleteSegment(selectedSegment)}
+                  />
+                </div>
+              </>
             )}
+          </fieldset>
 
+          {selectedSegmentId === null && (
             <fieldset className="compose__fieldset" aria-labelledby={`${legendId}-audience`}>
               <legend id={`${legendId}-audience`} className="compose__legend">
                 Audience
@@ -233,6 +359,10 @@ export function CommunicateCompose({ onClose }: CommunicateComposeProps) {
                       placeholder="vip, newsletter"
                     />
                   </label>
+                  <p className="compose__hint">
+                    A broadcast matches tags on the household, not tags on individual pets. Tag matching is exact, so a
+                    name spelled differently reaches nobody.
+                  </p>
                   <div className="compose__radio-row" role="radiogroup" aria-label="Tag match mode">
                     <label className="compose__radio">
                       <input
@@ -257,78 +387,106 @@ export function CommunicateCompose({ onClose }: CommunicateComposeProps) {
                   </div>
                 </>
               )}
+
+              <label className="compose__field">
+                <span className="compose__field-label">Save this audience as</span>
+                <input
+                  type="text"
+                  className="compose__text-input"
+                  value={segmentName}
+                  disabled={sending || segmentBusy}
+                  onChange={(e) => setSegmentName(e.target.value)}
+                  placeholder="Name to save this audience"
+                />
+              </label>
+              <div className="compose__actions">
+                <GhostButton
+                  label={segmentBusy ? 'Saving…' : 'Save segment'}
+                  disabled={sending || segmentBusy}
+                  onClick={() => void handleSaveSegment()}
+                />
+              </div>
             </fieldset>
+          )}
 
-            <fieldset className="compose__fieldset" aria-labelledby={`${legendId}-channels`}>
-              <legend id={`${legendId}-channels`} className="compose__legend">
-                Channels
-              </legend>
-              <ul className="compose__toggle-list">
-                <li className="compose__toggle-row">
-                  <span className="compose__toggle-caption">Email</span>
-                  <Toggle checked={emailOn} onChange={setEmailOn} disabled={sending} label="Send by email" />
-                </li>
-                <li className="compose__toggle-row">
-                  <span className="compose__toggle-caption">Text (SMS)</span>
-                  <Toggle checked={smsOn} onChange={setSmsOn} disabled={sending} label="Send by text (SMS)" />
-                </li>
-                <li className="compose__toggle-row">
-                  <span className="compose__toggle-caption">Push</span>
-                  <Toggle checked={pushOn} onChange={setPushOn} disabled={sending} label="Send by push notification" />
-                </li>
-              </ul>
-              {pushOn && (
-                <p className="compose__hint">
-                  Push reaches Kinfolk who have the app installed and notifications on. Anyone without a
-                  registered device is skipped, and the send report says how many.
-                </p>
-              )}
-            </fieldset>
+          <fieldset className="compose__fieldset" aria-labelledby={`${legendId}-channels`}>
+            <legend id={`${legendId}-channels`} className="compose__legend">
+              Channels
+            </legend>
+            <ul className="compose__toggle-list">
+              <li className="compose__toggle-row">
+                <span className="compose__toggle-caption">In-app</span>
+                <Toggle checked={inappOn} onChange={setInappOn} disabled={sending} label="Send in-app" />
+              </li>
+              <li className="compose__toggle-row">
+                <span className="compose__toggle-caption">Email</span>
+                <Toggle checked={emailOn} onChange={setEmailOn} disabled={sending} label="Send by email" />
+              </li>
+              <li className="compose__toggle-row">
+                <span className="compose__toggle-caption">Text (SMS)</span>
+                <Toggle checked={smsOn} onChange={setSmsOn} disabled={sending} label="Send by text (SMS)" />
+              </li>
+              <li className="compose__toggle-row">
+                <span className="compose__toggle-caption">Push</span>
+                <Toggle checked={pushOn} onChange={setPushOn} disabled={sending} label="Send by push notification" />
+              </li>
+            </ul>
+            {inappOn && (
+              <p className="compose__hint">
+                In-app writes a notification into the MyTribe portal feed. The subject is its title.
+              </p>
+            )}
+            {pushOn && (
+              <p className="compose__hint">
+                Push reaches Kinfolk who have the app installed and notifications on. Anyone without a registered
+                device is skipped, and the send report says how many.
+              </p>
+            )}
+          </fieldset>
 
-            <label className="compose__field">
-              <span className="compose__field-label">
-                Subject
-                {subjectRequired
-                  ? ' (required for email)'
-                  : subjectIsPushTitle
-                    ? ' (optional, push will show "Tribe Tails")'
-                    : ' (optional)'}
-              </span>
-              <input
-                type="text"
-                className="compose__text-input"
-                value={subject}
-                disabled={sending}
-                maxLength={SUBJECT_MAX}
-                onChange={(e) => setSubject(e.target.value)}
-                placeholder="What's this about?"
-              />
-            </label>
+          <label className="compose__field">
+            <span className="compose__field-label">
+              Subject
+              {subjectRequired
+                ? ' (required for email and in-app)'
+                : subjectIsPushTitle
+                  ? ' (optional, push will show "Tribe Tails")'
+                  : ' (optional)'}
+            </span>
+            <input
+              type="text"
+              className="compose__text-input"
+              value={subject}
+              disabled={sending}
+              maxLength={SUBJECT_MAX}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="What's this about?"
+            />
+          </label>
 
-            <label className="compose__field">
-              <span className="compose__field-label">Message</span>
-              <textarea
-                className="compose__textarea"
-                value={body}
-                disabled={sending}
-                maxLength={BODY_MAX}
-                rows={8}
-                onChange={(e) => setBody(e.target.value)}
-                placeholder="Write the message every recipient on this audience will see."
-              />
-              <span className="compose__char-count">
-                {body.length} / {BODY_MAX}
-              </span>
-            </label>
+          <label className="compose__field">
+            <span className="compose__field-label">Message</span>
+            <textarea
+              className="compose__textarea"
+              value={body}
+              disabled={sending}
+              maxLength={BODY_MAX}
+              rows={8}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="Write the message every recipient on this audience will see."
+            />
+            <span className="compose__char-count">
+              {body.length} / {BODY_MAX}
+            </span>
+          </label>
 
-            <div className="compose__actions">
-              <PrimaryButton label="Review broadcast" onClick={openConfirm} disabled={!formValid || sending} />
-            </div>
+          <div className="compose__actions">
+            <PrimaryButton label="Review broadcast" onClick={openConfirm} disabled={!formValid || sending} />
           </div>
-        </DenPanel>
-      )}
+        </div>
+      </DenPanel>
 
-      {confirmOpen && criteria && (
+      {confirmOpen && audienceArgs !== null && (
         <Dialog
           title="Send this broadcast?"
           onClose={() => {
@@ -347,7 +505,10 @@ export function CommunicateCompose({ onClose }: CommunicateComposeProps) {
           }
         >
           <p className="compose__confirm-line">
-            <strong>Audience:</strong> {describeAudience(criteria)}
+            <strong>Audience:</strong>{' '}
+            {selectedSegment !== undefined
+              ? `${selectedSegment.name} (${selectedSegment.description})`
+              : describeAudience(adhocCriteria as BroadcastCriteria)}
           </p>
           <p className="compose__confirm-line">
             <strong>Channels:</strong> {channels.map((c) => channelLabel(c)).join(', ')}
@@ -361,12 +522,12 @@ export function CommunicateCompose({ onClose }: CommunicateComposeProps) {
             <strong>Message:</strong> {trimmedBody}
           </p>
           <p className="compose__confirm-note">
-            This goes out to every kinfolk this audience matches, right now. The exact number reached is
-            reported below once the send completes; it isn&rsquo;t known until then.
+            This goes out to every kinfolk this audience matches, right now. The exact number reached is reported below
+            once the send completes; it isn&rsquo;t known until then.
           </p>
         </Dialog>
       )}
-    </div>
+    </>
   );
 }
 
@@ -388,14 +549,14 @@ interface BroadcastResultPanelProps {
 
 /**
  * The post-send result: the REAL `recipientCount` and per-channel
- * sent/skipped/failed tallies the callable returned, ported from the wasm
- * `broadcastSummary()` ("Reached N kinfolk...") but broken out per-channel
- * since this screen, unlike the reference, lets more than one channel fire
- * in the same send.
+ * sent/skipped/failed tallies the callable returned.
  *
- * No "Back to Recent" button here: the header's trailing button (rendered by
- * `CommunicateCompose` above, always present) already covers that, so this
- * panel doesn't grow a second, identically-labelled button next to it.
+ * One row per channel rather than the archive's single joined sentence
+ * ("Reached N kinfolk. email: 4 sent, 1 skipped; sms: 3 sent"), because this
+ * screen lets four channels fire in one send and a sentence that long stops
+ * being scannable. Only the channels actually selected are listed: the response
+ * carries all four, but rendering "push: 0 sent, 0 skipped, 0 failed" for a
+ * channel nobody chose reads as a failure rather than an absence.
  */
 function BroadcastResultPanel({ result, channels, onSendAnother }: BroadcastResultPanelProps) {
   return (

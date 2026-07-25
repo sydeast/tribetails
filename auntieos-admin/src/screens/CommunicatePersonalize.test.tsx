@@ -1,35 +1,43 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type Kinfolk } from '../api/directory';
-import {
-  type GenerateDraftResult,
-  type SendPersonalizedResult,
-} from '../api/communicateGenerate';
+import { type GenerateDraftResult } from '../api/communicateGenerate';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
-const { generateDraft, sendPersonalizedMessage } = vi.hoisted(() => ({
-  generateDraft: vi.fn(),
-  sendPersonalizedMessage: vi.fn(),
-}));
+const { generateDraft } = vi.hoisted(() => ({ generateDraft: vi.fn() }));
 vi.mock('../api/communicateGenerate', async (orig) => ({
   ...(await orig<typeof import('../api/communicateGenerate')>()),
   generateDraft,
-  sendPersonalizedMessage,
 }));
 
+const { approveGeneratedDraft } = vi.hoisted(() => ({ approveGeneratedDraft: vi.fn() }));
+vi.mock('../api/communicateApprove', async (orig) => ({
+  ...(await orig<typeof import('../api/communicateApprove')>()),
+  approveGeneratedDraft,
+}));
+
+const { sendExternalMessage } = vi.hoisted(() => ({ sendExternalMessage: vi.fn() }));
+vi.mock('../api/externalSend', () => ({ sendExternalMessage, suppressExternalRecipient: vi.fn() }));
+
 import { CommunicatePersonalize } from './CommunicatePersonalize';
+
+// NOTE: mocks reset inside `setup()`, called at the top of EACH test body rather
+// than from a shared `beforeEach`. Same deviation `api/invoicesWrite.test.ts`
+// documents: resetting a hoisted mock of a `vi.mock`'d local module from a
+// `beforeEach`, in a test that both configures a rejection and awaits it, makes
+// Vitest misreport the caught rejection as an unhandled error.
 
 function kinfolkRow(over: Partial<Kinfolk>): Kinfolk {
   return {
     _id: 'kf1',
     firstName: 'Dana',
     lastName: 'Halbrook',
-    phoneNumber: '(512) 555-1234',
+    phoneNumber: '+15125551234',
     email: 'dana@example.com',
     profilePictureUrl: '',
     status: 'active',
@@ -41,10 +49,8 @@ function kinfolkRow(over: Partial<Kinfolk>): Kinfolk {
 function draftResult(over: Partial<GenerateDraftResult> = {}): GenerateDraftResult {
   return {
     generated_copy: 'Nova had the best day at the park today.',
-    // Non-empty because Personalize now asks for want_title on the email
-    // channel and seeds the (required) subject line from it.
     generated_title: 'Nova at the park',
-    communication_type: 'email',
+    communication_type: 'visit_report',
     kinfolk_name: 'Dana Halbrook',
     kinfolk_id: 'kf1',
     draft_id: 'd1',
@@ -55,342 +61,272 @@ function draftResult(over: Partial<GenerateDraftResult> = {}): GenerateDraftResu
   };
 }
 
-let kinfolkAsync: Async<Kinfolk[]>;
+const ROWS: Kinfolk[] = [
+  kinfolkRow({}),
+  kinfolkRow({ _id: 'kf2', firstName: 'Dana', lastName: 'Zamora', email: 'dz@example.com' }),
+];
 
-beforeEach(() => {
-  kinfolkAsync = { status: 'ready', data: [kinfolkRow({})] };
-  useCollection.mockReset().mockImplementation(() => kinfolkAsync);
+function setup(rows: Async<Kinfolk[]> = { status: 'ready', data: ROWS }) {
+  useCollection.mockReset();
   generateDraft.mockReset();
-  sendPersonalizedMessage.mockReset();
+  approveGeneratedDraft.mockReset();
+  sendExternalMessage.mockReset();
+  useCollection.mockReturnValue(rows);
+  approveGeneratedDraft.mockResolvedValue({ ok: true, auditWarning: null, providerId: null, delivered: false });
+  return userEvent.setup();
+}
+
+/** Opens the typeahead, searches, and picks the named household. */
+async function pickRecipient(user: ReturnType<typeof userEvent.setup>, query: string, name: string) {
+  await user.click(screen.getByRole('button', { name: /choose|change/i }));
+  await user.type(screen.getByLabelText(/search kinfolk/i), query);
+  await user.click(screen.getByRole('button', { name: new RegExp(name) }));
+}
+
+async function generate(user: ReturnType<typeof userEvent.setup>, notes = 'Nova ate every bite.') {
+  await user.type(screen.getByLabelText(/^notes$/i), notes);
+  await user.click(screen.getByRole('button', { name: 'Generate draft' }));
+}
+
+describe('the composer form', () => {
+  it('opens on the KinTale report type, the archive default', () => {
+    setup();
+    render(<CommunicatePersonalize />);
+    expect(screen.getByRole('radio', { name: 'KinTale report' })).toBeChecked();
+  });
+
+  it('offers the four archive message types, KinTale report standing in for "Visit report"', () => {
+    setup();
+    render(<CommunicatePersonalize />);
+    for (const label of ['KinTale report', 'Text', 'Email', 'Blog']) {
+      expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it('opens on Warm and Medium', () => {
+    setup();
+    render(<CommunicatePersonalize />);
+    expect(screen.getByRole('radio', { name: 'Warm' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'Medium' })).toBeChecked();
+  });
+
+  it('offers the archive tone and length sets', () => {
+    setup();
+    render(<CommunicatePersonalize />);
+    for (const label of ['Warm', 'Cheerful', 'Professional', 'Playful', 'Short', 'Medium', 'Long']) {
+      expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it('hides the recipient picker for a Blog post, which addresses nobody', async () => {
+    const user = setup();
+    render(<CommunicatePersonalize />);
+    expect(screen.getByText('Recipient')).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: 'Blog' }));
+    expect(screen.queryByText('Recipient')).not.toBeInTheDocument();
+  });
 });
 
-async function pickRecipient(name = 'Dana Halbrook') {
-  await userEvent.selectOptions(screen.getByLabelText(/recipient/i), name);
-}
-
-async function fillNotes(text = 'Nova ran for an hour at the park.') {
-  await userEvent.type(screen.getByLabelText(/^notes/i), text);
-}
-
-describe('CommunicatePersonalize screen', () => {
-  it('lists kinfolk in the recipient picker and disables Generate until a recipient and notes are supplied', async () => {
-    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1', firstName: 'Dana', lastName: 'Halbrook' })] };
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    expect(screen.getByRole('option', { name: 'Dana Halbrook' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /generate draft/i })).toBeDisabled();
-
-    await pickRecipient();
-    expect(screen.getByRole('button', { name: /generate draft/i })).toBeDisabled();
-
-    await fillNotes();
-    expect(screen.getByRole('button', { name: /generate draft/i })).toBeEnabled();
-  });
-
-  it('shows a loading state while the kinfolk listener is still loading', () => {
-    kinfolkAsync = { status: 'loading' };
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    expect(screen.getByRole('status')).toBeInTheDocument();
-  });
-
-  it('surfaces a kinfolk load failure fail-loud, never a false empty picker', () => {
-    kinfolkAsync = { status: 'error', message: 'permission-denied' };
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    expect(screen.getByText(/permission-denied/)).toBeInTheDocument();
-  });
-
-  it('shows the proven-empty state when there is no kinfolk on file', () => {
-    kinfolkAsync = { status: 'ready', data: [] };
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    expect(screen.getByText(/no kinfolk on file yet/i)).toBeInTheDocument();
-  });
-
-  it('defaults the channel to email when the recipient has one on file', async () => {
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    expect(screen.getByRole('radio', { name: /email/i })).toBeChecked();
-  });
-
-  it('defaults to text when the recipient has only a phone number on file', async () => {
-    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ email: '' })] };
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    expect(screen.getByRole('radio', { name: /text/i })).toBeChecked();
-    expect(screen.getByRole('radio', { name: /email/i })).toBeDisabled();
-  });
-
-  it('shows a "no contact method" banner and disables both channels when neither is on file', async () => {
-    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ email: '', phoneNumber: '' })] };
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    expect(screen.getByText(/no contact method on file/i)).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: /email/i })).toBeDisabled();
-    expect(screen.getByRole('radio', { name: /text/i })).toBeDisabled();
-  });
-
-  it('calls generateDraft with the recipient, channel, and trimmed notes, omitting empty optional fields', async () => {
+describe('the recipient typeahead', () => {
+  it('resolves a real kinfolk id, and sends it, so the server never fuzzy-matches a name', async () => {
+    const user = setup();
     generateDraft.mockResolvedValue(draftResult());
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes('  Nova ran for an hour.  ');
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
+    render(<CommunicatePersonalize />);
+
+    await pickRecipient(user, 'Zamora', 'Dana Zamora');
+    await generate(user);
 
     await waitFor(() => expect(generateDraft).toHaveBeenCalled());
-    expect(generateDraft).toHaveBeenCalledWith({
-      communication_type: 'email',
-      recipient: 'Dana Halbrook',
-      raw_notes: 'Nova ran for an hour.',
-      // Email has somewhere to put a title now (the required subject line),
-      // which is the condition want_title's own doc sets for paying for the
-      // extra model call.
-      want_title: true,
-    });
+    expect(generateDraft.mock.calls[0]?.[0]?.kinfolk_id).toBe('kf2');
+    expect(generateDraft.mock.calls[0]?.[0]?.recipient).toBe('Dana Zamora');
   });
 
-  it('does NOT ask for a title on the sms channel, which has no subject line', async () => {
-    kinfolkAsync = {
-      status: 'ready',
-      data: [kinfolkRow({ _id: 'kf1', firstName: 'Dana', lastName: 'Halbrook', email: '', phoneNumber: '+15125551234' })],
-    };
-    generateDraft.mockResolvedValue(draftResult({ communication_type: 'sms' }));
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
-
-    await waitFor(() => expect(generateDraft).toHaveBeenCalled());
-    expect(generateDraft.mock.calls[0]?.[0]).not.toHaveProperty('want_title');
+  it('distinguishes two households that share a first name, which a name match could not', async () => {
+    const user = setup();
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('button', { name: /choose/i }));
+    await user.type(screen.getByLabelText(/search kinfolk/i), 'Dana');
+    expect(screen.getByRole('button', { name: /Dana Halbrook/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Dana Zamora/ })).toBeInTheDocument();
   });
 
-  it('includes tone_hint and max_length only when filled in', async () => {
+  it('says so plainly when a search matches nobody, instead of falling back to everybody', async () => {
+    const user = setup();
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('button', { name: /choose/i }));
+    await user.type(screen.getByLabelText(/search kinfolk/i), 'Nobody');
+    expect(screen.getByText(/no kinfolk match/i)).toBeInTheDocument();
+  });
+
+  it('offers no free-text entry, so an unresolved name can never be sent', () => {
+    setup();
+    render(<CommunicatePersonalize />);
+    expect(screen.queryByLabelText(/recipient name/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('generate', () => {
+  it('asks for notes before anything else, and makes no call', async () => {
+    const user = setup();
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('button', { name: 'Generate draft' }));
+    expect(await screen.findByText('Add a few notes first so Auntie has something to write about.')).toBeInTheDocument();
+    expect(generateDraft).not.toHaveBeenCalled();
+  });
+
+  it('asks for a recipient once notes exist, and makes no call', async () => {
+    const user = setup();
+    render(<CommunicatePersonalize />);
+    await generate(user);
+    expect(await screen.findByText('Pick a recipient for this message type first.')).toBeInTheDocument();
+    expect(generateDraft).not.toHaveBeenCalled();
+  });
+
+  it('carries the tone and length chips as tone_hint and max_length', async () => {
+    const user = setup();
     generateDraft.mockResolvedValue(draftResult());
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.type(screen.getByLabelText(/tone/i), 'celebratory');
-    await userEvent.type(screen.getByLabelText(/length/i), 'short');
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
+    render(<CommunicatePersonalize />);
+
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await user.click(screen.getByRole('radio', { name: 'Playful' }));
+    await user.click(screen.getByRole('radio', { name: 'Short' }));
+    await generate(user);
 
     await waitFor(() => expect(generateDraft).toHaveBeenCalled());
-    expect(generateDraft).toHaveBeenCalledWith(
-      expect.objectContaining({ tone_hint: 'celebratory', max_length: 'short' }),
-    );
+    expect(generateDraft.mock.calls[0]?.[0]?.tone_hint).toBe('playful');
+    expect(generateDraft.mock.calls[0]?.[0]?.max_length).toBe('short');
   });
 
-  it('shows the generated draft in an editable textarea', async () => {
-    generateDraft.mockResolvedValue(draftResult({ generated_copy: 'Nova had a wonderful time today.' }));
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
+  it('puts the copy in an editable box, not a read-only preview', async () => {
+    const user = setup();
+    generateDraft.mockResolvedValue(draftResult());
+    render(<CommunicatePersonalize />);
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
 
-    const draftBox = await screen.findByDisplayValue('Nova had a wonderful time today.');
-    await userEvent.clear(draftBox);
-    await userEvent.type(draftBox, 'Edited by the operator.');
-    expect(draftBox).toHaveValue('Edited by the operator.');
+    const box = await screen.findByLabelText(/edit before approving/i);
+    expect(box).toBeInstanceOf(HTMLTextAreaElement);
+    expect(box).not.toHaveAttribute('readonly');
   });
 
-  it('surfaces a draftWriteFailed warning without hiding the generated copy', async () => {
+  it('says the draft was not saved when the server says so, rather than letting the operator lose it', async () => {
+    const user = setup();
     generateDraft.mockResolvedValue(
-      draftResult({ draftWriteFailed: true, draft_id: null, warnings: ['Draft write failed: permission-denied'] }),
+      draftResult({ draft_id: null, draftWriteFailed: true, warnings: ['Draft write failed: quota'] }),
     );
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
+    render(<CommunicatePersonalize />);
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
 
-    expect(await screen.findByText(/draft not saved/i)).toBeInTheDocument();
-    expect(screen.getByText(/Draft write failed: permission-denied/)).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Nova had the best day at the park today.')).toBeInTheDocument();
+    expect(await screen.findByText(/Draft write failed: quota/)).toBeInTheDocument();
   });
 
-  it('fails loud on a generate error and leaves the form intact for a retry', async () => {
-    generateDraft.mockRejectedValueOnce(new Error('No Kinfolk match for "Dana Halbrook"'));
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes('Some notes');
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
+  it('surfaces a generate failure in the server’s own words', async () => {
+    const user = setup();
+    generateDraft.mockImplementation(() => Promise.reject(new Error('generate_rate_limit_exceeded')));
+    render(<CommunicatePersonalize />);
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+    expect(await screen.findByText('generate_rate_limit_exceeded')).toBeInTheDocument();
+  });
+});
 
-    expect(await screen.findByText(/No Kinfolk match for "Dana Halbrook"/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/^notes/i)).toHaveValue('Some notes');
-    expect(screen.queryByRole('button', { name: /regenerate/i })).toBeNull();
+describe('approve', () => {
+  async function draftReady(user: ReturnType<typeof userEvent.setup>, over: Partial<GenerateDraftResult> = {}) {
+    generateDraft.mockResolvedValue(draftResult(over));
+    render(<CommunicatePersonalize />);
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
+  }
+
+  it('promotes the draft through the ordered approve, passing the edited copy', async () => {
+    const user = setup();
+    await draftReady(user);
+    await user.click(screen.getByRole('button', { name: 'Approve draft' }));
+
+    await waitFor(() => expect(approveGeneratedDraft).toHaveBeenCalled());
+    const args = approveGeneratedDraft.mock.calls[0]?.[0];
+    expect(args?.draftId).toBe('d1');
+    expect(args?.kinfolkId).toBe('kf1');
+    expect(args?.editedCopy).toBe('Nova had the best day at the park today.');
   });
 
-  it('regenerates with avoid_opening set to the current draft opening', async () => {
-    generateDraft.mockResolvedValueOnce(draftResult({ generated_copy: 'Well, Nova had quite a day. She ran the whole time.' }));
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
-    await screen.findByDisplayValue('Well, Nova had quite a day. She ran the whole time.');
+  it('sends nothing for a KinTale report, which delivers from the KinTale flow rather than here', async () => {
+    const user = setup();
+    await draftReady(user);
+    await user.click(screen.getByRole('button', { name: 'Approve draft' }));
+    await waitFor(() => expect(approveGeneratedDraft).toHaveBeenCalled());
+    expect(approveGeneratedDraft.mock.calls[0]?.[0]?.deliver).toBeUndefined();
+  });
 
-    generateDraft.mockResolvedValueOnce(draftResult({ generated_copy: 'Nova ran the whole visit today.' }));
-    await userEvent.click(screen.getByRole('button', { name: /^regenerate$/i }));
+  it('confirms before a deliverable send, because it reaches a real household and is not undoable', async () => {
+    const user = setup();
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'email' }));
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'Email' }));
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await user.type(screen.getByLabelText(/^subject$/i), 'Nova at the park');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
 
-    await waitFor(() =>
-      expect(generateDraft).toHaveBeenLastCalledWith(
-        expect.objectContaining({ avoid_opening: 'Well, Nova had quite a day.' }),
-      ),
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    expect(await screen.findByText(/not undoable/i)).toBeInTheDocument();
+    expect(approveGeneratedDraft).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    await waitFor(() => expect(approveGeneratedDraft).toHaveBeenCalled());
+    expect(typeof approveGeneratedDraft.mock.calls[0]?.[0]?.deliver).toBe('function');
+  });
+
+  it('refuses to approve a draft the server never saved', async () => {
+    const user = setup();
+    await draftReady(user, { draft_id: null, draftWriteFailed: true, warnings: [] });
+    await user.click(screen.getByRole('button', { name: 'Approve draft' }));
+    expect(
+      await screen.findByText('This draft was not saved, so there is nothing to approve. Regenerate and try again.'),
+    ).toBeInTheDocument();
+    expect(approveGeneratedDraft).not.toHaveBeenCalled();
+  });
+
+  it('refuses an email with no subject, before the send would', async () => {
+    const user = setup();
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'email', generated_title: '' }));
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'Email' }));
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
+
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    expect(await screen.findByText('Email needs a subject.')).toBeInTheDocument();
+    expect(approveGeneratedDraft).not.toHaveBeenCalled();
+  });
+
+  it('reports an approve failure and never claims the draft was promoted', async () => {
+    const user = setup();
+    approveGeneratedDraft.mockImplementation(() =>
+      Promise.reject(new Error('Approve failed, the draft was not promoted: PERMISSION_DENIED')),
     );
+    await draftReady(user);
+    await user.click(screen.getByRole('button', { name: 'Approve draft' }));
+
+    expect(await screen.findByText(/the draft was not promoted/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^Draft approved$/i)).not.toBeInTheDocument();
   });
 
-  it('opens a confirm Dialog naming the recipient, channel, and exact message before sending', async () => {
-    generateDraft.mockResolvedValue(draftResult());
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
-    await screen.findByDisplayValue('Nova had the best day at the park today.');
-    await userEvent.click(screen.getByRole('button', { name: /review & send/i }));
-
-    const dialog = screen.getByRole('dialog', { name: /send this message/i });
-    expect(dialog).toHaveTextContent('Dana Halbrook');
-    expect(dialog).toHaveTextContent('dana@example.com');
-    expect(dialog).toHaveTextContent('Email');
-    expect(dialog).toHaveTextContent('Nova at the park');
-    expect(dialog).toHaveTextContent('Nova had the best day at the park today.');
-    expect(sendPersonalizedMessage).not.toHaveBeenCalled();
-  });
-
-  it('sends only on explicit confirm, disables the dialog while busy, and shows the real result', async () => {
-    generateDraft.mockResolvedValue(draftResult());
-    let release!: (v: SendPersonalizedResult) => void;
-    sendPersonalizedMessage.mockReturnValue(new Promise<SendPersonalizedResult>((r) => (release = r)));
-
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
-    await screen.findByDisplayValue('Nova had the best day at the park today.');
-    await userEvent.click(screen.getByRole('button', { name: /review & send/i }));
-    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
-
-    expect(screen.getByRole('button', { name: /cancel/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /sending/i })).toBeDisabled();
-    expect(sendPersonalizedMessage).toHaveBeenCalledWith({
-      channel: 'email',
-      message_body: 'Nova had the best day at the park today.',
-      kinfolk_id: 'kf1',
-      recipient_email: 'dana@example.com',
-      subject: 'Nova at the park',
+  it('says the draft is approved but the audit entry is missing, rather than hiding one or the other', async () => {
+    const user = setup();
+    approveGeneratedDraft.mockResolvedValue({
+      ok: true,
+      auditWarning: 'audit chain busy',
+      providerId: null,
+      delivered: false,
     });
+    await draftReady(user);
+    await user.click(screen.getByRole('button', { name: 'Approve draft' }));
 
-    release({ ok: true, providerId: 'SM123' });
-    await waitFor(() => expect(screen.getByText(/message sent/i)).toBeInTheDocument());
-    expect(screen.getByText(/Provider reference: SM123/)).toBeInTheDocument();
-    expect(screen.queryByRole('dialog')).toBeNull();
-  });
-
-  it('fails loud on a send error, closes the dialog, and preserves the draft for a retry', async () => {
-    generateDraft.mockResolvedValue(draftResult());
-    sendPersonalizedMessage.mockRejectedValueOnce(new Error('recipient_opted_out'));
-
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
-    await screen.findByDisplayValue('Nova had the best day at the park today.');
-    await userEvent.click(screen.getByRole('button', { name: /review & send/i }));
-    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
-
-    expect(await screen.findByText(/recipient_opted_out/)).toBeInTheDocument();
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.getByDisplayValue('Nova had the best day at the park today.')).toBeInTheDocument();
-  });
-
-  it('Cancel closes the confirm Dialog without sending', async () => {
-    generateDraft.mockResolvedValue(draftResult());
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
-    await screen.findByDisplayValue('Nova had the best day at the park today.');
-    await userEvent.click(screen.getByRole('button', { name: /review & send/i }));
-    await userEvent.click(screen.getByRole('button', { name: /cancel/i }));
-
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(sendPersonalizedMessage).not.toHaveBeenCalled();
-  });
-
-  it('"Send another" clears the form back to an empty, unselected state', async () => {
-    generateDraft.mockResolvedValue(draftResult());
-    sendPersonalizedMessage.mockResolvedValue({ ok: true, providerId: null });
-
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
-    await screen.findByDisplayValue('Nova had the best day at the park today.');
-    await userEvent.click(screen.getByRole('button', { name: /review & send/i }));
-    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
-    await screen.findByText(/message sent/i);
-
-    await userEvent.click(screen.getByRole('button', { name: /send another/i }));
-    expect(screen.getByLabelText(/recipient/i)).toHaveValue('');
-    expect(screen.getByLabelText(/^notes/i)).toHaveValue('');
-    expect(screen.queryByDisplayValue('Nova had the best day at the park today.')).toBeNull();
-  });
-
-  // ── Email subject ────────────────────────────────────────────────────────
-  // sendExternalMessage rejects a blank subject on the email channel, so the
-  // screen has to collect one. It is seeded from the generated title and only
-  // overwritten while the operator has not typed their own.
-  it('seeds the subject from the generated title and sends it', async () => {
-    generateDraft.mockResolvedValue(draftResult());
-    sendPersonalizedMessage.mockResolvedValue({ ok: true, providerId: 'SM1' });
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
-    await screen.findByDisplayValue('Nova had the best day at the park today.');
-    expect(screen.getByLabelText(/subject/i)).toHaveValue('Nova at the park');
-  });
-  it('never overwrites a subject the operator typed, even on regenerate', async () => {
-    generateDraft.mockResolvedValue(draftResult());
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
-    await screen.findByDisplayValue('Nova had the best day at the park today.');
-    const subjectField = screen.getByLabelText(/subject/i);
-    await userEvent.clear(subjectField);
-    await userEvent.type(subjectField, 'A subject I wrote');
-    generateDraft.mockResolvedValue(draftResult({ generated_title: 'A different title' }));
-    await userEvent.click(screen.getByRole('button', { name: /regenerate/i }));
-    await waitFor(() => expect(generateDraft).toHaveBeenCalledTimes(2));
-    expect(screen.getByLabelText(/subject/i)).toHaveValue('A subject I wrote');
-  });
-  it('blocks Review & send with an inline error when the email subject is blank', async () => {
-    generateDraft.mockResolvedValue(draftResult({ generated_title: '' }));
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
-    await screen.findByDisplayValue('Nova had the best day at the park today.');
-    expect(screen.getByLabelText(/subject/i)).toHaveValue('');
-    await userEvent.click(screen.getByRole('button', { name: /review & send/i }));
-    // No confirm dialog, no send, and the reason is on screen rather than
-    // arriving later as a server-side rejection.
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(sendPersonalizedMessage).not.toHaveBeenCalled();
-    expect(screen.getByRole('alert')).toHaveTextContent(/subject is required/i);
-  });
-  it('has no subject field on the sms channel', async () => {
-    kinfolkAsync = {
-      status: 'ready',
-      data: [kinfolkRow({ _id: 'kf1', firstName: 'Dana', lastName: 'Halbrook', email: '', phoneNumber: '+15125551234' })],
-    };
-    generateDraft.mockResolvedValue(draftResult({ communication_type: 'sms' }));
-    render(<CommunicatePersonalize onClose={() => {}} />);
-    await pickRecipient();
-    await fillNotes();
-    await userEvent.click(screen.getByRole('button', { name: /generate draft/i }));
-    await screen.findByDisplayValue('Nova had the best day at the park today.');
-    expect(screen.queryByLabelText(/subject/i)).toBeNull();
-  });
-  it('"Back to Recent" calls onClose', async () => {
-    const onClose = vi.fn();
-    render(<CommunicatePersonalize onClose={onClose} />);
-    await userEvent.click(screen.getByRole('button', { name: /back to recent/i }));
-    expect(onClose).toHaveBeenCalled();
+    expect(await screen.findByText(/audit chain busy/)).toBeInTheDocument();
+    expect(screen.getByText(/Draft approved/i)).toBeInTheDocument();
   });
 });
