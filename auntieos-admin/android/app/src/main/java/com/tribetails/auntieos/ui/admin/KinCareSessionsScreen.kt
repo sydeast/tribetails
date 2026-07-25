@@ -116,34 +116,25 @@ fun KinCareSessionsScreen(
         }
     }
 
-    // Day-of operational window, mirrors the web filter:
-    //   Active:   any date, currently in flight
-    //   Upcoming: SCHEDULED today through the next 14 days (hides stale migration noise)
-    //   Recent:   COMPLETED / CANCELLED since yesterday
-    // DRAFT / PENDING bookings are intentionally excluded; a booking surfaces here
-    // only once it is approved to SCHEDULED.
+    // Day-of operational window. The rules, and why each boundary sits where it
+    // does, live in `AuntieTimeWindow.kt` alongside their tests; this screen
+    // just applies them. Web's `lib/sessionFormat.ts` is the twin.
+    //
     // AO-18: the operator's "today" must be the LOCAL calendar date, not UTC.
     // nowIso() is UTC (correct for the stored *At timestamps below), but using
     // its date here shifted the whole Auntie Time day-window to tomorrow every
     // evening after ~19:00 CDT (UTC has already rolled over). LocalDate.now()
     // matches how android's Home/Invoices/Activity screens already compute today.
     val today = LocalDate.now().toString()
-    val yesterday = dateAddDays(today, -1)
-    val cutoff = dateAddDays(today, 14)
-    val visible = sessions.filter { session ->
-        val status = session.status.uppercase()
-        val date = session.startTime.take(10)
-        when {
-            status in setOf("ON_MY_WAY", "ARRIVED", "DEPARTED") -> true
-            status == "SCHEDULED" -> date in yesterday..cutoff
-            status in setOf("COMPLETED", "CANCELLED") -> date >= yesterday
-            else -> false
-        }
-    }
+    val visible = sessions.filter { isVisibleOnAuntieTime(it, today) }
+
+    // Operator issue #17: soonest or latest first, applied WITHIN each phase so
+    // "latest first" can never float Recent above Active.
+    var sort by remember { mutableStateOf(AuntieTimeSort.Soonest) }
 
     val grouped = visible
-        .sortedBy { it.startTime }
         .groupBy { phaseFor(it) }
+        .mapValues { (_, rows) -> sortSessions(rows, sort) }
 
     val activeCount = grouped[Phase.Active].orEmpty().size
     val upcomingToday = grouped[Phase.Upcoming].orEmpty().count { it.startTime.take(10) == today }
@@ -219,6 +210,15 @@ fun KinCareSessionsScreen(
                                 upcomingToday = upcomingToday,
                                 recentDone = recentDone,
                             )
+                            Spacer(Modifier.height(16.dp))
+
+                            AuntieChipGroup(
+                                options = AuntieTimeSort.entries.toList(),
+                                selected = setOf(sort),
+                                onSelectionChange = { next -> next.firstOrNull()?.let { sort = it } },
+                                label = { it.label },
+                                singleSelect = true,
+                            )
                             Spacer(Modifier.height(20.dp))
 
                             Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -229,6 +229,7 @@ fun KinCareSessionsScreen(
                                             phase = phase,
                                             count = items.size,
                                             sessions = items,
+                                            todayIso = today,
                                             kinfolkById = { kinfolkById[it] },
                                             kinById = kinById,
                                             breadcrumbsFor = breadcrumbsFor,
@@ -295,6 +296,8 @@ private fun PhaseGroup(
     phase: Phase,
     count: Int,
     sessions: List<KinCareSession>,
+    /** LOCAL today, so a card can decide whether its date needs a year. */
+    todayIso: String,
     kinfolkById: (String) -> Kinfolk?,
     kinById: Map<String, com.tribetails.auntieos.data.model.Kin>,
     breadcrumbsFor: (String) -> kotlinx.coroutines.flow.Flow<Result<List<com.tribetails.auntieos.data.model.LocationPoint>>>,
@@ -322,6 +325,7 @@ private fun PhaseGroup(
                 val kinfolk = kinfolkById(session.kinfolkId)
                 KinCareCard(
                     session = session,
+                    todayIso = todayIso,
                     address = kinfolk?.serviceAddress.orEmpty(),
                     phone = kinfolk?.phoneNumber.orEmpty(),
                     email = kinfolk?.email.orEmpty(),
@@ -343,6 +347,7 @@ private fun PhaseGroup(
 @Composable
 private fun KinCareCard(
     session: KinCareSession,
+    todayIso: String,
     address: String,
     phone: String,
     email: String,
@@ -406,7 +411,7 @@ private fun KinCareCard(
                             ServicePill(serviceType = session.serviceType)
                         }
                         Text(
-                            text = sessionWindow(session),
+                            text = sessionWindow(session, todayIso),
                             style = AuntieTheme.typography.bodySmall,
                             color = c.textDim,
                         )
@@ -826,48 +831,10 @@ private fun phaseFor(s: KinCareSession): Phase = when (s.status.uppercase()) {
     else -> Phase.CompletedToday
 }
 
-private fun sessionWindow(s: KinCareSession): String {
-    val start = shortDateTime(s.startTime)
-    val end = shortTime(s.endTime)
-    return when {
-        start.isBlank() && end.isBlank() -> "Time TBD"
-        end.isBlank() -> start
-        else -> "$start to $end"
-    }
-}
+/**
+ * The window, sort and date-label rules moved to `AuntieTimeWindow.kt` when
+ * operator issue #17 changed them (Recent is now seven days, the year shows
+ * outside the current one, and the operator can flip the sort). They are pure
+ * functions with their own unit tests there; this file stays the Composable.
+ */
 
-private fun shortDateTime(iso: String): String =
-    runCatching {
-        if (iso.length < 16) return@runCatching iso
-        val month = MONTHS[iso.substring(5, 7).toInt() - 1]
-        val day = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
-        val time = iso.substring(11, 16)
-        "$month $day · $time"
-    }.getOrDefault(iso)
-
-private fun shortTime(iso: String): String =
-    runCatching { if (iso.length >= 16) iso.substring(11, 16) else iso }
-        .getOrDefault(iso)
-
-private val MONTHS = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-
-/** Add [days] days to an ISO date string "YYYY-MM-DD". Handles month/year rollover. */
-private fun dateAddDays(iso: String, days: Int): String = runCatching {
-    if (iso.length < 10) return@runCatching iso
-    var y = iso.substring(0, 4).toInt()
-    var m = iso.substring(5, 7).toInt()
-    var d = iso.substring(8, 10).toInt() + days
-    while (d < 1) { m--; if (m < 1) { m = 12; y-- }; d += daysInMonth(y, m) }
-    while (d > daysInMonth(y, m)) { d -= daysInMonth(y, m); m++; if (m > 12) { m = 1; y++ } }
-    val ys = y.toString().padStart(4, '0')
-    val ms = m.toString().padStart(2, '0')
-    val ds = d.toString().padStart(2, '0')
-    "$ys-$ms-$ds"
-}.getOrDefault(iso)
-
-private fun daysInMonth(y: Int, m: Int) = when (m) {
-    1, 3, 5, 7, 8, 10, 12 -> 31
-    4, 6, 9, 11 -> 30
-    2 -> if (y % 400 == 0 || (y % 4 == 0 && y % 100 != 0)) 29 else 28
-    else -> 30
-}
