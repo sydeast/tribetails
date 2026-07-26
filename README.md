@@ -58,16 +58,16 @@ running it.
 
 ## Layout notes
 
-Each folder keeps its own toolchain, lockfile and tests, and is built
-independently. The root `package.json` holds no dependencies; it exists so every
-task has one name from the root rather than a path to remember.
+Each folder keeps its own toolchain and is built independently:
 
-    npm run setup       one-time: hooks, Android SDK path, all installs
-    npm test            every JS suite
-    npm run check       typecheck, lint, test, build
+- `mytribe/functions`: Node, `npm test` (vitest)
+- `mytribe/web`: Vite + React, `npm test`
+- `auntieos-admin`: Vite + React, `npm test`
+- `auntieos-admin/web`: Gradle, `:composeApp:compileKotlinJvm`, `:composeApp:jvmTest`
+- `auntieos-admin/web/functions`: Node, `npm test` (`node --test`)
+- `auntieos-admin/android`: Gradle, `:app:testDebugUnitTest`
 
-Suffix `test`, `typecheck` or `build` with `:functions`, `:admin` or `:portal`
-to run one project. `docs/RUNBOOK.md` has the full table.
+There is no root build. Run gates from the folder you changed.
 
 ## Secrets
 
