@@ -254,6 +254,21 @@ Dangerous because a failed fetch leaves stale refs and every later local answer
 is confidently wrong. `gh` uses an HTTPS token and is unaffected, so cross-check
 with `gh pr view` before believing local git.
 
+**Typecheck or build errors in code you did not touch, right after pulling
+main.** Example: `'rolldownOptions' does not exist in type
+'BuildEnvironmentOptions'` from `vite.config.ts`. A dependency-upgrade PR moved
+the lockfile past your installed `node_modules`, so tsc is checking new code
+against old types. `npm run setup` will NOT fix this: it skips any project whose
+`node_modules` directory exists, without checking staleness. Reinstall
+explicitly:
+
+```bash
+FORCE_INSTALL=1 npm run setup
+```
+
+or `npm --prefix <project> ci` for just the affected project. `npm ci` rather
+than `npm install`, so what lands is exactly the lockfile.
+
 **Gradle: "SDK location not found".** Run `npm run setup`.
 
 **Release build complains about signing.** `local.properties` needs
