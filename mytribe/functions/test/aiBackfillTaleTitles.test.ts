@@ -15,9 +15,10 @@ vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryFn }));
 vi.mock('../src/lib/staffGate', () => ({ isStaff: mocks.isStaffFn }));
 vi.mock('@anthropic-ai/sdk', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    messages: { batches: { create: mocks.batchCreateFn } },
-  })),
+  // vitest 4: a mock used with `new` must be implemented with `function`/`class`.
+  default: vi.fn(function () {
+    return { messages: { batches: { create: mocks.batchCreateFn } } };
+  }),
 }));
 
 import { aiBackfillTaleTitlesHandler } from '../src/admin/aiBackfillTaleTitles';

@@ -3,9 +3,10 @@ import { describe, it, expect, vi } from 'vitest';
 const constructEventMock = vi.fn();
 vi.mock('stripe', () => {
   return {
-    default: vi.fn().mockImplementation(() => ({
-      webhooks: { constructEvent: constructEventMock },
-    })),
+    // vitest 4: a mock used with `new` must be implemented with `function`/`class`.
+    default: vi.fn(function () {
+      return { webhooks: { constructEvent: constructEventMock } };
+    }),
   };
 });
 

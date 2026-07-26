@@ -13,9 +13,10 @@ vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryFn }));
 vi.mock('@anthropic-ai/sdk', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    messages: { batches: { retrieve: mocks.batchRetrieveFn, results: mocks.batchResultsFn } },
-  })),
+  // vitest 4: a mock used with `new` must be implemented with `function`/`class`.
+  default: vi.fn(function () {
+    return { messages: { batches: { retrieve: mocks.batchRetrieveFn, results: mocks.batchResultsFn } } };
+  }),
 }));
 
 import { runAiBatchPoll, normalizeTitle, MAX_TITLE_CHARS } from '../src/scheduled/aiBatchPollCron';

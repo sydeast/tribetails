@@ -18,9 +18,10 @@ vi.mock('../src/lib/conversations', async (importActual) => ({
   readThread: mocks.readThreadFn,
 }));
 vi.mock('@anthropic-ai/sdk', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    messages: { create: mocks.createFn },
-  })),
+  // vitest 4: a mock used with `new` must be implemented with `function`/`class`.
+  default: vi.fn(function () {
+    return { messages: { create: mocks.createFn } };
+  }),
 }));
 
 import { generateHandler } from '../src/portal/generate';
