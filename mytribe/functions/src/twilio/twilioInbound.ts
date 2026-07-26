@@ -83,7 +83,7 @@ async function matchKinfolkByPhone(
   rawNumber: string,
 ): Promise<{ kinfolkId: string | null; kinfolkName: string }> {
   const miss = { kinfolkId: null as string | null, kinfolkName: '' };
-  let e164: string | null = null;
+  let e164: string | null;
   try {
     e164 = normalizeE164(rawNumber);
   } catch {

@@ -84,8 +84,8 @@ export async function requestPasswordResetHandler(
   // paths are timing-indistinguishable, closes the auth/user-not-found
   // fast-throw oracle (~5ms miss vs ~500ms hit prior to this).
   const startMs = Date.now();
-  let user: import('firebase-admin/auth').UserRecord | null = null;
-  let link: string | null = null;
+  let user: import('firebase-admin/auth').UserRecord | null;
+  let link: string | null;
   try {
     user = await auth().getUserByEmail(email);
   } catch {
