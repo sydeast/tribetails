@@ -8,21 +8,59 @@ Every command here was run against the repo on 2026-07-26.
 
 ## Setup
 
+### What the machine needs first
+
+```bash
+bash scripts/preflight.sh
+```
+
+Changes nothing. Reports every tool, and for each missing one prints the install
+command for your platform. Run it before anything else; `npm run setup` runs it
+too and refuses to start if anything required is absent.
+
+| Tool | Needed for | Install (macOS) |
+|---|---|---|
+| **git** | everything | `xcode-select --install` |
+| **Node 22** | every JS project. 22 is the deployed functions runtime, pinned in `.nvmrc` | `nvm install 22 && nvm use` |
+| **npm** | dependencies | ships with Node |
+| **JDK 17+** | Firebase emulators (`test:rules`, `e2e`) and Gradle | `brew install --cask temurin@21` |
+| **firebase-tools** | emulators and every deploy | `npm install -g firebase-tools` |
+| Android SDK | Android builds only | Android Studio, or set `ANDROID_HOME` |
+| gh | PRs from the terminal | `brew install gh` |
+
+Two of these fail in ways that do not name themselves, which is why preflight
+checks them by RUNNING them rather than by looking for the binary:
+
+- **No JDK** produces `Could not start Firestore Emulator`, which mentions
+  neither Java nor the fix. macOS makes this worse by shipping a `/usr/bin/java`
+  stub that exists on a machine with no JDK and only fails when executed.
+- **firebase-tools missing** fails inside an npm script, so the error names the
+  script rather than the missing tool.
+
+### Then
+
 ```bash
 npm run setup
 ```
 
-Idempotent, safe to re-run. It points git at `.githooks`, writes
-`auntieos-admin/android/local.properties` if you have no Android SDK path yet,
-checks your Node against `.nvmrc`, and installs all three JS projects one at a
-time.
+Idempotent, safe to re-run. Runs preflight, points git at `.githooks`, writes
+`auntieos-admin/android/local.properties` if absent (never overwriting an
+existing one, which also holds signing keys), installs all three JS projects one
+at a time, and then **proves it worked** by typechecking. If any step fails it
+says which step, rather than exiting quietly.
 
-Then optionally, for Sentry and an App Check debug token. Both apps run fine
-without them:
+Optional, for Sentry and an App Check debug token. Both apps run fine without
+them:
 
 ```bash
 cp auntieos-admin/.env.example auntieos-admin/.env
 cp mytribe/web/.env.example mytribe/web/.env.local
+```
+
+Playwright needs its browser once, before `npm run e2e`:
+
+```bash
+npm --prefix auntieos-admin run e2e:install
 ```
 
 ---

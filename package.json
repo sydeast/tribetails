@@ -6,8 +6,8 @@
     "node": ">=22"
   },
   "scripts": {
+    "preflight": "bash scripts/preflight.sh",
     "setup": "bash scripts/bootstrap.sh",
-    "prepare": "git config core.hooksPath .githooks",
 
     "dev:admin": "npm --prefix auntieos-admin run dev",
     "dev:portal": "npm --prefix mytribe/web run dev",
