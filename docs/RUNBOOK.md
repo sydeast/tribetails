@@ -117,9 +117,10 @@ DSN qualifies; it is write-only ingestion, rate-limited on Sentry's side.
 | Admin | `npm --prefix auntieos-admin run dev` | **5174** |
 | Portal | `npm --prefix mytribe/web run dev` | 5173 |
 
-The admin is pinned to 5174 specifically so both can run side by side. If you
-have a `.claude/launch.json` that says 5173 for the admin, it is wrong and the
-browser preview will open on an empty port while the server sits on 5174.
+The admin is pinned to 5174 specifically so both can run side by side, which is
+why `.claude/launch.json` declares 5174 for it. That file said 5173 until
+2026-07-26, so a browser preview opened on an empty port while the dev server sat
+on 5174. If you see 5173 there again, that is the bug returning.
 
 ### Test
 
