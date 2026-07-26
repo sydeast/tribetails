@@ -82,6 +82,7 @@ From the repo root. Each fans out to the project that owns it.
 | `npm run lint` | Functions eslint |
 | `npm run e2e` | Playwright against the emulator |
 | `npm run check` | typecheck, lint, test, build. What CI runs. |
+| `npm run deploy` | The production run. See [Deploying](#deploying). |
 
 Suffix any of `test`, `typecheck`, `build` with `:functions`, `:admin` or
 `:portal` to run one project.
@@ -149,6 +150,56 @@ every client mirror. A red test there is the guard working.
 
 ## Deploying
 
+**`npm run build` does not deploy.** It writes `dist/` on your disk and uploads
+nothing. This is the mistake that has actually been made here: on 2026-07-26 the
+live admin was 33 hours and ~19 merged PRs behind `main` because a green build
+was read as a shipped one.
+
+### The production run
+
+```bash
+npm run deploy
+```
+
+That is the whole release. `scripts/release.sh` runs the steps below **in this
+order**, stops at the first failure, and names the step it died in.
+
+| # | Step | Why here |
+|---|---|---|
+| 0 | Preconditions | Clean tree, on `main`, synced with origin. Shipping uncommitted or stale code is the classic incident. |
+| 1 | `npm run check` | Typecheck, lint, test, build. Not optional theatre: this is what produces the `dist/` that step 6 uploads. |
+| 2 | Firestore indexes | Before the code that queries them. A query with no index fails at RUNTIME, not at build. |
+| 3 | Wait for indexes | The CLI returns when Firestore ACCEPTS an index, not when it is Enabled. The run blocks; the CLI will not. |
+| 4 | Firestore rules | From `mytribe` only. Refused outright if the admin mirror has drifted. |
+| 5 | Functions | Before the clients that call them: a client calling a function that is not there fails at runtime. |
+| 6 | Hosting | Admin, then portal. |
+| 7 | Verify | Fetches both live sites and compares the hashed bundle they reference against the one just built. |
+
+Step 7 is the one whose absence hid the stale admin. Hosting can report a
+successful release while browsers still get the old bundle. A release that
+cannot prove it landed has told you nothing.
+
+Knobs, all off by default:
+
+| Variable | Effect |
+|---|---|
+| `DRY_RUN=1` | Print every firebase command, run none |
+| `RELEASE_SKIP_CHECK=1` | Skip step 1. Then `dist/` is whatever was last built, which may not match HEAD |
+| `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` | Also ship the AuntieOS `default` and `reconcile` codebases |
+| `RELEASE_YES=1` | Do not prompt (CI). Preconditions still apply |
+
+The AuntieOS functions codebases are **skipped by default** and the run says so
+rather than omitting them quietly. They live in the second tree
+(`auntieos-admin/web`) with their own deploy semantics.
+
+Rolling back: the previous hosting release restores from the Firebase console
+(Hosting → release history). Functions and indexes do **not** roll back with it;
+they need their own revert and redeploy.
+
+### Deploying one thing by hand
+
+When you genuinely want a single target and not a release:
+
 ```bash
 scripts/safe-deploy.sh <prefix> -- firebase deploy --only <targets>
 ```
@@ -158,27 +209,16 @@ scripts/safe-deploy.sh <prefix> -- firebase deploy --only <targets>
 the wrong tree overwrites live rules with a stale mirror. The wrapper pins
 `--project`, refuses a bare `firebase deploy`, allows rules only from `mytribe`
 and only when the mirror is byte-identical, and prints every refusal in red.
-
 `DRY_RUN=1` prints the command it would run and does nothing.
 
 ```bash
-# the callables
 scripts/safe-deploy.sh mytribe -- firebase deploy --only functions:mytribe
-
-# operator admin at auntie.tribetails.com
 scripts/safe-deploy.sh auntieos-admin -- firebase deploy --only hosting:app
-
-# kinfolk portal
 scripts/safe-deploy.sh mytribe -- firebase deploy --only hosting:kinfolk_portal
-
-# indexes (rules go the same way, from mytribe only)
 scripts/safe-deploy.sh mytribe -- firebase deploy --only firestore:indexes
 ```
 
-**Order matters.** Deploy a new composite index BEFORE the code that queries it,
-and wait for it to finish building: a query with no index fails at runtime, not
-at build. Deploy a function before the client that calls it, for the same reason
-in reverse.
+Doing it this way puts the ordering above back in your head. Prefer the run.
 
 **Hosting target names lie.** `hosting:app` is the live admin. The target called
 `legacy-wasm`, whose site is literally named `auntieos-admin`, is the superseded
