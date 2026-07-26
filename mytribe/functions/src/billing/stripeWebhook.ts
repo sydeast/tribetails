@@ -17,7 +17,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   let event;
   try {
     event = verifyStripeWebhook(req.rawBody, sig);
-  } catch (err) {
+  } catch {
     logEvent({ severity: 'warn', function: 'stripeWebhook', event: 'stripe.signature.fail' });
     res.status(400).json({ error: 'bad-signature' });
     return;

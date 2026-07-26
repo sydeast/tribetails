@@ -10,7 +10,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "build:watch": "tsc -w",
-    "lint": "eslint --ext .ts src test",
+    "lint": "eslint src test",
     "format": "prettier -w \"src/**/*.ts\" \"test/**/*.ts\"",
     "test": "vitest run",
     "test:ci": "vitest run --config vitest.ci.config.ts",
@@ -40,16 +40,17 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@firebase/rules-unit-testing": "^3.0.4",
     "@types/node": "^22.19.19",
     "@types/sanitize-html": "^2.16.1",
-    "@typescript-eslint/eslint-plugin": "^7.18.0",
-    "@typescript-eslint/parser": "^7.18.0",
-    "eslint": "^8.57.0",
-    "eslint-config-prettier": "^9.1.0",
+    "eslint": "^10.8.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.7.0",
     "prettier": "^3.3.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.4",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10"
   }
 }
