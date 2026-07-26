@@ -40,6 +40,7 @@ import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.domain.InvoiceAction
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.invoiceActionsFor
+import com.tribetails.auntieos.domain.invoiceIsArchived
 import com.tribetails.auntieos.domain.invoiceIsOverdue
 import com.tribetails.auntieos.domain.invoiceStateOf
 import com.tribetails.auntieos.ui.components.AuntieAvatar
@@ -81,6 +82,46 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  */
 
 /** Den filter tabs. Mirrors the web spec's All / Unpaid / Paid / Overdue / Drafts row. */
+/**
+ * The archive facet's three states.
+ *
+ * `internal` rather than `private` so `InvoiceFacetTest` (same package) can
+ * assert `archivedAllows` directly, the convention `householdFacets` already
+ * follows in this file.
+ */
+internal enum class ArchivedMode(val label: String) {
+    Hide("Hidden"),
+    Include("Included"),
+    Only("Only archived"),
+}
+/**
+ * Does this invoice survive the archive facet?
+ *
+ * PRESENCE OF `archivedAt`, applied IN MEMORY over rows already loaded. It must
+ * stay in memory: `whereEqualTo("archivedAt", null)` matches only documents that
+ * HAVE the field, and every invoice predating Task 5.1 lacks it entirely, so a
+ * server predicate would return ZERO rows and would do it silently. Converting
+ * it needs a backfill first, which is a migration and not this task.
+ */
+internal fun archivedAllows(mode: ArchivedMode, invoice: Invoice): Boolean = when (mode) {
+    ArchivedMode.Hide -> !invoiceIsArchived(invoice)
+    ArchivedMode.Only -> invoiceIsArchived(invoice)
+    ArchivedMode.Include -> true
+}
+/**
+ * The Invoices panel subtitle.
+ *
+ * Names the archived exclusion rather than letting rows quietly disappear, and
+ * says the count is within what is LOADED: a client-side exclusion cannot see
+ * archived invoices it never read, so a bare number would read as a fact about
+ * the books.
+ */
+internal fun invoiceListSubtitle(visible: Int, inScope: Int, archivedHidden: Int): String {
+    val base = "$visible of $inScope shown. Tap a row to open the invoice."
+    if (archivedHidden <= 0) return base
+    val plural = if (archivedHidden == 1) "" else "s"
+    return "$base $archivedHidden archived invoice$plural hidden, counted within the invoices loaded here."
+}
 private enum class InvoiceFilter(val label: String) {
     All("All"),
     Unpaid("Unpaid"),
@@ -200,6 +241,9 @@ fun InvoicesScreen(
     var filter by remember { mutableStateOf(InvoiceFilter.All) }
     var query by remember { mutableStateOf("") }
     var household by remember { mutableStateOf(ALL_HOUSEHOLDS) }
+    // Archived invoices are HIDDEN by default, matching the web. Three states:
+    // hide them, show them alongside, show only them.
+    var archived by remember { mutableStateOf(ArchivedMode.Hide) }
     var showComposer by remember { mutableStateOf(false) }
     // PART B: the same composer drives both invoice and quote creation. quoteMode
     // flips the dialog into "New quote" + the Send-to-kinfolk toggle.
@@ -285,13 +329,30 @@ fun InvoicesScreen(
                         }
                         val households = householdFacets(invoices)
                         if (household !in households) household = ALL_HOUSEHOLDS
-                        val visible = sorted.filter {
+
+                        // THE ARCHIVE FACET IS LIST-WIDE, NOT A TAB. It decides
+                        // which invoices this screen is ABOUT, so the summary
+                        // tiles below are computed from the SURVIVORS rather than
+                        // from the raw list. An archived invoice counted into
+                        // Outstanding would be money the operator has already
+                        // decided to stop chasing, and one counted into Billed
+                        // would contradict what the web reports for the same week.
+                        //
+                        // Applied IN MEMORY, and it must stay that way:
+                        // `whereEqualTo("archivedAt", null)` matches only
+                        // documents that HAVE the field, and every invoice
+                        // predating Task 5.1 lacks it, so a server predicate would
+                        // return zero rows and raise no error at all.
+                        val inScope = sorted.filter { archivedAllows(archived, it) }
+                        val archivedHidden = sorted.size - inScope.size
+
+                        val visible = inScope.filter {
                             matchesFilter(it, filter, todayIso) &&
                                 matchesQuery(it, query) &&
                                 matchesHouseholdFacet(it, household)
                         }
 
-                        item { SummaryStrip(invoices, todayIso) }
+                        item { SummaryStrip(inScope, todayIso) }
 
                         item {
                             FilterRow(
@@ -302,13 +363,15 @@ fun InvoicesScreen(
                                 households = households,
                                 household = household,
                                 onHousehold = { household = it },
+                                archived = archived,
+                                onArchived = { archived = it },
                             )
                         }
 
                         item {
                             DenPanel(
                                 title = "Invoices",
-                                subtitle = "${visible.size} of ${invoices.size} shown. Tap a row to open the invoice.",
+                                subtitle = invoiceListSubtitle(visible.size, inScope.size, archivedHidden),
                             ) {
                                 if (visible.isEmpty()) {
                                     AuntieEmptyState(
@@ -433,6 +496,8 @@ private fun FilterRow(
     households: List<HouseholdFacet>,
     household: HouseholdFacet,
     onHousehold: (HouseholdFacet) -> Unit,
+    archived: ArchivedMode,
+    onArchived: (ArchivedMode) -> Unit,
 ) {
     // Stacked vertically for phone width: chips, then household facet, then search.
     Column(verticalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space3)) {
@@ -457,6 +522,18 @@ private fun FilterRow(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        // Archive facet. Always shown, unlike the household one: the operator
+        // needs a way back to an invoice they archived even when there is only
+        // one household, and a hidden control is how an archive becomes a
+        // one-way door.
+        AuntieDropdownField(
+            value = archived,
+            options = ArchivedMode.entries,
+            onSelect = onArchived,
+            displayText = { it.label },
+            label = "Archived",
+            modifier = Modifier.fillMaxWidth(),
+        )
         AuntieSearchField(
             value = query,
             onValueChange = onQueryChange,

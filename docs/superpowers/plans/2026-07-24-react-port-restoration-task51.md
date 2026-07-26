@@ -239,10 +239,13 @@ fabricated 0. Never invent a number for a failed read.
       section 2, including totality. RED observed.
 - [x] B2. `invoiceEditPolicy.ts` + the server-side positive-enumeration state
       classifier to green. 17 tests.
-- [ ] B3. Web mirror + a test asserting web and server agree on every state.
-      NOT DONE. The server enforces the rule, so nothing is unguarded; what is
-      missing is the client-side courtesy that decides whether to render the
-      Edit affordance. Needed before D3.
+- [x] B3. Web mirror (`src/lib/invoiceEditPolicy.ts`) + 31 tests asserting the
+      same state matrix the server's own test asserts. Written THREE-VALUED
+      (`InvoicePaymentStatus`) rather than boolean, so the concurrent
+      `fix/invoice-partial-payments` third state lands as a change to the
+      mapping and not to this module's shape or its call sites. `partial`
+      deliberately behaves like `settled` until that merges; the branch is
+      marked PARTIAL-PAYMENT FOLLOW-UP in both the module and the test.
 
 ### Phase C: callables
 - [x] C1. `updateInvoice` + 25 tests (happy, recompute, dollar projection,
@@ -250,31 +253,76 @@ fabricated 0. Never invent a number for a failed read.
       not-found, unauthenticated, non-admin through the wrapper).
 - [x] C2/C3. `archiveInvoice` + `unarchiveInvoice` + 14 tests, sharing
       `src/lib/invoiceArchive.ts` so the two cannot disagree on "archived".
-- [ ] C4. `listUninvoicedSessions`. NOT DONE. Blocks the picker (D4).
-- [ ] C5. `createInvoice` additive `lineItems`; update the contract freeze.
-      NOT DONE.
+- [x] C4. `listUninvoicedSessions`. Landed in PR #72 after this plan was
+      written.
+- [x] C5. `createInvoice` additive `lineItems` + `invoiceDiscountCents`, 12 new
+      tests. Omit the field and behaviour is IDENTICAL, including writing no
+      cents field at all: an empty array would arm `updateInvoice`'s recompute
+      on an invoice whose total was hand-entered. A `total` disagreeing with the
+      lines is REFUSED (`invoice_total_mismatch`) rather than overwritten,
+      because this callable cannot drop `total` from its request the way
+      `updateInvoice` can. The contract freeze MOVED from the flat `shapeKeys`
+      table to the recursive `shapeSignature` one, since a top-level key freeze
+      would have gone on passing while `lineItems[].unitCents` was renamed.
 - [x] C6. `index.ts` exports; `CALLABLE_CONTRACT.md` entries for the three new
       callables (plus the repairs in section 7); `callableContract.test.ts`
       freezes: archive/unarchive flat, `updateInvoice` by RECURSIVE signature
       because its `patch` is nested and carries a `.refine`.
-- [ ] C7. `invoicePdf.ts`: render real line items when present, keep the scalar
-      summary when absent, and retire the stale comment at :15-17. NOT DONE.
-      Nothing writes `lineItems` from a UI yet, so the stale comment is still
-      literally true today; it stops being true the moment D2/D3 ship.
+- [x] C7. `invoicePdf.ts`: renders a real items table when present, keeps the
+      scalar summary when absent, and the stale comment at :15-17 is retired.
+      15 new tests. Per-line amounts are DERIVED through `invoiceMath` rather
+      than read off the doc, and the subtotal is summed from the lines rather
+      than from the stored `subtotalCents`: on a document the household receives,
+      what is listed must add up to what is printed. An empty items table is
+      never drawn. `lineItemsForPdf` drops a malformed row rather than throwing,
+      because throwing fails the whole PDF and leaves the operator with nothing.
 
 ### Phase D: web
-- [ ] D1. `src/api/invoicesWrite.ts` wrappers + zod mirrors + tests.
-- [ ] D2. Line-item editor component (add/edit/remove/reorder, live derived total,
-      totals never hand-entered) + tests.
-- [ ] D3. `InvoiceDetail.tsx`: edit mode, archive/restore with confirm, the
-      lines-vs-total disagreement banner (1.4), linked visit list from `sessionIds`.
-- [ ] D4. `InvoiceCreate.tsx`: Blank vs From-KinCare entry paths, the picker,
-      selection to prefilled lines, real `<input type="date">`.
-- [ ] D5. `Invoices.tsx`: archive facet now that the field is really written;
-      KEEP the presence check and update its comment to say why it stays (0.6).
+- [x] D1. `src/api/invoicesWrite.ts` wrappers for `updateInvoice`,
+      `archiveInvoice`, `unarchiveInvoice` and `listUninvoicedSessions`, plus
+      `lineItems` on `NewInvoiceInput` and the reader `invoiceLineItems` in
+      `src/api/invoices.ts` (the one place absent-vs-empty is decided).
+- [x] D2. `components/InvoiceLineItems.tsx`: read-only table plus the editor
+      (add/remove/reorder, live derived total). 25 tests. Draft rows hold TEXT,
+      not numbers: parsing every keystroke would turn a blank price into a real
+      0. The running total says what it LEAVES OUT rather than counting a
+      half-typed row as zero, and a pending row reads "amount needs a qty and a
+      unit price" rather than "$0.00". There is nowhere to type a total.
+- [x] D3. `InvoiceDetail.tsx`: the itemization, edit mode, archive/restore with
+      confirm, and the lines-vs-total disagreement banner (1.4). An un-itemized
+      invoice gets a SENTENCE, never an empty table. A metadata-only edit sends
+      no `lineItems` key at all, mirroring the un-itemized guard client-side.
+- [x] D4. `InvoiceCreate.tsx`: flat vs itemized entry paths,
+      `components/UninvoicedVisitsPicker.tsx`, selection to prefilled lines, real
+      `<input type="date">`. An unpriced visit seeds a BLANK unit price the
+      operator must type into, never 0.00, and is never silently dropped either.
+- [x] D5. `Invoices.tsx`: the presence check STAYS, and its comment now explains
+      why it stays even though the field is finally being written (writing it on
+      new archives does not backfill the legacy docs). The hidden-invoice count
+      now says it is scoped to the loaded page rather than to the books.
 
 ### Phase E: android
-Scoped per section 5. Split proposed, not assumed.
+- [x] E1. Read-only line items on the detail screen, slice (a). New
+      `domain/InvoiceLineItems.kt` (decode + cents math + the disagreement
+      check) with 24 tests. `Invoice.lineItems` is held RAW and hand-decoded,
+      the `decodeTagDefs` Class A pattern, because a typed `List<T>` would make
+      Firestore throw on a malformed doc and blank the whole invoice query.
+      `archivedAt` is nullable `Any?` for the same class of reason
+      (`paymentsHistory`'s Class B decode crash) plus the fact that
+      `unarchiveInvoice` writes an explicit null. The disagreement banner is on
+      Android too.
+- [x] E2. Archive / restore, slice (c). Repository callables, VM actions with a
+      confirm, and the two exclusions that made this NOT deferrable:
+      `Stage2Step2Helpers.weeklyRevenue` and the Invoices `SummaryStrip` now skip
+      archived invoices, so Android cannot report revenue the web says has been
+      written off. Archive is kept OUT of `invoiceActionsFor`, since it is
+      orthogonal to state; and out of `invoiceIsPaidForRevenue`, since that is
+      the canonical PAID test three surfaces mirror.
+- [ ] E3. DEFERRED to task `5.1a Android line-item editor`: the editable
+      line-item editor (b) and the un-invoiced-visits picker (d). (b) is a Large
+      build that re-opens the shared action matrix and needs a cents/Double
+      boundary against `Invoice.total: Double` and `Invoice.discount: String`;
+      (d) is meaningless until (b) exists. Ruled by the coordinator, not assumed.
 
 ---
 

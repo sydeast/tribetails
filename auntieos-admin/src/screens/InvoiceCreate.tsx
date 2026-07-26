@@ -1,11 +1,20 @@
-import { useCallback, useState, type FormEvent } from 'react';
+import { useCallback, useMemo, useState, type FormEvent } from 'react';
 import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import { createInvoice, createQuote, type NewInvoiceInput } from '../api/invoicesWrite';
 import { useCollection } from '../lib/firestore';
+import { computeInvoiceTotals } from '../lib/invoiceMath';
+import { centsToDollars } from '../lib/invoiceMath';
+import { formatCentsUsd } from '../lib/invoiceReconcile';
 import { Dialog } from '../components/Dialog';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
 import { Banner } from '../components/Banner';
+import {
+  InvoiceLineItemsEditor,
+  parseDraftLines,
+  type DraftLine,
+} from '../components/InvoiceLineItems';
+import { UninvoicedVisitsPicker } from '../components/UninvoicedVisitsPicker';
 import './InvoiceCreate.css';
 
 export type InvoiceCreateMode = 'invoice' | 'quote';
@@ -96,6 +105,21 @@ export function validateInvoiceCreate(v: InvoiceCreateFormValues): string | null
  * disabled while submitting (never a double-submit), and the primary button
  * carries Buttons.tsx's `busy` state.
  */
+/**
+ * How this invoice's money is being decided.
+ *
+ *   flat      the operator types a total, as they always have. The legacy path,
+ *             and still the right one for a bill that is not itemized.
+ *   itemized  the total is DERIVED from line items and there is nowhere to type
+ *             one, so the invoice cannot claim a figure the work does not
+ *             support.
+ *
+ * Two paths rather than one because both are legitimate. Forcing itemization
+ * would make the composer refuse the quick one-off bill it exists to write, and
+ * dropping the flat path would strand every workflow that predates 5.1.
+ */
+export type InvoiceMoneyMode = 'flat' | 'itemized';
+
 export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: InvoiceCreateProps) {
   const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
   const households = kinfolkState.status === 'ready' ? kinfolkState.data : [];
@@ -117,15 +141,88 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const [moneyMode, setMoneyMode] = useState<InvoiceMoneyMode>('flat');
+  const [lines, setLines] = useState<DraftLine[]>([]);
+  const [invoiceDiscountText, setInvoiceDiscountText] = useState('');
+  const [sessionIds, setSessionIds] = useState<string[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
   const selectedHousehold = households.find((h) => h._id === kinfolkId);
+  const itemized = moneyMode === 'itemized';
+
+  // The derived total, recomputed as the operator types. This is the figure that
+  // gets SENT: the server refuses a total that disagrees with the lines, so both
+  // sides must come from this one computation, and they do, because this is the
+  // mirrored `invoiceMath` module the server recomputes from.
+  const derived = useMemo(() => {
+    if (!itemized) return null;
+    const parsed = parseDraftLines(lines, invoiceDiscountText);
+    if (parsed.lines === null) return { totals: null, error: parsed.error };
+    return {
+      totals: computeInvoiceTotals(parsed.lines, parsed.invoiceDiscountCents ?? 0, 0),
+      parsed,
+      error: null,
+    };
+  }, [itemized, lines, invoiceDiscountText]);
 
   async function submit() {
     if (submitting) return;
-    const err = validateInvoiceCreate({ kinfolkId, invoiceNumber, totalText, amountDueText, date, dueDate });
-    if (err) {
-      setValidationError(err);
-      return;
+
+    // ITEMIZED AND FLAT VALIDATE DIFFERENTLY, because in the itemized path there
+    // is no total to validate: it is derived. Running the flat validator over a
+    // blank total field would reject a perfectly good itemized invoice.
+    let moneyFields: Pick<NewInvoiceInput, 'total' | 'amountDue' | 'lineItems' | 'invoiceDiscountCents'>;
+
+    if (itemized) {
+      const parsed = parseDraftLines(lines, invoiceDiscountText);
+      if (parsed.error !== null) {
+        setValidationError(parsed.error);
+        return;
+      }
+      if (parsed.lines!.length === 0) {
+        setValidationError('Add at least one line item, or switch back to entering a total directly.');
+        return;
+      }
+      const totals = computeInvoiceTotals(parsed.lines!, parsed.invoiceDiscountCents!, 0);
+      if (kinfolkId.trim() === '') {
+        setValidationError('Pick a household for this invoice');
+        return;
+      }
+      if (invoiceNumber.trim() === '') {
+        setValidationError('Invoice number is required');
+        return;
+      }
+      if (date.trim() !== '' && !isValidInvoiceDate(date)) {
+        setValidationError('Date must be a real YYYY-MM-DD date');
+        return;
+      }
+      if (dueDate.trim() !== '' && !isValidInvoiceDate(dueDate)) {
+        setValidationError('Due date must be a real YYYY-MM-DD date');
+        return;
+      }
+      // Both dollar scalars are the PROJECTION of the same cents figure the
+      // server will recompute. Sending anything else is refused rather than
+      // silently overwritten, which is why neither is read off a form field.
+      moneyFields = {
+        total: centsToDollars(totals.totalCents),
+        amountDue: centsToDollars(totals.amountDueCents),
+        lineItems: parsed.lines!,
+        invoiceDiscountCents: parsed.invoiceDiscountCents!,
+      };
+    } else {
+      const err = validateInvoiceCreate({ kinfolkId, invoiceNumber, totalText, amountDueText, date, dueDate });
+      if (err) {
+        setValidationError(err);
+        return;
+      }
+      // No `lineItems` key AT ALL on the flat path, not an empty array. The
+      // server treats the key's presence as "this invoice is itemized", and an
+      // empty array would arm `updateInvoice`'s recompute on an invoice whose
+      // total was typed by hand, so a later due-date correction would rewrite it
+      // to $0.
+      moneyFields = { total: Number(totalText), amountDue: Number(amountDueText) };
     }
+
     setValidationError(null);
     setSubmitError(null);
     setSubmitting(true);
@@ -140,12 +237,13 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
       terms: terms.trim(),
       dueDate: dueDate.trim(),
       discount: discount.trim(),
-      total: Number(totalText),
-      amountDue: Number(amountDueText),
+      ...moneyFields,
       // A quote's status is forced QUOTE server-side regardless, mirrors the
       // wasm stamping "quote" locally purely for an honest optimistic value.
       status: isQuote ? '' : status,
-      sessionIds: [],
+      // The visits this invoice was built from, so the portal can show the
+      // household which work it covers and nothing double-bills them later.
+      sessionIds,
     };
 
     try {
@@ -258,49 +356,120 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
 
         <div className="invoice-create__row">
           <label className="invoice-create__field">
-            <span className="invoice-create__label">Date (YYYY-MM-DD)</span>
+            <span className="invoice-create__label">Date</span>
+            {/* A REAL date input, replacing the free-text field. The old one let
+                "Net 14" into a value the server parses as YYYY-MM-DD and the
+                Invoices list both windows and sorts on, so a typo there did not
+                just look wrong, it made the invoice unreachable under every
+                dated window. */}
             <input
+              type="date"
               className="invoice-create__input"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              placeholder="YYYY-MM-DD"
               disabled={submitting}
+              aria-label="Invoice date"
             />
           </label>
           <label className="invoice-create__field">
-            <span className="invoice-create__label">Due date (YYYY-MM-DD)</span>
+            <span className="invoice-create__label">Due date</span>
             <input
+              type="date"
               className="invoice-create__input"
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              placeholder="YYYY-MM-DD"
               disabled={submitting}
+              aria-label="Invoice due date"
             />
           </label>
         </div>
 
-        <div className="invoice-create__row">
-          <label className="invoice-create__field">
-            <span className="invoice-create__label">Total ($)</span>
-            <input
-              className="invoice-create__input"
-              inputMode="decimal"
-              value={totalText}
-              onChange={(e) => setTotalText(e.target.value)}
-              disabled={submitting}
+        <div className="invoice-create__mode" role="group" aria-label="How this invoice is priced">
+          <GhostButton
+            label="Enter a total"
+            onClick={() => setMoneyMode('flat')}
+            disabled={submitting || !itemized}
+          />
+          <GhostButton
+            label="Itemize it"
+            onClick={() => setMoneyMode('itemized')}
+            disabled={submitting || itemized}
+          />
+          {itemized && (
+            <GhostButton
+              label="Add from visits"
+              onClick={() => setPickerOpen(true)}
+              disabled={submitting || kinfolkId === ''}
             />
-          </label>
-          <label className="invoice-create__field">
-            <span className="invoice-create__label">Amount due ($)</span>
-            <input
-              className="invoice-create__input"
-              inputMode="decimal"
-              value={amountDueText}
-              onChange={(e) => setAmountDueText(e.target.value)}
-              disabled={submitting}
-            />
-          </label>
+          )}
         </div>
+
+        {itemized ? (
+          <>
+            {pickerOpen && (
+              <UninvoicedVisitsPicker
+                kinfolkId={kinfolkId}
+                onClose={() => setPickerOpen(false)}
+                onAdd={(added, addedSessionIds) => {
+                  setLines((prev) => [...prev, ...added]);
+                  // De-duplicated: adding the same visit twice would bill the
+                  // household for one piece of work two times.
+                  setSessionIds((prev) => [...new Set([...prev, ...addedSessionIds])]);
+                  setPickerOpen(false);
+                }}
+              />
+            )}
+            <InvoiceLineItemsEditor
+              drafts={lines}
+              onChange={setLines}
+              invoiceDiscountText={invoiceDiscountText}
+              onInvoiceDiscountChange={setInvoiceDiscountText}
+              disabled={submitting}
+            />
+            {/* The figure that will actually be sent, shown as such. There is no
+                total field to type into on this path, by design. */}
+            {/* NO FIGURE IS PROMISED UNTIL THERE IS ONE. With no lines at all
+                the arithmetic is a perfectly valid $0.00, and printing it would
+                tell the operator this invoice "will be sent for $0.00" when in
+                fact it cannot be sent at all. An empty set and a zero total are
+                different facts and must not read alike. */}
+            <p className="invoice-create__derived">
+              {lines.length === 0
+                ? 'Add a line, or bring some in from the visits picker. The total is worked out from the lines.'
+                : derived?.totals
+                  ? `This invoice will be sent for ${formatCentsUsd(derived.totals.totalCents)}, worked out from the lines above.`
+                  : 'The total will be worked out from the lines once every line has a quantity and a unit price.'}
+            </p>
+            {sessionIds.length > 0 && (
+              <p className="invoice-create__derived">
+                Linked to {sessionIds.length} visit{sessionIds.length === 1 ? '' : 's'}.
+              </p>
+            )}
+          </>
+        ) : (
+          <div className="invoice-create__row">
+            <label className="invoice-create__field">
+              <span className="invoice-create__label">Total ($)</span>
+              <input
+                className="invoice-create__input"
+                inputMode="decimal"
+                value={totalText}
+                onChange={(e) => setTotalText(e.target.value)}
+                disabled={submitting}
+              />
+            </label>
+            <label className="invoice-create__field">
+              <span className="invoice-create__label">Amount due ($)</span>
+              <input
+                className="invoice-create__input"
+                inputMode="decimal"
+                value={amountDueText}
+                onChange={(e) => setAmountDueText(e.target.value)}
+                disabled={submitting}
+              />
+            </label>
+          </div>
+        )}
 
         <label className="invoice-create__field">
           <span className="invoice-create__label">Terms, optional</span>

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { type InvoiceEntry } from '../api/invoices';
+import { invoiceLineItems, isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
 import {
   formatUsd,
   invoiceActionsFor,
@@ -10,12 +10,26 @@ import {
   localDateIso,
   type InvoiceAction,
 } from '../lib/invoiceFormat';
+import { invoiceEditScope, paymentStatusFromDoc } from '../lib/invoiceEditPolicy';
+import { checkInvoiceTotal, formatCentsUsd, storedTotalSourceLabel } from '../lib/invoiceReconcile';
 import {
   markInvoicePaid,
   sendInvoiceReminder,
   generateReceipt,
   reviewAndSendDraftInvoice,
+  updateInvoice,
+  archiveInvoice,
+  unarchiveInvoice,
+  type InvoicePatch,
 } from '../api/invoicesWrite';
+import {
+  InvoiceLineItemsTable,
+  InvoiceLineItemsEditor,
+  draftFromLineItem,
+  parseDraftLines,
+  type DraftLine,
+} from './InvoiceLineItems';
+import { centsToInputDollars } from '../lib/invoiceMoneyInput';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { Banner } from './Banner';
@@ -83,6 +97,36 @@ interface InvoiceDetailProps {
   onClose: () => void;
 }
 
+/** The metadata and money fields, mid-edit. Text, because a half-typed field is not a number. */
+interface EditDraft {
+  invoiceNumber: string;
+  date: string;
+  dueDate: string;
+  terms: string;
+  lines: DraftLine[];
+  invoiceDiscountText: string;
+  /**
+   * Whether this invoice HAD line items when editing began.
+   *
+   * Load-bearing, not bookkeeping. `updateInvoice` refuses to recompute an
+   * un-itemized invoice, and every invoice in the collection today is
+   * un-itemized. If a metadata-only edit sent `lineItems: []` it would tip the
+   * server into recomputing, and a real $40 invoice would become $0 because
+   * somebody fixed its due date. So the patch below only carries `lineItems`
+   * when the operator actually touched the money.
+   */
+  wasItemized: boolean;
+  /** Whether the money fields are editable at all, per the mirrored policy. */
+  moneyEditable: boolean;
+}
+
+/** Which way the archive confirm is pointing, and whether money is at stake. */
+interface ArchivePrompt {
+  direction: 'archive' | 'restore';
+  /** Set after the server refuses an archive because money is still owed. */
+  forceOffered: boolean;
+}
+
 /**
  * The invoice detail overlay: the row's ACTIONS the list only linked to via a
  * placeholder (`onSelect`). Every action here reaches a real household, so
@@ -110,6 +154,16 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
   // Free text, not a number input, so a half-typed "2" is never read as $2.
   // Parsed and validated at submit, where the operator can be told what is wrong.
   const [paidAmount, setPaidAmount] = useState('');
+
+  // Edit mode. Seeded from the invoice the moment Edit is pressed rather than
+  // held in sync with it: the live listener would otherwise overwrite what the
+  // operator is typing every time the doc changed underneath them.
+  const [editing, setEditing] = useState<EditDraft | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  // Archive/restore confirm. Separate from `pending` because the ACTIONS array
+  // is the state-driven action matrix and archiving is orthogonal to state: an
+  // invoice in any state can be archived.
+  const [archivePrompt, setArchivePrompt] = useState<ArchivePrompt | null>(null);
 
   const todayIso = localDateIso(new Date());
   const state = invoiceState({
@@ -142,6 +196,30 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
 
   const meta = pending ? ACTIONS.find((a) => a.key === pending) : undefined;
 
+  // The stored itemization. NULL means never itemized, which is not the same as
+  // an empty list and must not be rendered as an empty items table: a heading
+  // over no rows reads as "nothing was billed".
+  const storedLines = invoiceLineItems(invoice);
+  const archived = isArchivedInvoice(invoice);
+
+  // THE DISAGREEMENT CHECK. See lib/invoiceReconcile.ts for why this is a real
+  // reachable state and not defensive theatre: firestore.rules grants
+  // `allow update: if isAuntie()` over the whole collection and postInvoiceEvent
+  // merges an arbitrary payload, so both bypass every callable that would have
+  // kept the total and the lines in step.
+  const totalCheck = checkInvoiceTotal(invoice);
+
+  // The mirrored edit policy, deciding only whether to OFFER the control. The
+  // server enforces; a refusal comes back with a code and is surfaced verbatim.
+  // Standing comes from `paidCents`, never from `amountDue`, which reads 0 on
+  // every invoice the old partial-payment write touched. See paymentStatusFromDoc.
+  const editScope = invoiceEditScope(
+    state,
+    paymentStatusFromDoc(state, invoice.totalCents ?? Math.round(invoice.total * 100), invoice.paidCents),
+  );
+  const canEdit = editScope !== 'none';
+  const moneyEditable = editScope === 'all';
+
   function startAction(key: PendingAction) {
     setActionError(null);
     setNotice(null);
@@ -156,6 +234,115 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
   function cancelPending() {
     if (busy) return;
     setPending(null);
+  }
+
+  function startEditing() {
+    setActionError(null);
+    setNotice(null);
+    setEditError(null);
+    setEditing({
+      invoiceNumber: invoice.invoiceNumber,
+      date: invoice.date,
+      dueDate: invoice.dueDate,
+      terms: (invoice as { terms?: string }).terms ?? '',
+      lines: (storedLines ?? []).map(draftFromLineItem),
+      invoiceDiscountText:
+        typeof invoice.invoiceDiscountCents === 'number' && invoice.invoiceDiscountCents > 0
+          ? centsToInputDollars(invoice.invoiceDiscountCents)
+          : '',
+      wasItemized: storedLines !== null,
+      moneyEditable,
+    });
+  }
+
+  async function saveEdit() {
+    if (!editing || busy) return;
+
+    const patch: InvoicePatch = {};
+    // Only CHANGED fields go in the patch. Echoing an unchanged value back would
+    // still stamp `updatedAt` and write an audit entry describing an edit that
+    // did not happen.
+    if (editing.invoiceNumber !== invoice.invoiceNumber) patch.invoiceNumber = editing.invoiceNumber.trim();
+    if (editing.date !== invoice.date) patch.date = editing.date.trim();
+    if (editing.dueDate !== invoice.dueDate) patch.dueDate = editing.dueDate.trim();
+    if (editing.terms !== ((invoice as { terms?: string }).terms ?? '')) patch.terms = editing.terms;
+
+    if (editing.moneyEditable) {
+      const parsed = parseDraftLines(editing.lines, editing.invoiceDiscountText);
+      if (parsed.error !== null) {
+        setEditError(parsed.error);
+        return;
+      }
+      // THE UN-ITEMIZED GUARD, mirrored on the client so a metadata-only edit
+      // never becomes a money edit by accident. An invoice that was never
+      // itemized and still has no lines sends NO `lineItems` key at all: sending
+      // an empty array would tip `updateInvoice` into recomputing, and a real
+      // $40 invoice would be rewritten to $0 because its due date was corrected.
+      const touchedMoney = editing.wasItemized || parsed.lines!.length > 0;
+      if (touchedMoney) {
+        patch.lineItems = parsed.lines!;
+        patch.invoiceDiscountCents = parsed.invoiceDiscountCents!;
+      }
+    }
+
+    if (Object.keys(patch).length === 0) {
+      setEditError('Nothing has changed yet.');
+      return;
+    }
+
+    setBusy(true);
+    setEditError(null);
+    try {
+      await updateInvoice(invoice._id, patch);
+      setBusy(false);
+      setEditing(null);
+      setNotice('Invoice updated.');
+    } catch (caught) {
+      setBusy(false);
+      // Surfaced verbatim. The server's refusals carry a `details.code` and a
+      // sentence written for the operator (money locked by a recorded payment,
+      // a discount larger than its line), and rewording them here would lose
+      // exactly the part that says what to do next.
+      setEditError(`updateInvoice failed: ${caught instanceof Error ? caught.message : 'Save failed'}`);
+    }
+  }
+
+  async function confirmArchive(force: boolean) {
+    if (!archivePrompt || busy) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      if (archivePrompt.direction === 'restore') {
+        await unarchiveInvoice(invoice._id);
+        setNotice('Invoice restored to the working list.');
+      } else {
+        await archiveInvoice(invoice._id, force);
+        setNotice(
+          force
+            ? 'Invoice archived, and the balance written off the outstanding total.'
+            : 'Invoice archived.',
+        );
+      }
+      setBusy(false);
+      setArchivePrompt(null);
+    } catch (caught) {
+      setBusy(false);
+      const message = caught instanceof Error ? caught.message : 'Action failed';
+      // The server refuses an archive that would drop real money out of the
+      // outstanding total. That is not an error to bounce off; it is a decision
+      // to put back to the operator, so the prompt re-renders offering the
+      // write-off explicitly rather than just reporting a failure.
+      const stillOwing = /still has \$/.test(message) || /owing/i.test(message);
+      if (stillOwing && archivePrompt.direction === 'archive') {
+        setArchivePrompt({ direction: 'archive', forceOffered: true });
+        setActionError(message);
+      } else {
+        setArchivePrompt(null);
+        setActionError(
+          `${archivePrompt.direction === 'archive' ? 'archiveInvoice' : 'unarchiveInvoice'} failed: ${message}`,
+        );
+      }
+    }
   }
 
   async function confirmPending() {
@@ -249,6 +436,37 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
           </div>
         </dl>
 
+        {/* THE LINES-VERSUS-TOTAL DISAGREEMENT BANNER.
+            It names BOTH figures and reconciles NEITHER. It does not pick a
+            winner, does not re-derive the total for display, and does not write
+            a correction: a silent repair to a money field is how this drift
+            arises in the first place. The operator is the only one who knows
+            which number is the true one, so the banner's whole job is to make
+            sure they are looking at both. See lib/invoiceReconcile.ts. */}
+        {totalCheck.disagrees && totalCheck.storedTotalCents !== null && (
+          <Banner tone="error" title="This invoice disagrees with itself">
+            <p>
+              The line items below add up to{' '}
+              <strong>{formatCentsUsd(totalCheck.derivedTotalCents)}</strong>, but{' '}
+              {storedTotalSourceLabel(totalCheck.storedFrom!)} says{' '}
+              <strong>{formatCentsUsd(totalCheck.storedTotalCents)}</strong>.
+            </p>
+            <p>
+              Nothing has been changed to make them match, and nothing will be. The household is
+              billed the stored figure. This can happen when an invoice is written outside the
+              normal edit path. Re-saving the line items below will recompute the stored total from
+              them, if the lines are the version you want to keep.
+            </p>
+          </Banner>
+        )}
+
+        {archived && !notice && (
+          <Banner tone="info" title="Archived">
+            This invoice is out of the working list and out of the outstanding and billed totals. It
+            has not been deleted or cancelled, and the household can still see it and still pay it.
+          </Banner>
+        )}
+
         {notice && (
           <Banner tone="success" title="Done">
             {notice}
@@ -260,7 +478,151 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
           </Banner>
         )}
 
-        {meta ? (
+        {/* THE ITEMIZATION, or an explicit statement that there isn't one.
+            An invoice that was never itemized renders a SENTENCE, not an empty
+            table: a table with a heading and no rows reads as "nothing was
+            billed", which is a different and much worse claim than "nobody has
+            broken this invoice down". Every invoice created before Task 5.1 is
+            in that state, so this is the common branch, not the edge case. */}
+        {editing === null && (
+          storedLines === null ? (
+            <p className="invoice-detail__no-lines">
+              This invoice has no itemized breakdown. Its total was entered directly. Edit it to add
+              line items.
+            </p>
+          ) : storedLines.length === 0 ? (
+            <p className="invoice-detail__no-lines">
+              This invoice is itemized as billing nothing: it has a breakdown, and the breakdown is
+              empty.
+            </p>
+          ) : (
+            <InvoiceLineItemsTable
+              lines={storedLines}
+              invoiceDiscountCents={invoice.invoiceDiscountCents ?? 0}
+            />
+          )
+        )}
+
+        {editing !== null ? (
+          <div className="invoice-detail__edit">
+            {editError && (
+              <Banner tone="error" title="Can't save">
+                {editError}
+              </Banner>
+            )}
+            {!editing.moneyEditable && (
+              <Banner tone="warning" title="Money is locked">
+                A payment has already been recorded against this invoice, so its line items and
+                discounts cannot change. The number, dates and terms can still be corrected.
+              </Banner>
+            )}
+
+            <div className="invoice-detail__edit-fields">
+              <label className="invoice-detail__field">
+                <span className="invoice-detail__field-label">Invoice number</span>
+                <input
+                  className="invoice-detail__field-input"
+                  value={editing.invoiceNumber}
+                  onChange={(e) => setEditing({ ...editing, invoiceNumber: e.target.value })}
+                  disabled={busy}
+                  aria-label="Invoice number"
+                />
+              </label>
+              <label className="invoice-detail__field">
+                <span className="invoice-detail__field-label">Date</span>
+                {/* A real date input, per the plan: the free-text field it
+                    replaces let "Net 14" into a field the server parses as
+                    YYYY-MM-DD and the list sorts on. */}
+                <input
+                  type="date"
+                  className="invoice-detail__field-input"
+                  value={editing.date}
+                  onChange={(e) => setEditing({ ...editing, date: e.target.value })}
+                  disabled={busy}
+                  aria-label="Invoice date"
+                />
+              </label>
+              <label className="invoice-detail__field">
+                <span className="invoice-detail__field-label">Due date</span>
+                <input
+                  type="date"
+                  className="invoice-detail__field-input"
+                  value={editing.dueDate}
+                  onChange={(e) => setEditing({ ...editing, dueDate: e.target.value })}
+                  disabled={busy}
+                  aria-label="Invoice due date"
+                />
+              </label>
+              <label className="invoice-detail__field">
+                <span className="invoice-detail__field-label">Terms</span>
+                <input
+                  className="invoice-detail__field-input"
+                  value={editing.terms}
+                  onChange={(e) => setEditing({ ...editing, terms: e.target.value })}
+                  disabled={busy}
+                  aria-label="Invoice terms"
+                />
+              </label>
+            </div>
+
+            {editing.moneyEditable && (
+              <InvoiceLineItemsEditor
+                drafts={editing.lines}
+                onChange={(lines) => setEditing({ ...editing, lines })}
+                invoiceDiscountText={editing.invoiceDiscountText}
+                onInvoiceDiscountChange={(invoiceDiscountText) =>
+                  setEditing({ ...editing, invoiceDiscountText })
+                }
+                disabled={busy}
+              />
+            )}
+
+            <div className="invoice-detail__confirm-actions">
+              <GhostButton label="Cancel" onClick={() => !busy && setEditing(null)} disabled={busy} />
+              <PrimaryButton
+                label={busy ? 'Saving…' : 'Save changes'}
+                onClick={() => void saveEdit()}
+                disabled={busy}
+                busy={busy}
+              />
+            </div>
+          </div>
+        ) : archivePrompt ? (
+          <div className="invoice-detail__confirm">
+            <p className="invoice-detail__confirm-copy">
+              {archivePrompt.direction === 'restore'
+                ? 'This puts the invoice back into the working list and back into the outstanding and billed totals. Continue?'
+                : 'This takes the invoice out of the working list and out of the outstanding and billed totals. It does NOT delete it, cancel it, or forgive what is owed, and the household can still see it and still pay it. Continue?'}
+            </p>
+            {archivePrompt.forceOffered && (
+              <p className="invoice-detail__confirm-copy">
+                Archiving it anyway writes that balance off the outstanding total, so nothing will
+                remind you to collect it. That choice is recorded separately in the audit trail.
+              </p>
+            )}
+            <div className="invoice-detail__confirm-actions">
+              <GhostButton
+                label="Cancel"
+                onClick={() => !busy && setArchivePrompt(null)}
+                disabled={busy}
+              />
+              <PrimaryButton
+                label={
+                  busy
+                    ? 'Working…'
+                    : archivePrompt.direction === 'restore'
+                      ? 'Restore invoice'
+                      : archivePrompt.forceOffered
+                        ? 'Archive anyway'
+                        : 'Archive invoice'
+                }
+                onClick={() => void confirmArchive(archivePrompt.forceOffered)}
+                disabled={busy}
+                busy={busy}
+              />
+            </div>
+          </div>
+        ) : meta ? (
           <div className="invoice-detail__confirm">
             <p className="invoice-detail__confirm-copy">{meta.confirmCopy}</p>
             {meta.key === 'markPaid' && (
@@ -315,13 +677,31 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
           <div className="invoice-detail__actions">
             {available.length === 0 ? (
               <p className="invoice-detail__no-actions">
-                No actions available for a {info.label.toLowerCase()} invoice.
+                No collection actions for a {info.label.toLowerCase()} invoice.
               </p>
             ) : (
               available.map((a) => (
                 <GhostButton key={a.key} label={a.label} onClick={() => startAction(a.key)} />
               ))
             )}
+            {/* Edit is offered per the MIRRORED policy, purely so the operator
+                is not handed a control the server will reject. The server is the
+                enforcement; a refusal that gets through comes back with a code
+                and a sentence, and is shown verbatim above. */}
+            {canEdit && <GhostButton label="Edit" onClick={startEditing} />}
+            {/* Archive is deliberately NOT part of the state-driven action
+                matrix. That matrix answers "what can be done about the money",
+                and archiving is orthogonal to it: an invoice in any state can be
+                taken out of the working list. */}
+            <GhostButton
+              label={archived ? 'Restore' : 'Archive'}
+              onClick={() =>
+                setArchivePrompt({
+                  direction: archived ? 'restore' : 'archive',
+                  forceOffered: false,
+                })
+              }
+            />
           </div>
         )}
       </div>

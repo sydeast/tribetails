@@ -1,0 +1,118 @@
+/**
+ * The un-invoiced-visits picker. Imported directly by
+ * UninvoicedVisitsPicker.tsx. Tokens only; `src/styles/tokenUsage.test.ts`
+ * fails the build on an undeclared reference or a literal fallback.
+ */
+
+.visit-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.visit-picker__window {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.visit-picker__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.visit-picker__label {
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  font-weight: var(--type-label-sm-weight);
+  color: var(--color-text-dim);
+}
+
+.visit-picker__input {
+  padding: var(--space-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-tight);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+
+.visit-picker__hint,
+.visit-picker__scope {
+  margin: 0;
+  color: var(--color-text-dim);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+
+.visit-picker__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.visit-picker__row {
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-tight);
+  background: var(--color-surface-2);
+}
+
+.visit-picker__row-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  cursor: pointer;
+}
+
+.visit-picker__row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.visit-picker__row-service {
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+}
+
+.visit-picker__row-meta {
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.visit-picker__price {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+/* An unpriced visit reads as words, never as a money figure. "$0.00" here would
+   be indistinguishable from a service the business genuinely gives away, and it
+   would ride onto the finished invoice looking entirely deliberate. */
+.visit-picker__price--none {
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-warning);
+  font-style: italic;
+}
+
+.visit-picker__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}

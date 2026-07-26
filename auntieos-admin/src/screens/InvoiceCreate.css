@@ -60,3 +60,17 @@
   font-size: var(--type-body-md-size);
   color: var(--color-text-primary);
 }
+/* Task 5.1: the flat-vs-itemized switch and the derived-total line. */
+.invoice-create__mode {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+/* The total on the itemized path is stated, not typed. This line is where the
+   operator reads back what the invoice will actually be sent for. */
+.invoice-create__derived {
+  margin: 0;
+  color: var(--color-text-dim);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}

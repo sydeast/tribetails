@@ -15,7 +15,7 @@ vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
 vi.mock('../src/lib/resolveKinfolkAccess', () => ({ resolveKinfolkAccess: mocks.resolveKinfolkAccess }));
 
-import { renderInvoicePdf, invoiceForPdf, winAnsiSafe, type InvoiceForPdf } from '../src/lib/invoicePdf';
+import { renderInvoicePdf, invoiceForPdf, winAnsiSafe, lineItemsForPdf, usdCents, formatQty, type InvoiceForPdf } from '../src/lib/invoicePdf';
 import { generateInvoicePdfHandler } from '../src/admin/generateInvoicePdf';
 import { getMyInvoicePdfHandler } from '../src/portal/getMyInvoicePdf';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
@@ -123,5 +123,125 @@ describe('getMyInvoicePdf (portal, IDOR-scoped)', () => {
   it('throws not-found for a missing invoice', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock({ docs: {} }).db);
     await expect(getMyInvoicePdfHandler(req({ invoiceId: 'x' }))).rejects.toMatchObject({ code: 'not-found' });
+  });
+});
+/**
+ * Task 5.1: the PDF renders REAL line items when the invoice has them.
+ *
+ * `lineItemsForPdf` is tested hard because it reads a RAW Firestore document,
+ * not a validated payload. `firestore.rules` grants `allow update: if isAuntie()`
+ * over the whole invoices collection and `postInvoiceEvent` merges an arbitrary
+ * payload, so the malformed rows below are reachable states, not paranoia.
+ */
+describe('lineItemsForPdf (pure, defensive)', () => {
+  it('returns an empty list for an un-itemized invoice', () => {
+    expect(lineItemsForPdf(undefined)).toEqual([]);
+    expect(lineItemsForPdf(null)).toEqual([]);
+  });
+  it('returns an empty list when the field is not an array at all', () => {
+    expect(lineItemsForPdf('two dog walks')).toEqual([]);
+    expect(lineItemsForPdf({ description: 'Dog walk' })).toEqual([]);
+  });
+  it('derives the line amount rather than trusting a stored one', () => {
+    const [li] = lineItemsForPdf([{ description: 'Dog walk', qty: 3, unitCents: 2500, amountCents: 1 }]);
+    expect(li!.amountCents).toBe(7500);
+  });
+  it('subtracts a per-line discount from the derived amount', () => {
+    const [li] = lineItemsForPdf([{ description: 'Stay', qty: 1, unitCents: 8000, discountCents: 500 }]);
+    expect(li!.amountCents).toBe(7500);
+  });
+  it('rounds a fractional quantity once, at the line', () => {
+    const [li] = lineItemsForPdf([{ description: 'Hours', qty: 2.5, unitCents: 3333 }]);
+    expect(li!.amountCents).toBe(8333); // 8332.5 rounds half-up
+  });
+  it('DROPS a malformed row instead of failing the whole document', () => {
+    const rows = lineItemsForPdf([
+      { description: 'Good', qty: 1, unitCents: 100 },
+      { description: '', qty: 1, unitCents: 100 },
+      { description: 'No qty', unitCents: 100 },
+      { description: 'NaN qty', qty: Number.NaN, unitCents: 100 },
+      { description: 'String price', qty: 1, unitCents: '100' },
+      null,
+      'not a row',
+    ]);
+    expect(rows.map((r) => r.description)).toEqual(['Good']);
+  });
+  it('treats a missing discountCents as zero, not as a broken row', () => {
+    const [li] = lineItemsForPdf([{ description: 'Walk', qty: 1, unitCents: 2500 }]);
+    expect(li!.discountCents).toBe(0);
+    expect(li!.amountCents).toBe(2500);
+  });
+});
+describe('invoiceForPdf line-item fields', () => {
+  it('leaves an un-itemized invoice with no items and a zero subtotal', () => {
+    const inv = invoiceForPdf('i1', INV);
+    expect(inv.lineItems).toEqual([]);
+    expect(inv.subtotalCents).toBe(0);
+    expect(inv.invoiceDiscountCents).toBe(0);
+  });
+  it('sums the subtotal from the LINES, not from the stored subtotalCents', () => {
+    // The stored figure is deliberately wrong here: firestore.rules and
+    // postInvoiceEvent both bypass every callable, so the two can drift. What
+    // the household receives must add up to what it lists.
+    const inv = invoiceForPdf('i1', {
+      ...INV,
+      lineItems: [
+        { description: 'Dog walk', qty: 3, unitCents: 2500 },
+        { description: 'Stay', qty: 1, unitCents: 8000, discountCents: 500 },
+      ],
+      subtotalCents: 999_999,
+    });
+    expect(inv.subtotalCents).toBe(15000);
+  });
+  it('reads the invoice-level discount when present', () => {
+    const inv = invoiceForPdf('i1', { ...INV, lineItems: [{ description: 'x', qty: 1, unitCents: 500 }], invoiceDiscountCents: 250 });
+    expect(inv.invoiceDiscountCents).toBe(250);
+  });
+});
+describe('usdCents / formatQty', () => {
+  it('formats integer cents as dollars', () => {
+    expect(usdCents(0)).toBe('$0.00');
+    expect(usdCents(2500)).toBe('$25.00');
+    expect(usdCents(8333)).toBe('$83.33');
+    expect(usdCents(-1250)).toBe('-$12.50');
+  });
+  it('reads a non-finite figure as zero rather than printing $NaN on an invoice', () => {
+    expect(usdCents(Number.NaN)).toBe('$0.00');
+  });
+  it('prints a whole quantity without money-style decimals', () => {
+    expect(formatQty(3)).toBe('3');
+    expect(formatQty(2.5)).toBe('2.5');
+    expect(formatQty(Number.NaN)).toBe('0');
+  });
+});
+describe('renderInvoicePdf with line items', () => {
+  const itemized: Record<string, unknown> = {
+    ...INV,
+    lineItems: [
+      { description: 'Dog walk', qty: 3, unitCents: 2500 },
+      { description: 'Overnight stay', qty: 1, unitCents: 8000, discountCents: 500 },
+    ],
+    invoiceDiscountCents: 1000,
+  };
+  it('still produces a valid PDF for an itemized invoice', async () => {
+    const bytes = await renderInvoicePdf(invoiceForPdf('i1', itemized));
+    expect(Buffer.from(bytes.slice(0, 5)).toString()).toBe('%PDF-');
+    expect(bytes.length).toBeGreaterThan(500);
+  });
+  it('renders MORE bytes than the same invoice without items (the table is really drawn)', async () => {
+    const withItems = await renderInvoicePdf(invoiceForPdf('i1', itemized));
+    const without = await renderInvoicePdf(invoiceForPdf('i1', INV));
+    expect(withItems.length).toBeGreaterThan(without.length);
+  });
+  it('does not throw on a description carrying characters Helvetica cannot encode', async () => {
+    const bytes = await renderInvoicePdf(
+      invoiceForPdf('i1', { ...INV, lineItems: [{ description: '狗狗散步 🐕', qty: 1, unitCents: 2500 }] }),
+    );
+    expect(Buffer.from(bytes.slice(0, 5)).toString()).toBe('%PDF-');
+  });
+  it('renders an invoice with a 100-line itemization without blowing up', async () => {
+    const many = Array.from({ length: 100 }, (_, i) => ({ description: `Visit ${String(i)}`, qty: 1, unitCents: 2500 }));
+    const bytes = await renderInvoicePdf(invoiceForPdf('i1', { ...INV, lineItems: many }));
+    expect(Buffer.from(bytes.slice(0, 5)).toString()).toBe('%PDF-');
   });
 });

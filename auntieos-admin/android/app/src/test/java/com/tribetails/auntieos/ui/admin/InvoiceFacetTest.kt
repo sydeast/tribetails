@@ -44,3 +44,53 @@ class InvoiceFacetTest {
         assertFalse(invoiceIsQuote(Invoice(id = "i3", status = "")))
     }
 }
+/**
+ * Task 5.1: the archive facet and the panel subtitle.
+ *
+ * Same package as `InvoicesScreen.kt` so the `internal` helpers are visible,
+ * which is why `householdFacets` and friends are internal rather than private.
+ */
+class InvoiceArchiveFacetTest {
+    private fun inv(id: String, archived: Boolean) =
+        com.tribetails.auntieos.data.model.Invoice(id = id).apply {
+            if (archived) archivedAt = "2026-07-25T00:00:00Z"
+        }
+    @org.junit.Test
+    fun `Hide keeps only unarchived invoices`() {
+        org.junit.Assert.assertTrue(archivedAllows(ArchivedMode.Hide, inv("a", archived = false)))
+        org.junit.Assert.assertFalse(archivedAllows(ArchivedMode.Hide, inv("b", archived = true)))
+    }
+    @org.junit.Test
+    fun `Only keeps just the archived ones`() {
+        org.junit.Assert.assertFalse(archivedAllows(ArchivedMode.Only, inv("a", archived = false)))
+        org.junit.Assert.assertTrue(archivedAllows(ArchivedMode.Only, inv("b", archived = true)))
+    }
+    @org.junit.Test
+    fun `Include keeps everything`() {
+        org.junit.Assert.assertTrue(archivedAllows(ArchivedMode.Include, inv("a", archived = false)))
+        org.junit.Assert.assertTrue(archivedAllows(ArchivedMode.Include, inv("b", archived = true)))
+    }
+    @org.junit.Test
+    fun `an explicit null archivedAt survives Hide, because unarchive writes null`() {
+        val restored = com.tribetails.auntieos.data.model.Invoice(id = "r").apply { archivedAt = null }
+        org.junit.Assert.assertTrue(archivedAllows(ArchivedMode.Hide, restored))
+    }
+    @org.junit.Test
+    fun `the subtitle stays quiet when nothing is hidden`() {
+        org.junit.Assert.assertEquals(
+            "2 of 3 shown. Tap a row to open the invoice.",
+            invoiceListSubtitle(visible = 2, inScope = 3, archivedHidden = 0),
+        )
+    }
+    @org.junit.Test
+    fun `the subtitle NAMES the hidden invoices and scopes the count to what is loaded`() {
+        // Rows must never quietly disappear, and a bare number would read as a
+        // fact about the books rather than about this page.
+        val one = invoiceListSubtitle(visible = 1, inScope = 1, archivedHidden = 1)
+        org.junit.Assert.assertTrue(one.contains("1 archived invoice hidden"))
+        org.junit.Assert.assertTrue(one.contains("loaded here"))
+        org.junit.Assert.assertTrue(
+            invoiceListSubtitle(visible = 1, inScope = 1, archivedHidden = 3).contains("3 archived invoices hidden"),
+        )
+    }
+}

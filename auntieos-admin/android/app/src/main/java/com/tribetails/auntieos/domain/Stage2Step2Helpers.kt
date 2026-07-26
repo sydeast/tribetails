@@ -134,6 +134,17 @@ fun weeklyRevenue(invoices: List<Invoice>, weekStartIso: String, nowIso: String)
     val end = isoDatePrefixOrNull(nowIso) ?: return 0.0
     var sum = 0.0
     for (inv in invoices) {
+        // ARCHIVED INVOICES ARE NOT REVENUE. Kept as its own guard rather than
+        // folded into [invoiceIsPaidForRevenue], deliberately: that function is
+        // the canonical PAID test, mirrored by `InvoicesScreen.invoiceIsPaid` and
+        // the web's own, so overloading it with an archive concern would make
+        // three surfaces disagree about what "paid" means. Archive is orthogonal
+        // to state, here exactly as it is on the web.
+        //
+        // Not optional parity work: without this line, an invoice archived on the
+        // web would go on being counted into this tile, so Android would report a
+        // week's revenue the web says has been written off.
+        if (invoiceIsArchived(inv)) continue
         if (!invoiceIsPaidForRevenue(inv)) continue
         val date = isoDatePrefixOrNull(inv.date) ?: continue
         if (date in start..end) sum += inv.total

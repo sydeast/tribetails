@@ -152,3 +152,44 @@ class Stage2Step2HelpersTest {
         assertEquals(null, rescheduleArgsForDrop(KinCareSession(id = "s1"), "bad-date", 600))
     }
 }
+/**
+ * Task 5.1: archived invoices must not be counted as revenue.
+ *
+ * Not optional parity work. Without this, an invoice archived on the web would
+ * go on being counted into Android's weekly-revenue tile, so the two surfaces
+ * would report different money for the same week.
+ */
+class WeeklyRevenueArchiveTest {
+    private fun paidInvoice(id: String, archived: Boolean) =
+        com.tribetails.auntieos.data.model.Invoice(
+            id = id,
+            status = "paid",
+            total = 40.0,
+            amountDue = 0.0,
+            date = "2026-07-22",
+        ).apply { if (archived) archivedAt = "2026-07-25T00:00:00Z" }
+    @org.junit.Test
+    fun `an archived paid invoice is excluded from weekly revenue`() {
+        val invoices = listOf(paidInvoice("live", archived = false), paidInvoice("gone", archived = true))
+        org.junit.Assert.assertEquals(
+            40.0,
+            weeklyRevenue(invoices, "2026-07-20", "2026-07-26"),
+            0.001,
+        )
+    }
+    @org.junit.Test
+    fun `an unarchived paid invoice is still counted`() {
+        org.junit.Assert.assertEquals(
+            40.0,
+            weeklyRevenue(listOf(paidInvoice("live", archived = false)), "2026-07-20", "2026-07-26"),
+            0.001,
+        )
+    }
+    @org.junit.Test
+    fun `archive is kept OUT of the canonical paid test, so three surfaces cannot disagree`() {
+        // invoiceIsPaidForRevenue mirrors InvoicesScreen.invoiceIsPaid and the
+        // web's own. Overloading it with an archive concern would change what
+        // "paid" means on every surface that reads it.
+        org.junit.Assert.assertTrue(invoiceIsPaidForRevenue(paidInvoice("gone", archived = true)))
+    }
+}

@@ -367,10 +367,13 @@ describe('Invoices screen: archived invoices are excluded by default', () => {
     entry({ _id: 'gone', invoiceNumber: 'GONE', archivedAt: fakeTs('2026-07-20T00:00:00Z') }),
   ];
 
-  it('sends NO archivedAt predicate to the server, which would return zero rows today', () => {
-    // Nothing writes the field until Task 5.1, and Firestore `== null` matches
-    // only documents that HAVE it, so a server-side exclusion would silently
-    // empty the screen. The exclusion is a presence check over loaded rows.
+  it('sends NO archivedAt predicate to the server, which would return zero rows', () => {
+    // STILL TRUE NOW THAT 5.1 ACTUALLY WRITES THE FIELD, which is the whole
+    // reason to keep this test rather than retire it. `archiveInvoice` stamping
+    // new archives does not retroactively give `archivedAt` to the invoices
+    // already in the collection, and Firestore `== null` matches only documents
+    // that HAVE the field, so a server-side exclusion would silently empty the
+    // screen across essentially the whole collection. It needs a backfill first.
     render(<Invoices />);
     expect((lastSpec().filters ?? []).map((f) => f[0])).not.toContain('archivedAt');
   });
@@ -380,8 +383,13 @@ describe('Invoices screen: archived invoices are excluded by default', () => {
     render(<Invoices />);
     expect(screen.getByText('#LIVE')).toBeInTheDocument();
     expect(screen.queryByText('#GONE')).toBeNull();
+    // The count is scoped to the LOADED page and now says so. A client-side
+    // exclusion cannot see archived invoices it never loaded, so a bare
+    // "1 archived invoice excluded" reads like a fact about the books.
     expect(
-      screen.getByText('These totals cover the 1 invoice in the last 7 days. 1 archived invoice excluded.'),
+      screen.getByText(
+        'These totals cover the 1 invoice in the last 7 days. 1 archived invoice excluded, counted within the invoices loaded here rather than across the books.',
+      ),
     ).toBeInTheDocument();
   });
 

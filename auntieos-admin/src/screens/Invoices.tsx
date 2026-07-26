@@ -66,11 +66,31 @@ const FILTERS: readonly FilterDef[] = [
  * The archive facet. Blank is the toolbar's own "all" value, so the three
  * states are: hide archived (the default), show them alongside, show only them.
  *
- * Applied CLIENT-SIDE over the loaded page, deliberately. See
- * `InvoiceEntry.archivedAt`: nothing writes the field yet, and Firestore's
- * `== null` matches only documents that HAVE it, so a server-side exclusion
- * today would return every invoice as "archived" by omission, silently. A
- * presence check over the loaded rows is the same rule with none of that.
+ * STILL APPLIED CLIENT-SIDE, NOW THAT THE FIELD IS REALLY BEING WRITTEN. Task
+ * 5.1 shipped `archiveInvoice`, so `archivedAt` is no longer a field nothing
+ * touches, and the obvious next move looks like pushing this into the query to
+ * use the deployed `invoices (archivedAt ASC, date DESC)` index. IT IS STILL
+ * WRONG, and it would fail SILENTLY, which is why this comment is longer than
+ * the code it guards:
+ *
+ *  - `where('archivedAt', '==', null)` matches only documents that HAVE the
+ *    field set to null. It does not match documents missing it.
+ *  - Every invoice predating 5.1 is missing it, and archiving new invoices does
+ *    not retroactively give it to the old ones.
+ *  - So a "hide archived" predicate would return ZERO rows across essentially
+ *    the whole collection, and Firestore would raise no error at all. An empty
+ *    Invoices screen with a clean console is exactly the failure class this
+ *    codebase exists to refuse.
+ *
+ * Converting this to a server predicate needs a backfill stamping
+ * `archivedAt: null` onto every legacy invoice FIRST. That is a migration, and
+ * deliberately not part of this task. `unarchiveInvoice` already writes
+ * `archivedAt: null` rather than deleting the field, so restored invoices
+ * already carry the shape such a backfill would converge on.
+ *
+ * The cost of staying client-side, stated rather than hidden: the exclusion only
+ * sees rows this page has LOADED, so the hidden-invoice count in the stats note
+ * is a count within the loaded page, not within the books. The note says so.
  */
 type ArchivedMode = 'hide' | '' | 'only';
 
@@ -286,7 +306,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           ? `These totals cover the ${String(loaded)} invoice${plural} loaded so far, not all of ${windowLabel}.`
           : `These totals cover ${everyOne} invoice${plural} in ${windowLabel}.`) +
         (archivedHidden > 0
-          ? ` ${String(archivedHidden)} archived invoice${archivedHidden === 1 ? '' : 's'} excluded.`
+          ? ` ${String(archivedHidden)} archived invoice${archivedHidden === 1 ? '' : 's'} excluded, counted within the invoices loaded here rather than across the books.`
           : '');
 
   // THE HONESTY LINE. What the search box actually reaches, plus the one cost of
