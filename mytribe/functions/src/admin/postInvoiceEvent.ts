@@ -13,7 +13,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 const Args = z.object({
   familyId: z.string().min(1),
   invoiceId: z.string().min(1),
-  payload: z.record(z.unknown()),
+  payload: z.record(z.string(), z.unknown()),
 });
 
 export async function postInvoiceEventHandler(req: CallableRequest<unknown>): Promise<{ ok: true }> {

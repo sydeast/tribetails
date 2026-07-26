@@ -10,7 +10,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 
 const Args = z.object({
   familyId: z.string().min(1),
-  overrides: z.record(z.unknown()),
+  overrides: z.record(z.string(), z.unknown()),
 });
 
 const ALLOWED_KEYS = ['layoutDensity', 'accentChoice', 'tileOrder'] as const;

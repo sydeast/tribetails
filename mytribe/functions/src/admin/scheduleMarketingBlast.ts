@@ -13,7 +13,7 @@ const Args = z.object({
   key: z.enum(MARKETING_KEYS),
   fireAtMs: z.number().int().positive(),
   audienceUids: z.array(z.string().min(1)).min(1).max(5000),
-  data: z.record(z.unknown()),
+  data: z.record(z.string(), z.unknown()),
 });
 
 /**
