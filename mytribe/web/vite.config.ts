@@ -50,10 +50,11 @@ export default defineConfig({
   build: {
     sourcemap: false,
     // vite 8 bundles with rolldown, which drops object-form manualChunks;
-    // advancedChunks is its replacement for the same firebase-in-one-chunk split.
+    // codeSplitting (né advancedChunks) is its replacement for the same
+    // firebase-in-one-chunk split.
     rolldownOptions: {
       output: {
-        advancedChunks: {
+        codeSplitting: {
           groups: [{ name: 'firebase', test: /node_modules\/(@firebase|firebase)\// }],
         },
       },
