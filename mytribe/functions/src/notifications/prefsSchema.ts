@@ -25,12 +25,12 @@ const Category = z.enum([
 ]);
 const MarketingCategory = z.enum(['newsletter', 'survey', 'marketing']);
 
-const ChannelMap = z.record(Channel, z.boolean()).optional();
+const ChannelMap = z.partialRecord(Channel, z.boolean()).optional();
 
 export const PrefsShape = z.object({
-  byCategory: z.record(Category, ChannelMap).optional(),
+  byCategory: z.partialRecord(Category, ChannelMap).optional(),
   byKey: z.record(z.string(), ChannelMap).optional(),
-  marketingOptIn: z.record(MarketingCategory, z.boolean()).optional(),
+  marketingOptIn: z.partialRecord(MarketingCategory, z.boolean()).optional(),
 });
 
 export const SaveArgs = z.object({ prefs: PrefsShape });

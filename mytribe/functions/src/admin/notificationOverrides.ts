@@ -36,7 +36,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  */
 
 const Channel = z.enum(['email', 'sms', 'push']);
-const ChannelMap = z.record(Channel, z.boolean()).optional();
+const ChannelMap = z.partialRecord(Channel, z.boolean()).optional();
 // Audience revamp 2026-07: a per-stream overlay carries the same gate fields as the
 // flat override; the dispatcher falls back field-by-field to the flat values.
 const StreamGate = z
@@ -44,7 +44,7 @@ const StreamGate = z
     enabled: z.boolean().optional(),
     channels: ChannelMap,
     lockedEnabled: z.boolean().optional(),
-    locked: z.record(Channel, z.literal(true)).optional(),
+    locked: z.partialRecord(Channel, z.literal(true)).optional(),
   })
   .strict();
 const OverridePayload = z.object({
@@ -54,7 +54,7 @@ const OverridePayload = z.object({
   // pins a channel. Persisted verbatim into byKey and returned by the getter, so the
   // kinfolk prefs UI can render the locked toggles as read-only.
   lockedEnabled: z.boolean().optional(),
-  locked: z.record(Channel, z.literal(true)).optional(),
+  locked: z.partialRecord(Channel, z.literal(true)).optional(),
   // Operator-authored reason shown to users on locked/required rows. Trimmed here;
   // an empty result means "clear the stored reason" (handled in the save handler).
   lockReason: z

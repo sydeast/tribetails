@@ -7,7 +7,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
-const Args = z.object({ familyId: z.string().min(1), brandTokens: z.record(z.unknown()) });
+const Args = z.object({ familyId: z.string().min(1), brandTokens: z.record(z.string(), z.unknown()) });
 
 export async function setBrandTokensHandler(req: CallableRequest<unknown>): Promise<{ ok: true }> {
   const args = Args.parse(req.data);

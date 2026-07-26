@@ -132,19 +132,23 @@ function shapeKeys(schema: z.ZodObject<z.ZodRawShape>): string[] {
  */
 function shapeSignature(schema: z.ZodTypeAny, prefix = ''): string[] {
   // Unwrap the wrappers that do not change the field PATH, only its modality.
-  const def = (schema as { _def?: { typeName?: string; innerType?: z.ZodTypeAny; schema?: z.ZodTypeAny; type?: z.ZodTypeAny } })._def;
-  const typeName = def?.typeName;
-  if (typeName === 'ZodOptional' || typeName === 'ZodNullable' || typeName === 'ZodDefault') {
-    return shapeSignature(def!.innerType as z.ZodTypeAny, prefix);
+  // zod 4 internals: `def.type` is a lowercase kind string (the v3
+  // `_def.typeName` PascalCase names are gone), wrappers carry `innerType`,
+  // arrays carry `element`, and ZodEffects no longer exists — .transform
+  // builds a `pipe` (walk its input side) while .refine/.superRefine attach
+  // checks to the same schema without wrapping it.
+  const def = (schema as unknown as { def: { type: string; innerType?: z.ZodTypeAny; in?: z.ZodTypeAny; element?: z.ZodTypeAny } }).def;
+  const typeName = def?.type;
+  if (typeName === 'optional' || typeName === 'nullable' || typeName === 'default' || typeName === 'readonly' || typeName === 'catch') {
+    return shapeSignature(def.innerType as z.ZodTypeAny, prefix);
   }
-  if (typeName === 'ZodEffects') {
-    // .superRefine / .refine / .transform wrap the real schema (broadcastMessage).
-    return shapeSignature(def!.schema as z.ZodTypeAny, prefix);
+  if (typeName === 'pipe') {
+    return shapeSignature(def.in as z.ZodTypeAny, prefix);
   }
-  if (typeName === 'ZodArray') {
-    return shapeSignature(def!.type as z.ZodTypeAny, `${prefix}[]`);
+  if (typeName === 'array') {
+    return shapeSignature(def.element as z.ZodTypeAny, `${prefix}[]`);
   }
-  if (typeName === 'ZodObject') {
+  if (typeName === 'object') {
     const shape = (schema as z.ZodObject<z.ZodRawShape>).shape;
     const out: string[] = [];
     for (const key of Object.keys(shape)) {
