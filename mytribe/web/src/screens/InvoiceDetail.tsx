@@ -196,9 +196,20 @@ export function InvoiceDetail() {
                     </thead>
                     <tbody>
                       {inv.lineItems.map((item) => (
-                        <tr key={item.sessionId}>
+                        // Keyed on `lineId`, never `sessionId`: a stored line has
+                        // no session behind it, so every stored row would share
+                        // the same empty key.
+                        <tr key={item.lineId}>
                           <td className="svc">
                             <b>{item.label || 'Visit'}</b>
+                            {/* Shown only when it adds something. A quantity of
+                                one just repeats the amount column, while a line
+                                billed 3 x $20 should not read as a bare $60. */}
+                            {item.qty !== null && item.unitCents !== null && item.qty !== 1 && (
+                              <small>
+                                {item.qty} x {formatCentsUsd(item.unitCents)}
+                              </small>
+                            )}
                           </td>
                           <td className="date">{longDateLabel(item.dateIso) ?? '—'}</td>
                           <td className="r amt">{item.amountCents !== null ? formatCentsUsd(item.amountCents) : '—'}</td>

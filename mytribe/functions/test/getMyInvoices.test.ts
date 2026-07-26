@@ -108,8 +108,8 @@ describe('getMyInvoicesHandler', () => {
     const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
     const res = await getMyInvoicesHandler({ data: {}, auth: { uid: 'u1' } } as any);
     expect(res.open[0].lineItems).toEqual([
-      { sessionId: 'vis_1', label: '30Minute', dateIso: '2026-07-01T10:00:00', amountCents: 2500 },
-      { sessionId: 'vis_2', label: '2Hrs', dateIso: '2026-07-02', amountCents: 8000 },
+      { lineId: 'session:vis_1', source: 'session', sessionId: 'vis_1', label: '30Minute', dateIso: '2026-07-01T10:00:00', amountCents: 2500, qty: null, unitCents: null },
+      { lineId: 'session:vis_2', source: 'session', sessionId: 'vis_2', label: '2Hrs', dateIso: '2026-07-02', amountCents: 8000, qty: null, unitCents: null },
     ]);
     // Invoice without sessionIds carries no lineItems field at all.
     expect(res.paid[0].lineItems).toBeUndefined();
@@ -150,28 +150,40 @@ describe('invoice lineItem pure mappers', () => {
   it('mapSessionToLineItem maps the modern session shape (serviceType/startTime/rate)', async () => {
     const { mapSessionToLineItem } = await import('../src/portal/getMyInvoices');
     expect(mapSessionToLineItem('vis_1', { serviceType: '30Minute', startTime: '2026-07-01T10:00:00', rate: '25' })).toEqual({
+      lineId: 'session:vis_1',
+      source: 'session',
       sessionId: 'vis_1',
       label: '30Minute',
       dateIso: '2026-07-01T10:00:00',
       amountCents: 2500,
+      qty: null,
+      unitCents: null,
     });
   });
   it('mapSessionToLineItem accepts older type/date/price fields', async () => {
     const { mapSessionToLineItem } = await import('../src/portal/getMyInvoices');
     expect(mapSessionToLineItem('vis_2', { type: '2Hrs', date: '2026-07-02', price: 80 })).toEqual({
+      lineId: 'session:vis_2',
+      source: 'session',
       sessionId: 'vis_2',
       label: '2Hrs',
       dateIso: '2026-07-02',
       amountCents: 8000,
+      qty: null,
+      unitCents: null,
     });
   });
   it('mapSessionToLineItem degrades gracefully on sparse docs', async () => {
     const { mapSessionToLineItem } = await import('../src/portal/getMyInvoices');
     expect(mapSessionToLineItem('vis_3', {})).toEqual({
+      lineId: 'session:vis_3',
+      source: 'session',
       sessionId: 'vis_3',
       label: 'Service',
       dateIso: null,
       amountCents: null,
+      qty: null,
+      unitCents: null,
     });
     expect(mapSessionToLineItem('vis_4', { rate: 'not-a-number' }).amountCents).toBeNull();
   });
@@ -234,5 +246,99 @@ describe('getMyInvoices renders a part-paid invoice honestly', () => {
     const res = await load({ status: 'open', total: 40, amountDue: 20, paidCents: 20.5 });
     expect(res.open[0].paidCents).toBe(0);
     expect(res.open[0].partiallyPaid).toBe(false);
+  });
+});
+/**
+ * THE INVOICE'S OWN LINES WIN.
+ *
+ * Until 2026-07-25 this callable ignored the stored `lineItems` and rebuilt a
+ * list from `sessionIds`, so an itemized invoice showed the household a
+ * different set of rows from the one the operator billed, priced off the session
+ * (usually absent, so usually blank). These tests pin that the stored lines are
+ * used, that the session path is a FALLBACK and not a supplement, and that a
+ * malformed stored line is dropped rather than shown as a $0.00 charge.
+ */
+describe('getMyInvoices prefers the stored line items', () => {
+  const LINES = [
+    { description: 'Daily visit', qty: 3, unitCents: 2000 },
+    { description: 'Extra dog', qty: 1, unitCents: 500, discountCents: 100 },
+  ];
+  async function load(invoice: Record<string, unknown>, sessions: Record<string, unknown> = {}) {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] }, ...sessions },
+      queryDocs: { invoices: [{ id: 'inv1', data: { kinfolkId: '3', ...invoice } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    return res;
+  }
+  it('renders the stored lines, with the same arithmetic the server totals with', async () => {
+    const res = await load({ invoiceStatus: 'open', amountDue: 64, total: 64, lineItems: LINES });
+    expect(res.open[0].lineItems).toEqual([
+      { lineId: 'stored:0', source: 'stored', sessionId: '', label: 'Daily visit', dateIso: null, amountCents: 6000, qty: 3, unitCents: 2000 },
+      // 500 gross minus a 100 line discount. Rounded once at the line, exactly as
+      // invoiceMath.ts#lineAmountCents does, or the breakdown would not add up to
+      // the total printed under it.
+      { lineId: 'stored:1', source: 'stored', sessionId: '', label: 'Extra dog', dateIso: null, amountCents: 400, qty: 1, unitCents: 500 },
+    ]);
+  });
+  it('IGNORES sessionIds entirely when the invoice has its own lines', async () => {
+    // The bug in one assertion: this invoice has both, and the household must
+    // see what was billed, not a second list rebuilt from the visits.
+    const res = await load(
+      { invoiceStatus: 'open', amountDue: 64, total: 64, lineItems: LINES, sessionIds: ['vis_1'] },
+      { 'kin_care_sessions/vis_1': { serviceType: '30Minute', startTime: '2026-07-01T10:00:00', rate: '25' } },
+    );
+    expect(res.open[0].lineItems?.every((l) => l.source === 'stored')).toBe(true);
+    expect(res.open[0].lineItems).toHaveLength(2);
+  });
+  it('still falls back to sessions for a legacy invoice with no stored lines', async () => {
+    // Every invoice predating the line-item editor. The fallback is the only
+    // breakdown those will ever have, so it stays.
+    const res = await load(
+      { invoiceStatus: 'open', amountDue: 25, total: 25, sessionIds: ['vis_1'] },
+      { 'kin_care_sessions/vis_1': { serviceType: '30Minute', startTime: '2026-07-01T10:00:00', rate: '25' } },
+    );
+    expect(res.open[0].lineItems).toEqual([
+      { lineId: 'session:vis_1', source: 'session', sessionId: 'vis_1', label: '30Minute', dateIso: '2026-07-01T10:00:00', amountCents: 2500, qty: null, unitCents: null },
+    ]);
+  });
+  it('gives every row a key that is unique within the invoice', async () => {
+    // Keying on sessionId collapsed every stored row onto one empty key, which
+    // is a rendering bug the server can prevent rather than hope about.
+    const res = await load({ invoiceStatus: 'open', amountDue: 64, total: 64, lineItems: LINES });
+    const ids = (res.open[0].lineItems ?? []).map((l) => l.lineId);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+describe('storedLineItemsFrom', () => {
+  it('drops a malformed line rather than billing the household $0.00 for it', async () => {
+    // `firestore.rules` grants `allow update: if isAuntie()` over the whole
+    // collection and postInvoiceEvent merges an arbitrary payload, so neither
+    // the presence nor the shape of this array is guaranteed.
+    const { storedLineItemsFrom } = await import('../src/portal/getMyInvoices');
+    expect(
+      storedLineItemsFrom([
+        { description: 'Good', qty: 1, unitCents: 100 },
+        { description: '', qty: 1, unitCents: 100 },
+        { description: 'No qty', qty: 0, unitCents: 100 },
+        { description: 'Float cents', qty: 1, unitCents: 10.5 },
+        { description: 'Negative discount', qty: 1, unitCents: 100, discountCents: -5 },
+        null,
+        'not an object',
+      ]),
+    ).toEqual([{ description: 'Good', qty: 1, unitCents: 100, discountCents: 0 }]);
+  });
+  it('reads a missing or non-array field as no lines', async () => {
+    const { storedLineItemsFrom } = await import('../src/portal/getMyInvoices');
+    expect(storedLineItemsFrom(undefined)).toEqual([]);
+    expect(storedLineItemsFrom({})).toEqual([]);
+    expect(storedLineItemsFrom('lineItems')).toEqual([]);
+  });
+  it('caps the list so one bad doc cannot build an unbounded response', async () => {
+    const { storedLineItemsFrom, MAX_LINE_ITEM_SESSIONS } = await import('../src/portal/getMyInvoices');
+    const many = Array.from({ length: 60 }, (_, i) => ({ description: `L${i}`, qty: 1, unitCents: 100 }));
+    expect(storedLineItemsFrom(many)).toHaveLength(MAX_LINE_ITEM_SESSIONS);
   });
 });
