@@ -6,7 +6,9 @@ function getStripe(): Stripe {
   if (stripe) return stripe;
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) throw new Error('STRIPE_SECRET_KEY environment variable is required');
-  stripe = new Stripe(key, { apiVersion: '2024-06-20' });
+  // No apiVersion override: the SDK pins the API version it was generated
+  // against, and overriding it with an older date now fails the type check.
+  stripe = new Stripe(key);
   return stripe;
 }
 
