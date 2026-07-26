@@ -8,6 +8,12 @@ import {
   type User,
 } from 'firebase/auth';
 import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
+// Import cycle with activeTribe.ts (it imports getAuthState/useAuth back), but
+// every cross-reference is call-time and function declarations hoist, so
+// neither side touches an uninitialized binding during module evaluation. The
+// old dynamic import here never split a chunk anyway — activeTribe is
+// statically imported by the router and most screens.
+import { clearAccess } from './activeTribe';
 import { auth, activateAppCheck } from './firebase';
 
 /**
@@ -81,9 +87,6 @@ export async function signOut(): Promise<void> {
   await unregisterForPush();
 
   await firebaseSignOut(auth);
-  // Lazy import: activeTribe.ts imports getAuthState/useAuth from this module,
-  // so a static import here would be circular at module-init time.
-  const { clearAccess } = await import('./activeTribe');
   clearAccess();
 
   // S7-BLOCKER-1: if App Check activated during this session, its Enterprise
