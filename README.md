@@ -6,10 +6,14 @@ product, kept in one repo so a change that spans them lands as one commit.
 | Folder | What it is |
 |---|---|
 | `mytribe/` | Cloud Functions (the real backend, all callables) + the kinfolk portal React app at `kinfolk.tribetails.com` |
-| `auntieos/` | The operator app: Compose Multiplatform web (Wasm) + desktop (JVM) in `web/`, native Android in `android/` |
-| `auntieos-admin/` | React admin surface at `auntieos-admin.web.app` |
+| `auntieos-admin/src` | The live operator admin at `auntie.tribetails.com` |
+| `auntieos-admin/android` | The operator Android app |
+| `auntieos-admin/web` | AuntieOS-owned functions, plus the SUPERSEDED Compose wasm build and the PAUSED desktop (JVM) build |
 
-All three deploy into a single Firebase project, `auntieos-ttpc`.
+All of it deploys into a single Firebase project, `auntieos-ttpc`.
+
+`docs/RUNBOOK.md` is the standing operational doc: setup, scripts, builds,
+deploys, secrets and troubleshooting.
 
 ## Why one repo
 
