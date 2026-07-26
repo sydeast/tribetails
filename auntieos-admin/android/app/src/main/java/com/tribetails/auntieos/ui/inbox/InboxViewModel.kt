@@ -163,6 +163,26 @@ class InboxViewModel(private val repository: AuntieRepository) : ViewModel() {
         _isLoading.value = false
     }
 
+    /**
+     * What the operator is told after a reply goes out, matching the web admin's
+     * banner word for word in substance.
+     *
+     * The send SUCCEEDED in every branch here. None of this may read as a failed
+     * reply, because an operator who thinks a reply failed sends it a second time.
+     * What differs is only whether the reply is now visible in the SMS channel
+     * list: the server refuses to write that row for a number with no existing
+     * thread, so promising one would send somebody looking for a row that was
+     * never written.
+     */
+    internal fun smsReplyResultMessage(mirrored: Boolean, skippedReason: String): String = when {
+        mirrored -> "Reply sent and added to this thread"
+        skippedReason == "no_existing_thread" ->
+            "Reply sent. This number has not texted in before, so it is not added to the SMS list"
+        skippedReason == "write_failed" ->
+            "Reply sent, but it could not be added to the SMS list"
+        else -> "Reply sent"
+    }
+
     fun sendSmsReply(
         recipientPhone: String,
         body: String,
@@ -187,13 +207,17 @@ class InboxViewModel(private val repository: AuntieRepository) : ViewModel() {
                 subject = null,
                 body = body,
                 transactional = true,
+                // Ask the server to also list this reply in the SMS channel. It
+                // decides whether that is allowed; the message below reports what
+                // it actually did, not what was asked for.
+                mirrorToChannel = true,
             ).onSuccess { result ->
                 if (!voicemailId.isNullOrBlank()) {
                     repository.markVoicemailReplied(voicemailId, result.providerMessageId).onFailure {
                         _error.value = it.message ?: "Reply sent but voicemail status update failed"
                     }
                 }
-                _actionResult.tryEmit("Reply sent")
+                _actionResult.tryEmit(smsReplyResultMessage(result.mirrored, result.mirrorSkippedReason))
             }.onFailure { _error.value = it.message ?: "Failed to send reply" }
             _isLoading.value = false
         }

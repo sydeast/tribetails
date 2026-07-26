@@ -1,6 +1,20 @@
 {
   "indexes": [
     {
+      "collectionGroup": "sms_messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "counterpartNumber",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "media_files",
       "queryScope": "COLLECTION",
       "fields": [

@@ -91,6 +91,15 @@ import {
   writeCalendarProblem,
 } from '../src/lib/googleCalendarTargets';
 import { GOOGLE_OAUTH_REDIRECT_URI, GOOGLE_OAUTH_SECRETS } from '../src/lib/googleOAuth';
+// External send + the Inbox outbound mirror (2026-07-25). Three surfaces build
+// this payload: the Communicate external panel, the Inbox reply composer
+// (auntieos-admin/src/api/externalSend.ts) and android's AuntieRepository. It is
+// a `.superRefine` effects wrapper, so it is frozen by RECURSIVE signature
+// below. `mirrorToChannel` is the field that earns the freeze: it decides
+// whether a recipient's number is written to `sms_messages` IN THE CLEAR, so a
+// silent rename here is a privacy regression, not only a broken client.
+import { Args as SendExternalMessageArgs } from '../src/admin/sendExternalMessage';
+import { MIRROR_SKIPPED } from '../src/lib/smsChannelMirror';
 
 /**
  * AO-8 drift guard (design doc
@@ -296,6 +305,10 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
       'communicationType', 'content', 'docId', 'notes',
       'targetKinId', 'targetKinfolkId', 'targetType', 'title',
     ],
+  },
+  sendExternalMessage: {
+    schema: SendExternalMessageArgs,
+    signature: ['body', 'channel', 'mirrorToChannel', 'subject', 'to', 'transactional'],
   },
 };
 
@@ -566,5 +579,45 @@ describe('callable contract drift guard (brand asset confirm/remove)', () => {
     expect(m.MAX_BRAND_ASSET_PX).toBe(4000);
     expect([...m.ACCEPTED_BRAND_ASSET_TYPES]).toEqual(['image/png', 'image/jpeg', 'image/webp']);
     expect(m.BRAND_ASSET_FOLDER).toBe('tribetails/business/business_settings');
+  });
+});
+/**
+ * Mirror-decision freeze. Two clients hand-mirror these three codes to decide
+ * what the operator is told after a reply goes out, and the wrong branch is not
+ * a cosmetic bug: it either promises a row in a list where none was written, or
+ * it reads as a failed send and the operator texts the same person twice.
+ *
+ * The email refusal is frozen too. If `mirrorToChannel` ever became silently
+ * ignored on email instead of rejected, a banner would claim an `sms_messages`
+ * row for a send that touched only `emails`.
+ */
+describe('sendExternalMessage outbound mirror contract', () => {
+  it('freezes the skip reason codes both clients branch on', () => {
+    expect(MIRROR_SKIPPED.NOT_REQUESTED).toBe('not_requested');
+    expect(MIRROR_SKIPPED.NO_EXISTING_THREAD).toBe('no_existing_thread');
+    expect(MIRROR_SKIPPED.WRITE_FAILED).toBe('write_failed');
+  });
+  it('defaults mirrorToChannel to false, so a legacy payload never mirrors', () => {
+    const parsed = SendExternalMessageArgs.parse({ channel: 'sms', to: '+14155552671', body: 'hi' });
+    expect(parsed.mirrorToChannel).toBe(false);
+  });
+  it('accepts mirrorToChannel on sms', () => {
+    const ok = SendExternalMessageArgs.safeParse({
+      channel: 'sms',
+      to: '+14155552671',
+      body: 'hi',
+      mirrorToChannel: true,
+    });
+    expect(ok.success).toBe(true);
+  });
+  it('REFUSES mirrorToChannel on email rather than ignoring it', () => {
+    const bad = SendExternalMessageArgs.safeParse({
+      channel: 'email',
+      to: 'a@example.com',
+      subject: 's',
+      body: 'hi',
+      mirrorToChannel: true,
+    });
+    expect(bad.success).toBe(false);
   });
 });

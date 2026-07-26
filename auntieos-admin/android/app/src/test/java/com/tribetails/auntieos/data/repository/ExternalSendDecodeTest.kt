@@ -67,4 +67,60 @@ class ExternalSendDecodeTest {
         assertEquals("sms", r.channel)
         assertEquals("", r.recipientRedacted)
     }
+
+    /**
+     * The mirror fields. `mirrored` decides whether the operator is told the
+     * reply is now in the SMS thread, so it must be believed only on a literal
+     * true. An older deployed function omits both keys, and understating is the
+     * only safe direction: the UI keeps telling the old truth instead of naming
+     * a row that was never written.
+     */
+    @Test fun `send decode reads mirrored only on a literal true`() {
+        val yes = decodeExternalSendResult(
+            mapOf("ok" to true, "channel" to "sms", "mirrored" to true),
+            "sms",
+        )
+        assertEquals(true, yes.mirrored)
+        assertEquals("", yes.mirrorSkippedReason)
+    }
+    @Test fun `send decode treats an absent mirrored field as not mirrored`() {
+        val r = decodeExternalSendResult(mapOf("ok" to true, "channel" to "sms"), "sms")
+        assertEquals(false, r.mirrored)
+        assertEquals("", r.mirrorSkippedReason)
+    }
+    @Test fun `send decode does not accept a truthy non-boolean as mirrored`() {
+        for (bad in listOf<Any>("true", 1, "yes")) {
+            val r = decodeExternalSendResult(
+                mapOf("ok" to true, "channel" to "sms", "mirrored" to bad),
+                "sms",
+            )
+            assertEquals(false, r.mirrored)
+        }
+    }
+    @Test fun `send decode carries the skip reason through so the UI can be specific`() {
+        val r = decodeExternalSendResult(
+            mapOf(
+                "ok" to true,
+                "channel" to "sms",
+                "mirrored" to false,
+                "mirrorSkippedReason" to "no_existing_thread",
+            ),
+            "sms",
+        )
+        assertEquals(false, r.mirrored)
+        assertEquals("no_existing_thread", r.mirrorSkippedReason)
+    }
+    @Test fun `send decode drops a reason that contradicts a successful mirror`() {
+        val r = decodeExternalSendResult(
+            mapOf(
+                "ok" to true,
+                "channel" to "sms",
+                "mirrored" to true,
+                "mirrorSkippedReason" to "write_failed",
+            ),
+            "sms",
+        )
+        assertEquals(true, r.mirrored)
+        assertEquals("", r.mirrorSkippedReason)
+    }
 }
