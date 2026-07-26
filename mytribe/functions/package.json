@@ -8,6 +8,7 @@
   "main": "lib/index.js",
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "build:watch": "tsc -w",
     "lint": "eslint --ext .ts src test",
     "format": "prettier -w \"src/**/*.ts\" \"test/**/*.ts\"",
