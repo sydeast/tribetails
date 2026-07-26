@@ -182,3 +182,71 @@ describe('InvoiceDetail — a part-paid invoice reads honestly', () => {
     expect(screen.queryByText('PART PAID')).toBeNull();
   });
 });
+/**
+ * The breakdown table. Until 2026-07-25 the server built these rows from the
+ * invoice's `sessionIds` and never read its stored `lineItems`, so an itemized
+ * invoice showed the household a different set of rows from the one the operator
+ * billed, with amounts read off the session and therefore usually blank.
+ */
+describe('InvoiceDetail line items', () => {
+  const ITEMIZED: GetMyInvoicesResult['open'][number] = {
+    ...OPEN_INVOICE,
+    total: 64,
+    amountDue: 64,
+    lineItems: [
+      {
+        lineId: 'stored:0', source: 'stored', sessionId: '',
+        label: 'Daily visit', dateIso: null, amountCents: 6000, qty: 3, unitCents: 2000,
+      },
+      {
+        lineId: 'stored:1', source: 'stored', sessionId: '',
+        label: 'Extra dog', dateIso: null, amountCents: 400, qty: 1, unitCents: 500,
+      },
+    ],
+  };
+  async function renderWith(invoice: GetMyInvoicesResult['open'][number]) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({ open: [invoice], paid: [], credits: [], accountBalanceCents: 0 });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+  }
+  it('renders every stored line with a real amount, none of them blank', async () => {
+    await renderWith(ITEMIZED);
+    expect(await screen.findByText('Daily visit')).toBeInTheDocument();
+    expect(screen.getByText('Extra dog')).toBeInTheDocument();
+    expect(screen.getByText('$60.00')).toBeInTheDocument();
+    expect(screen.getByText('$4.00')).toBeInTheDocument();
+  });
+  it('shows the unit breakdown only where it adds something', async () => {
+    // 3 x $20 explains a $60 row. A quantity of one would just repeat the
+    // amount column, so it is not printed.
+    await renderWith(ITEMIZED);
+    expect(await screen.findByText('3 x $20.00')).toBeInTheDocument();
+    expect(screen.queryByText('1 x $5.00')).not.toBeInTheDocument();
+  });
+  it('renders two rows for two lines, which a shared React key would have collapsed', async () => {
+    // Every stored line carries an empty sessionId, so keying the table on it
+    // put two rows under one key.
+    await renderWith(ITEMIZED);
+    await screen.findByText('Daily visit');
+    const rows = document.querySelectorAll('table.items tbody tr');
+    expect(rows).toHaveLength(2);
+  });
+  it('still renders a legacy session-derived line, dates and all', async () => {
+    await renderWith({
+      ...OPEN_INVOICE,
+      lineItems: [
+        {
+          lineId: 'session:vis_1', source: 'session', sessionId: 'vis_1',
+          label: '30Minute', dateIso: '2026-07-01T10:00:00', amountCents: 2500, qty: null, unitCents: null,
+        },
+      ],
+    });
+    expect(await screen.findByText('30Minute')).toBeInTheDocument();
+    expect(screen.getByText('$25.00')).toBeInTheDocument();
+  });
+});

@@ -16,12 +16,28 @@ export type InvoiceStatus = 'draft' | 'open' | 'paid' | 'credit' | 'cancelled';
 export type CreditTarget = 'accountBalance';
 
 export interface InvoiceLineItemDto {
+  /**
+   * Stable key for one row, unique within an invoice. Use this and NOT
+   * `sessionId`, which is empty on a stored line, so every stored row would
+   * otherwise share one key.
+   */
+  lineId: string;
+  /**
+   * `stored` is what the operator actually billed, read off the invoice's own
+   * `lineItems`. `session` is the legacy fallback derived from `sessionIds` for
+   * an invoice with no lines. Never mixed on one invoice.
+   */
+  source: 'stored' | 'session';
+  /** The session behind a derived row. Empty on a stored line. */
   sessionId: string;
-  /** Service type of the visit, e.g. "30Minute". */
+  /** The billed description, or the visit's service type on a derived row. */
   label: string;
-  /** Session start (ISO string) or its date field; null when the session carries neither. */
+  /** Visit date on a derived row. Null on a stored line, which carries no date. */
   dateIso: string | null;
   amountCents: number | null;
+  /** Stored lines only. */
+  qty: number | null;
+  unitCents: number | null;
 }
 
 export interface InvoiceDto {
