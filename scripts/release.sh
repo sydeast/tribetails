@@ -56,6 +56,12 @@ cd "$ROOT"
 
 SAFE_DEPLOY="$ROOT/scripts/safe-deploy.sh"
 
+# The one shared project. safe-deploy.sh pins this for every deploy it runs;
+# declared here too because the secret preflight and the prune query it directly
+# rather than through safe-deploy. Omitting it made the preflight die on
+# `PROJECT: unbound variable` under set -u the first time it ran for real.
+PROJECT="auntieos-ttpc"
+
 red()  { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 grn()  { printf '\033[32m%s\033[0m\n' "$*"; }
 cyan() { printf '\033[36m%s\033[0m\n' "$*"; }
@@ -105,7 +111,20 @@ deploy() {
 # ---------------------------------------------------------------------------
 banner "0. Preconditions"
 
+# RELEASE_PREFLIGHT_ONLY=1 runs steps 0 and 1b and then STOPS, deploying
+# nothing. It exists because this script was previously only executable in the
+# exact situation it guards for — clean tree, on main, in sync — which meant its
+# own code paths could not be exercised anywhere else, and the secret preflight
+# shipped with a `PROJECT: unbound variable` that only appeared the first time it
+# ran for real. The tree/branch/sync guards are skipped in this mode precisely
+# because nothing in it can ship: it is unreachable from any deploy.
+PREFLIGHT_ONLY="${RELEASE_PREFLIGHT_ONLY:-0}"
+if [ "$PREFLIGHT_ONLY" = "1" ]; then
+  ylw "RELEASE_PREFLIGHT_ONLY=1: checking preflight only. Nothing will deploy."
+fi
+
 STEP="checking the working tree is clean"
+if [ "$PREFLIGHT_ONLY" != "1" ]; then
 if [ -n "$(git status --porcelain)" ]; then
   red "REFUSED: the working tree has uncommitted changes."
   red "  A release ships what is COMMITTED on main. Uncommitted work either"
@@ -175,6 +194,7 @@ if [ "${DRY_RUN:-0}" = "1" ]; then
 fi
 
 confirm "Release this commit to production (auntieos-ttpc)?"
+fi  # end of the guards skipped under RELEASE_PREFLIGHT_ONLY
 
 # ---------------------------------------------------------------------------
 # 1. Build and verify, which is also what produces the artifacts we upload.
@@ -182,7 +202,9 @@ confirm "Release this commit to production (auntieos-ttpc)?"
 banner "1. Check (typecheck, lint, test, build)"
 
 STEP="running npm run check"
-if [ "${RELEASE_SKIP_CHECK:-0}" = "1" ]; then
+if [ "$PREFLIGHT_ONLY" = "1" ]; then
+  ylw "SKIPPED (preflight only). Using whatever is already built."
+elif [ "${RELEASE_SKIP_CHECK:-0}" = "1" ]; then
   ylw "SKIPPED (RELEASE_SKIP_CHECK=1). The dist/ directories about to be"
   ylw "uploaded are whatever was last built, which may not match HEAD."
 else
@@ -236,6 +258,13 @@ else
     fi
     grn "secrets: all $(printf '%s\n' "$DECLARED" | wc -l | tr -d ' ') declared secrets exist"
   fi
+fi
+
+if [ "$PREFLIGHT_ONLY" = "1" ]; then
+  trap - EXIT
+  banner "Preflight only: stopping here"
+  grn "Steps 0 and 1b ran. Nothing was deployed."
+  exit 0
 fi
 
 # ---------------------------------------------------------------------------
