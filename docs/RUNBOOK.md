@@ -166,14 +166,27 @@ order**, stops at the first failure, and names the step it died in.
 
 | # | Step | Why here |
 |---|---|---|
-| 0 | Preconditions | Clean tree, on `main`, synced with origin. Shipping uncommitted or stale code is the classic incident. |
+| 0 | Preconditions | Clean tree, on `main`, synced with origin. Shipping uncommitted or stale code is the classic incident. Falls back to `gh` if the SSH agent is down, since it must verify the fact, not one transport. |
 | 1 | `npm run check` | Typecheck, lint, test, build. Not optional theatre: this is what produces the `dist/` that step 6 uploads. |
+| 1b | Secret preflight | Every secret the code DECLARES must exist. Firebase validates these before uploading, and one missing name fails the whole codebase. Refuses here, before any deploy. |
 | 2 | Firestore indexes | Before the code that queries them. A query with no index fails at RUNTIME, not at build. |
 | 3 | Wait for indexes | The CLI returns when Firestore ACCEPTS an index, not when it is Enabled. The run blocks; the CLI will not. |
 | 4 | Firestore rules | From `mytribe` only. Refused outright if the admin mirror has drifted. |
-| 5 | Functions | Before the clients that call them: a client calling a function that is not there fails at runtime. |
+| 5 | Functions | Before the clients that call them. **Skipped when `mytribe/functions` is unchanged since the last release** — see below. |
 | 6 | Hosting | Admin, then portal. |
 | 7 | Verify | Fetches both live sites and compares the hashed bundle they reference against the one just built. |
+| 8 | Prune revisions | Deletes old Cloud Run revisions, keeping the newest 10 per service and every serving one. Runs after verification, because those revisions are rollback targets. |
+
+**Why step 5 is conditional.** Redeploying the codebase mints a new Cloud Run
+revision for every one of its ~200 functions even when nothing changed.
+Revisions are never reclaimed on their own and each holds CPU against the
+regional quota, so an unconditional redeploy burns ~200 revisions to accomplish
+nothing — and once the quota is gone, the functions step fails and the release
+blocks itself before it ever reaches hosting. That happened on 2026-07-27. The
+last released commit is recorded in `.release-state` (gitignored, per machine);
+if nothing under `mytribe/functions` changed since then, the step is skipped and
+says so. Anything unknown deploys, because the safe default when you cannot
+prove code is current is to ship it.
 
 Step 7 is the one whose absence hid the stale admin. Hosting can report a
 successful release while browsers still get the old bundle. A release that
@@ -187,6 +200,10 @@ Knobs, all off by default:
 | `RELEASE_SKIP_CHECK=1` | Skip step 1. Then `dist/` is whatever was last built, which may not match HEAD |
 | `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` | Also ship the AuntieOS `default` and `reconcile` codebases |
 | `RELEASE_YES=1` | Do not prompt (CI). Preconditions still apply |
+| `RELEASE_FORCE_FUNCTIONS=1` | Deploy functions even when unchanged |
+| `RELEASE_SKIP_SECRET_CHECK=1` | Skip step 1b |
+| `RELEASE_SKIP_PRUNE=1` | Skip step 8. Revisions then accumulate until a deploy fails |
+| `RELEASE_KEEP_REVISIONS=N` | Revisions kept per service in step 8 (default 10) |
 
 The AuntieOS functions codebases are **skipped by default** and the run says so
 rather than omitting them quietly. They live in the second tree
@@ -285,6 +302,35 @@ Check the field type first.
 **A callable works locally and 500s in production.** The secret is set but not
 DECLARED in that function's `secrets: [...]`. See above.
 
+**A functions deploy fails with `Failed to validate secret versions ... not
+found or has no versions`.** The inverse trap: a secret the code DECLARES that
+nobody ever SET. Firebase validates every declared secret before uploading, so
+one missing name fails the ENTIRE codebase, not just the function declaring it.
+Release step 1b now catches this before anything deploys and prints the exact
+`firebase functions:secrets:set` command per missing name. To check by hand:
+
+```bash
+node scripts/declared-secrets.js
+```
+
+That reads the built `__endpoint`s — the same structure the CLI validates —
+rather than grepping source, which cannot see arrays built from spreads.
+
+**A functions deploy fails with `Quota exceeded for total allowable CPU per
+project per region`.** Cloud Run keeps every revision forever and each holds CPU
+against the regional quota. They reached 7,266 across 228 services and made
+deploys impossible until ~5,300 were deleted. Release step 8 now prunes after
+every release; to run it alone:
+
+```bash
+scripts/prune-run-revisions.sh 10
+```
+
+It never touches a serving revision, keeps the newest N per service, and retries
+the 429s the Cloud Run API returns under load. If pruning is not enough, the
+durable fix is a quota increase: Cloud Run Admin API, "Total CPU allocation, per
+project per region", `us-central1`.
+
 **A client mirror test goes red after a backend change.** The contract freeze
 doing its job. Update the doc, the frozen set and every mirror together.
 
@@ -298,16 +344,16 @@ with `gh pr view` before believing local git.
 main.** Example: `'rolldownOptions' does not exist in type
 'BuildEnvironmentOptions'` from `vite.config.ts`. A dependency-upgrade PR moved
 the lockfile past your installed `node_modules`, so tsc is checking new code
-against old types. `npm run setup` will NOT fix this: it skips any project whose
-`node_modules` directory exists, without checking staleness. Reinstall
-explicitly:
+against old types.
 
 ```bash
-FORCE_INSTALL=1 npm run setup
+npm run setup
 ```
 
-or `npm --prefix <project> ci` for just the affected project. `npm ci` rather
-than `npm install`, so what lands is exactly the lockfile.
+`setup` detects this now: it compares each `package-lock.json` against
+`node_modules/.package-lock.json` and reinstalls any project whose lockfile is
+newer, announcing it as STALE rather than skipping. (It used to check only that
+the directory existed, which is exactly how this hid for an hour.)
 
 **Gradle: "SDK location not found".** Run `npm run setup`.
 

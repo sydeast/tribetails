@@ -133,10 +133,37 @@ fi
 # the shared cache and fail with EACCES renaming into ~/.npm/_cacache.
 #
 # Not --silent: when an install fails, the reason is the only useful output.
+#
+# "Installed" is decided by STALENESS, not by the mere existence of the
+# directory. npm writes node_modules/.package-lock.json on every install, so if
+# package-lock.json is NEWER than that file, what is on disk predates the
+# lockfile and is not what this commit expects.
+#
+# The old check looked only for the directory, and on 2026-07-26 that hid a real
+# failure for an hour: a dependency-upgrade PR moved vite 6 -> 8, node_modules
+# still held 6.4.3, and `npm run build` died with "'rolldownOptions' does not
+# exist in type 'BuildEnvironmentOptions'" — a type error in code that was
+# correct. `npm run setup` was run and cheerfully reported the project already
+# installed, because it only checked that a directory existed.
 STEP="installing dependencies"
 for p in mytribe/functions mytribe/web auntieos-admin; do
-  if [ -d "$p/node_modules" ] && [ -z "${FORCE_INSTALL:-}" ]; then
-    grn "deps: $p already installed (FORCE_INSTALL=1 to reinstall)"
+  INSTALLED_MARKER="$p/node_modules/.package-lock.json"
+  STALE=0
+  if [ -d "$p/node_modules" ]; then
+    if [ ! -f "$INSTALLED_MARKER" ]; then
+      STALE=1   # no marker: npm never finished, or an ancient layout
+    elif [ "$p/package-lock.json" -nt "$INSTALLED_MARKER" ]; then
+      STALE=1   # lockfile moved after the last install
+    fi
+  fi
+
+  if [ "$STALE" -eq 1 ] && [ -z "${FORCE_INSTALL:-}" ]; then
+    ylw "deps: $p is STALE (package-lock.json is newer than the install)"
+    ylw "      reinstalling; this is the drift that makes correct code fail to build"
+  fi
+
+  if [ -d "$p/node_modules" ] && [ "$STALE" -eq 0 ] && [ -z "${FORCE_INSTALL:-}" ]; then
+    grn "deps: $p already installed and current (FORCE_INSTALL=1 to reinstall)"
   else
     STEP="installing dependencies in $p"
     printf 'deps: installing %s ...\n' "$p"

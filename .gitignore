@@ -4,3 +4,5 @@
 # contain whatever was in memory at the time (tokens, PII), and they are far
 # over GitHub's 100 MB limit.
 *.hprof
+.release-state
+__pycache__/
