@@ -125,18 +125,45 @@ if [ "$BRANCH" != "main" ]; then
 fi
 grn "branch: main"
 
+# The sync check must verify the FACT (local == origin), not one transport's
+# ability to ask. The 1Password SSH agent drops out regularly here, and on
+# 2026-07-27 it killed a release whose code was fine and already in sync: git
+# over SSH could not authenticate, so the check could not run, so the run
+# refused. The runbook already says `gh` uses an HTTPS token and is unaffected,
+# and is the right cross-check when the agent is down. Now the script knows
+# that too. This is not a bypass: it still proves local == origin, over a
+# transport that works. If BOTH transports fail we still refuse, because an
+# unverifiable sync is exactly the state that strands a merged PR off main.
 STEP="checking main is in sync with origin"
-git fetch origin main --quiet
 LOCAL="$(git rev-parse HEAD)"
-REMOTE="$(git rev-parse origin/main)"
+REMOTE=""
+if git fetch origin main --quiet 2>/dev/null; then
+  REMOTE="$(git rev-parse origin/main)"
+  SYNC_VIA="git"
+else
+  ylw "git fetch failed (SSH agent down?). Falling back to gh over HTTPS."
+  SLUG="$(git remote get-url origin | sed -E 's#^.*github\.com[:/]##; s#\.git$##')"
+  REMOTE="$(gh api "repos/$SLUG/commits/main" --jq .sha 2>/dev/null || true)"
+  SYNC_VIA="gh"
+fi
+
+if [ -z "$REMOTE" ]; then
+  red "REFUSED: cannot determine origin/main by any available transport."
+  red "  git fetch failed AND gh could not answer."
+  red "  If the 1Password SSH agent dropped, quit and reopen 1Password."
+  red "  An unverifiable sync is refused rather than assumed: that is how a"
+  red "  merged PR ends up not on main and nobody notices."
+  exit 1
+fi
+
 if [ "$LOCAL" != "$REMOTE" ]; then
-  red "REFUSED: local main and origin/main disagree."
+  red "REFUSED: local main and origin/main disagree (checked via $SYNC_VIA)."
   red "  local:  $LOCAL"
   red "  origin: $REMOTE"
   red "  Deploying either one silently picks a winner. Pull (or push) first."
   exit 1
 fi
-grn "sync: main == origin/main ($(git rev-parse --short HEAD))"
+grn "sync: main == origin/main ($(git rev-parse --short HEAD), via $SYNC_VIA)"
 
 # What is actually about to ship, so the operator can recognise it. A release
 # whose contents are a surprise is one nobody can sanity-check.
@@ -161,6 +188,54 @@ if [ "${RELEASE_SKIP_CHECK:-0}" = "1" ]; then
 else
   npm run check
   grn "check: passed, and dist/ now matches HEAD"
+fi
+
+# ---------------------------------------------------------------------------
+# 1b. Every DECLARED secret must exist, BEFORE anything deploys.
+# ---------------------------------------------------------------------------
+banner "1b. Secret preflight"
+
+# Firebase validates declared secrets before uploading, and a secret that is
+# declared but never SET fails the whole codebase deploy, not just the function
+# declaring it. On 2026-07-26 that killed a release five minutes in, AFTER
+# indexes and rules had already shipped, leaving production half-moved. The
+# names come from the built __endpoints, the same structure the CLI validates,
+# so this check agrees with the validator rather than approximating it.
+STEP="checking declared secrets exist"
+if [ "${RELEASE_SKIP_SECRET_CHECK:-0}" = "1" ]; then
+  ylw "SKIPPED (RELEASE_SKIP_SECRET_CHECK=1)."
+elif ! DECLARED="$(node "$ROOT/scripts/declared-secrets.js" 2>/dev/null)" || [ -z "$DECLARED" ]; then
+  # Could not read the endpoints (functions not built, e.g. under
+  # RELEASE_SKIP_CHECK). Say so plainly instead of reporting a clean check:
+  # "no secrets found" and "could not look" must never print the same.
+  ylw "could not read declared secrets (are the functions built?). Not checked."
+else
+  EXISTING="$(gcloud secrets list --project "$PROJECT" --format='value(name)' 2>/dev/null || true)"
+  if [ -z "$EXISTING" ]; then
+    ylw "could not list Secret Manager secrets; skipping the comparison."
+  else
+    MISSING=""
+    for s in $DECLARED; do
+      printf '%s\n' "$EXISTING" | grep -qx "$s" || MISSING="$MISSING $s"
+    done
+    if [ -n "$MISSING" ]; then
+      red "REFUSED: the code declares secrets that do not exist in Secret Manager:"
+      for s in $MISSING; do red "    $s"; done
+      red ""
+      red "  Firebase validates every declared secret before it uploads anything,"
+      red "  so these would fail the ENTIRE functions deploy, not just the"
+      red "  functions that declare them. Refusing now, before any deploy, so"
+      red "  production is not left half-shipped."
+      red ""
+      red "  Create each one from mytribe/ (it prompts, so the value stays out"
+      red "  of your shell history):"
+      for s in $MISSING; do
+        red "    firebase functions:secrets:set $s --project $PROJECT"
+      done
+      exit 1
+    fi
+    grn "secrets: all $(printf '%s\n' "$DECLARED" | wc -l | tr -d ' ') declared secrets exist"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -206,9 +281,44 @@ grn "rules: deployed"
 # ---------------------------------------------------------------------------
 banner "5. Functions"
 
+# WHY THIS IS CONDITIONAL, which is the fix for a cycle that blocked a release
+# for hours on 2026-07-27. Redeploying the codebase mints a NEW Cloud Run
+# revision for every one of its ~200 functions even when not a line changed.
+# Revisions are never reclaimed on their own, and each one holds CPU against the
+# regional "total allowable CPU" quota. A release that redeploys unchanged
+# functions therefore burns ~200 revisions of quota to accomplish nothing, and
+# once the quota is exhausted the functions step FAILS — so the release blocks
+# itself, on work it did not need to do, before it ever reaches hosting.
+#
+# The last released commit is recorded in .release-state (gitignored, per
+# machine). If nothing under mytribe/functions changed since then, the deployed
+# functions are already this code and the step is skipped and SAYS so. Anything
+# unknown (no state file, unreadable commit) deploys, because the safe default
+# when you cannot prove code is current is to ship it.
 STEP="deploying the mytribe functions codebase"
-deploy mytribe functions:mytribe
-grn "functions:mytribe: deployed"
+STATE_FILE="$ROOT/.release-state"
+LAST_RELEASED=""
+[ -f "$STATE_FILE" ] && LAST_RELEASED="$(cat "$STATE_FILE" 2>/dev/null || true)"
+
+FUNCTIONS_CHANGED=1
+if [ "${RELEASE_FORCE_FUNCTIONS:-0}" = "1" ]; then
+  ylw "functions: forced (RELEASE_FORCE_FUNCTIONS=1)"
+elif [ -n "$LAST_RELEASED" ] && git cat-file -e "$LAST_RELEASED^{commit}" 2>/dev/null; then
+  if git diff --quiet "$LAST_RELEASED" HEAD -- mytribe/functions 2>/dev/null; then
+    FUNCTIONS_CHANGED=0
+  fi
+fi
+
+if [ "$FUNCTIONS_CHANGED" -eq 0 ]; then
+  ylw "SKIPPED: mytribe/functions is unchanged since the last release"
+  ylw "  ($(git rev-parse --short "$LAST_RELEASED")). The deployed functions are"
+  ylw "  already this code. Redeploying would mint ~200 Cloud Run revisions and"
+  ylw "  burn regional CPU quota to change nothing."
+  ylw "  Force with RELEASE_FORCE_FUNCTIONS=1."
+else
+  deploy mytribe functions:mytribe
+  grn "functions:mytribe: deployed"
+fi
 
 STEP="deploying the admin functions codebases"
 if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
@@ -290,6 +400,43 @@ else
     exit 1
   fi
 fi
+
+# ---------------------------------------------------------------------------
+# 8. Reclaim Cloud Run revision quota.
+# ---------------------------------------------------------------------------
+banner "8. Prune old Cloud Run revisions"
+
+# Cloud Run keeps every revision forever and each holds CPU against the regional
+# "total allowable CPU" quota. Nothing here ever reclaimed them, so they reached
+# 7,266 across 228 services and exhausted us-central1, which failed 18 functions
+# mid-release on 2026-07-26 and then blocked the retry the next day. Pruning by
+# hand fixed that night; without a retention step it simply refills at roughly
+# 200 revisions per release, and someone rediscovers this in a few months.
+#
+# Runs AFTER verification on purpose: the revisions being deleted are rollback
+# targets, and they are only safe to drop once the thing that replaced them is
+# confirmed serving. Never touches the revision a service is serving, and keeps
+# RELEASE_KEEP_REVISIONS (default 10) per service, so rollback stays possible.
+STEP="pruning old Cloud Run revisions"
+KEEP="${RELEASE_KEEP_REVISIONS:-10}"
+if [ "${DRY_RUN:-0}" = "1" ]; then
+  ylw "DRY_RUN=1: skipping the prune."
+elif [ "${RELEASE_SKIP_PRUNE:-0}" = "1" ]; then
+  ylw "SKIPPED (RELEASE_SKIP_PRUNE=1). Revisions accumulate; the CPU quota is"
+  ylw "what eventually fails, and it fails a DEPLOY, not this script."
+else
+  bash "$ROOT/scripts/prune-run-revisions.sh" "$KEEP" || {
+    # A failed prune must not fail a verified release. The deploy landed; this
+    # is housekeeping, and reporting a good release as broken is its own harm.
+    ylw "prune reported problems (see above). The release itself is fine."
+  }
+fi
+
+# Record what shipped, so the next run can tell whether functions changed.
+# Written only after verification passed: a commit recorded as released when it
+# was not would make the NEXT release skip functions it should have deployed.
+STEP="recording the released commit"
+git rev-parse HEAD > "$ROOT/.release-state"
 
 trap - EXIT
 STEP="done"
