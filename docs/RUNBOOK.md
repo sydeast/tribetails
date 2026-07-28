@@ -202,7 +202,8 @@ Knobs, all off by default:
 | `RELEASE_YES=1` | Do not prompt (CI). Preconditions still apply |
 | `RELEASE_FORCE_FUNCTIONS=1` | Deploy functions even when unchanged |
 | `RELEASE_SKIP_SECRET_CHECK=1` | Skip step 1b |
-| `RELEASE_SKIP_PRUNE=1` | Skip step 8. Revisions then accumulate until a deploy fails |
+| `RELEASE_SKIP_PRUNE=1` | Skip both prunes. The functions deploy then runs without headroom and may exhaust the CPU quota partway through |
+| `RELEASE_PREDEPLOY_KEEP=N` | Revisions kept per service by the prune inside step 5 (default 2) |
 | `RELEASE_KEEP_REVISIONS=N` | Revisions kept per service in step 8 (default 10) |
 
 The AuntieOS functions codebases are **skipped by default** and the run says so
@@ -319,17 +320,42 @@ rather than grepping source, which cannot see arrays built from spreads.
 **A functions deploy fails with `Quota exceeded for total allowable CPU per
 project per region`.** Cloud Run keeps every revision forever and each holds CPU
 against the regional quota. They reached 7,266 across 228 services and made
-deploys impossible until ~5,300 were deleted. Release step 8 now prunes after
-every release; to run it alone:
+deploys impossible until ~5,300 were deleted.
+
+The release prunes twice, for two different reasons. Step 5 prunes to 2 per
+service **before** deploying functions, because that deploy mints ~217
+revisions and needs the room; step 8 prunes to 10 **after** verification, which
+is retention for the drift that out-of-band `safe-deploy` retries leave behind.
+Pruning after the deploy alone was not enough and failed the same way twice, on
+2026-07-26 and 2026-07-28: the wall sits near 900 revisions across 230
+services, so a floor of 690 (keep 3) plus 217 minted still hits it, and a floor
+of 460 (keep 2) does not.
+
+To run either by hand:
 
 ```bash
-scripts/prune-run-revisions.sh 10
+scripts/prune-run-revisions.sh 2    # headroom, what step 5 does
+scripts/prune-run-revisions.sh 10   # retention, what step 8 does
 ```
 
 It never touches a serving revision, keeps the newest N per service, and retries
 the 429s the Cloud Run API returns under load. If pruning is not enough, the
 durable fix is a quota increase: Cloud Run Admin API, "Total CPU allocation, per
 project per region", `us-central1`.
+
+**A deploy failed partway and left named functions undeployed.** Prune first,
+then redeploy only the names that failed, then record the release:
+
+```bash
+scripts/prune-run-revisions.sh 2
+scripts/safe-deploy.sh mytribe -- firebase deploy --only "functions:mytribe:NAME1,functions:mytribe:NAME2"
+git rev-parse HEAD > .release-state   # only once every function is live
+npm run deploy                        # functions now skip; hosting and verify finish
+```
+
+Write `.release-state` by hand only when the functions really are all live.
+The next release reads it to decide whether to deploy functions at all, so a
+premature write makes that release skip work it needed to do.
 
 **A client mirror test goes red after a backend change.** The contract freeze
 doing its job. Update the doc, the frozen set and every mirror together.
