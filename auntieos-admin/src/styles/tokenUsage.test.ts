@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -30,6 +30,17 @@ import { describe, expect, it } from 'vitest';
  * Fallbacks on tokens set at RUNTIME per element are fine and are not flagged:
  * `--den-tone`, `--avatar-gradient` and friends are declared by a component on
  * itself, so a consumer that has not been given one needs a default.
+ *
+ * HOW THE SUITES BELOW ARE BUILT: wherever a shared class or token has
+ * adopters, the adopter set is DISCOVERED by scanning the sources, never kept
+ * as a list. This file used to carry ledgers (seven lift adopters, seven
+ * wearer strings, three staggered screens) and changed five times in eighty
+ * commits keeping them current, and a test every new screen must edit is a
+ * test that gets edited on autopilot. What stays written down is only what a
+ * scan cannot know: which two surfaces are ALLOWED the brand gradient
+ * (exclusivity is the rule), and what the bundler's emit order decides (the
+ * `.signin .signin__card` pin). A new screen that follows the rules changes
+ * nothing here; one that breaks them fails here.
  */
 
 const stylesDir = dirname(fileURLToPath(import.meta.url));
@@ -63,6 +74,36 @@ function tsFiles(dir: string): string[] {
     return full.endsWith('.ts') || full.endsWith('.tsx') ? [full] : [];
   });
 }
+
+/** Markup that can put a class on an element. Tests are excluded: a test that
+ *  NAMES a class is not an element that WEARS it. */
+const TSX_FILES = tsFiles(srcDir).filter(
+  (f) => f.endsWith('.tsx') && !f.endsWith('.test.tsx'),
+);
+
+/**
+ * The class tokens a TSX file puts on elements, one token list per line: every
+ * string literal on a line that mentions `className`, split on whitespace.
+ * Loose on purpose (it reads plain attributes, template literals and the
+ * conditional-array form alike), while comments that merely DISCUSS a class
+ * stay out because they never say `className`. This scan is how adopters of a
+ * shared class are DISCOVERED below, instead of being listed by hand: the old
+ * ledgers of adopter files were why every new screen had to edit this test.
+ */
+function classTokenLines(file: string): string[][] {
+  const out: string[][] = [];
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (!line.includes('className')) continue;
+    const tokens: string[] = [];
+    for (const m of line.matchAll(/["'`]([^"'`]*)["'`]/g)) {
+      tokens.push(...m[1]!.split(/\s+/).filter(Boolean));
+    }
+    if (tokens.length > 0) out.push(tokens);
+  }
+  return out;
+}
+
+const classTokens = (file: string) => new Set(classTokenLines(file).flat());
 
 /** Tokens tokens.css owns: the global design system, as opposed to per-component locals. */
 const globalTokens = new Set(
@@ -231,18 +272,26 @@ describe('the Den entrance and ambient wash', () => {
     expect([...router.matchAll(/className="orb [abc]" aria-hidden="true"/g)]).toHaveLength(3);
   });
 
-  it('staggers the three screens the audit called out', () => {
+  it('staggers gaplessly from d1 on every screen that takes the entrance', () => {
     // Home, Directory and KinTales are the surfaces the 2026-07-25 audit picked
-    // as worth the entrance. A screen with no `d*` class hard-cuts into place.
-    for (const [screen, steps] of [
-      ['screens/Home.tsx', ['d1', 'd2']],
-      ['screens/Directory.tsx', ['d1', 'd2']],
-      ['screens/KinTales.tsx', ['d1', 'd2', 'd3']],
-    ] as const) {
-      const src = readFileSync(join(srcDir, screen), 'utf8');
-      for (const step of steps) {
-        expect(src, `${screen} is missing .${step}`).toMatch(new RegExp(`["' ]${step}["' ]`));
-      }
+    // as worth the entrance; a screen with no `d*` class hard-cuts into place,
+    // which is fine for the ones the audit skipped. WHO staggers is discovered
+    // by the class scan, so the next screen that opts in edits nothing here.
+    // What is held instead: the steps a screen wears must run d1, d2, ... with
+    // no hole, because a lone d3 is a block that sits invisible for 0.18s
+    // waiting on siblings that do not exist; and at least the audit's three
+    // must keep the entrance alive, because fewer means a screen was quietly
+    // un-staggered, not that a rule was followed.
+    const stagger = TSX_FILES.map((f) => ({
+      file: rel(f),
+      steps: [...classTokens(f)].filter((t) => /^d[1-4]$/.test(t)).sort(),
+    })).filter((s) => s.steps.length > 0);
+
+    expect(stagger.length).toBeGreaterThanOrEqual(3);
+    for (const { file, steps } of stagger) {
+      expect(steps, `${file} staggers with a hole in the sequence`).toEqual(
+        ['d1', 'd2', 'd3', 'd4'].slice(0, steps.length),
+      );
     }
   });
 
@@ -280,6 +329,11 @@ describe('the brand gradient renders somewhere real', () => {
     // and Vite emits GlassSurface.css after this file, so a one-class selector
     // ties and loses on order. The card was translucent over the gradient until
     // the built bundle was read.
+    //
+    // PINNED, not derived, deliberately: whether `.signin__card` beats
+    // `.glass-surface` is decided by which file the bundler emits second, and
+    // no scan of the SOURCES can see the bundle's emit order. The two-class
+    // selector is the fix; naming it here is the only way to hold it.
     expect(signin).toMatch(/\.signin \.signin__card\s*\{/);
   });
 
@@ -304,45 +358,45 @@ describe('the brand gradient renders somewhere real', () => {
     expect(kit).toMatch(/\.den-stat--feature\s*\{[^}]*isolation:\s*isolate/);
   });
 
-  it('stays a MARK: two surfaces, and no ordinary screen stylesheet', () => {
+  it('stays a MARK: two surfaces carry it, and everyone else comes up empty', () => {
     // "Reserved for hero and CTA moments" (tokens.css). A brand gradient on
     // every panel is wallpaper, not a mark. Sign-in carries it twice, the
     // full-bleed wash and the card's cap; the hero stat carries it once.
     expect(uses(signin)).toBe(2);
     expect(uses(kit)).toBe(1);
 
-    const screens = FILES.filter((f) => rel(f).startsWith('screens/'));
-    expect(screens.length).toBeGreaterThan(5);
-    expect(screens.filter((f) => uses(readFileSync(f, 'utf8')) > 0).map(rel)).toEqual([]);
+    // Offenders are DISCOVERED, not listed: every stylesheet in the app is
+    // scanned (screen, component and shared sheet alike, where the old check
+    // read only screens/),
+    // and anything outside the two carriers that names the gradient fails here
+    // without this test growing a ledger. The carrier list is the one thing
+    // that stays written down, because exclusivity IS the rule being pinned: a
+    // third surface must show up here as a deliberate edit, never as drift.
+    const carriers = new Set(['styles/signin.css', 'components/DenScreenKit.css']);
+    const offenders = FILES.filter((f) => !carriers.has(rel(f)))
+      .filter((f) => uses(readFileSync(f, 'utf8')) > 0)
+      .map(rel);
+    expect(offenders).toEqual([]);
   });
 });
 
 describe('the shared card lift', () => {
   const base = readFileSync(join(stylesDir, 'base.css'), 'utf8');
 
-  /** Every stylesheet whose cards lift. None of them may re-state the lift. */
-  const adopters = [
-    'components/DenScreenKit.css',
-    'screens/Directory.css',
-    'screens/KinTales.css',
-    'screens/Sessions.css',
-    'screens/Invoices.css',
-    'screens/Bookings.css',
-    'screens/Schedule.css',
-  ] as const;
+  /**
+   * Who lifts is DISCOVERED from the markup, never listed. This block used to
+   * carry two ledgers (seven adopter stylesheets and seven wearer strings),
+   * and keeping them current was an edit to this file for every screen that
+   * shipped. The class scan is the contract now: put `lift` on a clickable
+   * card and every rule below adopts it unprompted.
+   */
+  const wearers = TSX_FILES.filter((f) => classTokens(f).has('lift'));
 
-  /** The markup that wears the class, and the element it goes on. */
-  const wearers = [
-    ['components/DenScreenKit.tsx', 'den-stat--button lift'],
-    ['screens/Directory.tsx', 'directory__card lift'],
-    ['screens/KinTales.tsx', 'kintales__row-main lift'],
-    ['screens/Sessions.tsx', 'sessions__row-main lift'],
-    ['screens/Invoices.tsx', 'invoices__row-main lift'],
-    ['screens/Bookings.tsx', 'bookings__row-main lift'],
-    ['screens/Schedule.tsx', 'schedule__row-main lift'],
-  ] as const;
-
-  const read = (f: string) => readFileSync(join(srcDir, ...f.split('/')), 'utf8');
+  /** A wearer's co-located stylesheet, where one exists: the sheets that used
+   *  to re-state the lift, and the ones a per-file motion guard would hide in. */
+  const adopterSheets = wearers
+    .map((f) => f.replace(/\.tsx$/, '.css'))
+    .filter((f) => existsSync(f));
 
   it('declares the lift once, as a utility class, with both the rise and the shadow', () => {
     expect(base).toMatch(/\.lift:hover,\s*\.lift:focus-visible\s*\{[^}]*transform:\s*var\(--lift-rise\)/);
@@ -371,11 +425,17 @@ describe('the shared card lift', () => {
 
   it('is worn as a CLASS by every clickable card, not copied into each stylesheet', () => {
     // The first pass at this had the values in one place and the RULES in four,
-    // which is most of what the utility was for. The class is now on the
-    // element, so `.lift:hover` is the only rule in the app that lifts anything.
-    for (const [file, className] of wearers) {
-      expect(read(file), `${file} does not wear the lift`).toContain(className);
-    }
+    // which is most of what the utility was for. The class is on the element,
+    // so `.lift:hover` is the only rule in the app that lifts anything. Seven
+    // surfaces wear it today: the stat card plus the clickable row or card on
+    // six screens. The floor is what keeps that from quietly eroding to zero:
+    // it moves down only when a lifting screen is deliberately deleted, and a
+    // new adopter raises the count without touching this file.
+    expect(wearers.length).toBeGreaterThanOrEqual(7);
+    // Scanner self-test: the stat card wears the class inside a template
+    // literal, so if the className reader ever goes plain-strings-only it
+    // fails loudly here instead of every scan below going quietly emptier.
+    expect(wearers.map(rel)).toContain('components/DenScreenKit.tsx');
   });
 
   it('leaves no stylesheet re-stating the lift by hand', () => {
@@ -390,11 +450,18 @@ describe('the shared card lift', () => {
 
   it('leaves no adopter carrying a reduced-motion guard of its own', () => {
     // Per-file guards are how the admin ended up honouring the preference in 8
-    // of 79 stylesheets. The properties are neutralised once, at the root.
-    for (const file of adopters) {
-      expect(read(file), `${file} still guards reduced motion itself`).not.toContain(
-        'prefers-reduced-motion',
-      );
+    // of 79 stylesheets. For the lift the properties are neutralised once, at
+    // the root in base.css, so the stylesheet behind a card that lifts has no
+    // business naming the media query, whichever sheet the scan says that is
+    // this week. (Sheets with animations of their OWN may still guard them;
+    // this rule is scoped to the lift's adopters, where the guard is always a
+    // re-statement of what the root already does.)
+    expect(adopterSheets.length).toBeGreaterThan(0);
+    for (const sheet of adopterSheets) {
+      expect(
+        readFileSync(sheet, 'utf8'),
+        `${rel(sheet)} still guards reduced motion itself`,
+      ).not.toContain('prefers-reduced-motion');
     }
   });
 
@@ -404,14 +471,18 @@ describe('the shared card lift', () => {
     // handler (Schedule's BusyRow too: `booking_time_slots` overlays have no
     // detail to open and firestore.rules denies every client write to them).
     // Withholding the class is the whole mechanism; there is nothing to cancel.
-    for (const [file] of wearers) {
-      const statics = read(file)
-        .split('\n')
-        .filter((line) => line.includes('--static'));
-      expect(statics.filter((line) => /\blift\b/.test(line)), `${file} lifts a static row`).toEqual(
-        [],
-      );
+    // Checked over EVERY tsx file, not just today's wearers: an element whose
+    // class list carries both a `--static` variant and `lift` is an offender
+    // wherever it appears.
+    const offenders: string[] = [];
+    for (const f of TSX_FILES) {
+      for (const tokens of classTokenLines(f)) {
+        if (tokens.includes('lift') && tokens.some((t) => t.endsWith('--static'))) {
+          offenders.push(`${rel(f)} lifts a static row`);
+        }
+      }
     }
+    expect(offenders).toEqual([]);
   });
 
   it('lets a card choose its own hover border without a specificity fight', () => {
