@@ -53,7 +53,7 @@ import com.tribetails.auntieos.domain.invoiceActionsFor
 import com.tribetails.auntieos.domain.invoiceIsOverdue
 import com.tribetails.auntieos.domain.formatCentsUsd
 import com.tribetails.auntieos.domain.invoicePartPaid
-import com.tribetails.auntieos.domain.invoiceStateOf
+import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChip
@@ -311,12 +311,14 @@ private fun invoiceDetailBody(
     onArchive: () -> Unit,
 ) = with(scope) {
     val todayKey = runCatching { LocalDate.now().toString() }.getOrDefault("")
-    // AO-19: state, overdue flag, and the offered actions all come from the
-    // SHARED classifier (domain/InvoiceActions.kt) that the Den invoices list
-    // reads, so the two screens can never disagree about what this invoice is.
-    // The screen's old private invoiceStatusFor resolved `amountDue <= 0` to
-    // PAID first, which read a draft, a quote, and a credit as paid.
-    val state    = invoiceStateOf(invoice)
+    // State is the STORED stamp the server persisted (ADR-0002), decoded by the
+    // same domain/InvoiceActions.kt the Den invoices list reads, so the two
+    // screens can never disagree about what this invoice is - and neither can
+    // re-derive it. The screen's old private invoiceStatusFor resolved
+    // `amountDue <= 0` to PAID first, which read a draft, a quote, and a
+    // credit as paid. Null means "no recognizable stamp": the raw stored
+    // string renders and no action is offered.
+    val state    = invoiceStateOrNull(invoice)
     val overdue  = invoiceIsOverdue(invoice, todayKey)
     // Like overdue, a display refinement of OPEN and never its own state, so it
     // changes the pill and the copy and leaves the action set alone. That is
@@ -331,7 +333,7 @@ private fun invoiceDetailBody(
 
     // ── Amount stat row ─────────────────────────────────────────────────────────
     item {
-        val (statusTone, _, _) = statusTriple(state, overdue, partPaid != null)
+        val (statusTone, _, _) = statusTriple(state, invoice.status, overdue, partPaid != null)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -358,7 +360,10 @@ private fun invoiceDetailBody(
                     state == InvoiceState.QUOTE -> "quoted, not billed"
                     state == InvoiceState.CANCELLED -> "cancelled"
                     state == InvoiceState.CREDIT -> "credit owed to the household"
-                    else -> "nothing billed"
+                    state == InvoiceState.REDEEMED -> "credit redeemed"
+                    state == InvoiceState.ZERO -> "nothing billed"
+                    // No recognizable stamp: the raw stored word, not a guess.
+                    else -> invoice.status.trim().ifBlank { "no status on record" }
                 },
                 tone     = statusTone,
                 feature  = true,
@@ -670,9 +675,9 @@ private fun paymentMethodLines(bs: com.tribetails.auntieos.data.model.BusinessSe
 }
 
 @Composable
-private fun InvoiceHeaderBar(invoice: Invoice, state: InvoiceState, overdue: Boolean, partPaid: Boolean = false) {
+private fun InvoiceHeaderBar(invoice: Invoice, state: InvoiceState?, overdue: Boolean, partPaid: Boolean = false) {
     val c = AuntieTheme.colors
-    val (statusTone, statusText, statusIcon) = statusTriple(state, overdue, partPaid)
+    val (statusTone, statusText, statusIcon) = statusTriple(state, invoice.status, overdue, partPaid)
     val accent = statusTone.color(c)
 
     Row(
@@ -1054,18 +1059,24 @@ private fun DetailRow(
 // ── Pure helpers (ported from the web spec so both surfaces resolve identically) ──
 
 /**
- * Resolves the SHARED [InvoiceState] (plus the overdue refinement) to its
+ * Resolves the STORED [InvoiceState] (plus the overdue refinement) to its
  * (tone, label, leadingIcon) triple. Pure; unit-tested.
  *
  * This screen used to own a private three-member `InvoiceStatus` enum and an
  * `invoiceStatusFor` resolver whose first line was `amountDue <= 0 -> PAID`,
  * so a draft, a quote, and an unredeemed credit all rendered a confident PAID
- * pill while the Den list showed them correctly. Both are gone: the state and
- * the overdue flag now come from domain/InvoiceActions.kt, the same classifier
- * the list reads.
+ * pill while the Den list showed them correctly. Both are gone, and so is the
+ * classifier that replaced them: the state is the server's persisted stamp,
+ * decoded by domain/InvoiceActions.kt, the same read the list makes.
+ *
+ * [rawStatus] is rendered VERBATIM (uppercased for the pill) when the stamp is
+ * null - absent or outside the eight-word vocabulary. Showing the doc's own
+ * word for itself is the fail-soft ruling; deriving a nicer label from the
+ * money would resurrect the deleted classifier.
  */
 private fun statusTriple(
-    state: InvoiceState,
+    state: InvoiceState?,
+    rawStatus: String,
     overdue: Boolean,
     partPaid: Boolean = false,
 ): Triple<AuntieStatusTone, String, androidx.compose.ui.graphics.vector.ImageVector> {
@@ -1083,7 +1094,13 @@ private fun statusTriple(
         InvoiceState.QUOTE     -> Triple(AuntieStatusTone.Purple, "QUOTE", Lucide.FileText)
         InvoiceState.CANCELLED -> Triple(AuntieStatusTone.Muted, "CANCELLED", Lucide.X)
         InvoiceState.CREDIT    -> Triple(AuntieStatusTone.Teal, "CREDIT", Lucide.CircleAlert)
+        InvoiceState.REDEEMED  -> Triple(AuntieStatusTone.Muted, "REDEEMED", Lucide.CircleCheckBig)
         InvoiceState.ZERO      -> Triple(AuntieStatusTone.Muted, "ZERO", Lucide.FileText)
+        null                   -> Triple(
+            AuntieStatusTone.Muted,
+            rawStatus.trim().uppercase().ifBlank { "NO STATUS" },
+            Lucide.CircleAlert,
+        )
     }
 }
 

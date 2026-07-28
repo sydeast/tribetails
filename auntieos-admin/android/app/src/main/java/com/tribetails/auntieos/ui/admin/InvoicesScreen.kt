@@ -42,7 +42,7 @@ import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.invoiceActionsFor
 import com.tribetails.auntieos.domain.invoiceIsArchived
 import com.tribetails.auntieos.domain.invoiceIsOverdue
-import com.tribetails.auntieos.domain.invoiceStateOf
+import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
@@ -70,9 +70,10 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * filter row, and a single glass DenPanel list of invoice rows.
  *
  * Data wiring: drives off the existing [AdminDataViewModel] (invoices / isLoading
- * / error StateFlows). Paid / outstanding / overdue / draft are decided by the
- * local helpers below from real Invoice fields only; overdue compares dueDate to
- * TODAY rather than flagging every dated unpaid invoice.
+ * / error StateFlows). Paid / outstanding / draft are reads of the stored state
+ * stamp the server persists on every invoice (ADR-0002); overdue is the one
+ * client-side refinement, comparing dueDate to TODAY rather than flagging every
+ * dated unpaid invoice.
  *
  * Per-row actions are all wired to live callables on [AdminDataViewModel]: a draft
  * row reviews-and-sends via postInvoiceEvent (reviewAndSendDraftInvoice), an unpaid
@@ -130,22 +131,21 @@ private enum class InvoiceFilter(val label: String) {
     Drafts("Drafts"),
 }
 
-// ── invoice facets, all resolved through the SHARED classifier ───────────────
-// domain/InvoiceActions.kt is the single source of truth for what an invoice is
-// and what may be done to it, so this list and the detail screen can never
-// disagree. These stay as named facets because the filter row and the row chip
-// read more clearly this way; each is now a positive equality test against the
-// enumerated state rather than the old "not draft and not quote, so paid"
-// negation (the AO-12 shape, which read an unredeemed credit as PAID).
+// ── invoice facets, all reads of the STORED state stamp (ADR-0002) ───────────
+// domain/InvoiceActions.kt decodes the `status` the server persisted; nothing
+// here re-derives state from the money. These stay as named facets because the
+// filter row and the row chip read more clearly this way; each is a positive
+// equality test against the decoded state, and an unstamped doc (null) simply
+// matches none of them rather than being guessed into a bucket.
 
-private fun invoiceIsDraft(i: Invoice): Boolean = invoiceStateOf(i) == InvoiceState.DRAFT
+private fun invoiceIsDraft(i: Invoice): Boolean = invoiceStateOrNull(i) == InvoiceState.DRAFT
 
-/** A quote is an invoice in QUOTE status (PART B). Pure; unit-tested. */
-internal fun invoiceIsQuote(i: Invoice): Boolean = invoiceStateOf(i) == InvoiceState.QUOTE
+/** A quote is an invoice whose stored state reads QUOTE (PART B). Pure; unit-tested. */
+internal fun invoiceIsQuote(i: Invoice): Boolean = invoiceStateOrNull(i) == InvoiceState.QUOTE
 
-private fun invoiceIsPaid(i: Invoice): Boolean = invoiceStateOf(i) == InvoiceState.PAID
+private fun invoiceIsPaid(i: Invoice): Boolean = invoiceStateOrNull(i) == InvoiceState.PAID
 
-private fun invoiceIsOutstanding(i: Invoice): Boolean = invoiceStateOf(i) == InvoiceState.OPEN
+private fun invoiceIsOutstanding(i: Invoice): Boolean = invoiceStateOrNull(i) == InvoiceState.OPEN
 
 /** A date prefix in YYYY-MM-DD shape, or null if the field isn't usable. */
 private fun isoDatePrefixOrNull(date: String): String? =
@@ -585,15 +585,17 @@ private fun InvoiceRow(
     onSendDraft: (Invoice) -> Unit,
 ) {
     val c = AuntieTheme.colors
-    val state = invoiceStateOf(invoice)
+    val state = invoiceStateOrNull(invoice)
     val quote = state == InvoiceState.QUOTE
     val draft = state == InvoiceState.DRAFT
     val overdue = invoiceIsOverdue(invoice, todayIso)
     val unpaid = state == InvoiceState.OPEN
 
-    // Every chip is a positive read of the enumerated state. The old `else ->
+    // Every chip is a positive read of the STORED state. The old `else ->
     // "Paid"` fallback labelled a credit, a cancelled invoice, and a $0 row as
-    // PAID, which is the same negation defect the gating below fixes.
+    // PAID, which is the same negation defect the gating below fixes. A doc
+    // with no recognizable stamp shows its raw stored string: fail-soft, and
+    // never a re-derivation from the money.
     val (statusLabel, statusTone) = if (overdue) {
         "Overdue" to AuntieStatusTone.Error
     } else {
@@ -602,9 +604,11 @@ private fun InvoiceRow(
             InvoiceState.DRAFT -> "Draft" to AuntieStatusTone.Muted
             InvoiceState.CANCELLED -> "Cancelled" to AuntieStatusTone.Muted
             InvoiceState.CREDIT -> "Credit" to AuntieStatusTone.Teal
+            InvoiceState.REDEEMED -> "Redeemed" to AuntieStatusTone.Muted
             InvoiceState.ZERO -> "Zero" to AuntieStatusTone.Muted
             InvoiceState.OPEN -> "Unpaid" to AuntieStatusTone.Orange
             InvoiceState.PAID -> "Paid" to AuntieStatusTone.Success
+            null -> invoice.status.trim().ifBlank { "No status" } to AuntieStatusTone.Muted
         }
     }
     val amountColor = statusTone.color(c)
