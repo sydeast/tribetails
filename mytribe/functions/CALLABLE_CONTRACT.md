@@ -128,9 +128,12 @@ of this collection, and it is NOT the convention used elsewhere in this file:
 `date`, `dueDate`, `status` and `discount` are FREE TEXT (`z.string()`), never
 validated enums and never parsed dates. `status` in particular WAS whatever the
 caller sent; since the state stamp (below, 2026-07-28) every callable write
-canonicalizes it, but docs written before the backfill runs still carry the old
-spellings, so READERS keep classifying through a shared enumerator rather than
-deciding "paid" by ruling out the other states (the AO-12 defect).
+canonicalizes it, and the one-shot backfill has since run against production
+(18/18 docs stamped), so the stored value is reliable. The kinfolk portal
+reads it verbatim (see the getMyInvoices note below); the admin and Android
+retire legs ship as their own PRs, and any client classifier that remains
+enumerates positively — never deciding "paid" by ruling out the other states
+(the AO-12 defect).
 
 ### The persisted state stamp: `status` + `editScope` (ADR-0002)
 
@@ -144,9 +147,10 @@ and the `payments` SUBCOLLECTION):
   `quote | draft | cancelled | credit | redeemed | paid | zero | open`.
   This CANONICALIZES the field: a composer's `'QUOTE'`/`'sent'`/`''` stores as
   what every client classifier already resolved it to (`'quote'`/`'open'`/by
-  the money). Rendering is unchanged today because all three clients lowercase
-  and fall back to the money; the point is that a later PR can retire those
-  classifiers and read this field.
+  the money). The point was always that clients could retire their read-side
+  classifiers and render this field; the kinfolk portal did exactly that on
+  2026-07-28 (W2-5, below), and the admin and Android W2-5 legs ship as their
+  own PRs.
 - `editScope` — `all | metadataOnly | none`, the edit affordance for the doc's
   state and payment standing (part-paid stays `all`; settled money freezes to
   `metadataOnly`; paid/cancelled/credit/redeemed freeze to `none`, except the
@@ -162,10 +166,24 @@ cannot change state; a writer that cannot change state does not stamp). Pure
 readers (`getMyInvoices`, `getMyInvoicePdf`, `generateInvoicePdf`) never write
 state at all.
 
-Docs that predate the stamp get it from a one-shot runbook backfill
-(`mytribe/scripts/backfillInvoiceStateStamp.ts`, DRY RUN by default). Until
-that has run, the stored field exists only on docs a callable has touched, so
-no client may rely on it yet.
+Docs that predate the stamp got it from a one-shot runbook backfill
+(`mytribe/scripts/backfillInvoiceStateStamp.ts`, DRY RUN by default), since
+run against production (18/18 docs stamped, zero notification-guard refusals
+— see PR #106). Every production doc now carries the stamp, so clients may
+rely on it.
+
+**getMyInvoices consumes the stamp (W2-5, 2026-07-28).** The portal reader's
+response ships the doc's stored `status` VERBATIM — all eight states, no
+longer its old 5-state `resolveStatus` money heuristic — plus the stored
+`editScope` (or `null` when a doc carries none; the portal has no edit UI, the
+field ships for stamp parity). The three response buckets are decided by a
+TABLE over that stored string, not by re-classifying the money:
+open/draft/quote/zero → `open`, paid → `paid`, credit/redeemed → `credits`,
+cancelled → excluded entirely. A doc with no readable stamp fail-softs to
+`open` (string-only — money is NEVER consulted) and is reported once per call
+at warn (`portal.invoices.stampMissing`). Mirror:
+`mytribe/web/src/api/invoicesApi.ts` (updated field-for-field with the
+handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### createInvoice
 - req `{ familyId: string, kinfolkName?: string, invoiceNumber: string, client?: string, address?: string, date?: string, terms?: string, dueDate?: string, discount?: string, total: number, amountDue: number, status?: string, sessionIds?: string[], lineItems?: Array<{ description: string /* 1..200 */, qty: number /* >0, <=999 */, unitCents: number /* int 0..10_000_000 */, discountCents?: number /* int >=0 */ }> /* max 100 */, invoiceDiscountCents?: number /* int >=0 */ }`

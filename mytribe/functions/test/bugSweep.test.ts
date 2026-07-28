@@ -35,11 +35,17 @@ describe('BUG SWEEP — getMyInvoices (rules tightened)', () => {
     expect(res.paid).toHaveLength(0);
   });
 
-  it('FIXED: negative amountDue (refund) routes to CREDITS', async () => {
+  // MIGRATED (ADR-0002 W2-5): this test pinned the retired money heuristic —
+  // an unlabeled doc with a negative balance re-derived to credit at read
+  // time. The portal now ships the STORED stamp: a stamped credit still
+  // routes to CREDITS (the ruling this sweep fixed stands), while the same
+  // doc without a stamp fail-softs to open and is reported to monitoring
+  // (pinned in getMyInvoices.test.ts) — never re-classified from money.
+  it('FIXED: a stamped credit (refund) routes to CREDITS', async () => {
     const ctx = buildDbMock({
       docs: { 'clients/u1': { kinfolkIds: ['3'] } },
       queryDocs: {
-        invoices: [{ id: 'inv-credit', data: { kinfolkId: '3', total: -50, amountDue: -50 } }],
+        invoices: [{ id: 'inv-credit', data: { kinfolkId: '3', status: 'credit', total: -50, amountDue: -50 } }],
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);

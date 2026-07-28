@@ -86,8 +86,8 @@ Canonical invoices live in the FLAT top-level `invoices/{invoiceId}` collection
 (admin-written). Payments are real Stripe Checkout, not a mock.
 
 - `getMyInvoices` (callable, read-only). Queries the flat `invoices` collection by
-  `kinfolkId` and splits open vs paid (a doc resolves as paid when `amountDue` is 0 or
-  less; see `resolveStatus`).
+  `kinfolkId` and buckets open vs paid vs credits by the doc's stored state stamp
+  (`status`, ADR-0002; the read-side `resolveStatus` money heuristic is retired).
 - `payInvoice` (callable). Creates a real Stripe Checkout Session for the invoice and
   returns the hosted `checkoutUrl` the client opens in the platform browser. Authorized
   against `clients/{uid}.kinfolkIds`. Requires `STRIPE_SECRET_KEY`.

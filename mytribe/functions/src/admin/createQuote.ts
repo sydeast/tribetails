@@ -23,8 +23,9 @@ import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
  *     stored value to the classifier's vocabulary. The admin's chip still
  *     renders 'QUOTE', because it derives from `invoiceFormat.ts#invoiceState`,
  *     which lowercases before matching, exactly as it did for the old spelling.)
- *   - `invoiceStatus` = 'quote'  (the portal's canonical resolver field, see
- *     getMyInvoices.resolveStatus)
+ *   - `invoiceStatus` = 'quote'  (the legacy spelling; the portal now renders
+ *     the stored stamp and reads this field only as `statusFromStamp`'s
+ *     fallback, see getMyInvoices.ts)
  * so the quote is unambiguously distinguishable from a payable invoice on both
  * the admin and kinfolk sides. The caller-supplied `status` arg is ignored on
  * purpose; this endpoint always mints a quote.

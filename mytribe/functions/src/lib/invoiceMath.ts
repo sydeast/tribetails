@@ -185,8 +185,8 @@ export function invoiceTotalCentsOf(doc: {
  * `amountDueCents` CLAMPS AT ZERO and the excess is reported separately as
  * `overpaidCents`. It does not go negative, and that is not tidiness: a
  * negative `amountDue` is this codebase's CREDIT signal, read that way by
- * `invoiceEditPolicy.ts#invoiceStateOf`, by `getMyInvoices.ts#resolveStatus`,
- * by the admin's `invoiceFormat.ts#invoiceState` and by the Android
+ * `invoiceEditPolicy.ts#invoiceStateOf` (whose stored stamp the portal now
+ * renders), by the admin's `invoiceFormat.ts#invoiceState` and by the Android
  * `InvoiceActions.kt`. Letting an overpayment write a negative balance would
  * silently reclassify a settled invoice as a credit owed BACK to the household,
  * which is a different financial instrument with its own redemption flow

@@ -44,8 +44,10 @@ function money(v: unknown): number {
 }
 
 /**
- * Classifies one invoice doc. Precedence matches the admin twin and
- * `portal/getMyInvoices.ts#resolveStatus`: an explicit status wins, then a
+ * Classifies one invoice doc. Precedence matches the admin twin (the portal's
+ * `resolveStatus` was the third copy of this precedence until 2026-07-28,
+ * when `portal/getMyInvoices.ts` retired it and started reading the stored
+ * stamp this module's output writes): an explicit status wins, then a
  * negative balance is a credit even when unlabeled, then the money places an
  * unlabeled row.
  */

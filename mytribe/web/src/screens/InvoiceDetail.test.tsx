@@ -55,6 +55,8 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   amountDue: 50,
   isPaid: false,
   status: 'open',
+  // The stamp's edit half ships for parity; no portal screen branches on it.
+  editScope: null,
   paidCents: 0,
   partiallyPaid: false,
   date: '2026-07-01',
@@ -248,5 +250,48 @@ describe('InvoiceDetail line items', () => {
     });
     expect(await screen.findByText('30Minute')).toBeInTheDocument();
     expect(screen.getByText('$25.00')).toBeInTheDocument();
+  });
+});
+/**
+ * The stored stamp's states this screen newly distinguishes (ADR-0002 W2-5).
+ * The server ships `status` verbatim — all eight states — and the payable
+ * gate is now the positive `status === 'open' && amountDue > 0`, so a quote
+ * (which the retired 5-state enum could only spell `open`) no longer grows a
+ * Pay button, and a `redeemed` credit still renders its credit panel.
+ */
+describe('InvoiceDetail — stamped states', () => {
+  async function renderWith(res: GetMyInvoicesResult) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue(res);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+  }
+  it('a quote shows its QUOTE chip and NO Pay button, even with a positive total', async () => {
+    await renderWith({
+      open: [{ ...OPEN_INVOICE, status: 'quote', total: 80, amountDue: 80 }],
+      paid: [], credits: [], accountBalanceCents: 0,
+    });
+    expect(await screen.findByText('QUOTE')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Pay/ })).toBeNull();
+  });
+  it('a redeemed-status credit renders the redeemed panel, not the redeem button', async () => {
+    await renderWith({
+      open: [], paid: [],
+      credits: [{
+        ...OPEN_INVOICE,
+        status: 'redeemed',
+        creditAmountCents: 2000,
+        creditTarget: 'accountBalance',
+        creditRedeemedAtMs: 1_750_000_000_000,
+      }],
+      accountBalanceCents: 0,
+    });
+    expect(await screen.findByText(/Saved to Account Balance/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Save to Account Balance/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Pay/ })).toBeNull();
   });
 });

@@ -183,7 +183,14 @@ function OpenRow(props: { invoice: InvoiceDto; divider: boolean; paying: boolean
   const status = inv.partiallyPaid ? partPaidStatusInfo() : invoiceStatusInfo(inv.status, inv.creditRedeemedAtMs);
   const partPaid = partPaidSummary(inv);
   const tile = calTileFor(inv.dueDate);
-  const dueLabel = inv.status === 'draft' ? 'Not sent yet' : `Due ${shortDateLabel(inv.dueDate) ?? '—'}`;
+  // The open bucket now carries four states (server-side map, ADR-0002).
+  // "Due <date>" is a bill's line; a quote is not yet a bill and a zero
+  // invoice asks for nothing, so neither claims a due date.
+  const dueLabel =
+    inv.status === 'draft' ? 'Not sent yet'
+    : inv.status === 'quote' ? 'Not billed yet'
+    : inv.status === 'zero' ? 'No charge'
+    : `Due ${shortDateLabel(inv.dueDate) ?? '—'}`;
   const payable = inv.status === 'open' && inv.amountDue > 0;
 
   return (

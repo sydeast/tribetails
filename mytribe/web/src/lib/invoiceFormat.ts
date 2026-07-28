@@ -65,21 +65,37 @@ export interface InvoiceStatusInfo {
 
 /**
  * Friendly status label + chip/row CSS classes, shared by the list and
- * detail screens. Mirrors InvoicesScreen.kt's `invoiceStatusLabel` (Open ->
- * "Pending") — the already-implemented Kotlin reference, not the mockup's
- * literal "Due" example text, per S3 instructions (mirror data flow).
+ * detail screens. Covers all eight states of the stored Invoice State Stamp
+ * (ADR-0002) — LABELS ONLY, no classification: the server decides what an
+ * invoice IS, this decides only what each state is called on screen. Open ->
+ * "Pending" mirrors InvoicesScreen.kt's `invoiceStatusLabel` (the
+ * already-implemented Kotlin reference); quote/zero/redeemed mirror the
+ * admin's `invoiceStateInfo` labels (auntieos-admin/src/lib/invoiceFormat.ts).
  */
 export function invoiceStatusInfo(status: InvoiceStatus, creditRedeemedAtMs: number | null): InvoiceStatusInfo {
   switch (status) {
+    case 'quote':
+      // A proposal, not a bill: no "due" row treatment and (via the screens'
+      // status === 'open' gate) no Pay button.
+      return { label: 'Quote', chipLabel: 'QUOTE', cssClass: 'quote', invClass: 'draft' };
     case 'draft':
       return { label: 'Draft', chipLabel: 'DRAFT', cssClass: 'draft', invClass: 'draft' };
     case 'open':
       return { label: 'Pending', chipLabel: 'PENDING', cssClass: 'pending', invClass: 'due' };
+    case 'zero':
+      // A genuinely $0 invoice. Not "Paid": nothing was collected.
+      return { label: 'Zero balance', chipLabel: 'ZERO', cssClass: 'zero', invClass: '' };
     case 'paid':
       return { label: 'Paid', chipLabel: 'PAID', cssClass: 'paid', invClass: '' };
     case 'cancelled':
       return { label: 'Cancelled', chipLabel: 'CANCELLED', cssClass: 'cancelled', invClass: '' };
+    case 'redeemed':
+      return { label: 'Redeemed', chipLabel: 'REDEEMED', cssClass: 'redeemed', invClass: 'credit' };
     case 'credit':
+      // The stamp writes `redeemed` once `creditRedeemedAt` is set, so a
+      // stamped doc reaches the case above. This refinement stays for the
+      // fail-soft path (an unstamped doc can still say `credit` while
+      // carrying a redemption time) so a spent credit is never re-offered.
       return creditRedeemedAtMs !== null
         ? { label: 'Redeemed', chipLabel: 'REDEEMED', cssClass: 'redeemed', invClass: 'credit' }
         : { label: 'Credit', chipLabel: 'CREDIT', cssClass: 'creditc', invClass: 'credit' };
@@ -98,7 +114,7 @@ export function creditTargetLabel(target: 'accountBalance' | null): string {
  * The chip and label for a PART-PAID invoice: money has come in and it does not
  * cover the bill.
  *
- * A DISPLAY REFINEMENT OF `open`, NOT A SIXTH STATUS. `InvoiceStatus` is the
+ * A DISPLAY REFINEMENT OF `open`, NOT A NINTH STATUS. `InvoiceStatus` is the
  * backend's own enum and a part-paid invoice is genuinely open, so it keeps its
  * bucket, its Pay button and its due-date treatment. What changes is only what
  * the household is TOLD, and that matters here more than anywhere else in this

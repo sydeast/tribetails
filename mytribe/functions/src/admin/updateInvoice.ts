@@ -189,8 +189,8 @@ export async function updateInvoiceHandler(
     // uses, so an edit that drops the total below what has already been
     // collected writes a zero balance plus an explicit `overpaidCents`, not a
     // negative `amountDue`. A negative `amountDue` is this codebase's CREDIT
-    // signal (invoiceStateOf, getMyInvoices#resolveStatus, the admin and Android
-    // classifiers all read it that way), so writing one here would silently turn
+    // signal (invoiceStateOf — whose stamp the portal now renders — plus the
+    // admin and Android classifiers all read it that way), so writing one here would silently turn
     // an over-collected invoice into a credit owed back to the household.
     // `totals` keeps the raw signed arithmetic for the caller; the doc gets the
     // settled reading.
