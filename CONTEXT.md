@@ -25,6 +25,14 @@ names exactly; if a concept is missing, add it here in the PR that names it.
   (from `invoiceEditPolicy`). Persisted field on the invoice doc; client
   affordances read it instead of recomputing policy.
 
+- **AuthGate**: the Android seam every domain repo sits behind for the two
+  questions it asks before touching Firebase: is an admin signed in (one
+  user-facing failure sentence, one definition) and which sandbox is that admin
+  in (the `testTribeId` claim, read and cached once per session for the whole
+  app). Sources TestMode; does not apply it. `AuthGate.shared` is the
+  process-wide instance every repo takes as a constructor default, because a
+  second instance would mean a second claim cache.
+
 - **ScopedFirestore**: the Android seam that applies TestMode scoping to every
   kinfolk-scoped read, count, and query. An injected wrapper exposing
   `scopedQuery` / `scopedRead` / `scopedCount` that holds the mode itself, so

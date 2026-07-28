@@ -1,7 +1,6 @@
 package com.tribetails.auntieos.data.repository
 
 import com.tribetails.auntieos.data.model.Payment
-import com.tribetails.auntieos.domain.TestMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -214,7 +213,12 @@ class InvoiceRepositoryTest {
         // Turning any of them back into an eager `FirebaseFirestore.getInstance()`
         // default would blow up here with "Default FirebaseApp is not
         // initialized" rather than in a screenshot golden three files away.
-        val repo = InvoiceRepository(requireTestMode = { TestMode.OFF })
+        //
+        // W4-2 took the whole argument list away: the TestMode lambda became the
+        // default `AuthGate.shared`, which holds its own FirebaseAuth lazily, so
+        // the zero-argument construction below has to stay Firebase-free too
+        // (AuthGateTest pins that half).
+        val repo = InvoiceRepository()
         assertNotNull(repo)
     }
 }

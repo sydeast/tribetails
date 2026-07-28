@@ -35,7 +35,16 @@ import kotlinx.coroutines.withContext
 import java.util.*
 
 class AuntieRepository(
-    private val n8n: N8nApi
+    private val n8n: N8nApi,
+    /**
+     * W4-2: the shared sign-in gate and `testTribeId` claim source, no longer
+     * this file's to own. Defaults to [AuthGate.shared] so the god-file and every
+     * carved domain repo read the claim through ONE cache; a rebuilt repository
+     * (base-url change) keeps that cache rather than silently dropping it.
+     * `internal` so a test can assert the single-instance wiring, which is the
+     * whole invariant; the gate itself is public either way.
+     */
+    internal val authGate: AuthGate = AuthGate.shared,
 ) {
     private val firestore by lazy { FirebaseFirestore.getInstance() }
     private val storage by lazy { FirebaseStorage.getInstance() }
@@ -47,12 +56,6 @@ class AuntieRepository(
         val uid: String,
         val email: String?,
     )
-
-    private suspend fun ensureAuthenticated() {
-        if (auth.currentUser == null) {
-            throw IllegalStateException("Admin sign-in required before using AuntieOS.")
-        }
-    }
 
     fun authStateFlow(): Flow<SessionUser?> = callbackFlow {
         val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
@@ -123,12 +126,12 @@ class AuntieRepository(
 
     suspend fun signOut(): Result<Unit> = runCatching {
         auth.signOut()
-        clearTestModeCache()
+        authGate.clearTestModeCache()
         Unit
     }.onFailure { AuntieLog.e("Sign-out failed", it) }
 
     suspend fun currentAdminIdToken(forceRefresh: Boolean = false): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val user = auth.currentUser ?: error("Admin sign-in required before requesting an ID token.")
         val token = user.getIdToken(forceRefresh).await().token
         if (token.isNullOrBlank()) error("No Firebase ID token available.")
@@ -138,7 +141,7 @@ class AuntieRepository(
     /** Reads custom claim `admin` from current user's ID token. Forces refresh so server-side
      *  changes (e.g. setAdminClaim Cloud Function) are picked up without app restart. */
     suspend fun isCurrentUserAdmin(): Result<Boolean> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val token = auth.currentUser?.getIdToken(true)?.await()
         val isAdmin = token?.claims?.get("admin") == true
         AuntieLog.d("isCurrentUserAdmin uid=${auth.currentUser?.uid} → $isAdmin")
@@ -149,7 +152,7 @@ class AuntieRepository(
      *  claim is missing. Use before any destructive admin action so that
      *  client-side state can't be tampered to bypass Firestore rules. */
     private suspend fun requireAdminClaim() {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val isAdmin = isCurrentUserAdmin().getOrDefault(false)
         if (!isAdmin) {
             throw SecurityException("Admin claim required for this action")
@@ -168,28 +171,15 @@ class AuntieRepository(
     // unit-tested [TestMode] in the domain package.
     // ───────────────────────────────────────────────────────────────────────
 
-    @Volatile
-    private var cachedTestMode: TestMode? = null
-
     /**
-     * Reads the `testTribeId` custom claim from the current user's ID token and
-     * returns [TestMode]. Forces a token refresh so a server-set claim is picked
-     * up without an app restart (parity with [isCurrentUserAdmin]). Caches the
-     * result so the per-query scoping below doesn't re-fetch the token on every
-     * read. Fail-loud: a token-read failure surfaces via Result.failure.
+     * Reads the `testTribeId` custom claim and returns [TestMode]. W4-2: the read
+     * and its cache moved to [AuthGate], so this is now a pass-through kept for
+     * the screens that already ask the repository (Navigation, the scheduling
+     * ViewModels). Moving those callers onto the gate is the Auth domain carve,
+     * not this PR.
      */
-    suspend fun getTestMode(forceRefresh: Boolean = false): Result<TestMode> = runCatching {
-        ensureAuthenticated()
-        cachedTestMode?.let { if (!forceRefresh) return@runCatching it }
-        val token = auth.currentUser?.getIdToken(true)?.await()
-        val mode = TestMode.fromClaims(token?.claims)
-        AuntieLog.d("getTestMode uid=${auth.currentUser?.uid} active=${mode.active} tribe=${mode.testTribeId}")
-        cachedTestMode = mode
-        mode
-    }.onFailure { AuntieLog.e("Failed to read testTribeId claim", it) }
-
-    /** Clears the cached TestMode (called on sign-out so a new account re-reads its claim). */
-    private fun clearTestModeCache() { cachedTestMode = null }
+    suspend fun getTestMode(forceRefresh: Boolean = false): Result<TestMode> =
+        authGate.testMode(forceRefresh)
 
     /**
      * True iff a Stage-0I test admin is signed in. Plain-Boolean wrapper around
@@ -201,33 +191,22 @@ class AuntieRepository(
     suspend fun isTestAdminActive(): Boolean = getTestMode().getOrNull()?.active == true
 
     /**
-     * Resolve the active TestMode for an in-flight scoped read. Throws (rather
-     * than silently treating the user as a normal admin) if the claim can't be
-     * read, so a denied/failed claim check fails loud instead of leaking a broad
-     * unscoped query that Firestore rules would reject anyway.
-     *
-     * `internal` rather than private since W4-1: the carved-out domain repos
-     * (starting with [InvoiceRepository]) need the same fail-loud mode source,
-     * and the `testTribeId` claim read + its cache stay in ONE place - here -
-     * until the Auth domain repo is carved. AuntieOSApp wires it.
-     */
-    internal suspend fun requireTestMode(): TestMode =
-        getTestMode().getOrElse {
-            throw IllegalStateException("Could not resolve test-mode claim before a scoped read", it)
-        }
-
-    /**
      * The Stage-0I seam: every kinfolk-scoped read/count/query below goes
      * through [ScopedFirestore], which holds the mode source itself and applies
      * the sandbox constraint before any call-site code runs - so a new read
-     * cannot forget it. Mode resolution is [requireTestMode] (cached, fail-loud),
-     * exactly what the old hand-inlined forks used.
+     * cannot forget it. Mode resolution is [AuthGate.requireTestMode] (cached,
+     * fail-loud), exactly what the old hand-inlined forks used.
+     *
+     * The two seams meet here and only here: the gate SOURCES the mode, this
+     * seam APPLIES it to a query shape. W4-1 had to widen `requireTestMode` on
+     * this class so [InvoiceRepository] could borrow it; it now takes the gate
+     * directly and this file has nothing left to lend.
      */
-    private val scoped by lazy { ScopedFirestore(firestore) { requireTestMode() } }
+    private val scoped by lazy { ScopedFirestore(firestore, authGate::requireTestMode) }
 
     suspend fun getKinfolk(): Result<List<Kinfolk>> = runCatching {
         AuntieLog.d("Fetching kinfolk list")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         scoped.scopedRead(
             "kinfolk",
             // Test admin: the only reachable kinfolk doc is the one whose id ==
@@ -247,7 +226,7 @@ class AuntieRepository(
 
     suspend fun findKinfolkByPhone(phone: String): Result<Kinfolk?> = runCatching {
         AuntieLog.d("Searching kinfolk by phone: ${AuntieLog.redactPhone(phone)}")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         scoped.scopedRead(
             "kinfolk",
             // Test admin can only reach kinfolk/{testTribeId}; a phone query across
@@ -268,7 +247,7 @@ class AuntieRepository(
 
     suspend fun createKinfolk(firstName: String, lastName: String, phone: String): Result<Kinfolk> = runCatching {
         AuntieLog.i("Creating new kinfolk phone=${AuntieLog.redactPhone(phone)}")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val newKinfolk = Kinfolk(
             firstName = firstName,
             lastName = lastName,
@@ -283,7 +262,7 @@ class AuntieRepository(
 
     suspend fun createKinfolkComplete(kinfolk: Kinfolk): Result<Kinfolk> = runCatching {
         AuntieLog.i("Creating kinfolk complete phone=${AuntieLog.redactPhone(kinfolk.phoneNumber)}")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val docRef = firestore.collection("kinfolk").add(kinfolk).await()
         kinfolk.copy(id = docRef.id).also {
             AuntieLog.i("Created kinfolk id=${it.id}")
@@ -292,7 +271,7 @@ class AuntieRepository(
 
     suspend fun updateKinfolk(kinfolk: Kinfolk): Result<Unit> = runCatching {
         AuntieLog.i("Updating kinfolk id=${kinfolk.id}")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         // STAMP updatedAt, do not round-trip it. Adding the field to the model
         // stopped the save from DESTROYING it, but `.set()` would then write back
         // the value that was read, freezing the timestamp at its old value and
@@ -319,7 +298,7 @@ class AuntieRepository(
 
     suspend fun deleteKinfolk(kinfolkId: String): Result<Unit> = runCatching {
         AuntieLog.w("Deleting kinfolk: $kinfolkId")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("kinfolk").document(kinfolkId).delete().await()
         AuntieLog.i("Deleted kinfolk: $kinfolkId")
         Unit
@@ -330,7 +309,7 @@ class AuntieRepository(
     // remains in Firestore; lists must filter status="archived" to hide it.
     suspend fun archiveKinfolk(kinfolkId: String, reason: String, archivedBy: String = "admin"): Result<Unit> = runCatching {
         AuntieLog.i("Archiving kinfolk: $kinfolkId (reason: $reason)")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("kinfolk").document(kinfolkId).update(
             mapOf(
                 "status"         to "archived",
@@ -348,7 +327,7 @@ class AuntieRepository(
     // too (closes C-A residual chain hole). The callable is admin-gated; the
     // server uses req.auth.uid as the actual actor and re-runs all validation.
     suspend fun logActivity(entry: com.tribetails.auntieos.data.admin.ActivityLogEntry): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val payload = buildMap<String, Any> {
             put("actionType", entry.actionType)
             if (entry.description.isNotBlank()) put("description", entry.description)
@@ -369,7 +348,7 @@ class AuntieRepository(
      */
     suspend fun inviteKinfolkToPortal(kinfolkId: String): Result<String> = runCatching {
         AuntieLog.i("inviteKinfolkToPortal: $kinfolkId")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("inviteKinfolkToPortal")
             .call(mapOf("kinfolkId" to kinfolkId)).await().data as? Map<String, Any?>
@@ -379,7 +358,7 @@ class AuntieRepository(
 
     suspend fun unarchiveKinfolk(kinfolkId: String): Result<Unit> = runCatching {
         AuntieLog.i("Unarchiving kinfolk: $kinfolkId")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("kinfolk").document(kinfolkId).update(
             mapOf(
                 "status"         to "active",
@@ -392,14 +371,14 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to unarchive kinfolk $kinfolkId", it) }
 
     suspend fun getKinfolkById(kinfolkId: String): Result<Kinfolk?> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kinfolk").document(kinfolkId).get().await()
         snapshot.toObject(Kinfolk::class.java)
     }.onFailure { AuntieLog.e("Failed to get kinfolk $kinfolkId", it) }
 
     suspend fun getKin(kinfolkId: String): Result<List<Kin>> = runCatching {
         AuntieLog.d("Fetching kin for kinfolk: $kinfolkId")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kin")
             .whereEqualTo("kinfolkId", kinfolkId)
             .get().await()
@@ -412,10 +391,10 @@ class AuntieRepository(
         // Write stamp, not a query: in test mode the create is forced into the
         // sandbox scope; scopedKinfolkId passes the caller's own kinfolkId
         // through for the normal admin, so no mode fork is needed here.
-        val mode = requireTestMode()
+        val mode = authGate.requireTestMode()
         val kin = kin.copy(kinfolkId = mode.scopedKinfolkId(kin.kinfolkId))
         AuntieLog.i("Creating kin: ${kin.name} for kinfolk: ${kin.kinfolkId}")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val docRef = firestore.collection("kin").add(kin).await()
         // Additive FK for the MyTribe pet mirror (onFlatKinWrite). When the pet
         // belongs to a known kinfolk, stamp kinfolkId + familyKinPath so the
@@ -431,13 +410,13 @@ class AuntieRepository(
 
     suspend fun getAllKin(): Result<List<Kin>> = runCatching {
         AuntieLog.d("Fetching all kin (directory index)")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         scoped.scopedQuery("kin").toObjects(Kin::class.java)
     }.onFailure { AuntieLog.e("Failed to get all kin", it) }
 
     suspend fun updateKin(kin: Kin): Result<Unit> = runCatching {
         AuntieLog.i("Updating kin: ${kin.id}")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         // STAMP updatedAt rather than round-tripping the value that was read.
         // See updateKinfolk for why serverTimestamp() and not getCurrentTimestamp().
         // MERGE for the same reason as updateKinfolk: a bare set() deletes any
@@ -474,7 +453,7 @@ class AuntieRepository(
 
     suspend fun getDossier(kinfolkId: String): Result<Dossier?> = runCatching {
         AuntieLog.d("Fetching dossier for kinfolk: $kinfolkId")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("dossiers")
             .whereEqualTo("kinfolkId", kinfolkId)
             .get().await()
@@ -485,7 +464,7 @@ class AuntieRepository(
 
     suspend fun get411ForKin(kinId: String): Result<Kin411?> = runCatching {
         AuntieLog.d("Fetching 411 for kin: $kinId")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("the_411")
             .whereEqualTo("kinId", kinId)
             .get().await()
@@ -498,7 +477,7 @@ class AuntieRepository(
     suspend fun get411ByKinIds(kinIds: List<String>): Result<Map<String, Kin411>> = runCatching {
         val cleaned = kinIds.filter { it.isNotBlank() }.distinct()
         if (cleaned.isEmpty()) return@runCatching emptyMap()
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         // Firestore whereIn caps at 30; chunk for safety even though sessions rarely exceed a few kin.
         val out = mutableMapOf<String, Kin411>()
         cleaned.chunked(30).forEach { chunk ->
@@ -516,7 +495,7 @@ class AuntieRepository(
     suspend fun getKinByIds(kinIds: List<String>): Result<Map<String, Kin>> = runCatching {
         val cleaned = kinIds.filter { it.isNotBlank() }.distinct()
         if (cleaned.isEmpty()) return@runCatching emptyMap()
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val out = mutableMapOf<String, Kin>()
         cleaned.chunked(30).forEach { chunk ->
             val snap = firestore.collection("kin")
@@ -564,7 +543,7 @@ class AuntieRepository(
         kinfolkId: String?, // kinfolkId retained for call-site contract; profile refresh now owned by reconcile
     ): Result<Unit> = runCatching {
         AuntieLog.i("Approving draft: $draftId")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("generated_drafts").document(draftId).update(
             mapOf(
                 "status" to "approved",
@@ -578,7 +557,7 @@ class AuntieRepository(
 
     suspend fun sendMessage(request: SendMessageRequest): Result<String> = runCatching {
         AuntieLog.i("Sending message to: ${AuntieLog.redactPhone(request.recipient_phone)}")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         withContext(Dispatchers.IO) {
             val idToken = auth.currentUser?.getIdToken(false)?.await()?.token
                 ?: error("No Firebase ID token available for sendMessage")
@@ -594,7 +573,7 @@ class AuntieRepository(
 
     suspend fun synthesizeProfile(kinfolkId: String): Result<Unit> = runCatching {
         AuntieLog.i("Synthesizing profile for kinfolk: $kinfolkId")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         withContext(Dispatchers.IO) {
             functions.getHttpsCallable("synthesize_kinfolk_profile")
                 .call(mapOf("kinfolkId" to kinfolkId))
@@ -605,7 +584,7 @@ class AuntieRepository(
 
     suspend fun clearDossierHouseholdNotes(kinfolkId: String): Result<Unit> = runCatching {
         AuntieLog.i("Clearing dossier household notes for kinfolk: $kinfolkId")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         withContext(Dispatchers.IO) {
             functions.getHttpsCallable("clear_dossier_household_notes")
                 .call(mapOf("kinfolkId" to kinfolkId))
@@ -631,7 +610,7 @@ class AuntieRepository(
         transactional: Boolean = false,
         mirrorToChannel: Boolean = false,
     ): Result<ExternalSendResult> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val payload = buildMap<String, Any?> {
             put("channel", channel)
             put("to", to)
@@ -659,7 +638,7 @@ class AuntieRepository(
         channel: String,
         to: String,
     ): Result<ExternalSuppressResult> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("suppressExternalRecipient")
             .call(mapOf("channel" to channel, "to" to to))
@@ -673,7 +652,7 @@ class AuntieRepository(
      * rule). Counts are bumped by the SendGrid/Twilio webhooks. Fail-loud on error.
      */
     suspend fun listRecentSends(): Result<List<RecentSend>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listRecentSends")
             .call(emptyMap<String, Any?>())
@@ -688,7 +667,7 @@ class AuntieRepository(
      * rather than showing a silent empty dropdown. Mirrors web FirestoreClient.breeds().
      */
     suspend fun getBreeds(): Result<BreedBank> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getBreeds")
             .call(emptyMap<String, Any?>())
@@ -707,7 +686,7 @@ class AuntieRepository(
      * from the callable. Mirrors web FirestoreClient.getLocalWeather.
      */
     suspend fun getLocalWeather(): Result<com.tribetails.auntieos.data.model.LocalWeather> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getLocalWeather")
             .call(emptyMap<String, Any?>())
@@ -741,7 +720,7 @@ class AuntieRepository(
      * error rather than a silent-empty picker. Mirrors web FirestoreClient.listChecklistBank().
      */
     suspend fun getChecklistBank(): Result<List<ChecklistBankItem>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listChecklistBank")
             .call(emptyMap<String, Any?>())
@@ -760,7 +739,7 @@ class AuntieRepository(
 
     /** Run-4 #7b: persist a custom checklist item to the shared bank ("Save to bank"). */
     suspend fun saveChecklistBankItem(text: String, scope: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         functions.getHttpsCallable("saveChecklistBankItem")
             .call(mapOf("text" to text, "scope" to scope))
             .await()
@@ -774,7 +753,7 @@ class AuntieRepository(
     // errors surface verbatim through the Result failure.
 
     suspend fun listAudienceSegments(): Result<List<com.tribetails.auntieos.ui.communicate.AudienceSegment>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listAudienceSegments")
             .call(emptyMap<String, Any?>())
@@ -787,7 +766,7 @@ class AuntieRepository(
         name: String,
         criteria: com.tribetails.auntieos.ui.communicate.BroadcastCriteria,
     ): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val payload = buildMap<String, Any?> {
             if (!id.isNullOrBlank()) put("id", id)
             put("name", name)
@@ -799,7 +778,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("saveAudienceSegment failed", it) }
 
     suspend fun deleteAudienceSegment(id: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         functions.getHttpsCallable("deleteAudienceSegment").call(mapOf("id" to id)).await()
         Unit
     }.onFailure { AuntieLog.e("deleteAudienceSegment failed", it) }
@@ -811,7 +790,7 @@ class AuntieRepository(
         subject: String?,
         body: String,
     ): Result<com.tribetails.auntieos.ui.communicate.BroadcastResult> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val payload = buildMap<String, Any?> {
             if (!segmentId.isNullOrBlank()) put("segmentId", segmentId)
             if (criteria != null) put("criteria", criteria.toPayload())
@@ -829,28 +808,28 @@ class AuntieRepository(
     // errors surface verbatim through the Result failure.
 
     suspend fun listConversations(): Result<List<com.tribetails.auntieos.ui.inbox.ConversationSummary>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listConversations").call(emptyMap<String, Any?>()).await().data as? Map<String, Any?>
         com.tribetails.auntieos.ui.inbox.decodeConversations(raw)
     }.onFailure { AuntieLog.e("listConversations failed", it) }
 
     suspend fun getConversationThread(kinfolkId: String): Result<List<com.tribetails.auntieos.ui.inbox.ThreadMessage>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getConversationThread").call(mapOf("kinfolkId" to kinfolkId)).await().data as? Map<String, Any?>
         com.tribetails.auntieos.ui.inbox.decodeThread(raw)
     }.onFailure { AuntieLog.e("getConversationThread failed", it) }
 
     suspend fun replyToConversation(kinfolkId: String, body: String): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("replyToConversation").call(mapOf("kinfolkId" to kinfolkId, "body" to body)).await().data as? Map<String, Any?>
         com.tribetails.auntieos.ui.inbox.decodeReplyMessageId(raw)
     }.onFailure { AuntieLog.e("replyToConversation failed", it) }
 
     suspend fun markConversationRead(kinfolkId: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         functions.getHttpsCallable("markConversationRead").call(mapOf("kinfolkId" to kinfolkId)).await()
         Unit
     }.onFailure { AuntieLog.e("markConversationRead failed", it) }
@@ -866,7 +845,7 @@ class AuntieRepository(
      * have no serviceAddress. A missing Mapbox key surfaces as the callable's error.
      */
     suspend fun optimizeRoute(dateYmd: String): Result<RouteResult> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("optimizeRoute")
             .call(mapOf("date" to dateYmd)).await().data as? Map<String, Any?>
@@ -876,7 +855,7 @@ class AuntieRepository(
 
     /** AO-40: recent expenses + server week/month totals via listExpenses (default last 30 days). */
     suspend fun listExpenses(sinceIso: String? = null): Result<ExpenseSummary> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val payload = buildMap<String, Any?> { if (!sinceIso.isNullOrBlank()) put("sinceIso", sinceIso) }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listExpenses")
@@ -892,7 +871,7 @@ class AuntieRepository(
         note: String? = null,
         occurredAt: String? = null,
     ): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val payload = buildMap<String, Any?> {
             put("kind", kind)
             put("amountCents", amountCents)
@@ -907,7 +886,7 @@ class AuntieRepository(
 
     /** AO-41: supplies + low count (onHand <= par) via listSupplies. */
     suspend fun listSupplies(): Result<SuppliesResult> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listSupplies")
             .call(emptyMap<String, Any?>()).await().data as? Map<String, Any?>
@@ -917,7 +896,7 @@ class AuntieRepository(
 
     /** AO-41: bump a supply's on-hand by [delta] via adjustSupply (server clamps at 0); returns the new onHand. */
     suspend fun adjustSupply(supplyId: String, delta: Int): Result<Int> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("adjustSupply")
             .call(mapOf("supplyId" to supplyId, "delta" to delta)).await().data as? Map<String, Any?>
@@ -927,7 +906,7 @@ class AuntieRepository(
 
     /** AO-39: upcoming expirations via listExpirations (server sorts by dateIso asc). */
     suspend fun listExpirations(): Result<List<ExpirationItem>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listExpirations")
             .call(emptyMap<String, Any?>()).await().data as? Map<String, Any?>
@@ -1000,7 +979,7 @@ class AuntieRepository(
 
     suspend fun getRecentDrafts(): Result<List<Draft>> = runCatching {
         AuntieLog.d("Fetching recent drafts")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         scoped.scopedQuery(
             "generated_drafts",
             field = "kinfolk_id",
@@ -1024,7 +1003,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get recent drafts", it) }
 
     suspend fun getKinfolkCount(): Result<Int> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         scoped.scopedRead(
             "kinfolk",
             // Only kinfolk/{testTribeId} is reachable; count is 0 or 1.
@@ -1034,12 +1013,12 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get kinfolk count", it) }
 
     suspend fun getKinCount(): Result<Int> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         scoped.scopedCount("kin")
     }.onFailure { AuntieLog.e("Failed to get kin count", it) }
 
     suspend fun getPendingDraftCount(): Result<Int> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         scoped.scopedCount(
             "generated_drafts",
             field = "kinfolk_id",
@@ -1054,7 +1033,7 @@ class AuntieRepository(
     // Business/Operational Settings
     suspend fun getBusinessSettings(): Result<BusinessSettings> = runCatching {
         AuntieLog.d("Fetching business settings")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("business_settings")
             .document("business_settings")
             .get()
@@ -1080,7 +1059,7 @@ class AuntieRepository(
      * `mytribe/functions/CALLABLE_CONTRACT.md`.
      */
     suspend fun getCalendarSyncRun(): Result<CalendarSyncRun?> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("business_settings")
             .document("business_settings")
             .get()
@@ -1098,7 +1077,7 @@ class AuntieRepository(
         updatedBy: String = "admin"
     ): Result<Unit> = runCatching {
         AuntieLog.i("Saving business settings by $updatedBy")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val timestamp = getCurrentTimestamp()
         val updatedSettings = settings.copy(
             updatedAt = timestamp,
@@ -1123,7 +1102,7 @@ class AuntieRepository(
     // doc (or an empty menu) resolves to the shipped defaults via withDefaults().
     suspend fun getCoveragePackageConfig(): Result<CoveragePackageConfig> = runCatching {
         AuntieLog.d("Fetching coverage package config")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("coverage_package_config")
             .document("config")
             .get()
@@ -1142,7 +1121,7 @@ class AuntieRepository(
         updatedBy: String = "admin"
     ): Result<Unit> = runCatching {
         AuntieLog.i("Saving coverage package config by $updatedBy")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         // durations + rules are one saveable unit; merge() still guards the stamp
         // fields and any future sibling field on the doc.
         val stamped = config.copy(updatedAt = getCurrentTimestamp(), updatedBy = updatedBy)
@@ -1160,12 +1139,12 @@ class AuntieRepository(
     private val serviceRepo by lazy { ServiceRepository() }
 
     suspend fun getBusinessHours(): Result<List<BusinessHours>> {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         return serviceRepo.getBusinessHours()
     }
 
     suspend fun saveBusinessHours(hours: List<BusinessHours>): Result<Unit> {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         return serviceRepo.updateBusinessHours(hours)
     }
 
@@ -1176,7 +1155,7 @@ class AuntieRepository(
     // --- Media Storage Management ---
 
     suspend fun getMediaFiles(entityId: String, entityType: MediaEntityType): Result<List<MediaFile>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("media_files")
             .whereEqualTo("entityId", entityId)
             .whereEqualTo("entityType", entityType.name)
@@ -1189,21 +1168,21 @@ class AuntieRepository(
     /** #13 Gallery: ALL business media (every entity). Test-admin sandbox: scoped to the
      *  test kinfolk's media via [ScopedFirestore.scopedQuery]; the operator gets the full collection. */
     suspend fun getAllMedia(): Result<List<MediaFile>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         scoped.scopedQuery("media_files").toObjects(MediaFile::class.java)
     }.onFailure { AuntieLog.e("Failed to get all media", it) }
 
     /** #13 Gallery: set the kin tagged in a media file (rules gate to isAuntie/testOwns). */
     suspend fun updateMediaTags(mediaFileId: String, taggedKinIds: List<String>): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("media_files").document(mediaFileId)
             .update("taggedKinIds", taggedKinIds).await()
         Unit
     }.onFailure { AuntieLog.e("Failed to update media tags", it) }
 
     suspend fun saveMediaFile(mediaFile: MediaFile): Result<String> = runCatching {
-        ensureAuthenticated()
-        val mode = requireTestMode()
+        authGate.ensureAuthenticated()
+        val mode = authGate.requireTestMode()
         val docRef = firestore.collection("media_files").document()
         // Stage 0I: a test admin must stamp kinfolkId == testTribeId so the sandbox
         // rules (testOwnsIncoming) allow the write; the operator writes no scope.
@@ -1217,7 +1196,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to save media file", it) }
 
     suspend fun deleteMediaFile(mediaFileId: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("media_files").document(mediaFileId).delete().await()
         Unit
     }.onFailure { AuntieLog.e("Failed to delete media file", it) }
@@ -1231,7 +1210,7 @@ class AuntieRepository(
     // the parent doc.
 
     suspend fun addBreadcrumb(sessionId: String, point: LocationPoint): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(sessionId.isNotBlank()) { "sessionId required" }
         // LocationPoint stamps `timestamp = System.currentTimeMillis()` at construction by default;
         // LocationTrackingService overrides with `location.time` from the actual GPS fix. Caller is
@@ -1245,7 +1224,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to add breadcrumb for session $sessionId", it) }
 
     suspend fun getBreadcrumbs(sessionId: String): Result<List<LocationPoint>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(sessionId.isNotBlank()) { "sessionId required" }
         val snapshot = firestore.collection("kin_care_sessions")
             .document(sessionId)
@@ -1283,7 +1262,7 @@ class AuntieRepository(
     }
 
     suspend fun saveVisitRoute(route: VisitRoute): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         // Respect caller-supplied id so the route shell persisted at startTracking
         // becomes the same doc updated at saveRoute end-of-visit. Prevents orphan
         // LocationCheckpoint rows whose routeId references a route id that didn't
@@ -1303,13 +1282,13 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to save visit route", it) }
 
     suspend fun getVisitRoute(routeId: String): Result<VisitRoute?> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("visit_routes").document(routeId).get().await()
         snapshot.toObject(VisitRoute::class.java)
     }.onFailure { AuntieLog.e("Failed to get visit route", it) }
 
     suspend fun getVisitRoutesForKinfolk(kinfolkId: String): Result<List<VisitRoute>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("visit_routes")
             .whereEqualTo("kinfolkId", kinfolkId)
             .orderBy("startTime", com.google.firebase.firestore.Query.Direction.DESCENDING)
@@ -1319,7 +1298,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get visit routes", it) }
 
     suspend fun saveLocationCheckpoint(checkpoint: LocationCheckpoint): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val docRef = firestore.collection("location_checkpoints").document()
         val newCheckpoint = checkpoint.copy(
             id = docRef.id,
@@ -1330,7 +1309,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to save location checkpoint", it) }
 
     suspend fun getCheckpointsForRoute(routeId: String): Result<List<LocationCheckpoint>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("location_checkpoints")
             .whereEqualTo("routeId", routeId)
             .orderBy("timestamp")
@@ -1340,7 +1319,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get checkpoints", it) }
 
     suspend fun getLocationSharingPreferences(kinfolkId: String): Result<LocationSharingPreferences?> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("location_sharing_preferences")
             .whereEqualTo("kinfolkId", kinfolkId)
             .get()
@@ -1349,7 +1328,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get location sharing preferences", it) }
 
     suspend fun saveLocationSharingPreferences(preferences: LocationSharingPreferences): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val timestamp = getCurrentTimestamp()
 
         if (preferences.id.isBlank()) {
@@ -1369,7 +1348,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to save location sharing preferences", it) }
 
     suspend fun getVisitRoutesForSession(sessionId: String): Result<List<VisitRoute>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("visit_routes")
             .whereEqualTo("kinCareSessionId", sessionId)
             .orderBy("startTime", com.google.firebase.firestore.Query.Direction.DESCENDING)
@@ -1382,7 +1361,7 @@ class AuntieRepository(
 
     suspend fun getHouseholdData(kinfolkId: String): Result<HouseholdData?> = runCatching {
         AuntieLog.d("Fetching household data for kinfolk: $kinfolkId")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("household_data")
             .whereEqualTo("kinfolkId", kinfolkId)
             .limit(1)
@@ -1392,7 +1371,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get household data for $kinfolkId", it) }
 
     suspend fun saveHouseholdData(data: HouseholdData): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val timestamp = getCurrentTimestamp()
         if (data.id.isBlank()) {
             val docRef = firestore.collection("household_data").document()
@@ -1415,7 +1394,7 @@ class AuntieRepository(
     // --- Media Albums ---
 
     suspend fun getMediaAlbums(entityId: String, entityType: MediaEntityType): Result<List<MediaAlbum>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("media_albums")
             .whereEqualTo("entityId", entityId)
             .whereEqualTo("entityType", entityType.name)
@@ -1428,7 +1407,7 @@ class AuntieRepository(
     // --- Dynamic Field Definitions ---
 
     suspend fun getFieldDefinitions(targetEntity: TargetEntity? = null): Result<List<FieldDefinition>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val base = firestore.collection("field_definitions")
             .whereEqualTo("isActive", true)
         val query = if (targetEntity != null) {
@@ -1441,7 +1420,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get field definitions", it) }
 
     suspend fun createFieldDefinition(field: FieldDefinition): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val docRef = firestore.collection("field_definitions").document()
         val timestamp = getCurrentTimestamp()
         docRef.set(field.copy(
@@ -1453,7 +1432,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to create field definition", it) }
 
     suspend fun updateFieldDefinition(field: FieldDefinition): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("field_definitions").document(field.id)
             .set(field.copy(updatedAt = getCurrentTimestamp()))
             .await()
@@ -1461,7 +1440,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to update field definition ${field.id}", it) }
 
     suspend fun deleteFieldDefinition(fieldId: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("field_definitions").document(fieldId).delete().await()
         Unit
     }.onFailure { AuntieLog.e("Failed to delete field definition $fieldId", it) }
@@ -1469,7 +1448,7 @@ class AuntieRepository(
     // --- Dynamic Field Values ---
 
     suspend fun getDynamicFieldValues(entityId: String, entityType: TargetEntity): Result<List<DynamicFieldValue>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("dynamic_field_values")
             .whereEqualTo("entityId", entityId)
             .whereEqualTo("entityType", entityType.name)
@@ -1479,7 +1458,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get dynamic field values", it) }
 
     suspend fun saveDynamicFieldValue(value: DynamicFieldValue): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val timestamp = getCurrentTimestamp()
         if (value.id.isBlank()) {
             val docRef = firestore.collection("dynamic_field_values").document()
@@ -1504,7 +1483,7 @@ class AuntieRepository(
      * [BatchBookingResult.failed] so callers can show updated/failed honestly.
      */
     suspend fun batchUpdateBookings(ids: List<String>, action: String): Result<BatchBookingResult> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("batchUpdateBookings")
             .call(mapOf("ids" to ids, "action" to action))
@@ -1518,7 +1497,7 @@ class AuntieRepository(
      * not owned/missing are skipped server-side).
      */
     suspend fun bulkMarkNotificationsRead(ids: List<String>): Result<Int> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("bulkMarkNotificationsRead")
             .call(mapOf("ids" to ids))
@@ -1532,7 +1511,7 @@ class AuntieRepository(
      * (not-found / not-your-notification) surface verbatim.
      */
     suspend fun markNotificationRead(id: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(id.isNotBlank()) { "markNotificationRead requires a notification id" }
         functions.getHttpsCallable("markNotificationRead")
             .call(mapOf("notificationId" to id))
@@ -1545,7 +1524,7 @@ class AuntieRepository(
      * markNotificationUnread callable (inverse of markNotificationRead).
      */
     suspend fun markNotificationUnread(id: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(id.isNotBlank()) { "markNotificationUnread requires a notification id" }
         functions.getHttpsCallable("markNotificationUnread")
             .call(mapOf("notificationId" to id))
@@ -1560,7 +1539,7 @@ class AuntieRepository(
      * not the caller's). Fail-loud.
      */
     suspend fun archiveNotification(id: String): Result<Int> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(id.isNotBlank()) { "archiveNotification requires a notification id" }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("archiveNotification")
@@ -1575,7 +1554,7 @@ class AuntieRepository(
      * not owned/missing are skipped server-side).
      */
     suspend fun bulkArchiveNotifications(ids: List<String>): Result<Int> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(ids.isNotEmpty()) { "bulkArchiveNotifications requires at least one id" }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("bulkArchiveNotifications")
@@ -1587,12 +1566,12 @@ class AuntieRepository(
     // --- Visit Logs ---
 
     suspend fun getVisitLogs(): Result<List<VisitLog>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         scoped.scopedQuery("visit_logs").toObjects(VisitLog::class.java)
     }.onFailure { AuntieLog.e("Failed to get visit logs", it) }
 
     suspend fun getVisitLogsForKinfolk(kinfolkId: String): Result<List<VisitLog>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("visit_logs")
             .whereEqualTo("kinfolkId", kinfolkId)
             .get()
@@ -1601,7 +1580,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get visit logs for $kinfolkId", it) }
 
     suspend fun createVisitLog(log: VisitLog): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val docRef = firestore.collection("visit_logs").document()
         val timestamp = getCurrentTimestamp()
         docRef.set(log.copy(
@@ -1614,7 +1593,7 @@ class AuntieRepository(
     // --- Training Documents ---
 
     suspend fun getTrainingDocuments(): Result<List<TrainingDocument>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("training_documents").get().await()
         snapshot.toObjects(TrainingDocument::class.java)
     }.onFailure { AuntieLog.e("Failed to get training documents", it) }
@@ -1645,7 +1624,7 @@ class AuntieRepository(
         attachments: List<TrainingDocAttachment>,
         communicationType: String = "note",
     ): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(targetKinfolkId.isNotBlank()) { "targetKinfolkId required" }
         val payload = mutableMapOf<String, Any?>(
             "title" to title,
@@ -1675,7 +1654,7 @@ class AuntieRepository(
         attachments: List<TrainingDocAttachment>,
         communicationType: String = "note",
     ): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(docId.isNotBlank()) { "docId required" }
         require(targetKinfolkId.isNotBlank()) { "targetKinfolkId required" }
         val payload = mutableMapOf<String, Any?>(
@@ -1695,7 +1674,7 @@ class AuntieRepository(
 
     /** Spec 23: delete a Tribal Intel note. Does NOT unmerge already-folded dossier/411 text. */
     suspend fun deleteTrainingDocument(docId: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(docId.isNotBlank()) { "docId required" }
         functions.getHttpsCallable("deleteTrainingDocument").call(mapOf("docId" to docId)).await()
         Unit
@@ -1704,18 +1683,18 @@ class AuntieRepository(
     // --- Kin Care Sessions ---
 
     suspend fun getKinCareSessions(): Result<List<KinCareSession>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         scoped.scopedQuery("kin_care_sessions").toObjects(KinCareSession::class.java)
     }.onFailure { AuntieLog.e("Failed to get kin care sessions", it) }
 
     suspend fun getKinCareSession(sessionId: String): Result<KinCareSession?> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kin_care_sessions").document(sessionId).get().await()
         snapshot.toObject(KinCareSession::class.java)
     }.onFailure { AuntieLog.e("Failed to get kin care session $sessionId", it) }
 
     suspend fun getKinCareSessionsForKinfolk(kinfolkId: String): Result<List<KinCareSession>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kin_care_sessions")
             .whereEqualTo("kinfolkId", kinfolkId)
             .get()
@@ -1724,7 +1703,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get kin care sessions for $kinfolkId", it) }
 
     suspend fun getKinCareSessionsBySourceBookingId(sourceBookingId: String): Result<List<KinCareSession>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kin_care_sessions")
             .whereEqualTo("sourceBookingId", sourceBookingId)
             .get()
@@ -1733,10 +1712,10 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get kin care sessions for source booking $sourceBookingId", it) }
 
     suspend fun createKinCareSession(session: KinCareSession): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         // Write stamp, not a query: scopedKinfolkId forces the sandbox scope in
         // test mode and passes the caller's kinfolkId through otherwise.
-        val mode = requireTestMode()
+        val mode = authGate.requireTestMode()
         val session = session.copy(kinfolkId = mode.scopedKinfolkId(session.kinfolkId))
         val docRef = firestore.collection("kin_care_sessions").document()
         val timestamp = getCurrentTimestamp()
@@ -1760,7 +1739,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to create kin care session", it) }
 
     suspend fun updateKinCareSession(session: KinCareSession): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("kin_care_sessions").document(session.id)
             .set(session.copy(updatedAt = getCurrentTimestamp()))
             .await()
@@ -1768,7 +1747,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to update kin care session ${session.id}", it) }
 
     suspend fun getKinCareSessionsForDay(dayStartIso: String, dayEndIso: String): Result<List<KinCareSession>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = scoped.scopedQuery("kin_care_sessions") {
             whereGreaterThanOrEqualTo("startTime", dayStartIso)
                 .whereLessThan("startTime", dayEndIso)
@@ -1780,7 +1759,7 @@ class AuntieRepository(
     // --- Visit lifecycle transitions ---
 
     private suspend fun patchSession(sessionId: String, updates: Map<String, Any>): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val patched = updates.toMutableMap().apply { put("updatedAt", getCurrentTimestamp()) }
         firestore.collection("kin_care_sessions").document(sessionId)
             .update(patched)
@@ -1817,10 +1796,10 @@ class AuntieRepository(
     // --- Kin Care Reports (KinTales) ---
 
     suspend fun createKinCareReport(report: KinCareReport): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         // Write stamp, not a query: scopedKinfolkId forces the sandbox scope in
         // test mode and passes the caller's kinfolkId through otherwise.
-        val mode = requireTestMode()
+        val mode = authGate.requireTestMode()
         val report = report.copy(kinfolkId = mode.scopedKinfolkId(report.kinfolkId))
         val docRef = firestore.collection("kin_care_reports").document()
         val timestamp = getCurrentTimestamp()
@@ -1841,7 +1820,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to create kin care report", it) }
 
     suspend fun updateKinCareReport(report: KinCareReport): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("kin_care_reports").document(report.id)
             .set(report.copy(updatedAt = getCurrentTimestamp()))
             .await()
@@ -1849,7 +1828,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to update kin care report ${report.id}", it) }
 
     suspend fun markReportSent(reportId: String, sessionId: String, sentVia: String, deliveryReceiptId: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val timestamp = getCurrentTimestamp()
         firestore.collection("kin_care_reports").document(reportId)
             .update(mapOf(
@@ -1872,7 +1851,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to mark report sent $reportId", it) }
 
     suspend fun getReportsForSession(sessionId: String): Result<List<KinCareReport>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kin_care_reports")
             .whereEqualTo("sessionId", sessionId)
             .orderBy("createdAt")
@@ -1882,7 +1861,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get reports for session $sessionId", it) }
 
     suspend fun getDraftReports(): Result<List<KinCareReport>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = scoped.scopedQuery("kin_care_reports") {
             whereEqualTo("status", ReportStatus.DRAFT.name)
                 .orderBy("updatedAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
@@ -1891,7 +1870,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get draft reports", it) }
 
     suspend fun getAllKinCareReports(): Result<List<KinCareReport>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         scoped.scopedQuery("kin_care_reports").toObjects(KinCareReport::class.java)
     }.onFailure { AuntieLog.e("Failed to get all kin care reports", it) }
 
@@ -1924,7 +1903,7 @@ class AuntieRepository(
         kinfolkId: String,
         kinfolkName: String,
     ): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(reportId.isNotBlank()) { "reportId required" }
         require(kinfolkId.isNotBlank()) { "kinfolkId required" }
         functions.getHttpsCallable("triageOrphanReport")
@@ -1942,7 +1921,7 @@ class AuntieRepository(
         reportId: String,
         duplicateOfReportId: String,
     ): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(reportId.isNotBlank()) { "reportId required" }
         require(duplicateOfReportId.isNotBlank()) { "duplicateOfReportId required" }
         require(reportId != duplicateOfReportId) { "Cannot mark a report as a duplicate of itself" }
@@ -1960,7 +1939,7 @@ class AuntieRepository(
         reportId: String,
         reason: String,
     ): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(reportId.isNotBlank()) { "reportId required" }
         require(reason.length >= 5) { "Archive reason must be at least 5 characters" }
         functions.getHttpsCallable("triageOrphanReport")
@@ -1993,7 +1972,7 @@ class AuntieRepository(
      * so the collection is now closed to clients entirely.
      */
     suspend fun saveDeviceToken(token: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val payload = hashMapOf(
             "token" to token,
             "platform" to "android",
@@ -2109,7 +2088,7 @@ class AuntieRepository(
         transcript: String,
         popupUrl: String = ""
     ): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val id = callSid.ifBlank { UUID.randomUUID().toString() }
         val doc = firestore.collection("calls_log").document(id)
         val existing = doc.get().await().toObject(CallLog::class.java)
@@ -2133,7 +2112,7 @@ class AuntieRepository(
         transcript: String,
         audioUrl: String
     ): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val docRef = firestore.collection("voicemails").document()
         val log = VoicemailLog(
             id = docRef.id,
@@ -2149,7 +2128,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to create inbound voicemail", it) }
 
     suspend fun createInboundSmsLog(from: String, body: String): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val docRef = firestore.collection("sms_messages").document()
         val msg = SmsMessage(
             id = docRef.id,
@@ -2176,7 +2155,7 @@ class AuntieRepository(
      * forever.
      */
     suspend fun markVoicemailRead(voicemailId: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("voicemails").document(voicemailId).update(
             mapOf(
                 "replyStatus" to "read",
@@ -2188,7 +2167,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to mark voicemail read $voicemailId", it) }
 
     suspend fun markVoicemailReplied(voicemailId: String, replyLogId: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("voicemails").document(voicemailId).update(
             mapOf(
                 "replyStatus" to "replied",
@@ -2202,25 +2181,25 @@ class AuntieRepository(
     // --- Comms log reads (one collection per channel; consumed by InboxScreen) ---
 
     suspend fun getVoicemails(): Result<List<VoicemailLog>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("voicemails").get().await()
             .toObjects(VoicemailLog::class.java)
     }.onFailure { AuntieLog.e("Failed to get voicemails", it) }
 
     suspend fun getCalls(): Result<List<CallLog>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("calls_log").get().await()
             .toObjects(CallLog::class.java)
     }.onFailure { AuntieLog.e("Failed to get calls", it) }
 
     suspend fun getSmsMessages(): Result<List<SmsMessage>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("sms_messages").get().await()
             .toObjects(SmsMessage::class.java)
     }.onFailure { AuntieLog.e("Failed to get SMS messages", it) }
 
     suspend fun getEmails(): Result<List<EmailMessage>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("emails").get().await()
             .toObjects(EmailMessage::class.java)
     }.onFailure { AuntieLog.e("Failed to get emails", it) }
@@ -2231,7 +2210,7 @@ class AuntieRepository(
      * in one round-trip. Pass empty-string to clear a field (e.g. Undo Arrived).
      */
     suspend fun patchKinCareSession(id: String, patch: Map<String, Any>): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("kin_care_sessions").document(id).update(patch).await()
         Unit
     }.onFailure { AuntieLog.e("Failed to patch KinCareSession $id", it) }
@@ -2251,7 +2230,7 @@ class AuntieRepository(
         visitId: String,
         patch: Map<String, Any?>,
     ): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(familyId.isNotBlank() && batchId.isNotBlank() && visitId.isNotBlank()) {
             "patchKinCareDoc requires familyId, batchId, visitId"
         }
@@ -2273,7 +2252,7 @@ class AuntieRepository(
         batchId: String,
         visitId: String,
     ): Result<com.tribetails.auntieos.data.model.KinCareAssignment> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(familyId.isNotBlank() && batchId.isNotBlank() && visitId.isNotBlank()) {
             "getKinCareAssignment requires familyId, batchId, visitId"
         }
@@ -2299,7 +2278,7 @@ class AuntieRepository(
         visitId: String,
         auntieUid: String?,
     ): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         functions.getHttpsCallable("assignAuntie")
             .call(assignAuntiePayload(kinfolkId, batchId, visitId, auntieUid))
             .await()
@@ -2312,7 +2291,7 @@ class AuntieRepository(
      * [decodeListStaff] re-sorts defensively so the picker reads stably either way.
      */
     suspend fun listStaff(): Result<List<StaffMember>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val raw = functions.getHttpsCallable("listStaff")
             .call(emptyMap<String, Any?>())
             .await()
@@ -2323,7 +2302,7 @@ class AuntieRepository(
     // --- Activity log (audit trail) ---
 
     suspend fun getActivityLog(): Result<List<com.tribetails.auntieos.data.admin.ActivityLogEntry>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         // WARNING-10: bound the read to the 100 most recent entries ordered by seq
         // (the hash-chain sequence number written by writeAuditEntry). Chain integrity
         // is verified server-side via verifyActivityLogChain; the client only needs the
@@ -2341,7 +2320,7 @@ class AuntieRepository(
      * server-side so we don't pull other admins' dispatches.
      */
     suspend fun getNotifications(): Result<List<com.tribetails.auntieos.data.admin.NotificationEntry>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val uid = auth.currentUser?.uid
             ?: throw IllegalStateException("getNotifications called without auth uid")
         firestore.collection("notifications")
@@ -2355,7 +2334,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get notifications", it) }
 
     suspend fun getKinCareReport(reportId: String): Result<KinCareReport?> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kin_care_reports").document(reportId).get().await()
         snapshot.toObject(KinCareReport::class.java)
     }.onFailure { AuntieLog.e("Failed to get kin care report $reportId", it) }
@@ -2363,19 +2342,19 @@ class AuntieRepository(
     // --- KinTale Templates ---
 
     suspend fun getKinTaleTemplates(): Result<List<KinTaleTemplate>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kintale_templates").get().await()
         snapshot.toObjects(KinTaleTemplate::class.java)
     }.onFailure { AuntieLog.e("Failed to get KinTale templates", it) }
 
     suspend fun getKinTaleTemplate(templateId: String): Result<KinTaleTemplate?> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kintale_templates").document(templateId).get().await()
         snapshot.toObject(KinTaleTemplate::class.java)
     }.onFailure { AuntieLog.e("Failed to get KinTale template $templateId", it) }
 
     suspend fun createKinTaleTemplate(template: KinTaleTemplate): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val docRef = firestore.collection("kintale_templates").document()
         val ts = getCurrentTimestamp()
         docRef.set(template.copy(id = docRef.id, createdAt = ts, updatedAt = ts)).await()
@@ -2383,7 +2362,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to create KinTale template", it) }
 
     suspend fun updateKinTaleTemplate(template: KinTaleTemplate): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("kintale_templates").document(template.id)
             .set(template.copy(updatedAt = getCurrentTimestamp()))
             .await()
@@ -2391,14 +2370,14 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to update KinTale template ${template.id}", it) }
 
     suspend fun deleteKinTaleTemplate(templateId: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         firestore.collection("kintale_templates").document(templateId).delete().await()
         Unit
     }.onFailure { AuntieLog.e("Failed to delete KinTale template $templateId", it) }
 
     /** Pick the best template for a service type. Falls back to the default template if no match. */
     suspend fun getActiveTemplateForService(serviceType: String): Result<KinTaleTemplate?> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kintale_templates")
             .whereEqualTo("isActive", true)
             .get().await()
@@ -2417,7 +2396,7 @@ class AuntieRepository(
 
     // ---- Session GPS summary (parity w/ AuntieOS web) ----
     suspend fun saveSessionGpsSummary(sessionId: String, summary: GpsSummary): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(sessionId.isNotBlank()) { "sessionId required" }
         firestore.collection("kin_care_sessions").document(sessionId)
             .set(mapOf("gpsSummary" to summary), com.google.firebase.firestore.SetOptions.merge())
@@ -2450,7 +2429,7 @@ class AuntieRepository(
      * profile doc doesn't exist yet.
      */
     suspend fun getCurrentUserProfile(): Result<UserProfile?> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val uid = auth.currentUser?.uid
             ?: throw IllegalStateException("getCurrentUserProfile called without auth uid")
         firestore.collection("users").document(uid).get().await()
@@ -2492,7 +2471,7 @@ class AuntieRepository(
      * Returns the clinic id, whether newly created or matched.
      */
     suspend fun submitVetClinic(clinic: VetClinic): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("submitVetClinic")
             .call(
@@ -2521,7 +2500,7 @@ class AuntieRepository(
         sessionToken: String,
         limit: Int = 5,
     ): Result<List<com.tribetails.auntieos.data.api.MapboxSuggestion>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("mapboxSearch")
             .call(
@@ -2558,7 +2537,7 @@ class AuntieRepository(
         mapboxId: String,
         sessionToken: String,
     ): Result<com.tribetails.auntieos.data.api.MapboxFeature> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("mapboxRetrieve")
             .call(mapOf("mapboxId" to mapboxId, "sessionToken" to sessionToken))
@@ -2586,7 +2565,7 @@ class AuntieRepository(
      * a Map; numbers may arrive as Int/Long/Double, so reads go through Number.
      */
     suspend fun verifyActivityLogChain(): Result<com.tribetails.auntieos.data.admin.ChainVerifyResult> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val res = functions.getHttpsCallable("verifyActivityLogChain").call(emptyMap<String, Any?>()).await()
         @Suppress("UNCHECKED_CAST")
         val data = res.data as? Map<String, Any?> ?: emptyMap()
@@ -2605,7 +2584,7 @@ class AuntieRepository(
 
     /** Update an existing vet-clinic doc (parity with web updateVetClinic). */
     suspend fun updateVetClinic(clinic: VetClinic): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(clinic.id.isNotBlank()) { "VetClinic.id is required to update." }
         val ts = getCurrentTimestamp()
         val toWrite = clinic.copy(updatedAt = ts, createdAt = clinic.createdAtIso().ifBlank { ts })
@@ -2615,14 +2594,14 @@ class AuntieRepository(
 
     /** Hard-delete a vet-clinic doc (parity with web deleteVetClinic). */
     suspend fun deleteVetClinic(id: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(id.isNotBlank()) { "VetClinic id is required to delete." }
         firestore.collection("vet_clinics").document(id).delete().await()
         Unit
     }.onFailure { AuntieLog.e("Failed to delete vet clinic", it) }
 
     suspend fun saveUserProfile(profile: UserProfile): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(profile.uid.isNotBlank()) { "UserProfile.uid is required to save." }
         val ts = getCurrentTimestamp()
         val toWrite = profile.copy(
@@ -2652,7 +2631,7 @@ class AuntieRepository(
      * reply without them is a failure: a save that cannot be confirmed is not a save.
      */
     suspend fun saveDashboardLayout(tokens: List<String>): Result<List<String>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("saveDashboardLayout")
             .call(mapOf("tokens" to tokens)).await().data as? Map<String, Any?>
@@ -2670,7 +2649,7 @@ class AuntieRepository(
     // ───────────────────────────────────────────────────────────────────────
 
     suspend fun listFormSchemas(): Result<List<FormSchemaSummary>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listFormSchemas")
             .call(emptyMap<String, Any>())
@@ -2697,7 +2676,7 @@ class AuntieRepository(
     // ───────────────────────────────────────────────────────────────────────
 
     suspend fun getFeatureFlags(): Result<Map<String, Boolean>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getFeatureFlags")
             .call(emptyMap<String, Any>())
@@ -2712,7 +2691,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get feature flags", it) }
 
     suspend fun setFeatureFlags(flags: Map<String, Boolean>): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(flags.isNotEmpty()) { "setFeatureFlags: empty flag map" }
         functions.getHttpsCallable("setFeatureFlags")
             .call(mapOf("flags" to flags))
@@ -2727,7 +2706,7 @@ class AuntieRepository(
     // ───────────────────────────────────────────────────────────────────────
 
     suspend fun getBusinessNotificationOverrides(): Result<NotificationMatrix> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getBusinessNotificationOverrides")
             .call(emptyMap<String, Any>())
@@ -2751,7 +2730,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to load notification overrides", it) }
 
     suspend fun saveBusinessNotificationOverride(key: String, override: NotificationOverride): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(key.isNotBlank()) { "notification override key required" }
         // Serialization contract (only-true locks, per-stream gates, lockReason
         // empty-string-clears) lives in NotificationOverride.toCallablePayload().
@@ -2761,7 +2740,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to save notification override", it) }
 
     suspend fun deleteBusinessNotificationOverride(key: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(key.isNotBlank()) { "notification override key required" }
         functions.getHttpsCallable("deleteBusinessNotificationOverride").call(mapOf("key" to key)).await()
         Unit
@@ -2775,7 +2754,7 @@ class AuntieRepository(
     // ───────────────────────────────────────────────────────────────────────
 
     suspend fun getMyAdminNotificationPrefs(): Result<AdminNotificationPrefs> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getMyAdminNotificationPrefs")
             .call(emptyMap<String, Any>())
@@ -2793,7 +2772,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to load admin notification prefs", it) }
 
     suspend fun saveMyAdminNotificationPrefs(prefs: AdminNotificationPrefs): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val prefsMap = buildMap<String, Any> {
             if (prefs.byKey.isNotEmpty()) put("byKey", prefs.byKey)
             if (prefs.byCategory.isNotEmpty()) put("byCategory", prefs.byCategory)
@@ -2816,7 +2795,7 @@ class AuntieRepository(
         }.toMap()
 
     suspend fun getFormSchema(id: String): Result<FormSchema?> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(id.isNotBlank()) { "FormSchema id required" }
         val snap = firestore.collection("formSchemas").document(id).get().await()
         if (!snap.exists()) return@runCatching null
@@ -2825,7 +2804,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get form schema $id", it) }
 
     suspend fun saveFormSchema(schema: FormSchema): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(schema.id.isNotBlank()) { "FormSchema.id required" }
         val payload = mapOf("schema" to formSchemaToMap(schema))
         functions.getHttpsCallable("saveFormSchema").call(payload).await()
@@ -2844,7 +2823,7 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to save form schema ${schema.id}", it) }
 
     suspend fun deleteFormSchema(id: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(id.isNotBlank()) { "FormSchema id required" }
         functions.getHttpsCallable("deleteFormSchema")
             .call(mapOf("id" to id))
@@ -2891,7 +2870,7 @@ class AuntieRepository(
         familyId: String,
         includePhotos: Boolean = false,
     ): Result<ShareLinkResult> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(reportId.isNotBlank()) { "createShareLink: reportId required" }
         require(familyId.isNotBlank()) { "createShareLink: familyId required" }
         val payload = mapOf(
@@ -2920,8 +2899,8 @@ class AuntieRepository(
         serviceDurationMinutes: Int = 0,
         notes: String = "",
     ): Result<String> = runCatching {
-        ensureAuthenticated()
-        val mode = requireTestMode()
+        authGate.ensureAuthenticated()
+        val mode = authGate.requireTestMode()
         val kinfolkId = mode.scopedKinfolkId(kinfolkId)
         val payload = mapOf(
             "kinfolkId" to kinfolkId, "kinIds" to kinIds, "serviceType" to serviceType,
@@ -2936,7 +2915,7 @@ class AuntieRepository(
 
     /** 1E §A.9: reschedule an existing session (Schedule drag / Bookings reschedule). */
     suspend fun rescheduleBooking(sessionId: String, startTime: String, endTime: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         functions.getHttpsCallable("rescheduleBooking")
             .call(mapOf("sessionId" to sessionId, "startTime" to startTime, "endTime" to endTime))
             .await()
@@ -2955,7 +2934,7 @@ class AuntieRepository(
         entityType: MediaEntityType,
         entityId: String,
     ): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         functions.getHttpsCallable("setMediaProfilePhoto")
             .call(mapOf(
                 "mediaFileId" to mediaFileId,
@@ -2971,7 +2950,7 @@ class AuntieRepository(
      *  on a partial failure (failedVisits > 0). A response missing the
      *  affectedVisits field is an error, not a silent 0. */
     suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String): Result<ManageSeriesResult> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("manageBookingSeries")
             .call(mapOf("action" to action, "kinfolkId" to kinfolkId, "batchId" to batchId))
@@ -3064,7 +3043,7 @@ class AuntieRepository(
         perCollectionLimit: Long = 25,
     ): Result<RecentComms> = runCatching {
         AuntieLog.d("Fetching recent comms for kinfolk: $kinfolkId")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         coroutineScope {
             val smsDeferred = async {
                 firestore.collection("sms_messages")
@@ -3111,7 +3090,7 @@ class AuntieRepository(
      */
     suspend fun recapRecentComms(kinfolkId: String): Result<CommsRecap> = runCatching {
         AuntieLog.i("Recapping recent comms for kinfolk: $kinfolkId")
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("recap_recent_comms")
             .call(mapOf("kinfolkId" to kinfolkId))

@@ -38,13 +38,13 @@ class AuntieOSApp : Application() {
 
     /**
      * W4-1: the Invoice domain repo, first carve out of the AuntieRepository
-     * god-file. Its TestMode source reads `repository` at CALL time, not at
-     * construction, so a [rebuildRepository] (base-url change) is picked up and
-     * the `testTribeId` claim is still read and cached in exactly one place.
+     * god-file. W4-2 removed the wiring that used to live here: it took its
+     * TestMode as a lambda reading `repository` at call time, so that a
+     * [rebuildRepository] could not strand it on a dead claim cache. Both repos
+     * now default to `AuthGate.shared`, which no rebuild replaces, so the claim
+     * is read and cached in one place without this file arranging it.
      */
-    val invoiceRepository: InvoiceRepository by lazy {
-        InvoiceRepository(requireTestMode = { repository.requireTestMode() })
-    }
+    val invoiceRepository: InvoiceRepository by lazy { InvoiceRepository() }
 
     val mediaUploadManager: MediaUploadManager by lazy { MediaUploadManager(applicationContext, repository) }
     val visitNotifier: VisitNotifier by lazy { VisitNotifier() }
