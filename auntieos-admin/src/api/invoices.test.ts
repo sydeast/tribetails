@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import type { Timestamp } from 'firebase/firestore';
 import {
+  INVOICE_STATES,
   INVOICES_QUERY,
   INVOICES_PAGE_SIZE,
   invoiceMatchesSearch,
   invoicesPageQuery,
+  invoiceStamp,
   isArchivedInvoice,
   normalizeInvoice,
   type InvoiceEntry,
@@ -44,13 +46,20 @@ describe('normalizeInvoice (live-data crash guards, 2026-07-20)', () => {
     expect(normalizeInvoice(REAL_SANDBOX_DOC).sessionIds).toEqual([]);
   });
 
-  it('fills the string field that crashed on .trim', () => {
-    expect(normalizeInvoice(REAL_SANDBOX_DOC).status).toBe('');
+  it('does NOT invent a status, and reading the absent one through the stamp cannot crash', () => {
+    // This used to assert `status: ''` was filled in, guarding the classifier's
+    // `.trim()` crash. The classifier is gone (ADR-0002) and '' is not a member
+    // of the stamped union, so inventing it would be worse than leaving the
+    // field absent: `invoiceStamp` is the one reader, and it answers "no stamp"
+    // without touching a method on the missing value.
+    expect(normalizeInvoice(REAL_SANDBOX_DOC).status).toBeUndefined();
+    expect(() => invoiceStamp(normalizeInvoice(REAL_SANDBOX_DOC))).not.toThrow();
+    expect(invoiceStamp(normalizeInvoice(REAL_SANDBOX_DOC))).toEqual({ state: null, editScope: 'none' });
   });
 
   it('does NOT invent money it was not given', () => {
     // Defaulting an absent total to 0 would assert a financial fact the document
-    // never made. invoiceState reads a non-finite number as "no evidence".
+    // never made.
     const noMoney = normalizeInvoice({ _id: 'x' } as unknown as InvoiceEntry);
     expect(noMoney.total).toBeUndefined();
     expect(noMoney.amountDue).toBeUndefined();
@@ -114,6 +123,62 @@ describe('invoicesPageQuery: the list screen own paged window', () => {
       (f) => f[0],
     );
     expect(named).not.toContain('archivedAt');
+  });
+});
+
+/**
+ * The read side of ADR-0002's stamp: this is the ONE place the app decides
+ * whether a doc carries a stamp, so it is the one place the fail-soft is
+ * pinned. The rule everywhere: recognized stamp -> render it verbatim; anything
+ * else -> state null + editScope 'none' (the safe affordance), NEVER a state
+ * re-derived from the money fields.
+ */
+describe('invoiceStamp', () => {
+  function stamped(status: unknown, editScope: unknown) {
+    return invoiceStamp({ status, editScope } as unknown as Pick<InvoiceEntry, 'status' | 'editScope'>);
+  }
+
+  it('passes every canonical state through verbatim', () => {
+    for (const state of INVOICE_STATES) {
+      expect(stamped(state, 'all')).toEqual({ state, editScope: 'all' });
+    }
+  });
+
+  it('passes each of the three editScope values through verbatim', () => {
+    expect(stamped('open', 'all').editScope).toBe('all');
+    expect(stamped('open', 'metadataOnly').editScope).toBe('metadataOnly');
+    expect(stamped('paid', 'none').editScope).toBe('none');
+  });
+
+  it('reads an absent status as "no stamp", with the safe affordance', () => {
+    expect(stamped(undefined, 'all')).toEqual({ state: null, editScope: 'none' });
+  });
+
+  it('reads a legacy free-text status as "no stamp", never normalizing it into a state', () => {
+    // The stamp writes lowercase, exactly. 'PAID' is not "obviously paid": it
+    // is evidence the doc was never stamped, and lowercasing it here would be
+    // re-classification through the back door.
+    expect(stamped('PAID', 'none').state).toBeNull();
+    expect(stamped(' open ', 'all').state).toBeNull();
+    expect(stamped('sent', 'all').state).toBeNull();
+    expect(stamped('', 'all').state).toBeNull();
+  });
+
+  it('answers editScope none for an unrecognized state even when the stored scope looks valid', () => {
+    // A half-recognizable stamp is not a stamp. Offering money controls off the
+    // scope of a doc whose state cannot be read would be a guess.
+    expect(stamped('PAID', 'all')).toEqual({ state: null, editScope: 'none' });
+  });
+
+  it('answers editScope none when the stored scope itself is junk or absent', () => {
+    expect(stamped('open', undefined).editScope).toBe('none');
+    expect(stamped('open', 'everything').editScope).toBe('none');
+    expect(stamped('open', 42).editScope).toBe('none');
+  });
+
+  it('never throws on a wholly malformed doc', () => {
+    expect(() => stamped(42, { nested: true })).not.toThrow();
+    expect(stamped(42, { nested: true })).toEqual({ state: null, editScope: 'none' });
   });
 });
 

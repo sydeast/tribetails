@@ -1,84 +1,27 @@
 /**
- * Pure invoice classification + display helpers, kept out of the screen so the
- * mapping logic has direct vitest coverage (the denFormat.ts / FormSchemas.tsx
- * convention).
+ * Pure invoice DISPLAY helpers, kept out of the screen so the mapping logic has
+ * direct vitest coverage (the denFormat.ts / FormSchemas.tsx convention).
  *
- * THE AO-12 FIX, non-negotiable per the port brief: the wasm admin's
- * InvoiceFilters.kt decides "paid" by NEGATION, 
- *   invoiceIsPaid = !invoiceIsDraft(invoice) && !invoiceIsOutstanding(invoice)
- *, which is "not proven anything else, so call it paid". That is how an
- * unredeemed CREDIT (a refund owed TO the kinfolk, not a bill they paid)
- * rendered as a confident PAID chip in production. It is not ported here.
+ * WHAT IS DELIBERATELY NOT HERE ANYMORE: the classifier. This module used to
+ * hold `invoiceState`, an 8-state re-derivation of the invoice's state from its
+ * money fields (the AO-12 fix, ported from the wasm). Per ADR-0002 the server
+ * now persists the Invoice State Classifier's verdict onto every invoice doc as
+ * `status` + `editScope`, in the same write as every money change, and
+ * firestore.rules denies all client invoice writes, so the state a client would
+ * re-derive is at best redundant and at worst a second opinion. Clients render
+ * the persisted state and never classify: read the stamp through
+ * `api/invoices.ts#invoiceStamp` and hand the stored state to the helpers here.
  *
- * Instead this module ENUMERATES every state as its own positive branch,
- * mirroring MyTribe/web/src/lib/invoiceFormat.ts's `invoiceStatusInfo` (the
- * already-corrected reference: draft / open / paid / cancelled / credit, with
- * credit split into credit-vs-redeemed by `creditRedeemedAtMs`) and
- * getMyInvoices.ts's `resolveStatus` (the backend's own authoritative
- * precedence: explicit free-text status first, then real money fields as
- * positive signals, never "whatever is left over"). Two states neither of
- * those two references models are added because the ADMIN's raw `invoices`
- * doc needs them: `quote` (the admin-only free-text status createQuote writes,
- * per InvoiceFilters.kt's `invoiceIsQuote`) and `zero` (a genuinely $0
- * invoice, nothing was billed, so it is NOT a claim that someone paid).
+ * Everything below either formats a value (currency, dates) or maps an
+ * ALREADY-DECIDED state to a rendering (chip metadata, offered actions, the
+ * overdue/part-paid display refinements). Nothing below decides what state an
+ * invoice is in.
  */
-
-/** Every state this module will ever return. One branch below produces each. */
-export type InvoiceState = 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
-
-/**
- * What `invoiceState` needs to decide. `status` is free-text on the source doc
- * (createInvoice.ts / postInvoiceEvent.ts write whatever the caller passed,
- * default `''`), never a validated enum, so it is read case-insensitively
- * and trimmed, same as the wasm's `invoiceIsQuote` / `invoiceIsDraft`.
- */
-export interface InvoiceStateInput {
-  status: string;
-  /** Dollars still owed. Negative means a refund is owed instead (a credit). */
-  amountDue: number;
-  /** Dollars billed. Negative is the same credit signal as a negative amountDue. */
-  total: number;
-  /** True once `creditRedeemedAt` is present on the doc (redeemCredit.ts stamps it via FieldValue.serverTimestamp()). */
-  creditRedeemed: boolean;
-}
+import type { InvoiceState } from '../api/invoices';
 
 /** NaN/Infinity read as "no evidence", never as a false 0 that could tip a comparison the wrong way. */
 function financeNumber(v: number): number {
   return Number.isFinite(v) ? v : 0;
-}
-
-/**
- * Classifies one invoice. Every return is a POSITIVE read of either the
- * explicit `status` text or a real money field, nothing here is "not X, so
- * must be Y". Order is precedence, matching getMyInvoices.ts's resolveStatus:
- * an explicit status string wins; a negative balance is credit even without
- * the label; only then do we read amountDue/total to place an unlabeled row.
- */
-export function invoiceState(row: InvoiceStateInput): InvoiceState {
-  // Defensive on purpose: a doc predating the `status` field, or carrying only
-  // the legacy `invoiceStatus` spelling, has no status at all. Reading it blind
-  // threw "Cannot read properties of undefined" and the error boundary blanked
-  // the WHOLE invoices page over ONE bad row. An unlabeled row still classifies
-  // correctly from the money fields below, which is what this precedence order
-  // was built for.
-  const status = (row.status ?? '').trim().toLowerCase();
-  const amountDue = financeNumber(row.amountDue);
-  const total = financeNumber(row.total);
-
-  if (status === 'quote') return 'quote';
-  if (status === 'draft') return 'draft';
-  if (status === 'cancelled') return 'cancelled';
-  // A negative balance is the credit signal even when the label is missing or
-  // stale (mirrors resolveStatus's `amountDue < 0 || total < 0 -> credit`).
-  if (status === 'credit' || amountDue < 0 || total < 0) {
-    return row.creditRedeemed ? 'redeemed' : 'credit';
-  }
-  if (status === 'paid') return 'paid';
-  // Nothing explicit matched (status is 'open', '', or an unrecognized word).
-  // From here every branch reads a real number, positively:
-  if (amountDue > 0) return 'open'; // a balance is genuinely owed
-  if (total === 0) return 'zero'; // nothing was ever billed, not a paid claim
-  return 'paid'; // amountDue <= 0 and total > 0: the billed balance is retired
 }
 
 export interface InvoiceStateInfo {
@@ -90,7 +33,7 @@ export interface InvoiceStateInfo {
   cssClass: string;
 }
 
-/** Friendly label + chip class per enumerated state. Pure 1:1 map, no fallback branch. */
+/** Friendly label + chip class per stamped state. Pure 1:1 map, no fallback branch. */
 export function invoiceStateInfo(state: InvoiceState): InvoiceStateInfo {
   switch (state) {
     case 'quote':
@@ -113,17 +56,33 @@ export function invoiceStateInfo(state: InvoiceState): InvoiceStateInfo {
 }
 
 /**
+ * The chip for a doc that carries NO recognizable state stamp. ADR-0002 makes
+ * that doc impossible — every writer stamps, the backfill stamped the backlog,
+ * the rules deny client writes — so this is the DELIBERATE fail-soft kept
+ * visible in code, not a normal branch:
+ *
+ *   - it renders what the doc actually says (`status` lowercased, or "Unknown"
+ *     when even that is blank), never a state re-derived from the money fields.
+ *     No silent re-classification;
+ *   - its consumers pair it with the safe affordance set: no actions, no
+ *     editing (`invoiceStamp` already answered editScope 'none').
+ */
+export function unstampedStateInfo(rawStatus: unknown): InvoiceStateInfo {
+  const raw = typeof rawStatus === 'string' ? rawStatus.trim().toLowerCase() : '';
+  const label = raw === '' ? 'Unknown' : raw;
+  return { label, chipLabel: label.toUpperCase(), cssClass: 'unknown' };
+}
+
+/**
  * The consequential actions the invoice detail panel can offer. Keys match
  * InvoiceDetail.tsx's ACTIONS metadata one for one.
  */
 export type InvoiceAction = 'reminder' | 'markPaid' | 'receipt' | 'reviewSend';
 
 /**
- * Which actions an invoice in [state] may be offered. Lives HERE, beside the
- * classifier the Invoices list already filters and chips off, so the list and
- * the detail panel can never disagree about what an invoice is (the archive's
- * deliberate design: InvoiceFilters.kt decided both the row chip and the row's
- * available actions from one set of predicates).
+ * Which actions an invoice in [state] may be offered. [state] is the STORED
+ * stamp, so the list chip and the detail panel read the same persisted verdict
+ * and can never disagree about what an invoice is.
  *
  * AO-19, the operator report this closes: the detail panel rendered its whole
  * ACTIONS array unconditionally, so a PAID invoice still offered "Mark paid"
@@ -131,11 +90,11 @@ export type InvoiceAction = 'reminder' | 'markPaid' | 'receipt' | 'reviewSend';
  * would have nagged a household that already paid).
  *
  * TOTAL and NON-OVERLAPPING by construction:
- *   - Total: the switch enumerates all eight InvoiceState members with no
- *     `default`, so adding a ninth state is a compile error here rather than a
- *     silent "no actions" (or, worse, a silent "all actions") at runtime.
- *   - Non-overlapping: the argument is the single enumerated state, not a bag
- *     of independent booleans, so an invoice cannot be in two buckets at once.
+ *   - Total: the switch enumerates all eight stamped states with no `default`,
+ *     so a ninth state is a compile error here rather than a silent "no
+ *     actions" (or, worse, a silent "all actions") at runtime.
+ *   - Non-overlapping: the argument is the single stamped state, not a bag of
+ *     independent booleans, so an invoice cannot be in two buckets at once.
  *
  * The OVERDUE edge case, ruled explicitly: overdue is NOT a state, it is a
  * display refinement of `open` (see `isInvoiceOverdue`, which returns false for
@@ -171,7 +130,8 @@ export function invoiceActionsFor(state: InvoiceState): readonly InvoiceAction[]
     case 'redeemed':
       return [];
     // Nothing was ever billed, so there is nothing to collect and nothing to
-    // receipt. Deliberately NOT folded into `paid` (see invoiceState's note).
+    // receipt. Deliberately NOT folded into `paid`: "no bill" is a different
+    // claim than "someone paid".
     case 'zero':
       return [];
   }
@@ -225,13 +185,15 @@ export function humanizeDate(raw: string, refIso?: string): string {
 }
 
 /**
- * True only when the invoice is `open` (a real, unpaid, non-draft/quote/credit
- * balance) AND its dueDate parses to an ISO date strictly before [todayIso]. A
- * future-dated or unparseable dueDate is never counted overdue, and neither is
- * any other state, a draft, quote, or credit is never "overdue" by definition,
- * so this reads `state`, not amountDue, as its first gate.
+ * True only when the STORED state is `open` (a real, unpaid, non-draft/quote/
+ * credit balance) AND the dueDate parses to an ISO date strictly before
+ * [todayIso]. A future-dated or unparseable dueDate is never counted overdue,
+ * and neither is any other state — a draft, quote, or credit is never
+ * "overdue" by definition, so this reads the stamp, not amountDue, as its
+ * first gate. Accepts null (an unstamped doc) and answers false: no stamp, no
+ * overdue verdict.
  */
-export function isInvoiceOverdue(state: InvoiceState, dueDate: string, todayIso: string): boolean {
+export function isInvoiceOverdue(state: InvoiceState | null, dueDate: string, todayIso: string): boolean {
   if (state !== 'open') return false;
   const due = isoDatePrefixOrNull(dueDate);
   if (due === null) return false;
@@ -272,13 +234,16 @@ export function localDateIso(now: Date): string {
  * real balance is owed, so the subtraction would report the whole total as
  * collected on exactly the rows that are wrong. An invoice with no `paidCents`
  * at all is not claimed to be part-paid, because we have no record that it is.
+ *
+ * Accepts null (an unstamped doc) and answers null: no stamp, no part-paid
+ * claim.
  */
 export interface InvoicePartialPayment {
   paidCents: number;
   remainingCents: number;
 }
 export function invoicePartialPayment(
-  state: InvoiceState,
+  state: InvoiceState | null,
   row: { paidCents?: number; amountDue: number },
 ): InvoicePartialPayment | null {
   if (state !== 'open') return null;

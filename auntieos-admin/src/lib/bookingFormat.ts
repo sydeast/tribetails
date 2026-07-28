@@ -29,8 +29,9 @@ import { str } from './coerce';
  * Nothing here falls through to a state by elimination: an unrecognized or
  * blank status lands in its own named `unknown` bucket rather than being
  * silently absorbed into whichever state happens to be checked last, the
- * AO-12 class of bug invoiceFormat.ts's `invoiceState` was written to retire,
- * applied here before this screen ever ships a first version.
+ * AO-12 class of bug the Invoice State Classifier was written to retire (that
+ * classifier lives server-side now, `mytribe/functions/src/lib/invoiceEditPolicy.ts`,
+ * per ADR-0002), applied here before this screen ever ships a first version.
  */
 export type BookingState = 'draft' | 'pending' | 'scheduled' | 'completed' | 'cancelled' | 'unknown';
 

@@ -268,3 +268,11 @@
   color: var(--color-text-faint);
   text-decoration: line-through;
 }
+/* The fail-soft chip for a doc with no recognizable state stamp (ADR-0002 says
+   that doc is impossible; this is what renders if one appears anyway). Muted on
+   purpose: it makes no claim about the money. */
+.invoices__chip--unknown {
+  background: var(--color-surface-2);
+  color: var(--color-text-faint);
+  border: 1px dashed var(--color-text-faint);
+}
