@@ -43,6 +43,13 @@ function fakeTs(iso: string): Timestamp {
   return { toDate: () => new Date(iso) } as unknown as Timestamp;
 }
 
+/**
+ * The default doc is a STAMPED open invoice (`status: 'open'`,
+ * `editScope: 'all'`), which is what the server writes for an unpaid sent
+ * bill. Per ADR-0002 the stamp arrives ON the doc; these tests hand the screen
+ * stored fields and assert rendered chips/filters/totals, they never rely on
+ * the screen deriving a state from the money.
+ */
 function entry(over: Partial<InvoiceEntry>): InvoiceEntry {
   return {
     _id: 'inv1',
@@ -54,7 +61,8 @@ function entry(over: Partial<InvoiceEntry>): InvoiceEntry {
     dueDate: '',
     total: 40,
     amountDue: 40,
-    status: '',
+    status: 'open',
+    editScope: 'all',
     sessionIds: [],
     createdAt: fakeTs('2026-07-16T09:00:00Z'),
     ...over,
@@ -115,9 +123,12 @@ describe('Invoices screen', () => {
     expect(within(row).getByText('OPEN')).toBeInTheDocument();
   });
 
-  it('AO-12 regression guard: an unredeemed credit renders CREDIT, never PAID', () => {
+  it('AO-12 regression guard: a stored credit stamp renders CREDIT, never PAID', () => {
+    // The precedence table that decides credit-vs-paid is asserted server-side
+    // now (ADR-0002); what this list owes AO-12 is rendering the stored verdict
+    // verbatim rather than second-guessing it from the money.
     usePagedCollection.mockReturnValue(
-      paged([entry({ status: 'credit', amountDue: -20, total: -20 })]),
+      paged([entry({ status: 'credit', editScope: 'none', amountDue: -20, total: -20 })]),
     );
     render(<Invoices />);
     expect(screen.getByText('CREDIT')).toBeInTheDocument();
@@ -125,10 +136,13 @@ describe('Invoices screen', () => {
   });
 
   it('a redeemed credit renders REDEEMED, distinctly from an unredeemed one', () => {
+    // The server stamps `redeemed` itself once `creditRedeemedAt` lands; the
+    // doc carries both, and the chip reads the stamp.
     usePagedCollection.mockReturnValue(
       paged([
         entry({
-          status: 'credit',
+          status: 'redeemed',
+          editScope: 'none',
           amountDue: -20,
           total: -20,
           creditRedeemedAt: fakeTs('2026-07-15T00:00:00Z'),
@@ -139,14 +153,19 @@ describe('Invoices screen', () => {
     expect(screen.getByText('REDEEMED')).toBeInTheDocument();
   });
 
-  it('a settled invoice (amountDue retired, real total, no explicit label) renders PAID', () => {
-    usePagedCollection.mockReturnValue(paged([entry({ status: '', amountDue: 0, total: 40 })]));
+  it('a stamped paid invoice renders PAID', () => {
+    // This used to hand the screen a blank status and assert the money-field
+    // read (amountDue retired, real total) produced PAID. That derivation is
+    // the server's now (ADR-0002): the doc arrives already stamped `paid`.
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'paid', editScope: 'none', amountDue: 0, total: 40 })]),
+    );
     render(<Invoices />);
     expect(screen.getByText('PAID')).toBeInTheDocument();
   });
 
   it('a $0 invoice renders ZERO, not a fabricated PAID', () => {
-    usePagedCollection.mockReturnValue(paged([entry({ status: '', amountDue: 0, total: 0 })]));
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'zero', amountDue: 0, total: 0 })]));
     render(<Invoices />);
     expect(screen.getByText('ZERO')).toBeInTheDocument();
     expect(screen.queryByText('PAID')).toBeNull();
@@ -154,11 +173,30 @@ describe('Invoices screen', () => {
 
   it('an overdue open invoice shows the OVERDUE chip instead of OPEN', () => {
     usePagedCollection.mockReturnValue(
-      paged([entry({ status: '', amountDue: 40, total: 40, dueDate: '2020-01-01' })]),
+      paged([entry({ amountDue: 40, total: 40, dueDate: '2020-01-01' })]),
     );
     render(<Invoices />);
     expect(screen.getByText('OVERDUE')).toBeInTheDocument();
     expect(screen.queryByText('OPEN')).toBeNull();
+  });
+
+  it('a doc with no recognizable stamp gets the neutral chip, and matches only the All tab', async () => {
+    // The deliberate fail-soft (ADR-0002 makes this doc impossible; this is
+    // what renders if one appears anyway): the chip is the doc's own word,
+    // claiming nothing — never an OPEN re-derived from amountDue — and the row
+    // belongs to no status bucket.
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'sent' as unknown as InvoiceEntry['status'], amountDue: 40, total: 40 })]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('SENT')).toBeInTheDocument();
+    expect(screen.queryByText('OPEN')).toBeNull();
+    await userEvent.click(screen.getByRole('tab', { name: 'Open' }));
+    expect(
+      screen.getByText('Nothing in the loaded invoices matches this filter.'),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'All' }));
+    expect(screen.getByText('SENT')).toBeInTheDocument();
   });
 
   it('a part-paid open invoice shows PART PAID rather than a bare OPEN', () => {
@@ -427,7 +465,7 @@ describe('Invoices screen: archived invoices are excluded by default', () => {
 describe('Invoices screen: status tabs, search and the window all compose', () => {
   const three = [
     entry({ _id: 'a', invoiceNumber: 'A', status: 'draft', kinfolkName: 'The Bakers' }),
-    entry({ _id: 'b', invoiceNumber: 'B', status: '', amountDue: 40, total: 40, kinfolkName: 'The Bakers' }),
+    entry({ _id: 'b', invoiceNumber: 'B', status: 'open', amountDue: 40, total: 40, kinfolkName: 'The Bakers' }),
     entry({ _id: 'c', invoiceNumber: 'C', status: 'draft', kinfolkName: 'The Chens' }),
   ];
 
@@ -461,7 +499,7 @@ describe('Invoices screen: status tabs, search and the window all compose', () =
 
   it('shows a "nothing matches" hint (not the window empty state) when a filter excludes every row', async () => {
     usePagedCollection.mockReturnValue(
-      paged([entry({ status: '', amountDue: 40, total: 40 })]),
+      paged([entry({ status: 'open', amountDue: 40, total: 40 })]),
     );
     render(<Invoices />);
     await userEvent.click(screen.getByRole('tab', { name: 'Draft' }));
@@ -476,8 +514,8 @@ describe('Invoices screen: the totals say what they cover', () => {
   it('totals outstanding amountDue only across open invoices', () => {
     usePagedCollection.mockReturnValue(
       paged([
-        entry({ _id: 'a', amountDue: 40, total: 40, status: '' }),
-        entry({ _id: 'b', amountDue: 0, total: 20, status: 'paid' }),
+        entry({ _id: 'a', amountDue: 40, total: 40, status: 'open' }),
+        entry({ _id: 'b', amountDue: 0, total: 20, status: 'paid', editScope: 'none' }),
       ]),
     );
     render(<Invoices />);

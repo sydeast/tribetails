@@ -9,12 +9,12 @@ import type { Timestamp } from 'firebase/firestore';
  * (getMyInvoices.ts), and the Stripe webhook all read/write, confirmed against
  * createInvoice.ts, postInvoiceEvent.ts, and onInvoicesWrite.ts.
  *
- * `status` is free-text on the source doc, NOT a validated enum: createInvoice.ts's
- * zod schema is `status: z.string().default('')`, and the wasm's own
- * InvoiceFilters.kt comment says so explicitly ("Invoice.status is free-text in
- * the source of truth"). Never switch on it directly in a screen, go through
- * `lib/invoiceFormat.ts`'s `invoiceState`, which is where the AO-12 enumeration
- * (as opposed to negation) logic lives.
+ * `status` and `editScope` are the Invoice State Classifier STAMP (ADR-0002):
+ * every server-side invoice writer persists the classifier's output onto the
+ * doc in the same write, a backfill stamped the pre-existing docs, and
+ * firestore.rules denies all client invoice writes. Clients render the
+ * persisted state and never classify — read them through `invoiceStamp` below,
+ * never by re-deriving state from the money fields.
  *
  * `date` / `dueDate` are opaque free-text strings too (same zod schema), not
  * Firestore Timestamps and not guaranteed ISO, `lib/invoiceFormat.ts` handles
@@ -27,6 +27,37 @@ import type { Timestamp } from 'firebase/firestore';
  * a credit invoice that has been redeemed. Absent, never blank/null, so both are
  * optional here rather than defaulted (same convention as NotificationEntry.readAt).
  */
+
+/**
+ * Every state the server's Invoice State Classifier can stamp, verbatim from
+ * `mytribe/functions/src/lib/invoiceEditPolicy.ts#INVOICE_STATES`. The stamp
+ * always writes one of these, lowercase. This copy is a TYPE of the wire
+ * format, not a mirror of any logic: nothing in this app decides which member
+ * applies, it only reads what the server already decided.
+ */
+export const INVOICE_STATES = [
+  'quote',
+  'draft',
+  'cancelled',
+  'credit',
+  'redeemed',
+  'paid',
+  'zero',
+  'open',
+] as const;
+
+export type InvoiceState = (typeof INVOICE_STATES)[number];
+
+/**
+ * How much of the invoice the server will let an edit change, verbatim from
+ * the server module above.
+ *
+ *   all           every field, including the line items and the discounts
+ *   metadataOnly  the descriptive fields, but the money is frozen
+ *   none          nothing
+ */
+export type InvoiceEditScope = 'all' | 'metadataOnly' | 'none';
+
 export interface InvoiceEntry {
   _id: string;
   kinfolkId: string;
@@ -42,8 +73,8 @@ export interface InvoiceEntry {
    * `markInvoicePaid` and by the partial-payment repair pass.
    *
    * ABSENT on every invoice that predates 2026-07-25, which is why it is
-   * optional and why `invoiceState` reads a missing value as "no evidence"
-   * rather than as a real zero. Deliberately NOT derived from
+   * optional (an absent value is "no record of a payment", never a real
+   * zero, see `invoicePartialPayment`). Deliberately NOT derived from
    * `total - amountDue`: those are float dollars, and on every invoice the old
    * partial-payment write touched `amountDue` reads 0 while a real balance is
    * owed, so that subtraction would report the whole total as collected on
@@ -52,7 +83,16 @@ export interface InvoiceEntry {
   paidCents?: number;
   /** Collected beyond the total, in integer cents. Present only after an overpayment. */
   overpaidCents?: number;
-  status: string;
+  /**
+   * The persisted Invoice State Classifier verdict (ADR-0002), stamped by the
+   * server in the same write as every money change. Typed as the union because
+   * that is what the server writes; the interface is still a cast over raw
+   * Firestore data, so read it through `invoiceStamp`, which verifies at
+   * runtime instead of trusting the cast.
+   */
+  status: InvoiceState;
+  /** The stamp's other half: how much of this invoice the server will let an edit change. */
+  editScope: InvoiceEditScope;
   sessionIds: string[];
   creditTarget?: 'accountBalance' | 'originalPaymentMethod';
   creditRedeemedAt?: Timestamp;
@@ -150,6 +190,49 @@ export function invoiceLineItems(row: Pick<InvoiceEntry, 'lineItems'>): InvoiceL
 }
 
 /**
+ * The stamp as this doc actually carries it, verified rather than trusted.
+ *
+ * `state: null` means the doc carries NO recognizable stamp. Per ADR-0002 that
+ * should be impossible now — every writer stamps, the backfill stamped the
+ * backlog, and the rules deny every client write — so this is the deliberate
+ * fail-soft for the impossible doc, NOT a second classifier:
+ *
+ *   - the state is null, never re-derived from the money fields. The screens
+ *     render a neutral chip from the raw `status` text and say nothing they
+ *     cannot prove;
+ *   - the editScope is 'none', the SAFE affordance: no editing offered on an
+ *     unknown state. This is the one place the old mirror's "fail toward
+ *     offering the control" ruling inverts, on purpose: that ruling existed
+ *     because the mirror was a courtesy in front of a server that would refuse;
+ *     an unstamped doc means the write path itself is not what we think it is,
+ *     and offering money controls against it would be a guess.
+ *
+ * Recognition is EXACT match against the stamp's own vocabulary (lowercase, no
+ * padding), because that is what the server writes. A legacy spelling like
+ * 'PAID' is not "obviously paid", it is evidence the doc was never stamped,
+ * and normalizing it here would be re-classification through the back door.
+ */
+export interface InvoiceStamp {
+  state: InvoiceState | null;
+  editScope: InvoiceEditScope;
+}
+
+export function invoiceStamp(row: Pick<InvoiceEntry, 'status' | 'editScope'>): InvoiceStamp {
+  const status: unknown = row.status;
+  const state =
+    typeof status === 'string' && (INVOICE_STATES as readonly string[]).includes(status)
+      ? (status as InvoiceState)
+      : null;
+  if (state === null) return { state: null, editScope: 'none' };
+  const scope: unknown = row.editScope;
+  return {
+    state,
+    editScope:
+      scope === 'all' || scope === 'metadataOnly' || scope === 'none' ? scope : 'none',
+  };
+}
+
+/**
  * Has this invoice been archived?
  *
  * Presence, not truthiness: an archived invoice carries a Timestamp, an active
@@ -171,12 +254,16 @@ export function isArchivedInvoice(row: Pick<InvoiceEntry, 'archivedAt'>): boolea
  * both blanked the ENTIRE invoices page via the error boundary rather than
  * degrading one row:
  *   - the 4 seeded sandbox invoices had no `status`  -> `.trim()` of undefined
+ *     (in the since-deleted client classifier; `invoiceStamp` reads an absent
+ *     or unrecognized `status` as "no stamp" without touching a method on it,
+ *     so `status` no longer needs — or admits — a normalization default: ''
+ *     is not a member of the stamped union, and inventing a member would be
+ *     classification)
  *   - `test-kinfolk-001-invoice-1` has no `sessionIds` -> `.length` of undefined
  *
  * Normalize here, once, so no screen has to remember. Money fields are left
  * exactly as they arrive: coercing an absent `total` to 0 would invent a
- * financial fact, and `invoiceState` already treats a non-finite number as "no
- * evidence" rather than as a real zero.
+ * financial fact the document never made.
  */
 export function normalizeInvoice(row: InvoiceEntry): InvoiceEntry {
   return {
@@ -186,7 +273,6 @@ export function normalizeInvoice(row: InvoiceEntry): InvoiceEntry {
     invoiceNumber: row.invoiceNumber ?? '',
     date: row.date ?? '',
     dueDate: row.dueDate ?? '',
-    status: row.status ?? '',
     sessionIds: Array.isArray(row.sessionIds) ? row.sessionIds : [],
   };
 }

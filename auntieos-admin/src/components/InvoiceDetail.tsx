@@ -1,16 +1,15 @@
 import { useCallback, useState } from 'react';
-import { invoiceLineItems, isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
+import { invoiceLineItems, invoiceStamp, isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
 import {
   formatUsd,
   invoiceActionsFor,
   invoicePartialPayment,
-  invoiceState,
   invoiceStateInfo,
   isInvoiceOverdue,
   localDateIso,
+  unstampedStateInfo,
   type InvoiceAction,
 } from '../lib/invoiceFormat';
-import { invoiceEditScope, paymentStatusFromDoc } from '../lib/invoiceEditPolicy';
 import { checkInvoiceTotal, formatCentsUsd, storedTotalSourceLabel } from '../lib/invoiceReconcile';
 import {
   markInvoicePaid,
@@ -116,7 +115,7 @@ interface EditDraft {
    * when the operator actually touched the money.
    */
   wasItemized: boolean;
-  /** Whether the money fields are editable at all, per the mirrored policy. */
+  /** Whether the money fields are editable at all, per the stored editScope. */
   moneyEditable: boolean;
 }
 
@@ -166,12 +165,13 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
   const [archivePrompt, setArchivePrompt] = useState<ArchivePrompt | null>(null);
 
   const todayIso = localDateIso(new Date());
-  const state = invoiceState({
-    status: invoice.status,
-    amountDue: invoice.amountDue,
-    total: invoice.total,
-    creditRedeemed: invoice.creditRedeemedAt !== undefined,
-  });
+  // The STORED stamp (ADR-0002): the server classified this doc in the same
+  // write that last touched its money, so this panel reads the verdict and
+  // never re-derives it. `state` is null only for a doc with no recognizable
+  // stamp, which ADR-0002 makes impossible; the branches below keep that
+  // fail-soft visible — neutral chip, no actions, no editing — rather than
+  // silently re-classifying from the money fields.
+  const { state, editScope } = invoiceStamp(invoice);
   const overdue = isInvoiceOverdue(state, invoice.dueDate, todayIso);
   // Part-paid is a display refinement of `open`, like overdue, never its own
   // state: it changes the chip and the copy and leaves the action set alone,
@@ -181,17 +181,20 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
     ? { label: 'Overdue', chipLabel: 'OVERDUE', cssClass: 'overdue' }
     : partial
       ? { label: 'Part paid', chipLabel: 'PART PAID', cssClass: 'partpaid' }
-      : invoiceStateInfo(state);
+      : state === null
+        ? unstampedStateInfo(invoice.status)
+        : invoiceStateInfo(state);
   const household = invoice.kinfolkName || invoice.client || 'Unknown';
 
-  // AO-19: the actions offered are decided by the SAME enumerated state the
-  // Invoices list chips and filters off (lib/invoiceFormat.ts), so the list and
-  // this panel can never disagree about what an invoice is. A PAID invoice no
-  // longer offers "Mark paid" (which the server rejects) or "Send reminder"
-  // (which would nag a household that already paid). `overdue` is deliberately
-  // NOT passed: it is a display refinement of `open`, never its own state, so
-  // an overdue invoice already resolves to the outstanding set.
-  const allowed = invoiceActionsFor(state);
+  // AO-19: the actions offered are decided by the SAME stored state the
+  // Invoices list chips and filters off, so the list and this panel can never
+  // disagree about what an invoice is. A PAID invoice no longer offers "Mark
+  // paid" (which the server rejects) or "Send reminder" (which would nag a
+  // household that already paid). `overdue` is deliberately NOT passed: it is
+  // a display refinement of `open`, never its own state, so an overdue invoice
+  // already resolves to the outstanding set. An unstamped doc is offered
+  // nothing: no state, no claim about what acting on it would do.
+  const allowed = state === null ? [] : invoiceActionsFor(state);
   const available = ACTIONS.filter((a) => allowed.includes(a.key));
 
   const meta = pending ? ACTIONS.find((a) => a.key === pending) : undefined;
@@ -209,14 +212,12 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
   // kept the total and the lines in step.
   const totalCheck = checkInvoiceTotal(invoice);
 
-  // The mirrored edit policy, deciding only whether to OFFER the control. The
-  // server enforces; a refusal comes back with a code and is surfaced verbatim.
-  // Standing comes from `paidCents`, never from `amountDue`, which reads 0 on
-  // every invoice the old partial-payment write touched. See paymentStatusFromDoc.
-  const editScope = invoiceEditScope(
-    state,
-    paymentStatusFromDoc(state, invoice.totalCents ?? Math.round(invoice.total * 100), invoice.paidCents),
-  );
+  // The STORED editScope decides only whether to OFFER the control; the server
+  // still enforces on the write, and a refusal comes back with a code and is
+  // surfaced verbatim. This used to be a 191-line mirrored policy computing the
+  // scope from `paidCents`; the server now persists its own answer next to the
+  // state (ADR-0002), so offering is reading. `invoiceStamp` answered 'none'
+  // for an unstamped doc — the safe affordance — so no extra null-check here.
   const canEdit = editScope !== 'none';
   const moneyEditable = editScope === 'all';
 
@@ -677,14 +678,19 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
           <div className="invoice-detail__actions">
             {available.length === 0 ? (
               <p className="invoice-detail__no-actions">
-                No collection actions for a {info.label.toLowerCase()} invoice.
+                {state === null
+                  ? // The deliberate fail-soft for a doc with no recognizable
+                    // state stamp (impossible per ADR-0002): say so, offer
+                    // nothing, and never guess a state from the money fields.
+                    'This invoice carries no recognized state, so no collection actions are offered.'
+                  : `No collection actions for a ${info.label.toLowerCase()} invoice.`}
               </p>
             ) : (
               available.map((a) => (
                 <GhostButton key={a.key} label={a.label} onClick={() => startAction(a.key)} />
               ))
             )}
-            {/* Edit is offered per the MIRRORED policy, purely so the operator
+            {/* Edit is offered per the STORED editScope, purely so the operator
                 is not handed a control the server will reject. The server is the
                 enforcement; a refusal that gets through comes back with a code
                 and a sentence, and is shown verbatim above. */}

@@ -2,99 +2,26 @@ import { describe, it, expect } from 'vitest';
 import {
   formatUsd,
   humanizeDate,
-  invoiceState,
   invoiceStateInfo,
   isInvoiceOverdue,
   invoiceActionsFor,
   invoicePartialPayment,
   isoDatePrefixOrNull,
   localDateIso,
-  type InvoiceState,
-  type InvoiceStateInput,
+  unstampedStateInfo,
 } from './invoiceFormat';
+import { INVOICE_STATES, type InvoiceState } from '../api/invoices';
 
-function row(over: Partial<InvoiceStateInput>): InvoiceStateInput {
-  return { status: '', amountDue: 0, total: 0, creditRedeemed: false, ...over };
-}
-
-describe('invoiceState with a missing status field', () => {
-  // Found by driving the LIVE app 2026-07-20. `row.status.trim()` threw
-  // "Cannot read properties of undefined (reading 'trim')" and the error
-  // boundary blanked the ENTIRE invoices page, because the seeded sandbox
-  // invoices carry the legacy `invoiceStatus` spelling and no `status`.
-  //
-  // One malformed document must never take the whole screen down. Same
-  // blast-radius lesson as Firestore's toObjects: degrade the row, not the page.
-  const noStatus = (over: Partial<InvoiceStateInput>): InvoiceStateInput =>
-    ({ ...row(over), status: undefined as unknown as string });
-
-  it('does not throw when status is absent', () => {
-    expect(() => invoiceState(noStatus({ amountDue: 45, total: 45 }))).not.toThrow();
-  });
-
-  it('still classifies from the money fields when status is absent', () => {
-    expect(invoiceState(noStatus({ amountDue: 45, total: 45 }))).toBe('open');
-    expect(invoiceState(noStatus({ amountDue: 0, total: 60 }))).toBe('paid');
-    expect(invoiceState(noStatus({ amountDue: -20, total: -20 }))).toBe('credit');
-  });
-
-  it('treats null the same as absent', () => {
-    expect(invoiceState({ ...row({ amountDue: 0, total: 60 }), status: null as unknown as string })).toBe('paid');
-  });
-});
-
-describe('invoiceState (AO-12 regression guard: enumerated, never paid-by-negation)', () => {
-  it('an explicit "credit" status with no redemption stamp classifies as credit, never paid', () => {
-    expect(invoiceState(row({ status: 'credit', amountDue: -20, total: -20 }))).toBe('credit');
-  });
-
-  it('THE AO-12 CASE: an unredeemed credit must never render as paid, even though it has no outstanding positive balance', () => {
-    const unredeemedCredit = row({ status: 'credit', amountDue: -20, total: -20, creditRedeemed: false });
-    expect(invoiceState(unredeemedCredit)).not.toBe('paid');
-    expect(invoiceState(unredeemedCredit)).toBe('credit');
-  });
-
-  it('a credit becomes "redeemed" only once creditRedeemed is true', () => {
-    expect(invoiceState(row({ status: 'credit', amountDue: -20, total: -20, creditRedeemed: true }))).toBe(
-      'redeemed',
-    );
-  });
-
-  it('a negative amountDue or total is read as credit even without the explicit label', () => {
-    expect(invoiceState(row({ status: '', amountDue: -5, total: 0 }))).toBe('credit');
-    expect(invoiceState(row({ status: 'open', amountDue: 0, total: -5 }))).toBe('credit');
-  });
-
-  it('draft, quote, cancelled, and explicit paid are read directly off status', () => {
-    expect(invoiceState(row({ status: 'draft' }))).toBe('draft');
-    expect(invoiceState(row({ status: 'Quote' }))).toBe('quote');
-    expect(invoiceState(row({ status: ' CANCELLED ' }))).toBe('cancelled');
-    expect(invoiceState(row({ status: 'paid', amountDue: 0, total: 40 }))).toBe('paid');
-  });
-
-  it('a positive amountDue is open, regardless of total', () => {
-    expect(invoiceState(row({ status: '', amountDue: 40, total: 40 }))).toBe('open');
-  });
-
-  it('a $0 invoice (nothing billed) is "zero", not a fabricated "paid"', () => {
-    expect(invoiceState(row({ status: '', amountDue: 0, total: 0 }))).toBe('zero');
-  });
-
-  it('amountDue settled (<=0) with a real positive total is paid, a positive read of the retired balance', () => {
-    expect(invoiceState(row({ status: '', amountDue: 0, total: 40 }))).toBe('paid');
-  });
-
-  it('a non-finite amountDue/total is treated as no evidence (0), never as NaN-poisoned comparisons', () => {
-    expect(invoiceState(row({ status: '', amountDue: NaN, total: NaN }))).toBe('zero');
-    // Infinity reads as "no amountDue evidence" (0), not as ">0"; with a real
-    // positive total and nothing owed, that is the settled/paid signal.
-    expect(invoiceState(row({ status: '', amountDue: Infinity, total: 40 }))).toBe('paid');
-  });
-
-  it('status is read case-insensitively and trimmed', () => {
-    expect(invoiceState(row({ status: '  DrAfT  ' }))).toBe('draft');
-  });
-});
+/**
+ * NOTE ON WHAT THIS FILE NO LONGER TESTS. The `invoiceState` classifier (and
+ * its AO-12 regression table) lived here until ADR-0002 moved classification
+ * to the server, which persists its verdict onto every doc as `status` +
+ * `editScope`. The classifier and its tests moved WITH the authority: the
+ * precedence table is asserted in `mytribe/functions`' own suite, and this app
+ * only renders the stored state (see api/invoices.test.ts#invoiceStamp for the
+ * read side, and the Invoices/InvoiceDetail component tests for stored field
+ * in -> rendered affordance out).
+ */
 
 describe('invoiceStateInfo', () => {
   it.each([
@@ -108,6 +35,32 @@ describe('invoiceStateInfo', () => {
     ['open', 'Open', 'OPEN', 'open'],
   ] as const)('%s -> label %s / chip %s / css %s', (state, label, chipLabel, cssClass) => {
     expect(invoiceStateInfo(state)).toEqual({ label, chipLabel, cssClass });
+  });
+
+  it('covers every stamped state the wire type declares', () => {
+    // The switch is total by construction; this pins that the it.each table
+    // above stays in step with the union rather than silently shrinking.
+    for (const state of INVOICE_STATES) {
+      expect(invoiceStateInfo(state).chipLabel.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('unstampedStateInfo (the fail-soft chip for a doc with no recognizable stamp)', () => {
+  it('renders the raw status text lowercased, claiming nothing', () => {
+    expect(unstampedStateInfo('PAID')).toEqual({ label: 'paid', chipLabel: 'PAID', cssClass: 'unknown' });
+    expect(unstampedStateInfo('  Sent  ')).toEqual({ label: 'sent', chipLabel: 'SENT', cssClass: 'unknown' });
+  });
+
+  it('says Unknown when even the raw text is blank or absent', () => {
+    expect(unstampedStateInfo('')).toEqual({ label: 'Unknown', chipLabel: 'UNKNOWN', cssClass: 'unknown' });
+    expect(unstampedStateInfo(undefined)).toEqual({ label: 'Unknown', chipLabel: 'UNKNOWN', cssClass: 'unknown' });
+  });
+
+  it('always uses the neutral css class, never a real state chip', () => {
+    // 'paid' as raw text must NOT pick up the success-green paid chip: the
+    // whole point of the fallback is that it makes no claim about the money.
+    expect(unstampedStateInfo('paid').cssClass).toBe('unknown');
   });
 });
 
@@ -155,7 +108,7 @@ describe('humanizeDate', () => {
 });
 
 describe('isInvoiceOverdue', () => {
-  it('true only for an open invoice whose dueDate is strictly before today', () => {
+  it('true only for a stored-open invoice whose dueDate is strictly before today', () => {
     expect(isInvoiceOverdue('open', '2026-07-01', '2026-07-16')).toBe(true);
   });
 
@@ -174,6 +127,10 @@ describe('isInvoiceOverdue', () => {
     expect(isInvoiceOverdue('paid', '2020-01-01', '2026-07-16')).toBe(false);
     expect(isInvoiceOverdue('credit', '2020-01-01', '2026-07-16')).toBe(false);
   });
+
+  it('false for an unstamped doc (null state): no stamp, no overdue verdict', () => {
+    expect(isInvoiceOverdue(null, '2020-01-01', '2026-07-16')).toBe(false);
+  });
 });
 
 describe('localDateIso', () => {
@@ -189,16 +146,6 @@ describe('localDateIso', () => {
   });
 });
 describe('invoiceActionsFor', () => {
-  const ALL_STATES: readonly InvoiceState[] = [
-    'quote',
-    'draft',
-    'cancelled',
-    'credit',
-    'redeemed',
-    'paid',
-    'zero',
-    'open',
-  ];
   it('a paid invoice offers a receipt and NOTHING else (the AO-19 report)', () => {
     expect(invoiceActionsFor('paid')).toEqual(['receipt']);
   });
@@ -217,13 +164,13 @@ describe('invoiceActionsFor', () => {
     expect(invoiceActionsFor('redeemed')).toEqual([]);
     expect(invoiceActionsFor('zero')).toEqual([]);
   });
-  it('is TOTAL: every enumerated state resolves to a set, none throws or returns undefined', () => {
-    for (const state of ALL_STATES) {
+  it('is TOTAL: every stamped state resolves to a set, none throws or returns undefined', () => {
+    for (const state of INVOICE_STATES) {
       expect(Array.isArray(invoiceActionsFor(state)), `no action set for '${state}'`).toBe(true);
     }
   });
   it('never overlaps: no state offers both a collection action and a receipt', () => {
-    for (const state of ALL_STATES) {
+    for (const state of INVOICE_STATES) {
       const actions = invoiceActionsFor(state);
       const collecting = actions.includes('markPaid') || actions.includes('reminder');
       expect(collecting && actions.includes('receipt'), `'${state}' offers both`).toBe(false);
@@ -253,9 +200,13 @@ describe('invoicePartialPayment', () => {
     expect(invoicePartialPayment('open', { amountDue: 20 })).toBeNull();
   });
   it('is null for every state other than open, so it can never change an action set', () => {
-    for (const state of ['paid', 'draft', 'quote', 'credit', 'redeemed', 'cancelled', 'zero'] as const) {
+    const others = INVOICE_STATES.filter((s): s is InvoiceState => s !== 'open');
+    for (const state of others) {
       expect(invoicePartialPayment(state, open)).toBeNull();
     }
+  });
+  it('is null for an unstamped doc (null state): no stamp, no part-paid claim', () => {
+    expect(invoicePartialPayment(null, open)).toBeNull();
   });
   it('is null once nothing is left owing, however much was collected', () => {
     expect(invoicePartialPayment('open', { amountDue: 0, paidCents: 4000 })).toBeNull();

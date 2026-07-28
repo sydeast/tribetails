@@ -51,6 +51,13 @@ function settledResult() {
   };
 }
 
+/**
+ * The default doc is a STAMPED open invoice (`status: 'open'`,
+ * `editScope: 'all'`), which is what the server writes for an unpaid sent
+ * bill. Per ADR-0002 the stamp arrives ON the doc; these tests hand the panel
+ * stored fields and assert rendered affordances, they never rely on the panel
+ * deriving a state from the money.
+ */
 function entry(over: Partial<InvoiceEntry> = {}): InvoiceEntry {
   return {
     _id: 'inv1',
@@ -62,7 +69,8 @@ function entry(over: Partial<InvoiceEntry> = {}): InvoiceEntry {
     dueDate: '',
     total: 40,
     amountDue: 40,
-    status: '',
+    status: 'open',
+    editScope: 'all',
     sessionIds: [],
     createdAt: fakeTs('2026-07-16T09:00:00Z'),
     ...over,
@@ -112,21 +120,39 @@ describe('InvoiceDetail', () => {
 
   describe('actions gated by invoice state', () => {
     it('PAID: Generate receipt only, no Record payment and no Send reminder', () => {
-      render(<InvoiceDetail invoice={entry({ status: 'paid', amountDue: 0, total: 40 })} onClose={vi.fn()} />);
+      render(
+        <InvoiceDetail
+          invoice={entry({ status: 'paid', editScope: 'none', amountDue: 0, total: 40 })}
+          onClose={vi.fn()}
+        />,
+      );
       expect(screen.getByText('PAID')).toBeInTheDocument();
       expectExactActions(['Generate receipt']);
     });
 
-    it('PAID with no status label, retired balance: still receipt only', () => {
-      // amountDue <= 0 with a real billed total is the money-field read of paid
-      // (invoiceState's last branch), and it must gate identically to the label.
-      render(<InvoiceDetail invoice={entry({ status: '', amountDue: 0, total: 40 })} onClose={vi.fn()} />);
-      expect(screen.getByText('PAID')).toBeInTheDocument();
-      expectExactActions(['Generate receipt']);
+    it('UNSTAMPED: a doc with no recognizable stamp gets the neutral chip and NO actions', () => {
+      // This slot used to assert the money-field read of paid (blank status,
+      // retired balance) gated identically to the label. That derivation moved
+      // to the server (ADR-0002), which stamps its verdict onto the doc, so a
+      // legacy free-text status now means the doc was NEVER stamped — and the
+      // panel's answer is the deliberate fail-soft, not a guess: render the
+      // doc's own word as a neutral chip, offer nothing, and ignore even a
+      // valid-looking stored editScope (left at the fixture's 'all' here on
+      // purpose: no readable state, no money controls).
+      render(
+        <InvoiceDetail
+          invoice={entry({ status: 'sent' as unknown as InvoiceEntry['status'], amountDue: 0, total: 40 })}
+          onClose={vi.fn()}
+        />,
+      );
+      expect(screen.getByText('SENT')).toBeInTheDocument();
+      expectExactActions([]);
+      expect(screen.getByText(/carries no recognized state/i)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^edit$/i })).toBeNull();
     });
 
     it('OUTSTANDING: Record payment and Send reminder, no receipt, no draft send', () => {
-      render(<InvoiceDetail invoice={entry({ status: '', amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+      render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
       expect(screen.getByText('OPEN')).toBeInTheDocument();
       expectExactActions(['Send reminder', 'Record payment']);
     });
@@ -134,7 +160,7 @@ describe('InvoiceDetail', () => {
     it('OVERDUE: the same set as outstanding (overdue refines open, it is not its own state)', () => {
       render(
         <InvoiceDetail
-          invoice={entry({ status: '', amountDue: 40, total: 40, dueDate: '2000-01-01' })}
+          invoice={entry({ amountDue: 40, total: 40, dueDate: '2000-01-01' })}
           onClose={vi.fn()}
         />,
       );
@@ -183,17 +209,27 @@ describe('InvoiceDetail', () => {
     });
 
     it('CREDIT: no payment actions (money is owed TO the household, not by them)', () => {
-      render(<InvoiceDetail invoice={entry({ status: 'credit', amountDue: -20, total: -20 })} onClose={vi.fn()} />);
+      render(
+        <InvoiceDetail
+          invoice={entry({ status: 'credit', editScope: 'none', amountDue: -20, total: -20 })}
+          onClose={vi.fn()}
+        />,
+      );
       expectExactActions([]);
     });
 
     it('CANCELLED: no actions', () => {
-      render(<InvoiceDetail invoice={entry({ status: 'cancelled', amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+      render(
+        <InvoiceDetail
+          invoice={entry({ status: 'cancelled', editScope: 'none', amountDue: 40, total: 40 })}
+          onClose={vi.fn()}
+        />,
+      );
       expectExactActions([]);
     });
 
     it('ZERO: nothing was billed, so nothing to collect or receipt', () => {
-      render(<InvoiceDetail invoice={entry({ status: '', amountDue: 0, total: 0 })} onClose={vi.fn()} />);
+      render(<InvoiceDetail invoice={entry({ status: 'zero', amountDue: 0, total: 0 })} onClose={vi.fn()} />);
       expect(screen.getByText('ZERO')).toBeInTheDocument();
       expectExactActions([]);
     });
@@ -349,7 +385,12 @@ describe('InvoiceDetail', () => {
   it('issues a receipt through generateReceipt', async () => {
     generateReceipt.mockResolvedValue(undefined);
     // Receipt is a PAID-only action now, so this exercises it on a paid invoice.
-    render(<InvoiceDetail invoice={entry({ _id: 'inv9', status: 'paid', amountDue: 0 })} onClose={vi.fn()} />);
+    render(
+      <InvoiceDetail
+        invoice={entry({ _id: 'inv9', status: 'paid', editScope: 'none', amountDue: 0 })}
+        onClose={vi.fn()}
+      />,
+    );
     await userEvent.click(screen.getByRole('button', { name: /generate receipt/i }));
     await userEvent.click(screen.getByRole('button', { name: /^generate receipt$/i }));
     await waitFor(() => expect(generateReceipt).toHaveBeenCalledWith('inv9'));
@@ -364,8 +405,16 @@ describe('InvoiceDetail', () => {
     expect(await screen.findByText(/sendInvoiceReminder failed:.*already paid/i)).toBeInTheDocument();
   });
 
-  it('AO-12 regression guard: an unredeemed credit renders CREDIT, never PAID', () => {
-    render(<InvoiceDetail invoice={entry({ status: 'credit', amountDue: -20, total: -20 })} onClose={vi.fn()} />);
+  it('AO-12 regression guard: a stored credit stamp renders CREDIT, never PAID', () => {
+    // The precedence table that decides credit-vs-paid is asserted server-side
+    // now (ADR-0002); what this panel owes AO-12 is rendering the stored
+    // verdict verbatim rather than second-guessing it from the money.
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'credit', editScope: 'none', amountDue: -20, total: -20 })}
+        onClose={vi.fn()}
+      />,
+    );
     expect(screen.getByText('CREDIT')).toBeInTheDocument();
   });
 });
@@ -454,11 +503,16 @@ describe('InvoiceDetail lines-versus-total disagreement banner', () => {
   });
 });
 describe('InvoiceDetail editing', () => {
-  it('offers Edit on an open invoice and not on a paid one', () => {
+  it('offers Edit per the STORED editScope: on an open/all invoice, not on a paid/none one', () => {
     const { unmount } = render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
     expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument();
     unmount();
-    render(<InvoiceDetail invoice={entry({ status: 'paid', amountDue: 0, total: 40 })} onClose={vi.fn()} />);
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'paid', editScope: 'none', amountDue: 0, total: 40 })}
+        onClose={vi.fn()}
+      />,
+    );
     expect(screen.queryByRole('button', { name: /^edit$/i })).toBeNull();
   });
   it('sends ONLY the changed metadata field, and NO lineItems key, on an un-itemized invoice', async () => {
@@ -523,11 +577,26 @@ describe('InvoiceDetail editing', () => {
 });
 describe('InvoiceDetail archive and restore', () => {
   it('offers Archive in every state, because archiving is orthogonal to the money', () => {
-    for (const status of ['draft', 'quote', 'paid', 'cancelled', 'credit', '']) {
-      const { unmount } = render(<InvoiceDetail invoice={entry({ status })} onClose={vi.fn()} />);
+    // Each stamp pairs the state with the editScope the server actually writes
+    // for it (mytribe/functions/src/lib/invoiceEditPolicy.ts#invoiceEditScope).
+    const stamps: readonly [InvoiceEntry['status'], InvoiceEntry['editScope']][] = [
+      ['draft', 'all'],
+      ['quote', 'all'],
+      ['paid', 'none'],
+      ['cancelled', 'none'],
+      ['credit', 'none'],
+    ];
+    for (const [status, editScope] of stamps) {
+      const { unmount } = render(<InvoiceDetail invoice={entry({ status, editScope })} onClose={vi.fn()} />);
       expect(screen.getByRole('button', { name: /^archive$/i })).toBeInTheDocument();
       unmount();
     }
+    // Even an UNSTAMPED doc can be archived: the fail-soft withholds the money
+    // affordances, not the filing ones.
+    render(
+      <InvoiceDetail invoice={entry({ status: 'sent' as unknown as InvoiceEntry['status'] })} onClose={vi.fn()} />,
+    );
+    expect(screen.getByRole('button', { name: /^archive$/i })).toBeInTheDocument();
   });
   it('confirms first, and says what archiving does NOT do', async () => {
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);

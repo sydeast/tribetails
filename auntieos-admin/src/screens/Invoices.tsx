@@ -2,21 +2,22 @@ import { useMemo, useState } from 'react';
 import {
   invoiceMatchesSearch,
   invoicesPageQuery,
+  invoiceStamp,
   isArchivedInvoice,
   normalizeInvoice,
   type InvoiceEntry,
+  type InvoiceState,
 } from '../api/invoices';
 import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import {
   formatUsd,
   humanizeDate,
-  invoiceState,
   invoiceStateInfo,
   invoicePartialPayment,
   type InvoicePartialPayment,
   isInvoiceOverdue,
   localDateIso,
-  type InvoiceState,
+  unstampedStateInfo,
 } from '../lib/invoiceFormat';
 import { useCollection } from '../lib/firestore';
 import { usePagedCollection } from '../lib/usePagedCollection';
@@ -38,18 +39,22 @@ import './Invoices.css';
 
 /**
  * The Den filter tabs. Every predicate below is a POSITIVE membership test
- * against the enumerated `InvoiceState` (or the derived overdue flag), never
- * a negation of another bucket, per the AO-12 fix in lib/invoiceFormat.ts.
- * "Open" and "Overdue" overlap on purpose (an overdue invoice is still open):
- * that mirrors the wasm's own Unpaid/Overdue tabs, which never excluded each
- * other either.
+ * against the STORED `InvoiceState` stamp (or the derived overdue flag), never
+ * a negation of another bucket, per the AO-12 ruling the server's classifier
+ * inherited. "Open" and "Overdue" overlap on purpose (an overdue invoice is
+ * still open): that mirrors the wasm's own Unpaid/Overdue tabs, which never
+ * excluded each other either.
+ *
+ * `state` is null for a doc with no recognizable stamp (impossible per
+ * ADR-0002; fail-soft). Such a row matches only "All", positively via its
+ * always-true test — an unknown state is never claimed for any bucket.
  */
 type FilterKey = 'all' | 'open' | 'overdue' | 'paid' | 'draft' | 'quote' | 'credit';
 
 interface FilterDef {
   key: FilterKey;
   label: string;
-  test: (state: InvoiceState, overdue: boolean) => boolean;
+  test: (state: InvoiceState | null, overdue: boolean) => boolean;
 }
 
 const FILTERS: readonly FilterDef[] = [
@@ -116,10 +121,11 @@ function rangeLabel(range: DateRangeKey): string {
   return `the ${preset.label.toLowerCase()}`;
 }
 
-/** One row's derived display facts, computed once per render pass. */
+/** One row's display facts, read once per render pass. */
 interface RowView {
   entry: InvoiceEntry;
-  state: InvoiceState;
+  /** The STORED state stamp (ADR-0002). Null when the doc carries none: fail-soft, never re-derived. */
+  state: InvoiceState | null;
   overdue: boolean;
   /** Non-null when money has come in that does not cover the invoice. */
   partial: InvoicePartialPayment | null;
@@ -129,12 +135,10 @@ function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
   // Normalize BEFORE anything reads a field. InvoiceEntry is a cast over raw
   // Firestore data, not a guarantee, and real docs ARE missing keys it declares.
   return rows.map(normalizeInvoice).map((entry) => {
-    const state = invoiceState({
-      status: entry.status,
-      amountDue: entry.amountDue,
-      total: entry.total,
-      creditRedeemed: entry.creditRedeemedAt !== undefined,
-    });
+    // The state is READ off the doc, not computed from it: the server stamped
+    // the classifier's verdict in the same write as the money (ADR-0002), so
+    // re-deriving it here would be a second opinion at best.
+    const { state } = invoiceStamp(entry);
     return {
       entry,
       state,
@@ -149,9 +153,9 @@ function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
 /**
  * Admin Invoices list ("The Den · Invoices"). Reads the flat `invoices`
  * collection a PAGE at a time through `usePagedCollection` (invoice `date` desc,
- * windowed by the toolbar's date preset), then classifies every row through the
- * enumerated `invoiceState` (never by negation, see lib/invoiceFormat.ts for
- * the AO-12 rationale) for both the summary stat strip and the filter tabs.
+ * windowed by the toolbar's date preset), then reads every row's STORED state
+ * stamp (`invoiceStamp`, ADR-0002 — this screen never classifies) for both the
+ * summary stat strip and the filter tabs.
  *
  * WHAT PHASE 4 CHANGED. The date window, the household facet and the archive
  * facet are SERVER-side or list-wide; the status tabs and the search box narrow
@@ -265,8 +269,8 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
     rows.status === 'ready' &&
     selected === undefined;
 
-  // Classify every row exactly once (memoized), then project the stat strip AND
-  // the list off the SAME views, rather than re-walking the page per stat.
+  // Read every row's stamp exactly once (memoized), then project the stat strip
+  // AND the list off the SAME views, rather than re-walking the page per stat.
   // asyncScalar's projector runs only in the `ready` branch, where `views` holds
   // the ready data; AsyncRegion likewise renders its children only when ready.
   const views = useMemo(
@@ -506,11 +510,16 @@ function InvoiceRow({ view, todayIso, onSelect }: InvoiceRowProps) {
   // chip visually, the same relationship the wasm's InvoiceRow renders.
   // Part-paid is the same kind of refinement, ranked below overdue: an overdue
   // invoice that is also part-paid is still, first, overdue.
+  // A null state is a doc with no recognizable stamp: the neutral chip renders
+  // the raw status text and claims nothing. The deliberate fail-soft, never a
+  // re-classification from the money fields.
   const info = overdue
     ? { label: 'Overdue', chipLabel: 'OVERDUE', cssClass: 'overdue' }
     : partial
       ? { label: 'Part paid', chipLabel: 'PART PAID', cssClass: 'partpaid' }
-      : invoiceStateInfo(state);
+      : state === null
+        ? unstampedStateInfo(entry.status)
+        : invoiceStateInfo(state);
   const household = entry.kinfolkName || entry.client || 'Unknown';
   const secondary = entry.client && entry.client !== entry.kinfolkName ? entry.client : null;
   const dateLine =
