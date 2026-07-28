@@ -85,6 +85,11 @@ export { generateReceipt } from './admin/generateReceipt';
 export { markInvoicePaid } from './admin/markInvoicePaid';
 export { reviewAndSendDraftInvoice } from './admin/reviewAndSendDraftInvoice';
 export { updateInvoice } from './admin/updateInvoice';
+// W2-1 (ADR-0002 callable-only invoice writes): the callables that absorb
+// Android's four remaining direct Firestore money writes. Additive; nothing
+// calls them until Android re-points (W2-2), and rules are revoked after that.
+export { linkInvoiceSessions } from './admin/linkInvoiceSessions';
+export { recordPayment } from './admin/recordPayment';
 export { archiveInvoice } from './admin/archiveInvoice';
 export { unarchiveInvoice } from './admin/unarchiveInvoice';
 // Detection + repair for invoices wrecked by the pre-2026-07-25 partial-payment

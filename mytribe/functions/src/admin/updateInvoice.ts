@@ -63,6 +63,19 @@ export const Args = z.object({
         .regex(/^\d{4}-\d{2}-\d{2}$/)
         .optional(),
       terms: z.string().max(2000).optional(),
+      // W2-1 (ADR-0002): the descriptive fields Android's whole-model
+      // merge-set can change that this patch previously could not express.
+      // All metadata: none is read by the money computation below.
+      // `discount` is the LEGACY FREE-TEXT field ("10%"), display-only and
+      // never arithmetic; `invoiceDiscountCents` is the computed one.
+      // Deliberately still absent: `status` (the classifier owns it, ADR-0002),
+      // `sessionIds`/`_attribution` (linkInvoiceSessions owns the link),
+      // `archivedAt`/`archivedBy` (archiveInvoice/unarchiveInvoice), and
+      // `kinfolkId` (re-homing an invoice to another household is not an edit).
+      kinfolkName: z.string().max(200).optional(),
+      client: z.string().max(200).optional(),
+      address: z.string().max(500).optional(),
+      discount: z.string().max(200).optional(),
       lineItems: z.array(LineItem).max(100).optional(),
       invoiceDiscountCents: z.number().int().min(0).optional(),
     })
@@ -144,6 +157,10 @@ export async function updateInvoiceHandler(
   if (patch.date !== undefined) update['date'] = patch.date;
   if (patch.dueDate !== undefined) update['dueDate'] = patch.dueDate;
   if (patch.terms !== undefined) update['terms'] = patch.terms;
+  if (patch.kinfolkName !== undefined) update['kinfolkName'] = patch.kinfolkName;
+  if (patch.client !== undefined) update['client'] = patch.client;
+  if (patch.address !== undefined) update['address'] = patch.address;
+  if (patch.discount !== undefined) update['discount'] = patch.discount;
 
   // WHETHER TO RECOMPUTE AT ALL. Every invoice that exists today is
   // un-itemized, so "sum of zero lines" is NOT the same statement as "this
