@@ -245,41 +245,29 @@ class InvoiceDetailViewModel(
     fun saveLinks() {
         val invoiceId  = _uiState.value.invoice?.id ?: return
         val newIds     = _uiState.value.pendingSessionIds.toList()
-        val oldIds     = _uiState.value.invoice?.sessionIds?.toSet() ?: emptySet()
-        val added      = newIds.toSet() - oldIds
-        val removed    = oldIds - newIds.toSet()
 
         _uiState.value = _uiState.value.copy(saveLoading = true)
         viewModelScope.launch {
-            // 1. Write invoice.sessionIds + flip attribution to "manual"
-            val invoiceResult = repository.updateInvoiceSessionIds(invoiceId, newIds)
-            if (invoiceResult.isFailure) {
-                AuntieLog.e("Failed to update invoice sessionIds for $invoiceId", invoiceResult.exceptionOrNull())
+            // ONE callable owns both directions (W2-2 of ADR-0002): the invoice's
+            // sessionIds and every touched session's invoiceId change together in
+            // one server transaction, or not at all. The added/removed delta the
+            // old code computed here is derived server-side against the STORED
+            // set, so two concurrent saves cannot both work from the same stale
+            // snapshot, and a mid-loop session failure can no longer strand the
+            // invoice claiming a session that still points elsewhere.
+            val linkResult = repository.linkInvoiceSessions(invoiceId, newIds)
+            if (linkResult.isFailure) {
+                AuntieLog.e("Failed to link sessions for invoice $invoiceId", linkResult.exceptionOrNull())
                 _uiState.value = _uiState.value.copy(
                     saveLoading  = false,
-                    toastMessage = "Save failed: ${invoiceResult.exceptionOrNull()?.message}",
+                    toastMessage = "Save failed: ${linkResult.exceptionOrNull()?.message}",
                     toastVisible = true,
                     toastIsError = true,
                 )
                 return@launch
             }
 
-            // 2. Bidirectional sync: set invoiceId on newly linked sessions
-            added.forEach { sid ->
-                val r = repository.updateSessionInvoiceId(sid, invoiceId)
-                if (r.isFailure) {
-                    AuntieLog.e("Failed to link session $sid → invoice $invoiceId", r.exceptionOrNull())
-                }
-            }
-            // 3. Clear invoiceId on unlinked sessions
-            removed.forEach { sid ->
-                val r = repository.updateSessionInvoiceId(sid, "")
-                if (r.isFailure) {
-                    AuntieLog.e("Failed to unlink session $sid from invoice $invoiceId", r.exceptionOrNull())
-                }
-            }
-
-            // 4. Refresh invoice to pick up new sessionIds + attribution
+            // Refresh invoice to pick up new sessionIds + attribution + persisted state
             repository.getInvoiceById(invoiceId)
                 .onSuccess { refreshed ->
                     _uiState.value = _uiState.value.copy(

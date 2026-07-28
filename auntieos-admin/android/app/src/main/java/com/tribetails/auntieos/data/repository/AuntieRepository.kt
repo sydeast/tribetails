@@ -1561,9 +1561,8 @@ class AuntieRepository(
      * tiles. Nothing is deleted and nothing is cancelled; the household still
      * sees the invoice and can still pay it.
      *
-     * A CALLABLE RATHER THAN A DIRECT FIRESTORE WRITE, even though
-     * `updateInvoiceSessionIds` nearby writes the doc directly and the rules
-     * would permit this too. The server enforces the precondition that actually
+     * A CALLABLE RATHER THAN A DIRECT FIRESTORE WRITE (as every invoice write
+     * now is - ADR-0002). The server enforces the precondition that actually
      * matters: archiving an invoice money is still owed on removes it from the
      * very total that would remind anyone to collect it, so it is REFUSED unless
      * [force] is set, and a forced archive is audited distinctly as a write-off.
@@ -1795,15 +1794,6 @@ class AuntieRepository(
         raw["invoiceId"] as? String ?: error("createQuote: missing invoiceId")
     }.onFailure { AuntieLog.e("Failed to create quote", it) }
 
-    suspend fun updateInvoice(invoice: Invoice): Result<Unit> = runCatching {
-        ensureAuthenticated()
-        // MERGE: `invoices` carries backend-written structure this model does not
-        // declare (`sessionIds` is populated by backfill_structural_links.py), and
-        // a bare set() from the admin would drop it.
-        firestore.collection("invoices").document(invoice.id).set(invoice, com.google.firebase.firestore.SetOptions.merge()).await()
-        Unit
-    }.onFailure { AuntieLog.e("Failed to update invoice ${invoice.id}", it) }
-
     suspend fun getInvoiceById(invoiceId: String): Result<Invoice> = runCatching {
         ensureAuthenticated()
         val doc = firestore.collection("invoices").document(invoiceId).get().await()
@@ -1811,32 +1801,37 @@ class AuntieRepository(
             ?: throw NoSuchElementException("Invoice $invoiceId not found")
     }.onFailure { AuntieLog.e("Failed to get invoice $invoiceId", it) }
 
-    suspend fun updateInvoiceSessionIds(invoiceId: String, sessionIds: List<String>): Result<Unit> = runCatching {
+    /**
+     * W2-2 of ADR-0002: sets the invoice's session set via the
+     * linkInvoiceSessions callable, which owns BOTH directions atomically.
+     * This replaced two direct Firestore writers, `updateInvoiceSessionIds`
+     * (invoice side) and a per-session `updateSessionInvoiceId` loop in the
+     * ViewModel, whose log-and-continue could strand the invoice claiming a
+     * session that still pointed elsewhere when a mid-loop write failed.
+     *
+     * [sessionIds] is the invoice's FULL new set, not a delta; `[]` unlinks
+     * everything. The server derives added/removed against the stored set
+     * INSIDE its transaction, so two concurrent saves cannot both compute
+     * against the same stale snapshot. The attribution stamps the direct
+     * writes made (`manual` / `manual_unlink`, a removed session's invoiceId
+     * cleared to '' rather than deleted) are preserved byte-for-byte
+     * server-side, and TestMode scoping is server-side too.
+     *
+     * Fail-loud: the server's messages (invoice not found, session_not_found
+     * with the missing ids, sandbox permission-denied) surface verbatim, and
+     * on any failure NOTHING was written anywhere - the transaction is atomic.
+     */
+    suspend fun linkInvoiceSessions(invoiceId: String, sessionIds: List<String>): Result<InvoiceSessionLinks> = runCatching {
         ensureAuthenticated()
-        val ts = getCurrentTimestamp()
-        firestore.collection("invoices").document(invoiceId).update(
-            mapOf(
-                "sessionIds"      to sessionIds,
-                "_attribution"    to "manual",
-                "_attributionAt"  to ts,
-                "updatedAt"       to ts,
-            )
-        ).await()
-        AuntieLog.i("Linked ${sessionIds.size} session(s) to invoice $invoiceId")
-        Unit
-    }.onFailure { AuntieLog.e("Failed to update invoice sessionIds for $invoiceId", it) }
-
-    suspend fun updateSessionInvoiceId(sessionId: String, invoiceId: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
-        val ts = getCurrentTimestamp()
-        val update = if (invoiceId.isBlank()) {
-            mapOf("invoiceId" to "", "_attribution" to "manual_unlink", "_attributionAt" to ts, "updatedAt" to ts)
-        } else {
-            mapOf("invoiceId" to invoiceId, "_attribution" to "manual", "_attributionAt" to ts, "updatedAt" to ts)
+        require(invoiceId.isNotBlank()) { "linkInvoiceSessions requires an invoice id" }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("linkInvoiceSessions")
+            .call(mapOf("invoiceId" to invoiceId, "sessionIds" to sessionIds))
+            .await().data as? Map<String, Any?>
+        decodeInvoiceSessionLinks(raw, invoiceId, sessionIds).also {
+            AuntieLog.i("Linked ${it.sessionIds.size} session(s) to invoice $invoiceId (+${it.added.size}/-${it.removed.size})")
         }
-        firestore.collection("kin_care_sessions").document(sessionId).update(update).await()
-        Unit
-    }.onFailure { AuntieLog.e("Failed to update session invoiceId for $sessionId", it) }
+    }.onFailure { AuntieLog.e("linkInvoiceSessions failed for $invoiceId", it) }
 
     // --- Payments ---
 
@@ -1854,16 +1849,28 @@ class AuntieRepository(
         snapshot.toObjects(Payment::class.java)
     }.onFailure { AuntieLog.e("Failed to get payments for $kinfolkId", it) }
 
+    /**
+     * W2-2 of ADR-0002: records a row in the ROOT `payments` collection (the
+     * DISPLAY ledger the payment screens read) via the recordPayment callable,
+     * replacing Android's last direct Firestore write on money data. The old
+     * client-side TestMode copy (`mode.scopedKinfolkId`) is GONE on purpose:
+     * the server stamps a sandbox caller's row `kinfolkId = testTribeId` no
+     * matter what the request says (mytribe/functions/src/lib/testMode.ts),
+     * which a modified client cannot skip the way it could skip a client-side
+     * rewrite. This is NOT markInvoicePaid - that callable is the money
+     * authority (invoice subcollection + settlement); this one writes the
+     * display row only and can record a standalone payment with no invoice at
+     * all. Returns the new payment doc id.
+     */
     suspend fun createPayment(payment: Payment): Result<String> = runCatching {
         ensureAuthenticated()
-        // Write stamp, not a query: scopedKinfolkId forces the sandbox scope in
-        // test mode and passes the caller's kinfolkId through otherwise.
-        val mode = requireTestMode()
-        val payment = payment.copy(kinfolkId = mode.scopedKinfolkId(payment.kinfolkId))
-        val docRef = firestore.collection("payments").document()
-        docRef.set(payment.copy(id = docRef.id)).await()
-        docRef.id
-    }.onFailure { AuntieLog.e("Failed to create payment", it) }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("recordPayment")
+            .call(recordPaymentPayload(payment))
+            .await().data as? Map<String, Any?>
+            ?: error("recordPayment: non-map payload")
+        raw["paymentId"] as? String ?: error("recordPayment: missing paymentId")
+    }.onFailure { AuntieLog.e("Failed to record payment", it) }
 
     // --- Visit Logs ---
 
@@ -3628,6 +3635,76 @@ internal fun decodeListStaff(raw: Map<*, *>?): List<StaffMember> =
             )
         }
         .sortedBy { (it.displayName ?: it.uid).lowercase() }
+
+/**
+ * The invoice<->session link set after a linkInvoiceSessions write, as the
+ * server reports it: the stored full set, the delta the transaction actually
+ * applied, and the classifier state persisted onto the invoice doc
+ * (ADR-0002 decision 2).
+ */
+data class InvoiceSessionLinks(
+    val invoiceId: String,
+    /** The stored set after this write. */
+    val sessionIds: List<String>,
+    /** Sessions that gained `invoiceId` in this write. */
+    val added: List<String>,
+    /** Sessions whose `invoiceId` was cleared in this write. */
+    val removed: List<String>,
+    /** Classifier state persisted onto the invoice (e.g. `sent`); "" if omitted. */
+    val status: String,
+    /** `all` | `metadataOnly` | `none`; "" if omitted. */
+    val editScope: String,
+)
+
+/**
+ * Pure decode of the linkInvoiceSessions callable payload into
+ * [InvoiceSessionLinks]. The echoed invoiceId/sessionIds fall back to what was
+ * requested (the call succeeded if we got here; the server stores the
+ * requested set with duplicates collapsed, hence the distinct()). added and
+ * removed default to empty and status/editScope to "" when the server omits
+ * them. Pure; unit-tested.
+ */
+internal fun decodeInvoiceSessionLinks(
+    raw: Map<String, Any?>?,
+    requestedInvoiceId: String,
+    requestedSessionIds: List<String>,
+): InvoiceSessionLinks {
+    fun ids(key: String): List<String> =
+        (raw?.get(key) as? List<*>).orEmpty().mapNotNull { it as? String }
+    return InvoiceSessionLinks(
+        invoiceId = (raw?.get("invoiceId") as? String)?.ifBlank { requestedInvoiceId } ?: requestedInvoiceId,
+        sessionIds = if (raw?.get("sessionIds") is List<*>) ids("sessionIds") else requestedSessionIds.distinct(),
+        added = ids("added"),
+        removed = ids("removed"),
+        status = (raw?.get("status") as? String).orEmpty(),
+        editScope = (raw?.get("editScope") as? String).orEmpty(),
+    )
+}
+
+/**
+ * Pure encode of the recordPayment callable payload. Hand-mirrors the server
+ * zod Args (mytribe/functions/src/admin/recordPayment.ts) field for field:
+ * every field of Android's [Payment] model EXCEPT `id` (@DocumentId, never
+ * serialized; the server mints the doc id and returns it). Amount and tip stay
+ * DOLLARS-as-floats, the legacy shape of this collection. No TestMode
+ * anywhere: the sandbox kinfolkId stamp is the server's job now. Pure;
+ * unit-tested.
+ */
+internal fun recordPaymentPayload(payment: Payment): Map<String, Any?> = mapOf(
+    "kinfolkId" to payment.kinfolkId,
+    "kinfolkName" to payment.kinfolkName,
+    "client" to payment.client,
+    "address" to payment.address,
+    "date" to payment.date,
+    "paymentMethod" to payment.paymentMethod,
+    "referenceNumber" to payment.referenceNumber,
+    "email" to payment.email,
+    "amount" to payment.amount,
+    "tip" to payment.tip,
+    "notes" to payment.notes,
+    "invoiceId" to payment.invoiceId,
+    "invoiceNumber" to payment.invoiceNumber,
+)
 
 /**
  * Pure encode of the assignAuntie callable payload. The backend schema is
