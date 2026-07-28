@@ -1,11 +1,9 @@
 package com.tribetails.auntieos.data.repository
 
-import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.Payment
-import com.tribetails.auntieos.domain.TestMode
 import com.tribetails.auntieos.domain.scopedKinfolkId
 import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.tasks.await
@@ -33,53 +31,42 @@ import kotlinx.coroutines.tasks.await
  * Kotlin; they keep the `recordPaymentPayload` / `decodeInvoiceSettlement`
  * convention so that swap is mechanical.
  *
- * @param requireTestMode the fail-loud TestMode source, the same lambda shape
- *   [ScopedFirestore] takes. It is passed in rather than read here because the
- *   `testTribeId` claim (and its cache) belongs to the Auth domain, which is a
- *   later carve; today `AuntieOSApp` wires it to `AuntieRepository.requireTestMode`
- *   so there is still exactly ONE claim reader in the app.
+ * @param authGate W4-2: the shared sign-in gate and `testTribeId` claim source.
+ *   W4-1 copied the god-file's four-line sign-in check into this file and took
+ *   its TestMode as a lambda wired to `AuntieRepository.requireTestMode`; both
+ *   compromises are gone. The copy is deleted, the reach-back is deleted, and
+ *   the default [AuthGate.shared] keeps the claim read and its cache in exactly
+ *   one place across every repo.
  */
 class InvoiceRepository(
-    private val requireTestMode: suspend () -> TestMode,
+    internal val authGate: AuthGate = AuthGate.shared,
     functionsProvider: () -> FirebaseFunctions = { FirebaseFunctions.getInstance("us-central1") },
     firestoreProvider: () -> FirebaseFirestore = { FirebaseFirestore.getInstance() },
-    authProvider: () -> FirebaseAuth = { FirebaseAuth.getInstance() },
 ) {
     // Lazy so merely constructing the repo (e.g. as a ViewModel default in a
     // Firebase-less Robolectric test) never eagerly touches Firebase singletons.
-    // Same reason as KinTaleCommentsRepository's providers.
+    // Same reason as KinTaleCommentsRepository's providers, and the reason
+    // [AuthGate.shared] is safe as a default argument: it is lazy too.
     private val functions: FirebaseFunctions by lazy(functionsProvider)
     private val firestore: FirebaseFirestore by lazy(firestoreProvider)
-    private val auth: FirebaseAuth by lazy(authProvider)
 
     /**
      * The Stage-0I seam, built exactly as [AuntieRepository] builds its own: over
-     * this repo's firestore handle, holding [requireTestMode] itself so a new
-     * kinfolk-scoped read here cannot forget the sandbox constraint.
+     * this repo's firestore handle, sourcing its mode from [authGate] so a new
+     * kinfolk-scoped read here cannot forget the sandbox constraint. The gate
+     * answers who is signed in; this seam constrains what they can read.
      */
-    private val scoped: ScopedFirestore by lazy { ScopedFirestore(firestore, requireTestMode) }
-
-    /**
-     * Verbatim copy of the god-file's sign-in gate, so a signed-out call still
-     * fails with this sentence rather than a raw Firebase error. It is a copy on
-     * purpose and with a named owner: the gate consolidates when the Auth domain
-     * repo is carved (see CONTEXT.md "Domain repos").
-     */
-    private fun ensureAuthenticated() {
-        if (auth.currentUser == null) {
-            throw IllegalStateException("Admin sign-in required before using AuntieOS.")
-        }
-    }
+    private val scoped: ScopedFirestore by lazy { ScopedFirestore(firestore, authGate::requireTestMode) }
 
     // --- Invoices ---
 
     suspend fun getInvoices(): Result<List<Invoice>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         scoped.scopedQuery("invoices").toObjects(Invoice::class.java)
     }.onFailure { AuntieLog.e("Failed to get invoices", it) }
 
     suspend fun getInvoicesForKinfolk(kinfolkId: String): Result<List<Invoice>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val snapshot = firestore.collection("invoices")
             .whereEqualTo("kinfolkId", kinfolkId)
             .get()
@@ -88,7 +75,7 @@ class InvoiceRepository(
     }.onFailure { AuntieLog.e("Failed to get invoices for $kinfolkId", it) }
 
     suspend fun getInvoiceById(invoiceId: String): Result<Invoice> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val doc = firestore.collection("invoices").document(invoiceId).get().await()
         doc.toObject(Invoice::class.java)
             ?: throw NoSuchElementException("Invoice $invoiceId not found")
@@ -100,8 +87,8 @@ class InvoiceRepository(
      * notification). Replaces the old silent direct Firestore write.
      */
     suspend fun createInvoice(invoice: Invoice): Result<String> = runCatching {
-        ensureAuthenticated()
-        val mode = requireTestMode()
+        authGate.ensureAuthenticated()
+        val mode = authGate.requireTestMode()
         // In test mode force the invoice's household to the sandbox kinfolk so the
         // server write lands inside the rules-enforced scope.
         val scopedFamilyId = mode.scopedKinfolkId(invoice.kinfolkId)
@@ -134,8 +121,8 @@ class InvoiceRepository(
      * invoice.new) targeting the new invoice doc. Returns the new invoiceId.
      */
     suspend fun createQuote(invoice: Invoice, sendToKinfolk: Boolean): Result<String> = runCatching {
-        ensureAuthenticated()
-        val mode = requireTestMode()
+        authGate.ensureAuthenticated()
+        val mode = authGate.requireTestMode()
         val scopedFamilyId = mode.scopedKinfolkId(invoice.kinfolkId)
         val payload = mapOf(
             "familyId" to scopedFamilyId,
@@ -164,7 +151,7 @@ class InvoiceRepository(
      * Storage) and returns the download URL to open. Fail-loud on error.
      */
     suspend fun generateInvoicePdf(invoiceId: String): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("generateInvoicePdf")
             .call(mapOf("invoiceId" to invoiceId))
@@ -191,7 +178,7 @@ class InvoiceRepository(
      * do next.
      */
     suspend fun archiveInvoice(invoiceId: String, force: Boolean = false): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "archiveInvoice requires an invoice id" }
         val payload = if (force) mapOf("invoiceId" to invoiceId, "force" to true) else mapOf("invoiceId" to invoiceId)
         functions.getHttpsCallable("archiveInvoice").call(payload).await()
@@ -207,7 +194,7 @@ class InvoiceRepository(
      * reason.
      */
     suspend fun unarchiveInvoice(invoiceId: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "unarchiveInvoice requires an invoice id" }
         functions.getHttpsCallable("unarchiveInvoice")
             .call(mapOf("invoiceId" to invoiceId))
@@ -235,7 +222,7 @@ class InvoiceRepository(
         method: String,
         reference: String,
     ): Result<InvoiceSettlement> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         val payload = buildMap<String, Any> {
             put("invoiceId", invoiceId)
             if (amount != null) put("amount", amount)
@@ -251,7 +238,7 @@ class InvoiceRepository(
 
     /** Slice 2: marks an invoice receipted via the generateReceipt callable. */
     suspend fun generateReceipt(invoiceId: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         functions.getHttpsCallable("generateReceipt")
             .call(mapOf("invoiceId" to invoiceId))
             .await()
@@ -266,7 +253,7 @@ class InvoiceRepository(
      * surfaced verbatim.
      */
     suspend fun sendInvoiceReminder(invoiceId: String): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("sendInvoiceReminder")
             .call(mapOf("invoiceId" to invoiceId))
@@ -281,8 +268,8 @@ class InvoiceRepository(
      * Only the status field is merged, leaving the rest of the invoice untouched.
      */
     suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): Result<Unit> = runCatching {
-        ensureAuthenticated()
-        val mode = requireTestMode()
+        authGate.ensureAuthenticated()
+        val mode = authGate.requireTestMode()
         val scopedFamilyId = mode.scopedKinfolkId(familyId)
         val payload = mapOf(
             "familyId" to scopedFamilyId,
@@ -314,7 +301,7 @@ class InvoiceRepository(
      * on any failure NOTHING was written anywhere - the transaction is atomic.
      */
     suspend fun linkInvoiceSessions(invoiceId: String, sessionIds: List<String>): Result<InvoiceSessionLinks> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "linkInvoiceSessions requires an invoice id" }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("linkInvoiceSessions")
@@ -328,7 +315,7 @@ class InvoiceRepository(
     // --- Payments ---
 
     suspend fun getPayments(): Result<List<Payment>> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         scoped.scopedQuery("payments").toObjects(Payment::class.java)
     }.onFailure { AuntieLog.e("Failed to get payments", it) }
 
@@ -346,7 +333,7 @@ class InvoiceRepository(
      * all. Returns the new payment doc id.
      */
     suspend fun createPayment(payment: Payment): Result<String> = runCatching {
-        ensureAuthenticated()
+        authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("recordPayment")
             .call(recordPaymentPayload(payment))
