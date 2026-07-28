@@ -126,9 +126,46 @@ of this collection, and it is NOT the convention used elsewhere in this file:
 `logExpense` takes integer `amountCents`. Do not assume one from the other.
 
 `date`, `dueDate`, `status` and `discount` are FREE TEXT (`z.string()`), never
-validated enums and never parsed dates. `status` in particular is whatever the
-caller sent, so classify it through a shared enumerator rather than deciding
-"paid" by ruling out the other states (the AO-12 defect).
+validated enums and never parsed dates. `status` in particular WAS whatever the
+caller sent; since the state stamp (below, 2026-07-28) every callable write
+canonicalizes it, but docs written before the backfill runs still carry the old
+spellings, so READERS keep classifying through a shared enumerator rather than
+deciding "paid" by ruling out the other states (the AO-12 defect).
+
+### The persisted state stamp: `status` + `editScope` (ADR-0002)
+
+Every money-touching invoice callable persists the Invoice State Classifier's
+output onto the doc IN THE SAME WRITE that moves the money
+(`src/lib/invoiceStateStamp.ts`, derived through `src/lib/invoiceEditPolicy.ts`
+and the `payments` SUBCOLLECTION):
+
+- `status` — one of exactly eight lowercase values, frozen in
+  `test/callableContract.test.ts`:
+  `quote | draft | cancelled | credit | redeemed | paid | zero | open`.
+  This CANONICALIZES the field: a composer's `'QUOTE'`/`'sent'`/`''` stores as
+  what every client classifier already resolved it to (`'quote'`/`'open'`/by
+  the money). Rendering is unchanged today because all three clients lowercase
+  and fall back to the money; the point is that a later PR can retire those
+  classifiers and read this field.
+- `editScope` — `all | metadataOnly | none`, the edit affordance for the doc's
+  state and payment standing (part-paid stays `all`; settled money freezes to
+  `metadataOnly`; paid/cancelled/credit/redeemed freeze to `none`, except the
+  corrupt paid-with-partial-evidence shape, which stays `all` so it remains
+  repairable).
+
+Who stamps: `createInvoice`, `createQuote`, `updateInvoice`, `markInvoicePaid`,
+`postInvoiceEvent`, `reviewAndSendDraftInvoice`, `repairInvoicePayments`
+(repair mode), `redeemCredit`, `stripeWebhook` (paid events). Who deliberately
+does NOT: `archiveInvoice`/`unarchiveInvoice` (`archivedAt` is not a classifier
+input), `sendInvoiceReminder`, `generateReceipt`, `payInvoice` (their writes
+cannot change state; a writer that cannot change state does not stamp). Pure
+readers (`getMyInvoices`, `getMyInvoicePdf`, `generateInvoicePdf`) never write
+state at all.
+
+Docs that predate the stamp get it from a one-shot runbook backfill
+(`mytribe/scripts/backfillInvoiceStateStamp.ts`, DRY RUN by default). Until
+that has run, the stored field exists only on docs a callable has touched, so
+no client may rely on it yet.
 
 ### createInvoice
 - req `{ familyId: string, kinfolkName?: string, invoiceNumber: string, client?: string, address?: string, date?: string, terms?: string, dueDate?: string, discount?: string, total: number, amountDue: number, status?: string, sessionIds?: string[], lineItems?: Array<{ description: string /* 1..200 */, qty: number /* >0, <=999 */, unitCents: number /* int 0..10_000_000 */, discountCents?: number /* int >=0 */ }> /* max 100 */, invoiceDiscountCents?: number /* int >=0 */ }`
@@ -179,8 +216,10 @@ caller sent, so classify it through a shared enumerator rather than deciding
 - req: identical to `createInvoice`, plus `sendToKinfolk?: boolean` (default false)
 - res `{ ok: true, invoiceId: string }`
 - A quote is NOT a separate model, it is an invoice in QUOTE status. The caller's
-  `status` is IGNORED: the server always stamps `status: 'QUOTE'`, so no client can
-  mint a quote that fails to read as one.
+  `status` is IGNORED: the server always stamps `status: 'quote'` (lowercase
+  since the state stamp; the admin chip still renders 'QUOTE' because it derives
+  from the classifier, which lowercases), so no client can mint a quote that
+  fails to read as one.
 - `sendToKinfolk: true` dispatches the issued-quote notification immediately.
 
 ### markInvoicePaid
@@ -254,11 +293,17 @@ caller sent, so classify it through a shared enumerator rather than deciding
   and every invoice predating this callable is un-itemized.
 - Edit gating, enforced HERE and not in any UI, because `firestore.rules` grants
   `allow update: if isAuntie()` on this whole collection. Rule in
-  `src/lib/invoiceEditPolicy.ts`:
+  `src/lib/invoiceEditPolicy.ts` (the 2026-07-25 three-standing rule; this
+  section previously described the older any-payment-freezes version):
   - `draft` / `quote`: fully editable.
-  - `open` / `zero`: fully editable while the `payments` subcollection is EMPTY.
-    Once a payment exists, the money freezes and only metadata may change.
-  - `paid` / `cancelled` / `credit` / `redeemed`: no edits at all.
+  - `open` / `zero`: fully editable until the `payments` subcollection SETTLES
+    the invoice. A PART-PAID invoice stays fully editable — freezing on the
+    first payment of any size is what once left a part-collected balance
+    unrepairable. Once settled, the money freezes and only metadata may change.
+  - `paid`: no edits — EXCEPT a doc labelled paid whose recorded payments fall
+    short of its total (the pre-fix corruption), which stays fully editable so
+    it can be repaired.
+  - `cancelled` / `credit` / `redeemed`: no edits at all.
 - Error surface, all `failed-precondition`, clients branch on `details.code`:
   `invoice_not_editable` (a settled or withdrawn invoice),
   `invoice_money_locked` (a payment exists, so lines and discounts are frozen),

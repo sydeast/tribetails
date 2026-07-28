@@ -7,6 +7,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 
 const Args = z.object({
   invoiceId: z.string().min(1),
@@ -100,17 +101,22 @@ export async function redeemCreditHandler(req: CallableRequest<unknown>): Promis
     const newAccountBalanceCents = oldBal + amountCents;
 
     // WRITES: stamp the claim and apply the balance, atomically together.
-    tx.set(
-      invoiceRef,
-      {
-        creditTarget: 'accountBalance',
-        creditAmountCents: amountCents,
-        creditRedeemedAt: FieldValue.serverTimestamp(),
-        creditRedeemedByUid: uid,
-        status: 'credit',
-      },
-      { merge: true },
-    );
+    const update = {
+      creditTarget: 'accountBalance',
+      creditAmountCents: amountCents,
+      creditRedeemedAt: FieldValue.serverTimestamp(),
+      creditRedeemedByUid: uid,
+      status: 'credit',
+    };
+    // The state stamp (ADR-0002), inside the SAME transaction as the claim:
+    // with `creditRedeemedAt` set, the classifier reads the merged doc as
+    // `redeemed`, so that is what `status` stores (the classifier reads
+    // 'redeemed' as a credit-family label, so the doc keeps classifying as
+    // itself everywhere). paidCents is passed as 0 WITHOUT reading the
+    // payments subcollection, deliberately: the whole credit family maps to
+    // editScope 'none' regardless of standing (`invoiceEditScope`), so the
+    // read could not change the stamp and would only widen the transaction.
+    tx.set(invoiceRef, { ...update, ...invoiceStateStampOf({ ...txInv, ...update }, 0) }, { merge: true });
     tx.set(familyRef, { accountBalanceCents: newAccountBalanceCents }, { merge: true });
 
     return { amountCents, newAccountBalanceCents };

@@ -62,6 +62,14 @@ describe('repairPlanFor finds the corruption', () => {
     expect(plan.update.partialPaymentRepairedAt).toBeTypeOf('string');
   });
 
+  it('carries the state stamp (ADR-0002): a repaired invoice is open and fully editable', () => {
+    // Every plan is by construction a part-paid open invoice, and part-paid
+    // stays fully editable (the 2026-07-25 rule this whole module serves).
+    const plan = planOf(CORRUPT) as Extract<ReturnType<typeof planOf>, { finding: unknown }>;
+    expect(plan.update.status).toBe('open');
+    expect(plan.update.editScope).toBe('all');
+  });
+
   it('keeps the paidAt/paidBy history rather than tidying away evidence of how it happened', () => {
     const plan = planOf(CORRUPT) as Extract<ReturnType<typeof planOf>, { finding: unknown }>;
     expect(plan.update).not.toHaveProperty('paidAt');

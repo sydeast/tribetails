@@ -57,7 +57,16 @@ export function invoiceStateOf(doc: InvoiceStateDoc): InvoiceState {
   if (status === 'quote') return 'quote';
   if (status === 'draft') return 'draft';
   if (status === 'cancelled') return 'cancelled';
-  if (status === 'credit' || amountDue < 0 || total < 0) {
+  // `redeemed` joined the positive reads on 2026-07-28, when the state stamp
+  // (`lib/invoiceStateStamp.ts`, ADR-0002) started writing this module's OUTPUT
+  // back into `status`. Every output must classify to itself, or stamping a doc
+  // could change what a re-run says about it: a credit whose money did not
+  // independently signal credit (a positive-`amountDue` doc labelled `credit`,
+  // reachable through `redeemCredit`'s own guard) would be stamped `redeemed`
+  // and then re-read as `open`. It is a FAMILY label, not a state assertion:
+  // `creditRedeemedAt` still decides credit vs redeemed below, so a doc
+  // labelled `redeemed` with no redemption stamp honestly reads `credit`.
+  if (status === 'credit' || status === 'redeemed' || amountDue < 0 || total < 0) {
     return doc.creditRedeemedAt !== undefined && doc.creditRedeemedAt !== null ? 'redeemed' : 'credit';
   }
   if (status === 'paid') return 'paid';

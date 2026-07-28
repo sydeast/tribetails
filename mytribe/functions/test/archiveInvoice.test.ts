@@ -55,6 +55,20 @@ describe('archiveInvoice', () => {
     expect(write(ctx)!.data.archivedBy).toBe('admin1');
   });
 
+  it('does NOT carry the ADR-0002 state stamp, deliberately', async () => {
+    // Archived-ness is orthogonal to the eight-state classifier: `archivedAt`
+    // is not one of its inputs, so this write CANNOT change status or
+    // editScope, and a writer that cannot change state does not stamp. (Same
+    // reasoning exempts unarchiveInvoice, sendInvoiceReminder, generateReceipt
+    // and payInvoice's pending-checkout stamp.) Rewriting the stamp here would
+    // add nothing but a payments-subcollection read per archive.
+    const ctx = seed(PAID);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await archiveInvoiceHandler(req({ invoiceId: 'inv1' }));
+    expect(write(ctx)!.data).not.toHaveProperty('status');
+    expect(write(ctx)!.data).not.toHaveProperty('editScope');
+  });
+
   it('archives a draft even though it carries a balance', async () => {
     // A draft was never sent, so its "balance" was never claimed from anyone.
     // Abandoning one is routine and must not need a force flag.

@@ -20,6 +20,7 @@ vi.mock('firebase-admin/firestore', async () => {
 
 import { createInvoiceHandler } from '../src/admin/createInvoice';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
+import { invoiceStateStampOf } from '../src/lib/invoiceStateStamp';
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
@@ -126,6 +127,39 @@ describe('createInvoice handler effects', () => {
     mocks.enqueue.mockRejectedValueOnce(new Error('boom'));
     const res = await createInvoiceHandler(req(validPayload));
     expect(res.ok).toBe(true);
+  });
+});
+
+describe('createInvoice state stamp (ADR-0002)', () => {
+  it("persists the classifier's reading in the same write: a sent invoice stamps open/all", async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req(validPayload));
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    // The caller's free-text 'sent' canonicalizes to what every classifier
+    // already resolved it to: money owed on a non-draft doc is 'open'.
+    expect(write.data.status).toBe('open');
+    expect(write.data.editScope).toBe('all');
+    // And the stored stamp IS the classifier's output for the doc as written.
+    expect(invoiceStateStampOf(write.data, 0)).toEqual({ status: 'open', editScope: 'all' });
+  });
+
+  it('keeps an explicit draft a draft', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req({ ...validPayload, status: 'draft' }));
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    expect(write.data.status).toBe('draft');
+    expect(write.data.editScope).toBe('all');
+  });
+
+  it('stamps an itemized zero-worth invoice zero/all, so it can receive its first real line', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req({ ...validPayload, status: '', total: 0, amountDue: 0, lineItems: [] }));
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    expect(write.data.status).toBe('zero');
+    expect(write.data.editScope).toBe('all');
   });
 });
 

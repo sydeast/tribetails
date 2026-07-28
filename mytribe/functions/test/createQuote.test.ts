@@ -20,6 +20,7 @@ vi.mock('firebase-admin/firestore', async () => {
 
 import { createQuoteHandler } from '../src/admin/createQuote';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
+import { invoiceStateStampOf } from '../src/lib/invoiceStateStamp';
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
@@ -82,16 +83,30 @@ describe('createQuote zod validation', () => {
 });
 
 describe('createQuote handler effects', () => {
-  it('forces QUOTE status on both status fields regardless of caller status arg', async () => {
+  it('forces quote status on both status fields regardless of caller status arg', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
     await createQuoteHandler(req(validPayload));
     const write = ctx.writes.find((w) => w.path.startsWith('invoices/'));
     expect(write).toBeTruthy();
-    expect(write!.data.status).toBe('QUOTE');
+    // Lowercase since the state stamp (2026-07-28): the stored value is the
+    // classifier's canonical vocabulary. The admin chip still reads 'QUOTE',
+    // because it derives from the classifier, which lowercases before matching.
+    expect(write!.data.status).toBe('quote');
     expect(write!.data.invoiceStatus).toBe('quote');
     expect(write!.data.kinfolkId).toBe('fam1');
     expect(write!.data.createdAt).toBe('__TS__');
+  });
+
+  it('persists the state stamp in the same write: a quote is fully editable', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createQuoteHandler(req(validPayload));
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    // What the classifier says about the doc as written is what the doc stores.
+    expect(invoiceStateStampOf(write.data, 0)).toEqual({ status: 'quote', editScope: 'all' });
+    expect(write.data.status).toBe('quote');
+    expect(write.data.editScope).toBe('all');
   });
 
   it('writes a BILLING_QUOTE_CREATED audit entry', async () => {

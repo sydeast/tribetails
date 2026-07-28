@@ -309,3 +309,44 @@ describe('markInvoicePaid audit trail', () => {
     expect(entry.payload.amountDueCents).toBe(2000);
   });
 });
+describe('markInvoicePaid state stamp (ADR-0002)', () => {
+  it('a PARTIAL payment stamps open/all in the same batch: outstanding and fully editable', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 20 }));
+    const w = invoiceWriteOf(ctx)!;
+    expect(w.data.status).toBe('open');
+    expect(w.data.editScope).toBe('all');
+  });
+  it('a SETTLING payment stamps paid/none', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 40 }));
+    const w = invoiceWriteOf(ctx)!;
+    expect(w.data.status).toBe('paid');
+    expect(w.data.editScope).toBe('none');
+  });
+  it('an OVERPAYMENT stamps paid/none off the clamped balance, never credit', async () => {
+    const ctx = seed({ kinfolkId: 'fam1', status: 'open', amountDue: 39.5, total: 39.5 });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 40 }));
+    const w = invoiceWriteOf(ctx)!;
+    // amountDue clamps at 0 (a negative is this codebase's credit signal), so
+    // the classifier reads the persisted doc as paid, exactly as intended.
+    expect(w.data.status).toBe('paid');
+    expect(w.data.editScope).toBe('none');
+    expect(w.data.amountDue).toBe(0);
+  });
+  it('settling the SECOND HALF of a part-paid invoice stamps paid/none from the summed evidence', async () => {
+    const ctx = seed(
+      { kinfolkId: 'fam1', invoiceNumber: 'INV-9', status: 'open', amountDue: 20, total: 40 },
+      [{ id: 'p1', data: { amount: 20, amountCents: 2000 } }],
+    );
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await markInvoicePaidHandler(req({ invoiceId: 'inv1' }));
+    expect(res.state).toBe('settled');
+    const w = invoiceWriteOf(ctx)!;
+    expect(w.data.status).toBe('paid');
+    expect(w.data.editScope).toBe('none');
+  });
+});

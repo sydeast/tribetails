@@ -649,3 +649,64 @@ describe('sendExternalMessage outbound mirror contract', () => {
     expect(bad.success).toBe(false);
   });
 });
+/**
+ * STORED-FIELD freeze for the Invoice State Stamp (ADR-0002).
+ *
+ * Not a request shape: the two fields every money-touching invoice callable
+ * now PERSISTS onto `invoices/{id}` (`lib/invoiceStateStamp.ts`), which the
+ * three clients will read in place of their own classifiers once those are
+ * deleted. That makes the field NAMES, the eight status VALUES and the three
+ * editScope VALUES a cross-app contract exactly like the calendar receipt
+ * fields above: rename or respell any of them and three renderers go quietly
+ * blank, plus every already-stamped doc in the collection becomes stale.
+ * The backfill's skip check and the runbook both assume these exact strings.
+ *
+ * Imported inside the block rather than at the top of this file on purpose
+ * (the confirmBrandAssetUpload precedent): it keeps every line this task
+ * added contiguous at the end, so the parallel invoice-callables branch
+ * editing the import header does not conflict with it.
+ */
+describe('callable contract drift guard (invoice state stamp stored fields)', () => {
+  it('the stamp writes exactly the two fields clients will read', async () => {
+    const { invoiceStateStampOf } = await import('../src/lib/invoiceStateStamp');
+    const stamp = invoiceStateStampOf({ status: 'open', amountDue: 40, total: 40 }, 0);
+    expect(Object.keys(stamp).sort()).toEqual(['editScope', 'status']);
+  });
+  it('the eight status values are unchanged, lowercase, in precedence order', async () => {
+    const { INVOICE_STATES } = await import('../src/lib/invoiceEditPolicy');
+    expect([...INVOICE_STATES]).toEqual([
+      'quote',
+      'draft',
+      'cancelled',
+      'credit',
+      'redeemed',
+      'paid',
+      'zero',
+      'open',
+    ]);
+    for (const s of INVOICE_STATES) expect(s).toBe(s.toLowerCase());
+  });
+  it('the three editScope values are unchanged', async () => {
+    const { invoiceStateStampOf } = await import('../src/lib/invoiceStateStamp');
+    // One representative doc per scope; the VALUES are what clients branch on.
+    expect(invoiceStateStampOf({ status: 'draft' }, 0).editScope).toBe('all');
+    expect(
+      invoiceStateStampOf({ status: 'open', amountDue: 40, total: 40, totalCents: 4000 }, 4000)
+        .editScope,
+    ).toBe('metadataOnly');
+    expect(invoiceStateStampOf({ status: 'cancelled' }, 0).editScope).toBe('none');
+  });
+  it('every stamped status is itself a legal classifier INPUT (the fixpoint clients rely on)', async () => {
+    const { INVOICE_STATES, invoiceStateOf } = await import('../src/lib/invoiceEditPolicy');
+    // A doc carrying a stamped status plus the money that produced it must
+    // classify back to that status, or a stamp could go stale the moment it
+    // was written. The per-state fixtures live in invoiceStateStamp.test.ts;
+    // here the freeze only pins that the five label-read states round-trip on
+    // the label alone.
+    for (const s of ['quote', 'draft', 'cancelled', 'paid'] as const) {
+      expect(invoiceStateOf({ status: s })).toBe(s);
+    }
+    expect(invoiceStateOf({ status: 'redeemed', creditRedeemedAt: 'ts' })).toBe('redeemed');
+    expect(INVOICE_STATES).toContain('redeemed');
+  });
+});

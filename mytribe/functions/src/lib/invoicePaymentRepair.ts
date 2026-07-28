@@ -47,6 +47,7 @@ import {
   centsToDollars,
   type PaymentAmount,
 } from './invoiceMath';
+import { invoiceStateStampOf } from './invoiceStateStamp';
 
 /** The fields the detector reads off a raw `invoices/{id}` doc. All optional: real docs are missing keys. */
 export interface RepairInvoiceDoc {
@@ -165,6 +166,29 @@ export function repairPlanFor(
 
   const status = typeof doc.status === 'string' ? doc.status : '';
 
+  const update: Record<string, unknown> = {
+    // Back to open, with a real balance, so it returns to Outstanding and
+    // someone chases the rest.
+    status: 'open',
+    paymentStatus: 'PARTIAL',
+    totalCents: settlement.totalCents,
+    paidCents: settlement.paidCents,
+    amountDueCents: settlement.amountDueCents,
+    overpaidCents: 0,
+    amountDue: centsToDollars(settlement.amountDueCents),
+    // `paidAt`/`paidBy` are deliberately NOT cleared. They record that someone
+    // pressed Mark paid at a particular moment, which did happen; the claim
+    // that was false was the balance, and that is what this rewrites. Deleting
+    // a true historical stamp to tidy up a false derived one would destroy
+    // evidence of how the invoice got into this state.
+    partialPaymentRepairedAt: new Date().toISOString(),
+  };
+  // The state stamp (ADR-0002), part of the same repair update. Every plan
+  // this function returns is by construction a part-paid open invoice, so the
+  // stamp reads open/all; derived through the shared helper anyway so the two
+  // can never drift.
+  Object.assign(update, invoiceStateStampOf({ ...doc, ...update }, settlement.paidCents));
+
   return {
     finding: {
       invoiceId,
@@ -177,23 +201,7 @@ export function repairPlanFor(
       understatedCents: correctAmountDueCents - claimedAmountDueCents,
       status,
     },
-    update: {
-      // Back to open, with a real balance, so it returns to Outstanding and
-      // someone chases the rest.
-      status: 'open',
-      paymentStatus: 'PARTIAL',
-      totalCents: settlement.totalCents,
-      paidCents: settlement.paidCents,
-      amountDueCents: settlement.amountDueCents,
-      overpaidCents: 0,
-      amountDue: centsToDollars(settlement.amountDueCents),
-      // `paidAt`/`paidBy` are deliberately NOT cleared. They record that someone
-      // pressed Mark paid at a particular moment, which did happen; the claim
-      // that was false was the balance, and that is what this rewrites. Deleting
-      // a true historical stamp to tidy up a false derived one would destroy
-      // evidence of how the invoice got into this state.
-      partialPaymentRepairedAt: new Date().toISOString(),
-    },
+    update,
   };
 }
 

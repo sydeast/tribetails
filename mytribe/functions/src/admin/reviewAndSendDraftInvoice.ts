@@ -10,6 +10,8 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 
 /**
  * Dedicated draft-review-and-send callable, replacing the AuntieOS admin's
@@ -122,16 +124,20 @@ export async function reviewAndSendDraftInvoiceHandler(
     targetId: args.invoiceId,
   });
 
-  await ref.set(
-    {
-      status: 'open',
-      invoiceStatus: 'open',
-      sentAt: FieldValue.serverTimestamp(),
-      sentBy: uid,
-      updatedAt: FieldValue.serverTimestamp(),
-    },
-    { merge: true },
-  );
+  const update = {
+    status: 'open',
+    invoiceStatus: 'open',
+    sentAt: FieldValue.serverTimestamp(),
+    sentBy: uid,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  // The state stamp (ADR-0002), in the same write as the flip. The standing is
+  // read from the payments SUBCOLLECTION; on a real draft it is empty (a draft
+  // cannot take a payment, markInvoicePaid refuses it), but reading it keeps
+  // the rule uniform rather than asserted per call site.
+  const paymentsSnap = await ref.collection('payments').get();
+  const paidCents = paidCentsFromPayments(paymentsSnap.docs.map((d) => d.data() as PaymentAmount));
+  await ref.set({ ...update, ...invoiceStateStampOf({ ...data, ...update }, paidCents) }, { merge: true });
 
   await writeAuditEntry({
     event: AUDIT_EVENTS.BILLING_DRAFT_INVOICE_SENT,

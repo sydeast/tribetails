@@ -52,6 +52,9 @@ describe('reviewAndSendDraftInvoice happy path', () => {
     expect(write?.data.status).toBe('open');
     expect(write?.data.invoiceStatus).toBe('open');
     expect(write?.data.sentBy).toBe('admin1');
+    // The state stamp (ADR-0002) rides the same write: a just-sent invoice
+    // with its full balance owed is open and fully editable.
+    expect(write?.data.editScope).toBe('all');
   });
 
   it('enqueues invoice.new to the resolved kinfolk uid', async () => {

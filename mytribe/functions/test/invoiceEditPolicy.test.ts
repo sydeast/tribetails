@@ -29,6 +29,19 @@ describe('invoiceStateOf (server-side twin of the admin lib/invoiceFormat.ts enu
     expect(invoiceStateOf({ status: 'credit' })).toBe('credit');
   });
 
+  it("reads 'redeemed' as a credit-FAMILY label, added 2026-07-28 for the state stamp", () => {
+    // The stamp writes this module's own output back into `status`, so
+    // `redeemed` has to classify as itself even when the money does not
+    // independently signal credit (the positive-amountDue credit that
+    // redeemCredit's guard allows through).
+    expect(invoiceStateOf({ status: 'redeemed', amountDue: 5, creditRedeemedAt: 'anything' })).toBe(
+      'redeemed',
+    );
+    // A family label, not a state assertion: with no redemption stamp there is
+    // no evidence of a redemption, and the honest reading is credit.
+    expect(invoiceStateOf({ status: 'redeemed', amountDue: 5 })).toBe('credit');
+  });
+
   it('classifies an unlabeled row from its money, positively', () => {
     expect(invoiceStateOf({ status: '', amountDue: 40, total: 40 })).toBe('open');
     expect(invoiceStateOf({ status: '', amountDue: 0, total: 0 })).toBe('zero');
