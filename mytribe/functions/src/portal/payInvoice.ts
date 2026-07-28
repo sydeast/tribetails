@@ -7,6 +7,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { validateResponse } from '../lib/callableResponse';
 
 const Args = z.object({
   invoiceId: z.string().min(1),
@@ -15,13 +16,33 @@ const Args = z.object({
   cancelUrl: z.string().url(),
 });
 
-interface PayInvoiceResult {
-  /** Stripe-hosted Checkout URL, open this in the platform's browser. */
-  checkoutUrl: string;
-  sessionId: string;
-  amountCents: number;
-  currency: string;
-}
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1). Exported, unlike the interface it
+ * replaced, because the contract guard freezes it and decision 2 generates the
+ * portal's type from it.
+ *
+ * `amountCents` IS THE REMAINING BALANCE, not the invoice total: on a part-paid
+ * invoice those differ, and this is the figure Stripe was actually asked to
+ * charge. `.positive()` because the handler refuses a zero-or-less balance
+ * before it ever reaches Stripe. A checkout for nothing is not a response
+ * this callable has.
+ *
+ * `checkoutUrl` is `.min(1)` even though the handler writes `session.url ?? ''`:
+ * an empty URL is a Stripe response this code cannot use, and shipping it
+ * would reach the household as a Pay button that opens nothing. The guard
+ * reports it instead of letting it pass unremarked.
+ */
+export const Result = z
+  .object({
+    /** Stripe-hosted Checkout URL, opened via the platform's browser. */
+    checkoutUrl: z.string().min(1),
+    sessionId: z.string().min(1),
+    /** What Stripe was asked to charge: the REMAINING balance, integer cents. */
+    amountCents: z.number().int().positive(),
+    /** ISO-4217, lowercase. Always 'usd' today; shipped so no client hardcodes it. */
+    currency: z.string().min(1),
+  })
+  .strict();
 
 /**
  * Creates a Stripe Checkout Session for a flat-collection `invoices/{invoiceId}` doc.
@@ -33,7 +54,7 @@ interface PayInvoiceResult {
  * the invoice's kinfolkId. The webhook (`stripeWebhook`) marks the invoice
  * paid via `payment_intent.succeeded` event with metadata.
  */
-export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<PayInvoiceResult> {
+export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -103,12 +124,12 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     extra: { invoiceId: args.invoiceId, kinfolkId, amountCents, sessionId: session.id },
   });
 
-  return {
+  return validateResponse('payInvoice', Result, {
     checkoutUrl: session.url ?? '',
     sessionId: session.id,
     amountCents,
     currency: 'usd',
-  };
+  });
 }
 
 /**

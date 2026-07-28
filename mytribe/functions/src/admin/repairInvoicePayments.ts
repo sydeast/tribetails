@@ -15,6 +15,8 @@ import {
   type RepairInvoiceDoc,
 } from '../lib/invoicePaymentRepair';
 import type { PaymentAmount } from '../lib/invoiceMath';
+import { validateResponse } from '../lib/callableResponse';
+import { CentsSchema, OkSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 
 /**
  * The operator's tool for the invoices the pre-2026-07-25 partial-payment write
@@ -73,20 +75,82 @@ export const Args = z.object({
   startAfterId: z.string().min(1).max(200).optional(),
 });
 
-export interface RepairInvoicePaymentsResult {
-  ok: true;
-  mode: 'detect' | 'repair';
-  /** Invoices read this page. */
-  scanned: number;
-  /** Every invoice found in the corrupt state, with the before and after figures. */
-  findings: RepairFinding[];
-  /** How many were actually written. Always 0 in `detect` mode. */
-  repaired: number;
-  /** Why the untouched invoices were untouched, counted by reason. */
-  skipped: Record<RepairSkipReason, number>;
-  /** Pass back as `startAfterId` for the next page, or null when the sweep is complete. */
-  nextCursor: string | null;
-}
+/**
+ * One reported invoice. Mirrors `lib/invoicePaymentRepair.ts#RepairFinding`,
+ * which is the producer; `tsc` proves the two agree, because the handler's
+ * return type is inferred from this schema and the findings it assembles are
+ * `RepairFinding[]`.
+ *
+ * The sign constraints are the FINDING's guarantees, not the collection's:
+ * `repairPlanFor` only emits a finding for a part-paid invoice with a real
+ * total, so `correctAmountDueCents` is non-negative and `understatedCents` is
+ * strictly positive. `claimedAmountDueCents` is the only signed field: it is
+ * whatever the corrupt doc claims, and a negative claim is exactly the kind of
+ * doc this pass exists to find.
+ */
+const RepairFindingSchema = z
+  .object({
+    invoiceId: z.string().min(1),
+    /** Null when the doc carries no readable invoice number. */
+    invoiceNumber: z.string().nullable(),
+    /** Null on a legacy row with no household stamped on it. */
+    kinfolkId: z.string().nullable(),
+    totalCents: CentsSchema,
+    /** Summed from the `payments` subcollection. */
+    paidCents: CentsSchema,
+    /** What the doc currently claims is owed. Signed: a corrupt doc may claim anything. */
+    claimedAmountDueCents: SignedCentsSchema,
+    /** What the recorded payments say is owed. */
+    correctAmountDueCents: CentsSchema,
+    /** correctAmountDueCents - claimedAmountDueCents. Positive by construction. */
+    understatedCents: z.number().int().positive(),
+    /** The doc's current status, VERBATIM, not the classified one. */
+    status: z.string(),
+  })
+  .strict();
+
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1), and the source of the TS type
+ * below.
+ *
+ * `mode` is echoed because it decides what the rest of the response MEANS: the
+ * same `findings` list is a report in `detect` and a record of writes in
+ * `repair`, and an operator reading a paginated sweep has to be able to tell
+ * which run they are looking at.
+ *
+ * `skipped` is a zod record over the five reasons, which requires ALL FIVE
+ * KEYS. That is deliberate: `emptySkipTally()` seeds every reason at 0 so a
+ * detect run that found nothing still says WHY, and a partial tally would let
+ * "no invoice hit this reason" and "this reason was dropped from the report"
+ * look identical.
+ */
+export const Result = z
+  .object({
+    ok: OkSchema,
+    mode: z.enum(['detect', 'repair']),
+    /** Invoices read this page. */
+    scanned: z.number().int().min(0),
+    /** Every invoice found in the corrupt state, with the before and after figures. */
+    findings: z.array(RepairFindingSchema),
+    /** How many were actually written. Always 0 in `detect` mode. */
+    repaired: z.number().int().min(0),
+    /** Why the untouched invoices were untouched, counted by reason. */
+    skipped: z.record(
+      z.enum([
+        'no_payments',
+        'payments_cover_total',
+        'no_total',
+        'balance_already_correct',
+        'would_lower_balance',
+      ]),
+      z.number().int().min(0),
+    ),
+    /** Pass back as `startAfterId` for the next page, or null when the sweep is complete. */
+    nextCursor: z.string().nullable(),
+  })
+  .strict();
+
+export type RepairInvoicePaymentsResult = z.infer<typeof Result>;
 
 function emptySkipTally(): Record<RepairSkipReason, number> {
   return {
@@ -100,7 +164,7 @@ function emptySkipTally(): Record<RepairSkipReason, number> {
 
 export async function repairInvoicePaymentsHandler(
   req: CallableRequest<unknown>,
-): Promise<RepairInvoicePaymentsResult> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -200,7 +264,7 @@ export async function repairInvoicePaymentsHandler(
     extra: { mode: args.mode, scanned: snap.docs.length, found: findings.length, repaired },
   });
 
-  return {
+  return validateResponse('repairInvoicePayments', Result, {
     ok: true,
     mode: args.mode,
     scanned: snap.docs.length,
@@ -208,7 +272,7 @@ export async function repairInvoicePaymentsHandler(
     repaired,
     skipped,
     nextCursor,
-  };
+  });
 }
 
 export const repairInvoicePayments = onCall(

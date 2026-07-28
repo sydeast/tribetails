@@ -8,8 +8,25 @@ single human source those mirrors are built from.
 `functions/test/callableContract.test.ts` freezes the REQUEST field set of the
 widget callables below and fails on drift. When you change a shape on purpose:
 edit that test's frozen set, edit this file, and edit all three client mirrors in
-the same change. Response shapes are not zod-introspectable, so this doc is their
-review anchor.
+the same change.
+
+**Responses on the INVOICE MONEY SURFACE are machine-checked as of 2026-07-28
+(ADR-0001 step W3-1).** Every callable that reads or writes an invoice, a
+payment or a quote exports a `Result` zod schema beside its `Args`, parses its
+outbound value through it (`src/lib/callableResponse.ts`), and has that shape
+frozen by the same recursive walker the deep request shapes use. For those 19,
+this doc is documentation and the schema is the authority. Every OTHER callable's
+response is still doc-only and this file remains its review anchor; closing that
+gap is a later PR.
+
+A response that fails its own schema is LOGGED AT ERROR AND RETURNED UNCHANGED,
+never refused. The response is built after the write commits, these writes are
+non-idempotent and carry no client request id, and every client renders a
+failure as a retry affordance, so throwing would turn a description bug into a
+double collection. The failure surfaces as `callable.response.contractViolation`
+at `severity: 'error'` plus a Sentry exception naming the field PATHS (never the
+values: these responses carry household names and addresses). The schemas are
+`.strict()`, so an ADDED field is reported rather than absorbed.
 
 Frozen request shapes:
 
@@ -295,7 +312,27 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### updateInvoice
 - req `{ invoiceId: string /* 1..200 */, patch: { invoiceNumber?: string /* 1..60 */, date?: string /* YYYY-MM-DD */, dueDate?: string /* YYYY-MM-DD */, terms?: string /* <=2000 */, kinfolkName?: string /* <=200 */, client?: string /* <=200 */, address?: string /* <=500 */, discount?: string /* legacy FREE TEXT, <=200 */, lineItems?: Array<{ description: string /* 1..200 */, qty: number /* >0, <=999 */, unitCents: number /* int, 0..10_000_000 */, discountCents?: number /* int, >=0 */ }> /* <=100 */, invoiceDiscountCents?: number /* int, >=0 */ } }`
-- res `{ ok: true, invoiceId: string, totals: { subtotalCents: number, totalCents: number, paidCents: number, amountDueCents: number } }`
+- res `{ ok: true, invoiceId: string, totals: { subtotalCents: number, totalCents: number, paidCents: number, amountDueCents: number /* SIGNED, and NOT what was persisted; read the next bullet */ } }`
+- **`totals` IS NOT THE INVOICE'S STORED MONEY**, and until W3-1 (2026-07-28)
+  nothing said so: not this doc, not the React admin's `InvoiceTotalsResult`
+  mirror. It is the raw signed `computeInvoiceTotals` arithmetic; the DOC is
+  written from `settleInvoice`, which clamps the balance at 0 and moves the
+  excess into an `overpaidCents` field this response does not carry. Two live
+  consequences:
+  1. An edit dropping an itemized invoice BELOW what was already collected
+     answers with a NEGATIVE `totals.amountDueCents` while the doc stores
+     `amountDueCents: 0` + `overpaidCents`. A negative balance is this
+     codebase's credit signal everywhere else, so do not feed this figure to a
+     classifier.
+  2. On an UN-ITEMIZED invoice patched without lines (the money is
+     deliberately not recomputed, and every invoice predating the line-item
+     editor is un-itemized), `totals` is the ZERO-LINE computation:
+     `subtotalCents: 0`, `totalCents: 0`, `paidCents` as recorded, and
+     `amountDueCents: -paidCents`. The invoice is untouched and still worth
+     what it was worth; `totals` simply does not describe it.
+  The W3-1 response schema DESCRIBES this rather than correcting it, because
+  three clients are deployed against it. Clamping the wire, or adding
+  `overpaidCents` to it, is a shape change and belongs to its own PR.
 - **There is no `total` or `amountDue` in the request, and `patch` is `.strict()`.**
   The server recomputes every money field from the stored line items and the
   recorded payments and IGNORES anything else. A client that tries to assert what

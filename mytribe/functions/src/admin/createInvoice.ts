@@ -11,6 +11,8 @@ import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { computeInvoiceTotals, validateInvoiceMoney, centsToDollars } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { validateResponse } from '../lib/callableResponse';
+import { OkSchema } from '../lib/invoiceResponseSchema';
 
 /**
  * Server-mints the invoice doc id so the id is authoritative (the composer does
@@ -73,6 +75,20 @@ export const Args = z.object({
   invoiceDiscountCents: z.number().int().min(0).optional(),
 });
 
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1). Exported for the same reason `Args`
+ * is: the contract guard freezes it, and decision 2 generates the clients'
+ * types from it. `.strict()`, so an added field is reported rather than
+ * absorbed. Three deployed clients read this.
+ */
+export const Result = z
+  .object({
+    ok: OkSchema,
+    /** The SERVER-minted doc id; the composer never invents one. */
+    invoiceId: z.string().min(1),
+  })
+  .strict();
+
 /** "$36.00" / "-$12.50" from an integer count of cents, for the refusal message. */
 function usd(cents: number): string {
   const sign = cents < 0 ? '-' : '';
@@ -87,7 +103,7 @@ function usdFromDollars(dollars: number): string {
 
 export async function createInvoiceHandler(
   req: CallableRequest<unknown>,
-): Promise<{ ok: true; invoiceId: string }> {
+): Promise<z.infer<typeof Result>> {
   const args = Args.parse(req.data);
 
   // The itemized fields, or nothing at all. An un-itemized invoice must not
@@ -194,7 +210,7 @@ export async function createInvoiceHandler(
     });
   }
 
-  return { ok: true, invoiceId: ref.id };
+  return validateResponse('createInvoice', Result, { ok: true, invoiceId: ref.id });
 }
 
 export const createInvoice = onCall(

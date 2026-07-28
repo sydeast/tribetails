@@ -10,6 +10,8 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateOf, invoiceEditRefusal, paymentStandingOf } from '../lib/invoiceEditPolicy';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { validateResponse } from '../lib/callableResponse';
+import { CentsSchema, OkSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 import {
   computeInvoiceTotals,
   paidCentsFromPayments,
@@ -104,13 +106,65 @@ function storedLineItems(data: InvoiceDoc): InvoiceLineItemInput[] | null {
   return Array.isArray(data.lineItems) ? (data.lineItems as InvoiceLineItemInput[]) : null;
 }
 
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1).
+ *
+ * `totals` IS THE POINT OF THE RESPONSE, not a courtesy echo. The request
+ * carries no `total` at all (the server recomputes every figure from the
+ * stored lines and the recorded payments), so this block is the only way a
+ * caller learns what the invoice is now worth, and the admin's
+ * `updateInvoice` wrapper returns it and nothing else.
+ *
+ * `totals` IS NOT WHAT THIS CALLABLE PERSISTED, and W3-1 is the first time
+ * that has been written down anywhere. It is the RAW SIGNED arithmetic of
+ * `computeInvoiceTotals`; the doc is written from `settleInvoice`, which
+ * clamps the balance at 0 and moves the excess into `overpaidCents` (a field
+ * this response does not carry at all). Two consequences, both real on
+ * today's data and both previously undescribed by the doc and by the React
+ * admin's `InvoiceTotalsResult` mirror:
+ *
+ *   1. An edit that drops an itemized invoice BELOW what has already been
+ *      collected answers with a NEGATIVE `amountDueCents` while the doc
+ *      stores 0 + `overpaidCents`.
+ *   2. On an UN-ITEMIZED invoice patched without lines (the money is
+ *      deliberately not recomputed, and every invoice predating the line-item
+ *      editor is un-itemized), `totals` is the zero-line computation:
+ *      `subtotalCents` 0, `totalCents` 0, `paidCents` as recorded, and
+ *      `amountDueCents` therefore `-paidCents`. The invoice itself is
+ *      untouched and still worth what it was worth.
+ *
+ * The schema describes that rather than the tidier statement, because three
+ * clients read this and W3-1 is a guard, not a redesign: a schema asserting
+ * `.min(0)` here would fire on an ordinary metadata edit of a part-paid
+ * invoice and train everyone to ignore the alert. Clamping the wire, or
+ * adding `overpaidCents` to it, is a shape change and belongs to its own PR.
+ */
+export const Result = z
+  .object({
+    ok: OkSchema,
+    invoiceId: z.string().min(1),
+    totals: z
+      .object({
+        /** 0 when the money was not recomputed. See the header. */
+        subtotalCents: CentsSchema,
+        /** 0 when the money was not recomputed. NOT the invoice's stored total. */
+        totalCents: CentsSchema,
+        /** Summed from the `payments` subcollection, never off the doc scalar. */
+        paidCents: CentsSchema,
+        /**
+         * `totalCents - paidCents`, SIGNED and unclamped. See the header for
+         * the two ways it goes negative. The doc's `amountDueCents` is the
+         * clamped `settleInvoice` reading and is a different number.
+         */
+        amountDueCents: SignedCentsSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
 export async function updateInvoiceHandler(
   req: CallableRequest<unknown>,
-): Promise<{
-  ok: true;
-  invoiceId: string;
-  totals: { subtotalCents: number; totalCents: number; paidCents: number; amountDueCents: number };
-}> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -252,7 +306,7 @@ export async function updateInvoiceHandler(
     extra: { invoiceId, fields: Object.keys(patch), itemized: lines !== null },
   });
 
-  return { ok: true, invoiceId, totals };
+  return validateResponse('updateInvoice', Result, { ok: true, invoiceId, totals });
 }
 
 export const updateInvoice = onCall(

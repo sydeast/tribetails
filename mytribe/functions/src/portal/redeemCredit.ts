@@ -8,6 +8,8 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { validateResponse } from '../lib/callableResponse';
+import { CentsSchema, OkSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 
 const Args = z.object({
   invoiceId: z.string().min(1),
@@ -19,12 +21,32 @@ const Args = z.object({
   target: z.literal('accountBalance').optional().default('accountBalance'),
 });
 
-interface RedeemCreditResult {
-  ok: true;
-  redeemedAmountCents: number;
-  target: 'accountBalance';
-  newAccountBalanceCents: number | null;
-}
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1). Exported, unlike the interface it
+ * replaced, because the contract guard freezes it and decision 2 generates the
+ * portal's type from it.
+ *
+ * `target` is a single-value literal, matching the request's. Credits are NOT
+ * refundable (operator ruling, 2026-07-20): account balance is the only
+ * destination, and a schema that said `string` would invite a client to render
+ * a refund that cannot happen.
+ *
+ * `newAccountBalanceCents` is `.nullable()` because the transaction returns the
+ * balance it wrote, and a caller must be able to tell "the balance is now X"
+ * from "the balance was not readable". It is SIGNED cents: the field is a
+ * running household balance, not a bounded invoice figure.
+ */
+export const Result = z
+  .object({
+    ok: OkSchema,
+    /** The credit's absolute value, integer cents, as applied. */
+    redeemedAmountCents: CentsSchema,
+    /** The only redemption target there is. */
+    target: z.literal('accountBalance'),
+    /** The balance after this redemption, or null when it could not be read back. */
+    newAccountBalanceCents: SignedCentsSchema.nullable(),
+  })
+  .strict();
 
 /**
  * Redeems a credit invoice (negative amountDue or status='credit') by bumping
@@ -48,7 +70,7 @@ interface RedeemCreditResult {
  *   is no longer any external side effect after the claim, so the claim can no
  *   longer need releasing.
  */
-export async function redeemCreditHandler(req: CallableRequest<unknown>): Promise<RedeemCreditResult> {
+export async function redeemCreditHandler(req: CallableRequest<unknown>): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -135,12 +157,12 @@ export async function redeemCreditHandler(req: CallableRequest<unknown>): Promis
     },
   });
 
-  return {
+  return validateResponse('redeemCredit', Result, {
     ok: true,
     redeemedAmountCents: claim.amountCents,
     target: 'accountBalance',
     newAccountBalanceCents: claim.newAccountBalanceCents,
-  };
+  });
 }
 
 function numericFrom(v: unknown): number {

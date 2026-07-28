@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { z } from 'zod';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -6,6 +7,14 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { INVOICE_STATES, type InvoiceState, type InvoiceEditScope } from '../lib/invoiceEditPolicy';
+import { validateResponse } from '../lib/callableResponse';
+import {
+  CentsSchema,
+  DollarsSchema,
+  InvoiceStateSchema,
+  NullableInvoiceEditScopeSchema,
+  SignedCentsSchema,
+} from '../lib/invoiceResponseSchema';
 
 interface GetMyInvoicesRequest {
   kinfolkId?: string;
@@ -19,104 +28,163 @@ interface GetMyInvoicesRequest {
  */
 type Status = InvoiceState;
 
-export interface InvoiceLineItemDto {
-  /**
-   * Stable key for one row, unique within an invoice. NOT the session id: a
-   * stored line has no session behind it, so keying on `sessionId` would collapse
-   * every stored row onto one empty key in the household's table.
-   */
-  lineId: string;
-  /**
-   * Where the row came from, so nothing downstream has to guess.
-   *
-   *   stored   the invoice's OWN `lineItems`, which is what the operator billed
-   *   session  derived from `sessionIds`, for a legacy invoice carrying no lines
-   */
-  source: 'stored' | 'session';
-  /** The session behind a derived row. Empty on a stored line. */
-  sessionId: string;
-  /** The billed description, or the visit's service type on a derived row. */
-  label: string;
-  /** Visit date on a derived row. Null on a stored line, which carries no date. */
-  dateIso: string | null;
-  amountCents: number | null;
-  /** Stored lines only, so a household sees 3 x $20 rather than an unexplained $60. */
-  qty: number | null;
-  unitCents: number | null;
-}
+export const InvoiceLineItemDtoSchema = z
+  .object({
+    /**
+     * Stable key for one row, unique within an invoice. NOT the session id: a
+     * stored line has no session behind it, so keying on `sessionId` would collapse
+     * every stored row onto one empty key in the household's table.
+     */
+    lineId: z.string().min(1),
+    /**
+     * Where the row came from, so nothing downstream has to guess.
+     *
+     *   stored   the invoice's OWN `lineItems`, which is what the operator billed
+     *   session  derived from `sessionIds`, for a legacy invoice carrying no lines
+     */
+    source: z.enum(['stored', 'session']),
+    /** The session behind a derived row. EMPTY STRING on a stored line, never absent. */
+    sessionId: z.string(),
+    /** The billed description, or the visit's service type on a derived row. */
+    label: z.string(),
+    /** Visit date on a derived row. Null on a stored line, which carries no date. */
+    dateIso: z.string().nullable(),
+    /**
+     * SIGNED cents. A stored line is `round(qty x unitCents) - discountCents`
+     * read from a doc `firestore.rules` lets any admin write, so a line whose
+     * discount exceeds it lands here negative. Describing that as non-negative
+     * would make the schema a wish rather than a description.
+     */
+    amountCents: SignedCentsSchema.nullable(),
+    /** Stored lines only, so a household sees 3 x $20 rather than an unexplained $60. */
+    qty: z.number().positive().nullable(),
+    unitCents: CentsSchema.nullable(),
+  })
+  .strict();
 
-interface InvoiceDto {
-  id: string;
-  kinfolkId: string;
-  kinfolkName: string | null;
-  client: string | null;
-  total: number;
-  amountDue: number;
-  isPaid: boolean;
-  /**
-   * The stored Invoice State Stamp (ADR-0002): one of the eight lowercase
-   * `INVOICE_STATES`, persisted by every money-touching callable in the same
-   * write that moves the money and backfilled across every pre-stamp doc.
-   * READ off the doc, never re-derived here. See the bucket table on the
-   * handler for how the eight states land in open/paid/credits.
-   */
-  status: Status;
-  /**
-   * The stamp's second half: how much of this invoice may still change
-   * (`all` | `metadataOnly` | `none`). Null when the doc carries no stored
-   * scope (pre-backfill sandbox seeds); the portal offers no edit UI, so this
-   * ships for parity with the stamp, not because a screen branches on it yet.
-   */
-  editScope: InvoiceEditScope | null;
-  /**
-   * What has been collected against this invoice, in cents, read from the
-   * `paidCents` field the payment path writes.
-   *
-   * NOT re-derived from `total - amountDue`. Those are float dollars, and on
-   * every invoice touched by the pre-2026-07-25 partial-payment write
-   * `amountDue` reads 0 while a real balance is owed, so that subtraction would
-   * report the entire total as collected on exactly the invoices that are
-   * wrong. 0 on an invoice that predates the field, which is honest rather than
-   * flattering: the portal does not claim a payment it has no record of.
-   */
-  paidCents: number;
-  /**
-   * Money has come in and it does NOT cover this invoice.
-   *
-   * A part-paid invoice is neither paid nor untouched, and rendering it as
-   * either is a lie to the household: "unpaid" hides the $20 they already sent,
-   * "paid" hides the $20 they still owe. `status` stays `open` so the invoice
-   * keeps its payable behaviour and its bucket; this is the flag that lets the
-   * screen say what is actually true about it.
-   */
-  partiallyPaid: boolean;
-  date: string | null;
-  dueDate: string | null;
-  discount: string | null;
-  terms: string | null;
-  paymentsHistory: string | null;
-  address: string | null;
-  viewed: boolean;
-  // Credit-specific (only meaningful when status is 'credit' or 'redeemed' —
-  // 'redeemed' is what the stamp writes once `creditRedeemedAt` is set).
-  // Account balance is the only redemption target: credits are NOT refundable.
-  creditAmountCents: number | null;
-  creditTarget: 'accountBalance' | null;
-  creditRedeemedAtMs: number | null;
-  /**
-   * Per-visit line items resolved from the invoice's `sessionIds` (AuntieOS
-   * `kin_care_sessions` docs). OPTIONAL: absent when the invoice carries no
-   * sessionIds or when the session lookups fail — never fails the whole call.
-   */
-  lineItems?: InvoiceLineItemDto[];
-}
+export type InvoiceLineItemDto = z.infer<typeof InvoiceLineItemDtoSchema>;
 
-interface GetMyInvoicesResult {
-  open: InvoiceDto[];
-  paid: InvoiceDto[];
-  credits: InvoiceDto[];
-  accountBalanceCents: number;
-}
+const InvoiceDtoSchema = z
+  .object({
+    id: z.string().min(1),
+    kinfolkId: z.string(),
+    kinfolkName: z.string().nullable(),
+    client: z.string().nullable(),
+    /** DOLLARS as a float, the legacy shape of this collection. Not cents. */
+    total: DollarsSchema,
+    /** DOLLARS as a float, and MAY BE NEGATIVE: that is the credit signal. */
+    amountDue: DollarsSchema,
+    isPaid: z.boolean(),
+    /**
+     * The stored Invoice State Stamp (ADR-0002): one of the eight lowercase
+     * `INVOICE_STATES`, persisted by every money-touching callable in the same
+     * write that moves the money and backfilled across every pre-stamp doc.
+     * READ off the doc, never re-derived here. See the bucket table on the
+     * handler for how the eight states land in open/paid/credits.
+     *
+     * NEVER NULL and never a raw stored spelling: `statusFromStamp` fail-softs
+     * an unreadable stamp to `open` (string-only, never money), so this field
+     * is always one of the eight the clients branch on.
+     */
+    status: InvoiceStateSchema,
+    /**
+     * The stamp's second half: how much of this invoice may still change
+     * (`all` | `metadataOnly` | `none`). Null when the doc carries no stored
+     * scope (pre-backfill sandbox seeds); the portal offers no edit UI, so this
+     * ships for parity with the stamp, not because a screen branches on it yet.
+     *
+     * `.nullable()`, never `.optional()`: the fail-soft absent case is a
+     * present `null`, which every client already handles, and an absent KEY
+     * would be a third state nobody wrote a branch for.
+     */
+    editScope: NullableInvoiceEditScopeSchema,
+    /**
+     * What has been collected against this invoice, in cents, read from the
+     * `paidCents` field the payment path writes.
+     *
+     * NOT re-derived from `total - amountDue`. Those are float dollars, and on
+     * every invoice touched by the pre-2026-07-25 partial-payment write
+     * `amountDue` reads 0 while a real balance is owed, so that subtraction would
+     * report the entire total as collected on exactly the invoices that are
+     * wrong. 0 on an invoice that predates the field, which is honest rather than
+     * flattering: the portal does not claim a payment it has no record of.
+     */
+    paidCents: CentsSchema,
+    /**
+     * Money has come in and it does NOT cover this invoice.
+     *
+     * A part-paid invoice is neither paid nor untouched, and rendering it as
+     * either is a lie to the household: "unpaid" hides the $20 they already sent,
+     * "paid" hides the $20 they still owe. `status` stays `open` so the invoice
+     * keeps its payable behaviour and its bucket; this is the flag that lets the
+     * screen say what is actually true about it.
+     */
+    partiallyPaid: z.boolean(),
+    // Free text on the doc, so free text here. `date`/`dueDate` are NOT parsed
+    // dates and never have been (see the money/format note in
+    // CALLABLE_CONTRACT.md); a `.regex()` here would refuse legacy invoices the
+    // household can still see today.
+    date: z.string().nullable(),
+    dueDate: z.string().nullable(),
+    discount: z.string().nullable(),
+    terms: z.string().nullable(),
+    paymentsHistory: z.string().nullable(),
+    address: z.string().nullable(),
+    viewed: z.boolean(),
+    // Credit-specific (only meaningful when status is 'credit' or 'redeemed';
+    // 'redeemed' is what the stamp writes once `creditRedeemedAt` is set).
+    // Account balance is the only redemption target: credits are NOT refundable.
+    /** ABSOLUTE value in cents: the handler takes `Math.abs` of a negative balance. */
+    creditAmountCents: CentsSchema.nullable(),
+    creditTarget: z.literal('accountBalance').nullable(),
+    /**
+     * Epoch millis. NOT `.int()`: it comes off a stored value that may be a
+     * plain number rather than a Timestamp, and refusing a fractional legacy
+     * millisecond would report a household's redeemed credit as a server bug.
+     */
+    creditRedeemedAtMs: z.number().nullable(),
+    /**
+     * Per-visit line items resolved from the invoice's `sessionIds` (AuntieOS
+     * `kin_care_sessions` docs). OPTIONAL: absent when the invoice carries no
+     * sessionIds or when the session lookups fail. Never fails the whole call.
+     *
+     * `.optional()` here and NOT `.nullable()`, the opposite call from
+     * `editScope` above, because the handler spreads the key in only when it
+     * has lines. The portal's mirror types it `lineItems?:` to match.
+     */
+    lineItems: z.array(InvoiceLineItemDtoSchema).optional(),
+  })
+  .strict();
+
+type InvoiceDto = z.infer<typeof InvoiceDtoSchema>;
+
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1), and the source of the TS types
+ * above.
+ *
+ * NO `ok` FIELD: a pure read that answers with data or throws. Three buckets
+ * plus the household's balance, exactly as `mytribe/web/src/api/invoicesApi.ts`
+ * transcribes it: the 20-field DTO whose silent rename ADR-0001 names as the
+ * defect this whole workstream exists to make impossible.
+ *
+ * `cancelled` invoices appear in NO bucket. That is not an omission the schema
+ * can express, and it is the one contract here still carried by prose: see the
+ * bucket table on the handler.
+ */
+export const Result = z
+  .object({
+    open: z.array(InvoiceDtoSchema),
+    paid: z.array(InvoiceDtoSchema),
+    credits: z.array(InvoiceDtoSchema),
+    /**
+     * The household's spendable balance, `families/{kinfolkId}.accountBalanceCents`.
+     * NOT `.int()`: `numericFrom` will happily parse a stringly-typed legacy
+     * field into a float, and the honest schema describes what ships rather
+     * than what the field name promises.
+     */
+    accountBalanceCents: z.number(),
+  })
+  .strict();
 
 /**
  * Returns the signed-in kinfolk's invoices, split into three buckets.
@@ -166,7 +234,7 @@ interface GetMyInvoicesResult {
  */
 export async function getMyInvoicesHandler(
   req: CallableRequest<GetMyInvoicesRequest>,
-): Promise<GetMyInvoicesResult> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
 
   const uid = req.auth?.uid;
@@ -310,7 +378,7 @@ export async function getMyInvoicesHandler(
     extra: { kinfolkId, openCount: open.length, paidCount: paid.length, creditCount: credits.length },
   });
 
-  return { open, paid, credits, accountBalanceCents };
+  return validateResponse('getMyInvoices', Result, { open, paid, credits, accountBalanceCents });
 }
 
 function isInvoiceState(s: string): s is Status {

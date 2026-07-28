@@ -5,6 +5,8 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { validateResponse } from '../lib/callableResponse';
+import { CentsSchema } from '../lib/invoiceResponseSchema';
 
 /**
  * Completed visits in a date window that no invoice has claimed yet, priced
@@ -78,26 +80,51 @@ const MAX_SESSIONS = 500;
 const SESSIONS_COLLECTION = 'kin_care_sessions';
 const SETTINGS_DOC = 'business_settings/business_settings';
 
-export interface UninvoicedSession {
-  sessionId: string;
-  kinfolkId: string;
-  serviceType: string;
-  durationMinutes: number;
-  startTime: string;
-  /** Integer cents from the rate card, or null when it could not be priced. */
-  unitCents: number | null;
-}
+/** One completed, unclaimed visit, as the invoice composer needs it. */
+const UninvoicedSessionSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    kinfolkId: z.string(),
+    serviceType: z.string(),
+    durationMinutes: z.number(),
+    /** ISO-8601 STRING on this collection, never a Timestamp. See the header. */
+    startTime: z.string(),
+    /**
+     * Integer cents from the rate card, or NULL when it could not be priced.
+     *
+     * `.nullable()`, never `.optional()`, and that distinction is the whole
+     * point of the field: an ABSENT key would let a client read it as 0 and
+     * bill a household nothing for real work. Null is a value that has to be
+     * handled.
+     */
+    unitCents: CentsSchema.nullable(),
+  })
+  .strict();
 
-export interface ListUninvoicedSessionsResult {
-  sessions: UninvoicedSession[];
-  /** Sessions returned above with no usable rate, so the caller can prompt for one. */
-  unpriceable: Array<{ sessionId: string; serviceType: string }>;
-  /** False when `business_settings.serviceRates` is missing, so a miss is not a real miss. */
-  rateCardLoaded: boolean;
-  /** Rows read before filtering. An empty result over 400 scanned rows means something. */
-  scanned: number;
-  truncated: boolean;
-}
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1), and the source of the TS types
+ * below.
+ *
+ * NO `ok` FIELD, unlike every write on this surface. This is a pure read: it
+ * answers with data or it throws, and there is no partial success for it to
+ * report. Kept as it ships rather than "tidied" into the `ok` convention,
+ * because the React admin returns this response object verbatim.
+ */
+export const Result = z
+  .object({
+    sessions: z.array(UninvoicedSessionSchema),
+    /** Sessions returned above with no usable rate, so the caller can prompt for one. */
+    unpriceable: z.array(z.object({ sessionId: z.string(), serviceType: z.string() }).strict()),
+    /** False when `business_settings.serviceRates` is missing, so a miss is not a real miss. */
+    rateCardLoaded: z.boolean(),
+    /** Rows read before filtering. An empty result over 400 scanned rows means something. */
+    scanned: z.number().int().min(0),
+    truncated: z.boolean(),
+  })
+  .strict();
+
+export type UninvoicedSession = z.infer<typeof UninvoicedSessionSchema>;
+export type ListUninvoicedSessionsResult = z.infer<typeof Result>;
 
 /** The day after `day` (`YYYY-MM-DD`), so an inclusive `to` becomes an exclusive bound. */
 function nextDay(day: string): string {
@@ -137,7 +164,7 @@ function rateToCents(rate: unknown): number | null {
 
 export async function listUninvoicedSessionsHandler(
   req: CallableRequest<unknown>,
-): Promise<ListUninvoicedSessionsResult> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -210,13 +237,13 @@ export async function listUninvoicedSessionsHandler(
     },
   });
 
-  return {
+  return validateResponse('listUninvoicedSessions', Result, {
     sessions,
     unpriceable,
     rateCardLoaded,
     scanned: snap.docs.length,
     truncated: snap.docs.length >= MAX_SESSIONS,
-  };
+  });
 }
 
 export const listUninvoicedSessions = onCall(

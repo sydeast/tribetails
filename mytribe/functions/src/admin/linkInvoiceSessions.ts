@@ -9,14 +9,14 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveInvoiceWriteActor, testOwnsDoc } from '../lib/testMode';
-import {
-  invoiceStateOf,
-  paymentStandingOf,
-  invoiceEditScope,
-  type InvoiceState,
-  type InvoiceEditScope,
-} from '../lib/invoiceEditPolicy';
+import { invoiceStateOf, paymentStandingOf, invoiceEditScope } from '../lib/invoiceEditPolicy';
 import { paidCentsFromPayments, invoiceTotalCentsOf, type PaymentAmount } from '../lib/invoiceMath';
+import { validateResponse } from '../lib/callableResponse';
+import {
+  InvoiceEditScopeSchema,
+  InvoiceStateSchema,
+  OkSchema,
+} from '../lib/invoiceResponseSchema';
 
 /**
  * Sets the invoice<->session link IN BOTH DIRECTIONS, atomically. W2-1 of
@@ -82,19 +82,37 @@ export const Args = z.object({
   sessionIds: z.array(z.string().min(1).max(200)).max(200),
 });
 
-export interface LinkInvoiceSessionsResult {
-  ok: true;
-  invoiceId: string;
-  /** The stored set after this write. */
-  sessionIds: string[];
-  /** Sessions that gained `invoiceId` in this write. */
-  added: string[];
-  /** Sessions whose `invoiceId` was cleared in this write. */
-  removed: string[];
-  /** The classifier state persisted onto the doc (ADR-0002). */
-  status: InvoiceState;
-  editScope: InvoiceEditScope;
-}
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1), and the source of the TS type
+ * below: the schema is the authority for both directions, so the hand-written
+ * interface this replaced is gone rather than kept beside it as a second
+ * description to drift from.
+ *
+ * `added` / `removed` are the DELTA the server derived inside its transaction
+ * against the stored set. The caller sent a full set and cannot have computed
+ * them. Android's `decodeInvoiceSessionLinks` reads all three lists.
+ */
+export const Result = z
+  .object({
+    ok: OkSchema,
+    invoiceId: z.string().min(1),
+    /** The stored set after this write. */
+    sessionIds: z.array(z.string()),
+    /** Sessions that gained `invoiceId` in this write. */
+    added: z.array(z.string()),
+    /** Sessions whose `invoiceId` was cleared in this write. */
+    removed: z.array(z.string()),
+    /**
+     * The classifier state persisted onto the doc (ADR-0002). NOT nullable and
+     * NOT a free string: linking always stamps, so a caller that reads this
+     * field is reading the same eight-state vocabulary the doc now carries.
+     */
+    status: InvoiceStateSchema,
+    editScope: InvoiceEditScopeSchema,
+  })
+  .strict();
+
+export type LinkInvoiceSessionsResult = z.infer<typeof Result>;
 
 type InvoiceDoc = {
   kinfolkId?: string;
@@ -120,7 +138,7 @@ function storedSessionIds(data: InvoiceDoc): string[] {
 
 export async function linkInvoiceSessionsHandler(
   req: CallableRequest<unknown>,
-): Promise<LinkInvoiceSessionsResult> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const actor = resolveInvoiceWriteActor(req, 'linkInvoiceSessions');
 
@@ -272,7 +290,7 @@ export async function linkInvoiceSessionsHandler(
     },
   });
 
-  return {
+  return validateResponse('linkInvoiceSessions', Result, {
     ok: true,
     invoiceId: args.invoiceId,
     sessionIds: newIds,
@@ -280,7 +298,7 @@ export async function linkInvoiceSessionsHandler(
     removed: outcome.removed,
     status: outcome.state,
     editScope: outcome.scope,
-  };
+  });
 }
 
 export const linkInvoiceSessions = onCall(

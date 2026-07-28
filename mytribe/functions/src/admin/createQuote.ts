@@ -10,6 +10,8 @@ import { enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { validateResponse } from '../lib/callableResponse';
+import { OkSchema } from '../lib/invoiceResponseSchema';
 
 /**
  * A quote is NOT a separate model: it is an invoice in QUOTE status. This
@@ -59,9 +61,22 @@ export const Args = z.object({
   sendToKinfolk: z.boolean().default(false),
 });
 
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1). Exported for the same reason `Args`
+ * is: the contract guard freezes it and decision 2 generates the clients'
+ * types from it. `.strict()`, so an added field is reported rather than
+ * absorbed.
+ */
+export const Result = z
+  .object({
+    ok: OkSchema,
+    /** Echoed back so a caller batching several calls can pair up the answers. */
+    invoiceId: z.string().min(1),
+  })
+  .strict();
 export async function createQuoteHandler(
   req: CallableRequest<unknown>,
-): Promise<{ ok: true; invoiceId: string }> {
+): Promise<z.infer<typeof Result>> {
   const args = Args.parse(req.data);
 
   const ref = db().collection('invoices').doc();
@@ -124,7 +139,7 @@ export async function createQuoteHandler(
     }
   }
 
-  return { ok: true, invoiceId: ref.id };
+  return validateResponse('createQuote', Result, { ok: true, invoiceId: ref.id });
 }
 
 export const createQuote = onCall(

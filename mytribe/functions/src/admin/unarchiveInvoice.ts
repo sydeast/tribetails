@@ -9,6 +9,8 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { isArchived, type ArchivableInvoice } from '../lib/invoiceArchive';
+import { validateResponse } from '../lib/callableResponse';
+import { OkSchema } from '../lib/invoiceResponseSchema';
 
 /**
  * Restores an archived invoice to the operator's working list.
@@ -28,9 +30,22 @@ export const Args = z.object({
   invoiceId: z.string().min(1).max(200),
 });
 
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1). Exported for the same reason `Args`
+ * is: the contract guard freezes it and decision 2 generates the clients'
+ * types from it. `.strict()`, so an added field is reported rather than
+ * absorbed.
+ */
+export const Result = z
+  .object({
+    ok: OkSchema,
+    /** Echoed back so a caller batching several calls can pair up the answers. */
+    invoiceId: z.string().min(1),
+  })
+  .strict();
 export async function unarchiveInvoiceHandler(
   req: CallableRequest<unknown>,
-): Promise<{ ok: true; invoiceId: string }> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -91,7 +106,7 @@ export async function unarchiveInvoiceHandler(
     extra: { invoiceId: args.invoiceId },
   });
 
-  return { ok: true, invoiceId: args.invoiceId };
+  return validateResponse('unarchiveInvoice', Result, { ok: true, invoiceId: args.invoiceId });
 }
 
 export const unarchiveInvoice = onCall(

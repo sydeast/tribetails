@@ -9,6 +9,8 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { generateAndStoreInvoicePdf } from '../lib/invoicePdf';
+import { validateResponse } from '../lib/callableResponse';
+import { OkSchema } from '../lib/invoiceResponseSchema';
 
 /**
  * Stage 3 / 16.2 - kinfolk-portal invoice PDF download ("Download PDF" on the
@@ -23,9 +25,23 @@ const Args = z.object({
   kinfolkId: z.string().min(1).max(200).optional(),
 });
 
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1). `pdfUrl` is a Cloud Storage
+ * download-token URL the client opens directly; it is a URL rather than bytes
+ * on purpose, so nothing here has to carry a PDF through the callable
+ * transport. `.strict()`, so an added field is reported rather than absorbed.
+ */
+export const Result = z
+  .object({
+    ok: OkSchema,
+    invoiceId: z.string().min(1),
+    /** Download-token URL, opened as-is. Never empty on a success. */
+    pdfUrl: z.string().min(1),
+  })
+  .strict();
 export async function getMyInvoicePdfHandler(
   req: CallableRequest<unknown>,
-): Promise<{ ok: true; invoiceId: string; pdfUrl: string }> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -71,7 +87,7 @@ export async function getMyInvoicePdfHandler(
     logEvent({ severity: 'warn', function: 'getMyInvoicePdf', event: 'audit.write.failed', uid, errorMessage: (err as Error)?.message });
   });
 
-  return { ok: true, invoiceId: args.invoiceId, pdfUrl };
+  return validateResponse('getMyInvoicePdf', Result, { ok: true, invoiceId: args.invoiceId, pdfUrl });
 }
 
 export const getMyInvoicePdf = onCall(

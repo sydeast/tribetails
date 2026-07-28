@@ -17,6 +17,12 @@ import {
   type InvoiceSettlementState,
 } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { validateResponse } from '../lib/callableResponse';
+import {
+  CentsSchema,
+  InvoiceSettlementStateSchema,
+  OkSchema,
+} from '../lib/invoiceResponseSchema';
 
 /**
  * Dedicated manual-payment callable, replacing the AuntieOS admin's prior
@@ -189,24 +195,45 @@ function refusedLifecycle(d: InvoiceDoc): string | null {
   return null;
 }
 
-export interface MarkInvoicePaidResult {
-  ok: true;
-  invoiceId: string;
-  paymentId: string;
-  /** Where the invoice stands AFTER this payment, derived from every recorded payment. */
-  state: InvoiceSettlementState;
-  totalCents: number;
-  /** Every payment on record, including the one just written. */
-  paidCents: number;
-  /** Still owed. Never negative. */
-  amountDueCents: number;
-  /** Collected beyond the total. Zero unless [state] is 'overpaid'. */
-  overpaidCents: number;
-}
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1), and the source of the TS type
+ * below. The schema is the authority, so the hand-written interface it
+ * replaced is gone rather than left beside it to drift.
+ *
+ * THESE FIGURES ARE DERIVED FROM EVERY RECORDED PAYMENT, not from the `amount`
+ * in the request, which is why the caller cannot compute them and why this
+ * response is the operator's only honest account of where the invoice now
+ * stands. The React admin destructures all six fields
+ * (`api/invoicesWrite.ts#markInvoicePaid`) and Android decodes `state`
+ * (`decodeInvoiceSettlement`).
+ *
+ * `amountDueCents` is non-negative BY SCHEMA, not merely by convention: a
+ * negative balance is this codebase's credit signal, so an over-collected
+ * invoice leaking one here would read downstream as money owed BACK to the
+ * household. The excess ships as `overpaidCents` instead.
+ */
+export const Result = z
+  .object({
+    ok: OkSchema,
+    invoiceId: z.string().min(1),
+    /** The `invoices/{id}/payments/{paymentId}` row written in the same batch. */
+    paymentId: z.string().min(1),
+    /** Where the invoice stands AFTER this payment, derived from every recorded payment. */
+    state: InvoiceSettlementStateSchema,
+    totalCents: CentsSchema,
+    /** Every payment on record, including the one just written. */
+    paidCents: CentsSchema,
+    /** Still owed. Never negative; see the header. */
+    amountDueCents: CentsSchema,
+    /** Collected beyond the total. Zero unless `state` is 'overpaid'. */
+    overpaidCents: CentsSchema,
+  })
+  .strict();
+export type MarkInvoicePaidResult = z.infer<typeof Result>;
 
 export async function markInvoicePaidHandler(
   req: CallableRequest<unknown>,
-): Promise<MarkInvoicePaidResult> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -399,7 +426,7 @@ export async function markInvoicePaidHandler(
     });
   }
 
-  return {
+  return validateResponse('markInvoicePaid', Result, {
     ok: true,
     invoiceId: args.invoiceId,
     paymentId: paymentRef.id,
@@ -408,7 +435,7 @@ export async function markInvoicePaidHandler(
     paidCents: after.paidCents,
     amountDueCents: after.amountDueCents,
     overpaidCents: after.overpaidCents,
-  };
+  });
 }
 
 export const markInvoicePaid = onCall(

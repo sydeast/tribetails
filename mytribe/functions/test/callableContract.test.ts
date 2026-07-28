@@ -710,3 +710,226 @@ describe('callable contract drift guard (invoice state stamp stored fields)', ()
     expect(INVOICE_STATES).toContain('redeemed');
   });
 });
+/**
+ * THE RESPONSE HALF (ADR-0001 step W3-1), machine-checked at last.
+ *
+ * Everything above this line freezes REQUEST shapes. Responses had no guard at
+ * all: `CALLABLE_CONTRACT.md` names itself their "review anchor", and ADR-0001
+ * opens by measuring how far that anchor had already drifted (a mirror missing
+ * three exports, an Android payload no test inspects, a coverage count off by
+ * 16). A rename inside `getMyInvoices`'s 20-field DTO, transcribed field for
+ * field into `mytribe/web/src/api/invoicesApi.ts`, shipped a silently broken
+ * portal.
+ *
+ * These are the same `Result` zod schemas the handlers now validate their
+ * outbound value against (`lib/callableResponse.ts`), frozen by the SAME
+ * recursive walker the deep request shapes use, so a response rename at any
+ * depth fails here, in the same file, in the same voice as a request rename.
+ *
+ * Scope is the invoice money surface: every callable that reads or writes an
+ * invoice, a payment or a quote. The rest of the ~171 callables are a later
+ * PR, and are unguarded until then; that is a stated gap, not an oversight.
+ *
+ * Imported as thunks inside the block rather than at the top of this file, the
+ * confirmBrandAssetUpload precedent: it keeps every line this task added
+ * contiguous at the end.
+ */
+const FROZEN_RESPONSE_SHAPES: Record<
+  string,
+  { load: () => Promise<{ Result: z.ZodTypeAny }>; signature: string[] }
+> = {
+  // The `{ ok, invoiceId }` family. Thin, and deliberately so: the id is the
+  // only thing the caller could not already know, and on `createInvoice` /
+  // `createQuote` it is SERVER-MINTED, which is the whole reason it ships.
+  createInvoice: { load: () => import('../src/admin/createInvoice'), signature: ['invoiceId', 'ok'] },
+  createQuote: { load: () => import('../src/admin/createQuote'), signature: ['invoiceId', 'ok'] },
+  archiveInvoice: { load: () => import('../src/admin/archiveInvoice'), signature: ['invoiceId', 'ok'] },
+  unarchiveInvoice: { load: () => import('../src/admin/unarchiveInvoice'), signature: ['invoiceId', 'ok'] },
+  reviewAndSendDraftInvoice: {
+    load: () => import('../src/admin/reviewAndSendDraftInvoice'),
+    signature: ['invoiceId', 'ok'],
+  },
+  sendInvoiceReminder: {
+    load: () => import('../src/admin/sendInvoiceReminder'),
+    signature: ['invoiceId', 'ok'],
+  },
+  // Bare acks. `postInvoiceEvent` merges an ARBITRARY payload and must not
+  // start echoing the doc back: that would make the merge's result a contract.
+  postInvoiceEvent: { load: () => import('../src/admin/postInvoiceEvent'), signature: ['ok'] },
+  generateReceipt: { load: () => import('../src/admin/generateReceipt'), signature: ['ok'] },
+  // A download-token URL, never bytes.
+  generateInvoicePdf: {
+    load: () => import('../src/admin/generateInvoicePdf'),
+    signature: ['invoiceId', 'ok', 'pdfUrl'],
+  },
+  getMyInvoicePdf: {
+    load: () => import('../src/portal/getMyInvoicePdf'),
+    signature: ['invoiceId', 'ok', 'pdfUrl'],
+  },
+  // The money answers. Every field here is one the caller CANNOT compute:
+  // `updateInvoice`'s request carries no total at all, and `markInvoicePaid`
+  // derives its state from every recorded payment rather than from the amount
+  // just sent.
+  updateInvoice: {
+    load: () => import('../src/admin/updateInvoice'),
+    signature: [
+      'invoiceId',
+      'ok',
+      // NOT the persisted figures: `totals` is the raw signed arithmetic and
+      // the doc is written from the clamped `settleInvoice` reading. See the
+      // schema's header. W3-1 documented that rather than changing the wire.
+      'totals.amountDueCents',
+      'totals.paidCents',
+      'totals.subtotalCents',
+      'totals.totalCents',
+    ],
+  },
+  markInvoicePaid: {
+    load: () => import('../src/admin/markInvoicePaid'),
+    signature: [
+      'amountDueCents',
+      'invoiceId',
+      'ok',
+      // `overpaidCents` is the field that stops an over-collection becoming a
+      // credit. Dropping it would leave the excess with nowhere to be reported.
+      'overpaidCents',
+      'paidCents',
+      'paymentId',
+      'state',
+      'totalCents',
+    ],
+  },
+  // W2-1 (ADR-0002). Both ship something the caller could not have known: the
+  // server-derived link delta, and the kinfolkId a sandbox row was stamped with.
+  linkInvoiceSessions: {
+    load: () => import('../src/admin/linkInvoiceSessions'),
+    signature: ['added[]', 'editScope', 'invoiceId', 'ok', 'removed[]', 'sessionIds[]', 'status'],
+  },
+  recordPayment: {
+    load: () => import('../src/admin/recordPayment'),
+    signature: ['kinfolkId', 'ok', 'paymentId'],
+  },
+  // The operator sweeps. `skipped` is a record, so the walker names the key
+  // and not the five reasons; those are pinned by value in
+  // invoiceResponseContract.test.ts.
+  repairInvoicePayments: {
+    load: () => import('../src/admin/repairInvoicePayments'),
+    signature: [
+      'findings[].claimedAmountDueCents',
+      'findings[].correctAmountDueCents',
+      'findings[].invoiceId',
+      'findings[].invoiceNumber',
+      'findings[].kinfolkId',
+      'findings[].paidCents',
+      'findings[].status',
+      'findings[].totalCents',
+      'findings[].understatedCents',
+      'mode',
+      'nextCursor',
+      'ok',
+      'repaired',
+      'scanned',
+      'skipped',
+    ],
+  },
+  listUninvoicedSessions: {
+    load: () => import('../src/admin/listUninvoicedSessions'),
+    signature: [
+      'rateCardLoaded',
+      'scanned',
+      'sessions[].durationMinutes',
+      'sessions[].kinfolkId',
+      'sessions[].serviceType',
+      'sessions[].sessionId',
+      'sessions[].startTime',
+      'sessions[].unitCents',
+      'truncated',
+      'unpriceable[].serviceType',
+      'unpriceable[].sessionId',
+    ],
+  },
+  // The household-facing three. `payInvoice` is the only response on this
+  // surface with no `ok`, no `invoiceId` and a live third-party URL in it.
+  payInvoice: {
+    load: () => import('../src/portal/payInvoice'),
+    signature: ['amountCents', 'checkoutUrl', 'currency', 'sessionId'],
+  },
+  redeemCredit: {
+    load: () => import('../src/portal/redeemCredit'),
+    signature: ['newAccountBalanceCents', 'ok', 'redeemedAmountCents', 'target'],
+  },
+};
+describe('ADR-0001 W3-1 response contract drift guard (invoice money surface)', () => {
+  for (const [name, { load, signature }] of Object.entries(FROZEN_RESPONSE_SHAPES)) {
+    it(`${name} response signature is unchanged (update the mirrors + CALLABLE_CONTRACT.md if this fails)`, async () => {
+      const { Result } = await load();
+      expect(shapeSignature(Result)).toEqual([...signature].sort());
+    });
+  }
+});
+/**
+ * `getMyInvoices` gets its own block because its response is three copies of
+ * ONE DTO, and listing 87 dotted paths would bury the fact that matters: the
+ * three buckets are the same shape. A client that had to handle a
+ * bucket-specific field would be re-deriving state from placement, which is
+ * precisely what the ADR-0002 stamp retired.
+ *
+ * This is the 20-field DTO ADR-0001 names in its opening argument, transcribed
+ * field for field into `mytribe/web/src/api/invoicesApi.ts`. Until now nothing
+ * checked that transcription.
+ */
+describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () => {
+  const INVOICE_DTO_SIGNATURE = [
+    'address',
+    'amountDue',
+    'client',
+    'creditAmountCents',
+    'creditRedeemedAtMs',
+    'creditTarget',
+    'date',
+    'discount',
+    'dueDate',
+    // The ADR-0002 stamp, both halves, shipped verbatim off the doc.
+    'editScope',
+    'id',
+    'isPaid',
+    'kinfolkId',
+    'kinfolkName',
+    // Optional on the DTO; the walker names it either way, which is the point:
+    // an optional field is still a field three clients read.
+    'lineItems[].amountCents',
+    'lineItems[].dateIso',
+    'lineItems[].label',
+    'lineItems[].lineId',
+    'lineItems[].qty',
+    'lineItems[].sessionId',
+    'lineItems[].source',
+    'lineItems[].unitCents',
+    'paidCents',
+    'partiallyPaid',
+    'paymentsHistory',
+    'status',
+    'terms',
+    'total',
+    'viewed',
+  ];
+  it('the top level is three buckets plus the household balance, and nothing else', async () => {
+    const { Result } = await import('../src/portal/getMyInvoices');
+    expect(Object.keys((Result as z.ZodObject<z.ZodRawShape>).shape).sort()).toEqual([
+      'accountBalanceCents',
+      'credits',
+      'open',
+      'paid',
+    ]);
+  });
+  it('every bucket ships the SAME invoice DTO, frozen field for field', async () => {
+    const { Result } = await import('../src/portal/getMyInvoices');
+    const shape = (Result as z.ZodObject<z.ZodRawShape>).shape;
+    for (const bucket of ['open', 'paid', 'credits'] as const) {
+      const element = (shape[bucket] as unknown as { def: { element: z.ZodTypeAny } }).def.element;
+      expect(shapeSignature(element), `${bucket} bucket DTO`).toEqual(
+        [...INVOICE_DTO_SIGNATURE].sort(),
+      );
+    }
+  });
+});
