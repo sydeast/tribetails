@@ -1,9 +1,9 @@
 import { useCallback, useState } from 'react';
-import {
-  listUninvoicedSessions,
-  type UninvoicedSession,
-  type UninvoicedSessionsResult,
-} from '../api/invoicesWrite';
+import { listUninvoicedSessions } from '../api/invoicesWrite';
+import type {
+  ListUninvoicedSessionsResult,
+  ListUninvoicedSessionsResultSession,
+} from '../contracts/invoiceContracts.generated';
 import { formatCentsUsd } from '../lib/invoiceReconcile';
 import { centsToInputDollars } from '../lib/invoiceMoneyInput';
 import { humanizeDate, localDateIso } from '../lib/invoiceFormat';
@@ -43,7 +43,7 @@ interface UninvoicedVisitsPickerProps {
 }
 
 /** A visit turned into a draft line. The unit price is BLANK when it could not be priced. */
-export function draftFromSession(session: UninvoicedSession): DraftLine {
+export function draftFromSession(session: ListUninvoicedSessionsResultSession): DraftLine {
   const hours = session.durationMinutes > 0 ? session.durationMinutes / 60 : 0;
   const label = session.serviceType.trim() === '' ? 'Visit' : session.serviceType.trim();
   const dateLabel = session.startTime.slice(0, 10);
@@ -77,7 +77,7 @@ export function UninvoicedVisitsPicker({ kinfolkId, onAdd, onClose }: Uninvoiced
   const [to, setTo] = useState(initial.to);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<UninvoicedSessionsResult | null>(null);
+  const [result, setResult] = useState<ListUninvoicedSessionsResult | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
 
   // Only this household's visits. The callable is not scoped by household (it

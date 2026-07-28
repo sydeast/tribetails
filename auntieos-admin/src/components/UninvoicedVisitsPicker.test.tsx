@@ -2,7 +2,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { UninvoicedSession, UninvoicedSessionsResult } from '../api/invoicesWrite';
+import type {
+  ListUninvoicedSessionsResult,
+  ListUninvoicedSessionsResultSession,
+} from '../contracts/invoiceContracts.generated';
 
 const { listUninvoicedSessions } = vi.hoisted(() => ({ listUninvoicedSessions: vi.fn() }));
 vi.mock('../api/invoicesWrite', async (orig) => ({
@@ -12,7 +15,7 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
 
 import { UninvoicedVisitsPicker, draftFromSession } from './UninvoicedVisitsPicker';
 
-function session(over: Partial<UninvoicedSession> = {}): UninvoicedSession {
+function session(over: Partial<ListUninvoicedSessionsResultSession> = {}): ListUninvoicedSessionsResultSession {
   return {
     sessionId: 's1',
     kinfolkId: 'kf1',
@@ -24,7 +27,7 @@ function session(over: Partial<UninvoicedSession> = {}): UninvoicedSession {
   };
 }
 
-function result(over: Partial<UninvoicedSessionsResult> = {}): UninvoicedSessionsResult {
+function result(over: Partial<ListUninvoicedSessionsResult> = {}): ListUninvoicedSessionsResult {
   return {
     sessions: [session()],
     unpriceable: [],

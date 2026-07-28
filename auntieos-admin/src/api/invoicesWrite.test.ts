@@ -10,8 +10,8 @@ import {
   generateReceipt,
   markInvoicePaid,
   reviewAndSendDraftInvoice,
-  type NewInvoiceInput,
 } from './invoicesWrite';
+import type { CreateInvoiceArgs } from '../contracts/invoiceContracts.generated';
 
 // NOTE: `call.mockReset()` runs at the top of EACH test body below, not in a
 // shared `beforeEach`. That is deliberate, not a stylistic drift from the
@@ -26,7 +26,7 @@ import {
 // trigger with no change in test isolation (every test sets its own
 // mockResolvedValue/mockRejectedValue immediately after).
 
-function invoiceInput(over: Partial<NewInvoiceInput> = {}): NewInvoiceInput {
+function invoiceInput(over: Partial<CreateInvoiceArgs> = {}): CreateInvoiceArgs {
   return {
     familyId: 'kf1',
     kinfolkName: 'The Whitfields',
@@ -116,6 +116,30 @@ describe('markInvoicePaid', () => {
       reference: 'CK-100',
       paidAt: '2026-07-01T00:00:00Z',
     });
+  });
+
+  // The settlement is handed back AS THE SERVER SENT IT, not rebuilt field by
+  // field on the way through. Rebuilding it was the last place this module could
+  // drop a field the response gained (ADR-0001), and `InvoiceDetail` decides
+  // which sentence the operator reads from `state` / `amountDueCents` /
+  // `overpaidCents`, so a dropped one would misreport real money.
+  it('returns the server settlement verbatim', async () => {
+    call.mockReset();
+    call.mockResolvedValue({
+      ok: true,
+      invoiceId: 'inv-5',
+      paymentId: 'pay-3',
+      state: 'partial',
+      totalCents: 4000,
+      paidCents: 2000,
+      amountDueCents: 2000,
+      overpaidCents: 0,
+    });
+    const res = await markInvoicePaid('inv-5', { amount: 20 });
+    expect(res.state).toBe('partial');
+    expect(res.amountDueCents).toBe(2000);
+    expect(res.overpaidCents).toBe(0);
+    expect(res.paymentId).toBe('pay-3');
   });
 
   it('fails loud on rejection', async () => {

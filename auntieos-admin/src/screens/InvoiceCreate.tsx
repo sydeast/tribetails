@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, type FormEvent } from 'react';
 import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
-import { createInvoice, createQuote, type NewInvoiceInput } from '../api/invoicesWrite';
+import { createInvoice, createQuote } from '../api/invoicesWrite';
+import type { CreateInvoiceArgs } from '../contracts/invoiceContracts.generated';
 import { useCollection } from '../lib/firestore';
 import { computeInvoiceTotals } from '../lib/invoiceMath';
 import { centsToDollars } from '../lib/invoiceMath';
@@ -171,7 +172,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
     // ITEMIZED AND FLAT VALIDATE DIFFERENTLY, because in the itemized path there
     // is no total to validate: it is derived. Running the flat validator over a
     // blank total field would reject a perfectly good itemized invoice.
-    let moneyFields: Pick<NewInvoiceInput, 'total' | 'amountDue' | 'lineItems' | 'invoiceDiscountCents'>;
+    let moneyFields: Pick<CreateInvoiceArgs, 'total' | 'amountDue' | 'lineItems' | 'invoiceDiscountCents'>;
 
     if (itemized) {
       const parsed = parseDraftLines(lines, invoiceDiscountText);
@@ -227,7 +228,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
     setSubmitError(null);
     setSubmitting(true);
 
-    const base: NewInvoiceInput = {
+    const base: CreateInvoiceArgs = {
       familyId: kinfolkId,
       kinfolkName: selectedHousehold ? kinfolkDisplayName(selectedHousehold) : '',
       invoiceNumber: invoiceNumber.trim(),
@@ -247,6 +248,18 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
     };
 
     try {
+      // KNOWN DEFECT, RECORDED RATHER THAN PATCHED HERE: an ITEMIZED QUOTE
+      // LOSES ITS LINES. `CreateQuoteArgs` has no `lineItems` and no
+      // `invoiceDiscountCents` (see the contracts module), and the server's zod
+      // object strips both silently rather than refusing, so the quote is stored
+      // with the right total and none of the lines behind it. The money-mode
+      // toggle above is not gated on `isQuote`, so an operator can reach this
+      // today. The spread below still carries both keys because that is what
+      // ships now and this change is a type adoption, not a behaviour change:
+      // TypeScript does not excess-property-check a spread, so nothing here
+      // fails, which is exactly why the comment has to. Fixing it means either
+      // giving `createQuote` line items server-side or gating itemization out of
+      // quote mode, and that is a decision about the product, not a type.
       const result = isQuote ? await createQuote({ ...base, sendToKinfolk }) : await createInvoice(base);
       setSubmitting(false);
       onCreated?.(result.invoiceId);
