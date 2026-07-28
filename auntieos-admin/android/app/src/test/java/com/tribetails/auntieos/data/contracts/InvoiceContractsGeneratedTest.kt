@@ -11,15 +11,17 @@ import org.junit.Test
  *
  * The generator's own tests (mytribe/functions/test/contractsCodegen.test.ts)
  * pin the emitted SOURCE. This file pins its BEHAVIOUR, because the emitted
- * source is only interesting if a junk payload decodes the way
- * `decodeInvoiceSettlement` and `decodeInvoiceSessionLinks` decode one today.
+ * source is only interesting if a junk payload degrades rather than throwing.
  * A callable response arrives after the server write has already committed, so
  * a decoder that threw would report collected money as a failed collection,
  * and every screen in this app renders a failure as a retry affordance.
  *
- * NOTHING HERE IS RE-POINTED YET. `InvoiceRepository` still uses its
- * hand-mirrors; adoption is a later, per-client change. These tests are what
- * make that swap reviewable rather than hopeful.
+ * `InvoiceRepository` IS RE-POINTED AT THESE NOW. Its hand-mirrors are deleted
+ * and the divergences the swap turned up are ruled on where they belong:
+ * InvoiceRepositoryTest holds the client-side fallbacks and the model-to-Args
+ * mapping, and RecordPaymentOutcomeTest holds the settlement-state ruling, the
+ * one place a generated decoder deliberately answers differently from the hand
+ * one it replaced.
  */
 class InvoiceContractsGeneratedTest {
 

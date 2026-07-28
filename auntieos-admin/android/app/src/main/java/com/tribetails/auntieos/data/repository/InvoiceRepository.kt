@@ -2,6 +2,26 @@ package com.tribetails.auntieos.data.repository
 
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
+import com.tribetails.auntieos.data.contracts.ArchiveInvoiceArgs
+import com.tribetails.auntieos.data.contracts.CreateInvoiceArgs
+import com.tribetails.auntieos.data.contracts.CreateQuoteArgs
+import com.tribetails.auntieos.data.contracts.GenerateInvoicePdfArgs
+import com.tribetails.auntieos.data.contracts.GenerateReceiptArgs
+import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsArgs
+import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsResult
+import com.tribetails.auntieos.data.contracts.MarkInvoicePaidArgs
+import com.tribetails.auntieos.data.contracts.MarkInvoicePaidResult
+import com.tribetails.auntieos.data.contracts.PostInvoiceEventArgs
+import com.tribetails.auntieos.data.contracts.RecordPaymentArgs
+import com.tribetails.auntieos.data.contracts.SendInvoiceReminderArgs
+import com.tribetails.auntieos.data.contracts.UnarchiveInvoiceArgs
+import com.tribetails.auntieos.data.contracts.decodeCreateInvoiceResult
+import com.tribetails.auntieos.data.contracts.decodeCreateQuoteResult
+import com.tribetails.auntieos.data.contracts.decodeGenerateInvoicePdfResult
+import com.tribetails.auntieos.data.contracts.decodeLinkInvoiceSessionsResult
+import com.tribetails.auntieos.data.contracts.decodeMarkInvoicePaidResult
+import com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult
+import com.tribetails.auntieos.data.contracts.decodeSendInvoiceReminderResult
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.domain.scopedKinfolkId
@@ -26,10 +46,14 @@ import kotlinx.coroutines.tasks.await
  * two equality filters on one field; both are carried over exactly as the god-file
  * had them.
  *
- * The payload encoders/decoders below are HAND-MIRRORS of the server zod schemas
- * and live with the repo that sends them. ADR-0001 replaces them with generated
- * Kotlin; they keep the `recordPaymentPayload` / `decodeInvoiceSettlement`
- * convention so that swap is mechanical.
+ * EVERY WIRE SHAPE HERE IS GENERATED (ADR-0001). The request classes and the
+ * `decode*` functions come from `data.contracts.InvoiceContracts.generated.kt`,
+ * which is projected from the server zod schemas; the hand-mirrors this file
+ * used to carry are gone. What remains below the class is the thin adaptation
+ * from Android's own models to those generated Args, plus the handful of
+ * CLIENT-SIDE fallbacks that are not in any schema and are each named at their
+ * definition. A schema rename is now a compile error here rather than a silent
+ * key mismatch on the wire.
  *
  * @param authGate W4-2: the shared sign-in gate and `testTribeId` claim source.
  *   W4-1 copied the god-file's four-line sign-in check into this file and took
@@ -85,32 +109,21 @@ class InvoiceRepository(
      * Slice 2: routes through the createInvoice callable (server mints the id,
      * writes audit BILLING_INVOICE_CREATED, and enqueues the invoice.new
      * notification). Replaces the old silent direct Firestore write.
+     *
+     * Fail-loud on a response that carries no id: the caller's whole reason for
+     * calling is to learn the new invoice's id, so returning "" as a success
+     * would hand the ViewModel a doc reference that resolves to nothing.
      */
     suspend fun createInvoice(invoice: Invoice): Result<String> = runCatching {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
         // In test mode force the invoice's household to the sandbox kinfolk so the
         // server write lands inside the rules-enforced scope.
-        val scopedFamilyId = mode.scopedKinfolkId(invoice.kinfolkId)
-        val payload = mapOf(
-            "familyId" to scopedFamilyId,
-            "kinfolkName" to invoice.kinfolkName,
-            "invoiceNumber" to invoice.invoiceNumber,
-            "client" to invoice.client,
-            "address" to invoice.address,
-            "date" to invoice.date,
-            "terms" to invoice.terms,
-            "dueDate" to invoice.dueDate,
-            "discount" to invoice.discount,
-            "total" to invoice.total,
-            "amountDue" to invoice.amountDue,
-            "status" to invoice.status,
-            "sessionIds" to invoice.sessionIds,
-        )
+        val args = createInvoiceArgs(invoice, familyId = mode.scopedKinfolkId(invoice.kinfolkId))
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("createInvoice").call(payload).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("createInvoice").call(args.toPayload()).await().data as? Map<String, Any?>
             ?: error("createInvoice: non-map payload")
-        raw["invoiceId"] as? String ?: error("createInvoice: missing invoiceId")
+        decodeCreateInvoiceResult(raw).invoiceId.ifBlank { error("createInvoice: missing invoiceId") }
     }.onFailure { AuntieLog.e("Failed to create invoice", it) }
 
     /**
@@ -123,41 +136,28 @@ class InvoiceRepository(
     suspend fun createQuote(invoice: Invoice, sendToKinfolk: Boolean): Result<String> = runCatching {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
-        val scopedFamilyId = mode.scopedKinfolkId(invoice.kinfolkId)
-        val payload = mapOf(
-            "familyId" to scopedFamilyId,
-            "kinfolkName" to invoice.kinfolkName,
-            "invoiceNumber" to invoice.invoiceNumber,
-            "client" to invoice.client,
-            "address" to invoice.address,
-            "date" to invoice.date,
-            "terms" to invoice.terms,
-            "dueDate" to invoice.dueDate,
-            "discount" to invoice.discount,
-            "total" to invoice.total,
-            "amountDue" to invoice.amountDue,
-            "sessionIds" to invoice.sessionIds,
-            "sendToKinfolk" to sendToKinfolk,
-        )
+        val args = createQuoteArgs(invoice, familyId = mode.scopedKinfolkId(invoice.kinfolkId), sendToKinfolk = sendToKinfolk)
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("createQuote").call(payload).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("createQuote").call(args.toPayload()).await().data as? Map<String, Any?>
             ?: error("createQuote: non-map payload")
-        raw["invoiceId"] as? String ?: error("createQuote: missing invoiceId")
+        decodeCreateQuoteResult(raw).invoiceId.ifBlank { error("createQuote: missing invoiceId") }
     }.onFailure { AuntieLog.e("Failed to create quote", it) }
 
     /**
      * Stage 3 / 16.2: generates a downloadable PDF of an invoice via the
      * generateInvoicePdf callable (server renders with pdf-lib + stores to Cloud
-     * Storage) and returns the download URL to open. Fail-loud on error.
+     * Storage) and returns the download URL to open. Fail-loud on error: there is
+     * nothing to open without a URL, so a blank one is reported rather than
+     * launched.
      */
     suspend fun generateInvoicePdf(invoiceId: String): Result<String> = runCatching {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("generateInvoicePdf")
-            .call(mapOf("invoiceId" to invoiceId))
+            .call(GenerateInvoicePdfArgs(invoiceId = invoiceId).toPayload())
             .await().data as? Map<String, Any?>
-        (raw?.get("pdfUrl") as? String)?.takeIf { it.isNotBlank() }
-            ?: error("generateInvoicePdf: server returned no pdfUrl")
+        decodeGenerateInvoicePdfResult(raw).pdfUrl
+            .ifBlank { error("generateInvoicePdf: server returned no pdfUrl") }
     }.onFailure { AuntieLog.e("generateInvoicePdf failed for $invoiceId", it) }
 
     /**
@@ -180,8 +180,7 @@ class InvoiceRepository(
     suspend fun archiveInvoice(invoiceId: String, force: Boolean = false): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "archiveInvoice requires an invoice id" }
-        val payload = if (force) mapOf("invoiceId" to invoiceId, "force" to true) else mapOf("invoiceId" to invoiceId)
-        functions.getHttpsCallable("archiveInvoice").call(payload).await()
+        functions.getHttpsCallable("archiveInvoice").call(archiveInvoiceArgs(invoiceId, force).toPayload()).await()
         Unit
     }.onFailure { AuntieLog.e("archiveInvoice failed for $invoiceId", it) }
 
@@ -197,7 +196,7 @@ class InvoiceRepository(
         authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "unarchiveInvoice requires an invoice id" }
         functions.getHttpsCallable("unarchiveInvoice")
-            .call(mapOf("invoiceId" to invoiceId))
+            .call(UnarchiveInvoiceArgs(invoiceId = invoiceId).toPayload())
             .await()
         Unit
     }.onFailure { AuntieLog.e("unarchiveInvoice failed for $invoiceId", it) }
@@ -213,6 +212,19 @@ class InvoiceRepository(
      * callable wrote `paid` with a zero balance for ANY amount, which is how $20
      * against a $40 invoice made the remaining $20 uncollectable.
      *
+     * AN UNREADABLE `state` IS NOW REPORTED, NOT GUESSED. The deleted
+     * hand-decoder answered "partial" when it could not read the server's
+     * `state`, and the generated decoder answers `""`. Both readings agree that
+     * "paid in full" must never be invented; they disagree about whether the
+     * client may invent "partial" instead, and the schema settles it: the
+     * server's `state` is a required four-member enum built from `settleInvoice`
+     * on every path, so there is no absent case for a schema default to
+     * describe and no honest wire meaning for "partial" here. The reading that
+     * matters to the operator moved up to the presenter, where it is a sentence
+     * about what is known rather than a claim about money:
+     * `recordPaymentToast` answers a blank state with neither settlement nor a
+     * fabricated balance. See RecordPaymentOutcomeTest.
+     *
      * Fail-loud: the server's precondition messages (already settled, draft or
      * quote, cancelled, credit) surface verbatim.
      */
@@ -221,26 +233,20 @@ class InvoiceRepository(
         amount: Double?,
         method: String,
         reference: String,
-    ): Result<InvoiceSettlement> = runCatching {
+    ): Result<MarkInvoicePaidResult> = runCatching {
         authGate.ensureAuthenticated()
-        val payload = buildMap<String, Any> {
-            put("invoiceId", invoiceId)
-            if (amount != null) put("amount", amount)
-            if (method.isNotBlank()) put("method", method)
-            if (reference.isNotBlank()) put("reference", reference)
-        }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("markInvoicePaid")
-            .call(payload)
+            .call(markInvoicePaidArgs(invoiceId, amount, method, reference).toPayload())
             .await().data as? Map<String, Any?>
-        decodeInvoiceSettlement(raw)
+        decodeMarkInvoicePaidResult(raw)
     }.onFailure { AuntieLog.e("markInvoicePaid failed for $invoiceId", it) }
 
     /** Slice 2: marks an invoice receipted via the generateReceipt callable. */
     suspend fun generateReceipt(invoiceId: String): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
         functions.getHttpsCallable("generateReceipt")
-            .call(mapOf("invoiceId" to invoiceId))
+            .call(GenerateReceiptArgs(invoiceId = invoiceId).toPayload())
             .await()
         Unit
     }.onFailure { AuntieLog.e("generateReceipt failed for $invoiceId", it) }
@@ -256,9 +262,9 @@ class InvoiceRepository(
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("sendInvoiceReminder")
-            .call(mapOf("invoiceId" to invoiceId))
+            .call(SendInvoiceReminderArgs(invoiceId = invoiceId).toPayload())
             .await().data as? Map<String, Any?>
-        decodeSentReminderInvoiceId(raw, invoiceId)
+        reminderInvoiceIdOrRequested(raw, invoiceId)
     }.onFailure { AuntieLog.e("sendInvoiceReminder failed for $invoiceId", it) }
 
     /**
@@ -266,17 +272,22 @@ class InvoiceRepository(
      * callable. postInvoiceEvent merges the supplied payload onto invoices/{invoiceId}
      * and (because the doc already exists) fires the invoice.updated notification.
      * Only the status field is merged, leaving the rest of the invoice untouched.
+     *
+     * NAMED FOR WHAT IT DOES, NOT FOR THE CALLABLE IT USES: the server also has a
+     * dedicated `reviewAndSendDraftInvoice` callable, and this method does not
+     * call it. Re-pointing is a behaviour change (a different guard, a different
+     * audit event) and belongs to whoever makes it deliberately, so ADR-0001
+     * adoption leaves the target alone and only replaces the payload map.
      */
     suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
-        val scopedFamilyId = mode.scopedKinfolkId(familyId)
-        val payload = mapOf(
-            "familyId" to scopedFamilyId,
-            "invoiceId" to invoiceId,
-            "payload" to mapOf("status" to "sent"),
+        val args = PostInvoiceEventArgs(
+            familyId = mode.scopedKinfolkId(familyId),
+            invoiceId = invoiceId,
+            payload = mapOf("status" to "sent"),
         )
-        functions.getHttpsCallable("postInvoiceEvent").call(payload).await()
+        functions.getHttpsCallable("postInvoiceEvent").call(args.toPayload()).await()
         Unit
     }.onFailure { AuntieLog.e("reviewAndSendDraftInvoice failed for $invoiceId", it) }
 
@@ -300,14 +311,14 @@ class InvoiceRepository(
      * with the missing ids, sandbox permission-denied) surface verbatim, and
      * on any failure NOTHING was written anywhere - the transaction is atomic.
      */
-    suspend fun linkInvoiceSessions(invoiceId: String, sessionIds: List<String>): Result<InvoiceSessionLinks> = runCatching {
+    suspend fun linkInvoiceSessions(invoiceId: String, sessionIds: List<String>): Result<LinkInvoiceSessionsResult> = runCatching {
         authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "linkInvoiceSessions requires an invoice id" }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("linkInvoiceSessions")
-            .call(mapOf("invoiceId" to invoiceId, "sessionIds" to sessionIds))
+            .call(LinkInvoiceSessionsArgs(invoiceId = invoiceId, sessionIds = sessionIds).toPayload())
             .await().data as? Map<String, Any?>
-        decodeInvoiceSessionLinks(raw, invoiceId, sessionIds).also {
+        invoiceSessionLinksOf(raw, invoiceId, sessionIds).also {
             AuntieLog.i("Linked ${it.sessionIds.size} session(s) to invoice $invoiceId (+${it.added.size}/-${it.removed.size})")
         }
     }.onFailure { AuntieLog.e("linkInvoiceSessions failed for $invoiceId", it) }
@@ -336,128 +347,163 @@ class InvoiceRepository(
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("recordPayment")
-            .call(recordPaymentPayload(payment))
+            .call(recordPaymentArgs(payment).toPayload())
             .await().data as? Map<String, Any?>
             ?: error("recordPayment: non-map payload")
-        raw["paymentId"] as? String ?: error("recordPayment: missing paymentId")
+        decodeRecordPaymentResult(raw).paymentId.ifBlank { error("recordPayment: missing paymentId") }
     }.onFailure { AuntieLog.e("Failed to record payment", it) }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Model -> generated Args, and the client-side fallbacks
+//
+// What used to live here was a set of hand-mirrors: payload maps and `decode*`
+// functions that transcribed the server zod schemas key by key, with nothing
+// but review discipline holding them to it. ADR-0001 deleted them. What is left
+// is the part no schema can state: how Android's own [Invoice] and [Payment]
+// models map onto the generated request classes, and the three fallbacks this
+// client applies on top of a generated decode. Every one of them is pure and
+// unit-tested (InvoiceRepositoryTest), so they run without Firebase static init.
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Where an invoice stands after a payment, as the `markInvoicePaid` callable
- * reports it. Every figure is INTEGER CENTS.
+ * [Invoice] -> `createInvoice` request.
  *
- * [amountDueCents] is never negative: an overpayment settles the invoice and
- * puts the excess in [overpaidCents] instead, because a negative balance is this
- * codebase's CREDIT signal and would silently turn an over-collected invoice
- * into a credit owed back to the household.
+ * [familyId] is passed in already TestMode-scoped rather than read here, so this
+ * stays pure and the sandbox decision has exactly one home (the caller).
+ * `lineItems` and `invoiceDiscountCents` are left at their generated defaults:
+ * Android's composer sends the dollar `total`/`amountDue` pair, and the server
+ * treats the line-item pair as the alternative to it, not an addition.
  */
-data class InvoiceSettlement(
-    /** One of `unpaid`, `partial`, `settled`, `overpaid`. */
-    val state: String,
-    val totalCents: Long,
-    val paidCents: Long,
-    val amountDueCents: Long,
-    val overpaidCents: Long,
-) {
-    val isPartial: Boolean get() = state == "partial"
-    val isOverpaid: Boolean get() = state == "overpaid"
-}
-
-/**
- * Pure decode of the markInvoicePaid callable payload into [InvoiceSettlement].
- *
- * A MISSING `state` DECODES TO "partial", NOT TO "settled". If the server's
- * answer cannot be read, the safe reading is that the invoice may still be
- * owed: that keeps it in Outstanding and keeps the operator able to collect,
- * which is exactly what the original defect took away. Defaulting the other way
- * would reproduce the bug in the client. Pure; unit-tested.
- */
-internal fun decodeInvoiceSettlement(raw: Map<String, Any?>?): InvoiceSettlement {
-    fun cents(key: String): Long = (raw?.get(key) as? Number)?.toLong() ?: 0L
-    val state = (raw?.get("state") as? String)?.takeIf { it.isNotBlank() } ?: "partial"
-    return InvoiceSettlement(
-        state = state,
-        totalCents = cents("totalCents"),
-        paidCents = cents("paidCents"),
-        amountDueCents = cents("amountDueCents"),
-        overpaidCents = cents("overpaidCents"),
-    )
-}
-
-/**
- * Pure decode of the sendInvoiceReminder callable payload to the echoed invoiceId,
- * falling back to the requested id when the server omits it. Pure; unit-tested.
- */
-internal fun decodeSentReminderInvoiceId(raw: Map<String, Any?>?, requested: String): String =
-    (raw?.get("invoiceId") as? String)?.ifBlank { requested } ?: requested
-
-/**
- * The invoice<->session link set after a linkInvoiceSessions write, as the
- * server reports it: the stored full set, the delta the transaction actually
- * applied, and the classifier state persisted onto the invoice doc
- * (ADR-0002 decision 2).
- */
-data class InvoiceSessionLinks(
-    val invoiceId: String,
-    /** The stored set after this write. */
-    val sessionIds: List<String>,
-    /** Sessions that gained `invoiceId` in this write. */
-    val added: List<String>,
-    /** Sessions whose `invoiceId` was cleared in this write. */
-    val removed: List<String>,
-    /** Classifier state persisted onto the invoice (e.g. `sent`); "" if omitted. */
-    val status: String,
-    /** `all` | `metadataOnly` | `none`; "" if omitted. */
-    val editScope: String,
+internal fun createInvoiceArgs(invoice: Invoice, familyId: String): CreateInvoiceArgs = CreateInvoiceArgs(
+    familyId = familyId,
+    kinfolkName = invoice.kinfolkName,
+    invoiceNumber = invoice.invoiceNumber,
+    client = invoice.client,
+    address = invoice.address,
+    date = invoice.date,
+    terms = invoice.terms,
+    dueDate = invoice.dueDate,
+    discount = invoice.discount,
+    total = invoice.total,
+    amountDue = invoice.amountDue,
+    status = invoice.status,
+    sessionIds = invoice.sessionIds,
 )
 
 /**
- * Pure decode of the linkInvoiceSessions callable payload into
- * [InvoiceSessionLinks]. The echoed invoiceId/sessionIds fall back to what was
- * requested (the call succeeded if we got here; the server stores the
- * requested set with duplicates collapsed, hence the distinct()). added and
- * removed default to empty and status/editScope to "" when the server omits
- * them. Pure; unit-tested.
+ * [Invoice] -> `createQuote` request.
+ *
+ * `status` IS LEFT AT THE SCHEMA DEFAULT, deliberately, where
+ * [createInvoiceArgs] forwards the model's. createQuote mints in QUOTE status
+ * "regardless of what the caller passes" (admin/createQuote.ts) and never reads
+ * the arg, so forwarding a composer's draft status here would put a value on the
+ * wire that reads as a request the server refuses to honour.
  */
-internal fun decodeInvoiceSessionLinks(
+internal fun createQuoteArgs(invoice: Invoice, familyId: String, sendToKinfolk: Boolean): CreateQuoteArgs = CreateQuoteArgs(
+    familyId = familyId,
+    kinfolkName = invoice.kinfolkName,
+    invoiceNumber = invoice.invoiceNumber,
+    client = invoice.client,
+    address = invoice.address,
+    date = invoice.date,
+    terms = invoice.terms,
+    dueDate = invoice.dueDate,
+    discount = invoice.discount,
+    total = invoice.total,
+    amountDue = invoice.amountDue,
+    sessionIds = invoice.sessionIds,
+    sendToKinfolk = sendToKinfolk,
+)
+
+/**
+ * The `markInvoicePaid` request.
+ *
+ * A BLANK method or reference IS OMITTED, NOT SENT BLANK. The dialog leaves
+ * both empty when the operator does not fill them in, and the server types them
+ * `z.string().trim().min(1).optional()`: an empty string is not a weaker
+ * version of an absent one there, it is a validation failure that refuses the
+ * whole payment. Only [amount] may legitimately be null, and the generated
+ * class omits a null for us.
+ */
+internal fun markInvoicePaidArgs(
+    invoiceId: String,
+    amount: Double?,
+    method: String,
+    reference: String,
+): MarkInvoicePaidArgs = MarkInvoicePaidArgs(
+    invoiceId = invoiceId,
+    amount = amount,
+    method = method.takeIf { it.isNotBlank() },
+    reference = reference.takeIf { it.isNotBlank() },
+)
+
+/**
+ * The `archiveInvoice` request. An unforced archive omits `force` rather than
+ * sending `false`, which is the shape this callable has always been called
+ * with: the flag exists to say a write-off was chosen, and every audited
+ * archive should be able to tell "not forced" from "the client had an opinion".
+ */
+internal fun archiveInvoiceArgs(invoiceId: String, force: Boolean): ArchiveInvoiceArgs =
+    ArchiveInvoiceArgs(invoiceId = invoiceId, force = force.takeIf { it })
+
+/**
+ * [Payment] -> `recordPayment` request: every field of Android's model EXCEPT
+ * `id` (@DocumentId, never serialized; the server mints the doc id and returns
+ * it). Amount and tip stay DOLLARS-as-floats, the legacy shape of this
+ * collection. No TestMode anywhere: the sandbox kinfolkId stamp is the server's
+ * job now.
+ */
+internal fun recordPaymentArgs(payment: Payment): RecordPaymentArgs = RecordPaymentArgs(
+    kinfolkId = payment.kinfolkId,
+    kinfolkName = payment.kinfolkName,
+    client = payment.client,
+    address = payment.address,
+    date = payment.date,
+    paymentMethod = payment.paymentMethod,
+    referenceNumber = payment.referenceNumber,
+    email = payment.email,
+    amount = payment.amount,
+    tip = payment.tip,
+    notes = payment.notes,
+    invoiceId = payment.invoiceId,
+    invoiceNumber = payment.invoiceNumber,
+)
+
+/**
+ * The invoiceId `sendInvoiceReminder` echoed, falling back to the one we asked
+ * about.
+ *
+ * A CLIENT FALLBACK, NOT A SCHEMA DEFAULT, and it is safe for the same reason
+ * the settlement state's is not: this value is not news. We are decoding an
+ * echo of the id we just sent, on a call that already succeeded, so the fallback
+ * restates something the caller knows rather than inventing something only the
+ * server could know.
+ */
+internal fun reminderInvoiceIdOrRequested(raw: Map<String, Any?>?, requested: String): String =
+    decodeSendInvoiceReminderResult(raw).invoiceId.ifBlank { requested }
+
+/**
+ * The `linkInvoiceSessions` response, with the two echoed fields falling back to
+ * what was requested.
+ *
+ * `sessionIds` FALLS BACK ONLY WHEN THE KEY IS ABSENT, never when it is present
+ * and empty: `[]` is the server saying everything was unlinked, and the
+ * generated decoder cannot tell that apart from a missing key because both are
+ * an empty list to it. The distinction is real - an unlink is the one save
+ * whose stored set is empty - so it is made here, off the raw payload, before
+ * the decode collapses it. `added`, `removed`, `status` and `editScope` are the
+ * generated decoder's unaltered: they are the server's derivation and this
+ * client has nothing to fall back to.
+ */
+internal fun invoiceSessionLinksOf(
     raw: Map<String, Any?>?,
     requestedInvoiceId: String,
     requestedSessionIds: List<String>,
-): InvoiceSessionLinks {
-    fun ids(key: String): List<String> =
-        (raw?.get(key) as? List<*>).orEmpty().mapNotNull { it as? String }
-    return InvoiceSessionLinks(
-        invoiceId = (raw?.get("invoiceId") as? String)?.ifBlank { requestedInvoiceId } ?: requestedInvoiceId,
-        sessionIds = if (raw?.get("sessionIds") is List<*>) ids("sessionIds") else requestedSessionIds.distinct(),
-        added = ids("added"),
-        removed = ids("removed"),
-        status = (raw?.get("status") as? String).orEmpty(),
-        editScope = (raw?.get("editScope") as? String).orEmpty(),
+): LinkInvoiceSessionsResult {
+    val decoded = decodeLinkInvoiceSessionsResult(raw)
+    return decoded.copy(
+        invoiceId = decoded.invoiceId.ifBlank { requestedInvoiceId },
+        sessionIds = if (raw?.get("sessionIds") is List<*>) decoded.sessionIds else requestedSessionIds.distinct(),
     )
 }
-
-/**
- * Pure encode of the recordPayment callable payload. Hand-mirrors the server
- * zod Args (mytribe/functions/src/admin/recordPayment.ts) field for field:
- * every field of Android's [Payment] model EXCEPT `id` (@DocumentId, never
- * serialized; the server mints the doc id and returns it). Amount and tip stay
- * DOLLARS-as-floats, the legacy shape of this collection. No TestMode
- * anywhere: the sandbox kinfolkId stamp is the server's job now. Pure;
- * unit-tested.
- */
-internal fun recordPaymentPayload(payment: Payment): Map<String, Any?> = mapOf(
-    "kinfolkId" to payment.kinfolkId,
-    "kinfolkName" to payment.kinfolkName,
-    "client" to payment.client,
-    "address" to payment.address,
-    "date" to payment.date,
-    "paymentMethod" to payment.paymentMethod,
-    "referenceNumber" to payment.referenceNumber,
-    "email" to payment.email,
-    "amount" to payment.amount,
-    "tip" to payment.tip,
-    "notes" to payment.notes,
-    "invoiceId" to payment.invoiceId,
-    "invoiceNumber" to payment.invoiceNumber,
-)

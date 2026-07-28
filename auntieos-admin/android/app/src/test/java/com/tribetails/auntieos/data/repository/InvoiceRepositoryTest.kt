@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.data.repository
 
+import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.Payment
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -8,17 +9,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The [InvoiceRepository] wire contract: every pure encoder and decoder the
- * invoice and payment callables go through. Renamed from InvoiceWriteCallablesTest
- * and gathered here by W4-1, so the contracts sit beside the repo that sends
- * them rather than scattered across the god-file's test files.
+ * The [InvoiceRepository] wire contract, after ADR-0001 adoption.
  *
- * These payloads are HAND-MIRRORED against the server zod Args (e.g.
- * mytribe/functions/src/admin/recordPayment.ts), so these tests pin the exact
- * key set: a key added or dropped here is contract drift the compiler cannot
- * see. ADR-0001 replaces the mirrors with generated Kotlin; the tests outlive
- * that swap. Kept pure so they run without Firebase static init, like
- * AssignAuntiePayloadTest / StageTwoTailDecodeTest.
+ * These payloads USED TO BE hand-mirrors of the server zod Args, and this file
+ * used to pin their key sets because a key added or dropped there was contract
+ * drift the compiler could not see. The generated request classes make that the
+ * compiler's job. What is left to pin is the part the generator does not know:
+ * how Android's own [Invoice] and [Payment] models map onto those classes, and
+ * the client-side fallbacks the repo applies on top of a generated decode.
+ *
+ * The key-set assertions are KEPT rather than retired. They cost nothing, and a
+ * schema change that drops a field the model still fills would otherwise pass
+ * the build and go out on the wire missing.
+ *
+ * Kept pure so they run without Firebase static init, like
+ * AssignAuntiePayloadTest / InvoiceContractsGeneratedTest.
  */
 class InvoiceRepositoryTest {
 
@@ -42,8 +47,8 @@ class InvoiceRepositoryTest {
     )
 
     @Test
-    fun `recordPayment payload mirrors the zod Args field for field`() {
-        val p = recordPaymentPayload(payment)
+    fun `recordPayment carries every Payment field the zod Args declares`() {
+        val p = recordPaymentArgs(payment).toPayload()
         // Exactly the 13 Args keys, nothing else (no id, no TestMode scoping).
         assertEquals(
             setOf(
@@ -70,7 +75,7 @@ class InvoiceRepositoryTest {
 
     @Test
     fun `recordPayment payload never carries the client-side doc id`() {
-        assertFalse(recordPaymentPayload(payment).containsKey("id"))
+        assertFalse(recordPaymentArgs(payment).toPayload().containsKey("id"))
     }
 
     @Test
@@ -80,16 +85,112 @@ class InvoiceRepositoryTest {
         // the server's job now (lib/testMode.ts), so what the caller set is
         // exactly what is sent.
         val standalone = payment.copy(kinfolkId = "", invoiceId = "", invoiceNumber = "")
-        val p = recordPaymentPayload(standalone)
+        val p = recordPaymentArgs(standalone).toPayload()
         assertEquals("", p["kinfolkId"])
         assertEquals("", p["invoiceId"])
+    }
+
+    // ── createInvoice / createQuote payloads ─────────────────────────────────
+    // Named by ADR-0001 as the mirror "inspected by no test". It is inspected
+    // now, and by a test that could not have been written against the old
+    // inline map: these are pure functions taking an already-scoped familyId.
+
+    private val invoice = Invoice(
+        id = "inv1",
+        kinfolkId = "kf1",
+        kinfolkName = "Rosa Parks",
+        invoiceNumber = "1042",
+        client = "Rosa P.",
+        address = "12 Elm St",
+        date = "2026-05-01",
+        terms = "Net 30",
+        dueDate = "2026-05-31",
+        discount = "10",
+        total = 40.0,
+        amountDue = 40.0,
+        status = "draft",
+        sessionIds = listOf("ses1", "ses2"),
+    )
+
+    @Test
+    fun `createInvoice sends the sandbox-scoped familyId, not the invoice's own kinfolkId`() {
+        val p = createInvoiceArgs(invoice, familyId = "test-tribe").toPayload()
+        assertEquals("test-tribe", p["familyId"])
+        assertFalse("kinfolkId is not an arg of this callable", p.containsKey("kinfolkId"))
+    }
+
+    @Test
+    fun `createInvoice carries the composer's fields including its status`() {
+        val p = createInvoiceArgs(invoice, familyId = "kf1").toPayload()
+        assertEquals(
+            setOf(
+                "familyId", "kinfolkName", "invoiceNumber", "client", "address",
+                "date", "terms", "dueDate", "discount", "total", "amountDue",
+                "status", "sessionIds",
+            ),
+            p.keys,
+        )
+        assertEquals("draft", p["status"])
+        assertEquals(40.0, p["total"])
+        assertEquals(listOf("ses1", "ses2"), p["sessionIds"])
+        // The line-item pair is the alternative to total/amountDue, not an
+        // addition to it, so an absent one must stay absent rather than ship
+        // empty and read as "this invoice has no lines".
+        assertFalse(p.containsKey("lineItems"))
+        assertFalse(p.containsKey("invoiceDiscountCents"))
+    }
+
+    @Test
+    fun `createQuote leaves status at the schema default rather than forwarding the composer's`() {
+        // createQuote mints in QUOTE status regardless of the arg and never
+        // reads it (admin/createQuote.ts), so forwarding "draft" here would put
+        // a request on the wire that the server refuses to honour.
+        val p = createQuoteArgs(invoice, familyId = "kf1", sendToKinfolk = true).toPayload()
+        assertEquals("", p["status"])
+        assertEquals(true, p["sendToKinfolk"])
+        assertEquals("1042", p["invoiceNumber"])
+    }
+
+    // ── markInvoicePaid payload ──────────────────────────────────────────────
+
+    @Test
+    fun `markInvoicePaid omits a blank method and reference rather than sending empty strings`() {
+        // The server types both `z.string().trim().min(1).optional()`, so a
+        // blank one is not a weaker version of an absent one: it fails
+        // validation and the whole payment is refused.
+        val p = markInvoicePaidArgs("inv1", amount = 20.0, method = "", reference = "   ").toPayload()
+        assertEquals(setOf("invoiceId", "amount"), p.keys)
+    }
+
+    @Test
+    fun `markInvoicePaid sends what the operator did fill in`() {
+        val p = markInvoicePaidArgs("inv1", amount = 20.0, method = "Zelle", reference = "Z-123").toPayload()
+        assertEquals(setOf("invoiceId", "amount", "method", "reference"), p.keys)
+        assertEquals("Zelle", p["method"])
+        assertEquals("Z-123", p["reference"])
+    }
+
+    @Test
+    fun `markInvoicePaid omits a null amount, which is the settle-the-rest case`() {
+        val p = markInvoicePaidArgs("inv1", amount = null, method = "Cash", reference = "").toPayload()
+        assertEquals(setOf("invoiceId", "method"), p.keys)
+    }
+
+    // ── archiveInvoice payload ───────────────────────────────────────────────
+
+    @Test
+    fun `archiveInvoice omits force unless the operator chose the write-off`() {
+        assertEquals(setOf("invoiceId"), archiveInvoiceArgs("inv1", force = false).toPayload().keys)
+        val forced = archiveInvoiceArgs("inv1", force = true).toPayload()
+        assertEquals(setOf("invoiceId", "force"), forced.keys)
+        assertEquals(true, forced["force"])
     }
 
     // ── linkInvoiceSessions result decode ────────────────────────────────────
 
     @Test
-    fun `decodeInvoiceSessionLinks reads the full server payload`() {
-        val decoded = decodeInvoiceSessionLinks(
+    fun `invoiceSessionLinks reads the full server payload`() {
+        val decoded = invoiceSessionLinksOf(
             mapOf(
                 "ok" to true,
                 "invoiceId" to "inv1",
@@ -111,10 +212,10 @@ class InvoiceRepositoryTest {
     }
 
     @Test
-    fun `decodeInvoiceSessionLinks falls back to the requested set on a null payload`() {
+    fun `invoiceSessionLinks falls back to the requested set on a null payload`() {
         // The call succeeded (we only decode after a successful await), so the
         // requested set IS the stored set; duplicates collapse like the server's.
-        val decoded = decodeInvoiceSessionLinks(
+        val decoded = invoiceSessionLinksOf(
             null,
             requestedInvoiceId = "inv1",
             requestedSessionIds = listOf("ses1", "ses1", "ses2"),
@@ -128,8 +229,8 @@ class InvoiceRepositoryTest {
     }
 
     @Test
-    fun `decodeInvoiceSessionLinks drops non-string entries and tolerates partial payloads`() {
-        val decoded = decodeInvoiceSessionLinks(
+    fun `invoiceSessionLinks drops non-string entries and tolerates partial payloads`() {
+        val decoded = invoiceSessionLinksOf(
             mapOf(
                 "invoiceId" to "",                       // blank → requested id
                 "sessionIds" to listOf("ses1", 7, null), // junk entries dropped
@@ -145,10 +246,13 @@ class InvoiceRepositoryTest {
     }
 
     @Test
-    fun `decodeInvoiceSessionLinks reads an empty stored set as empty, not as the requested fallback`() {
+    fun `invoiceSessionLinks reads an empty stored set as empty, not as the requested fallback`() {
         // `[]` unlinks everything; an explicit empty list from the server must
-        // decode as empty rather than falling back to what was requested.
-        val decoded = decodeInvoiceSessionLinks(
+        // decode as empty rather than falling back to what was requested. The
+        // generated decoder alone cannot tell those apart - both are an empty
+        // list by the time it is done - which is why the fallback is decided
+        // off the raw payload.
+        val decoded = invoiceSessionLinksOf(
             mapOf("invoiceId" to "inv1", "sessionIds" to emptyList<String>(), "removed" to listOf("ses1")),
             requestedInvoiceId = "inv1",
             requestedSessionIds = emptyList(),
@@ -157,51 +261,31 @@ class InvoiceRepositoryTest {
         assertEquals(listOf("ses1"), decoded.removed)
     }
 
-    // ── sendInvoiceReminder result decode (moved from StageTwoTailDecodeTest) ─
+    @Test
+    fun `invoiceSessionLinks unlinking everything is not read as a failed decode`() {
+        // The save that clears every link sends [] and gets [] back. Falling
+        // back here would tell the screen the links survived the unlink.
+        val decoded = invoiceSessionLinksOf(
+            mapOf("invoiceId" to "inv1", "sessionIds" to emptyList<String>(), "removed" to listOf("ses1", "ses2")),
+            requestedInvoiceId = "inv1",
+            requestedSessionIds = listOf("ses1", "ses2"),
+        )
+        assertTrue(decoded.sessionIds.isEmpty())
+    }
+
+    // ── sendInvoiceReminder result decode ────────────────────────────────────
     @Test
     fun `reminder decode echoes server invoiceId`() {
-        assertEquals("inv-9", decodeSentReminderInvoiceId(mapOf("ok" to true, "invoiceId" to "inv-9"), "inv-1"))
+        assertEquals("inv-9", reminderInvoiceIdOrRequested(mapOf("ok" to true, "invoiceId" to "inv-9"), "inv-1"))
     }
     @Test
     fun `reminder decode falls back to requested id when missing`() {
-        assertEquals("inv-1", decodeSentReminderInvoiceId(mapOf("ok" to true), "inv-1"))
-        assertEquals("inv-1", decodeSentReminderInvoiceId(null, "inv-1"))
+        assertEquals("inv-1", reminderInvoiceIdOrRequested(mapOf("ok" to true), "inv-1"))
+        assertEquals("inv-1", reminderInvoiceIdOrRequested(null, "inv-1"))
     }
     @Test
     fun `reminder decode falls back when server id is blank`() {
-        assertEquals("inv-1", decodeSentReminderInvoiceId(mapOf("invoiceId" to ""), "inv-1"))
-    }
-    // ── markInvoicePaid settlement decode (moved from RecordPaymentOutcomeTest) ─
-    @Test
-    fun `settlement decodes the callable payload into integer cents`() {
-        val decoded = decodeInvoiceSettlement(
-            mapOf(
-                "state" to "partial",
-                "totalCents" to 4000,
-                "paidCents" to 2000,
-                "amountDueCents" to 2000,
-                "overpaidCents" to 0,
-            ),
-        )
-        assertEquals("partial", decoded.state)
-        assertEquals(2000L, decoded.amountDueCents)
-        assertTrue(decoded.isPartial)
-    }
-    @Test
-    fun `an UNREADABLE settlement payload decodes to partial, never to settled`() {
-        // If the server's answer cannot be read, the safe reading is that money
-        // may still be owed: that keeps the invoice in Outstanding and keeps the
-        // operator able to collect. Defaulting to settled would reproduce the
-        // very defect this decode exists to prevent, in the client.
-        assertTrue(decodeInvoiceSettlement(null).isPartial)
-        assertTrue(decodeInvoiceSettlement(emptyMap()).isPartial)
-        assertTrue(decodeInvoiceSettlement(mapOf("state" to "")).isPartial)
-    }
-    @Test
-    fun `a missing cents field decodes to zero rather than throwing`() {
-        val decoded = decodeInvoiceSettlement(mapOf("state" to "settled"))
-        assertEquals(0L, decoded.amountDueCents)
-        assertEquals(0L, decoded.overpaidCents)
+        assertEquals("inv-1", reminderInvoiceIdOrRequested(mapOf("invoiceId" to ""), "inv-1"))
     }
 
     // ── construction ─────────────────────────────────────────────────────────
