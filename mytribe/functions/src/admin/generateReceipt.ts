@@ -15,7 +15,7 @@ import { OkSchema } from '../lib/invoiceResponseSchema';
 // Marks an existing invoice receipted and enqueues the kinfolk-facing
 // invoice.receipt notification. Fails loud (not-found) when the invoice is
 // missing rather than silently creating one.
-const Args = z.object({
+export const Args = z.object({
   invoiceId: z.string().min(1),
 });
 

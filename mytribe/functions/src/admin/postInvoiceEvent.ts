@@ -14,7 +14,7 @@ import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
 
-const Args = z.object({
+export const Args = z.object({
   familyId: z.string().min(1),
   invoiceId: z.string().min(1),
   payload: z.record(z.string(), z.unknown()),

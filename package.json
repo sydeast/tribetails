@@ -31,9 +31,13 @@
     "build:android": "cd auntieos-admin/android && ./gradlew compileDebugKotlin",
 
     "lint": "npm --prefix mytribe/functions run lint",
+
+    "contracts:generate": "npm --prefix mytribe/functions run contracts:generate",
+    "contracts:check": "npm --prefix mytribe/functions run contracts:check",
+
     "e2e": "npm --prefix auntieos-admin run e2e",
 
-    "check": "npm run typecheck && npm run lint && npm test && npm run build",
+    "check": "npm run typecheck && npm run lint && npm run contracts:check && npm test && npm run build",
 
     "deploy": "bash scripts/release.sh"
   }

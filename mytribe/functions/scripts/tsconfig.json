@@ -1,0 +1,15 @@
+{
+  "//": "Build-time tooling, NOT deployed code. The functions tsconfig has rootDir 'src' and emits to lib/, so anything here would either be refused by it or shipped in the deploy bundle. This config type-checks the generator on its own (`npm run typecheck` runs both) and is the --project ts-node reads at run time. The src/ schemas it imports are checked transitively, so they are not listed in `include` again.",
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".."
+  },
+  "include": ["./**/*.ts"],
+  "ts-node": {
+    "transpileOnly": true,
+    "compilerOptions": {
+      "module": "commonjs"
+    }
+  }
+}
