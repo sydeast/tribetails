@@ -44,10 +44,11 @@ class InvoicePartPaidTest {
 
     @Test
     fun `is null for every state other than OPEN, so it can never change an action set`() {
-        for (status in listOf("paid", "draft", "quote", "cancelled", "credit")) {
+        for (status in listOf("paid", "draft", "quote", "cancelled", "credit", "redeemed", "zero")) {
             assertNull(invoicePartPaid(inv(status = status)))
         }
-        // A credit, whose money points the other way.
+        // An UNSTAMPED doc: no stored state means no OPEN, so no part-paid
+        // verdict either, however suggestive the money reads (ADR-0002).
         assertNull(invoicePartPaid(inv(status = "", amountDue = -25.0, total = -25.0)))
     }
 
@@ -60,7 +61,7 @@ class InvoicePartPaidTest {
     fun `a part-paid invoice keeps the whole outstanding action set`() {
         // The guard that keeps collecting the balance possible at all: part-paid
         // is a display refinement of OPEN, so the actions are untouched.
-        val actions = invoiceActionsFor(invoiceStateOf(inv()))
+        val actions = invoiceActionsFor(invoiceStateOrNull(inv()))
         assertTrue(actions.contains(InvoiceAction.RECORD_PAYMENT))
         assertTrue(actions.contains(InvoiceAction.SEND_REMINDER))
     }

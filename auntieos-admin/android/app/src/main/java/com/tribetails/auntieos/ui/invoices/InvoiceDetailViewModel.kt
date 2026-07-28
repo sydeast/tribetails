@@ -11,7 +11,7 @@ import com.tribetails.auntieos.data.repository.InvoiceSettlement
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.formatCentsUsd
 import com.tribetails.auntieos.domain.invoicePartPaid
-import com.tribetails.auntieos.domain.invoiceStateOf
+import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -559,12 +559,13 @@ class InvoiceDetailViewModel(
 }
 
 /**
- * True when an invoice is still a draft (case-insensitive). Pure; unit-tested.
- * Delegates to the shared classifier (domain/InvoiceActions.kt) so this and the
- * Den list's own draft facet can never drift apart.
+ * True when an invoice's STORED state stamp reads draft (case-insensitive).
+ * Pure; unit-tested. Delegates to the shared stamp decode
+ * (domain/InvoiceActions.kt) so this and the Den list's own draft facet can
+ * never drift apart - and neither re-derives state from the money.
  */
 internal fun isDraftInvoice(invoice: Invoice): Boolean =
-    invoiceStateOf(invoice) == InvoiceState.DRAFT
+    invoiceStateOrNull(invoice) == InvoiceState.DRAFT
 
 /** Payments confidently linked to an invoice via the populated Payment.invoiceId. Pure; tested. */
 internal fun paymentsForInvoice(payments: List<Payment>, invoiceId: String): List<Payment> {

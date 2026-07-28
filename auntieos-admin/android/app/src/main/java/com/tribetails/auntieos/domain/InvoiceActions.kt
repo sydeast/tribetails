@@ -3,39 +3,114 @@ package com.tribetails.auntieos.domain
 import com.tribetails.auntieos.data.model.Invoice
 
 /**
- * The ONE invoice classifier both invoice surfaces read: the Den list
+ * The ONE invoice state module both invoice surfaces read: the Den list
  * (ui/admin/InvoicesScreen.kt) and the detail screen (ui/invoices/
- * InvoiceDetailScreen.kt). Mirrors the web `src/lib/invoiceFormat.ts`
- * (`invoiceState` / `isInvoiceOverdue` / `invoiceActionsFor`) so all four
- * surfaces, two platforms, agree on what an invoice IS and what may be done
- * to it.
+ * InvoiceDetailScreen.kt).
  *
- * Before this file the two Android screens classified independently and DID
- * disagree: the list used status/amountDue predicates, while the detail
- * screen's own `invoiceStatusFor` collapsed everything to PAID / OVERDUE /
- * OUTSTANDING with `amountDue <= 0 -> PAID` as its first line, which reads a
- * draft, a quote, and an unredeemed CREDIT (negative balance) as PAID.
+ * THIS FILE NO LONGER CLASSIFIES. Under ADR-0002 the server's Invoice State
+ * Classifier (`mytribe/functions/src/lib/invoiceEditPolicy.ts`) is the single
+ * authority on what an invoice IS: every money-touching callable persists its
+ * output onto the doc as two fields, `status` (one of the eight canonical
+ * lowercase states in `INVOICE_STATES`) and `editScope`, and a backfill
+ * stamped every pre-existing doc. What lives here now is the READ side:
+ * decoding the stored stamp into typed values and mapping those values to the
+ * affordances a screen may offer.
  *
- * Every branch below is a POSITIVE read of the explicit status text or of a
- * real money field. Nothing here is "not X, so it must be Y", which is the
- * AO-12 defect the web module documents at length: the wasm admin defined
- * paid as `!draft && !outstanding`, so an unredeemed credit rendered a
- * confident PAID chip in production.
+ * The classifier this file used to hold (`invoiceStateOf`, precedence over
+ * status text and money fields) is deleted, not moved. It was one of five
+ * copies of the same rule at three different state cardinalities, and its
+ * seven states lacked `redeemed` entirely: a credit the household had already
+ * drawn down could not be rendered as such on Android at all. Consuming the
+ * stored stamp closes that drift for good, because a state the server adds
+ * arrives here as data instead of waiting for a ported branch.
  *
- * DIVERGENCE FROM WEB, forced by the data model: the web enum also carries
- * `redeemed` (a credit the household has already drawn down), keyed off the
- * doc's `creditRedeemedAt` stamp. The Android [Invoice] model has no such
- * field, so a credit stays [InvoiceState.CREDIT] here. The action set is the
- * same for both on web (empty), so no gating decision depends on the split.
+ * ABSENT OR UNRECOGNIZED STAMPS ARE NOT RE-DERIVED, deliberately. Re-deriving
+ * "just for the fallback" would quietly resurrect the fifth classifier and the
+ * AO-12 negation defect with it. Instead the failure is soft and visible:
+ * [invoiceStateOrNull] returns null, the screens render the RAW stored string
+ * where the state chip would be, [invoiceActionsFor] offers no actions, and
+ * [invoiceEditScopeOf] offers no edit affordances. A doc that reaches the app
+ * unstamped renders as exactly what it is - a doc this app does not claim to
+ * understand - rather than as a guess.
+ */
+
+/**
+ * The eight canonical invoice states, mirroring the server's `INVOICE_STATES`
+ * one for one (order and all). `REDEEMED` is the state the deleted 7-state
+ * classifier could never produce.
  */
 enum class InvoiceState {
     QUOTE,
     DRAFT,
     CANCELLED,
     CREDIT,
+    REDEEMED,
     PAID,
     ZERO,
     OPEN,
+}
+
+/**
+ * Decodes the stored state stamp, or null when the doc carries no
+ * recognizable stamp.
+ *
+ * A DECODE, NOT A CLASSIFICATION: the only field read is `status`, and the
+ * only tolerance applied is the repo's lowercase-before-compare convention
+ * (the server always writes lowercase; trimming and lowercasing here means a
+ * legacy hand-written `"Draft"` still decodes rather than falling to null).
+ * No money field is consulted, ever - the server already did that, in the
+ * same write that moved the money.
+ *
+ * Null is an honest answer, not an error: it means "this doc predates the
+ * stamp or carries a vocabulary this build does not know", and every consumer
+ * fails soft on it (raw string rendered, no actions, no edit affordances).
+ */
+fun invoiceStateOrNull(invoice: Invoice): InvoiceState? = when (invoice.status.trim().lowercase()) {
+    "quote" -> InvoiceState.QUOTE
+    "draft" -> InvoiceState.DRAFT
+    "cancelled" -> InvoiceState.CANCELLED
+    "credit" -> InvoiceState.CREDIT
+    "redeemed" -> InvoiceState.REDEEMED
+    "paid" -> InvoiceState.PAID
+    "zero" -> InvoiceState.ZERO
+    "open" -> InvoiceState.OPEN
+    else -> null
+}
+
+/**
+ * The stored edit-scope stamp: how much of this invoice the server will let
+ * an edit change. Mirrors the server's `InvoiceEditScope`
+ * (`'all' | 'metadataOnly' | 'none'`).
+ */
+enum class InvoiceEditScope {
+    ALL,
+    METADATA_ONLY,
+    NONE,
+}
+
+/**
+ * Decodes the stored `editScope` stamp. Same decode-only contract as
+ * [invoiceStateOrNull], same case tolerance.
+ *
+ * ABSENT OR UNRECOGNIZED READS AS [InvoiceEditScope.NONE]: no edit
+ * affordances are offered for a doc whose editability the server has not
+ * stated. That is the deliberate fail-soft ruling, not a shortcut - the
+ * alternative (recomputing the policy from the money) is precisely the
+ * client-side re-derivation ADR-0002 retires, and offering `ALL` on a shrug
+ * would invite an edit the server will refuse anyway.
+ *
+ * NO ANDROID SURFACE CONSUMES THIS YET, a fact about the app rather than an
+ * omission here: the admin's only invoice-field editor (`updateInvoice`) was
+ * deleted as dead code in the W2-2 re-point, and the linked-sessions editor
+ * is deliberately NOT gated on editScope, mirroring the server's own ruling
+ * in `admin/linkInvoiceSessions.ts` (attributing which sessions a bill
+ * covers is not an edit of what the household was asked for). This decode
+ * pins the contract the first real edit surface will read.
+ */
+fun invoiceEditScopeOf(invoice: Invoice): InvoiceEditScope = when (invoice.editScope?.trim()?.lowercase()) {
+    "all" -> InvoiceEditScope.ALL
+    "metadataonly" -> InvoiceEditScope.METADATA_ONLY
+    else -> InvoiceEditScope.NONE
 }
 
 /** Consequential actions an invoice surface may offer. */
@@ -48,32 +123,6 @@ enum class InvoiceAction {
 
 /** NaN/Infinity read as "no evidence", never as a false 0 that could tip a comparison. */
 private fun Double.finiteOrZero(): Double = if (isFinite()) this else 0.0
-
-/**
- * Classifies one invoice. Precedence matches the web `invoiceState` exactly:
- * an explicit status string wins, a negative balance is a credit even when
- * the label is missing, and only then do the money fields place an unlabeled
- * row.
- */
-fun invoiceStateOf(invoice: Invoice): InvoiceState {
-    val status = invoice.status.trim().lowercase()
-    val amountDue = invoice.amountDue.finiteOrZero()
-    val total = invoice.total.finiteOrZero()
-
-    return when {
-        status == "quote" -> InvoiceState.QUOTE
-        status == "draft" -> InvoiceState.DRAFT
-        status == "cancelled" -> InvoiceState.CANCELLED
-        // A negative balance is the credit signal even when the label is
-        // missing or stale (money is owed TO the household, not by them).
-        status == "credit" || amountDue < 0.0 || total < 0.0 -> InvoiceState.CREDIT
-        status == "paid" -> InvoiceState.PAID
-        // Nothing explicit matched. Every branch from here reads a real number:
-        amountDue > 0.0 -> InvoiceState.OPEN // a balance is genuinely owed
-        total == 0.0 -> InvoiceState.ZERO // nothing was billed, not a paid claim
-        else -> InvoiceState.PAID // amountDue <= 0 and total > 0: the balance is retired
-    }
-}
 
 /** A YYYY-MM-DD prefix, or null when the field cannot be read as one. */
 internal fun invoiceIsoDatePrefixOrNull(raw: String): String? {
@@ -89,39 +138,43 @@ internal fun invoiceIsoDatePrefixOrNull(raw: String): String? {
 }
 
 /**
- * True only when the invoice is [InvoiceState.OPEN] AND its dueDate parses to
- * a date strictly before [todayIso]. Overdue is a display refinement of open,
- * never a state of its own: a draft, a quote, a credit, or a paid invoice is
- * never "overdue" no matter how stale its dueDate reads. Lexicographic
- * compare is correct on zero-padded YYYY-MM-DD.
+ * True only when the stored stamp reads [InvoiceState.OPEN] AND dueDate parses
+ * to a date strictly before [todayIso]. Overdue stays a CLIENT-side display
+ * refinement of open because it is a function of the clock, which a persisted
+ * stamp cannot carry: the server cannot rewrite every invoice at midnight.
+ * A draft, a quote, a credit, a redeemed credit, a paid invoice, and an
+ * UNSTAMPED doc are never "overdue" no matter how stale their dueDate reads.
+ * Lexicographic compare is correct on zero-padded YYYY-MM-DD.
  */
 fun invoiceIsOverdue(invoice: Invoice, todayIso: String): Boolean {
-    if (invoiceStateOf(invoice) != InvoiceState.OPEN) return false
+    if (invoiceStateOrNull(invoice) != InvoiceState.OPEN) return false
     val due = invoiceIsoDatePrefixOrNull(invoice.dueDate) ?: return false
     return due < todayIso
 }
 
 /**
- * Which actions an invoice in [state] may be offered, on the list row and in
- * the detail screen alike.
+ * Which actions an invoice whose stored stamp reads [state] may be offered, on
+ * the list row and in the detail screen alike.
  *
- * TOTAL and NON-OVERLAPPING by construction: the `when` is exhaustive over the
- * enum with no `else`, so adding an eighth state is a compile error here
- * rather than a silent fallthrough (the fallthrough is exactly how the list's
- * `else -> Receipt` row action offered a receipt on a cancelled invoice), and
- * the argument is the single enumerated state rather than a bag of booleans,
- * so an invoice cannot land in two buckets at once.
+ * TOTAL AND NON-OVERLAPPING by construction: the `when` is exhaustive over the
+ * enum plus null with no `else`, so a ninth server state (arriving here as a
+ * new enum entry) is a compile error rather than a silent fallthrough, and the
+ * argument is the single decoded state rather than a bag of booleans, so an
+ * invoice cannot land in two buckets at once.
+ *
+ * NULL - an unstamped or unrecognized doc - OFFERS NOTHING. Fabricating an
+ * affordance for a doc the app does not understand is how a cancelled invoice
+ * once offered a Receipt button; the row stays tappable through to the detail
+ * screen, where the raw status renders.
  *
  * The OVERDUE edge case, ruled explicitly: overdue is not a state (see
- * [invoiceIsOverdue]), so "overdue AND draft" and "overdue AND quote" are
- * unrepresentable rather than merely unhandled, and an overdue invoice gets
- * exactly the OPEN set. That is why this takes [state] alone.
+ * [invoiceIsOverdue]), so an overdue invoice gets exactly the OPEN set.
  *
  * RECORD_PAYMENT is Android's spelling of the web's "Mark paid": the same
  * transition, through the Record-payment dialog that also writes the
  * Payment.invoiceId audit link.
  */
-fun invoiceActionsFor(state: InvoiceState): List<InvoiceAction> = when (state) {
+fun invoiceActionsFor(state: InvoiceState?): List<InvoiceAction> = when (state) {
     // A real, unpaid balance: collect it.
     InvoiceState.OPEN -> listOf(InvoiceAction.SEND_REMINDER, InvoiceAction.RECORD_PAYMENT)
     // Settled. A receipt is all that is left; re-collecting is the reported bug
@@ -136,22 +189,26 @@ fun invoiceActionsFor(state: InvoiceState): List<InvoiceAction> = when (state) {
     InvoiceState.CANCELLED -> emptyList()
     // Money owed TO the household; redemption is its own flow.
     InvoiceState.CREDIT -> emptyList()
+    // Already drawn down. Nothing left to collect, remind about, or receipt.
+    // The deleted classifier had no such state, so before the stamp a redeemed
+    // credit on Android fell wherever its money fields happened to point.
+    InvoiceState.REDEEMED -> emptyList()
     // Nothing was ever billed, so nothing to collect and nothing to receipt.
     InvoiceState.ZERO -> emptyList()
+    // No recognizable stamp: no affordance is fabricated for a doc this app
+    // does not claim to understand.
+    null -> emptyList()
 }
 /**
  * What has been collected against an invoice, and what is left, in integer
  * cents. Null when the invoice is not part-paid.
  *
- * PART-PAID IS A DISPLAY REFINEMENT OF [InvoiceState.OPEN], NOT AN EIGHTH
+ * PART-PAID IS A DISPLAY REFINEMENT OF [InvoiceState.OPEN], NOT A NINTH
  * STATE, exactly like [invoiceIsOverdue] and for the same reason: it changes
  * the chip and the copy, and it never changes which actions the invoice may be
  * offered. A part-paid invoice is still an open invoice with a real balance, so
  * it keeps the whole outstanding action set, which is precisely what makes
- * collecting the rest possible. Making it a state would have forced
- * [invoiceActionsFor] to enumerate it, and the first person to write
- * `InvoiceState.PART_PAID -> emptyList()` would have reintroduced the very
- * defect this exists to remove.
+ * collecting the rest possible.
  *
  * READS [Invoice.paidCents], NEVER `total - amountDue`. Those are float dollars,
  * and on every invoice the pre-2026-07-25 write touched `amountDue` reads 0.0
@@ -167,7 +224,7 @@ data class InvoicePartPayment(
     val remainingCents: Long,
 )
 fun invoicePartPaid(invoice: Invoice): InvoicePartPayment? {
-    if (invoiceStateOf(invoice) != InvoiceState.OPEN) return null
+    if (invoiceStateOrNull(invoice) != InvoiceState.OPEN) return null
     if (invoice.paidCents <= 0L) return null
     val amountDue = invoice.amountDue.finiteOrZero()
     val remainingCents = Math.round(amountDue * 100.0)

@@ -379,7 +379,26 @@ data class Invoice(
     var paidCents: Long = 0L,
     /** Collected beyond the total, in integer cents. Non-zero only after an overpayment. */
     var overpaidCents: Long = 0L,
+    /**
+     * The Invoice State Classifier's stored verdict (ADR-0002): one of the
+     * server's eight canonical lowercase states (`quote`, `draft`, `cancelled`,
+     * `credit`, `redeemed`, `paid`, `zero`, `open`), written by every
+     * money-touching callable in the same write that moves the money, and
+     * backfilled onto every pre-existing doc. Decoded (never re-derived) by
+     * `domain.invoiceStateOrNull`; a value outside that vocabulary renders raw
+     * and offers no actions.
+     */
     var status: String = "",
+    /**
+     * The classifier's stored edit verdict, written alongside [status]:
+     * `all`, `metadataOnly`, or `none`. NULLABLE because every invoice that
+     * predates the ADR-0002 backfill window could lack the field, and a
+     * non-null setter that meets a null under `toObject()` blanks the whole
+     * invoice query, not one row (the Class B decode crash `paymentsHistory`
+     * above records). Absent decodes to "offer no edit affordances" through
+     * `domain.invoiceEditScopeOf` - the fail-soft ruling, never a recompute.
+     */
+    var editScope: String? = null,
     var viewed: String = "",
     // Attribution fields written by backfill_structural_links.py
     var sessionIds: List<String> = emptyList(),
