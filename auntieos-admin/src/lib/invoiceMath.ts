@@ -1,21 +1,32 @@
 /**
  * Invoice money arithmetic. Integer cents throughout.
  *
- * THIS IS THE MIRROR, NOT THE AUTHORITY. The byte-identical twin lives at
- * `mytribe/functions/src/lib/invoiceMath.ts`, and the SERVER is what decides
- * what an invoice is worth: `updateInvoice` recomputes every figure from the
- * stored line items and ignores any total a client sends. This copy exists for
- * ONE reason, so the operator sees a live total while typing instead of having
- * to save to find out. If the two ever disagree, the server is right and this
- * file is the bug.
+ * THIS IS THE MIRROR, NOT THE AUTHORITY, AND IT IS A DELIBERATE SUBSET. The
+ * authority lives at `mytribe/functions/src/lib/invoiceMath.ts`, and the SERVER
+ * is what decides what an invoice is worth: `updateInvoice` recomputes every
+ * figure from the stored line items and ignores any total a client sends. This
+ * copy exists for ONE reason, so the operator sees a live total while typing
+ * instead of having to save to find out, and it carries exactly the five
+ * functions that job needs: `lineAmountCents`, `computeInvoiceTotals`,
+ * `paidCentsFromPayments`, `centsToDollars` and `validateInvoiceMoney`. The
+ * server's copy additionally owns `settleInvoice`, `invoiceTotalCentsOf` and
+ * `isPartiallyPaid` (grown in the 2026-07-25 partial-payment work), and this
+ * file lacks them ON PURPOSE: settlement is a decision about stored money,
+ * taken once, where the money is stored, and a local copy of that decision
+ * would be an invitation to take it twice. If the shared arithmetic ever
+ * disagrees, the server is right and this file is the bug.
  *
  * Kept as a copy rather than a shared package for the same reason
  * `src/lib/calendarSyncId.ts` and `src/lib/bookingDetailFormat.ts` are: there is
- * no shared build between `auntieos-admin/` and `mytribe/functions/`, so the
- * guard is a fixture table asserted in BOTH trees (`invoiceMath.test.ts` here
- * and `test/invoiceMath.test.ts` there, same cases, same expected numbers). A
- * change to one that is not made to the other turns a suite red rather than
- * quietly shipping two different ideas of a total.
+ * no shared build between `auntieos-admin/` and `mytribe/functions/`. The guard
+ * is therefore twofold. `invoiceMath.test.ts` here and `test/invoiceMath.test.ts`
+ * there assert a fixture table over the shared functions, same cases, same
+ * expected numbers, so a change to one side's ARITHMETIC that is not made to
+ * the other turns a suite red. And `invoiceMath.parity.test.ts` reads both
+ * files off disk and pins the EXPORT SETS, this file to the subset above and
+ * the server to that subset plus its three, so the next export the server
+ * grows fails a test that asks whether the preview needs it too, instead of
+ * quietly widening a gap this header once denied existed.
  *
  * WHY CENTS, WHEN THE INVOICE DOC STORES DOLLARS. `invoices/{id}.total` and
  * `.amountDue` are floating-point DOLLARS (`createInvoice.ts`'s zod schema is
