@@ -89,8 +89,20 @@ describe('invoiceStatusInfo', () => {
     expect(invoiceStatusInfo('cancelled', null)).toEqual({ label: 'Cancelled', chipLabel: 'CANCELLED', cssClass: 'cancelled', invClass: '' });
   });
 
+  it('covers the stamped states the retired 5-state enum could not spell (ADR-0002)', () => {
+    // A quote is a proposal, not a bill: no due-row treatment, and its chip is
+    // not the pending orange.
+    expect(invoiceStatusInfo('quote', null)).toEqual({ label: 'Quote', chipLabel: 'QUOTE', cssClass: 'quote', invClass: 'draft' });
+    // A genuinely $0 invoice is not "Paid": nothing was collected.
+    expect(invoiceStatusInfo('zero', null)).toEqual({ label: 'Zero balance', chipLabel: 'ZERO', cssClass: 'zero', invClass: '' });
+    // The stamp says redeemed directly; no redemption-time refinement needed.
+    expect(invoiceStatusInfo('redeemed', null)).toEqual({ label: 'Redeemed', chipLabel: 'REDEEMED', cssClass: 'redeemed', invClass: 'credit' });
+  });
+
   it('distinguishes redeemed vs unredeemed credit', () => {
     expect(invoiceStatusInfo('credit', null)).toEqual({ label: 'Credit', chipLabel: 'CREDIT', cssClass: 'creditc', invClass: 'credit' });
+    // The fail-soft path: an unstamped doc can still say `credit` while
+    // carrying a redemption time, and a spent credit must never be re-offered.
     expect(invoiceStatusInfo('credit', 1_750_000_000_000)).toEqual({
       label: 'Redeemed',
       chipLabel: 'REDEEMED',

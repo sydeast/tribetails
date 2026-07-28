@@ -5,12 +5,19 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { INVOICE_STATES, type InvoiceState, type InvoiceEditScope } from '../lib/invoiceEditPolicy';
 
 interface GetMyInvoicesRequest {
   kinfolkId?: string;
 }
 
-type Status = 'draft' | 'open' | 'paid' | 'credit' | 'cancelled';
+/**
+ * The stored Invoice State Stamp's vocabulary (ADR-0002), all eight states.
+ * This callable used to keep its own 5-state `resolveStatus` with a money
+ * fallback; that classifier is retired. The doc's stamped `status` is the
+ * truth and this handler only READS it — see `statusFromStamp`.
+ */
+type Status = InvoiceState;
 
 export interface InvoiceLineItemDto {
   /**
@@ -46,7 +53,21 @@ interface InvoiceDto {
   total: number;
   amountDue: number;
   isPaid: boolean;
+  /**
+   * The stored Invoice State Stamp (ADR-0002): one of the eight lowercase
+   * `INVOICE_STATES`, persisted by every money-touching callable in the same
+   * write that moves the money and backfilled across every pre-stamp doc.
+   * READ off the doc, never re-derived here. See the bucket table on the
+   * handler for how the eight states land in open/paid/credits.
+   */
   status: Status;
+  /**
+   * The stamp's second half: how much of this invoice may still change
+   * (`all` | `metadataOnly` | `none`). Null when the doc carries no stored
+   * scope (pre-backfill sandbox seeds); the portal offers no edit UI, so this
+   * ships for parity with the stamp, not because a screen branches on it yet.
+   */
+  editScope: InvoiceEditScope | null;
   /**
    * What has been collected against this invoice, in cents, read from the
    * `paidCents` field the payment path writes.
@@ -76,7 +97,8 @@ interface InvoiceDto {
   paymentsHistory: string | null;
   address: string | null;
   viewed: boolean;
-  // Credit-specific (only meaningful when status === 'credit').
+  // Credit-specific (only meaningful when status is 'credit' or 'redeemed' —
+  // 'redeemed' is what the stamp writes once `creditRedeemedAt` is set).
   // Account balance is the only redemption target: credits are NOT refundable.
   creditAmountCents: number | null;
   creditTarget: 'accountBalance' | null;
@@ -99,18 +121,46 @@ interface GetMyInvoicesResult {
 /**
  * Returns the signed-in kinfolk's invoices, split into three buckets.
  *
- * Status resolution (precedence):
- *   1. explicit `invoiceStatus` field set by AuntieOS, canonical
- *   2. fallback heuristic from amountDue / total:
- *        amountDue > 0           → open
- *        amountDue == 0 + total > 0 (no draft tag) → paid
- *        amountDue < 0 OR total < 0 → credit
- *        amountDue + total both missing → open (draft-like)
+ * STATUS IS THE STORED STAMP, NOT A CLASSIFICATION. Every server-side invoice
+ * writer persists the Invoice State Classifier's output (`status` +
+ * `editScope`, ADR-0002) in the same write that moves the money, and a
+ * one-shot backfill stamped every doc that predated it. This handler READS
+ * that field; the 5-state `resolveStatus` money heuristic that used to live
+ * here is retired (per CONTEXT.md: clients render the persisted state and
+ * never classify — and this response builder is the portal's classifier of
+ * record, so the same rule lands here).
  *
- * Buckets:
- *   open   , payable now (also includes draft)
- *   paid   , fully settled
- *   credits, awaiting redemption to account balance (credits are NOT refundable)
+ * How the eight stamped states land in the three buckets:
+ *
+ *   open      → open     a real balance is owed, payable
+ *   draft     → open     visible, not payable (unchanged: "Not sent yet")
+ *   quote     → open     a PROPOSAL, not yet money owed. Previously the
+ *                        5-state fallback misread quotes as `open`, which put
+ *                        a Pay button on an unaccepted quote. It stays in the
+ *                        open bucket so the household still sees it, but it
+ *                        ships as `quote` so no client renders it payable
+ *                        (the admin's rule: "a quote is not a bill").
+ *   zero      → open     a genuinely $0 invoice. Nothing owed, but calling it
+ *                        paid would claim a payment that never happened; it
+ *                        keeps its previous open-bucket placement, non-payable
+ *                        by money (amountDue is 0).
+ *   paid      → paid     settled
+ *   credit    → credits  owed TO the household, awaiting redemption
+ *   redeemed  → credits  a SPENT credit. The stamp writes `redeemed` once
+ *                        `creditRedeemedAt` is set (previously the money
+ *                        fallback re-read these as `credit` and the clients
+ *                        re-derived redemption from `creditRedeemedAtMs`).
+ *                        Stays beside its unredeemed siblings, where every
+ *                        client already renders it.
+ *   cancelled → (none)   withdrawn; excluded from all three buckets, exactly
+ *                        as the 5-state code excluded it. The household is
+ *                        not shown a bill that no longer stands.
+ *
+ * An invoice with NO readable stamp (impossible post-backfill) fail-softs to
+ * the raw stored status string lowercased — and to `open` when even that is
+ * unreadable — NEVER to a money heuristic; see `statusFromStamp`. Such docs
+ * are logged at warn so a stamping gap surfaces in monitoring instead of as a
+ * silent re-classification.
  *
  * Account balance is a family-scoped flat field at `families/{kinfolkId}.accountBalanceCents`.
  */
@@ -133,6 +183,7 @@ export async function getMyInvoicesHandler(
   const accountBalanceCents = numericFrom(familySnap.data()?.accountBalanceCents);
 
   const sessionIdsByInvoice = new Map<string, string[]>();
+  const unstampedIds: string[] = [];
 
   const all: InvoiceDto[] = invoiceSnap.docs.map((d) => {
     const data = d.data() as Record<string, unknown>;
@@ -150,21 +201,16 @@ export async function getMyInvoicesHandler(
     // editor), and the two lists are never mixed: they answer different
     // questions and their amounts come from different places.
     if (storedLines.length === 0 && sessionIds.length > 0) sessionIdsByInvoice.set(d.id, sessionIds);
-    const amountDuePresent = data['amountDue'] != null;
-    const totalPresent = data['total'] != null;
     const amountDue = numericFrom(data['amountDue']);
     const total = numericFrom(data['total']);
-    // `status` is canonical (backfilled across every real invoice on 2026-07-20);
-    // `invoiceStatus` is the legacy spelling the sandbox seed still writes.
-    const status: Status = resolveStatus(
-      data['status'] ?? data['invoiceStatus'],
-      amountDuePresent,
-      totalPresent,
-      amountDue,
-      total,
-    );
+    const stamped = statusFromStamp(data);
+    if (!stamped.stamped) unstampedIds.push(d.id);
+    const status = stamped.status;
     const isPaid = status === 'paid';
-    const isCredit = status === 'credit';
+    // The whole credit family: `redeemed` is what the stamp writes once
+    // `creditRedeemedAt` is set, and a redeemed credit still carries every
+    // credit field a client renders (amount, target, redemption time).
+    const isCredit = status === 'credit' || status === 'redeemed';
     // Integer cents off the doc, never a subtraction of two floats. See the
     // InvoiceDto field note for why that subtraction is specifically unsafe on
     // the invoices this exists to describe.
@@ -179,6 +225,7 @@ export async function getMyInvoicesHandler(
       amountDue,
       isPaid,
       status,
+      editScope: editScopeFrom(data['editScope']),
       paidCents,
       partiallyPaid,
       date: stringOrNull(data['date']),
@@ -230,15 +277,30 @@ export async function getMyInvoicesHandler(
     }
   }
 
+  // The 8→3 bucket map, decided FROM the stored status alone. See the handler
+  // doc comment for the per-state reasoning; `cancelled` lands in no bucket.
   const open = all
-    .filter((i) => i.status === 'open' || i.status === 'draft')
+    .filter((i) => i.status === 'open' || i.status === 'draft' || i.status === 'quote' || i.status === 'zero')
     .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
   const paid = all
     .filter((i) => i.status === 'paid')
     .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
   const credits = all
-    .filter((i) => i.status === 'credit')
+    .filter((i) => i.status === 'credit' || i.status === 'redeemed')
     .sort((a, b) => (b.creditRedeemedAtMs ?? 0) - (a.creditRedeemedAtMs ?? 0));
+
+  // Post-backfill this should never fire: every server writer stamps and the
+  // backfill covered the rest. One aggregated warning per call, not one per
+  // doc, so a legacy seed with many rows is one alert rather than a flood.
+  if (unstampedIds.length > 0) {
+    logEvent({
+      severity: 'warn',
+      function: 'getMyInvoices',
+      event: 'portal.invoices.stampMissing',
+      uid,
+      extra: { kinfolkId, count: unstampedIds.length, invoiceIds: unstampedIds.slice(0, 20) },
+    });
+  }
 
   logEvent({
     severity: 'info',
@@ -251,23 +313,39 @@ export async function getMyInvoicesHandler(
   return { open, paid, credits, accountBalanceCents };
 }
 
-function resolveStatus(
-  raw: unknown,
-  amountDuePresent: boolean,
-  totalPresent: boolean,
-  amountDue: number,
-  total: number,
-): Status {
-  if (typeof raw === 'string') {
-    const s = raw.toLowerCase();
-    if (s === 'paid' || s === 'open' || s === 'draft' || s === 'credit' || s === 'cancelled') {
-      return s;
-    }
-  }
-  if (amountDue < 0 || total < 0) return 'credit';
-  if (amountDuePresent && amountDue > 0) return 'open';
-  if (amountDuePresent && amountDue === 0 && totalPresent && total > 0) return 'paid';
-  return 'open'; // missing-amountDue (draft-like) routes to open per Admin note.
+function isInvoiceState(s: string): s is Status {
+  return (INVOICE_STATES as readonly string[]).includes(s);
+}
+
+/**
+ * Reads the stored state stamp off a raw invoice doc. `stamped: false` means
+ * the doc carried no readable stamp, which the caller reports to monitoring.
+ *
+ * `status` is the canonical field (every server writer stamps it, ADR-0002,
+ * and the backfill covered every doc that predated the stamp); `invoiceStatus`
+ * is the legacy spelling the sandbox seeds still write, kept as a read
+ * fallback so a seeded sandbox renders rather than warns on every row.
+ *
+ * FAIL-SOFT IS STRING-ONLY, NEVER MONEY. A doc whose stored string is not one
+ * of the eight states (or is absent entirely) routes to `open` — the same
+ * terminal default the retired 5-state classifier used for a doc it could not
+ * place, chosen because it keeps the invoice VISIBLE (a dropped invoice is
+ * money a household cannot pay) while every payment affordance stays gated on
+ * `amountDue` client-side and re-validated by `payInvoice` server-side. What
+ * this deliberately does NOT do is re-derive a state from amountDue/total:
+ * the classifier lives in `lib/invoiceEditPolicy.ts` and runs at write time;
+ * a read-side re-derivation is exactly the divergence ADR-0002 retired.
+ */
+export function statusFromStamp(data: Record<string, unknown>): { status: Status; stamped: boolean } {
+  const raw = data['status'] ?? data['invoiceStatus'];
+  const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (isInvoiceState(s)) return { status: s, stamped: true };
+  return { status: 'open', stamped: false };
+}
+
+/** The stamp's stored edit scope, or null when the doc carries none. */
+function editScopeFrom(raw: unknown): InvoiceEditScope | null {
+  return raw === 'all' || raw === 'metadataOnly' || raw === 'none' ? raw : null;
 }
 
 /** Max sessions resolved per invoice; anything past the cap is dropped. */

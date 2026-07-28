@@ -111,8 +111,9 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       appliedOutcome: isPaidEvent ? 'PAID' : 'FAILED',
     });
     // Match the flat-doc shape AuntieOS writes: free-text `status` + numeric
-    // `amountDue`. The portal's heuristic resolves a doc as paid when
-    // amountDue <= 0 (see getMyInvoices.resolveStatus), so mark both.
+    // `amountDue`. The portal renders the stored `status` stamp (ADR-0002;
+    // its money heuristic is retired) and the reminders cron still reads
+    // `amountDue <= 0` as settled, so mark both.
     const patch: Record<string, unknown> = {
       lastStripeEventAtMs: eventCreatedMs,
       lastStripeEventId: event.id,

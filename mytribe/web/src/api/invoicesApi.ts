@@ -11,7 +11,17 @@ import { call } from '../lib/fns';
 
 // ── getMyInvoices (functions/src/portal/getMyInvoices.ts) ───────────────────
 
-export type InvoiceStatus = 'draft' | 'open' | 'paid' | 'credit' | 'cancelled';
+/**
+ * The stored Invoice State Stamp's vocabulary (ADR-0002): all eight canonical
+ * lowercase states, persisted server-side by every money-touching callable
+ * and shipped verbatim — the portal renders this, it never classifies.
+ * Bucketing (which of open/paid/credits an invoice arrives in) is also
+ * decided server-side: open/draft/quote/zero → `open`, paid → `paid`,
+ * credit/redeemed → `credits`, cancelled → excluded.
+ */
+export type InvoiceStatus = 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
+/** The stamp's edit-affordance half. The portal has no edit UI; shipped for parity. */
+export type InvoiceEditScope = 'all' | 'metadataOnly' | 'none';
 /** Account balance is the only redemption target: credits are NOT refundable. */
 export type CreditTarget = 'accountBalance';
 
@@ -48,7 +58,17 @@ export interface InvoiceDto {
   total: number;
   amountDue: number;
   isPaid: boolean;
+  /**
+   * The stored Invoice State Stamp (ADR-0002), read off the doc server-side,
+   * never re-derived. See the bucket map on `InvoiceStatus`.
+   */
   status: InvoiceStatus;
+  /**
+   * The stamp's second half: how much of this invoice may still change.
+   * Null when the doc carries no stored scope (pre-backfill sandbox seeds).
+   * No portal screen branches on it yet; it ships for stamp parity.
+   */
+  editScope: InvoiceEditScope | null;
   /**
    * What has been collected against this invoice, in integer cents.
    *
@@ -75,7 +95,8 @@ export interface InvoiceDto {
   paymentsHistory: string | null;
   address: string | null;
   viewed: boolean;
-  // Credit-specific (only meaningful when status === 'credit')
+  // Credit-specific (only meaningful when status is 'credit' or 'redeemed' —
+  // 'redeemed' is what the stamp writes once `creditRedeemedAt` is set)
   creditAmountCents: number | null;
   creditTarget: CreditTarget | null;
   creditRedeemedAtMs: number | null;

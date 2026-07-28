@@ -47,6 +47,11 @@
 .inv .end { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 9px; min-width: 108px; }
 .btn.sm { padding: 9px 15px; font-size: 13px; border-radius: 11px; }
 .chip.draft { background: rgba(17, 19, 31, .08); color: var(--navy-soft); }
+/* Quote and zero: draft-family neutrals, not the pending orange — neither is
+   a bill asking to be paid. Quote reads teal-tinted so a sent proposal is
+   distinguishable from an unsent draft at a glance. */
+.chip.quote { background: rgba(10, 133, 149, .08); color: var(--teal); }
+.chip.zero { background: rgba(17, 19, 31, .05); color: var(--navy-muted); }
 .chip.pending { background: rgba(223, 132, 49, .16); color: var(--orange); }
 .chip.paid { background: rgba(10, 133, 149, .14); color: var(--teal); }
 /* Part paid: money has come in and it does not cover the invoice. Deliberately

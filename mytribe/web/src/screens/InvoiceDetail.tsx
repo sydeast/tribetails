@@ -104,14 +104,26 @@ export function InvoiceDetail() {
   // what it SAYS about itself changes. See lib/invoiceFormat.ts.
   const status = inv.partiallyPaid ? partPaidStatusInfo() : invoiceStatusInfo(inv.status, inv.creditRedeemedAtMs);
   const partPaid = partPaidSummary(inv);
-  const isCredit = inv.status === 'credit';
+  // The whole credit family: the stamp writes `redeemed` once the credit is
+  // spent, and a redeemed credit still carries every credit field this screen
+  // renders. Checking `credit` alone would drop a redeemed credit's panel.
+  const isCredit = inv.status === 'credit' || inv.status === 'redeemed';
   const redeemed = inv.creditRedeemedAtMs !== null;
   // `paidCents` when the server has recorded one, and only then. The
-  // total-minus-balance fallback stays for invoices predating the field, but it
-  // can never override a real figure: on every invoice the pre-2026-07-25 write
-  // touched it would report the whole total as collected.
+  // total-minus-balance fallback STAYS (checked 2026-07-28, when the stamp
+  // landed): invoices settled before the cents fields existed carry no
+  // `paidCents` at all — the backfill stamped only status/editScope — so the
+  // server honestly ships 0 for them and deleting this line would blank the
+  // "Paid" row on every historical receipt. It can never override a real
+  // figure: on every invoice the pre-2026-07-25 write touched it would report
+  // the whole total as collected.
   const paidAmount = inv.paidCents > 0 ? inv.paidCents / 100 : Math.max(0, inv.total - inv.amountDue);
-  const payable = !isCredit && inv.status !== 'cancelled' && !inv.isPaid && inv.amountDue > 0;
+  // Same rule as the list row: only an `open` invoice with a balance takes a
+  // payment. Spelled positively rather than as the old not-credit/not-
+  // cancelled/not-paid negation, which — now that the enum carries all eight
+  // stamped states — would have offered a Pay button on a quote (not yet a
+  // bill) and on a draft (never sent).
+  const payable = inv.status === 'open' && inv.amountDue > 0;
 
   return (
     <>

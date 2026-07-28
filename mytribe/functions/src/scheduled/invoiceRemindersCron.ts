@@ -37,8 +37,10 @@ function parseDueMs(d: InvoiceDoc): number | null {
 // `paymentStatus`/`status==='paid'` cover the Stripe webhook path
 // (stripeWebhook.ts sets both `status` and `amountDue:0` together); the
 // `amountDue <= 0` check covers every other write path (e.g. AuntieOS
-// manual payments), matching the portal's own canonical heuristic in
-// getMyInvoices.ts's `resolveStatus`.
+// manual payments) — the same reading the portal's retired `resolveStatus`
+// used. The portal now renders the stored state stamp (ADR-0002); this cron
+// still money-checks defensively because a missed reminder is cheaper than a
+// wrongly sent one, and `amountDue <= 0` can only ever SUPPRESS a reminder.
 function isPaid(d: InvoiceDoc): boolean {
   if (d.paymentStatus === 'PAID' || d.status === 'paid') return true;
   return typeof d.amountDue === 'number' && d.amountDue <= 0;
