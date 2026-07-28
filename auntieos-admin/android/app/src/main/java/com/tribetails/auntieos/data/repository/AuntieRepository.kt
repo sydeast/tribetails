@@ -212,53 +212,53 @@ class AuntieRepository(
         }
 
     /**
-     * Applies the sandbox kinfolkId constraint to a query over a kinfolk-scoped
-     * collection (one with a `kinfolkId` field). In test mode adds
-     * `whereEqualTo("kinfolkId", testTribeId)`; the normal-admin path returns the
-     * query untouched. Uses the pure [TestMode.kinfolkScopeFilter] for the
-     * decision so the selection is unit-tested.
+     * The Stage-0I seam: every kinfolk-scoped read/count/query below goes
+     * through [ScopedFirestore], which holds the mode source itself and applies
+     * the sandbox constraint before any call-site code runs - so a new read
+     * cannot forget it. Mode resolution is [requireTestMode] (cached, fail-loud),
+     * exactly what the old hand-inlined forks used.
      */
-    private fun com.google.firebase.firestore.Query.scopedByKinfolk(mode: TestMode): com.google.firebase.firestore.Query {
-        val filter = mode.kinfolkScopeFilter() ?: return this
-        return whereEqualTo("kinfolkId", filter)
-    }
+    private val scoped by lazy { ScopedFirestore(firestore) { requireTestMode() } }
 
     suspend fun getKinfolk(): Result<List<Kinfolk>> = runCatching {
         AuntieLog.d("Fetching kinfolk list")
         ensureAuthenticated()
-        val mode = requireTestMode()
-        if (mode.active) {
+        scoped.scopedRead(
+            "kinfolk",
             // Test admin: the only reachable kinfolk doc is the one whose id ==
             // testTribeId. A broad collection read would be permission-denied, so
             // collapse to a single doc fetch (fail-loud: errors propagate).
-            val doc = firestore.collection("kinfolk").document(mode.testTribeId).get().await()
-            val k = doc.toObject(Kinfolk::class.java)
-            return@runCatching listOfNotNull(k).filter { mode.allowsKinfolkDoc(it.id) }
-        }
-        val snapshot = firestore.collection("kinfolk").get().await()
-        snapshot.toObjects(Kinfolk::class.java).also {
-            AuntieLog.d("Fetched ${it.size} kinfolk")
-        }
+            sandbox = { doc ->
+                val k = doc.toObject(Kinfolk::class.java)
+                listOfNotNull(k).filter { allowsKinfolkDoc(it.id) }
+            },
+            unscoped = { col ->
+                col.get().await().toObjects(Kinfolk::class.java).also {
+                    AuntieLog.d("Fetched ${it.size} kinfolk")
+                }
+            },
+        )
     }.onFailure { AuntieLog.e("Failed to get kinfolk", it) }
 
     suspend fun findKinfolkByPhone(phone: String): Result<Kinfolk?> = runCatching {
         AuntieLog.d("Searching kinfolk by phone: ${AuntieLog.redactPhone(phone)}")
         ensureAuthenticated()
-        val mode = requireTestMode()
-        if (mode.active) {
+        scoped.scopedRead(
+            "kinfolk",
             // Test admin can only reach kinfolk/{testTribeId}; a phone query across
             // the collection would be denied. Fetch the sandbox doc and match locally.
-            val doc = firestore.collection("kinfolk").document(mode.testTribeId).get().await()
-            val k = doc.toObject(Kinfolk::class.java)
-            return@runCatching k?.takeIf { it.phoneNumber == phone }
-        }
-        val snapshot = firestore.collection("kinfolk")
-            .whereEqualTo("phoneNumber", phone)
-            .get().await()
-        snapshot.documents.firstOrNull()?.toObject(Kinfolk::class.java).also {
-            if (it != null) AuntieLog.d("Found kinfolk id=${it.id}")
-            else AuntieLog.d("No kinfolk found for phone ${AuntieLog.redactPhone(phone)}")
-        }
+            sandbox = { doc ->
+                doc.toObject(Kinfolk::class.java)?.takeIf { it.phoneNumber == phone }
+            },
+            unscoped = { col ->
+                col.whereEqualTo("phoneNumber", phone)
+                    .get().await()
+                    .documents.firstOrNull()?.toObject(Kinfolk::class.java).also {
+                        if (it != null) AuntieLog.d("Found kinfolk id=${it.id}")
+                        else AuntieLog.d("No kinfolk found for phone ${AuntieLog.redactPhone(phone)}")
+                    }
+            },
+        )
     }.onFailure { AuntieLog.e("Error finding kinfolk by phone", it) }
 
     suspend fun createKinfolk(firstName: String, lastName: String, phone: String): Result<Kinfolk> = runCatching {
@@ -404,8 +404,11 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get kin for $kinfolkId", it) }
 
     suspend fun createKin(kin: Kin): Result<Kin> = runCatching {
+        // Write stamp, not a query: in test mode the create is forced into the
+        // sandbox scope; scopedKinfolkId passes the caller's own kinfolkId
+        // through for the normal admin, so no mode fork is needed here.
         val mode = requireTestMode()
-        val kin = if (mode.active) kin.copy(kinfolkId = mode.scopedKinfolkId(kin.kinfolkId)) else kin
+        val kin = kin.copy(kinfolkId = mode.scopedKinfolkId(kin.kinfolkId))
         AuntieLog.i("Creating kin: ${kin.name} for kinfolk: ${kin.kinfolkId}")
         ensureAuthenticated()
         val docRef = firestore.collection("kin").add(kin).await()
@@ -424,8 +427,7 @@ class AuntieRepository(
     suspend fun getAllKin(): Result<List<Kin>> = runCatching {
         AuntieLog.d("Fetching all kin (directory index)")
         ensureAuthenticated()
-        val mode = requireTestMode()
-        firestore.collection("kin").scopedByKinfolk(mode).get().await().toObjects(Kin::class.java)
+        scoped.scopedQuery("kin").toObjects(Kin::class.java)
     }.onFailure { AuntieLog.e("Failed to get all kin", it) }
 
     suspend fun updateKin(kin: Kin): Result<Unit> = runCatching {
@@ -994,58 +996,54 @@ class AuntieRepository(
     suspend fun getRecentDrafts(): Result<List<Draft>> = runCatching {
         AuntieLog.d("Fetching recent drafts")
         ensureAuthenticated()
-        val mode = requireTestMode()
-        val col = firestore.collection("generated_drafts")
-        if (mode.active) {
+        scoped.scopedQuery(
+            "generated_drafts",
+            field = "kinfolk_id",
             // Stage-0I sandbox: rules DENY an unfiltered list of generated_drafts, so
             // constrain to this tribe's own drafts (the doc's snake_case `kinfolk_id`
             // field == testScope; see generate.js). Sort + cap client-side to avoid a
             // composite (kinfolk_id, createdOn) index; the sandbox draft set is tiny.
-            col.whereEqualTo("kinfolk_id", mode.testTribeId)
-                .get().await()
-                .toObjects(Draft::class.java)
-                .sortedByDescending { it.createdOn }
-                .take(3)
-        } else {
-            col.orderBy("createdOn", com.google.firebase.firestore.Query.Direction.DESCENDING)
-                .limit(3)
-                .get().await()
-                .toObjects(Draft::class.java)
-        }
+            sandbox = { q ->
+                q.get().await()
+                    .toObjects(Draft::class.java)
+                    .sortedByDescending { it.createdOn }
+                    .take(3)
+            },
+            unscoped = { col ->
+                col.orderBy("createdOn", com.google.firebase.firestore.Query.Direction.DESCENDING)
+                    .limit(3)
+                    .get().await()
+                    .toObjects(Draft::class.java)
+            },
+        )
     }.onFailure { AuntieLog.e("Failed to get recent drafts", it) }
 
     suspend fun getKinfolkCount(): Result<Int> = runCatching {
         ensureAuthenticated()
-        val mode = requireTestMode()
-        if (mode.active) {
+        scoped.scopedRead(
+            "kinfolk",
             // Only kinfolk/{testTribeId} is reachable; count is 0 or 1.
-            return@runCatching if (firestore.collection("kinfolk").document(mode.testTribeId).get().await().exists()) 1 else 0
-        }
-        firestore.collection("kinfolk").get().await().size()
+            sandbox = { doc -> if (doc.exists()) 1 else 0 },
+            unscoped = { col -> col.get().await().size() },
+        )
     }.onFailure { AuntieLog.e("Failed to get kinfolk count", it) }
 
     suspend fun getKinCount(): Result<Int> = runCatching {
         ensureAuthenticated()
-        val mode = requireTestMode()
-        firestore.collection("kin").scopedByKinfolk(mode).get().await().size()
+        scoped.scopedCount("kin")
     }.onFailure { AuntieLog.e("Failed to get kin count", it) }
 
     suspend fun getPendingDraftCount(): Result<Int> = runCatching {
         ensureAuthenticated()
-        val mode = requireTestMode()
-        val col = firestore.collection("generated_drafts")
-        if (mode.active) {
+        scoped.scopedCount(
+            "generated_drafts",
+            field = "kinfolk_id",
             // Stage-0I sandbox: scope to this tribe (kinfolk_id == testScope) and count
             // 'pending' client-side to avoid a composite (kinfolk_id, status) index. An
             // unfiltered read is denied by rules for a test admin.
-            col.whereEqualTo("kinfolk_id", mode.testTribeId)
-                .get().await()
-                .documents.count { it.getString("status") == "pending" }
-        } else {
-            col.whereEqualTo("status", "pending")
-                .get().await()
-                .size()
-        }
+            sandbox = { snap -> snap.documents.count { it.getString("status") == "pending" } },
+            unscoped = { whereEqualTo("status", "pending") },
+        )
     }.onFailure { AuntieLog.e("Failed to get pending draft count", it) }
 
     // Business/Operational Settings
@@ -1184,12 +1182,10 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get media files", it) }
 
     /** #13 Gallery: ALL business media (every entity). Test-admin sandbox: scoped to the
-     *  test kinfolk's media via [scopedByKinfolk]; the operator gets the full collection. */
+     *  test kinfolk's media via [ScopedFirestore.scopedQuery]; the operator gets the full collection. */
     suspend fun getAllMedia(): Result<List<MediaFile>> = runCatching {
         ensureAuthenticated()
-        val mode = requireTestMode()
-        firestore.collection("media_files").scopedByKinfolk(mode).get().await()
-            .toObjects(MediaFile::class.java)
+        scoped.scopedQuery("media_files").toObjects(MediaFile::class.java)
     }.onFailure { AuntieLog.e("Failed to get all media", it) }
 
     /** #13 Gallery: set the kin tagged in a media file (rules gate to isAuntie/testOwns). */
@@ -1210,7 +1206,7 @@ class AuntieRepository(
         // (replaces the prior second SetOptions.merge write from before the field existed).
         val newMediaFile = mediaFile
             .copy(id = docRef.id, uploadedAt = getCurrentTimestamp())
-            .withSandboxScope(if (mode.active) mode.testTribeId else null)
+            .withSandboxScope(mode.kinfolkScopeFilter())
         docRef.set(newMediaFile).await()
         docRef.id
     }.onFailure { AuntieLog.e("Failed to save media file", it) }
@@ -1500,9 +1496,7 @@ class AuntieRepository(
 
     suspend fun getInvoices(): Result<List<Invoice>> = runCatching {
         ensureAuthenticated()
-        val mode = requireTestMode()
-        val snapshot = firestore.collection("invoices").scopedByKinfolk(mode).get().await()
-        snapshot.toObjects(Invoice::class.java)
+        scoped.scopedQuery("invoices").toObjects(Invoice::class.java)
     }.onFailure { AuntieLog.e("Failed to get invoices", it) }
 
     suspend fun getInvoicesForKinfolk(kinfolkId: String): Result<List<Invoice>> = runCatching {
@@ -1848,9 +1842,7 @@ class AuntieRepository(
 
     suspend fun getPayments(): Result<List<Payment>> = runCatching {
         ensureAuthenticated()
-        val mode = requireTestMode()
-        val snapshot = firestore.collection("payments").scopedByKinfolk(mode).get().await()
-        snapshot.toObjects(Payment::class.java)
+        scoped.scopedQuery("payments").toObjects(Payment::class.java)
     }.onFailure { AuntieLog.e("Failed to get payments", it) }
 
     suspend fun getPaymentsForKinfolk(kinfolkId: String): Result<List<Payment>> = runCatching {
@@ -1864,8 +1856,10 @@ class AuntieRepository(
 
     suspend fun createPayment(payment: Payment): Result<String> = runCatching {
         ensureAuthenticated()
+        // Write stamp, not a query: scopedKinfolkId forces the sandbox scope in
+        // test mode and passes the caller's kinfolkId through otherwise.
         val mode = requireTestMode()
-        val payment = if (mode.active) payment.copy(kinfolkId = mode.scopedKinfolkId(payment.kinfolkId)) else payment
+        val payment = payment.copy(kinfolkId = mode.scopedKinfolkId(payment.kinfolkId))
         val docRef = firestore.collection("payments").document()
         docRef.set(payment.copy(id = docRef.id)).await()
         docRef.id
@@ -1875,9 +1869,7 @@ class AuntieRepository(
 
     suspend fun getVisitLogs(): Result<List<VisitLog>> = runCatching {
         ensureAuthenticated()
-        val mode = requireTestMode()
-        val snapshot = firestore.collection("visit_logs").scopedByKinfolk(mode).get().await()
-        snapshot.toObjects(VisitLog::class.java)
+        scoped.scopedQuery("visit_logs").toObjects(VisitLog::class.java)
     }.onFailure { AuntieLog.e("Failed to get visit logs", it) }
 
     suspend fun getVisitLogsForKinfolk(kinfolkId: String): Result<List<VisitLog>> = runCatching {
@@ -1994,9 +1986,7 @@ class AuntieRepository(
 
     suspend fun getKinCareSessions(): Result<List<KinCareSession>> = runCatching {
         ensureAuthenticated()
-        val mode = requireTestMode()
-        val snapshot = firestore.collection("kin_care_sessions").scopedByKinfolk(mode).get().await()
-        snapshot.toObjects(KinCareSession::class.java)
+        scoped.scopedQuery("kin_care_sessions").toObjects(KinCareSession::class.java)
     }.onFailure { AuntieLog.e("Failed to get kin care sessions", it) }
 
     suspend fun getKinCareSession(sessionId: String): Result<KinCareSession?> = runCatching {
@@ -2025,8 +2015,10 @@ class AuntieRepository(
 
     suspend fun createKinCareSession(session: KinCareSession): Result<String> = runCatching {
         ensureAuthenticated()
+        // Write stamp, not a query: scopedKinfolkId forces the sandbox scope in
+        // test mode and passes the caller's kinfolkId through otherwise.
         val mode = requireTestMode()
-        val session = if (mode.active) session.copy(kinfolkId = mode.scopedKinfolkId(session.kinfolkId)) else session
+        val session = session.copy(kinfolkId = mode.scopedKinfolkId(session.kinfolkId))
         val docRef = firestore.collection("kin_care_sessions").document()
         val timestamp = getCurrentTimestamp()
 
@@ -2058,14 +2050,11 @@ class AuntieRepository(
 
     suspend fun getKinCareSessionsForDay(dayStartIso: String, dayEndIso: String): Result<List<KinCareSession>> = runCatching {
         ensureAuthenticated()
-        val mode = requireTestMode()
-        val snapshot = firestore.collection("kin_care_sessions")
-            .scopedByKinfolk(mode)
-            .whereGreaterThanOrEqualTo("startTime", dayStartIso)
-            .whereLessThan("startTime", dayEndIso)
-            .orderBy("startTime")
-            .get()
-            .await()
+        val snapshot = scoped.scopedQuery("kin_care_sessions") {
+            whereGreaterThanOrEqualTo("startTime", dayStartIso)
+                .whereLessThan("startTime", dayEndIso)
+                .orderBy("startTime")
+        }
         snapshot.toObjects(KinCareSession::class.java)
     }.onFailure { AuntieLog.e("Failed to get kin care sessions for day", it) }
 
@@ -2110,8 +2099,10 @@ class AuntieRepository(
 
     suspend fun createKinCareReport(report: KinCareReport): Result<String> = runCatching {
         ensureAuthenticated()
+        // Write stamp, not a query: scopedKinfolkId forces the sandbox scope in
+        // test mode and passes the caller's kinfolkId through otherwise.
         val mode = requireTestMode()
-        val report = if (mode.active) report.copy(kinfolkId = mode.scopedKinfolkId(report.kinfolkId)) else report
+        val report = report.copy(kinfolkId = mode.scopedKinfolkId(report.kinfolkId))
         val docRef = firestore.collection("kin_care_reports").document()
         val timestamp = getCurrentTimestamp()
         val currentUser = auth.currentUser
@@ -2173,21 +2164,16 @@ class AuntieRepository(
 
     suspend fun getDraftReports(): Result<List<KinCareReport>> = runCatching {
         ensureAuthenticated()
-        val mode = requireTestMode()
-        val snapshot = firestore.collection("kin_care_reports")
-            .scopedByKinfolk(mode)
-            .whereEqualTo("status", ReportStatus.DRAFT.name)
-            .orderBy("updatedAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
-            .get()
-            .await()
+        val snapshot = scoped.scopedQuery("kin_care_reports") {
+            whereEqualTo("status", ReportStatus.DRAFT.name)
+                .orderBy("updatedAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
+        }
         snapshot.toObjects(KinCareReport::class.java)
     }.onFailure { AuntieLog.e("Failed to get draft reports", it) }
 
     suspend fun getAllKinCareReports(): Result<List<KinCareReport>> = runCatching {
         ensureAuthenticated()
-        val mode = requireTestMode()
-        val snapshot = firestore.collection("kin_care_reports").scopedByKinfolk(mode).get().await()
-        snapshot.toObjects(KinCareReport::class.java)
+        scoped.scopedQuery("kin_care_reports").toObjects(KinCareReport::class.java)
     }.onFailure { AuntieLog.e("Failed to get all kin care reports", it) }
 
     // --- Orphan KinCareReport triage ---
