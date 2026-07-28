@@ -127,10 +127,13 @@ describe('rules: test-admin sandbox', () => {
     );
   });
 
-  it('updates its own invoice / session / payment / media', async () => {
+  it('updates its own session / payment / media; invoice is DENIED (callable-only, ADR-0002)', async () => {
     const env = await getEnv();
     const fs = asTestAdmin(env).firestore();
-    await assertSucceeds(fs.doc(`invoices/${TEST_TRIBE}-i1`).set({ kinfolkId: TEST_TRIBE, total: 99 }, { merge: true }));
+    // ADR-0002: invoice writes are callable-only for the sandbox too, so the
+    // Invoice State Classifier stamp can never be skipped. The sandbox writes
+    // invoices through the same callables production uses.
+    await assertFails(fs.doc(`invoices/${TEST_TRIBE}-i1`).set({ kinfolkId: TEST_TRIBE, total: 99 }, { merge: true }));
     await assertSucceeds(fs.doc(`kin_care_sessions/${TEST_TRIBE}-s1`).set({ kinfolkId: TEST_TRIBE, status: 'COMPLETED' }, { merge: true }));
     await assertSucceeds(fs.doc(`payments/${TEST_TRIBE}-p1`).set({ kinfolkId: TEST_TRIBE, amount: 99 }, { merge: true }));
     await assertSucceeds(fs.doc(`media_files/${TEST_TRIBE}-m1`).set({ kinfolkId: TEST_TRIBE, isProfilePhoto: true }, { merge: true }));
@@ -255,7 +258,10 @@ describe('rules: test-admin sandbox', () => {
  */
 const SCOPED_COLLECTIONS = [
   'kin',
-  'invoices',
+  // 'invoices' left WARNING-18's create-succeeds expectation under ADR-0002:
+  // invoice writes are callable-only for everyone, sandbox included. The
+  // update-deny half (b) still holds for invoices, trivially, and the explicit
+  // invoice case below pins the create-deny.
   'payments',
   'media_files',
   'kin_care_reports',
@@ -286,6 +292,16 @@ describe('rules: test-admin sandbox create-vs-update split (WARNING-18 / C-2)', 
         fs.doc(`${col}/${TEST_TRIBE}-fresh`).set({ kinfolkId: TEST_TRIBE, isTestData: true }),
       );
     }
+  });
+
+  // Invoices: callable-only under ADR-0002. Even the sandbox's own-tribe
+  // create is denied; the sandbox invoices through the same callables as prod.
+  it('CREATE of a fresh invoice with kinfolkId == TEST_TRIBE is DENIED (ADR-0002 callable-only)', async () => {
+    const env = await getEnv();
+    const fs = asTestAdmin(env).firestore();
+    await assertFails(
+      fs.doc(`invoices/${TEST_TRIBE}-fresh`).set({ kinfolkId: TEST_TRIBE, isTestData: true }),
+    );
   });
 
   // (b) UPDATE a pre-seeded LIVE doc, attempting to re-tag it into sandbox
