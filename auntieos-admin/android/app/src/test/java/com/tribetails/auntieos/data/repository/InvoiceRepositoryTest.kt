@@ -1,22 +1,27 @@
 package com.tribetails.auntieos.data.repository
 
 import com.tribetails.auntieos.data.model.Payment
+import com.tribetails.auntieos.domain.TestMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * W2-2 of ADR-0002: pure encode/decode contracts for the two invoice-write
- * callables that replaced Android's direct Firestore money writes.
+ * The [InvoiceRepository] wire contract: every pure encoder and decoder the
+ * invoice and payment callables go through. Renamed from InvoiceWriteCallablesTest
+ * and gathered here by W4-1, so the contracts sit beside the repo that sends
+ * them rather than scattered across the god-file's test files.
  *
- * The recordPayment payload is HAND-MIRRORED against the server zod Args
- * (mytribe/functions/src/admin/recordPayment.ts), so these tests pin the exact
+ * These payloads are HAND-MIRRORED against the server zod Args (e.g.
+ * mytribe/functions/src/admin/recordPayment.ts), so these tests pin the exact
  * key set: a key added or dropped here is contract drift the compiler cannot
- * see. Kept pure so they run without Firebase static init, like
+ * see. ADR-0001 replaces the mirrors with generated Kotlin; the tests outlive
+ * that swap. Kept pure so they run without Firebase static init, like
  * AssignAuntiePayloadTest / StageTwoTailDecodeTest.
  */
-class InvoiceWriteCallablesTest {
+class InvoiceRepositoryTest {
 
     // ── recordPayment payload ────────────────────────────────────────────────
 
@@ -151,5 +156,65 @@ class InvoiceWriteCallablesTest {
         )
         assertTrue(decoded.sessionIds.isEmpty())
         assertEquals(listOf("ses1"), decoded.removed)
+    }
+
+    // ── sendInvoiceReminder result decode (moved from StageTwoTailDecodeTest) ─
+    @Test
+    fun `reminder decode echoes server invoiceId`() {
+        assertEquals("inv-9", decodeSentReminderInvoiceId(mapOf("ok" to true, "invoiceId" to "inv-9"), "inv-1"))
+    }
+    @Test
+    fun `reminder decode falls back to requested id when missing`() {
+        assertEquals("inv-1", decodeSentReminderInvoiceId(mapOf("ok" to true), "inv-1"))
+        assertEquals("inv-1", decodeSentReminderInvoiceId(null, "inv-1"))
+    }
+    @Test
+    fun `reminder decode falls back when server id is blank`() {
+        assertEquals("inv-1", decodeSentReminderInvoiceId(mapOf("invoiceId" to ""), "inv-1"))
+    }
+    // ── markInvoicePaid settlement decode (moved from RecordPaymentOutcomeTest) ─
+    @Test
+    fun `settlement decodes the callable payload into integer cents`() {
+        val decoded = decodeInvoiceSettlement(
+            mapOf(
+                "state" to "partial",
+                "totalCents" to 4000,
+                "paidCents" to 2000,
+                "amountDueCents" to 2000,
+                "overpaidCents" to 0,
+            ),
+        )
+        assertEquals("partial", decoded.state)
+        assertEquals(2000L, decoded.amountDueCents)
+        assertTrue(decoded.isPartial)
+    }
+    @Test
+    fun `an UNREADABLE settlement payload decodes to partial, never to settled`() {
+        // If the server's answer cannot be read, the safe reading is that money
+        // may still be owed: that keeps the invoice in Outstanding and keeps the
+        // operator able to collect. Defaulting to settled would reproduce the
+        // very defect this decode exists to prevent, in the client.
+        assertTrue(decodeInvoiceSettlement(null).isPartial)
+        assertTrue(decodeInvoiceSettlement(emptyMap()).isPartial)
+        assertTrue(decodeInvoiceSettlement(mapOf("state" to "")).isPartial)
+    }
+    @Test
+    fun `a missing cents field decodes to zero rather than throwing`() {
+        val decoded = decodeInvoiceSettlement(mapOf("state" to "settled"))
+        assertEquals(0L, decoded.amountDueCents)
+        assertEquals(0L, decoded.overpaidCents)
+    }
+
+    // ── construction ─────────────────────────────────────────────────────────
+    @Test
+    fun `constructing the repo touches no Firebase singleton`() {
+        // The Firebase handles are lazy PROVIDERS, not eager constructor
+        // arguments, so `AuntieOSApp.instance.invoiceRepository` is safe to name
+        // as a ViewModel default argument in a Firebase-less Robolectric test.
+        // Turning any of them back into an eager `FirebaseFirestore.getInstance()`
+        // default would blow up here with "Default FirebaseApp is not
+        // initialized" rather than in a screenshot golden three files away.
+        val repo = InvoiceRepository(requireTestMode = { TestMode.OFF })
+        assertNotNull(repo)
     }
 }

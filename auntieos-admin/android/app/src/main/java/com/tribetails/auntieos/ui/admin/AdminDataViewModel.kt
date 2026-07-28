@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,8 +19,14 @@ sealed interface ChainVerifyUiState {
     data class Error(val message: String) : ChainVerifyUiState
 }
 
+/**
+ * W4-1: the invoice and payment paths inject [InvoiceRepository] directly.
+ * [repository] still serves this screen's other ~20 domains, which are carved
+ * in later waves.
+ */
 class AdminDataViewModel(
-    private val repository: AuntieRepository = AuntieOSApp.instance.repository
+    private val repository: AuntieRepository = AuntieOSApp.instance.repository,
+    private val invoiceRepository: InvoiceRepository = AuntieOSApp.instance.invoiceRepository,
 ) : ViewModel() {
 
     private val _isLoading = MutableStateFlow(false)
@@ -224,7 +231,7 @@ class AdminDataViewModel(
             _isLoading.value = true
             _error.value = null
 
-            repository.getInvoices().onSuccess { invoiceList ->
+            invoiceRepository.getInvoices().onSuccess { invoiceList ->
                 _invoices.value = invoiceList.sortedByDescending { it.date }
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to load invoices"
@@ -239,7 +246,7 @@ class AdminDataViewModel(
             _isLoading.value = true
             _error.value = null
 
-            repository.getPayments().onSuccess { paymentList ->
+            invoiceRepository.getPayments().onSuccess { paymentList ->
                 _payments.value = paymentList.sortedByDescending { it.date }
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to load payments"
@@ -352,7 +359,7 @@ class AdminDataViewModel(
     fun createInvoice(invoice: Invoice) {
         viewModelScope.launch {
             _isLoading.value = true
-            repository.createInvoice(invoice).onSuccess {
+            invoiceRepository.createInvoice(invoice).onSuccess {
                 loadInvoices() // Refresh the list
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to create invoice"
@@ -370,7 +377,7 @@ class AdminDataViewModel(
     fun createQuote(invoice: Invoice, sendToKinfolk: Boolean) {
         viewModelScope.launch {
             _isLoading.value = true
-            repository.createQuote(invoice, sendToKinfolk).onSuccess {
+            invoiceRepository.createQuote(invoice, sendToKinfolk).onSuccess {
                 _invoiceActionMessage.value = if (sendToKinfolk) "Quote created and sent." else "Quote created."
                 loadInvoices() // Refresh the list
             }.onFailure { throwable ->
@@ -384,7 +391,7 @@ class AdminDataViewModel(
     fun generateReceipt(invoiceId: String) {
         viewModelScope.launch {
             _isLoading.value = true
-            repository.generateReceipt(invoiceId).onSuccess {
+            invoiceRepository.generateReceipt(invoiceId).onSuccess {
                 loadInvoices() // Refresh to reflect receiptIssuedAt
                 _invoiceActionMessage.value = "Receipt generated."
             }.onFailure { throwable ->
@@ -411,7 +418,7 @@ class AdminDataViewModel(
     fun sendInvoiceReminder(invoiceId: String) {
         if (invoiceId.isBlank()) return
         viewModelScope.launch {
-            repository.sendInvoiceReminder(invoiceId).onSuccess {
+            invoiceRepository.sendInvoiceReminder(invoiceId).onSuccess {
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope = viewModelScope,
                     repository = repository,
@@ -439,7 +446,7 @@ class AdminDataViewModel(
             return
         }
         viewModelScope.launch {
-            repository.reviewAndSendDraftInvoice(invoice.id, invoice.kinfolkId).onSuccess {
+            invoiceRepository.reviewAndSendDraftInvoice(invoice.id, invoice.kinfolkId).onSuccess {
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope = viewModelScope,
                     repository = repository,
@@ -459,7 +466,7 @@ class AdminDataViewModel(
     fun createPayment(payment: Payment) {
         viewModelScope.launch {
             _isLoading.value = true
-            repository.createPayment(payment).onSuccess {
+            invoiceRepository.createPayment(payment).onSuccess {
                 loadPayments() // Refresh the list
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to create payment"

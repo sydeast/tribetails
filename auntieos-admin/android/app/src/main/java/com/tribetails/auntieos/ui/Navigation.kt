@@ -376,12 +376,12 @@ private fun AuthenticatedNavHost(
     val app = AuntieOSApp.instance
     val context = app.applicationContext
 
-    val homeVm              = remember { HomeViewModel(app.repository) }
+    val homeVm              = remember { HomeViewModel(app.repository, app.invoiceRepository) }
     val commVm              = remember { CommunicateViewModel(app.repository) }
     val callsVm             = remember { CallsViewModel(context, app.repository) }
     val settingsVm          = remember { SettingsViewModel(context) }
     val msgVm               = remember { MessagingViewModel(app.repository) }
-    val directoryVm         = remember { DirectoryViewModel(app.repository) }
+    val directoryVm         = remember { DirectoryViewModel(app.repository, app.invoiceRepository) }
     val schedulingVm        = remember { EnhancedSchedulingViewModel(app.bookingRepository, app.serviceRepository) }
     val serviceManagementVm = remember { ServiceManagementViewModel(app.serviceRepository) }
 
@@ -782,7 +782,7 @@ private fun AuthenticatedNavHost(
                     InvoiceDetailScreen(
                         invoiceId = invoiceId,
                         onBack    = { navController.popBackStack() },
-                        viewModel = InvoiceDetailViewModel(app.repository),
+                        viewModel = InvoiceDetailViewModel(app.repository, app.invoiceRepository),
                     )
                 }
             }

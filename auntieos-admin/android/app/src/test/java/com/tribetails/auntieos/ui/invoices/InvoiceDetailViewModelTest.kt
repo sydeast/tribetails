@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.invoices
 
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
@@ -25,16 +26,17 @@ class InvoiceDetailViewModelTest {
 
     private lateinit var viewModel: InvoiceDetailViewModel
     private val repository = mockk<AuntieRepository>(relaxed = true)
+    private val invoiceRepository = mockk<InvoiceRepository>(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
 
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         // loadInvoice now also loads payments for the per-invoice join.
-        coEvery { repository.getPayments() } returns Result.success(emptyList<com.tribetails.auntieos.data.model.Payment>())
+        coEvery { invoiceRepository.getPayments() } returns Result.success(emptyList<com.tribetails.auntieos.data.model.Payment>())
         // A8: loadInvoice also fetches business settings for the "How to pay" section.
         coEvery { repository.getBusinessSettings() } returns Result.success(com.tribetails.auntieos.data.model.BusinessSettings())
-        viewModel = InvoiceDetailViewModel(repository)
+        viewModel = InvoiceDetailViewModel(repository, invoiceRepository)
     }
 
     @After
@@ -53,7 +55,7 @@ class InvoiceDetailViewModelTest {
             status = "paid",
             dueDate = "2026-06-01"
         )
-        coEvery { repository.getInvoiceById("inv123") } returns Result.success(invoice)
+        coEvery { invoiceRepository.getInvoiceById("inv123") } returns Result.success(invoice)
 
         viewModel.loadInvoice("inv123")
         advanceUntilIdle()
@@ -68,7 +70,7 @@ class InvoiceDetailViewModelTest {
 
     @Test
     fun `loadInvoice sets error when invoice not found`() = runTest {
-        coEvery { repository.getInvoiceById("missing") } returns Result.failure(
+        coEvery { invoiceRepository.getInvoiceById("missing") } returns Result.failure(
             NoSuchElementException("Invoice not found")
         )
 
@@ -85,7 +87,7 @@ class InvoiceDetailViewModelTest {
     @Test
     fun `loadInvoice sets isLoading then clears it`() = runTest {
         val invoice = Invoice(id = "inv999", invoiceNumber = "INV-999")
-        coEvery { repository.getInvoiceById("inv999") } returns Result.success(invoice)
+        coEvery { invoiceRepository.getInvoiceById("inv999") } returns Result.success(invoice)
 
         viewModel.loadInvoice("inv999")
         // isLoading should be true before coroutine runs
@@ -98,7 +100,7 @@ class InvoiceDetailViewModelTest {
 
     // ── Stage 3 / 16.2: invoice PDF download ─────────────────────────────────
     private fun loadInvoiceFor(id: String) {
-        coEvery { repository.getInvoiceById(id) } returns Result.success(Invoice(id = id, invoiceNumber = "INV-$id"))
+        coEvery { invoiceRepository.getInvoiceById(id) } returns Result.success(Invoice(id = id, invoiceNumber = "INV-$id"))
         viewModel.loadInvoice(id)
     }
 
@@ -106,7 +108,7 @@ class InvoiceDetailViewModelTest {
     fun `downloadPdf success sets pdfUrlToOpen and consume clears it`() = runTest {
         loadInvoiceFor("inv-pdf")
         advanceUntilIdle()
-        coEvery { repository.generateInvoicePdf("inv-pdf") } returns Result.success("https://firebasestorage.example/x?token=t")
+        coEvery { invoiceRepository.generateInvoicePdf("inv-pdf") } returns Result.success("https://firebasestorage.example/x?token=t")
 
         viewModel.downloadPdf()
         advanceUntilIdle()
@@ -124,7 +126,7 @@ class InvoiceDetailViewModelTest {
     fun `downloadPdf failure surfaces fail-loud toast and no url`() = runTest {
         loadInvoiceFor("inv-bad")
         advanceUntilIdle()
-        coEvery { repository.generateInvoicePdf("inv-bad") } returns Result.failure(RuntimeException("boom"))
+        coEvery { invoiceRepository.generateInvoicePdf("inv-bad") } returns Result.failure(RuntimeException("boom"))
 
         viewModel.downloadPdf()
         advanceUntilIdle()

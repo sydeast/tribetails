@@ -4,6 +4,7 @@ import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -34,14 +35,15 @@ class InvoiceArchiveViewModelTest {
 
     private lateinit var viewModel: InvoiceDetailViewModel
     private val repository = mockk<AuntieRepository>(relaxed = true)
+    private val invoiceRepository = mockk<InvoiceRepository>(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
 
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
-        coEvery { repository.getPayments() } returns Result.success(emptyList<Payment>())
+        coEvery { invoiceRepository.getPayments() } returns Result.success(emptyList<Payment>())
         coEvery { repository.getBusinessSettings() } returns Result.success(BusinessSettings())
-        viewModel = InvoiceDetailViewModel(repository)
+        viewModel = InvoiceDetailViewModel(repository, invoiceRepository)
     }
 
     @After
@@ -50,7 +52,7 @@ class InvoiceArchiveViewModelTest {
     }
 
     private suspend fun TestScope.loadInvoice(invoice: Invoice) {
-        coEvery { repository.getInvoiceById(invoice.id) } returns Result.success(invoice)
+        coEvery { invoiceRepository.getInvoiceById(invoice.id) } returns Result.success(invoice)
         viewModel.loadInvoice(invoice.id)
         advanceUntilIdle()
     }
@@ -65,17 +67,17 @@ class InvoiceArchiveViewModelTest {
         viewModel.promptArchive()
         advanceUntilIdle()
         assertTrue(viewModel.uiState.value.archivePrompt)
-        coVerify(exactly = 0) { repository.archiveInvoice(any(), any()) }
+        coVerify(exactly = 0) { invoiceRepository.archiveInvoice(any(), any()) }
     }
 
     @Test
     fun `confirming archives without force`() = runTest {
         loadInvoice(openInvoice())
-        coEvery { repository.archiveInvoice("i1", false) } returns Result.success(Unit)
+        coEvery { invoiceRepository.archiveInvoice("i1", false) } returns Result.success(Unit)
         viewModel.promptArchive()
         viewModel.confirmArchive(false)
         advanceUntilIdle()
-        coVerify { repository.archiveInvoice("i1", false) }
+        coVerify { invoiceRepository.archiveInvoice("i1", false) }
         assertFalse(viewModel.uiState.value.archivePrompt)
         assertEquals("Invoice archived.", viewModel.uiState.value.toastMessage)
     }
@@ -86,7 +88,7 @@ class InvoiceArchiveViewModelTest {
         // the outstanding total. That is a decision to hand back to the operator,
         // not an error to bounce off, so the confirm stays open.
         loadInvoice(openInvoice())
-        coEvery { repository.archiveInvoice("i1", false) } returns
+        coEvery { invoiceRepository.archiveInvoice("i1", false) } returns
             Result.failure(RuntimeException("This invoice still has \$40.00 owing. Archiving it would drop that from the outstanding total."))
         viewModel.promptArchive()
         viewModel.confirmArchive(false)
@@ -99,18 +101,18 @@ class InvoiceArchiveViewModelTest {
     @Test
     fun `forcing takes a SECOND explicit press and says what was given up`() = runTest {
         loadInvoice(openInvoice())
-        coEvery { repository.archiveInvoice("i1", true) } returns Result.success(Unit)
+        coEvery { invoiceRepository.archiveInvoice("i1", true) } returns Result.success(Unit)
         viewModel.promptArchive()
         viewModel.confirmArchive(true)
         advanceUntilIdle()
-        coVerify { repository.archiveInvoice("i1", true) }
+        coVerify { invoiceRepository.archiveInvoice("i1", true) }
         assertTrue(viewModel.uiState.value.toastMessage.contains("written off"))
     }
 
     @Test
     fun `any other failure closes the prompt and reports verbatim`() = runTest {
         loadInvoice(openInvoice())
-        coEvery { repository.archiveInvoice("i1", false) } returns
+        coEvery { invoiceRepository.archiveInvoice("i1", false) } returns
             Result.failure(RuntimeException("This invoice is already archived."))
         viewModel.promptArchive()
         viewModel.confirmArchive(false)
@@ -122,12 +124,12 @@ class InvoiceArchiveViewModelTest {
     @Test
     fun `an ARCHIVED invoice restores instead of archiving`() = runTest {
         loadInvoice(archivedInvoice())
-        coEvery { repository.unarchiveInvoice("i1") } returns Result.success(Unit)
+        coEvery { invoiceRepository.unarchiveInvoice("i1") } returns Result.success(Unit)
         viewModel.promptArchive()
         viewModel.confirmArchive(false)
         advanceUntilIdle()
-        coVerify { repository.unarchiveInvoice("i1") }
-        coVerify(exactly = 0) { repository.archiveInvoice(any(), any()) }
+        coVerify { invoiceRepository.unarchiveInvoice("i1") }
+        coVerify(exactly = 0) { invoiceRepository.archiveInvoice(any(), any()) }
         assertTrue(viewModel.uiState.value.toastMessage.contains("restored"))
     }
 
@@ -137,7 +139,7 @@ class InvoiceArchiveViewModelTest {
         // Stubbed even though this test never advances to it: `runTest` drains
         // the scheduler on the way out, and a relaxed mockk hands back a bare
         // Object that cannot be cast to the Result the coroutine awaits.
-        coEvery { repository.archiveInvoice("i1", false) } returns Result.success(Unit)
+        coEvery { invoiceRepository.archiveInvoice("i1", false) } returns Result.success(Unit)
         viewModel.promptArchive()
         viewModel.confirmArchive(false)
         // Still in flight: the dispatcher has not been advanced.

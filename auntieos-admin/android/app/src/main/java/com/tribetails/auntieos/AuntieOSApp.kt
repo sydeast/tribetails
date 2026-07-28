@@ -10,6 +10,7 @@ import com.tribetails.auntieos.BuildConfig
 import com.tribetails.auntieos.data.api.RetrofitClient
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.ServiceRepository
 import com.tribetails.auntieos.location.BreadcrumbDispatcher
 import com.tribetails.auntieos.media.MediaUploadManager
@@ -34,6 +35,17 @@ class AuntieOSApp : Application() {
 
     val bookingRepository: BookingRepository by lazy { BookingRepository() }
     val serviceRepository: ServiceRepository by lazy { ServiceRepository() }
+
+    /**
+     * W4-1: the Invoice domain repo, first carve out of the AuntieRepository
+     * god-file. Its TestMode source reads `repository` at CALL time, not at
+     * construction, so a [rebuildRepository] (base-url change) is picked up and
+     * the `testTribeId` claim is still read and cached in exactly one place.
+     */
+    val invoiceRepository: InvoiceRepository by lazy {
+        InvoiceRepository(requireTestMode = { repository.requireTestMode() })
+    }
+
     val mediaUploadManager: MediaUploadManager by lazy { MediaUploadManager(applicationContext, repository) }
     val visitNotifier: VisitNotifier by lazy { VisitNotifier() }
     val breadcrumbDispatcher: BreadcrumbDispatcher by lazy {

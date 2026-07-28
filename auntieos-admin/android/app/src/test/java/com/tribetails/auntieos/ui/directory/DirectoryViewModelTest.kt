@@ -4,6 +4,7 @@ import com.tribetails.auntieos.data.model.HouseholdData
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -27,6 +28,7 @@ class DirectoryViewModelTest {
 
     private lateinit var viewModel: DirectoryViewModel
     private val repository = mockk<AuntieRepository>(relaxed = true)
+    private val invoiceRepository = mockk<InvoiceRepository>(relaxed = true)
     private val testDispatcher = UnconfinedTestDispatcher()
 
     @Before
@@ -48,14 +50,14 @@ class DirectoryViewModelTest {
         coEvery { repository.getKin(any()) } returns Result.success(emptyList())
         coEvery { repository.getAllKinCareReports() } returns Result.success(emptyList())
         coEvery { repository.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
-        coEvery { repository.getInvoicesForKinfolk(any()) } returns Result.success(emptyList())
+        coEvery { invoiceRepository.getInvoicesForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repository.getHouseholdData(any()) } returns Result.success(null)
         coEvery { repository.listFormSchemas() } returns Result.success(emptyList())
         coEvery { repository.clearDossierHouseholdNotes(any()) } returns Result.success(Unit)
         // Phase 3: refresh-intelligence (synthesize) on the directory VM.
         coEvery { repository.synthesizeProfile(any()) } returns Result.success(Unit)
 
-        viewModel = DirectoryViewModel(repository)
+        viewModel = DirectoryViewModel(repository, invoiceRepository)
     }
 
     @After

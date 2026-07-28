@@ -7,6 +7,7 @@ import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.InvoiceSettlement
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.formatCentsUsd
@@ -58,8 +59,15 @@ data class InvoiceDetailUiState(
     val archiving: Boolean = false,
 )
 
+/**
+ * W4-1: this screen is invoice work, so it injects [InvoiceRepository] directly
+ * rather than reaching through a facade. [repository] is still here for the
+ * collaborators that are NOT invoice domain and have not been carved yet: the
+ * kin-care session list, business settings, and the AuditLog writer.
+ */
 class InvoiceDetailViewModel(
     private val repository: AuntieRepository = AuntieOSApp.instance.repository,
+    private val invoiceRepository: InvoiceRepository = AuntieOSApp.instance.invoiceRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(InvoiceDetailUiState())
@@ -68,7 +76,7 @@ class InvoiceDetailViewModel(
     fun loadInvoice(invoiceId: String) {
         _uiState.value = InvoiceDetailUiState(isLoading = true)
         viewModelScope.launch {
-            repository.getInvoiceById(invoiceId)
+            invoiceRepository.getInvoiceById(invoiceId)
                 .onSuccess { invoice ->
                     _uiState.value = _uiState.value.copy(
                         invoice   = invoice,
@@ -107,7 +115,7 @@ class InvoiceDetailViewModel(
     private fun loadPaymentsForInvoice(invoiceId: String, kinfolkId: String) {
         if (invoiceId.isBlank()) return
         viewModelScope.launch {
-            repository.getPayments()
+            invoiceRepository.getPayments()
                 .onSuccess { all ->
                     _uiState.value = _uiState.value.copy(
                         linkedPayments = paymentsForInvoice(all, invoiceId),
@@ -156,7 +164,7 @@ class InvoiceDetailViewModel(
         val invoiceId = _uiState.value.invoice?.id ?: return
         _uiState.value = _uiState.value.copy(recordingPayment = true)
         viewModelScope.launch {
-            val settlement = repository.markInvoicePaid(
+            val settlement = invoiceRepository.markInvoicePaid(
                 invoiceId = invoiceId,
                 amount = payment.amount,
                 method = payment.paymentMethod,
@@ -174,7 +182,7 @@ class InvoiceDetailViewModel(
             // Best-effort: the money has already landed server-side, so a failure
             // here costs this screen's list row, not the payment. Logged, never
             // swallowed.
-            repository.createPayment(payment)
+            invoiceRepository.createPayment(payment)
                 .onFailure { AuntieLog.e("Legacy payment row failed for invoice $invoiceId", it) }
 
             com.tribetails.auntieos.data.admin.AuditLog.fire(
@@ -255,7 +263,7 @@ class InvoiceDetailViewModel(
             // set, so two concurrent saves cannot both work from the same stale
             // snapshot, and a mid-loop session failure can no longer strand the
             // invoice claiming a session that still points elsewhere.
-            val linkResult = repository.linkInvoiceSessions(invoiceId, newIds)
+            val linkResult = invoiceRepository.linkInvoiceSessions(invoiceId, newIds)
             if (linkResult.isFailure) {
                 AuntieLog.e("Failed to link sessions for invoice $invoiceId", linkResult.exceptionOrNull())
                 _uiState.value = _uiState.value.copy(
@@ -268,7 +276,7 @@ class InvoiceDetailViewModel(
             }
 
             // Refresh invoice to pick up new sessionIds + attribution + persisted state
-            repository.getInvoiceById(invoiceId)
+            invoiceRepository.getInvoiceById(invoiceId)
                 .onSuccess { refreshed ->
                     _uiState.value = _uiState.value.copy(
                         invoice      = refreshed,
@@ -301,7 +309,7 @@ class InvoiceDetailViewModel(
         if (_uiState.value.generatingReceipt) return
         _uiState.value = _uiState.value.copy(generatingReceipt = true)
         viewModelScope.launch {
-            repository.generateReceipt(invoiceId)
+            invoiceRepository.generateReceipt(invoiceId)
                 .onSuccess {
                     com.tribetails.auntieos.data.admin.AuditLog.fire(
                         scope            = viewModelScope,
@@ -337,7 +345,7 @@ class InvoiceDetailViewModel(
         if (_uiState.value.generatingPdf) return
         _uiState.value = _uiState.value.copy(generatingPdf = true)
         viewModelScope.launch {
-            repository.generateInvoicePdf(invoiceId)
+            invoiceRepository.generateInvoicePdf(invoiceId)
                 .onSuccess { url ->
                     com.tribetails.auntieos.data.admin.AuditLog.fire(
                         scope            = viewModelScope,
@@ -388,7 +396,7 @@ class InvoiceDetailViewModel(
         if (_uiState.value.sendingReminder) return
         _uiState.value = _uiState.value.copy(sendingReminder = true)
         viewModelScope.launch {
-            repository.sendInvoiceReminder(invoiceId)
+            invoiceRepository.sendInvoiceReminder(invoiceId)
                 .onSuccess {
                     com.tribetails.auntieos.data.admin.AuditLog.fire(
                         scope            = viewModelScope,
@@ -445,9 +453,9 @@ class InvoiceDetailViewModel(
         _uiState.value = _uiState.value.copy(archiving = true)
         viewModelScope.launch {
             val outcome = if (restoring) {
-                repository.unarchiveInvoice(invoice.id)
+                invoiceRepository.unarchiveInvoice(invoice.id)
             } else {
-                repository.archiveInvoice(invoice.id, force)
+                invoiceRepository.archiveInvoice(invoice.id, force)
             }
             outcome
                 .onSuccess {
@@ -515,7 +523,7 @@ class InvoiceDetailViewModel(
         }
         _uiState.value = _uiState.value.copy(sendingDraft = true)
         viewModelScope.launch {
-            repository.reviewAndSendDraftInvoice(invoice.id, invoice.kinfolkId)
+            invoiceRepository.reviewAndSendDraftInvoice(invoice.id, invoice.kinfolkId)
                 .onSuccess {
                     com.tribetails.auntieos.data.admin.AuditLog.fire(
                         scope            = viewModelScope,
@@ -547,7 +555,7 @@ class InvoiceDetailViewModel(
     /** Re-fetch the invoice into state without flipping the loading shimmer. */
     private fun reloadInvoiceQuietly(invoiceId: String) {
         viewModelScope.launch {
-            repository.getInvoiceById(invoiceId)
+            invoiceRepository.getInvoiceById(invoiceId)
                 .onSuccess { refreshed -> _uiState.value = _uiState.value.copy(invoice = refreshed) }
                 .onFailure { AuntieLog.e("Quiet reload failed for invoice $invoiceId", it) }
         }

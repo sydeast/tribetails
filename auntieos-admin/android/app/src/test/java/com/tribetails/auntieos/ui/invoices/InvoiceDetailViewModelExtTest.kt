@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.invoices
 
 import com.tribetails.auntieos.TestFixtures
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -24,16 +25,18 @@ class InvoiceDetailViewModelExtTest {
 
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var mockRepo: AuntieRepository
+    private lateinit var mockInvoiceRepo: InvoiceRepository
 
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         mockRepo = mockk()
+        mockInvoiceRepo = mockk()
         // Default stub: session fetch returns empty list so tests that only care
         // about invoice loading don't break on the new getKinCareSessionsForKinfolk call.
         coEvery { mockRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         // loadInvoice now also loads payments for the per-invoice join (spec 17).
-        coEvery { mockRepo.getPayments() } returns Result.success(emptyList<com.tribetails.auntieos.data.model.Payment>())
+        coEvery { mockInvoiceRepo.getPayments() } returns Result.success(emptyList<com.tribetails.auntieos.data.model.Payment>())
         // A8: loadInvoice also fetches business settings for the "How to pay" section.
         coEvery { mockRepo.getBusinessSettings() } returns Result.success(com.tribetails.auntieos.data.model.BusinessSettings())
     }
@@ -43,7 +46,7 @@ class InvoiceDetailViewModelExtTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = InvoiceDetailViewModel(repository = mockRepo)
+    private fun buildViewModel() = InvoiceDetailViewModel(repository = mockRepo, invoiceRepository = mockInvoiceRepo)
 
     @Test
     fun `initial state has no invoice and no error`() {
@@ -55,7 +58,7 @@ class InvoiceDetailViewModelExtTest {
 
     @Test
     fun `loadInvoice populates invoice on success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById("inv1") } returns Result.success(TestFixtures.invoice1)
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(TestFixtures.invoice1)
 
         val vm = buildViewModel()
         vm.loadInvoice("inv1")
@@ -69,7 +72,7 @@ class InvoiceDetailViewModelExtTest {
 
     @Test
     fun `loadInvoice sets error on repository failure`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById(any()) } returns Result.failure(RuntimeException("Not found"))
+        coEvery { mockInvoiceRepo.getInvoiceById(any()) } returns Result.failure(RuntimeException("Not found"))
 
         val vm = buildViewModel()
         vm.loadInvoice("inv99")
@@ -83,7 +86,7 @@ class InvoiceDetailViewModelExtTest {
 
     @Test
     fun `retry after error calls loadInvoice again`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById("inv1") } returnsMany listOf(
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returnsMany listOf(
             Result.failure(RuntimeException("Timeout")),
             Result.success(TestFixtures.invoice1)
         )
@@ -99,12 +102,12 @@ class InvoiceDetailViewModelExtTest {
 
         assertNotNull(vm.uiState.value.invoice)
         assertNull(vm.uiState.value.error)
-        coVerify(exactly = 2) { mockRepo.getInvoiceById("inv1") }
+        coVerify(exactly = 2) { mockInvoiceRepo.getInvoiceById("inv1") }
     }
 
     @Test
     fun `loadInvoice with empty string id sets error state`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById("") } returns
+        coEvery { mockInvoiceRepo.getInvoiceById("") } returns
             Result.failure(RuntimeException("Document path must not be empty"))
 
         val vm = buildViewModel()

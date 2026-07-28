@@ -4,6 +4,7 @@ import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.TrainingDocAttachment
 import com.tribetails.auntieos.data.model.TrainingDocument
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -45,7 +46,7 @@ class TribalIntelViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = AdminDataViewModel(repository = mockRepo)
+    private fun buildViewModel() = AdminDataViewModel(repository = mockRepo, invoiceRepository = mockk(relaxed = true))
 
     @Test
     fun `createTrainingDocument success sets queued message and passes KINFOLK target`() = runTest(testDispatcher) {

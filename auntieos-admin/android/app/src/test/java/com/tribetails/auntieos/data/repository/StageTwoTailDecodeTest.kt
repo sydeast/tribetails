@@ -4,27 +4,15 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * Stage 2 tail: pure decoders for the new callable payloads (sendInvoiceReminder,
- * batchUpdateBookings, bulkMarkNotificationsRead). These are the decode contracts the
- * AuntieRepository callable methods delegate to, kept pure so they are exhaustively
- * testable without Firebase static init.
+ * Stage 2 tail: pure decoders for the new callable payloads (batchUpdateBookings,
+ * bulkMarkNotificationsRead, archiveNotification). These are the decode contracts
+ * the AuntieRepository callable methods delegate to, kept pure so they are
+ * exhaustively testable without Firebase static init.
+ *
+ * The sendInvoiceReminder decode that used to open this file moved to
+ * InvoiceRepositoryTest with the W4-1 carve: it is migrated, not dropped.
  */
 class StageTwoTailDecodeTest {
-
-    // ── sendInvoiceReminder ──────────────────────────────────────────────────────
-
-    @Test fun `reminder decode echoes server invoiceId`() {
-        assertEquals("inv-9", decodeSentReminderInvoiceId(mapOf("ok" to true, "invoiceId" to "inv-9"), "inv-1"))
-    }
-
-    @Test fun `reminder decode falls back to requested id when missing`() {
-        assertEquals("inv-1", decodeSentReminderInvoiceId(mapOf("ok" to true), "inv-1"))
-        assertEquals("inv-1", decodeSentReminderInvoiceId(null, "inv-1"))
-    }
-
-    @Test fun `reminder decode falls back when server id is blank`() {
-        assertEquals("inv-1", decodeSentReminderInvoiceId(mapOf("invoiceId" to ""), "inv-1"))
-    }
 
     // ── bulkMarkNotificationsRead ────────────────────────────────────────────────
 
