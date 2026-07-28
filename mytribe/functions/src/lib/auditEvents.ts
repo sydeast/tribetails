@@ -83,6 +83,16 @@ export const AUDIT_EVENTS = {
   // chasing money, not a cosmetic filter.
   BILLING_INVOICE_ARCHIVED: 'BILLING_INVOICE_ARCHIVED',
   BILLING_INVOICE_UNARCHIVED: 'BILLING_INVOICE_UNARCHIVED',
+  // W2-1 (ADR-0002): the invoice<->session link was manually curated through
+  // linkInvoiceSessions (both directions in one transaction). Logged because
+  // the link decides which visits an invoice bills for, so moving it after a
+  // household has seen a figure is investigable state.
+  BILLING_INVOICE_SESSIONS_LINKED: 'BILLING_INVOICE_SESSIONS_LINKED',
+  // W2-1 (ADR-0002): a row was created in the ROOT payments collection
+  // (recordPayment callable): the display ledger the payment screens read,
+  // distinct from BILLING_INVOICE_PAID which covers the invoice-settling
+  // subcollection write in markInvoicePaid.
+  BILLING_PAYMENT_RECORDED: 'BILLING_PAYMENT_RECORDED',
 
   THEME_BRAND_TOKENS_UPDATED: 'THEME_BRAND_TOKENS_UPDATED',
   THEME_KINFOLK_OVERRIDES_UPDATED: 'THEME_KINFOLK_OVERRIDES_UPDATED',

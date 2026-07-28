@@ -468,3 +468,67 @@ describe('updateInvoice admin gate', () => {
     });
   });
 });
+/**
+ * W2-1 (ADR-0002): the four descriptive fields android's whole-model merge-set
+ * writes that the patch previously could not express. Appended as its own block
+ * (rather than woven into the suites above) so every line this task added stays
+ * contiguous, same as the brand-asset block in callableContract.test.ts.
+ */
+describe('updateInvoice W2-1 metadata fields (kinfolkName / client / address / discount)', () => {
+  it('writes all four without touching the money', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await updateInvoiceHandler(
+      req({
+        invoiceId: 'inv1',
+        patch: {
+          kinfolkName: 'The Riveras',
+          client: 'Ana Rivera',
+          address: '12 Elm St',
+          discount: '10% loyalty',
+        },
+      }),
+    );
+    expect(res.ok).toBe(true);
+    const w = invoiceWrite(ctx)!;
+    expect(w.data.kinfolkName).toBe('The Riveras');
+    expect(w.data.client).toBe('Ana Rivera');
+    expect(w.data.address).toBe('12 Elm St');
+    expect(w.data.discount).toBe('10% loyalty');
+    // Metadata only: no recompute happened on this un-itemized invoice.
+    expect(w.data.totalCents).toBeUndefined();
+    expect(w.data.total).toBeUndefined();
+  });
+  it('the legacy free-text discount is NOT money: it stays editable on a settled invoice', async () => {
+    // `invoiceDiscountCents` on the same invoice is refused (the money is
+    // locked); the display string never enters the arithmetic, so it may still
+    // be corrected.
+    const ctx = seed(
+      { ...OPEN_INVOICE, totalCents: 4000 },
+      [{ id: 'p1', data: { amountCents: 4000 } }],
+    );
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await updateInvoiceHandler(
+      req({ invoiceId: 'inv1', patch: { discount: 'waived' } }),
+    );
+    expect(res.ok).toBe(true);
+    await expect(
+      updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { invoiceDiscountCents: 100 } })),
+    ).rejects.toMatchObject({ code: 'failed-precondition', details: { code: 'invoice_money_locked' } });
+  });
+  it('still refuses the fields the patch deliberately does not carry', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    for (const bad of [
+      { status: 'paid' }, // the classifier owns status (ADR-0002)
+      { sessionIds: ['s1'] }, // linkInvoiceSessions owns the link
+      { kinfolkId: 'fam2' }, // re-homing an invoice is not an edit
+      { total: 0 }, // the server owns every total
+    ]) {
+      await expect(
+        updateInvoiceHandler(req({ invoiceId: 'inv1', patch: bad })),
+      ).rejects.toMatchObject({ code: 'invalid-argument' });
+    }
+    expect(ctx.writes).toHaveLength(0);
+  });
+});

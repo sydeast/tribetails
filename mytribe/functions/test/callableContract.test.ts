@@ -23,6 +23,10 @@ import { Args as ArchiveInvoiceArgs } from '../src/admin/archiveInvoice';
 import { Args as UnarchiveInvoiceArgs } from '../src/admin/unarchiveInvoice';
 // The partial-payment detection/repair pass (2026-07-25).
 import { Args as RepairInvoicePaymentsArgs } from '../src/admin/repairInvoicePayments';
+// W2-1 (ADR-0002): the callables that absorb Android's direct Firestore money
+// writes. Frozen from birth: Android's W2-2 mirror is built from these shapes.
+import { Args as LinkInvoiceSessionsArgs } from '../src/admin/linkInvoiceSessions';
+import { Args as RecordPaymentArgs } from '../src/admin/recordPayment';
 // Shared catalog write reached by BOTH the kinfolk portal and the AuntieOS
 // admin vet-clinic picker (Task 1.8). Two independent clients now build this
 // payload, which is exactly the condition this guard exists for.
@@ -194,6 +198,18 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   },
   archiveInvoice: { schema: ArchiveInvoiceArgs, keys: ['force', 'invoiceId'] },
   unarchiveInvoice: { schema: UnarchiveInvoiceArgs, keys: ['invoiceId'] },
+  // W2-1 (ADR-0002 callable-only invoice writes). Both replace direct Android
+  // Firestore writes, so the mirror Android builds in W2-2 is built FROM these
+  // frozen shapes. `sessionIds` is an array of plain strings (like
+  // createQuote's), so the flat freeze stays accurate.
+  linkInvoiceSessions: { schema: LinkInvoiceSessionsArgs, keys: ['invoiceId', 'sessionIds'] },
+  recordPayment: {
+    schema: RecordPaymentArgs,
+    keys: [
+      'address', 'amount', 'client', 'date', 'email', 'invoiceId', 'invoiceNumber',
+      'kinfolkId', 'kinfolkName', 'notes', 'paymentMethod', 'referenceNumber', 'tip',
+    ],
+  },
   assignTemplate: { schema: AssignTemplateArgs, keys: ['active', 'audience', 'catalogKey', 'templateId', 'triggerKey'] },
   deleteTrainingDocument: { schema: DeleteTrainingDocumentArgs, keys: ['docId'] },
 
@@ -295,7 +311,15 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
     schema: UpdateInvoiceArgs,
     signature: [
       'invoiceId',
-      'patch.date', 'patch.dueDate', 'patch.invoiceDiscountCents', 'patch.invoiceNumber',
+      // `address`/`client`/`discount`/`kinfolkName` added in W2-1 (ADR-0002):
+      // the descriptive fields Android's whole-model merge-set writes, so the
+      // patch can express that write once Android re-points. All optional, so
+      // every pre-existing payload still validates; the freeze is the SUPERSET.
+      // `discount` is the legacy FREE-TEXT field, not money;
+      // `invoiceDiscountCents` remains the computed one.
+      'patch.address', 'patch.client',
+      'patch.date', 'patch.discount', 'patch.dueDate', 'patch.invoiceDiscountCents',
+      'patch.invoiceNumber', 'patch.kinfolkName',
       'patch.lineItems[].description', 'patch.lineItems[].discountCents',
       'patch.lineItems[].qty', 'patch.lineItems[].unitCents',
       'patch.terms',

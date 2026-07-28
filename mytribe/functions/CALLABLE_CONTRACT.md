@@ -25,9 +25,13 @@ Frozen request shapes:
 - Operator preferences (added 2026-07-25): `saveDashboardLayout`. One field, but
   the VALUE is the contract (a "key:size" token), so the guard freezes the token
   regex alongside the key set.
+- Invoice write funnel W2-1 (added 2026-07-28, ADR-0002): `linkInvoiceSessions`,
+  `recordPayment`. Frozen from birth: android's W2-2 mirror is built FROM these
+  shapes rather than reverse-engineered later. Both are flat (`sessionIds` is an
+  array of plain strings, like `createQuote`'s).
 
 Coverage reality, so nobody over-trusts this: the admin invokes ~50 MyTribe
-callables; the above 10 are frozen. The measured surface, not the stale "~26":
+callables; the above 12 are frozen. The measured surface, not the stale "~26":
 
 - Nested / effects shapes (added 2026-07-21), frozen by RECURSIVE signature:
   `saveFormSchema` (3-level `schema.sections[].fields[]`), `saveTemplate`
@@ -110,7 +114,7 @@ must say "next reconcile pass", never "instantly".
   into a Dossier or Kin411 is NOT unmerged; the handler's audit payload records
   that, and every client's delete confirm must state it before committing.
 
-## Invoices (admin-gated)
+## Invoices (admin-gated; the W2-1 pair also admits a scoped test admin, see each section's GATE line)
 
 All three write the FLAT top-level `invoices` collection, the same one the
 kinfolk portal (`portal/getMyInvoices.ts`), the Stripe webhook and the
@@ -233,7 +237,7 @@ caller sent, so classify it through a shared enumerator rather than deciding
   for the same completeness reason; loop until `nextCursor` is null.
 
 ### updateInvoice
-- req `{ invoiceId: string /* 1..200 */, patch: { invoiceNumber?: string /* 1..60 */, date?: string /* YYYY-MM-DD */, dueDate?: string /* YYYY-MM-DD */, terms?: string /* <=2000 */, lineItems?: Array<{ description: string /* 1..200 */, qty: number /* >0, <=999 */, unitCents: number /* int, 0..10_000_000 */, discountCents?: number /* int, >=0 */ }> /* <=100 */, invoiceDiscountCents?: number /* int, >=0 */ } }`
+- req `{ invoiceId: string /* 1..200 */, patch: { invoiceNumber?: string /* 1..60 */, date?: string /* YYYY-MM-DD */, dueDate?: string /* YYYY-MM-DD */, terms?: string /* <=2000 */, kinfolkName?: string /* <=200 */, client?: string /* <=200 */, address?: string /* <=500 */, discount?: string /* legacy FREE TEXT, <=200 */, lineItems?: Array<{ description: string /* 1..200 */, qty: number /* >0, <=999 */, unitCents: number /* int, 0..10_000_000 */, discountCents?: number /* int, >=0 */ }> /* <=100 */, invoiceDiscountCents?: number /* int, >=0 */ } }`
 - res `{ ok: true, invoiceId: string, totals: { subtotalCents: number, totalCents: number, paidCents: number, amountDueCents: number } }`
 - **There is no `total` or `amountDue` in the request, and `patch` is `.strict()`.**
   The server recomputes every money field from the stored line items and the
@@ -260,6 +264,82 @@ caller sent, so classify it through a shared enumerator rather than deciding
   `invoice_money_locked` (a payment exists, so lines and discounts are frozen),
   `invoice_money_invalid` (a discount larger than what it discounts; the message
   names both figures). Plus `not-found` for an unknown id.
+- W2-1 (ADR-0002) added the four descriptive fields android's whole-model
+  merge-set writes that the patch could not previously express: `kinfolkName`,
+  `client`, `address`, `discount`. `discount` here is the LEGACY FREE-TEXT
+  display field ("10%"); it never enters the arithmetic (`invoiceDiscountCents`
+  is the computed one), so it does not count as touching money and stays
+  editable on a settled invoice. Still deliberately absent from the patch:
+  `status` (the classifier owns it, ADR-0002), `sessionIds`/`_attribution`
+  (`linkInvoiceSessions` owns the link), `archivedAt`/`archivedBy`
+  (`archiveInvoice`/`unarchiveInvoice`), and `kinfolkId` (re-homing an invoice
+  to another household is not an edit).
+
+### linkInvoiceSessions
+- req `{ invoiceId: string /* 1..200 */, sessionIds: string[] /* each 1..200, max 200; duplicates collapsed */ }`
+- res `{ ok: true, invoiceId: string, sessionIds: string[], added: string[], removed: string[], status: string /* classifier state */, editScope: 'all'|'metadataOnly'|'none' }`
+- W2-1 (ADR-0002): replaces android's two direct writes,
+  `AuntieRepository.updateInvoiceSessionIds` (invoice side) and the per-session
+  `updateSessionInvoiceId` loop. ONE TRANSACTION owns both directions: the
+  invoice's `sessionIds` and every touched session's `invoiceId` change
+  together or not at all. Android's loop logged and continued on a per-session
+  failure, which could leave the invoice claiming a session that still pointed
+  elsewhere.
+- `sessionIds` is the invoice's FULL new set, not a delta. The delta is derived
+  server-side inside the transaction against the stored set. Link and unlink
+  are one operation; `[]` unlinks everything.
+- Attribution stamps are android's, byte for byte: the invoice gets
+  `_attribution: 'manual'` (on an unlink too: the operator curated the set
+  either way); an added session gets `'manual'`; a removed session gets
+  `'manual_unlink'` with `invoiceId: ''`, an EMPTY STRING, never a field delete,
+  because `listUninvoicedSessions` treats absent/empty/whitespace as one
+  unclaimed state. `_attributionAt` is an ISO-8601 STRING (android's `Invoice`
+  model decodes it as a non-null Kotlin String; a Timestamp there is the
+  Class B decode crash). `updatedAt` is a server Timestamp, both models
+  tolerate it.
+- Persists the classifier's `status` + `editScope` onto the invoice on every
+  write (ADR-0002 decision 2). Linking changes none of the classifier's
+  inputs, so this normalizes (a stored `'QUOTE'` re-stamps as `'quote'`; every
+  reader lowercases before comparing). Linking is NOT gated on `editScope`:
+  attributing sessions to a paid or cancelled invoice moves no money and
+  android permits it today.
+- GATE: staff (admin claim) pass unscoped; a TEST ADMIN (`testTribeId` claim,
+  `lib/testMode.ts`) passes scoped: the invoice and every touched session
+  must carry `kinfolkId == testTribeId`, else `permission-denied` with nothing
+  written. There is deliberately NO invoice/session kinfolk-equality check on
+  the staff path: legacy rows carry blank kinfolkIds and android performs no
+  such check today.
+- Errors: `not-found` for an unknown invoice; `failed-precondition` /
+  `session_not_found` (with `details.missing`) when any named session does not
+  exist. Atomic: nothing written.
+- Audit `BILLING_INVOICE_SESSIONS_LINKED` with the full added/removed delta.
+
+### recordPayment
+- req `{ amount: number /* DOLLARS, float, the legacy shape of this collection */, kinfolkId?: string /* <=120, default '' */, kinfolkName?: string, client?: string, address?: string, date?: string /* free text */, paymentMethod?: string, referenceNumber?: string, email?: string, tip?: number /* default 0 */, notes?: string, invoiceId?: string /* '' = standalone payment */, invoiceNumber?: string }` (every `?` defaults to `''`/`0`)
+- res `{ ok: true, paymentId: string, kinfolkId: string /* what was actually stored; the sandbox id for a test admin */ }`
+- W2-1 (ADR-0002): replaces `AuntieRepository.createPayment`, the direct create
+  on the ROOT `payments` collection. This is the DISPLAY LEDGER the payment
+  screens read (`getPayments`, `getPaymentsForKinfolk`, the invoice detail's
+  linked-payments join on `invoiceId`); the server's settlement arithmetic
+  never reads it, so it cannot double-count against `markInvoicePaid`.
+- **NOT `markInvoicePaid`, and does not call it.** That callable is the money
+  authority: it writes the `invoices/{id}/payments` SUBCOLLECTION and
+  re-derives the invoice's settlement, and it refuses drafts/quotes/credits/
+  settled invoices. Android's record-payment flow calls the two as separate
+  steps (money first, display row second, best-effort); this callable is the
+  second step only. A payment row here can exist with NO invoice at all (the
+  admin Payments tab's standalone flow).
+- Field set mirrors android's `Payment` model verbatim; the server adds
+  `recordedBy` + `createdAt` (serverTimestamp). No `id` field inside the doc
+  (android's `@DocumentId` never serialized one).
+- Writes NO invoice doc, so no classifier state is persisted here: `status`/
+  `editScope` live on invoices, and the invoice side of a payment is
+  `markInvoicePaid`'s write.
+- GATE: staff unscoped; a test admin's row is STAMPED
+  `kinfolkId = testTribeId` no matter what the request says. This is the server-side
+  version of the `scopedKinfolkId` copy android does client-side today.
+- Audit `BILLING_PAYMENT_RECORDED` (distinct from `BILLING_INVOICE_PAID`,
+  which covers the settling subcollection write).
 
 ### archiveInvoice
 - req `{ invoiceId: string /* 1..200 */, force?: boolean }`
