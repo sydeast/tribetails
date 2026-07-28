@@ -9,6 +9,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateOf, invoiceEditRefusal, paymentStandingOf } from '../lib/invoiceEditPolicy';
+import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import {
   computeInvoiceTotals,
   paidCentsFromPayments,
@@ -191,6 +192,14 @@ export async function updateInvoiceHandler(
     update['amountDue'] = centsToDollars(settled.amountDueCents);
   }
 
+  // The state stamp (ADR-0002), computed over the doc AS THIS WRITE LEAVES IT
+  // and merged in the same set, so there is no window where the money moved
+  // but the stored state describes the old money. Note it runs on the
+  // PERSISTED (clamped) figures, not on the raw signed `totals` returned to
+  // the caller: an over-collected edit stamps paid/none, never credit.
+  const stamp = invoiceStateStampOf({ ...data, ...update }, paidCents);
+  update['status'] = stamp.status;
+  update['editScope'] = stamp.editScope;
   await ref.set(update, { merge: true });
 
   await writeAuditEntry({

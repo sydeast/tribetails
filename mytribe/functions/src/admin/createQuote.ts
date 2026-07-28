@@ -9,6 +9,7 @@ import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 
 /**
  * A quote is NOT a separate model: it is an invoice in QUOTE status. This
@@ -17,7 +18,11 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * to the kinfolk.
  *
  * Status is written on BOTH fields the system reads:
- *   - `status`        = 'QUOTE'  (the AuntieOS admin composer/list field)
+ *   - `status`        = 'quote'  (the AuntieOS admin composer/list field.
+ *     Lowercase since the state stamp, 2026-07-28: the stamp canonicalizes the
+ *     stored value to the classifier's vocabulary. The admin's chip still
+ *     renders 'QUOTE', because it derives from `invoiceFormat.ts#invoiceState`,
+ *     which lowercases before matching, exactly as it did for the old spelling.)
  *   - `invoiceStatus` = 'quote'  (the portal's canonical resolver field, see
  *     getMyInvoices.resolveStatus)
  * so the quote is unambiguously distinguishable from a payable invoice on both
@@ -59,7 +64,7 @@ export async function createQuoteHandler(
   const args = Args.parse(req.data);
 
   const ref = db().collection('invoices').doc();
-  await ref.set({
+  const doc = {
     kinfolkName: args.kinfolkName,
     invoiceNumber: args.invoiceNumber,
     client: args.client,
@@ -72,11 +77,20 @@ export async function createQuoteHandler(
     amountDue: args.amountDue,
     // A quote is an invoice in QUOTE status. Stamp both the admin-side `status`
     // and the portal-canonical `invoiceStatus` so neither side mis-buckets it.
-    status: 'QUOTE',
+    // The state stamp below canonicalizes `status` to the classifier's
+    // lowercase 'quote'; asserting it here as well keeps this endpoint's whole
+    // point, ignoring the caller's status arg, visible in one place.
+    status: 'quote',
     invoiceStatus: 'quote',
     sessionIds: args.sessionIds,
     kinfolkId: args.familyId,
     _id: ref.id,
+  };
+  // The state stamp (ADR-0002), in the same write. paidCents is 0 by
+  // construction on a brand-new doc.
+  await ref.set({
+    ...doc,
+    ...invoiceStateStampOf(doc, 0),
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });

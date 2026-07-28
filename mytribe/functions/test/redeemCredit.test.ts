@@ -254,6 +254,11 @@ describe('redeemCreditHandler', () => {
     expect(invoiceWrite!.data.creditAmountCents).toBe(2550);
     expect(invoiceWrite!.data.creditRedeemedAt).toBe('__SERVER_TS__');
     expect(invoiceWrite!.data.creditRedeemedByUid).toBe('u1');
+    // The state stamp (ADR-0002), inside the SAME transaction as the claim:
+    // with creditRedeemedAt set, the classifier reads the doc as redeemed, and
+    // the whole credit family is frozen.
+    expect(invoiceWrite!.data.status).toBe('redeemed');
+    expect(invoiceWrite!.data.editScope).toBe('none');
   });
 
   // CREDITS ARE NOT REFUNDABLE (operator ruling, 2026-07-20). The three tests

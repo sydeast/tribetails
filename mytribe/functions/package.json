@@ -19,6 +19,7 @@
     "serve": "npm run build && firebase emulators:start --only functions",
     "deploy": "../../scripts/safe-deploy.sh mytribe -- firebase deploy --only functions:mytribe",
     "logs": "firebase functions:log",
+    "backfill:invoice-state": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillInvoiceStateStamp.ts",
     "seed:emails": "ts-node --project ../scripts/tsconfig.json ../scripts/seedEmailTemplates.ts",
     "seed:notif-templates": "ts-node --project ../scripts/tsconfig.json ../scripts/seedNotificationTemplates.ts",
     "seed:demo-kinfolk": "ts-node --project ../scripts/tsconfig.json ../scripts/seedDemoKinfolk.ts"

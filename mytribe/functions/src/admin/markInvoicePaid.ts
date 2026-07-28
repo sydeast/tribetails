@@ -16,6 +16,7 @@ import {
   type PaymentAmount,
   type InvoiceSettlementState,
 } from '../lib/invoiceMath';
+import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 
 /**
  * Dedicated manual-payment callable, replacing the AuntieOS admin's prior
@@ -280,37 +281,48 @@ export async function markInvoicePaidHandler(
     recordedBy: uid,
     createdAt: FieldValue.serverTimestamp(),
   });
+  const invoiceUpdate = {
+    // A PARTIAL PAYMENT LEAVES THE INVOICE OPEN with a real balance, so it
+    // stays in Outstanding and someone chases the rest. Only a settling
+    // payment writes 'paid'. (The state stamp below re-derives the same value
+    // from the merged doc; writing it here too keeps the rule readable at the
+    // point it is decided.)
+    status: settling ? 'paid' : 'open',
+    paymentStatus: settling ? 'PAID' : 'PARTIAL',
+    // Integer cents: the truth. Written even on an un-itemized invoice, where
+    // `totalCents` is projected from the dollar `total`, so every downstream
+    // reader has an exact figure instead of re-deriving one from a float.
+    totalCents: after.totalCents,
+    paidCents: after.paidCents,
+    amountDueCents: after.amountDueCents,
+    overpaidCents: after.overpaidCents,
+    // The legacy dollar scalar, projected from the SAME cents figure in the
+    // same pass so the two can never disagree. Never negative: see
+    // settleInvoice's note on why an overpayment must not read as a credit.
+    amountDue: centsToDollars(after.amountDueCents),
+    paymentMethod: args.method ?? null,
+    paymentReference: args.reference ?? null,
+    // `paidAt`/`paidBy` mean "when this invoice was PAID", so they are stamped
+    // only by the payment that actually settles it. A partial stamps
+    // `lastPaymentAt`/`lastPaymentBy` instead, which is a different claim and
+    // deserves a different field rather than a premature version of this one.
+    ...(settling
+      ? { paidAt: FieldValue.serverTimestamp(), paidBy: uid }
+      : {}),
+    lastPaymentAt: FieldValue.serverTimestamp(),
+    lastPaymentBy: uid,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
   batch.set(
     ref,
     {
-      // A PARTIAL PAYMENT LEAVES THE INVOICE OPEN with a real balance, so it
-      // stays in Outstanding and someone chases the rest. Only a settling
-      // payment writes 'paid'.
-      status: settling ? 'paid' : 'open',
-      paymentStatus: settling ? 'PAID' : 'PARTIAL',
-      // Integer cents: the truth. Written even on an un-itemized invoice, where
-      // `totalCents` is projected from the dollar `total`, so every downstream
-      // reader has an exact figure instead of re-deriving one from a float.
-      totalCents: after.totalCents,
-      paidCents: after.paidCents,
-      amountDueCents: after.amountDueCents,
-      overpaidCents: after.overpaidCents,
-      // The legacy dollar scalar, projected from the SAME cents figure in the
-      // same pass so the two can never disagree. Never negative: see
-      // settleInvoice's note on why an overpayment must not read as a credit.
-      amountDue: centsToDollars(after.amountDueCents),
-      paymentMethod: args.method ?? null,
-      paymentReference: args.reference ?? null,
-      // `paidAt`/`paidBy` mean "when this invoice was PAID", so they are stamped
-      // only by the payment that actually settles it. A partial stamps
-      // `lastPaymentAt`/`lastPaymentBy` instead, which is a different claim and
-      // deserves a different field rather than a premature version of this one.
-      ...(settling
-        ? { paidAt: FieldValue.serverTimestamp(), paidBy: uid }
-        : {}),
-      lastPaymentAt: FieldValue.serverTimestamp(),
-      lastPaymentBy: uid,
-      updatedAt: FieldValue.serverTimestamp(),
+      ...invoiceUpdate,
+      // The state stamp (ADR-0002), in the SAME batch as the money it
+      // describes. Derived from the doc as this write leaves it, with the new
+      // payment included in paidCents: a settling payment stamps paid/none, a
+      // partial stamps open/all (part-paid stays fully editable), and an
+      // overpayment stamps paid off the CLAMPED zero balance, never credit.
+      ...invoiceStateStampOf({ ...data, ...invoiceUpdate }, after.paidCents),
     },
     { merge: true },
   );

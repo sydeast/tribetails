@@ -9,6 +9,8 @@ import { logEvent } from '../lib/logger';
 import { wrapHttp } from '../lib/wrapHttp';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
+import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 
 export async function stripeWebhookHandler(req: Request, res: Response): Promise<void> {
   if (req.method !== 'POST') { res.status(405).end(); return; }
@@ -80,6 +82,12 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     }
     const invoiceSnap = await tx.get(ref);
     const invoice = invoiceSnap.data() as { lastStripeEventAtMs?: number } | undefined;
+    // The state stamp's payment standing reads the `payments` SUBCOLLECTION
+    // (Stripe's own mirror docs live in the ROOT `payments` collection, so on
+    // a card-only invoice this sums to zero; a manually-recorded partial shows
+    // up here and keeps the doc honestly repairable). Read now, before the
+    // first write: a Firestore transaction refuses reads after writes.
+    const subPaymentsSnap = isPaidEvent ? await tx.get(ref.collection('payments')) : null;
     const lastEventMs = invoice?.lastStripeEventAtMs ?? 0;
     if (eventCreatedMs > 0 && eventCreatedMs < lastEventMs) {
       // Out-of-order retry arriving after a newer event has already been
@@ -113,6 +121,13 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       patch.status = 'paid';
       patch.amountDue = 0;
       patch.paidAt = FieldValue.serverTimestamp();
+      // The state stamp (ADR-0002), in the same transactional write as the
+      // flip it describes. A failed event changes nothing the classifier
+      // reads, so only the paid branch stamps.
+      const paidCents = paidCentsFromPayments(
+        (subPaymentsSnap?.docs ?? []).map((d) => d.data() as PaymentAmount),
+      );
+      Object.assign(patch, invoiceStateStampOf({ ...(invoiceSnap.data() ?? {}), ...patch }, paidCents));
     }
     tx.set(ref, patch, { merge: true });
     if (isPaidEvent) {

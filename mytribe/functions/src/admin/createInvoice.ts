@@ -10,6 +10,7 @@ import { enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { computeInvoiceTotals, validateInvoiceMoney, centsToDollars } from '../lib/invoiceMath';
+import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 
 /**
  * Server-mints the invoice doc id so the id is authoritative (the composer does
@@ -134,7 +135,7 @@ export async function createInvoiceHandler(
   }
 
   const ref = db().collection('invoices').doc();
-  await ref.set({
+  const doc = {
     kinfolkName: args.kinfolkName,
     invoiceNumber: args.invoiceNumber,
     client: args.client,
@@ -150,6 +151,16 @@ export async function createInvoiceHandler(
     kinfolkId: args.familyId,
     _id: ref.id,
     ...money,
+  };
+  // The state stamp (ADR-0002), IN THE SAME WRITE as the money it describes.
+  // Spread AFTER the caller's fields: it canonicalizes `status` to the
+  // classifier's reading of this very doc (a caller's 'sent' or '' stores as
+  // 'open'), which is the vocabulary all three clients' own classifiers
+  // already resolve these fields to. paidCents is 0 by construction: a payment
+  // cannot be recorded against an invoice before it exists.
+  await ref.set({
+    ...doc,
+    ...invoiceStateStampOf(doc, 0),
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });

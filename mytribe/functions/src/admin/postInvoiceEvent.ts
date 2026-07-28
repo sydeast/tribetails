@@ -9,6 +9,8 @@ import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 
 const Args = z.object({
   familyId: z.string().min(1),
@@ -24,8 +26,28 @@ export async function postInvoiceEventHandler(req: CallableRequest<unknown>): Pr
   const ref = db().collection('invoices').doc(args.invoiceId);
   const existing = await ref.get();
   const isNew = !existing.exists;
+  // This callable merges an ARBITRARY payload, so of all the invoice writers
+  // it is the one that most needs the state stamp (ADR-0002): any field the
+  // classifier reads may be about to change. The stamp is derived from the doc
+  // as this merge leaves it, with the payment standing read from the payments
+  // SUBCOLLECTION (never the amountDue scalar), and joins the same set. It is
+  // spread AFTER the payload: a payload status spelling the classifier does
+  // not recognize is canonicalized, exactly as every client classifier would
+  // have resolved it at read time.
+  const paymentsSnap = await ref.collection('payments').get();
+  const paidCents = paidCentsFromPayments(paymentsSnap.docs.map((d) => d.data() as PaymentAmount));
+  const merged: Record<string, unknown> = {
+    ...(existing.data() ?? {}),
+    ...args.payload,
+    kinfolkId: args.familyId,
+  };
   await ref.set(
-    { ...args.payload, kinfolkId: args.familyId, updatedAt: FieldValue.serverTimestamp() },
+    {
+      ...args.payload,
+      kinfolkId: args.familyId,
+      ...invoiceStateStampOf(merged, paidCents),
+      updatedAt: FieldValue.serverTimestamp(),
+    },
     { merge: true },
   );
   await writeAuditEntry({

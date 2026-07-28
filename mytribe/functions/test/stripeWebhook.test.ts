@@ -47,6 +47,9 @@ vi.mock('../src/lib/stripe', () => ({
 // can assert the flat invoice doc AND the mirror payments doc.
 const writes: Array<{ path: string; data: Record<string, unknown> }> = [];
 const docState: Record<string, { exists: boolean; data: Record<string, unknown> | undefined }> = {};
+// Canned SUBCOLLECTION query results, keyed by full collection path
+// (e.g. 'invoices/i1/payments'). The state stamp reads this inside the txn.
+const subDocs: Record<string, Array<{ id: string; data: Record<string, unknown> }>> = {};
 
 function makeDocRef(path: string) {
   return {
@@ -57,6 +60,11 @@ function makeDocRef(path: string) {
     }),
     set: vi.fn(async (data: Record<string, unknown>) => {
       writes.push({ path, data });
+    }),
+    collection: (sub: string) => ({
+      get: vi.fn(async () => ({
+        docs: (subDocs[`${path}/${sub}`] ?? []).map((d) => ({ id: d.id, data: () => d.data })),
+      })),
     }),
   };
 }
@@ -84,6 +92,7 @@ vi.mock('../src/lib/logger', () => ({ logEvent: logMock.logEvent }));
 beforeEach(() => {
   writes.length = 0;
   for (const k of Object.keys(docState)) delete docState[k];
+  for (const k of Object.keys(subDocs)) delete subDocs[k];
   logMock.logEvent.mockClear();
 });
 
@@ -115,6 +124,10 @@ describe('stripeWebhook', () => {
     expect(invoiceWrite).toBeDefined();
     expect(invoiceWrite!.data.status).toBe('paid');
     expect(invoiceWrite!.data.amountDue).toBe(0);
+    // The state stamp rides the SAME transactional write. No manual payment in
+    // the subcollection (Stripe mirrors into the ROOT payments collection), so
+    // the label is believed and the doc freezes: paid/none.
+    expect(invoiceWrite!.data.editScope).toBe('none');
 
     // Mirror payment doc, keyed by event id for idempotency.
     const paymentWrite = writes.find((w) => w.path === 'payments/evt_1');
@@ -187,6 +200,28 @@ describe('stripeWebhook', () => {
     const warn = logMock.logEvent.mock.calls.find((c) => c[0]?.event === 'stripe.amount.unresolved');
     expect(warn).toBeDefined();
     expect(warn?.[0]?.severity).toBe('warn');
+  });
+
+  it('stamps paid/all when a manually-recorded partial sits in the payments SUBCOLLECTION', async () => {
+    // A $20 manual payment was recorded against this $40 invoice, then the
+    // household paid the card link. The doc is labelled paid, but the
+    // subcollection's evidence falls short of the total, which is exactly the
+    // repairable shape invoiceEditPolicy keeps editable (paid + partial ->
+    // 'all'), so the stamp must not freeze it.
+    docState['invoices/i1'] = {
+      exists: true,
+      data: { kinfolkId: 'f1', amountDue: 20, total: 40, totalCents: 4000 },
+    };
+    subDocs['invoices/i1/payments'] = [{ id: 'p1', data: { amount: 20, amountCents: 2000 } }];
+    const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
+    const status = vi.fn().mockReturnThis();
+    await (stripeWebhookHandler as any)(
+      { method: 'POST', headers: { 'stripe-signature': 'good' }, rawBody: Buffer.from('{}') },
+      { status, json: vi.fn(), end: vi.fn() },
+    );
+    const invoiceWrite = writes.find((w) => w.path === 'invoices/i1');
+    expect(invoiceWrite!.data.status).toBe('paid');
+    expect(invoiceWrite!.data.editScope).toBe('all');
   });
 
   it('is idempotent — a replayed event id does not re-write', async () => {

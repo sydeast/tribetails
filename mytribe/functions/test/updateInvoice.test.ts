@@ -324,6 +324,11 @@ describe('updateInvoice edit gating (enforced here, not in the UI)', () => {
     expect(w.data.amountDue).toBe(0);
     expect(w.data.amountDueCents).toBe(0);
     expect(w.data.overpaidCents).toBe(3500);
+    // The state stamp runs on the PERSISTED (clamped) figures, not the raw
+    // signed totals returned to the caller: over-collected settles the doc, so
+    // it stamps paid/none, never credit off a negative balance.
+    expect(w.data.status).toBe('paid');
+    expect(w.data.editScope).toBe('none');
   });
 
   it('refuses an edit to a cancelled invoice and to a credit', async () => {
@@ -347,6 +352,41 @@ describe('updateInvoice edit gating (enforced here, not in the UI)', () => {
         }),
       ),
     ).resolves.toMatchObject({ ok: true });
+  });
+});
+
+describe('updateInvoice state stamp (ADR-0002)', () => {
+  it('every write carries the stamp, even a metadata-only edit', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { terms: 'Net 7' } }));
+    const w = invoiceWrite(ctx)!;
+    expect(w.data.status).toBe('open');
+    expect(w.data.editScope).toBe('all');
+  });
+
+  it('a PART-PAID invoice stamps open/all: still outstanding, still fully repairable', async () => {
+    const ctx = seed(OPEN_INVOICE, [{ id: 'p1', data: { amount: 10 } }]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(
+      req({ invoiceId: 'inv1', patch: { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 4000 }] } }),
+    );
+    const w = invoiceWrite(ctx)!;
+    expect(w.data.status).toBe('open');
+    expect(w.data.editScope).toBe('all');
+  });
+
+  it('a metadata edit on a SETTLED invoice stamps paid/none off the payments evidence', async () => {
+    const ctx = seed(OPEN_INVOICE, [{ id: 'p1', data: { amount: 40 } }]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { terms: 'Net 14' } }));
+    const w = invoiceWrite(ctx)!;
+    // The stored label still said 'open'; the subcollection says the money is
+    // in. The stamp persists the classifier's reading of the doc as this
+    // write leaves it: amountDue is untouched by a metadata edit, so status
+    // stays open by the money, but the SCOPE reflects the settled standing.
+    expect(w.data.status).toBe('open');
+    expect(w.data.editScope).toBe('metadataOnly');
   });
 });
 
