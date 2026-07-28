@@ -8,6 +8,7 @@ import androidx.compose.ui.test.performClick
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.TrainingDocument
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import io.mockk.coEvery
 import io.mockk.mockk
@@ -43,7 +44,7 @@ class TrainingDocumentsScreenRobolectricTest {
 
     @Test
     fun addForm_opensAndPopulatesKinfolkPicker_saveDisabledWithoutTarget() {
-        val vm = AdminDataViewModel(repository = buildRepo())
+        val vm = AdminDataViewModel(repository = buildRepo(), invoiceRepository = mockk(relaxed = true))
         rule.setContent {
             AuntieOSTheme {
                 TrainingDocumentsScreen(viewModel = vm, onBack = {})
@@ -64,7 +65,7 @@ class TrainingDocumentsScreenRobolectricTest {
 
     @Test
     fun deleteConfirm_showsUnmergeCaveat() {
-        val vm = AdminDataViewModel(repository = buildRepo())
+        val vm = AdminDataViewModel(repository = buildRepo(), invoiceRepository = mockk(relaxed = true))
         rule.setContent {
             AuntieOSTheme {
                 TrainingDocumentsScreen(viewModel = vm, onBack = {})

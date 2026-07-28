@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.directory
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -31,6 +32,7 @@ class DirectoryViewModelArchiveTest {
 
     private lateinit var viewModel: DirectoryViewModel
     private val repository = mockk<AuntieRepository>(relaxed = true)
+    private val invoiceRepository = mockk<InvoiceRepository>(relaxed = true)
     private val testDispatcher = UnconfinedTestDispatcher()
 
     @Before
@@ -39,7 +41,7 @@ class DirectoryViewModelArchiveTest {
         coEvery { repository.getKinfolk() } returns Result.success(emptyList())
         coEvery { repository.getAllKin() } returns Result.success(emptyList<Kin>())
         coEvery { repository.getKinCareSessions() } returns Result.success(emptyList())
-        viewModel = DirectoryViewModel(repository)
+        viewModel = DirectoryViewModel(repository, invoiceRepository)
     }
 
     @After
@@ -53,7 +55,7 @@ class DirectoryViewModelArchiveTest {
         coEvery { repository.getKinfolk() } returns Result.success(
             listOf(Kinfolk(id = id, firstName = "Test", lastName = "User", status = status))
         )
-        viewModel = DirectoryViewModel(repository)
+        viewModel = DirectoryViewModel(repository, invoiceRepository)
         viewModel.loadKinfolkForEdit(id)
     }
 

@@ -6,6 +6,7 @@ import com.tribetails.auntieos.data.admin.NotificationEntry
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.TrainingDocument
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -30,11 +31,13 @@ class AdminDataViewModelTest {
 
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var mockRepo: AuntieRepository
+    private lateinit var mockInvoiceRepo: InvoiceRepository
 
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         mockRepo = mockk()
+        mockInvoiceRepo = mockk()
     }
 
     @After
@@ -42,7 +45,7 @@ class AdminDataViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = AdminDataViewModel(repository = mockRepo)
+    private fun buildViewModel() = AdminDataViewModel(repository = mockRepo, invoiceRepository = mockInvoiceRepo)
 
     // ─── Initial state ────────────────────────────────────────────────────────
 
@@ -62,7 +65,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `loadInvoices populates invoices on success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1, TestFixtures.invoice2))
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1, TestFixtures.invoice2))
 
         val vm = buildViewModel()
         vm.loadInvoices()
@@ -75,7 +78,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `loadInvoices sets error on failure`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoices() } returns Result.failure(RuntimeException("Network error"))
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.failure(RuntimeException("Network error"))
 
         val vm = buildViewModel()
         vm.loadInvoices()
@@ -90,7 +93,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `loadPayments populates payments on success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getPayments() } returns Result.success(listOf(TestFixtures.payment1))
+        coEvery { mockInvoiceRepo.getPayments() } returns Result.success(listOf(TestFixtures.payment1))
 
         val vm = buildViewModel()
         vm.loadPayments()
@@ -103,7 +106,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `loadPayments sets error on failure`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getPayments() } returns Result.failure(RuntimeException("Timeout"))
+        coEvery { mockInvoiceRepo.getPayments() } returns Result.failure(RuntimeException("Timeout"))
 
         val vm = buildViewModel()
         vm.loadPayments()
@@ -322,8 +325,8 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createInvoice refreshes invoices list on success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.createInvoice(any()) } returns Result.success("inv-new")
-        coEvery { mockRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
+        coEvery { mockInvoiceRepo.createInvoice(any()) } returns Result.success("inv-new")
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
 
         val vm = buildViewModel()
         vm.createInvoice(TestFixtures.invoice1)
@@ -335,7 +338,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createInvoice sets error on failure`() = runTest(testDispatcher) {
-        coEvery { mockRepo.createInvoice(any()) } returns Result.failure(RuntimeException("Write failed"))
+        coEvery { mockInvoiceRepo.createInvoice(any()) } returns Result.failure(RuntimeException("Write failed"))
 
         val vm = buildViewModel()
         vm.createInvoice(TestFixtures.invoice1)
@@ -349,14 +352,14 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createQuote routes through repository and refreshes on success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.createQuote(any(), any()) } returns Result.success("q-new")
-        coEvery { mockRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
+        coEvery { mockInvoiceRepo.createQuote(any(), any()) } returns Result.success("q-new")
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
 
         val vm = buildViewModel()
         vm.createQuote(TestFixtures.invoice1, sendToKinfolk = true)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { mockRepo.createQuote(any(), true) }
+        coVerify(exactly = 1) { mockInvoiceRepo.createQuote(any(), true) }
         assertFalse(vm.isLoading.value)
         assertEquals(1, vm.invoices.value.size)
         assertEquals("Quote created and sent.", vm.invoiceActionMessage.value)
@@ -364,20 +367,20 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createQuote without send confirms quietly`() = runTest(testDispatcher) {
-        coEvery { mockRepo.createQuote(any(), any()) } returns Result.success("q-new")
-        coEvery { mockRepo.getInvoices() } returns Result.success(emptyList())
+        coEvery { mockInvoiceRepo.createQuote(any(), any()) } returns Result.success("q-new")
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
 
         val vm = buildViewModel()
         vm.createQuote(TestFixtures.invoice1, sendToKinfolk = false)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { mockRepo.createQuote(any(), false) }
+        coVerify(exactly = 1) { mockInvoiceRepo.createQuote(any(), false) }
         assertEquals("Quote created.", vm.invoiceActionMessage.value)
     }
 
     @Test
     fun `createQuote sets error on failure`() = runTest(testDispatcher) {
-        coEvery { mockRepo.createQuote(any(), any()) } returns Result.failure(RuntimeException("quote failed"))
+        coEvery { mockInvoiceRepo.createQuote(any(), any()) } returns Result.failure(RuntimeException("quote failed"))
 
         val vm = buildViewModel()
         vm.createQuote(TestFixtures.invoice1, sendToKinfolk = false)
@@ -502,14 +505,14 @@ class AdminDataViewModelTest {
 
     @Test
     fun `generateReceipt routes through repository and refreshes invoices on success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.generateReceipt("inv-1") } returns Result.success(Unit)
-        coEvery { mockRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
+        coEvery { mockInvoiceRepo.generateReceipt("inv-1") } returns Result.success(Unit)
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
 
         val vm = buildViewModel()
         vm.generateReceipt("inv-1")
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { mockRepo.generateReceipt("inv-1") }
+        coVerify(exactly = 1) { mockInvoiceRepo.generateReceipt("inv-1") }
         assertFalse(vm.isLoading.value)
         assertNull(vm.error.value)
         assertEquals(1, vm.invoices.value.size)
@@ -517,7 +520,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `generateReceipt sets error on failure`() = runTest(testDispatcher) {
-        coEvery { mockRepo.generateReceipt(any()) } returns Result.failure(RuntimeException("not-found"))
+        coEvery { mockInvoiceRepo.generateReceipt(any()) } returns Result.failure(RuntimeException("not-found"))
 
         val vm = buildViewModel()
         vm.generateReceipt("missing")
@@ -532,8 +535,8 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createPayment refreshes payments list on success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.createPayment(any()) } returns Result.success("pay-new")
-        coEvery { mockRepo.getPayments() } returns Result.success(listOf(TestFixtures.payment1))
+        coEvery { mockInvoiceRepo.createPayment(any()) } returns Result.success("pay-new")
+        coEvery { mockInvoiceRepo.getPayments() } returns Result.success(listOf(TestFixtures.payment1))
 
         val vm = buildViewModel()
         vm.createPayment(TestFixtures.payment1)
@@ -545,7 +548,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createPayment sets error on failure`() = runTest(testDispatcher) {
-        coEvery { mockRepo.createPayment(any()) } returns Result.failure(RuntimeException("Write failed"))
+        coEvery { mockInvoiceRepo.createPayment(any()) } returns Result.failure(RuntimeException("Write failed"))
 
         val vm = buildViewModel()
         vm.createPayment(TestFixtures.payment1)
@@ -610,7 +613,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `clearError resets error to null`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoices() } returns Result.failure(RuntimeException("oops"))
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.failure(RuntimeException("oops"))
 
         val vm = buildViewModel()
         vm.loadInvoices()

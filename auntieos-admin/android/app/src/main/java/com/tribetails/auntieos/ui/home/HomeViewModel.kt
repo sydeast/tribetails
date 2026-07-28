@@ -12,6 +12,7 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.VisitStatus
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.flow.first
 import com.tribetails.auntieos.location.LocationTrackingService
@@ -89,6 +90,9 @@ data class HomeUiState(
 
 class HomeViewModel(
     private val repo: AuntieRepository,
+    // W4-1: the revenue tile + Cash Flow widget read invoices, so the dashboard
+    // injects the Invoice domain repo directly rather than through a facade.
+    private val invoiceRepo: InvoiceRepository,
     private val notifier: VisitNotifier = AuntieOSApp.instance.visitNotifier
 ) : ViewModel() {
 
@@ -216,7 +220,7 @@ class HomeViewModel(
                 val settings       = async { repo.getBusinessSettings() }
                 // Invoices feed the "This week $" revenue tile + Cash Flow widget. A
                 // read failure degrades those tiles (logged), never blanks the dashboard.
-                val invoicesDef    = async { repo.getInvoices() }
+                val invoicesDef    = async { invoiceRepo.getInvoices() }
                 // Gatekeeper: all sessions (not just today's) to find each household's
                 // last completed visit. Same degrade-not-blank policy as invoices.
                 val allSessionsDef = async { repo.getKinCareSessions() }

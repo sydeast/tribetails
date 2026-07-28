@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.data.admin.ChainVerifyResult
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +42,7 @@ class AdminDataViewModelChainVerifyTest {
         Dispatchers.resetMain()
     }
 
-    private fun vm() = AdminDataViewModel(repository = repo)
+    private fun vm() = AdminDataViewModel(repository = repo, invoiceRepository = mockk(relaxed = true))
 
     @Test
     fun `verifyChain success maps to Done with passing verdict`() = runTest(testDispatcher) {

@@ -4,6 +4,7 @@ import com.tribetails.auntieos.data.admin.ActivityLogEntry
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -29,6 +30,7 @@ class DirectoryViewModelAuditLogTest {
 
     private lateinit var viewModel: DirectoryViewModel
     private val repository = mockk<AuntieRepository>(relaxed = true)
+    private val invoiceRepository = mockk<InvoiceRepository>(relaxed = true)
     private val testDispatcher = UnconfinedTestDispatcher()
 
     @Before
@@ -38,7 +40,7 @@ class DirectoryViewModelAuditLogTest {
         coEvery { repository.getAllKin() } returns Result.success(emptyList<Kin>())
         coEvery { repository.getKinCareSessions() } returns Result.success(emptyList())
         coEvery { repository.logActivity(any()) } returns Result.success(Unit)
-        viewModel = DirectoryViewModel(repository)
+        viewModel = DirectoryViewModel(repository, invoiceRepository)
     }
 
     @After
@@ -70,7 +72,7 @@ class DirectoryViewModelAuditLogTest {
             coEvery { repository.getKinfolk() } returns Result.success(
                 listOf(Kinfolk(id = "kf-arch", firstName = "T", lastName = "U"))
             )
-            viewModel = DirectoryViewModel(repository)
+            viewModel = DirectoryViewModel(repository, invoiceRepository)
             viewModel.loadKinfolkForEdit("kf-arch")
             advanceUntilIdle()
             coEvery { repository.archiveKinfolk(any(), any(), any()) } returns Result.success(Unit)
@@ -92,7 +94,7 @@ class DirectoryViewModelAuditLogTest {
         coEvery { repository.getKinfolk() } returns Result.success(
             listOf(Kinfolk(id = "kf-un", firstName = "T", lastName = "U", status = "archived"))
         )
-        viewModel = DirectoryViewModel(repository)
+        viewModel = DirectoryViewModel(repository, invoiceRepository)
         viewModel.loadKinfolkForEdit("kf-un")
         advanceUntilIdle()
         coEvery { repository.unarchiveKinfolk(any()) } returns Result.success(Unit)

@@ -21,6 +21,7 @@ import com.tribetails.auntieos.domain.recentTalesFor
 import com.tribetails.auntieos.domain.upcomingVisitsFor
 import com.tribetails.auntieos.domain.invoicesForKinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.joinDateForEdit
@@ -226,7 +227,11 @@ data class EditKinUiState(
 internal fun kinSchemaIds(summaries: List<FormSchemaSummary>): List<String> =
     appliesToSchemaIds(summaries, "KIN")
 
-class DirectoryViewModel(private val repository: AuntieRepository) : ViewModel() {
+class DirectoryViewModel(
+    private val repository: AuntieRepository,
+    // W4-1: the household profile's invoice list is Invoice domain, injected directly.
+    private val invoiceRepository: InvoiceRepository,
+) : ViewModel() {
 
     private val _directoryState = MutableStateFlow(DirectoryUiState())
     val directoryState: StateFlow<DirectoryUiState> = _directoryState.asStateFlow()
@@ -461,7 +466,7 @@ class DirectoryViewModel(private val repository: AuntieRepository) : ViewModel()
                 val kinDef = async { repository.getKin(kinfolkId) }
                 val reportsDef = async { repository.getAllKinCareReports() }
                 val sessionsDef = async { repository.getKinCareSessionsForKinfolk(kinfolkId) }
-                val invoicesDef = async { repository.getInvoicesForKinfolk(kinfolkId) }
+                val invoicesDef = async { invoiceRepository.getInvoicesForKinfolk(kinfolkId) }
                 // Phase 2: structured HouseholdData drives the migration box's gap list.
                 val householdDef = async { repository.getHouseholdData(kinfolkId) }
 

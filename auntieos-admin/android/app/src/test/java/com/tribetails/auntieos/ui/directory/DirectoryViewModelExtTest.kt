@@ -4,6 +4,7 @@ import com.tribetails.auntieos.TestFixtures
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -29,6 +30,7 @@ class DirectoryViewModelExtTest {
 
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var mockRepo: AuntieRepository
+    private val mockInvoiceRepo = mockk<InvoiceRepository>(relaxed = true)
 
     @Before
     fun setUp() {
@@ -46,7 +48,7 @@ class DirectoryViewModelExtTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = DirectoryViewModel(repository = mockRepo)
+    private fun buildViewModel() = DirectoryViewModel(repository = mockRepo, invoiceRepository = mockInvoiceRepo)
 
     @Test
     fun `loadDirectory sets error when repository fails`() = runTest(testDispatcher) {

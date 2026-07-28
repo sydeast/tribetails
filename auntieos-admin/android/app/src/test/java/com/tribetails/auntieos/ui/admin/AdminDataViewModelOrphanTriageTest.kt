@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.admin
 import com.tribetails.auntieos.TestFixtures
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -52,7 +53,7 @@ class AdminDataViewModelOrphanTriageTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = AdminDataViewModel(repository = mockRepo)
+    private fun buildViewModel() = AdminDataViewModel(repository = mockRepo, invoiceRepository = mockk(relaxed = true))
 
     // ─── loadKinfolkDirectory ─────────────────────────────────────────────────
 

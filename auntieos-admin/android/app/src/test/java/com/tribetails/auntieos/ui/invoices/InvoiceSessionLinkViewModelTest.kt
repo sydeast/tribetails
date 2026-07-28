@@ -5,6 +5,7 @@ import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.VisitStatus
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.InvoiceSessionLinks
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -34,6 +35,7 @@ class InvoiceSessionLinkViewModelTest {
 
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var mockRepo: AuntieRepository
+    private lateinit var mockInvoiceRepo: InvoiceRepository
 
     private val invoiceWithSessions = Invoice(
         id         = "inv1",
@@ -71,9 +73,10 @@ class InvoiceSessionLinkViewModelTest {
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         mockRepo = mockk(relaxed = true)
+        mockInvoiceRepo = mockk(relaxed = true)
         // loadInvoice now also loads payments for the per-invoice join; stub it so
         // these session-link tests stay deterministic.
-        coEvery { mockRepo.getPayments() } returns Result.success(emptyList<com.tribetails.auntieos.data.model.Payment>())
+        coEvery { mockInvoiceRepo.getPayments() } returns Result.success(emptyList<com.tribetails.auntieos.data.model.Payment>())
         // A8: loadInvoice also fetches business settings for the "How to pay" section.
         // A relaxed mock can't fabricate Result<BusinessSettings> (value class), so stub it.
         coEvery { mockRepo.getBusinessSettings() } returns Result.success(com.tribetails.auntieos.data.model.BusinessSettings())
@@ -84,13 +87,13 @@ class InvoiceSessionLinkViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = InvoiceDetailViewModel(repository = mockRepo)
+    private fun buildViewModel() = InvoiceDetailViewModel(repository = mockRepo, invoiceRepository = mockInvoiceRepo)
 
     // ── Load + session fetch ──────────────────────────────────────────────────
 
     @Test
     fun `loadInvoice fetches sessions for kinfolk on success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
         coEvery { mockRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(
             listOf(session1, session2, session3)
         )
@@ -109,7 +112,7 @@ class InvoiceSessionLinkViewModelTest {
     @Test
     fun `loadInvoice does not fetch sessions when kinfolkId is blank`() = runTest(testDispatcher) {
         val invoiceNoKinfolk = invoiceWithSessions.copy(kinfolkId = "")
-        coEvery { mockRepo.getInvoiceById("inv1") } returns Result.success(invoiceNoKinfolk)
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceNoKinfolk)
 
         val vm = buildViewModel()
         vm.loadInvoice("inv1")
@@ -122,7 +125,7 @@ class InvoiceSessionLinkViewModelTest {
 
     @Test
     fun `sessions load error shows toast without blocking invoice display`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
         coEvery { mockRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.failure(
             RuntimeException("Firestore timeout")
         )
@@ -142,7 +145,7 @@ class InvoiceSessionLinkViewModelTest {
 
     @Test
     fun `openEditMode seeds pendingSessionIds from invoice sessionIds`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
         coEvery { mockRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(emptyList())
 
         val vm = buildViewModel()
@@ -158,7 +161,7 @@ class InvoiceSessionLinkViewModelTest {
 
     @Test
     fun `closeEditMode clears edit flag`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
         coEvery { mockRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(emptyList())
 
         val vm = buildViewModel()
@@ -172,7 +175,7 @@ class InvoiceSessionLinkViewModelTest {
 
     @Test
     fun `toggleSessionInPending adds unselected session`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
         coEvery { mockRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(
             listOf(session1, session2, session3)
         )
@@ -189,7 +192,7 @@ class InvoiceSessionLinkViewModelTest {
 
     @Test
     fun `toggleSessionInPending removes already-selected session`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
         coEvery { mockRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(
             listOf(session1, session2)
         )
@@ -212,12 +215,12 @@ class InvoiceSessionLinkViewModelTest {
 
     @Test
     fun `saveLinks calls linkInvoiceSessions with the full pending set`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
         coEvery { mockRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(
             listOf(session1, session2, session3)
         )
         val updatedInvoice = invoiceWithSessions.copy(sessionIds = listOf("ses2", "ses3"), attribution = "manual")
-        coEvery { mockRepo.linkInvoiceSessions("inv1", any()) } returns Result.success(
+        coEvery { mockInvoiceRepo.linkInvoiceSessions("inv1", any()) } returns Result.success(
             InvoiceSessionLinks(
                 invoiceId = "inv1",
                 sessionIds = listOf("ses2", "ses3"),
@@ -227,7 +230,7 @@ class InvoiceSessionLinkViewModelTest {
                 editScope = "all",
             )
         )
-        coEvery { mockRepo.getInvoiceById("inv1") } returnsMany listOf(
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returnsMany listOf(
             Result.success(invoiceWithSessions),
             Result.success(updatedInvoice),
         )
@@ -243,7 +246,7 @@ class InvoiceSessionLinkViewModelTest {
 
         // The FULL new set rides one call; the delta is the server's to derive.
         val sent = slot<List<String>>()
-        coVerify(exactly = 1) { mockRepo.linkInvoiceSessions("inv1", capture(sent)) }
+        coVerify(exactly = 1) { mockInvoiceRepo.linkInvoiceSessions("inv1", capture(sent)) }
         assertEquals(setOf("ses2", "ses3"), sent.captured.toSet())
 
         val state = vm.uiState.value
@@ -254,9 +257,9 @@ class InvoiceSessionLinkViewModelTest {
 
     @Test
     fun `saveLinks shows error toast when linkInvoiceSessions fails`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
         coEvery { mockRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(emptyList())
-        coEvery { mockRepo.linkInvoiceSessions("inv1", any()) } returns
+        coEvery { mockInvoiceRepo.linkInvoiceSessions("inv1", any()) } returns
             Result.failure(RuntimeException("Permission denied"))
 
         val vm = buildViewModel()
@@ -275,7 +278,7 @@ class InvoiceSessionLinkViewModelTest {
 
     @Test
     fun `dismissToast clears toast visibility`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
         coEvery { mockRepo.getKinCareSessionsForKinfolk("kf1") } returns
             Result.failure(RuntimeException("boom"))
 
@@ -292,13 +295,13 @@ class InvoiceSessionLinkViewModelTest {
 
     @Test
     fun `saveLinks with unchanged selection still sends the full set and closes edit mode`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(invoiceWithSessions)
         coEvery { mockRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(
             listOf(session1, session2)
         )
         // Full-set semantics: the client always sends the whole set; a no-change
         // save comes back with an empty added/removed delta, derived server-side.
-        coEvery { mockRepo.linkInvoiceSessions("inv1", any()) } returns Result.success(
+        coEvery { mockInvoiceRepo.linkInvoiceSessions("inv1", any()) } returns Result.success(
             InvoiceSessionLinks(
                 invoiceId = "inv1",
                 sessionIds = listOf("ses1", "ses2"),
@@ -309,7 +312,7 @@ class InvoiceSessionLinkViewModelTest {
             )
         )
         val refreshed = invoiceWithSessions.copy(attribution = "manual")
-        coEvery { mockRepo.getInvoiceById("inv1") } returnsMany listOf(
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returnsMany listOf(
             Result.success(invoiceWithSessions),
             Result.success(refreshed),
         )
@@ -323,7 +326,7 @@ class InvoiceSessionLinkViewModelTest {
 
         assertFalse(vm.uiState.value.editMode)
         val sent = slot<List<String>>()
-        coVerify(exactly = 1) { mockRepo.linkInvoiceSessions("inv1", capture(sent)) }
+        coVerify(exactly = 1) { mockInvoiceRepo.linkInvoiceSessions("inv1", capture(sent)) }
         assertEquals(setOf("ses1", "ses2"), sent.captured.toSet())
     }
 }

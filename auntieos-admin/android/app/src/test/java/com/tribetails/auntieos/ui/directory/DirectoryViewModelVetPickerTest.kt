@@ -4,6 +4,7 @@ import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.VetClinic
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -34,6 +35,7 @@ class DirectoryViewModelVetPickerTest {
 
     private lateinit var viewModel: DirectoryViewModel
     private val repository = mockk<AuntieRepository>(relaxed = true)
+    private val invoiceRepository = mockk<InvoiceRepository>(relaxed = true)
     private val testDispatcher = UnconfinedTestDispatcher()
 
     private val riverside = VetClinic(
@@ -70,7 +72,7 @@ class DirectoryViewModelVetPickerTest {
         coEvery { repository.getKinCareSessions() } returns Result.success(emptyList())
         coEvery { repository.observeVetClinics() } returns flowOf(listOf(riverside, petEr))
         coEvery { repository.submitVetClinic(any()) } returns Result.success("new-clinic")
-        viewModel = DirectoryViewModel(repository)
+        viewModel = DirectoryViewModel(repository, invoiceRepository)
     }
 
     @After

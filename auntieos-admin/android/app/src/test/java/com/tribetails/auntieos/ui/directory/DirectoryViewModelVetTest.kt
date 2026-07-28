@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.directory
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +28,7 @@ class DirectoryViewModelVetTest {
 
     private lateinit var viewModel: DirectoryViewModel
     private val repository = mockk<AuntieRepository>(relaxed = true)
+    private val invoiceRepository = mockk<InvoiceRepository>(relaxed = true)
     private val testDispatcher = UnconfinedTestDispatcher()
 
     private val kinfolkWithVet = Kinfolk(
@@ -51,11 +53,11 @@ class DirectoryViewModelVetTest {
         coEvery { repository.getDossier(any()) } returns Result.success(null)
         coEvery { repository.getAllKinCareReports() } returns Result.success(emptyList())
         coEvery { repository.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
-        coEvery { repository.getInvoicesForKinfolk(any()) } returns Result.success(emptyList())
+        coEvery { invoiceRepository.getInvoicesForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repository.get411ForKin(any()) } returns Result.failure(NoSuchElementException("none"))
         // Phase 2: loadProfile now reads HouseholdData for the dossier migration box.
         coEvery { repository.getHouseholdData(any()) } returns Result.success(null)
-        viewModel = DirectoryViewModel(repository)
+        viewModel = DirectoryViewModel(repository, invoiceRepository)
     }
 
     @After

@@ -5,6 +5,7 @@ import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.Draft
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.notifications.VisitNotifier
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -33,12 +34,14 @@ class HomeViewModelTest {
 
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var mockRepo: AuntieRepository
+    private lateinit var mockInvoiceRepo: InvoiceRepository
     private lateinit var mockNotifier: VisitNotifier
 
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         mockRepo = mockk()
+        mockInvoiceRepo = mockk()
         mockNotifier = mockk(relaxed = true)
         stubDefaultRepoResponses()
     }
@@ -56,14 +59,14 @@ class HomeViewModelTest {
         coEvery { mockRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(emptyList())
         coEvery { mockRepo.getBusinessSettings() } returns Result.success(TestFixtures.businessSettings)
         // Stage 2 Step 2: Home now loads invoices for the weekly-revenue tile.
-        coEvery { mockRepo.getInvoices() } returns Result.success(emptyList())
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
         // Gatekeeper widget: Home now loads all sessions for the visit-gap ranking.
         coEvery { mockRepo.getKinCareSessions() } returns Result.success(emptyList())
         // Care-flags widget (AO-37): Home also loads all kin to join against sessions.
         coEvery { mockRepo.getAllKin() } returns Result.success(emptyList())
     }
 
-    private fun buildViewModel() = HomeViewModel(repo = mockRepo, notifier = mockNotifier)
+    private fun buildViewModel() = HomeViewModel(repo = mockRepo, invoiceRepo = mockInvoiceRepo, notifier = mockNotifier)
 
     @Test
     fun `init loads dashboard data successfully`() = runTest(testDispatcher) {
@@ -282,7 +285,7 @@ class HomeViewModelTest {
 
     @Test
     fun `cash flow outstanding and gatekeeper gaps computed from loaded data`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getInvoices() } returns Result.success(
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(
             listOf(
                 com.tribetails.auntieos.data.model.Invoice(id = "i1", status = "unpaid", total = 120.0, amountDue = 120.0, date = "2026-06-01"),
                 com.tribetails.auntieos.data.model.Invoice(id = "i2", status = "unpaid", total = 30.5, amountDue = 30.5, date = "2026-06-02"),
