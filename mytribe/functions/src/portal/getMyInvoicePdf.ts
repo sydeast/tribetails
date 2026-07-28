@@ -20,7 +20,7 @@ import { OkSchema } from '../lib/invoiceResponseSchema';
  * guard). Renders + stores the PDF and returns a download-token URL.
  */
 
-const Args = z.object({
+export const Args = z.object({
   invoiceId: z.string().min(1).max(200),
   kinfolkId: z.string().min(1).max(200).optional(),
 });

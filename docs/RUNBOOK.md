@@ -80,8 +80,10 @@ From the repo root. Each fans out to the project that owns it.
 | `npm run build` | All three projects |
 | `npm run build:android` | `compileDebugKotlin` |
 | `npm run lint` | Functions eslint |
+| `npm run contracts:generate` | Rewrite the generated Contracts module from the server zod schemas |
+| `npm run contracts:check` | Regenerate into memory and fail on any diff. Part of `check`. |
 | `npm run e2e` | Playwright against the emulator |
-| `npm run check` | typecheck, lint, test, build. What CI runs. |
+| `npm run check` | typecheck, lint, contracts, test, build. What CI runs. |
 | `npm run deploy` | The production run. See [Deploying](#deploying). |
 
 Suffix any of `test`, `typecheck`, `build` with `:functions`, `:admin` or

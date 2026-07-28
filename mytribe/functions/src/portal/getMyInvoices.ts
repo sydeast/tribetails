@@ -64,7 +64,7 @@ export const InvoiceLineItemDtoSchema = z
 
 export type InvoiceLineItemDto = z.infer<typeof InvoiceLineItemDtoSchema>;
 
-const InvoiceDtoSchema = z
+export const InvoiceDtoSchema = z
   .object({
     id: z.string().min(1),
     kinfolkId: z.string(),

@@ -1,0 +1,8 @@
+# The generated Contracts module (ADR-0001). Marked so a review of the schema
+# change that caused it is not buried under a thousand lines of mechanical
+# diff: GitHub collapses these by default and leaves them out of language
+# stats. They are still tracked, still reviewable when expanded, and still
+# verified on every CI run by `npm run contracts:check`.
+mytribe/web/src/contracts/*.generated.ts linguist-generated=true
+auntieos-admin/src/contracts/*.generated.ts linguist-generated=true
+auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/contracts/*.generated.kt linguist-generated=true

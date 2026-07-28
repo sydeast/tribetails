@@ -48,7 +48,7 @@ import { OkSchema } from '../lib/invoiceResponseSchema';
  * and swallow-log notification failures, because their primary deliverable
  * is the invoice record, not the send itself.
  */
-const Args = z.object({
+export const Args = z.object({
   invoiceId: z.string().min(1).max(200),
 });
 

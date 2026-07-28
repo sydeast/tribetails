@@ -67,6 +67,14 @@ jobs:
               - 'auntieos-admin/android/**'
             mytribe:
               - 'mytribe/functions/**'
+              # ADR-0001: the generated Contracts module is committed INSIDE the
+              # consuming projects, so the regen gate has to run when one of
+              # those copies changes too. Without these lines a hand edit to a
+              # generated file under auntieos-admin/ would be reviewed by the
+              # admin job, which does not know the file is generated.
+              - 'mytribe/web/src/contracts/**'
+              - 'auntieos-admin/src/contracts/**'
+              - 'auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/contracts/**'
             portal:
               - 'mytribe/web/**'
               - '.github/workflows/ci.yml'
@@ -188,6 +196,12 @@ jobs:
           cache-dependency-path: mytribe/functions/package-lock.json
       - run: npm ci
       - run: npm run lint
+      # ADR-0001 decision 3: regenerate the Contracts module from the zod
+      # schemas and fail on any difference, so a schema change and its
+      # generated fallout land in one reviewable commit. Early, so a stale
+      # artifact is reported as staleness here rather than as a client compile
+      # error in another job that cannot explain it.
+      - run: npm run contracts:check
       - run: npm run build
       # test:ci runs the in-project functions suite. Plain `npm test` also globs
       - run: npm run test:ci

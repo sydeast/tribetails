@@ -23,4 +23,11 @@ export default tseslint.config(
       'no-console': ['warn', { allow: ['warn', 'error'] }],
     },
   },
+  {
+    // Build-time tooling, not deployed code. `no-console` is here to keep
+    // stray debug logging out of the functions, where the structured logger is
+    // the only sanctioned output; a CLI's whole job is to report on stdout.
+    files: ['scripts/**/*.ts'],
+    rules: { 'no-console': 'off' },
+  },
 );

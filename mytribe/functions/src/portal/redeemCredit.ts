@@ -11,7 +11,7 @@ import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
 import { CentsSchema, OkSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 
-const Args = z.object({
+export const Args = z.object({
   invoiceId: z.string().min(1),
   kinfolkId: z.string().optional(),
   // Account balance is the ONLY redemption target. Kept as a single-value enum

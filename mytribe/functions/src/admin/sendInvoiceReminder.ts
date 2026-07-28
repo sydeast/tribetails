@@ -29,7 +29,7 @@ import { OkSchema } from '../lib/invoiceResponseSchema';
  */
 const NOTIFIED_FIELD_REMINDER = 'reminderNotifiedAtMs';
 
-const Args = z.object({
+export const Args = z.object({
   invoiceId: z.string().min(1).max(200),
 });
 

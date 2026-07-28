@@ -9,7 +9,7 @@ import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 
-const Args = z.object({
+export const Args = z.object({
   invoiceId: z.string().min(1),
   kinfolkId: z.string().optional(),
   successUrl: z.string().url(),

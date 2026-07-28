@@ -19,7 +19,7 @@ import { OkSchema } from '../lib/invoiceResponseSchema';
  * throws not-found; render/store errors surface as internal.
  */
 
-const Args = z.object({ invoiceId: z.string().min(1).max(200) });
+export const Args = z.object({ invoiceId: z.string().min(1).max(200) });
 
 /**
  * The RESPONSE shape (ADR-0001 step W3-1). `pdfUrl` is a Cloud Storage
