@@ -10,6 +10,8 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateOf } from '../lib/invoiceEditPolicy';
 import { isArchived, amountStillOwed, formatOwed, type ArchivableInvoice } from '../lib/invoiceArchive';
+import { validateResponse } from '../lib/callableResponse';
+import { OkSchema } from '../lib/invoiceResponseSchema';
 
 /**
  * Archives one invoice: hides it from the operator's default list view and from
@@ -33,9 +35,22 @@ export const Args = z.object({
   force: z.boolean().optional(),
 });
 
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1). Exported for the same reason `Args`
+ * is: the contract guard freezes it and decision 2 generates the clients'
+ * types from it. `.strict()`, so an added field is reported rather than
+ * absorbed.
+ */
+export const Result = z
+  .object({
+    ok: OkSchema,
+    /** Echoed back so a caller batching several calls can pair up the answers. */
+    invoiceId: z.string().min(1),
+  })
+  .strict();
 export async function archiveInvoiceHandler(
   req: CallableRequest<unknown>,
-): Promise<{ ok: true; invoiceId: string }> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -109,7 +124,7 @@ export async function archiveInvoiceHandler(
     extra: { invoiceId: args.invoiceId, state, forced },
   });
 
-  return { ok: true, invoiceId: args.invoiceId };
+  return validateResponse('archiveInvoice', Result, { ok: true, invoiceId: args.invoiceId });
 }
 
 export const archiveInvoice = onCall(

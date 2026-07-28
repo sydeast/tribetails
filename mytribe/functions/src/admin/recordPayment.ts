@@ -9,6 +9,8 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveInvoiceWriteActor, scopedKinfolkId } from '../lib/testMode';
+import { validateResponse } from '../lib/callableResponse';
+import { OkSchema } from '../lib/invoiceResponseSchema';
 
 /**
  * Creates a row in the ROOT `payments` collection. W2-1 of ADR-0002
@@ -81,16 +83,31 @@ export const Args = z.object({
   invoiceNumber: z.string().max(200).default(''),
 });
 
-export interface RecordPaymentResult {
-  ok: true;
-  paymentId: string;
-  /** The kinfolkId actually stored: the sandbox id when the caller is a test admin. */
-  kinfolkId: string;
-}
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1), and the source of the TS type
+ * below. The schema is the authority, so the hand-written interface it
+ * replaced is gone rather than left beside it to drift.
+ *
+ * `kinfolkId` IS NOT AN ECHO. A sandbox caller's row is stamped with their
+ * `testTribeId` no matter what the request said, so this field is the only
+ * way that caller learns which household the row actually landed under. It is
+ * a plain string and MAY BE EMPTY: a standalone payment (the admin Payments
+ * tab's no-invoice flow) belongs to no household, and `''` is what is stored.
+ */
+export const Result = z
+  .object({
+    ok: OkSchema,
+    /** The SERVER-minted `payments/{id}`. */
+    paymentId: z.string().min(1),
+    /** What was actually stored: the sandbox id for a test admin, `''` for a standalone row. */
+    kinfolkId: z.string(),
+  })
+  .strict();
+export type RecordPaymentResult = z.infer<typeof Result>;
 
 export async function recordPaymentHandler(
   req: CallableRequest<unknown>,
-): Promise<RecordPaymentResult> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const actor = resolveInvoiceWriteActor(req, 'recordPayment');
 
@@ -172,7 +189,7 @@ export async function recordPaymentHandler(
     },
   });
 
-  return { ok: true, paymentId: ref.id, kinfolkId };
+  return validateResponse('recordPayment', Result, { ok: true, paymentId: ref.id, kinfolkId });
 }
 
 export const recordPayment = onCall(

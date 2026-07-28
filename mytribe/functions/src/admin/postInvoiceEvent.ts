@@ -11,6 +11,8 @@ import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { validateResponse } from '../lib/callableResponse';
+import { OkSchema } from '../lib/invoiceResponseSchema';
 
 const Args = z.object({
   familyId: z.string().min(1),
@@ -18,7 +20,15 @@ const Args = z.object({
   payload: z.record(z.string(), z.unknown()),
 });
 
-export async function postInvoiceEventHandler(req: CallableRequest<unknown>): Promise<{ ok: true }> {
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1). Deliberately just `ok`: this
+ * callable identifies the invoice in the REQUEST, and echoing an id back that
+ * the caller supplied would read like a server-side confirmation of something
+ * the server never minted. `.strict()`, so adding one is a deliberate act.
+ */
+export const Result = z.object({ ok: OkSchema }).strict();
+
+export async function postInvoiceEventHandler(req: CallableRequest<unknown>): Promise<z.infer<typeof Result>> {
   const args = Args.parse(req.data);
   // Canonical store is the FLAT top-level `invoices` collection (AuntieOS
   // Android + web write here). Stamp `kinfolkId` so the portal's
@@ -73,7 +83,7 @@ export async function postInvoiceEventHandler(req: CallableRequest<unknown>): Pr
     });
   }
 
-  return { ok: true };
+  return validateResponse('postInvoiceEvent', Result, { ok: true });
 }
 
 export const postInvoiceEvent = onCall(

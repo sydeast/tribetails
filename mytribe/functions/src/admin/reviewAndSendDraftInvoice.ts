@@ -12,6 +12,8 @@ import { enqueueNotification } from '../notifications/dispatcher';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { validateResponse } from '../lib/callableResponse';
+import { OkSchema } from '../lib/invoiceResponseSchema';
 
 /**
  * Dedicated draft-review-and-send callable, replacing the AuntieOS admin's
@@ -67,9 +69,22 @@ function normalizedStatus(d: InvoiceDoc): string {
   return typeof d.status === 'string' ? d.status.trim().toLowerCase() : '';
 }
 
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1). Exported for the same reason `Args`
+ * is: the contract guard freezes it and decision 2 generates the clients'
+ * types from it. `.strict()`, so an added field is reported rather than
+ * absorbed.
+ */
+export const Result = z
+  .object({
+    ok: OkSchema,
+    /** Echoed back so a caller batching several calls can pair up the answers. */
+    invoiceId: z.string().min(1),
+  })
+  .strict();
 export async function reviewAndSendDraftInvoiceHandler(
   req: CallableRequest<unknown>,
-): Promise<{ ok: true; invoiceId: string }> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -167,7 +182,7 @@ export async function reviewAndSendDraftInvoiceHandler(
     extra: { invoiceId: args.invoiceId, kinfolkId: familyId },
   });
 
-  return { ok: true, invoiceId: args.invoiceId };
+  return validateResponse('reviewAndSendDraftInvoice', Result, { ok: true, invoiceId: args.invoiceId });
 }
 
 export const reviewAndSendDraftInvoice = onCall(

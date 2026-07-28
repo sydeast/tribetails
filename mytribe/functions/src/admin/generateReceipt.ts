@@ -9,6 +9,8 @@ import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { validateResponse } from '../lib/callableResponse';
+import { OkSchema } from '../lib/invoiceResponseSchema';
 
 // Marks an existing invoice receipted and enqueues the kinfolk-facing
 // invoice.receipt notification. Fails loud (not-found) when the invoice is
@@ -17,9 +19,17 @@ const Args = z.object({
   invoiceId: z.string().min(1),
 });
 
+/**
+ * The RESPONSE shape (ADR-0001 step W3-1). Deliberately just `ok`: this
+ * callable identifies the invoice in the REQUEST, and echoing an id back that
+ * the caller supplied would read like a server-side confirmation of something
+ * the server never minted. `.strict()`, so adding one is a deliberate act.
+ */
+export const Result = z.object({ ok: OkSchema }).strict();
+
 export async function generateReceiptHandler(
   req: CallableRequest<unknown>,
-): Promise<{ ok: true }> {
+): Promise<z.infer<typeof Result>> {
   const args = Args.parse(req.data);
 
   const ref = db().collection('invoices').doc(args.invoiceId);
@@ -60,7 +70,7 @@ export async function generateReceiptHandler(
     });
   }
 
-  return { ok: true };
+  return validateResponse('generateReceipt', Result, { ok: true });
 }
 
 export const generateReceipt = onCall(
