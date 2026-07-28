@@ -243,9 +243,13 @@ service cloud.firestore {
       allow read: if isAuntie()
                   || (isKinfolk() && resource.data.kinfolkId == request.auth.token.kinfolkId)
                   || testOwnsExisting();
-      allow create: if isAuntie() || testOwnsIncoming();
-      allow update: if isAuntie() || testOwnsExisting();
-      allow delete: if isAuntie() || testOwnsExisting();
+      // Callable-only writes (ADR-0002): every invoice write, production and
+      // TestMode sandbox alike, goes through a callable so the Invoice State
+      // Classifier stamp (status + editScope) can never be skipped. The last
+      // client-direct writer was removed in PR #105.
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
     }
 
     match /kin_care_reports/{reportId} {
