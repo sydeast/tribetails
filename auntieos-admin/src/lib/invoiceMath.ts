@@ -131,25 +131,43 @@ export function computeInvoiceTotals(
 
 /** One entry of the `invoices/{id}/payments` subcollection, as far as money goes. */
 export interface PaymentAmount {
-  /** DOLLARS. `markInvoicePaid.ts` writes the callable's `amount` arg verbatim. */
+  /**
+   * DOLLARS. The historical field: `markInvoicePaid.ts` wrote the callable's
+   * `amount` arg verbatim, and every payment recorded before 2026-07-25 carries
+   * only this.
+   */
   amount?: number;
+  /**
+   * CENTS, written alongside `amount` from 2026-07-25 on. Preferred when
+   * present, because it is the figure the settlement was actually computed
+   * from; `amount` is its dollar projection and can only lose precision.
+   */
+  amountCents?: number;
 }
 
 /**
  * What has actually been collected, in cents.
  *
  * Reads the `payments` SUBCOLLECTION rather than the invoice's own `amountDue`
- * scalar, and that is load-bearing: `markInvoicePaid.ts` sets `amountDue: 0`
- * unconditionally, even when the recorded `amount` is a PARTIAL payment. The
- * scalar therefore cannot answer "how much came in"; only the subcollection can.
+ * scalar, and that is load-bearing. Before 2026-07-25 `markInvoicePaid.ts` set
+ * `amountDue: 0` unconditionally, even when the recorded `amount` was a PARTIAL
+ * payment, so on every invoice paid through that path the scalar cannot answer
+ * either "has anyone paid" or "how much came in". Only the subcollection can,
+ * which is why it is also what the repair pass reconstructs the real balance
+ * from (`lib/invoicePaymentRepair.ts`).
  *
- * Each payment is dollar-denominated, so it is rounded to cents individually on
- * the way in and only then added. Rounding after summing floats would reintroduce
- * the drift this module exists to prevent.
+ * `amountCents` wins over `amount` per row. Rows are summed as integers, so a
+ * dollar-only row is rounded to cents individually on the way in and only then
+ * added. Rounding after summing floats would reintroduce the drift this module
+ * exists to prevent.
  */
 export function paidCentsFromPayments(payments: readonly PaymentAmount[]): number {
   let cents = 0;
   for (const p of payments) {
+    if (typeof p.amountCents === 'number' && Number.isInteger(p.amountCents)) {
+      cents += p.amountCents;
+      continue;
+    }
     if (typeof p.amount !== 'number' || !Number.isFinite(p.amount)) continue;
     cents += Math.round(p.amount * 100);
   }

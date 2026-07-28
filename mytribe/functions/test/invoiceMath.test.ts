@@ -168,6 +168,32 @@ describe('paidCentsFromPayments prefers the integer field', () => {
   it('ignores a row carrying no usable amount rather than reading it as zero-and-valid', () => {
     expect(paidCentsFromPayments([{ amount: 20 }, {}, { amount: Number.NaN }])).toBe(2000);
   });
+  it('trusts amountCents over a dollar field that re-rounds to a different cent', () => {
+    // The dollar figure is a lossy projection, never the source. A row whose
+    // amount carries sub-cent noise (10.006 from an upstream calculation) would
+    // re-round to 1001 cents; the settlement was computed at 1000 integer
+    // cents, and that is the figure that counts.
+    expect(paidCentsFromPayments([{ amount: 10.006, amountCents: 1000 }])).toBe(1000);
+  });
+  it('reads a row that carries only amountCents', () => {
+    expect(paidCentsFromPayments([{ amountCents: 2500 }])).toBe(2500);
+  });
+  it('falls back to dollars when amountCents is not an integer, the one shape it refuses', () => {
+    // A fractional count of cents is a contradiction in terms; the dollar field
+    // is the safer witness on such a row.
+    expect(paidCentsFromPayments([{ amount: 10, amountCents: 100.5 }])).toBe(1000);
+  });
+  it('sums a mixed history: integer rows, dollar-only rows, and a cents-denominated refund', () => {
+    // 2000 + 1010 - 500, with the empty row contributing nothing.
+    expect(
+      paidCentsFromPayments([
+        { amount: 20, amountCents: 2000 },
+        { amount: 10.1 },
+        { amountCents: -500 },
+        {},
+      ]),
+    ).toBe(2510);
+  });
 });
 describe('invoiceTotalCentsOf', () => {
   it('prefers the stored integer totalCents', () => {
