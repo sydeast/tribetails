@@ -53,6 +53,11 @@
 #   RELEASE_SKIP_ANDROID=1              ship the web without the Android client.
 #                                       Off by default: shipping them together
 #                                       is the point of steps 1c and 6b.
+#   RELEASE_ANDROID_GROUPS=a,b          App Distribution group aliases to send
+#   RELEASE_ANDROID_TESTERS=a@b,c@d     to. Neither set means every tester on
+#                                       the project; nobody at all REFUSES the
+#                                       release, because the CLI's own default
+#                                       is to upload and reach no one.
 #
 # Every deploy here goes through scripts/safe-deploy.sh, which pins the project,
 # refuses a bare deploy, and refuses rules from the wrong tree. This script adds
@@ -342,6 +347,48 @@ else
   fi
 fi
 
+# WHO THE BUILD ACTUALLY REACHES, decided before anything ships.
+#
+# `appdistribution:distribute` takes --testers or --groups. Given NEITHER it
+# uploads the binary, attaches the release notes, prints
+#
+#   no testers or groups specified, skipping
+#
+# as a WARNING, and exits 0. A release that reports success and reaches nobody
+# is the exact silent drift steps 1c and 6b exist to end, and it is worse than
+# the old behaviour because a green Android line now claims it shipped.
+# Observed on the first real run of this step, 2026-07-28.
+#
+# So the audience is resolved HERE, where an empty one can still refuse the
+# whole release, rather than at 6b where the web has already gone out.
+STEP="resolving the Android distribution audience"
+ANDROID_GROUPS="${RELEASE_ANDROID_GROUPS:-}"
+ANDROID_TESTERS="${RELEASE_ANDROID_TESTERS:-}"
+if [ "$ANDROID_BUILT" = "1" ] && [ -z "$ANDROID_GROUPS" ] && [ -z "$ANDROID_TESTERS" ]; then
+  # Nothing configured, so fall back to every tester on the project. For an
+  # internal tool that IS the audience, and it keeps the roster in the Firebase
+  # console instead of hardcoded here where it would rot.
+  ANDROID_TESTERS="$(
+    firebase appdistribution:testers:list --project "$PROJECT" --json 2>/dev/null |
+      node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const t=(JSON.parse(s).result||{}).testers||[];console.log(t.map(x=>String(x.name).split("/").pop()).filter(Boolean).join(","))}catch(e){console.log("")}})'
+  )"
+  # awk NF rather than `tr , newline | wc -l`: with no trailing newline wc
+  # counts separators, so one tester reports as 0 and two report as 1.
+  [ -n "$ANDROID_TESTERS" ] && ylw "android: no audience configured; using all $(printf '%s' "$ANDROID_TESTERS" | awk -F, '{print NF}') project tester(s)."
+fi
+if [ "$ANDROID_BUILT" = "1" ] && [ -z "$ANDROID_GROUPS" ] && [ -z "$ANDROID_TESTERS" ]; then
+  red "REFUSED: the Android build has nobody to go to."
+  red "  The project has no App Distribution testers and no group was named,"
+  red "  so the upload would succeed, warn 'no testers or groups specified',"
+  red "  and reach no one. Nothing has deployed yet."
+  red "  Fix by adding a tester:"
+  red "    firebase appdistribution:testers:add EMAIL --project $PROJECT"
+  red "  or name an audience for this run:"
+  red "    RELEASE_ANDROID_GROUPS=alias   (or RELEASE_ANDROID_TESTERS=a@b,c@d)"
+  red "  To ship the web alone anyway: RELEASE_SKIP_ANDROID=1."
+  exit 1
+fi
+
 if [ "$PREFLIGHT_ONLY" = "1" ]; then
   trap - EXIT
   banner "Preflight only: stopping here"
@@ -529,22 +576,43 @@ if [ "$ANDROID_BUILT" != "1" ]; then
 else
   ANDROID_APP_ID="${RELEASE_ANDROID_APP_ID:-1:153396971788:android:6bcb7c5411aeda837f2129}"
   ANDROID_NOTES="$(git log -1 --format='%h %s')"
+
+  # The audience was resolved and proven non-empty in 1c. Passing it is what
+  # turns an upload into a distribution: without one of these two flags the
+  # CLI warns and exits 0, having shipped to nobody.
+  ANDROID_AUDIENCE_ARGS=()
+  ANDROID_AUDIENCE_DESC=""
+  if [ -n "$ANDROID_GROUPS" ]; then
+    ANDROID_AUDIENCE_ARGS+=(--groups "$ANDROID_GROUPS")
+    ANDROID_AUDIENCE_DESC="groups $ANDROID_GROUPS"
+  fi
+  if [ -n "$ANDROID_TESTERS" ]; then
+    ANDROID_AUDIENCE_ARGS+=(--testers "$ANDROID_TESTERS")
+    ANDROID_AUDIENCE_DESC="${ANDROID_AUDIENCE_DESC:+$ANDROID_AUDIENCE_DESC, }$(printf '%s' "$ANDROID_TESTERS" | awk -F, '{print NF}') tester(s)"
+  fi
+
   if [ "${DRY_RUN:-0}" = "1" ]; then
-    ylw "DRY_RUN=1: would upload $ANDROID_APK to App Distribution"
+    ylw "DRY_RUN=1: would upload $ANDROID_APK to $ANDROID_AUDIENCE_DESC"
   else
-    firebase appdistribution:distribute "$ANDROID_APK" \
+    cyan "android: distributing to $ANDROID_AUDIENCE_DESC"
+    if firebase appdistribution:distribute "$ANDROID_APK" \
       --app "$ANDROID_APP_ID" \
       --project "$PROJECT" \
-      --release-notes "$ANDROID_NOTES" || {
+      --release-notes "$ANDROID_NOTES" \
+      "${ANDROID_AUDIENCE_ARGS[@]}"; then
+      grn "android: distributed to $ANDROID_AUDIENCE_DESC"
+    else
       # The APK is built and signed on disk either way. Failing the release
       # here would report a landed web deploy as broken; saying nothing would
-      # recreate the silent drift. So: loud, non-fatal, with the retry.
-      ylw "android: upload FAILED. The signed APK is still at:"
+      # recreate the silent drift. So: loud, non-fatal, with the retry, and
+      # the retry carries the audience because that is the part forgotten.
+      ylw "android: distribution FAILED. The signed APK is still at:"
       ylw "  $ANDROID_APK"
       ylw "  Retry with:"
-      ylw "  firebase appdistribution:distribute '$ANDROID_APK' --app $ANDROID_APP_ID --project $PROJECT"
-    }
-    grn "android: distributed"
+      ylw "  firebase appdistribution:distribute '$ANDROID_APK' \\"
+      ylw "    --app $ANDROID_APP_ID --project $PROJECT \\"
+      ylw "    --release-notes '$ANDROID_NOTES' ${ANDROID_AUDIENCE_ARGS[*]}"
+    fi
   fi
 fi
 
