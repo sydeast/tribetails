@@ -1,12 +1,12 @@
 package com.tribetails.auntieos.ui.invoices
 
 import com.tribetails.auntieos.TestFixtures
+import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsResult
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.VisitStatus
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
-import com.tribetails.auntieos.data.repository.InvoiceSessionLinks
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -221,7 +221,8 @@ class InvoiceSessionLinkViewModelTest {
         )
         val updatedInvoice = invoiceWithSessions.copy(sessionIds = listOf("ses2", "ses3"), attribution = "manual")
         coEvery { mockInvoiceRepo.linkInvoiceSessions("inv1", any()) } returns Result.success(
-            InvoiceSessionLinks(
+            LinkInvoiceSessionsResult(
+                ok = true,
                 invoiceId = "inv1",
                 sessionIds = listOf("ses2", "ses3"),
                 added = listOf("ses3"),
@@ -302,7 +303,8 @@ class InvoiceSessionLinkViewModelTest {
         // Full-set semantics: the client always sends the whole set; a no-change
         // save comes back with an empty added/removed delta, derived server-side.
         coEvery { mockInvoiceRepo.linkInvoiceSessions("inv1", any()) } returns Result.success(
-            InvoiceSessionLinks(
+            LinkInvoiceSessionsResult(
+                ok = true,
                 invoiceId = "inv1",
                 sessionIds = listOf("ses1", "ses2"),
                 added = emptyList(),

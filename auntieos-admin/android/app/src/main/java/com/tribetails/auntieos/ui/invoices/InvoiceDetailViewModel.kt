@@ -3,12 +3,12 @@ package com.tribetails.auntieos.ui.invoices
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
+import com.tribetails.auntieos.data.contracts.MarkInvoicePaidResult
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
-import com.tribetails.auntieos.data.repository.InvoiceSettlement
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.formatCentsUsd
 import com.tribetails.auntieos.domain.invoicePartPaid
@@ -654,25 +654,44 @@ internal fun archiveSuccessMessage(restoring: Boolean, force: Boolean): String =
  * covered half an invoice as if the invoice were done is the UI half of the
  * defect this whole change exists to remove: the operator had no way to tell,
  * from the screen, that a balance was still owed.
+ *
+ * A BLANK `state` GETS ITS OWN SENTENCE, and that branch is where ADR-0001
+ * adoption put a ruling the deleted `decodeInvoiceSettlement` used to make in
+ * the wire decoder. That decoder answered an unreadable payload with "partial",
+ * which meant this function said "$0.00 is still owed" - a settlement figure
+ * nobody sent. The generated decoder answers `""` instead, and `""` is not one
+ * of the four states the server can send, so the only honest thing to say is
+ * that the invoice's new position is unknown. It must not fall through to
+ * "paid in full": that is the very claim the 2026-07-25 fix exists to stop the
+ * app making on its own.
  */
-internal fun recordPaymentToast(settlement: InvoiceSettlement): String = when {
-    settlement.isPartial ->
+internal fun recordPaymentToast(settlement: MarkInvoicePaidResult): String = when (settlement.state) {
+    "partial" ->
         "Partial payment recorded. ${formatCentsUsd(settlement.amountDueCents)} is still owed, and the invoice stays open."
-    settlement.isOverpaid ->
+    "overpaid" ->
         "Payment recorded and the invoice is settled. It was overpaid by ${formatCentsUsd(settlement.overpaidCents)}, which has not been turned into a credit."
+    "" ->
+        "Payment recorded. The server did not report where the invoice now stands, so open it to check what is still owed."
     else -> "Payment recorded. The invoice is paid in full."
 }
 /**
  * The audit line for one recorded payment. Says whether the invoice was settled
  * or merely part-paid, so the audit trail cannot claim "paid" about an invoice
  * that is not. Pure; unit-tested.
+ *
+ * The blank-state branch is the same ruling as [recordPaymentToast]'s, and it
+ * matters more here: an audit line is read back months later by someone with no
+ * other record of the call, so "settled" written on a response that never said
+ * so is a false entry rather than a stale toast.
  */
 internal fun recordPaymentAuditDescription(
     amount: Double,
     invoiceLabel: String,
-    settlement: InvoiceSettlement,
-): String = if (settlement.isPartial) {
-    "Recorded partial payment of $amount against invoice $invoiceLabel; ${formatCentsUsd(settlement.amountDueCents)} still owed"
-} else {
-    "Recorded payment of $amount against invoice $invoiceLabel; invoice settled"
+    settlement: MarkInvoicePaidResult,
+): String = when (settlement.state) {
+    "partial" ->
+        "Recorded partial payment of $amount against invoice $invoiceLabel; ${formatCentsUsd(settlement.amountDueCents)} still owed"
+    "" ->
+        "Recorded payment of $amount against invoice $invoiceLabel; the server did not report the resulting balance"
+    else -> "Recorded payment of $amount against invoice $invoiceLabel; invoice settled"
 }
