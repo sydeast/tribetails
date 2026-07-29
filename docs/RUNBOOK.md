@@ -171,11 +171,13 @@ order**, stops at the first failure, and names the step it died in.
 | 0 | Preconditions | Clean tree, on `main`, synced with origin. Shipping uncommitted or stale code is the classic incident. Falls back to `gh` if the SSH agent is down, since it must verify the fact, not one transport. |
 | 1 | `npm run check` | Typecheck, lint, test, build. Not optional theatre: this is what produces the `dist/` that step 6 uploads. |
 | 1b | Secret preflight | Every secret the code DECLARES must exist. Firebase validates these before uploading, and one missing name fails the whole codebase. Refuses here, before any deploy. |
+| 1c | Android build | Assembles the signed release APK. Runs before the first deploy so a build failure costs nothing; the upload is step 6b. |
 | 2 | Firestore indexes | Before the code that queries them. A query with no index fails at RUNTIME, not at build. |
 | 3 | Wait for indexes | The CLI returns when Firestore ACCEPTS an index, not when it is Enabled. The run blocks; the CLI will not. |
 | 4 | Firestore rules | From `mytribe` only. Refused outright if the admin mirror has drifted. |
 | 5 | Functions | Before the clients that call them. **Skipped when `mytribe/functions` is unchanged since the last release** — see below. |
 | 6 | Hosting | Admin, then portal. |
+| 6b | Android | Uploads the APK from step 1c to App Distribution, in the same run as the web. |
 | 7 | Verify | Fetches both live sites and compares the hashed bundle they reference against the one just built. |
 | 8 | Prune revisions | Deletes old Cloud Run revisions, keeping the newest 10 per service and every serving one. Runs after verification, because those revisions are rollback targets. |
 
@@ -203,10 +205,68 @@ Knobs, all off by default:
 | `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` | Also ship the AuntieOS `default` and `reconcile` codebases |
 | `RELEASE_YES=1` | Do not prompt (CI). Preconditions still apply |
 | `RELEASE_FORCE_FUNCTIONS=1` | Deploy functions even when unchanged |
+| `RELEASE_SKIP_ANDROID=1` | Ship the web without the Android client. Off by default; shipping them together is the point of steps 1c and 6b |
+| `RELEASE_ANDROID_APP_ID=…` | Override the App Distribution app id (defaults to the `com.tribetails.auntieos` app) |
+| `RELEASE_ANDROID_GROUPS=a,b` | App Distribution group aliases to distribute to |
+| `RELEASE_ANDROID_TESTERS=a@b,c@d` | Tester emails to distribute to. Neither this nor groups set means every tester on the project |
 | `RELEASE_SKIP_SECRET_CHECK=1` | Skip step 1b |
 | `RELEASE_SKIP_PRUNE=1` | Skip both prunes. The functions deploy then runs without headroom and may exhaust the CPU quota partway through |
 | `RELEASE_PREDEPLOY_KEEP=N` | Revisions kept per service by the prune inside step 5 (default 2) |
 | `RELEASE_KEEP_REVISIONS=N` | Revisions kept per service in step 8 (default 10) |
+
+### The Android client ships with the web
+
+Steps 1c and 6b exist because it did not, for a long time, and nothing said so.
+The three clients were built to parity, the same callables and contracts and
+invoice state table, held honest by tests in all three trees. The release script
+shipped functions and two hosting targets and never touched Android. Parity was
+real in the source tree and fiction in production: by 2026-07-28 the newest APK
+was versionCode 318 against a web build of 518, which is 47 commits and ~13,400
+added lines nobody could run.
+
+Staleness was not the whole cost. The deployed rules revoked client-direct
+invoice writes on 2026-07-28 (`invoices allow create/update/delete: if false`,
+ADR-0002) and Android's writer moved to callables in PR #105, so any APK from
+before #105 gets `PERMISSION_DENIED` on every invoice create, edit and delete.
+A client that cannot ship rots against a server that keeps moving.
+
+The build runs at 1c, before the first deploy, so a failure costs nothing. The
+upload runs at 6b, beside hosting. **CI cannot do either**: release signing needs
+the keystore, and the Mapbox SDK needs a downloads token, and both are per
+machine and gitignored. That is why this lives in the release you run locally
+and not in Actions. What it needs:
+
+| Needs | Where |
+|---|---|
+| `KEYSTORE_PATH`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` | `auntieos-admin/android/local.properties` |
+| `MAPBOX_DOWNLOADS_TOKEN` | `~/.gradle/gradle.properties`, or the environment |
+| An App Distribution tester list | Firebase console, per project |
+
+A missing keystore or token **refuses the release** at 1c rather than shipping a
+web half, because a partial release is how the clients diverged to begin with.
+Override with `RELEASE_SKIP_ANDROID=1` when you mean it.
+
+A distribution failure at 6b is loud but not fatal: the web has already landed
+by then, the signed APK is on disk, and the run prints the retry command,
+audience flags included. Failing the release there would report a good deploy as
+broken.
+
+**Uploading is not distributing.** `appdistribution:distribute` needs
+`--testers` or `--groups`. Given neither it uploads the binary, attaches the
+release notes, prints `⚠ no testers or groups specified, skipping`, and **exits
+0**. That is a release that looks shipped and reaches nobody, which is worse
+than the old silence because now a green Android line says otherwise. It
+happened on the first real run of this step, on 2026-07-28.
+
+So step 1c resolves the audience before anything deploys: `RELEASE_ANDROID_GROUPS`,
+else `RELEASE_ANDROID_TESTERS`, else every tester on the project (the roster
+lives in the Firebase console, not in this repo where it would rot). If that
+resolves to nobody, the release is **refused** while nothing has shipped, and
+the refusal prints the command to add a tester.
+
+`versionName` embeds the short SHA (`build.gradle.kts` builds it from
+`gitShortSha`), so a tester's screenshot names the commit it came from without
+anyone checking the console.
 
 The AuntieOS functions codebases are **skipped by default** and the run says so
 rather than omitting them quietly. They live in the second tree
