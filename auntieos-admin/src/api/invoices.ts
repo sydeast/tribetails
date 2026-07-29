@@ -1,6 +1,10 @@
 import { type CollectionSpec } from '../lib/firestore';
 import type { PagedCollectionSpec } from '../lib/usePagedCollection';
 import type { Timestamp } from 'firebase/firestore';
+import type {
+  CreateInvoiceArgsLineItem,
+  LinkInvoiceSessionsResult,
+} from '../contracts/invoiceContracts.generated';
 
 /**
  * One `invoices` row. Mirrors the wasm `Invoice` data class in FirestoreClient.kt
@@ -29,11 +33,33 @@ import type { Timestamp } from 'firebase/firestore';
  */
 
 /**
- * Every state the server's Invoice State Classifier can stamp, verbatim from
- * `mytribe/functions/src/lib/invoiceEditPolicy.ts#INVOICE_STATES`. The stamp
- * always writes one of these, lowercase. This copy is a TYPE of the wire
- * format, not a mirror of any logic: nothing in this app decides which member
- * applies, it only reads what the server already decided.
+ * The Invoice State Classifier's two halves, TAKEN FROM THE CONTRACTS MODULE
+ * (ADR-0001) rather than transcribed from `invoiceEditPolicy.ts` as they were
+ * until now. `linkInvoiceSessions` is the callable that returns both side by
+ * side and un-widened, which is why its result is the source here.
+ *
+ *   InvoiceState      the 8 states the stamp can write, lowercase
+ *   InvoiceEditScope  what an edit may still change
+ *                       all           every field, line items and discounts
+ *                       metadataOnly  the descriptive fields, money frozen
+ *                       none          nothing
+ *
+ * Nothing in this app decides which member applies; it reads what the server
+ * already decided.
+ */
+export type InvoiceState = LinkInvoiceSessionsResult['status'];
+export type InvoiceEditScope = LinkInvoiceSessionsResult['editScope'];
+
+/**
+ * The same vocabulary as a RUNTIME value, which is the one thing the type above
+ * cannot give `invoiceStamp`: it has to test a string it was handed against the
+ * members, and a type erases.
+ *
+ * `satisfies` pins the list to the contract, so a member this array holds and
+ * the server does not is a typecheck failure here. The reverse (a state added
+ * server-side and not added here) is NOT a compile error. It lands as the
+ * documented fail-soft below: an unrecognized stamp reads as no stamp, which
+ * hides the money affordances rather than guessing at them.
  */
 export const INVOICE_STATES = [
   'quote',
@@ -44,19 +70,7 @@ export const INVOICE_STATES = [
   'paid',
   'zero',
   'open',
-] as const;
-
-export type InvoiceState = (typeof INVOICE_STATES)[number];
-
-/**
- * How much of the invoice the server will let an edit change, verbatim from
- * the server module above.
- *
- *   all           every field, including the line items and the discounts
- *   metadataOnly  the descriptive fields, but the money is frozen
- *   none          nothing
- */
-export type InvoiceEditScope = 'all' | 'metadataOnly' | 'none';
+] as const satisfies readonly InvoiceState[];
 
 export interface InvoiceEntry {
   _id: string;
@@ -139,22 +153,22 @@ export interface InvoiceEntry {
 }
 
 /**
- * One billed line. Integer cents, matching the server's zod schema field for
- * field (`mytribe/functions/src/admin/updateInvoice.ts`).
+ * One billed line: `description`, a `qty` that may be fractional (2.5 hours), a
+ * `unitCents` that is an INTEGER count of cents, and an optional per-line
+ * `discountCents`.
+ *
+ * AN ALIAS OF THE CONTRACT, not a transcription of it. The stored array is
+ * whatever `createInvoice` was handed or whatever `updateInvoice`'s patch
+ * replaced it with, written through verbatim (`updateInvoice.ts:253`), so the
+ * request shape IS the stored shape and there is no second thing to describe.
+ * `UpdateInvoiceArgsPatchLineItem` is the identical type on the edit side; the
+ * codegen emits one per callable, and this app needs one name.
  *
  * There is NO stored per-line amount, deliberately. It is always derived through
  * `lib/invoiceMath.ts#lineAmountCents`, so the lines shown and the total shown
  * can only ever come from one rule.
  */
-export interface InvoiceLineItem {
-  description: string;
-  /** Units billed. May be fractional (2.5 hours). */
-  qty: number;
-  /** Price per unit, an INTEGER count of cents. */
-  unitCents: number;
-  /** Optional per-line reduction, integer cents. */
-  discountCents?: number;
-}
+export type InvoiceLineItem = CreateInvoiceArgsLineItem;
 
 /**
  * The stored lines, or null when this invoice has never been itemized.

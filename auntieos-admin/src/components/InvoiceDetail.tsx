@@ -19,8 +19,8 @@ import {
   updateInvoice,
   archiveInvoice,
   unarchiveInvoice,
-  type InvoicePatch,
 } from '../api/invoicesWrite';
+import type { UpdateInvoiceArgsPatch } from '../contracts/invoiceContracts.generated';
 import {
   InvoiceLineItemsTable,
   InvoiceLineItemsEditor,
@@ -259,7 +259,12 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
   async function saveEdit() {
     if (!editing || busy) return;
 
-    const patch: InvoicePatch = {};
+    // The patch type is the contract's (ADR-0001), which accepts FOUR fields
+    // this panel does not offer: `kinfolkName`, `client`, `address` and
+    // `discount`. That is not an oversight to fix in passing here, it is a
+    // capability the edit form never grew; surfacing it is a UI change and its
+    // own concern.
+    const patch: UpdateInvoiceArgsPatch = {};
     // Only CHANGED fields go in the patch. Echoing an unchanged value back would
     // still stamp `updatedAt` and write an audit entry describing an edit that
     // did not happen.

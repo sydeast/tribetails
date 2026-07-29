@@ -1,89 +1,91 @@
 import { call } from '../lib/fns';
-import type { InvoiceLineItem } from './invoices';
+import type {
+  ArchiveInvoiceArgs,
+  ArchiveInvoiceResult,
+  CreateInvoiceArgs,
+  CreateInvoiceResult,
+  CreateQuoteArgs,
+  CreateQuoteResult,
+  GenerateReceiptArgs,
+  GenerateReceiptResult,
+  ListUninvoicedSessionsArgs,
+  ListUninvoicedSessionsResult,
+  MarkInvoicePaidArgs,
+  MarkInvoicePaidResult,
+  RepairInvoicePaymentsArgs,
+  RepairInvoicePaymentsResult,
+  ReviewAndSendDraftInvoiceArgs,
+  ReviewAndSendDraftInvoiceResult,
+  SendInvoiceReminderArgs,
+  SendInvoiceReminderResult,
+  UnarchiveInvoiceArgs,
+  UnarchiveInvoiceResult,
+  UpdateInvoiceArgs,
+  UpdateInvoiceArgsPatch,
+  UpdateInvoiceResult,
+  UpdateInvoiceResultTotals,
+} from '../contracts/invoiceContracts.generated';
 
 /**
- * The write side of the Invoices screen. Every callable below was confirmed
- * live against MyTribe/functions/src/admin/*.ts (read, not guessed):
+ * The write side of the Invoices screen.
  *
- *   createInvoice.ts              zod Args matched field-for-field
- *   createQuote.ts                same Args + `sendToKinfolk`; server ignores
- *                                 the caller's `status` and always mints QUOTE
- *   sendInvoiceReminder.ts        `{ invoiceId }`, throws failed-precondition
- *                                 if the invoice is already paid
- *   generateReceipt.ts            `{ invoiceId }`
- *   markInvoicePaid.ts            `{ invoiceId, amount?, method?, reference?,
- *                                 paidAt? }`; writes a `payments` subcollection
- *                                 entry (amount/method/reference/paidAt/
- *                                 recordedBy) in the same batch as the status
- *                                 flip, throws failed-precondition if already
- *                                 paid or still a draft/quote
- *   reviewAndSendDraftInvoice.ts  `{ invoiceId }`; throws failed-precondition
- *                                 if the invoice isn't a draft, or if it's
- *                                 missing a total, household, or invoice
- *                                 number
+ * EVERY SHAPE BELOW COMES FROM THE CONTRACTS MODULE (ADR-0001). This file used
+ * to carry its own transcription of each callable's zod Args and Result,
+ * re-read against the handler by hand whenever somebody remembered to. Those
+ * transcriptions are gone: the types are imported from
+ * `contracts/invoiceContracts.generated.ts`, which is projected from the server
+ * schemas and which CI regenerates and diffs, so a schema change either lands
+ * with its client fallout or fails the build.
+ *
+ * What survives here is what a generated type cannot say: WHEN a callable
+ * refuses, WHAT it does to a household, and which of two legitimate-looking
+ * payloads is the one that does not lose money. That is the division ADR-0001
+ * draws, and the reason the prose below no longer lists field names.
  *
  * `markInvoicePaid` and `reviewAndSendDraftInvoice` used to route through
  * `postInvoiceEvent`, the generic admin invoice-mutation callable, as a
  * workaround: a real backend call, but the generic primitive rather than a
  * purpose-built endpoint, with no payment audit trail and no draft-send
- * validation. Both now call their own dedicated callables above, neither of
- * which needs `familyId` from the caller: each loads the invoice server-side
- * and reads `kinfolkId` off the doc itself.
+ * validation. Both now call their own dedicated callables, neither of which
+ * needs `familyId` from the caller: each loads the invoice server-side and
+ * reads `kinfolkId` off the doc itself.
  */
 
 /**
- * Shared shape of createInvoice/createQuote, matching both callables' zod
- * schema field-for-field (createQuote accepts the identical shape plus
- * `sendToKinfolk`, and ignores the caller's `status`).
+ * createInvoice (admin): mints a new `invoices/{id}` doc, kinfolk gets notified
+ * `invoice.new`.
+ *
+ * `CreateInvoiceArgs.lineItems` is ADDITIVE: omit it and the callable behaves
+ * exactly as it always did, storing `total` / `amountDue` verbatim and writing
+ * no cents field at all.
+ *
+ * SUPPLY IT AND `total` / `amountDue` MUST EQUAL THE SUM OF THE LINES. The
+ * server REFUSES a disagreement (`invoice_total_mismatch`) rather than silently
+ * overwriting the caller's figure, so both must come from the same
+ * `lib/invoiceMath.ts` computation the composer already runs to show a live
+ * total while the operator types. Never hand-enter a total beside line items.
  */
-export interface NewInvoiceInput {
-  familyId: string;
-  kinfolkName: string;
-  invoiceNumber: string;
-  client: string;
-  address: string;
-  date: string;
-  terms: string;
-  dueDate: string;
-  discount: string;
-  total: number;
-  amountDue: number;
-  status: string;
-  sessionIds: string[];
-  /**
-   * Optional itemization, added by Task 5.1. ADDITIVE: omit it and the callable
-   * behaves exactly as it always did, storing `total` / `amountDue` verbatim and
-   * writing no cents field at all.
-   *
-   * SUPPLY IT AND `total` / `amountDue` MUST EQUAL THE SUM OF THE LINES. The
-   * server REFUSES a disagreement (`invoice_total_mismatch`) rather than
-   * silently overwriting the caller's figure, so both must come from the same
-   * `lib/invoiceMath.ts` computation the composer already runs to show a live
-   * total while the operator types. Never hand-enter a total beside line items.
-   */
-  lineItems?: InvoiceLineItem[];
-  /** Whole-invoice reduction in integer cents. Only meaningful with `lineItems`. */
-  invoiceDiscountCents?: number;
-}
-
-export interface NewInvoiceResult {
-  invoiceId: string;
-}
-
-/** createInvoice (admin): mints a new `invoices/{id}` doc, kinfolk gets notified `invoice.new`. */
-export async function createInvoice(input: NewInvoiceInput): Promise<NewInvoiceResult> {
-  const res = await call<NewInvoiceInput, { ok: true; invoiceId: string }>('createInvoice', input);
+export async function createInvoice(
+  input: CreateInvoiceArgs,
+): Promise<Pick<CreateInvoiceResult, 'invoiceId'>> {
+  const res = await call<CreateInvoiceArgs, CreateInvoiceResult>('createInvoice', input);
   return { invoiceId: res.invoiceId };
 }
 
-export interface NewQuoteInput extends NewInvoiceInput {
-  /** When true, dispatches the issued-quote notification (`invoice.new`, isQuote: true) immediately. */
-  sendToKinfolk: boolean;
-}
-
-/** createQuote (admin): same shape as createInvoice, always mints QUOTE status server-side. */
-export async function createQuote(input: NewQuoteInput): Promise<NewInvoiceResult> {
-  const res = await call<NewQuoteInput, { ok: true; invoiceId: string }>('createQuote', input);
+/**
+ * createQuote (admin): a quote is an invoice the server always mints in QUOTE
+ * status, whatever `status` the caller sends.
+ *
+ * IT IS NOT createInvoice'S SHAPE PLUS ONE FLAG, which is what this file
+ * claimed until the contracts module was generated. `CreateQuoteArgs` has NO
+ * `lineItems` and NO `invoiceDiscountCents`: the server's zod object strips
+ * both without complaint, so an itemized quote is stored with its total and
+ * none of the lines behind it. See the note in `screens/InvoiceCreate.tsx`.
+ */
+export async function createQuote(
+  input: CreateQuoteArgs,
+): Promise<Pick<CreateQuoteResult, 'invoiceId'>> {
+  const res = await call<CreateQuoteArgs, CreateQuoteResult>('createQuote', input);
   return { invoiceId: res.invoiceId };
 }
 
@@ -94,7 +96,7 @@ export async function createQuote(input: NewQuoteInput): Promise<NewInvoiceResul
  * if the id is wrong.
  */
 export async function sendInvoiceReminder(invoiceId: string): Promise<void> {
-  await call<{ invoiceId: string }, { ok: true; invoiceId: string }>('sendInvoiceReminder', { invoiceId });
+  await call<SendInvoiceReminderArgs, SendInvoiceReminderResult>('sendInvoiceReminder', { invoiceId });
 }
 
 /**
@@ -103,40 +105,7 @@ export async function sendInvoiceReminder(invoiceId: string): Promise<void> {
  * invoice is missing rather than silently creating one.
  */
 export async function generateReceipt(invoiceId: string): Promise<void> {
-  await call<{ invoiceId: string }, { ok: true }>('generateReceipt', { invoiceId });
-}
-
-export interface MarkInvoicePaidInput {
-  /**
-   * Dollar amount actually collected. MAY BE PARTIAL. Omit to settle whatever
-   * the recorded payments leave outstanding (server default).
-   */
-  amount?: number;
-  /** Free-text payment method, e.g. "check", "cash", "venmo". */
-  method?: string;
-  /** Free-text reference/confirmation number for the payment. */
-  reference?: string;
-  /** ISO-8601 timestamp for when the payment was actually received. Omit to use now (server default). */
-  paidAt?: string;
-}
-
-interface MarkInvoicePaidRequest extends MarkInvoicePaidInput {
-  invoiceId: string;
-}
-
-/** Where an invoice stands after a payment, derived server-side from every recorded payment. */
-export type InvoiceSettlementState = 'unpaid' | 'partial' | 'settled' | 'overpaid';
-
-export interface MarkInvoicePaidResult {
-  paymentId: string;
-  state: InvoiceSettlementState;
-  totalCents: number;
-  /** Every payment on record, including the one just made. */
-  paidCents: number;
-  /** Still owed. Never negative. */
-  amountDueCents: number;
-  /** Collected beyond the total. Zero unless `state` is 'overpaid'. */
-  overpaidCents: number;
+  await call<GenerateReceiptArgs, GenerateReceiptResult>('generateReceipt', { invoiceId });
 }
 
 /**
@@ -153,7 +122,8 @@ export interface MarkInvoicePaidResult {
  * $20 against a $40 invoice made the remaining $20 uncollectable: the invoice
  * dropped out of Outstanding and the next call was refused as already-paid.
  *
- * Omit `amount` to settle whatever is still outstanding.
+ * Omit `amount` to settle whatever is still outstanding. It is DOLLARS, unlike
+ * every `*Cents` field in the result, which are integer cents.
  *
  * An OVERPAYMENT settles the invoice, leaves `amountDueCents` at 0 (never
  * negative, which is this codebase's credit signal) and reports the excess as
@@ -168,54 +138,9 @@ export interface MarkInvoicePaidResult {
  */
 export async function markInvoicePaid(
   invoiceId: string,
-  input: MarkInvoicePaidInput = {},
+  input: Omit<MarkInvoicePaidArgs, 'invoiceId'> = {},
 ): Promise<MarkInvoicePaidResult> {
-  const res = await call<MarkInvoicePaidRequest, { ok: true; invoiceId: string } & MarkInvoicePaidResult>(
-    'markInvoicePaid',
-    { invoiceId, ...input },
-  );
-  return {
-    paymentId: res.paymentId,
-    state: res.state,
-    totalCents: res.totalCents,
-    paidCents: res.paidCents,
-    amountDueCents: res.amountDueCents,
-    overpaidCents: res.overpaidCents,
-  };
-}
-
-// ── repairInvoicePayments (functions/src/admin/repairInvoicePayments.ts) ─────
-
-/** Why a scanned invoice was left alone by the repair pass. */
-export type RepairSkipReason =
-  | 'no_payments'
-  | 'payments_cover_total'
-  | 'no_total'
-  | 'balance_already_correct'
-  | 'would_lower_balance';
-
-export interface RepairFinding {
-  invoiceId: string;
-  invoiceNumber: string | null;
-  kinfolkId: string | null;
-  totalCents: number;
-  paidCents: number;
-  /** What the doc currently claims is owed. */
-  claimedAmountDueCents: number;
-  /** What the recorded payments say is owed. */
-  correctAmountDueCents: number;
-  understatedCents: number;
-  status: string;
-}
-
-export interface RepairInvoicePaymentsResult {
-  mode: 'detect' | 'repair';
-  scanned: number;
-  findings: RepairFinding[];
-  repaired: number;
-  skipped: Record<RepairSkipReason, number>;
-  /** Pass back as `startAfterId` for the next page, or null when the sweep is done. */
-  nextCursor: string | null;
+  return call<MarkInvoicePaidArgs, MarkInvoicePaidResult>('markInvoicePaid', { invoiceId, ...input });
 }
 
 /**
@@ -232,20 +157,9 @@ export interface RepairInvoicePaymentsResult {
  * to fix something. Pages explicitly, one page per call, via `nextCursor`.
  */
 export async function repairInvoicePayments(
-  input: { mode?: 'detect' | 'repair'; limit?: number; startAfterId?: string } = {},
+  input: RepairInvoicePaymentsArgs = {},
 ): Promise<RepairInvoicePaymentsResult> {
-  const res = await call<typeof input, { ok: true } & RepairInvoicePaymentsResult>(
-    'repairInvoicePayments',
-    input,
-  );
-  return {
-    mode: res.mode,
-    scanned: res.scanned,
-    findings: res.findings,
-    repaired: res.repaired,
-    skipped: res.skipped,
-    nextCursor: res.nextCursor,
-  };
+  return call<RepairInvoicePaymentsArgs, RepairInvoicePaymentsResult>('repairInvoicePayments', input);
 }
 
 /**
@@ -256,56 +170,31 @@ export async function repairInvoicePayments(
  * draft rather than sending it anyway), `not-found` if the id is wrong.
  */
 export async function reviewAndSendDraftInvoice(invoiceId: string): Promise<void> {
-  await call<{ invoiceId: string }, { ok: true; invoiceId: string }>('reviewAndSendDraftInvoice', { invoiceId });
+  await call<ReviewAndSendDraftInvoiceArgs, ReviewAndSendDraftInvoiceResult>('reviewAndSendDraftInvoice', {
+    invoiceId,
+  });
 }
-/* -------------------------------------------------------------------------
- * Task 5.1: editing, archiving and the un-invoiced-visits read.
- *
- * Every shape below was confirmed against the deployed handler, not guessed:
- * `updateInvoice.ts`, `archiveInvoice.ts`, `unarchiveInvoice.ts` and
- * `listUninvoicedSessions.ts`, plus their entries in
- * `mytribe/functions/CALLABLE_CONTRACT.md`.
- * ------------------------------------------------------------------------- */
-/**
- * The editable slice of an invoice.
- *
- * THERE IS NO `total` FIELD HERE, AND THAT IS THE POINT. The server's `patch` is
- * `.strict()` and carries no total either, so a client that tries to assert what
- * an invoice is worth gets `invalid-argument` instead of having its number
- * quietly dropped. Every money figure is recomputed server-side from the line
- * items and the recorded payments, which is what makes the total a household
- * sees necessarily the sum of the lines it is shown.
- *
- * At least one field must be present. An empty patch is refused rather than
- * absorbed as a no-op, because it would stamp `updatedAt` and write an audit
- * entry describing a change that never happened.
- */
-export interface InvoicePatch {
-  invoiceNumber?: string;
-  /** `YYYY-MM-DD`. The server rejects anything else. */
-  date?: string;
-  /** `YYYY-MM-DD`. */
-  dueDate?: string;
-  terms?: string;
-  /**
-   * The FULL replacement list, not a delta. Sending it recomputes the money, so
-   * omit the key entirely on a metadata-only edit rather than echoing back what
-   * is already stored: `updateInvoice` treats the key's PRESENCE as "this patch
-   * touches money", which is what the edit gating turns on.
-   */
-  lineItems?: InvoiceLineItem[];
-  /** Whole-invoice reduction, integer cents. Also counts as touching money. */
-  invoiceDiscountCents?: number;
-}
-export interface InvoiceTotalsResult {
-  subtotalCents: number;
-  totalCents: number;
-  paidCents: number;
-  amountDueCents: number;
-}
+
 /**
  * updateInvoice (admin): edits an invoice's descriptive fields, its line items,
  * or both, and returns the money the server actually computed.
+ *
+ * THERE IS NO `total` IN `UpdateInvoiceArgsPatch`, AND THAT IS THE POINT. The
+ * server's `patch` is `.strict()` and carries no total either, so a client that
+ * tries to assert what an invoice is worth gets `invalid-argument` instead of
+ * having its number quietly dropped. Every money figure is recomputed
+ * server-side from the line items and the recorded payments, which is what makes
+ * the total a household sees necessarily the sum of the lines it is shown.
+ *
+ * `lineItems` is the FULL replacement list, not a delta, and its PRESENCE is
+ * what the server reads as "this patch touches money". Omit the key entirely on
+ * a metadata-only edit rather than echoing back what is already stored.
+ *
+ * At least one field must be present. An empty patch is refused rather than
+ * absorbed as a no-op, because it would stamp `updatedAt` and write an audit
+ * entry describing a change that never happened. That is a zod `.refine`, which
+ * the generated type cannot express, so it is a runtime refusal rather than a
+ * compile error.
  *
  * IT WILL NOT RECOMPUTE AN UN-ITEMIZED INVOICE, which is the guard that matters
  * most on today's data: every invoice in the collection has zero line items, so
@@ -320,14 +209,12 @@ export interface InvoiceTotalsResult {
  */
 export async function updateInvoice(
   invoiceId: string,
-  patch: InvoicePatch,
-): Promise<InvoiceTotalsResult> {
-  const res = await call<
-    { invoiceId: string; patch: InvoicePatch },
-    { ok: true; invoiceId: string; totals: InvoiceTotalsResult }
-  >('updateInvoice', { invoiceId, patch });
+  patch: UpdateInvoiceArgsPatch,
+): Promise<UpdateInvoiceResultTotals> {
+  const res = await call<UpdateInvoiceArgs, UpdateInvoiceResult>('updateInvoice', { invoiceId, patch });
   return res.totals;
 }
+
 /**
  * archiveInvoice (admin): stamps `archivedAt` / `archivedBy` so the invoice
  * drops out of the operator's working list and out of the outstanding and billed
@@ -348,11 +235,12 @@ export async function updateInvoice(
  * silently.
  */
 export async function archiveInvoice(invoiceId: string, force = false): Promise<void> {
-  await call<{ invoiceId: string; force?: boolean }, { ok: true; invoiceId: string }>('archiveInvoice', {
+  await call<ArchiveInvoiceArgs, ArchiveInvoiceResult>('archiveInvoice', {
     invoiceId,
     ...(force ? { force: true } : {}),
   });
 }
+
 /**
  * unarchiveInvoice (admin): restores an archived invoice to the working list.
  *
@@ -362,60 +250,40 @@ export async function archiveInvoice(invoiceId: string, force = false): Promise<
  * Throws `failed-precondition` when the invoice was not archived to begin with.
  */
 export async function unarchiveInvoice(invoiceId: string): Promise<void> {
-  await call<{ invoiceId: string }, { ok: true; invoiceId: string }>('unarchiveInvoice', { invoiceId });
+  await call<UnarchiveInvoiceArgs, UnarchiveInvoiceResult>('unarchiveInvoice', { invoiceId });
 }
-/** One completed, un-invoiced visit, as the picker needs it. */
-export interface UninvoicedSession {
-  sessionId: string;
-  kinfolkId: string;
-  serviceType: string;
-  durationMinutes: number;
-  /** ISO-8601 instant. The server range-queries this LEXICALLY; it is a string, not a Timestamp. */
-  startTime: string;
-  /**
-   * The rate-card price in integer cents, or NULL when it could not be priced.
-   *
-   * NULL IS NOT ZERO AND MUST NEVER BE RENDERED AS ZERO. A service the rate card
-   * does not hold, a rate that will not parse, and a rate of zero all arrive
-   * here as null, and the caller's job is to make the operator TYPE a price. A
-   * silent 0 would bill a household nothing for real work and look deliberate on
-   * the invoice.
-   */
-  unitCents: number | null;
-}
-export interface UninvoicedSessionsResult {
-  sessions: UninvoicedSession[];
-  /** The subset of `sessions` above with no usable rate. Prompt for each one. */
-  unpriceable: Array<{ sessionId: string; serviceType: string }>;
-  /**
-   * False when `business_settings.serviceRates` is missing entirely, which
-   * separates "this service is not on the card" from "there is no card". Those
-   * need different sentences: the second is a settings problem, not a per-visit one.
-   */
-  rateCardLoaded: boolean;
-  /** Rows read BEFORE filtering. An empty result over 400 scanned rows means something. */
-  scanned: number;
-  /** True when the server's page cap was reached, so the window may hold more. */
-  truncated: boolean;
-}
+
 /**
  * listUninvoicedSessions (admin): completed visits in a date window that no
  * invoice has claimed yet, priced from the rate card where that is possible.
  * Reads only; writes nothing.
  *
- * `from` and `to` are INCLUSIVE `YYYY-MM-DD` days. The server compares them
+ * `from` and `to` are INCLUSIVE `YYYY-MM-DD` days, and the server also enforces
+ * an ordering rule between them that the generated type cannot express (a zod
+ * `.refine`), so a pair that typechecks can still be refused. It compares them
  * lexically against `kin_care_sessions.startTime`, which is an ISO STRING rather
  * than a Timestamp, and filters both the completed status and the
  * already-invoiced check IN MEMORY. That is not laziness on the server's part:
  * `status` casing is unenforced, and `invoiceId` is ABSENT rather than empty on
  * most sessions, so either predicate applied server-side would silently drop
  * real work instead of billing for it.
+ *
+ * A session's `unitCents` is NULL WHEN IT COULD NOT BE PRICED, AND NULL IS NOT
+ * ZERO. A service the rate card does not hold, a rate that will not parse, and a
+ * rate of zero all arrive as null, and the caller's job is to make the operator
+ * TYPE a price. A silent 0 would bill a household nothing for real work and look
+ * deliberate on the invoice. `unpriceable` is the subset to prompt for;
+ * `rateCardLoaded: false` means `business_settings.serviceRates` is missing
+ * ENTIRELY, which is a settings problem rather than a per-visit one and needs a
+ * different sentence. `scanned` counts rows read BEFORE filtering, so an empty
+ * result over 400 scanned rows means something, and `truncated` says the
+ * server's page cap was reached and the window may hold more.
  */
 export async function listUninvoicedSessions(
   from: string,
   to: string,
-): Promise<UninvoicedSessionsResult> {
-  return call<{ from: string; to: string }, UninvoicedSessionsResult>('listUninvoicedSessions', {
+): Promise<ListUninvoicedSessionsResult> {
+  return call<ListUninvoicedSessionsArgs, ListUninvoicedSessionsResult>('listUninvoicedSessions', {
     from,
     to,
   });
