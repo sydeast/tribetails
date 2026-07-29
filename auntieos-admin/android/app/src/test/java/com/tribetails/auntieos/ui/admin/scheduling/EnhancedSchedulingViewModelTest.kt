@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.admin.scheduling
 
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
 import com.tribetails.auntieos.data.repository.GoogleCalendarConnectionState
 import com.tribetails.auntieos.data.repository.ServiceRepository
@@ -34,6 +35,7 @@ class EnhancedSchedulingViewModelTest {
     private lateinit var bookingRepo: BookingRepository
     private lateinit var serviceRepo: ServiceRepository
     private lateinit var auntieRepo: AuntieRepository
+    private lateinit var kinCareRepo: KinCareRepository
 
     @Before
     fun setUp() {
@@ -42,6 +44,7 @@ class EnhancedSchedulingViewModelTest {
         bookingRepo = mockk()
         serviceRepo = mockk()
         auntieRepo = mockk()
+        kinCareRepo = mockk()
 
         // init { loadInitialData() } fires immediately on construction - stub required.
         coEvery { serviceRepo.getBaseServices() } returns Result.success(emptyList())
@@ -75,7 +78,8 @@ class EnhancedSchedulingViewModelTest {
     private fun buildViewModel() = EnhancedSchedulingViewModel(
         bookingRepository = bookingRepo,
         serviceRepository = serviceRepo,
-        auntieRepository = auntieRepo
+        auntieRepository = auntieRepo,
+        kinCareRepository = kinCareRepo,
     )
 
     // ─── approveBooking ───────────────────────────────────────────────────────
@@ -91,8 +95,8 @@ class EnhancedSchedulingViewModelTest {
         )
 
         coEvery { bookingRepo.updateBooking(any()) } returns Result.success(Unit)
-        coEvery { auntieRepo.getKinCareSessionsBySourceBookingId("b1") } returns Result.success(emptyList())
-        coEvery { auntieRepo.createKinCareSession(any()) } returns Result.success("session1")
+        coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns Result.success(emptyList())
+        coEvery { kinCareRepo.createKinCareSession(any()) } returns Result.success("session1")
         // loadBookingsForDateRange re-fires after approve
         coEvery { bookingRepo.getBookings(any(), any(), any(), any()) } returns Result.success(emptyList())
         coEvery { bookingRepo.getTimeSlots(any(), any(), any()) } returns Result.success(emptyList())

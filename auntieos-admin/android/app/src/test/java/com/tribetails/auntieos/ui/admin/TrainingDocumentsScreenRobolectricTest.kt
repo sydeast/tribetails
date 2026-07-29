@@ -44,7 +44,7 @@ class TrainingDocumentsScreenRobolectricTest {
 
     @Test
     fun addForm_opensAndPopulatesKinfolkPicker_saveDisabledWithoutTarget() {
-        val vm = AdminDataViewModel(repository = buildRepo(), invoiceRepository = mockk(relaxed = true))
+        val vm = AdminDataViewModel(repository = buildRepo(), invoiceRepository = mockk(relaxed = true), kinCareRepository = mockk(relaxed = true))
         rule.setContent {
             AuntieOSTheme {
                 TrainingDocumentsScreen(viewModel = vm, onBack = {})
@@ -65,7 +65,7 @@ class TrainingDocumentsScreenRobolectricTest {
 
     @Test
     fun deleteConfirm_showsUnmergeCaveat() {
-        val vm = AdminDataViewModel(repository = buildRepo(), invoiceRepository = mockk(relaxed = true))
+        val vm = AdminDataViewModel(repository = buildRepo(), invoiceRepository = mockk(relaxed = true), kinCareRepository = mockk(relaxed = true))
         rule.setContent {
             AuntieOSTheme {
                 TrainingDocumentsScreen(viewModel = vm, onBack = {})

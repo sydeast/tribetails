@@ -11,6 +11,7 @@ import com.tribetails.auntieos.data.api.RetrofitClient
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.ServiceRepository
 import com.tribetails.auntieos.location.BreadcrumbDispatcher
 import com.tribetails.auntieos.media.MediaUploadManager
@@ -46,10 +47,18 @@ class AuntieOSApp : Application() {
      */
     val invoiceRepository: InvoiceRepository by lazy { InvoiceRepository() }
 
+    /**
+     * W4-3: the KinCare domain repo. Same wiring as [invoiceRepository] and for
+     * the same reason: it defaults to `AuthGate.shared`, which no
+     * [rebuildRepository] replaces, so a base-url change cannot strand it on a
+     * dead `testTribeId` cache and this file arranges nothing.
+     */
+    val kinCareRepository: KinCareRepository by lazy { KinCareRepository() }
+
     val mediaUploadManager: MediaUploadManager by lazy { MediaUploadManager(applicationContext, repository) }
     val visitNotifier: VisitNotifier by lazy { VisitNotifier() }
     val breadcrumbDispatcher: BreadcrumbDispatcher by lazy {
-        BreadcrumbDispatcher(repository = repository, scope = appScope)
+        BreadcrumbDispatcher(repository = kinCareRepository, scope = appScope)
     }
 
     override fun onCreate() {

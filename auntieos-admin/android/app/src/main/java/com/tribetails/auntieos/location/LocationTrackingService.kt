@@ -15,6 +15,7 @@ import com.tribetails.auntieos.R
 import com.tribetails.auntieos.config.MapboxConfig
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +48,11 @@ class LocationTrackingService : Service() {
     private lateinit var locationCallback: LocationCallback
     private lateinit var repository: AuntieRepository
 
+    // W4-3: the visit's own lifecycle and GPS summary are KinCare domain; the
+    // visit_routes and location_checkpoints writes this service also makes are
+    // not, and stay on [repository] until the Location carve.
+    private lateinit var kinCareRepository: KinCareRepository
+
     private var currentSessionId: String? = null
     private var currentKinfolkId: String? = null
     private var homeLocation: LocationPoint? = null
@@ -69,6 +75,7 @@ class LocationTrackingService : Service() {
         AuntieLog.d("LocationTrackingService onCreate")
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         repository = AuntieOSApp.instance.repository
+        kinCareRepository = AuntieOSApp.instance.kinCareRepository
 
         createNotificationChannel()
         setupLocationCallback()
@@ -368,7 +375,7 @@ class LocationTrackingService : Service() {
             onSuccess = { routeId ->
                 AuntieLog.i("Visit route saved: $routeId")
                 if (!sessionId.isNullOrBlank()) {
-                    repository.patchKinCareSession(
+                    kinCareRepository.patchKinCareSession(
                         sessionId,
                         mapOf("visitRouteId" to routeId)
                     ).onFailure { e ->
@@ -378,7 +385,7 @@ class LocationTrackingService : Service() {
                     // the web side writes via saveSessionGpsSummary. MyTribe getMyVisits
                     // reads this so kinfolks get visit replay regardless of which client
                     // (Android vs web) drove the session.
-                    repository.saveSessionGpsSummary(sessionId, buildGpsSummary(finalRoute, routePoints))
+                    kinCareRepository.saveSessionGpsSummary(sessionId, buildGpsSummary(finalRoute, routePoints))
                         .onFailure { e ->
                             AuntieLog.e("Failed to save session gpsSummary on $sessionId", e)
                         }

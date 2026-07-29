@@ -6,6 +6,7 @@ import com.tribetails.auntieos.data.model.Draft
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.notifications.VisitNotifier
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -35,6 +36,7 @@ class HomeViewModelTest {
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var mockRepo: AuntieRepository
     private lateinit var mockInvoiceRepo: InvoiceRepository
+    private lateinit var mockKinCareRepo: KinCareRepository
     private lateinit var mockNotifier: VisitNotifier
 
     @Before
@@ -42,6 +44,7 @@ class HomeViewModelTest {
         Dispatchers.setMain(testDispatcher)
         mockRepo = mockk()
         mockInvoiceRepo = mockk()
+        mockKinCareRepo = mockk()
         mockNotifier = mockk(relaxed = true)
         stubDefaultRepoResponses()
     }
@@ -56,17 +59,17 @@ class HomeViewModelTest {
         coEvery { mockRepo.getKinCount() } returns Result.success(3)
         coEvery { mockRepo.getPendingDraftCount() } returns Result.success(1)
         coEvery { mockRepo.getRecentDrafts() } returns Result.success(listOf(TestFixtures.draft1))
-        coEvery { mockRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(emptyList())
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(emptyList())
         coEvery { mockRepo.getBusinessSettings() } returns Result.success(TestFixtures.businessSettings)
         // Stage 2 Step 2: Home now loads invoices for the weekly-revenue tile.
         coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
         // Gatekeeper widget: Home now loads all sessions for the visit-gap ranking.
-        coEvery { mockRepo.getKinCareSessions() } returns Result.success(emptyList())
+        coEvery { mockKinCareRepo.getKinCareSessions() } returns Result.success(emptyList())
         // Care-flags widget (AO-37): Home also loads all kin to join against sessions.
         coEvery { mockRepo.getAllKin() } returns Result.success(emptyList())
     }
 
-    private fun buildViewModel() = HomeViewModel(repo = mockRepo, invoiceRepo = mockInvoiceRepo, notifier = mockNotifier)
+    private fun buildViewModel() = HomeViewModel(repo = mockRepo, invoiceRepo = mockInvoiceRepo, kinCareRepo = mockKinCareRepo, notifier = mockNotifier)
 
     @Test
     fun `init loads dashboard data successfully`() = runTest(testDispatcher) {
@@ -89,10 +92,10 @@ class HomeViewModelTest {
             status = com.tribetails.auntieos.data.model.VisitStatus.DEPARTED.name,
             autoCompleteEligible = true
         )
-        coEvery { mockRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(autoCompleteSession))
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(autoCompleteSession))
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
-        coEvery { mockRepo.markSessionComplete(any()) } returns Result.success(Unit)
-        coEvery { mockRepo.getKinCareSessionsForDay(any(), any()) } returnsMany listOf(
+        coEvery { mockKinCareRepo.markSessionComplete(any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returnsMany listOf(
             Result.success(listOf(autoCompleteSession)),
             Result.failure(RuntimeException("Reload failed"))
         )
@@ -113,8 +116,8 @@ class HomeViewModelTest {
             autoCompleteEligible = true
         )
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
-        coEvery { mockRepo.markSessionComplete(any()) } returns Result.success(Unit)
-        coEvery { mockRepo.getKinCareSessionsForDay(any(), any()) } returnsMany listOf(
+        coEvery { mockKinCareRepo.markSessionComplete(any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returnsMany listOf(
             Result.success(listOf(autoCompleteSession)),
             Result.failure(RuntimeException("fail"))
         )
@@ -129,7 +132,7 @@ class HomeViewModelTest {
 
     @Test
     fun `todayVisits are hydrated with kinfolk cards`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(TestFixtures.session1))
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(TestFixtures.session1))
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
 
         val vm = buildViewModel()
@@ -142,9 +145,9 @@ class HomeViewModelTest {
 
     @Test
     fun `complete sets pendingActionSessionId during action`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(TestFixtures.session1))
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(TestFixtures.session1))
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
-        coEvery { mockRepo.markSessionComplete(any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.markSessionComplete(any()) } returns Result.success(Unit)
 
         val vm = buildViewModel()
         advanceUntilIdle()
@@ -247,7 +250,7 @@ class HomeViewModelTest {
 
     @Test
     fun `today sessions read failure sets isOffline`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSessionsForDay(any(), any()) } returns Result.failure(RuntimeException("Auth expired"))
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.failure(RuntimeException("Auth expired"))
 
         val vm = buildViewModel()
         advanceUntilIdle()
@@ -293,7 +296,7 @@ class HomeViewModelTest {
             ),
         )
         val lastVisit = java.time.LocalDate.now().minusDays(15).toString()
-        coEvery { mockRepo.getKinCareSessions() } returns Result.success(
+        coEvery { mockKinCareRepo.getKinCareSessions() } returns Result.success(
             listOf(
                 KinCareSession(kinfolkId = "f1", kinfolkName = "the Bs", startTime = lastVisit, status = "COMPLETED"),
             ),
@@ -314,7 +317,7 @@ class HomeViewModelTest {
 
     @Test
     fun `sessions read failure degrades gatekeeper without blanking dashboard`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSessions() } returns Result.failure(RuntimeException("boom"))
+        coEvery { mockKinCareRepo.getKinCareSessions() } returns Result.failure(RuntimeException("boom"))
 
         val vm = buildViewModel()
         advanceUntilIdle()

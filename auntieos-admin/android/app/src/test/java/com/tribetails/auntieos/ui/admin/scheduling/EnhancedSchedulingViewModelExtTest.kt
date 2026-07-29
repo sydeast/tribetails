@@ -7,6 +7,7 @@ import com.tribetails.auntieos.data.model.EnhancedBooking
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.VisitStatus
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
 import com.tribetails.auntieos.data.repository.GoogleCalendarConnectionState
 import com.tribetails.auntieos.data.repository.ServiceRepository
@@ -38,6 +39,7 @@ class EnhancedSchedulingViewModelExtTest {
     private lateinit var bookingRepo: BookingRepository
     private lateinit var serviceRepo: ServiceRepository
     private lateinit var auntieRepo: AuntieRepository
+    private lateinit var kinCareRepo: KinCareRepository
 
     @Before
     fun setUp() {
@@ -45,6 +47,7 @@ class EnhancedSchedulingViewModelExtTest {
         bookingRepo = mockk()
         serviceRepo = mockk()
         auntieRepo = mockk()
+        kinCareRepo = mockk()
 
         coEvery { serviceRepo.getBaseServices() } returns Result.success(emptyList())
         coEvery { serviceRepo.getSupplementalServices() } returns Result.success(emptyList())
@@ -75,7 +78,8 @@ class EnhancedSchedulingViewModelExtTest {
     private fun buildViewModel() = EnhancedSchedulingViewModel(
         bookingRepository = bookingRepo,
         serviceRepository = serviceRepo,
-        auntieRepository = auntieRepo
+        auntieRepository = auntieRepo,
+        kinCareRepository = kinCareRepo,
     )
 
     @Test
@@ -118,7 +122,7 @@ class EnhancedSchedulingViewModelExtTest {
     @Test
     fun `cancelBooking success transitions booking to REJECTED status`() = runTest(testDispatcher) {
         coEvery { bookingRepo.updateBooking(any()) } returns Result.success(Unit)
-        coEvery { auntieRepo.getKinCareSessionsBySourceBookingId("b1") } returns Result.success(emptyList())
+        coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns Result.success(emptyList())
 
         val vm = buildViewModel()
         vm.cancelBooking(TestFixtures.booking1, "Test cancellation")
@@ -164,8 +168,8 @@ class EnhancedSchedulingViewModelExtTest {
                 status = VisitStatus.SCHEDULED.name
             )
             coEvery { bookingRepo.updateBooking(any()) } returns Result.success(Unit)
-            coEvery { auntieRepo.getKinCareSessionsBySourceBookingId("b2") } returns Result.success(listOf(existingSession))
-            coEvery { auntieRepo.createKinCareSession(any()) } returns Result.success("ses-existing")
+            coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b2") } returns Result.success(listOf(existingSession))
+            coEvery { kinCareRepo.createKinCareSession(any()) } returns Result.success("ses-existing")
 
             val vm = buildViewModel()
             val alreadyAccepted = TestFixtures.booking2.copy(status = BookingStatus.ACCEPTED)
@@ -173,7 +177,7 @@ class EnhancedSchedulingViewModelExtTest {
             advanceUntilIdle()
 
             assertNull(vm.state.value.errorMessage)
-            coVerify(exactly = 0) { auntieRepo.createKinCareSession(any()) }
+            coVerify(exactly = 0) { kinCareRepo.createKinCareSession(any()) }
         }
 
     // H-A5: createBooking called twice rapidly must not fire two concurrent repo calls.
@@ -189,6 +193,7 @@ class EnhancedSchedulingViewModelExtTest {
                 val bRepo: BookingRepository = mockk()
                 val sRepo: ServiceRepository = mockk()
                 val aRepo: AuntieRepository = mockk()
+                val kcRepo: KinCareRepository = mockk()
 
                 coEvery { sRepo.getBaseServices() } returns Result.success(emptyList())
                 coEvery { sRepo.getSupplementalServices() } returns Result.success(emptyList())
@@ -211,7 +216,7 @@ class EnhancedSchedulingViewModelExtTest {
                 )
                 coEvery { bRepo.createBooking(any()) } returns Result.success("b-new")
 
-                val vm = EnhancedSchedulingViewModel(bRepo, sRepo, aRepo)
+                val vm = EnhancedSchedulingViewModel(bRepo, sRepo, aRepo, kcRepo)
                 advanceUntilIdle() // finish init
 
                 // Both calls happen before any coroutine executes (StandardTestDispatcher queues them)

@@ -75,6 +75,7 @@ class EnhancedSchedulingViewModelArchiveTest {
         bookingRepository = bookingRepo,
         serviceRepository = serviceRepo,
         auntieRepository  = auntieRepo,
+        kinCareRepository = mockk(relaxed = true),
     )
 
     @Test

@@ -6,6 +6,7 @@ import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +28,9 @@ sealed interface ChainVerifyUiState {
 class AdminDataViewModel(
     private val repository: AuntieRepository = AuntieOSApp.instance.repository,
     private val invoiceRepository: InvoiceRepository = AuntieOSApp.instance.invoiceRepository,
+    // W4-3: the Auntie Time session list, its row patches and the KinTale
+    // buckets (including orphan triage) are KinCare domain.
+    private val kinCareRepository: KinCareRepository = AuntieOSApp.instance.kinCareRepository,
 ) : ViewModel() {
 
     private val _isLoading = MutableStateFlow(false)
@@ -291,7 +295,7 @@ class AdminDataViewModel(
             _isLoading.value = true
             _error.value = null
 
-            repository.getKinCareSessions().onSuccess { sessionList ->
+            kinCareRepository.getKinCareSessions().onSuccess { sessionList ->
                 _kinCareSessions.value = sessionList.sortedByDescending { it.startTime }
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to load kin care sessions"
@@ -310,7 +314,7 @@ class AdminDataViewModel(
             _isLoading.value = true
             _error.value = null
 
-            repository.getAllKinCareReports().onSuccess { reportList ->
+            kinCareRepository.getAllKinCareReports().onSuccess { reportList ->
                 _kinCareReports.value = reportList.sortedByDescending { sortKey(it) }
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to load KinTales"
@@ -345,7 +349,7 @@ class AdminDataViewModel(
      */
     fun patchKinCareSession(id: String, patch: Map<String, Any>, onResult: (Throwable?) -> Unit = {}) {
         viewModelScope.launch {
-            repository.patchKinCareSession(id, patch).onSuccess {
+            kinCareRepository.patchKinCareSession(id, patch).onSuccess {
                 loadKinCareSessions()
                 onResult(null)
             }.onFailure { t ->
@@ -630,7 +634,7 @@ class AdminDataViewModel(
     fun createKinCareSession(session: KinCareSession) {
         viewModelScope.launch {
             _isLoading.value = true
-            repository.createKinCareSession(session).onSuccess {
+            kinCareRepository.createKinCareSession(session).onSuccess {
                 loadKinCareSessions() // Refresh the list
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to create session"
@@ -668,7 +672,7 @@ class AdminDataViewModel(
     fun assignOrphanReport(reportId: String, kinfolkId: String, kinfolkName: String) {
         viewModelScope.launch {
             _isLoading.value = true
-            repository.assignKinfolkToOrphanReport(reportId, kinfolkId, kinfolkName)
+            kinCareRepository.assignKinfolkToOrphanReport(reportId, kinfolkId, kinfolkName)
                 .onSuccess {
                     _triageResult.value = TriageResult(true, "Assigned to $kinfolkName")
                     loadKinCareReports()
@@ -683,7 +687,7 @@ class AdminDataViewModel(
     fun markOrphanAsDuplicate(reportId: String, duplicateOfReportId: String) {
         viewModelScope.launch {
             _isLoading.value = true
-            repository.markOrphanReportAsDuplicate(reportId, duplicateOfReportId)
+            kinCareRepository.markOrphanReportAsDuplicate(reportId, duplicateOfReportId)
                 .onSuccess {
                     _triageResult.value = TriageResult(true, "Marked as duplicate")
                     loadKinCareReports()
@@ -698,7 +702,7 @@ class AdminDataViewModel(
     fun archiveOrphanAsBad(reportId: String, reason: String) {
         viewModelScope.launch {
             _isLoading.value = true
-            repository.archiveOrphanReportAsBadData(reportId, reason)
+            kinCareRepository.archiveOrphanReportAsBadData(reportId, reason)
                 .onSuccess {
                     _triageResult.value = TriageResult(true, "Archived as bad data")
                     loadKinCareReports()

@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.KinTaleCommentsRepository
 import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.notifications.VisitNotifier
@@ -59,6 +60,10 @@ enum class SaveStatus { IDLE, SAVED, ERROR }
 
 class KinTaleReportViewModel(
     private val repository: AuntieRepository = AuntieOSApp.instance.repository,
+    // W4-3: the visit being written up, the KinTale itself and its share link
+    // are KinCare domain. [repository] still serves this screen's template,
+    // media, form-schema and AI-generation reads.
+    private val kinCareRepository: KinCareRepository = AuntieOSApp.instance.kinCareRepository,
     private val mediaUploader: MediaUploadManager = AuntieOSApp.instance.mediaUploadManager,
     private val notifier: VisitNotifier = AuntieOSApp.instance.visitNotifier,
     private val commentsRepo: KinTaleCommentsRepository = KinTaleCommentsRepository(),
@@ -75,7 +80,7 @@ class KinTaleReportViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
-            val session = repository.getKinCareSession(sessionId).getOrNull()
+            val session = kinCareRepository.getKinCareSession(sessionId).getOrNull()
 
             if (session == null) {
                 _uiState.value = _uiState.value.copy(isLoading = false, error = "Session not found")
@@ -100,7 +105,7 @@ class KinTaleReportViewModel(
             // Resume an existing draft if a reportId was passed; otherwise scaffold IN-MEMORY only.
             // Draft is NOT persisted to Firestore until the first content change (Auntie's Q3).
             val report = if (existingReportId != null) {
-                repository.getKinCareReport(existingReportId).getOrNull() ?: scaffoldReport(session, template)
+                kinCareRepository.getKinCareReport(existingReportId).getOrNull() ?: scaffoldReport(session, template)
             } else {
                 scaffoldReport(session, template)
             }
@@ -283,7 +288,7 @@ class KinTaleReportViewModel(
             _uiState.value = _uiState.value.copy(isSaving = true)
             try {
                 if (report.id.isBlank()) {
-                    val newId = repository.createKinCareReport(report).getOrNull()
+                    val newId = kinCareRepository.createKinCareReport(report).getOrNull()
                     if (newId != null) {
                         _uiState.value = _uiState.value.copy(
                             report = _uiState.value.report.copy(id = newId),
@@ -294,7 +299,7 @@ class KinTaleReportViewModel(
                         _uiState.value = _uiState.value.copy(isSaving = false, saveStatus = SaveStatus.ERROR)
                     }
                 } else {
-                    repository.updateKinCareReport(_uiState.value.report).fold(
+                    kinCareRepository.updateKinCareReport(_uiState.value.report).fold(
                         onSuccess = {
                             _uiState.value = _uiState.value.copy(isSaving = false, saveStatus = SaveStatus.SAVED)
                         },
@@ -384,12 +389,12 @@ class KinTaleReportViewModel(
             _uiState.value = _uiState.value.copy(isSending = true)
             // Make sure latest state is persisted (and create on first call if needed)
             if (report.id.isBlank()) {
-                val newId = repository.createKinCareReport(report).getOrNull()
+                val newId = kinCareRepository.createKinCareReport(report).getOrNull()
                 if (newId != null) {
                     _uiState.value = _uiState.value.copy(report = _uiState.value.report.copy(id = newId))
                 }
             } else {
-                repository.updateKinCareReport(report).getOrNull()
+                kinCareRepository.updateKinCareReport(report).getOrNull()
             }
             val savedReport = _uiState.value.report
             if (savedReport.id.isBlank()) {
@@ -403,7 +408,7 @@ class KinTaleReportViewModel(
             ).fold(
                 onSuccess = { result ->
                     val firstDispatchId = result.dispatchIds.firstOrNull().orEmpty()
-                    repository.markReportSent(
+                    kinCareRepository.markReportSent(
                         reportId = savedReport.id,
                         sessionId = session.id,
                         sentVia = "catalog",
@@ -465,7 +470,7 @@ class KinTaleReportViewModel(
         }
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSharing = true, shareError = null)
-            repository.createShareLink(reportId = report.id, familyId = report.kinfolkId).fold(
+            kinCareRepository.createShareLink(reportId = report.id, familyId = report.kinfolkId).fold(
                 onSuccess = { result ->
                     _uiState.value = _uiState.value.copy(
                         isSharing = false,

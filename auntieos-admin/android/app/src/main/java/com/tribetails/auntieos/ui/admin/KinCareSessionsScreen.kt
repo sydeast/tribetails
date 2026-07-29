@@ -86,7 +86,7 @@ fun KinCareSessionsScreen(
     // §A.10: injectable so the route map is hermetic in tests; defaults to the live
     // breadcrumb subcollection read.
     breadcrumbsFor: (String) -> kotlinx.coroutines.flow.Flow<Result<List<com.tribetails.auntieos.data.model.LocationPoint>>> =
-        { AuntieOSApp.instance.repository.observeBreadcrumbs(it) },
+        { AuntieOSApp.instance.kinCareRepository.observeBreadcrumbs(it) },
 ) {
     val sessions by viewModel.kinCareSessions.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()

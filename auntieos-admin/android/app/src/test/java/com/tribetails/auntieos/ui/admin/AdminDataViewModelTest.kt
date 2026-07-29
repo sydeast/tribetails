@@ -7,6 +7,7 @@ import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.TrainingDocument
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -32,12 +33,14 @@ class AdminDataViewModelTest {
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var mockRepo: AuntieRepository
     private lateinit var mockInvoiceRepo: InvoiceRepository
+    private lateinit var mockKinCareRepo: KinCareRepository
 
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         mockRepo = mockk()
         mockInvoiceRepo = mockk()
+        mockKinCareRepo = mockk()
     }
 
     @After
@@ -45,7 +48,7 @@ class AdminDataViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = AdminDataViewModel(repository = mockRepo, invoiceRepository = mockInvoiceRepo)
+    private fun buildViewModel() = AdminDataViewModel(repository = mockRepo, invoiceRepository = mockInvoiceRepo, kinCareRepository = mockKinCareRepo)
 
     // ─── Initial state ────────────────────────────────────────────────────────
 
@@ -172,7 +175,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `loadKinCareSessions populates kinCareSessions on success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSessions() } returns Result.success(listOf(TestFixtures.session1))
+        coEvery { mockKinCareRepo.getKinCareSessions() } returns Result.success(listOf(TestFixtures.session1))
 
         val vm = buildViewModel()
         vm.loadKinCareSessions()
@@ -185,7 +188,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `loadKinCareSessions sets error on failure`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSessions() } returns Result.failure(RuntimeException("Server error"))
+        coEvery { mockKinCareRepo.getKinCareSessions() } returns Result.failure(RuntimeException("Server error"))
 
         val vm = buildViewModel()
         vm.loadKinCareSessions()
@@ -200,7 +203,7 @@ class AdminDataViewModelTest {
     @Test
     fun `loadKinCareReports populates kinCareReports on success`() = runTest(testDispatcher) {
         val report = KinCareReport(id = "r1", kinfolkId = "kf1", sentAt = "2026-05-01")
-        coEvery { mockRepo.getAllKinCareReports() } returns Result.success(listOf(report))
+        coEvery { mockKinCareRepo.getAllKinCareReports() } returns Result.success(listOf(report))
 
         val vm = buildViewModel()
         vm.loadKinCareReports()
@@ -213,7 +216,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `loadKinCareReports sets error on failure`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getAllKinCareReports() } returns Result.failure(RuntimeException("KinTale load failed"))
+        coEvery { mockKinCareRepo.getAllKinCareReports() } returns Result.failure(RuntimeException("KinTale load failed"))
 
         val vm = buildViewModel()
         vm.loadKinCareReports()
@@ -295,8 +298,8 @@ class AdminDataViewModelTest {
 
     @Test
     fun `patchKinCareSession triggers loadKinCareSessions and invokes onResult null on success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.patchKinCareSession(any(), any()) } returns Result.success(Unit)
-        coEvery { mockRepo.getKinCareSessions() } returns Result.success(listOf(TestFixtures.session1))
+        coEvery { mockKinCareRepo.patchKinCareSession(any(), any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.getKinCareSessions() } returns Result.success(listOf(TestFixtures.session1))
 
         val vm = buildViewModel()
         var callbackArg: Throwable? = Throwable("sentinel")
@@ -310,7 +313,7 @@ class AdminDataViewModelTest {
     @Test
     fun `patchKinCareSession sets error and invokes onResult throwable on failure`() = runTest(testDispatcher) {
         val err = RuntimeException("Patch denied")
-        coEvery { mockRepo.patchKinCareSession(any(), any()) } returns Result.failure(err)
+        coEvery { mockKinCareRepo.patchKinCareSession(any(), any()) } returns Result.failure(err)
 
         val vm = buildViewModel()
         var callbackArg: Throwable? = null
@@ -587,8 +590,8 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createKinCareSession refreshes sessions list on success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.createKinCareSession(any()) } returns Result.success("ses-new")
-        coEvery { mockRepo.getKinCareSessions() } returns Result.success(listOf(TestFixtures.session1))
+        coEvery { mockKinCareRepo.createKinCareSession(any()) } returns Result.success("ses-new")
+        coEvery { mockKinCareRepo.getKinCareSessions() } returns Result.success(listOf(TestFixtures.session1))
 
         val vm = buildViewModel()
         vm.createKinCareSession(TestFixtures.session1)
@@ -600,7 +603,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createKinCareSession sets error on failure`() = runTest(testDispatcher) {
-        coEvery { mockRepo.createKinCareSession(any()) } returns Result.failure(RuntimeException("Write failed"))
+        coEvery { mockKinCareRepo.createKinCareSession(any()) } returns Result.failure(RuntimeException("Write failed"))
 
         val vm = buildViewModel()
         vm.createKinCareSession(TestFixtures.session1)

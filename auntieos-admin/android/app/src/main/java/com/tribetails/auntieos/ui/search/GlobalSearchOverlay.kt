@@ -63,6 +63,8 @@ fun GlobalSearchOverlay(
 ) {
     val c = AuntieTheme.colors
     val repo = remember { AuntieOSApp.instance.repository }
+    // W4-3: KinTales are KinCare domain; kinfolk and kin stay on [repo].
+    val kinCareRepo = remember { AuntieOSApp.instance.kinCareRepository }
 
     var kinfolk by remember { mutableStateOf<List<Kinfolk>>(emptyList()) }
     var kin by remember { mutableStateOf<List<Kin>>(emptyList()) }
@@ -75,7 +77,7 @@ fun GlobalSearchOverlay(
         // Fail loud: any failed load shows a banner; nothing is faked.
         val kinfolkRes = repo.getKinfolk()
         val kinRes = repo.getAllKin()
-        val taleRes = repo.getAllKinCareReports()
+        val taleRes = kinCareRepo.getAllKinCareReports()
         val failure = kinfolkRes.exceptionOrNull()
             ?: kinRes.exceptionOrNull()
             ?: taleRes.exceptionOrNull()

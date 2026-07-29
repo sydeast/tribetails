@@ -46,7 +46,7 @@ class TribalIntelViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = AdminDataViewModel(repository = mockRepo, invoiceRepository = mockk(relaxed = true))
+    private fun buildViewModel() = AdminDataViewModel(repository = mockRepo, invoiceRepository = mockk(relaxed = true), kinCareRepository = mockk(relaxed = true))
 
     @Test
     fun `createTrainingDocument success sets queued message and passes KINFOLK target`() = runTest(testDispatcher) {

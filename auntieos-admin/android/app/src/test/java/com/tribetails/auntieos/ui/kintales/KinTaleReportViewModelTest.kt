@@ -8,6 +8,7 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.KinTaleTemplate
 import com.tribetails.auntieos.data.model.ReportStatus
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.notifications.VisitNotifier
 import io.mockk.coEvery
@@ -35,6 +36,7 @@ class KinTaleReportViewModelTest {
 
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var mockRepo: AuntieRepository
+    private lateinit var mockKinCareRepo: KinCareRepository
     private lateinit var mockUploader: MediaUploadManager
     private lateinit var mockNotifier: VisitNotifier
 
@@ -42,6 +44,7 @@ class KinTaleReportViewModelTest {
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         mockRepo = mockk()
+        mockKinCareRepo = mockk()
         mockUploader = mockk(relaxed = true)
         mockNotifier = mockk(relaxed = true)
     }
@@ -53,13 +56,14 @@ class KinTaleReportViewModelTest {
 
     private fun buildViewModel() = KinTaleReportViewModel(
         repository = mockRepo,
+        kinCareRepository = mockKinCareRepo,
         mediaUploader = mockUploader,
         notifier = mockNotifier
     )
 
     @Test
     fun `load sets error when session not found`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSession(any()) } returns Result.success(null)
+        coEvery { mockKinCareRepo.getKinCareSession(any()) } returns Result.success(null)
 
         val vm = buildViewModel()
         vm.load("ses99", null)
@@ -72,7 +76,7 @@ class KinTaleReportViewModelTest {
 
     @Test
     fun `load populates session and kinfolk on success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
@@ -91,7 +95,7 @@ class KinTaleReportViewModelTest {
 
     @Test
     fun `updateBodyCopy updates report bodyCopy in state`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
@@ -108,7 +112,7 @@ class KinTaleReportViewModelTest {
 
     @Test
     fun `send sets error when no content`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
@@ -125,7 +129,7 @@ class KinTaleReportViewModelTest {
 
     @Test
     fun `persistDraft does nothing when report has no content`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
@@ -143,12 +147,12 @@ class KinTaleReportViewModelTest {
 
     @Test
     fun `persistDraft creates new report when it has content and no id`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
-        coEvery { mockRepo.createKinCareReport(any()) } returns Result.success("newId")
+        coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("newId")
 
         val vm = buildViewModel()
         vm.load("ses1", null)
@@ -166,7 +170,7 @@ class KinTaleReportViewModelTest {
     @Test
     fun `send sets error when kinfolk is null because session kinfolkId is empty`() = runTest(testDispatcher) {
         val sessionNoKinfolk = TestFixtures.session1.copy(kinfolkId = "")
-        coEvery { mockRepo.getKinCareSession("ses-nk") } returns Result.success(sessionNoKinfolk)
+        coEvery { mockKinCareRepo.getKinCareSession("ses-nk") } returns Result.success(sessionNoKinfolk)
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
 
@@ -190,20 +194,20 @@ class KinTaleReportViewModelTest {
 
     @Test
     fun `send writes the first dispatchId as the delivery receipt`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
-        coEvery { mockRepo.createKinCareReport(any()) } returns Result.success("rep-1")
-        coEvery { mockRepo.updateKinCareReport(any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("rep-1")
+        coEvery { mockKinCareRepo.updateKinCareReport(any()) } returns Result.success(Unit)
         coEvery { mockNotifier.notify(VisitNotifier.Event.REPORT_SENT, any(), any(), any()) } returns
             Result.success(VisitNotifier.DispatchResult(dispatchIds = listOf("n8n_77", "n8n_88"), suppressed = false))
 
         val viaSlot = slot<String>()
         val receiptSlot = slot<String>()
         coEvery {
-            mockRepo.markReportSent(any(), any(), capture(viaSlot), capture(receiptSlot))
+            mockKinCareRepo.markReportSent(any(), any(), capture(viaSlot), capture(receiptSlot))
         } returns Result.success(Unit)
 
         val vm = buildViewModel()
@@ -221,13 +225,13 @@ class KinTaleReportViewModelTest {
 
     @Test
     fun `send dispatch failure leaves status DRAFT and sets error`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
-        coEvery { mockRepo.createKinCareReport(any()) } returns Result.success("rep-1")
-        coEvery { mockRepo.updateKinCareReport(any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("rep-1")
+        coEvery { mockKinCareRepo.updateKinCareReport(any()) } returns Result.success(Unit)
         coEvery { mockNotifier.notify(VisitNotifier.Event.REPORT_SENT, any(), any(), any()) } returns
             Result.failure(IllegalStateException("session not booking-originated"))
 
@@ -248,7 +252,7 @@ class KinTaleReportViewModelTest {
 
     @Test
     fun `updateTitle updates report title in state`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
@@ -265,13 +269,13 @@ class KinTaleReportViewModelTest {
 
     @Test
     fun `persistDraft persists the typed title and mood on the created report`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
         val captured = slot<KinCareReport>()
-        coEvery { mockRepo.createKinCareReport(capture(captured)) } returns Result.success("newId")
+        coEvery { mockKinCareRepo.createKinCareReport(capture(captured)) } returns Result.success("newId")
 
         val vm = buildViewModel()
         vm.load("ses1", null)
@@ -289,12 +293,12 @@ class KinTaleReportViewModelTest {
 
     @Test
     fun `persistDraft surfaces error on create failure and keeps the title`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
-        coEvery { mockRepo.createKinCareReport(any()) } returns Result.failure(RuntimeException("write failed"))
+        coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.failure(RuntimeException("write failed"))
 
         val vm = buildViewModel()
         vm.load("ses1", null)
@@ -311,7 +315,7 @@ class KinTaleReportViewModelTest {
 
     @Test
     fun `clearError resets error to null`() = runTest(testDispatcher) {
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
@@ -340,7 +344,7 @@ class KinTaleReportViewModelTest {
     @Test
     fun `load populates kinList filtered by session kinIds and joins heading`() = runTest(testDispatcher) {
         val session = TestFixtures.session1.copy(kinfolkId = "kf1", kinIds = listOf("kin1"))
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(session)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(session)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.success(listOf(biscuit, gravy))
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
@@ -360,7 +364,7 @@ class KinTaleReportViewModelTest {
     @Test
     fun `load yields empty kinList when no kin resolve`() = runTest(testDispatcher) {
         val session = TestFixtures.session1.copy(kinfolkId = "kf1", kinIds = emptyList())
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(session)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(session)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
@@ -377,7 +381,7 @@ class KinTaleReportViewModelTest {
     @Test
     fun `load with failing getKin keeps kinList empty and does not crash`() = runTest(testDispatcher) {
         val session = TestFixtures.session1.copy(kinfolkId = "kf1", kinIds = listOf("kin1"))
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(session)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(session)
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin("kf1") } returns Result.failure(RuntimeException("kin query failed"))
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
@@ -417,7 +421,7 @@ class KinTaleReportViewModelTest {
 
     /** Loads an existing report doc so report.id + kinfolkId are populated. */
     private fun kotlinx.coroutines.test.TestScope.loadExistingReport(vm: KinTaleReportViewModel, report: KinCareReport) {
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(
             TestFixtures.session1.copy(kinfolkId = "kf1"),
         )
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
@@ -425,7 +429,7 @@ class KinTaleReportViewModelTest {
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
         coEvery { mockRepo.listFormSchemas() } returns Result.success(emptyList())
-        coEvery { mockRepo.getKinCareReport("rep1") } returns Result.success(report)
+        coEvery { mockKinCareRepo.getKinCareReport("rep1") } returns Result.success(report)
         vm.load("ses1", "rep1")
         advanceUntilIdle()
     }
@@ -444,8 +448,8 @@ class KinTaleReportViewModelTest {
     @Test
     fun `requestShareLink stores url on success`() = runTest(testDispatcher) {
         val report = KinCareReport(id = "rep1", kinfolkId = "kf1", status = ReportStatus.SENT.name)
-        coEvery { mockRepo.createShareLink("rep1", "kf1", any()) } returns
-            Result.success(AuntieRepository.ShareLinkResult("share123", "https://share/share123"))
+        coEvery { mockKinCareRepo.createShareLink("rep1", "kf1", any()) } returns
+            Result.success(KinCareRepository.ShareLinkResult("share123", "https://share/share123"))
         val vm = buildViewModel()
         loadExistingReport(vm, report)
         vm.requestShareLink()
@@ -458,7 +462,7 @@ class KinTaleReportViewModelTest {
     @Test
     fun `requestShareLink surfaces callable failure as shareError`() = runTest(testDispatcher) {
         val report = KinCareReport(id = "rep1", kinfolkId = "kf1", status = ReportStatus.SENT.name)
-        coEvery { mockRepo.createShareLink("rep1", "kf1", any()) } returns
+        coEvery { mockKinCareRepo.createShareLink("rep1", "kf1", any()) } returns
             Result.failure(RuntimeException("permission-denied"))
         val vm = buildViewModel()
         loadExistingReport(vm, report)
@@ -503,13 +507,13 @@ class KinTaleReportViewModelTest {
 
     // ── Generate-draft action (Scope C) ──────────────────────────────────────
     private suspend fun kotlinx.coroutines.test.TestScope.loadedVmWithKinfolk(): KinTaleReportViewModel {
-        coEvery { mockRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
         coEvery { mockRepo.getKinfolkById(any()) } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getKin(any()) } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
-        coEvery { mockRepo.createKinCareReport(any()) } returns Result.success("rep1")
-        coEvery { mockRepo.updateKinCareReport(any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("rep1")
+        coEvery { mockKinCareRepo.updateKinCareReport(any()) } returns Result.success(Unit)
         val vm = buildViewModel()
         vm.load("ses1", null)
         advanceUntilIdle()

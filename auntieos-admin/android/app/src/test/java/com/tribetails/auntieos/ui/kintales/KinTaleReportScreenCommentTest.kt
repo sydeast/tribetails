@@ -10,6 +10,7 @@ import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.MediaEntityType
 import com.tribetails.auntieos.data.model.ReportStatus
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.KinTaleCommentsRepository
 import com.tribetails.auntieos.data.repository.KinTaleCommentsRepository.CommentsState
 import com.tribetails.auntieos.data.repository.KinTaleCommentsRepository.KinTaleComment
@@ -62,13 +63,18 @@ class KinTaleReportScreenCommentTest {
         status = ReportStatus.SENT.name,
     )
 
+    private fun kinCareRepo(): KinCareRepository {
+        val repo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { repo.getKinCareSession("demo-s1") } returns Result.success(AndroidDemoFixtures.kinTaleSession)
+        coEvery { repo.getKinCareReport("demo-report-1") } returns Result.success(sentReport)
+        return repo
+    }
+
     private fun repo(): AuntieRepository {
         val repo = mockk<AuntieRepository>(relaxed = true)
-        coEvery { repo.getKinCareSession("demo-s1") } returns Result.success(AndroidDemoFixtures.kinTaleSession)
         coEvery { repo.getKinfolkById("demo-kf-1") } returns Result.success(AndroidDemoFixtures.kinfolk.first())
         coEvery { repo.getKin("demo-kf-1") } returns Result.success(AndroidDemoFixtures.kinTaleKin)
         coEvery { repo.getActiveTemplateForService(any()) } returns Result.success(null)
-        coEvery { repo.getKinCareReport("demo-report-1") } returns Result.success(sentReport)
         coEvery { repo.getMediaFiles("demo-s1", MediaEntityType.VISIT_LOG) } returns Result.success(AndroidDemoFixtures.kinTaleMedia)
         coEvery { repo.listFormSchemas() } returns Result.success(emptyList())
         return repo
@@ -77,6 +83,7 @@ class KinTaleReportScreenCommentTest {
     private fun buildVm(comments: KinTaleCommentsRepository): KinTaleReportViewModel {
         val vm = KinTaleReportViewModel(
             repository = repo(),
+            kinCareRepository = kinCareRepo(),
             mediaUploader = mockk<MediaUploadManager>(relaxed = true),
             notifier = mockk<VisitNotifier>(relaxed = true),
             commentsRepo = comments,

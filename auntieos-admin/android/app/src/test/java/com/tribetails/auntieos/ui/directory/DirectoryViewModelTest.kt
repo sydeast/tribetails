@@ -5,6 +5,7 @@ import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -29,6 +30,7 @@ class DirectoryViewModelTest {
     private lateinit var viewModel: DirectoryViewModel
     private val repository = mockk<AuntieRepository>(relaxed = true)
     private val invoiceRepository = mockk<InvoiceRepository>(relaxed = true)
+    private val kinCareRepository = mockk<KinCareRepository>(relaxed = true)
     private val testDispatcher = UnconfinedTestDispatcher()
 
     @Before
@@ -41,15 +43,15 @@ class DirectoryViewModelTest {
         )
         coEvery { repository.getKinfolk() } returns Result.success(kinfolkList)
         coEvery { repository.getAllKin() } returns Result.success(emptyList<Kin>())
-        coEvery { repository.getKinCareSessions() } returns Result.success(emptyList())
+        coEvery { kinCareRepository.getKinCareSessions() } returns Result.success(emptyList())
 
         // loadProfile dependencies + the Phase 2 household-notes migration methods.
         // Stub every read loadProfile makes so a found-kinfolk profile load resolves
         // cleanly under the (relaxed) mock and the new getHouseholdData call is exercised.
         coEvery { repository.getDossier(any()) } returns Result.success(null)
         coEvery { repository.getKin(any()) } returns Result.success(emptyList())
-        coEvery { repository.getAllKinCareReports() } returns Result.success(emptyList())
-        coEvery { repository.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
+        coEvery { kinCareRepository.getAllKinCareReports() } returns Result.success(emptyList())
+        coEvery { kinCareRepository.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { invoiceRepository.getInvoicesForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repository.getHouseholdData(any()) } returns Result.success(null)
         coEvery { repository.listFormSchemas() } returns Result.success(emptyList())
@@ -57,7 +59,7 @@ class DirectoryViewModelTest {
         // Phase 3: refresh-intelligence (synthesize) on the directory VM.
         coEvery { repository.synthesizeProfile(any()) } returns Result.success(Unit)
 
-        viewModel = DirectoryViewModel(repository, invoiceRepository)
+        viewModel = DirectoryViewModel(repository, invoiceRepository, kinCareRepository)
     }
 
     @After

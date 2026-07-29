@@ -62,7 +62,7 @@ fun LiveTrackingScreen(
     // kin_care_sessions/{sessionId}/breadcrumbs subcollection (per
     // [[bug-sprint-architecture-decisions]]). VisitRoute.routePoints array is
     // being dropped in Step 4c once RouteViewerScreen also migrates.
-    val repository = com.tribetails.auntieos.AuntieOSApp.instance.repository
+    val repository = com.tribetails.auntieos.AuntieOSApp.instance.kinCareRepository
     val pointsResult by repository.observeBreadcrumbs(sessionId)
         .collectAsState(initial = Result.success(emptyList<com.tribetails.auntieos.data.model.LocationPoint>()))
     val livePoints = remember(pointsResult) { pointsResult.getOrDefault(emptyList()) }
@@ -198,7 +198,7 @@ fun LiveTrackingScreen(
                             noteSubmitting = true
                             noteError      = null
                             scope.launch {
-                                val repo = AuntieOSApp.instance.repository
+                                val repo = AuntieOSApp.instance.kinCareRepository
                                 val current = repo.getKinCareSession(sessionId).getOrNull()
                                 val merged  = buildVisitNoteAppendix(current?.notes.orEmpty(), typed)
                                 repo.patchKinCareSession(
@@ -207,7 +207,7 @@ fun LiveTrackingScreen(
                                 ).onSuccess {
                                     AuditLog.fire(
                                         scope            = scope,
-                                        repository       = repo,
+                                        repository       = AuntieOSApp.instance.repository,
                                         actionType       = "VISIT_NOTE_ADDED",
                                         description      = "Field note added during live visit",
                                         targetId         = sessionId,

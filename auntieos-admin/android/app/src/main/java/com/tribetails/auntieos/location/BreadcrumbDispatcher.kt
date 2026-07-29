@@ -1,7 +1,7 @@
 package com.tribetails.auntieos.location
 
 import com.tribetails.auntieos.data.model.LocationPoint
-import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicLong
  * doesn't spam logcat with one warn per dropped point.
  */
 class BreadcrumbDispatcher(
-    private val repository: AuntieRepository,
+    private val repository: KinCareRepository,
     private val scope: CoroutineScope,
     private val capacity: Int = DEFAULT_CAPACITY,
     private val nowMs: () -> Long = System::currentTimeMillis,

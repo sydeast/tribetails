@@ -9,6 +9,7 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.formatCentsUsd
 import com.tribetails.auntieos.domain.invoicePartPaid
@@ -68,6 +69,9 @@ data class InvoiceDetailUiState(
 class InvoiceDetailViewModel(
     private val repository: AuntieRepository = AuntieOSApp.instance.repository,
     private val invoiceRepository: InvoiceRepository = AuntieOSApp.instance.invoiceRepository,
+    // W4-3: the session-link picker lists the household's visits, which is a
+    // KinCare read. The LINK itself is still written by the invoice callable.
+    private val kinCareRepository: KinCareRepository = AuntieOSApp.instance.kinCareRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(InvoiceDetailUiState())
@@ -216,7 +220,7 @@ class InvoiceDetailViewModel(
         if (kinfolkId.isBlank()) return
         _uiState.value = _uiState.value.copy(sessionsLoading = true)
         viewModelScope.launch {
-            repository.getKinCareSessionsForKinfolk(kinfolkId)
+            kinCareRepository.getKinCareSessionsForKinfolk(kinfolkId)
                 .onSuccess { sessions ->
                     _uiState.value = _uiState.value.copy(
                         availableSessions = sessions,

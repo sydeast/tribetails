@@ -376,12 +376,12 @@ private fun AuthenticatedNavHost(
     val app = AuntieOSApp.instance
     val context = app.applicationContext
 
-    val homeVm              = remember { HomeViewModel(app.repository, app.invoiceRepository) }
+    val homeVm              = remember { HomeViewModel(app.repository, app.invoiceRepository, app.kinCareRepository) }
     val commVm              = remember { CommunicateViewModel(app.repository) }
     val callsVm             = remember { CallsViewModel(context, app.repository) }
     val settingsVm          = remember { SettingsViewModel(context) }
     val msgVm               = remember { MessagingViewModel(app.repository) }
-    val directoryVm         = remember { DirectoryViewModel(app.repository, app.invoiceRepository) }
+    val directoryVm         = remember { DirectoryViewModel(app.repository, app.invoiceRepository, app.kinCareRepository) }
     val schedulingVm        = remember { EnhancedSchedulingViewModel(app.bookingRepository, app.serviceRepository) }
     val serviceManagementVm = remember { ServiceManagementViewModel(app.serviceRepository) }
 

@@ -5,6 +5,7 @@ import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -31,6 +32,7 @@ class DirectoryViewModelExtTest {
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var mockRepo: AuntieRepository
     private val mockInvoiceRepo = mockk<InvoiceRepository>(relaxed = true)
+    private val mockKinCareRepo = mockk<KinCareRepository>(relaxed = true)
 
     @Before
     fun setUp() {
@@ -38,7 +40,7 @@ class DirectoryViewModelExtTest {
         mockRepo = mockk()
         coEvery { mockRepo.getKinfolk() } returns Result.success(TestFixtures.allKinfolk)
         coEvery { mockRepo.getAllKin() } returns Result.success(emptyList<Kin>())
-        coEvery { mockRepo.getKinCareSessions() } returns Result.success(emptyList())
+        coEvery { mockKinCareRepo.getKinCareSessions() } returns Result.success(emptyList())
         coEvery { mockRepo.logActivity(any()) } returns Result.success(Unit)
         every { mockRepo.observeVetClinics() } returns emptyFlow()
     }
@@ -48,7 +50,7 @@ class DirectoryViewModelExtTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = DirectoryViewModel(repository = mockRepo, invoiceRepository = mockInvoiceRepo)
+    private fun buildViewModel() = DirectoryViewModel(repository = mockRepo, invoiceRepository = mockInvoiceRepo, kinCareRepository = mockKinCareRepo)
 
     @Test
     fun `loadDirectory sets error when repository fails`() = runTest(testDispatcher) {
