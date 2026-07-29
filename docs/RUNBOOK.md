@@ -180,11 +180,11 @@ order**, stops at the first failure, and names the step it died in.
 | 8 | Prune revisions | Deletes old Cloud Run revisions, keeping the newest 10 per service and every serving one. Runs after verification, because those revisions are rollback targets. |
 
 **Why step 5 is conditional.** Redeploying the codebase mints a new Cloud Run
-revision for every one of its ~200 functions even when nothing changed.
-Revisions are never reclaimed on their own and each holds CPU against the
-regional quota, so an unconditional redeploy burns ~200 revisions to accomplish
-nothing — and once the quota is gone, the functions step fails and the release
-blocks itself before it ever reaches hosting. That happened on 2026-07-27. The
+revision for every one of its ~200 functions even when nothing changed, and a
+bulk functions deploy is the step most likely to fail: it is where the CPU
+quota bites, and a failure there blocks the release before it ever reaches
+hosting. That happened on 2026-07-27. Skipping the step when the code is
+identical removes that risk for free rather than re-rolling the dice. The
 last released commit is recorded in `.release-state` (gitignored, per machine);
 if nothing under `mytribe/functions` changed since then, the step is skipped and
 says so. Anything unknown deploys, because the safe default when you cannot
@@ -204,8 +204,8 @@ Knobs, all off by default:
 | `RELEASE_YES=1` | Do not prompt (CI). Preconditions still apply |
 | `RELEASE_FORCE_FUNCTIONS=1` | Deploy functions even when unchanged |
 | `RELEASE_SKIP_SECRET_CHECK=1` | Skip step 1b |
-| `RELEASE_SKIP_PRUNE=1` | Skip both prunes. The functions deploy then runs without headroom and may exhaust the CPU quota partway through |
-| `RELEASE_PREDEPLOY_KEEP=N` | Revisions kept per service by the prune inside step 5 (default 2) |
+| `RELEASE_SKIP_PRUNE=1` | Skip the step 8 retention prune. Revisions then accumulate until someone prunes by hand |
+| `RELEASE_PREDEPLOY_KEEP=N` | Prune to N per service before the functions deploy. Off by default and unproven; see the quota entry below |
 | `RELEASE_KEEP_REVISIONS=N` | Revisions kept per service in step 8 (default 10) |
 
 The AuntieOS functions codebases are **skipped by default** and the run says so
@@ -320,40 +320,73 @@ That reads the built `__endpoint`s — the same structure the CLI validates —
 rather than grepping source, which cannot see arrays built from spreads.
 
 **A functions deploy fails with `Quota exceeded for total allowable CPU per
-project per region`.** Cloud Run keeps every revision forever and each holds CPU
-against the regional quota. They reached 7,266 across 228 services and made
-deploys impossible until ~5,300 were deleted.
+project per region`.** It fails the tail of the deploy (18 functions on
+2026-07-26, 20 on 2026-07-28), and the casualties are crons, triggers and
+sweeps, the batch firebase-tools deploys last.
 
-The release prunes twice, for two different reasons. Step 5 prunes to 2 per
-service **before** deploying functions, because that deploy mints ~217
-revisions and needs the room; step 8 prunes to 10 **after** verification, which
-is retention for the drift that out-of-band `safe-deploy` retries leave behind.
-Pruning after the deploy alone was not enough and failed the same way twice, on
-2026-07-26 and 2026-07-28: the wall sits near 900 revisions across 230
-services, so a floor of 690 (keep 3) plus 217 minted still hits it, and a floor
-of 460 (keep 2) does not.
+**Do not prune to fix this.** Pruning was the documented fix here until
+2026-07-28, on the theory that Cloud Run revisions each hold CPU forever. That
+theory is wrong, and it was disproved the expensive way: the pre-deploy prune
+ran, hit its predicted floor within one revision (676 against a predicted 677),
+and the deploy failed anyway with the same 20 functions. Three measurements say
+why:
 
-To run either by hand:
+- `run.googleapis.com/active_revisions` reported usage **230 against 230
+  services**, one apiece, while 676 revisions existed. Idle revisions are not
+  counted, so deleting them frees nothing that was being counted.
+- 36 revisions pin `min-instances=1`; the other 640 scale to zero. At rest the
+  project holds ~36 CPU, nowhere near a ceiling.
+- redeploying the failed names as a batch of 20 succeeds minutes later with no
+  quota change in between.
+
+Read that as: the prune is proven *insufficient*, and it reclaims something
+other than what is being counted. The remaining inference, that the real limit
+is on concurrent container starts during a bulk deploy, fits every observation
+but has not been proven directly. Nobody has found the enforced ceiling;
+`CpuAllocPerProjectRegion` reports 200,000 and publishes no usage series.
+
+So the fix is the batch retry below, and the durable fix is a quota increase:
+Cloud Run Admin API, "Total CPU allocation, per project per region",
+`us-central1`.
+
+Pruning is still worth doing as retention, which is what step 8 is for:
 
 ```bash
-scripts/prune-run-revisions.sh 2    # headroom, what step 5 does
 scripts/prune-run-revisions.sh 10   # retention, what step 8 does
 ```
 
 It never touches a serving revision, keeps the newest N per service, and retries
-the 429s the Cloud Run API returns under load. If pruning is not enough, the
-durable fix is a quota increase: Cloud Run Admin API, "Total CPU allocation, per
-project per region", `us-central1`.
+the 429s the Cloud Run API returns under load.
 
-**A deploy failed partway and left named functions undeployed.** Prune first,
-then redeploy only the names that failed, then record the release:
+**A deploy failed partway and left named functions undeployed.** The failed
+functions are still serving their previous revision, so production is
+mixed-version rather than down, so check before assuming an outage:
 
 ```bash
-scripts/prune-run-revisions.sh 2
+gcloud run services list --region us-central1 --project auntieos-ttpc \
+  --format='value(metadata.name,status.conditions[0].status)' | awk -F'\t' '$2!="True"{print $1}'
+```
+
+Service names are the lowercased export names. Redeploy exactly those, then
+record the release:
+
+```bash
 scripts/safe-deploy.sh mytribe -- firebase deploy --only "functions:mytribe:NAME1,functions:mytribe:NAME2"
 git rev-parse HEAD > .release-state   # only once every function is live
 npm run deploy                        # functions now skip; hosting and verify finish
 ```
+
+Confirm every retried service is serving its **new** revision before writing
+`.release-state`. `Ready=True` alone can mean it rolled back to the old one:
+
+```bash
+gcloud run services describe NAME --region us-central1 --project auntieos-ttpc \
+  --format='value(status.latestCreatedRevisionName,status.latestReadyRevisionName)'
+```
+
+Those two must match. Write `.release-state` to a path outside the repo if you
+back it up first; a stray `.release-state.bak-*` is untracked and step 0 refuses
+the release for a dirty tree.
 
 Write `.release-state` by hand only when the functions really are all live.
 The next release reads it to decide whether to deploy functions at all, so a

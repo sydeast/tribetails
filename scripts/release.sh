@@ -345,42 +345,48 @@ if [ "$FUNCTIONS_CHANGED" -eq 0 ]; then
   ylw "  burn regional CPU quota to change nothing."
   ylw "  Force with RELEASE_FORCE_FUNCTIONS=1."
 else
-  # MAKE THE HEADROOM BEFORE SPENDING IT.
+  # THE AUTOMATIC PRE-DEPLOY PRUNE IS GONE. Read this before re-adding it,
+  # because the reasoning that put it here was measured, confident and wrong.
   #
-  # Deploying this codebase mints one Cloud Run revision per function, ~217 of
-  # them, and every revision holds CPU against the regional "total allowable
-  # CPU" quota until something reclaims it. The quota is what failed 18
-  # functions on 2026-07-26 and 20 more on 2026-07-28, both times mid-deploy,
-  # and both times the fix was the same manual sequence: prune, then retry the
-  # failed names. Step 8 already prunes, but it runs after verification, which
-  # is too late to help the step that actually needs the room.
+  # Three deploys died mid-run on "Quota exceeded for total allowable CPU per
+  # project per region" (2026-07-26, and twice on 2026-07-28), each leaving
+  # ~20 functions on their previous revision. The diagnosis was that Cloud Run
+  # revisions accumulate and each holds CPU, so this step pruned to 2 per
+  # service to make room. The arithmetic was stated as measured rather than
+  # modelled: a wall near 900 revisions, keep-2 leaving a floor of 460 plus
+  # ~217 minted.
   #
-  # The numbers, measured on 2026-07-28 rather than estimated: 230 services,
-  # 708 revisions before the deploy, failure at ~928. That puts the wall near
-  # 900, so the floor this leaves has to sit ~220 below it:
+  # On 2026-07-28 that prune ran, landed within one revision of its prediction
+  # (676 against a predicted 677), and the deploy failed anyway with the same
+  # 20 functions. Three measurements say why the model was wrong:
   #
-  #   keep 3 -> floor ~690, plus ~217 minted = ~907   over the wall
-  #   keep 2 -> floor  460, plus ~217 minted = ~680   room to spare
+  #   - run.googleapis.com/active_revisions reported usage 230 against 230
+  #     services, one apiece, while 676 revisions existed. Idle revisions are
+  #     not counted, so deleting them frees nothing that was being counted.
+  #   - 36 revisions pin min-instances=1; the other 640 scale to zero. At rest
+  #     the project holds ~36 CPU, nowhere near a ceiling.
+  #   - the casualties are always the deploy's last concurrent batch (crons,
+  #     triggers, sweeps), and redeploying those same names as a batch of 20
+  #     succeeds minutes later with no quota change in between.
   #
-  # The 460 is measured, not modelled: `DRY_RUN=1 prune-run-revisions.sh 2`
-  # planned 248 deletions against those 708 on 2026-07-28.
+  # That points at concurrent container starts during a bulk deploy rather
+  # than at revision inventory. Be careful how much of that to believe: what
+  # is PROVEN is only that the prune was insufficient and that the resource it
+  # reclaims is not the one being counted. The mechanism is inference.
   #
-  # Hence 2, which is arithmetic and not taste. Rollback survives it: the
-  # prune never deletes a revision a service is SERVING, so the live code is
-  # always among the survivors, and a functions rollback here is a revert and
-  # redeploy anyway (see the closing note of this script), not a revision flip.
+  # But the cost was never in doubt. The prune spent ~250 revisions of
+  # rollback depth immediately before the riskiest step in the release, to buy
+  # headroom there is no evidence it bought. Step 8 still prunes for
+  # retention, after verification, where spending that depth is safe.
   #
-  # Skipped entirely when functions are unchanged, because a release that
-  # deploys nothing needs no headroom and should not spend rollback depth.
+  # Setting RELEASE_PREDEPLOY_KEEP=N restores the old behaviour for one run.
+  # It is opt-in because it is unproven, not because it is dangerous.
   STEP="reclaiming Cloud Run quota before the functions deploy"
-  PREDEPLOY_KEEP="${RELEASE_PREDEPLOY_KEEP:-2}"
-  if [ "${DRY_RUN:-0}" = "1" ]; then
-    ylw "DRY_RUN=1: skipping the pre-deploy prune."
-  elif [ "${RELEASE_SKIP_PRUNE:-0}" = "1" ]; then
-    ylw "SKIPPED (RELEASE_SKIP_PRUNE=1). The deploy below may exhaust the"
-    ylw "  regional CPU quota partway through and fail some functions."
-  else
-    bash "$ROOT/scripts/prune-run-revisions.sh" "$PREDEPLOY_KEEP" || {
+  if [ -n "${RELEASE_PREDEPLOY_KEEP:-}" ] && [ "${DRY_RUN:-0}" != "1" ]; then
+    ylw "RELEASE_PREDEPLOY_KEEP=$RELEASE_PREDEPLOY_KEEP: pruning before the deploy."
+    ylw "  Opt-in and unproven (see the comment above). This spends rollback"
+    ylw "  depth to buy headroom that may not exist."
+    bash "$ROOT/scripts/prune-run-revisions.sh" "$RELEASE_PREDEPLOY_KEEP" || {
       # Deploy anyway. A prune that could not run is not proof the quota is
       # short, and refusing to ship on a housekeeping failure is worse than
       # trying. If the quota really is short, the deploy says so plainly.
