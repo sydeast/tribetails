@@ -5,7 +5,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { InvoiceDetail } from './InvoiceDetail';
-import type { GetMyInvoicesResult } from '../api/invoicesApi';
+import type { GetMyInvoicesResult } from '../contracts/invoiceContracts.generated';
 
 /**
  * Covers the one gap this session found in an already-shipped screen: the

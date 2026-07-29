@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyInvoices, payInvoice, redeemCredit } from '../api/invoicesApi';
-import type { InvoiceDto } from '../api/invoicesApi';
+import type { InvoiceDto } from '../contracts/invoiceContracts.generated';
 import {
   calTileFor,
   creditTargetLabel,

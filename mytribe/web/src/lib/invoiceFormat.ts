@@ -4,8 +4,17 @@
  * DEVELOPMENT_PLAN_2026-07-10.md S3 file-scope rules) so the mapping logic
  * has direct vitest coverage, same pattern as portalFormat.test.ts.
  */
-import type { InvoiceStatus } from '../api/invoicesApi';
+import type { InvoiceDto } from '../contracts/invoiceContracts.generated';
 import { calTile } from './portalFormat';
+
+/**
+ * The stored Invoice State Stamp's vocabulary (ADR-0002), read off the
+ * generated DTO instead of spelled out again. An alias for readability, not a
+ * declaration: writing the eight states out here would be one more copy to
+ * keep in step, which is the drift ADR-0001 ends. A state renamed server-side
+ * now lands as a compile error on the switch below.
+ */
+type InvoiceStatus = InvoiceDto['status'];
 
 /** "$36.00" / "-$12.50" from a dollars-denominated amount. */
 export function formatUsd(dollars: number): string {
@@ -107,7 +116,7 @@ export function invoiceStatusInfo(status: InvoiceStatus, creditRedeemedAtMs: num
  * The old "Returned to Original Payment Method" case is gone: credits are NOT
  * refundable, so account balance is the only target a credit can carry.
  */
-export function creditTargetLabel(target: 'accountBalance' | null): string {
+export function creditTargetLabel(target: InvoiceDto['creditTarget']): string {
   return target === 'accountBalance' ? 'Saved to Account Balance' : 'Redeemed';
 }
 /**
