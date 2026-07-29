@@ -18,6 +18,8 @@
 #   1. npm run check  - typecheck, lint, test, build. This is also what
 #                       produces the dist/ that step 5 uploads, so it is not
 #                       optional theatre: skipping it ships a stale bundle.
+#  1c. android build  - assemble the signed release APK BEFORE anything ships,
+#                       so a build failure costs nothing. Same rule as step 1.
 #   2. indexes        - BEFORE the code that queries them. A query with no
 #                       index fails at RUNTIME, not at build.
 #   3. index wait     - deploying an index returns before it is Enabled. The
@@ -27,6 +29,10 @@
 #                       reverse: a client calling a function that is not there
 #                       fails at runtime.
 #   6. hosting        - admin, then portal.
+#  6b. android        - upload the APK built in 1c to App Distribution, in the
+#                       SAME run as the web. Android was outside this script
+#                       until 2026-07-28 and had drifted 200 versionCodes
+#                       behind the web while the source trees stayed at parity.
 #   7. verify         - fetch the live bundles and compare to what was just
 #                       built. This is the step whose absence hid the stale
 #                       admin for 33 hours. A release that cannot prove it
@@ -44,6 +50,9 @@
 #                                       the run SAYS when it skipped them.
 #   RELEASE_YES=1                       do not prompt (CI). Preconditions still
 #                                       apply; nothing is bypassed.
+#   RELEASE_SKIP_ANDROID=1              ship the web without the Android client.
+#                                       Off by default: shipping them together
+#                                       is the point of steps 1c and 6b.
 #
 # Every deploy here goes through scripts/safe-deploy.sh, which pins the project,
 # refuses a bare deploy, and refuses rules from the wrong tree. This script adds
@@ -260,6 +269,79 @@ else
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# 1c. Assemble the Android release, BEFORE anything ships.
+# ---------------------------------------------------------------------------
+banner "1c. Android release build"
+
+# WHY ANDROID IS IN THE RELEASE AT ALL.
+#
+# The three clients were built to parity: the same callables, the same
+# contracts, the same invoice state table, kept honest by tests in all three
+# trees. That discipline held everywhere except the last step. This script
+# shipped functions and two hosting targets and never touched Android, so
+# parity was real in the source tree and fiction in production. By 2026-07-28
+# the newest APK was versionCode 318 against a web build of 518: 47 commits and
+# ~13,400 added lines that no user could run.
+#
+# That is not merely stale. On 2026-07-28 the deployed Firestore rules revoked
+# client-direct invoice writes (invoices allow create/update/delete: if false,
+# ADR-0002), and the Android writer moved to callables in PR #105. Any APK
+# built before #105 therefore gets PERMISSION_DENIED on every invoice create,
+# edit and delete. A client that cannot ship is a client that silently rots
+# against a server that keeps moving.
+#
+# WHY IT BUILDS HERE AND DISTRIBUTES LATER.
+#
+# Same rule step 1 follows for dist/: build everything before shipping
+# anything. An APK that fails to assemble AFTER hosting has gone out breaks
+# parity in the other direction and leaves the web ahead of Android, which is
+# the exact state this step exists to end. So the assembly runs before the
+# first deploy, where its failure costs nothing, and the upload runs beside
+# hosting in step 6b.
+#
+# CI cannot do this: release signing needs the keystore, which lives in
+# local.properties (gitignored, per machine) alongside the Mapbox downloads
+# token. This script runs where those already are.
+ANDROID_DIR="$ROOT/auntieos-admin/android"
+ANDROID_APK="$ANDROID_DIR/app/build/outputs/apk/release/app-release.apk"
+ANDROID_BUILT=0
+
+STEP="assembling the Android release APK"
+if [ "${RELEASE_SKIP_ANDROID:-0}" = "1" ]; then
+  ylw "SKIPPED (RELEASE_SKIP_ANDROID=1). The web ships without the Android"
+  ylw "  client, which is the drift that put Android 200 versionCodes behind."
+elif [ "$PREFLIGHT_ONLY" = "1" ]; then
+  ylw "SKIPPED (preflight only)."
+elif [ ! -d "$ANDROID_DIR" ]; then
+  ylw "SKIPPED: no $ANDROID_DIR on this machine."
+else
+  rm -f "$ANDROID_APK"
+  if [ "${DRY_RUN:-0}" = "1" ]; then
+    ylw "DRY_RUN=1: would run ./gradlew :app:assembleRelease"
+  else
+    # Fails at execution time, naming the missing piece, when the keystore or
+    # the Mapbox token is absent. Refuse the release rather than ship a web
+    # half: a partial release is how the two clients diverged in the first
+    # place.
+    ( cd "$ANDROID_DIR" && ./gradlew :app:assembleRelease --no-daemon ) || {
+      red "REFUSED: the Android release APK did not build."
+      red "  Nothing has been deployed yet, which is why this step runs here."
+      red "  Release signing needs KEYSTORE_PATH, KEYSTORE_PASSWORD, KEY_ALIAS"
+      red "  and KEY_PASSWORD in auntieos-admin/android/local.properties, and"
+      red "  MAPBOX_DOWNLOADS_TOKEN in ~/.gradle/gradle.properties."
+      red "  To ship the web alone anyway: RELEASE_SKIP_ANDROID=1."
+      exit 1
+    }
+    [ -f "$ANDROID_APK" ] || {
+      red "REFUSED: gradle succeeded but $ANDROID_APK is not there."
+      exit 1
+    }
+    ANDROID_BUILT=1
+    grn "android: assembled $(basename "$ANDROID_APK") ($(du -h "$ANDROID_APK" | cut -f1))"
+  fi
+fi
+
 if [ "$PREFLIGHT_ONLY" = "1" ]; then
   trap - EXIT
   banner "Preflight only: stopping here"
@@ -428,6 +510,43 @@ grn "admin: deployed"
 STEP="deploying the kinfolk portal (hosting:kinfolk_portal)"
 deploy mytribe hosting:kinfolk_portal
 grn "portal: deployed"
+
+# ---------------------------------------------------------------------------
+# 6b. The third client, shipped in the same run as the other two.
+# ---------------------------------------------------------------------------
+banner "6b. Android"
+
+# App Distribution is the channel: the operator admin is an internal tool with
+# named testers. The tester list is managed in the Firebase console; this
+# uploads to whoever is already on it.
+#
+# The release note carries the commit, so a tester's build always names the
+# code it came from. versionName already embeds the short SHA (build.gradle.kts
+# builds it from gitShortSha), so the APK is self-identifying even off-console.
+STEP="distributing the Android release"
+if [ "$ANDROID_BUILT" != "1" ]; then
+  ylw "SKIPPED: no APK was assembled in step 1c."
+else
+  ANDROID_APP_ID="${RELEASE_ANDROID_APP_ID:-1:153396971788:android:6bcb7c5411aeda837f2129}"
+  ANDROID_NOTES="$(git log -1 --format='%h %s')"
+  if [ "${DRY_RUN:-0}" = "1" ]; then
+    ylw "DRY_RUN=1: would upload $ANDROID_APK to App Distribution"
+  else
+    firebase appdistribution:distribute "$ANDROID_APK" \
+      --app "$ANDROID_APP_ID" \
+      --project "$PROJECT" \
+      --release-notes "$ANDROID_NOTES" || {
+      # The APK is built and signed on disk either way. Failing the release
+      # here would report a landed web deploy as broken; saying nothing would
+      # recreate the silent drift. So: loud, non-fatal, with the retry.
+      ylw "android: upload FAILED. The signed APK is still at:"
+      ylw "  $ANDROID_APK"
+      ylw "  Retry with:"
+      ylw "  firebase appdistribution:distribute '$ANDROID_APK' --app $ANDROID_APP_ID --project $PROJECT"
+    }
+    grn "android: distributed"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 7. Prove it landed.
