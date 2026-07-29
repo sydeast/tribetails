@@ -207,6 +207,8 @@ Knobs, all off by default:
 | `RELEASE_FORCE_FUNCTIONS=1` | Deploy functions even when unchanged |
 | `RELEASE_SKIP_ANDROID=1` | Ship the web without the Android client. Off by default; shipping them together is the point of steps 1c and 6b |
 | `RELEASE_ANDROID_APP_ID=…` | Override the App Distribution app id (defaults to the `com.tribetails.auntieos` app) |
+| `RELEASE_ANDROID_GROUPS=a,b` | App Distribution group aliases to distribute to |
+| `RELEASE_ANDROID_TESTERS=a@b,c@d` | Tester emails to distribute to. Neither this nor groups set means every tester on the project |
 | `RELEASE_SKIP_SECRET_CHECK=1` | Skip step 1b |
 | `RELEASE_SKIP_PRUNE=1` | Skip the step 8 retention prune. Revisions then accumulate until someone prunes by hand |
 | `RELEASE_PREDEPLOY_KEEP=N` | Prune to N per service before the functions deploy. Off by default and unproven; see the quota entry below |
@@ -244,9 +246,24 @@ A missing keystore or token **refuses the release** at 1c rather than shipping a
 web half, because a partial release is how the clients diverged to begin with.
 Override with `RELEASE_SKIP_ANDROID=1` when you mean it.
 
-An upload failure at 6b is loud but not fatal: the web has already landed by
-then, the signed APK is on disk, and the run prints the retry command. Failing
-the release there would report a good deploy as broken.
+A distribution failure at 6b is loud but not fatal: the web has already landed
+by then, the signed APK is on disk, and the run prints the retry command with
+its audience flags. Failing the release there would report a good deploy as
+broken.
+
+**Uploading is not distributing.** `appdistribution:distribute` needs
+`--testers` or `--groups`. Given neither it uploads the binary, attaches the
+release notes, prints `no testers or groups specified, skipping`, and **exits
+0**. That is a release that looks shipped and reaches nobody, and it is worse
+than the old silence because a green Android line now claims otherwise. It
+happened on the first real run of this step, on 2026-07-28.
+
+So step 1c resolves the audience before anything deploys: `RELEASE_ANDROID_GROUPS`,
+else `RELEASE_ANDROID_TESTERS`, else every tester on the project, read from
+`appdistribution:testers:list --json`. The roster stays in the Firebase console
+rather than in this repo, where a checked-in list of people would rot. If it
+resolves to nobody the release is **refused** while nothing has shipped, and the
+refusal prints the command that adds a tester.
 
 `versionName` embeds the short SHA (`build.gradle.kts` builds it from
 `gitShortSha`), so a tester's screenshot names the commit it came from without
