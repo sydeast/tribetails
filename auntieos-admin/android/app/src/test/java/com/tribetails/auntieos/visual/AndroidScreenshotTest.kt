@@ -7,6 +7,7 @@ import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.MediaEntityType
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
 import com.tribetails.auntieos.data.repository.GoogleCalendarConnectionState
 import com.tribetails.auntieos.data.repository.ServiceRepository
@@ -87,10 +88,11 @@ class AndroidScreenshotTest {
     @Test
     fun directory() {
         val repo = mockk<AuntieRepository>(relaxed = true)
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
         coEvery { repo.getKinfolk() } returns Result.success(AndroidDemoFixtures.kinfolk)
         coEvery { repo.getAllKin() } returns Result.success(AndroidDemoFixtures.allKin)
-        coEvery { repo.getKinCareSessions() } returns Result.success(AndroidDemoFixtures.sessions)
-        val vm = DirectoryViewModel(repo, mockk<InvoiceRepository>(relaxed = true))
+        coEvery { kinCareRepo.getKinCareSessions() } returns Result.success(AndroidDemoFixtures.sessions)
+        val vm = DirectoryViewModel(repo, mockk<InvoiceRepository>(relaxed = true), kinCareRepo)
         vm.loadDirectory() // inline on Unconfined main -> state populated before render
         compose.setContent {
             AuntieOSTheme(themeMode = ThemeMode.DARK) {
@@ -103,11 +105,12 @@ class AndroidScreenshotTest {
     @Test
     fun home() {
         val repo = mockk<AuntieRepository>(relaxed = true)
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
         coEvery { repo.getKinfolkCount() } returns Result.success(6)
         coEvery { repo.getKinCount() } returns Result.success(9)
         coEvery { repo.getPendingDraftCount() } returns Result.success(0)
         coEvery { repo.getRecentDrafts() } returns Result.success(emptyList())
-        coEvery { repo.getKinCareSessionsForDay(any(), any()) } returns Result.success(AndroidDemoFixtures.sessions)
+        coEvery { kinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(AndroidDemoFixtures.sessions)
         coEvery { repo.getBusinessSettings() } returns Result.success(BusinessSettings())
         coEvery { repo.getKinfolkById(any()) } returns Result.success(AndroidDemoFixtures.kinfolk.first())
         val invoiceRepo = mockk<InvoiceRepository>(relaxed = true)
@@ -119,10 +122,10 @@ class AndroidScreenshotTest {
         // a bare Object that dies at the List cast, so this test was capturing a
         // CRASHED dashboard: two fail-loud banners, "0 VISITS", every widget gone.
         // Nothing noticed because the golden was recorded, never asserted.
-        coEvery { repo.getKinCareSessions() } returns Result.success(AndroidDemoFixtures.sessions)
+        coEvery { kinCareRepo.getKinCareSessions() } returns Result.success(AndroidDemoFixtures.sessions)
         coEvery { repo.getAllKin() } returns Result.success(AndroidDemoFixtures.allKin)
         // init{} calls load() inline on the Unconfined main dispatcher.
-        val vm = HomeViewModel(repo, invoiceRepo, mockk<VisitNotifier>(relaxed = true))
+        val vm = HomeViewModel(repo, invoiceRepo, kinCareRepo, mockk<VisitNotifier>(relaxed = true))
         compose.setContent {
             AuntieOSTheme(themeMode = ThemeMode.DARK) {
                 HomeScreen(vm, onNavigateToCommunicate = {}, onNavigateToCalls = {}, onWriteKinTale = {})
@@ -134,14 +137,15 @@ class AndroidScreenshotTest {
     @Test
     fun invoiceDetail() {
         val repo = mockk<AuntieRepository>(relaxed = true)
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
         val invoiceRepo = mockk<InvoiceRepository>(relaxed = true)
         coEvery { invoiceRepo.getInvoiceById("demo-inv-1") } returns Result.success(AndroidDemoFixtures.invoice)
-        coEvery { repo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
+        coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { invoiceRepo.getPayments() } returns Result.success(emptyList())
         // A8: loadInvoice fetches business settings (How-to-pay). Blank settings keep the
         // panel hidden so this golden is unchanged.
         coEvery { repo.getBusinessSettings() } returns Result.success(com.tribetails.auntieos.data.model.BusinessSettings())
-        val vm = InvoiceDetailViewModel(repository = repo, invoiceRepository = invoiceRepo)
+        val vm = InvoiceDetailViewModel(repository = repo, invoiceRepository = invoiceRepo, kinCareRepository = kinCareRepo)
         vm.loadInvoice("demo-inv-1")
         compose.setContent {
             AuntieOSTheme(themeMode = ThemeMode.DARK) {
@@ -175,9 +179,10 @@ class AndroidScreenshotTest {
     @Test
     fun kintaleLogs() {
         val repo = mockk<AuntieRepository>(relaxed = true)
-        coEvery { repo.getAllKinCareReports() } returns Result.success(AndroidDemoFixtures.kinTaleReports)
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getAllKinCareReports() } returns Result.success(AndroidDemoFixtures.kinTaleReports)
         coEvery { repo.getKinfolk() } returns Result.success(AndroidDemoFixtures.kinfolk)
-        val vm = AdminDataViewModel(repository = repo, invoiceRepository = mockk(relaxed = true))
+        val vm = AdminDataViewModel(repository = repo, invoiceRepository = mockk(relaxed = true), kinCareRepository = kinCareRepo)
         // Screen's LaunchedEffect(Unit) auto-loads reports + kinfolk directory.
         compose.setContent {
             AuntieOSTheme(themeMode = ThemeMode.DARK) {
@@ -227,10 +232,11 @@ class AndroidScreenshotTest {
     @Test
     fun auntieTime() {
         val repo = mockk<AuntieRepository>(relaxed = true)
-        coEvery { repo.getKinCareSessions() } returns Result.success(AndroidDemoFixtures.auntieTimeSessions)
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSessions() } returns Result.success(AndroidDemoFixtures.auntieTimeSessions)
         coEvery { repo.getKinfolk() } returns Result.success(AndroidDemoFixtures.kinfolk)
         coEvery { repo.getAllKin() } returns Result.success(AndroidDemoFixtures.allKin)
-        val vm = AdminDataViewModel(repository = repo, invoiceRepository = mockk(relaxed = true))
+        val vm = AdminDataViewModel(repository = repo, invoiceRepository = mockk(relaxed = true), kinCareRepository = kinCareRepo)
         vm.loadKinCareSessions()
         compose.setContent {
             AuntieOSTheme(themeMode = ThemeMode.DARK) {
@@ -455,14 +461,16 @@ class AndroidScreenshotTest {
     @Test
     fun kintaleReport() {
         val repo = mockk<AuntieRepository>(relaxed = true)
-        coEvery { repo.getKinCareSession("demo-s1") } returns Result.success(AndroidDemoFixtures.kinTaleSession)
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSession("demo-s1") } returns Result.success(AndroidDemoFixtures.kinTaleSession)
         coEvery { repo.getKinfolkById("demo-kf-1") } returns Result.success(AndroidDemoFixtures.kinfolk.first())
         coEvery { repo.getKin("demo-kf-1") } returns Result.success(AndroidDemoFixtures.kinTaleKin)
         coEvery { repo.getActiveTemplateForService(any()) } returns Result.success(null)
-        coEvery { repo.getKinCareReport("demo-report-1") } returns Result.success(AndroidDemoFixtures.kinTaleReport)
+        coEvery { kinCareRepo.getKinCareReport("demo-report-1") } returns Result.success(AndroidDemoFixtures.kinTaleReport)
         coEvery { repo.getMediaFiles("demo-s1", MediaEntityType.VISIT_LOG) } returns Result.success(AndroidDemoFixtures.kinTaleMedia)
         val vm = KinTaleReportViewModel(
             repository = repo,
+            kinCareRepository = kinCareRepo,
             mediaUploader = mockk<MediaUploadManager>(relaxed = true),
             notifier = mockk<VisitNotifier>(relaxed = true),
         )

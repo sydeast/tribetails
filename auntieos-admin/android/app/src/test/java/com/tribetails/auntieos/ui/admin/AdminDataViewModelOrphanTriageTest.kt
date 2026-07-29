@@ -4,6 +4,7 @@ import com.tribetails.auntieos.TestFixtures
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -34,18 +35,20 @@ import org.junit.Test
  *   • clearTriageResult() drops the toast state
  *
  * This mirrors the pure-helper TDD pattern already used elsewhere in the repo
- * (see AuntieRepositoryBreadcrumbsTest's comment block).
+ * (see KinCareRepositoryBreadcrumbsTest's comment block).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AdminDataViewModelOrphanTriageTest {
 
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var mockRepo: AuntieRepository
+    private lateinit var mockKinCareRepo: KinCareRepository
 
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         mockRepo = mockk()
+        mockKinCareRepo = mockk()
     }
 
     @After
@@ -53,7 +56,7 @@ class AdminDataViewModelOrphanTriageTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = AdminDataViewModel(repository = mockRepo, invoiceRepository = mockk(relaxed = true))
+    private fun buildViewModel() = AdminDataViewModel(repository = mockRepo, invoiceRepository = mockk(relaxed = true), kinCareRepository = mockKinCareRepo)
 
     // ─── loadKinfolkDirectory ─────────────────────────────────────────────────
 
@@ -88,8 +91,8 @@ class AdminDataViewModelOrphanTriageTest {
 
     @Test
     fun `assignOrphanReport on success publishes success result and reloads reports`() = runTest(testDispatcher) {
-        coEvery { mockRepo.assignKinfolkToOrphanReport("legacy_79", "kf1", "Rosa Parks") } returns Result.success(Unit)
-        coEvery { mockRepo.getAllKinCareReports() } returns Result.success(emptyList())
+        coEvery { mockKinCareRepo.assignKinfolkToOrphanReport("legacy_79", "kf1", "Rosa Parks") } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.getAllKinCareReports() } returns Result.success(emptyList())
 
         val vm = buildViewModel()
         vm.assignOrphanReport("legacy_79", "kf1", "Rosa Parks")
@@ -99,12 +102,12 @@ class AdminDataViewModelOrphanTriageTest {
         assertNotNull(result)
         assertTrue(result!!.success)
         assertTrue(result.message.contains("Rosa Parks"))
-        coVerify { mockRepo.getAllKinCareReports() }
+        coVerify { mockKinCareRepo.getAllKinCareReports() }
     }
 
     @Test
     fun `assignOrphanReport on failure publishes error result and clears isLoading`() = runTest(testDispatcher) {
-        coEvery { mockRepo.assignKinfolkToOrphanReport(any(), any(), any()) } returns Result.failure(RuntimeException("write denied"))
+        coEvery { mockKinCareRepo.assignKinfolkToOrphanReport(any(), any(), any()) } returns Result.failure(RuntimeException("write denied"))
 
         val vm = buildViewModel()
         vm.assignOrphanReport("legacy_79", "kf1", "Rosa Parks")
@@ -121,8 +124,8 @@ class AdminDataViewModelOrphanTriageTest {
 
     @Test
     fun `markOrphanAsDuplicate on success publishes success result and reloads`() = runTest(testDispatcher) {
-        coEvery { mockRepo.markOrphanReportAsDuplicate("legacy_80", "report_xyz") } returns Result.success(Unit)
-        coEvery { mockRepo.getAllKinCareReports() } returns Result.success(emptyList())
+        coEvery { mockKinCareRepo.markOrphanReportAsDuplicate("legacy_80", "report_xyz") } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.getAllKinCareReports() } returns Result.success(emptyList())
 
         val vm = buildViewModel()
         vm.markOrphanAsDuplicate("legacy_80", "report_xyz")
@@ -132,12 +135,12 @@ class AdminDataViewModelOrphanTriageTest {
         assertNotNull(result)
         assertTrue(result!!.success)
         assertEquals("Marked as duplicate", result.message)
-        coVerify { mockRepo.getAllKinCareReports() }
+        coVerify { mockKinCareRepo.getAllKinCareReports() }
     }
 
     @Test
     fun `markOrphanAsDuplicate on failure surfaces error message`() = runTest(testDispatcher) {
-        coEvery { mockRepo.markOrphanReportAsDuplicate(any(), any()) } returns Result.failure(IllegalArgumentException("Cannot mark a report as a duplicate of itself"))
+        coEvery { mockKinCareRepo.markOrphanReportAsDuplicate(any(), any()) } returns Result.failure(IllegalArgumentException("Cannot mark a report as a duplicate of itself"))
 
         val vm = buildViewModel()
         vm.markOrphanAsDuplicate("legacy_80", "legacy_80")
@@ -154,8 +157,8 @@ class AdminDataViewModelOrphanTriageTest {
 
     @Test
     fun `archiveOrphanAsBad on success publishes success result and reloads`() = runTest(testDispatcher) {
-        coEvery { mockRepo.archiveOrphanReportAsBadData("legacy_81", "junk test data") } returns Result.success(Unit)
-        coEvery { mockRepo.getAllKinCareReports() } returns Result.success(emptyList())
+        coEvery { mockKinCareRepo.archiveOrphanReportAsBadData("legacy_81", "junk test data") } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.getAllKinCareReports() } returns Result.success(emptyList())
 
         val vm = buildViewModel()
         vm.archiveOrphanAsBad("legacy_81", "junk test data")
@@ -165,12 +168,12 @@ class AdminDataViewModelOrphanTriageTest {
         assertNotNull(result)
         assertTrue(result!!.success)
         assertEquals("Archived as bad data", result.message)
-        coVerify { mockRepo.getAllKinCareReports() }
+        coVerify { mockKinCareRepo.getAllKinCareReports() }
     }
 
     @Test
     fun `archiveOrphanAsBad on failure surfaces repo error and clears isLoading`() = runTest(testDispatcher) {
-        coEvery { mockRepo.archiveOrphanReportAsBadData(any(), any()) } returns Result.failure(IllegalArgumentException("Archive reason must be at least 5 characters"))
+        coEvery { mockKinCareRepo.archiveOrphanReportAsBadData(any(), any()) } returns Result.failure(IllegalArgumentException("Archive reason must be at least 5 characters"))
 
         val vm = buildViewModel()
         vm.archiveOrphanAsBad("legacy_81", "no")
@@ -187,8 +190,8 @@ class AdminDataViewModelOrphanTriageTest {
 
     @Test
     fun `clearTriageResult drops the toast state`() = runTest(testDispatcher) {
-        coEvery { mockRepo.archiveOrphanReportAsBadData(any(), any()) } returns Result.success(Unit)
-        coEvery { mockRepo.getAllKinCareReports() } returns Result.success(emptyList())
+        coEvery { mockKinCareRepo.archiveOrphanReportAsBadData(any(), any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.getAllKinCareReports() } returns Result.success(emptyList())
 
         val vm = buildViewModel()
         vm.archiveOrphanAsBad("legacy_81", "junk test data")
@@ -209,8 +212,8 @@ class AdminDataViewModelOrphanTriageTest {
             it.sentVia = "legacy_visit_logs"
             it.triageStatus = "assigned"
         }
-        coEvery { mockRepo.assignKinfolkToOrphanReport(any(), any(), any()) } returns Result.success(Unit)
-        coEvery { mockRepo.getAllKinCareReports() } returns Result.success(listOf(reportAfter))
+        coEvery { mockKinCareRepo.assignKinfolkToOrphanReport(any(), any(), any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.getAllKinCareReports() } returns Result.success(listOf(reportAfter))
 
         val vm = buildViewModel()
         vm.assignOrphanReport("legacy_79", "kf1", "Rosa Parks")

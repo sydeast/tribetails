@@ -36,7 +36,7 @@ class InvoiceDetailViewModelTest {
         coEvery { invoiceRepository.getPayments() } returns Result.success(emptyList<com.tribetails.auntieos.data.model.Payment>())
         // A8: loadInvoice also fetches business settings for the "How to pay" section.
         coEvery { repository.getBusinessSettings() } returns Result.success(com.tribetails.auntieos.data.model.BusinessSettings())
-        viewModel = InvoiceDetailViewModel(repository, invoiceRepository)
+        viewModel = InvoiceDetailViewModel(repository, invoiceRepository, mockk(relaxed = true))
     }
 
     @After

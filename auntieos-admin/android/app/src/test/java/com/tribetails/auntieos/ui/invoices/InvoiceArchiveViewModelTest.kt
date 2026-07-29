@@ -43,7 +43,7 @@ class InvoiceArchiveViewModelTest {
         Dispatchers.setMain(testDispatcher)
         coEvery { invoiceRepository.getPayments() } returns Result.success(emptyList<Payment>())
         coEvery { repository.getBusinessSettings() } returns Result.success(BusinessSettings())
-        viewModel = InvoiceDetailViewModel(repository, invoiceRepository)
+        viewModel = InvoiceDetailViewModel(repository, invoiceRepository, mockk(relaxed = true))
     }
 
     @After

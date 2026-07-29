@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.invoices
 import com.tribetails.auntieos.TestFixtures
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -26,15 +27,17 @@ class InvoiceDetailViewModelExtTest {
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var mockRepo: AuntieRepository
     private lateinit var mockInvoiceRepo: InvoiceRepository
+    private lateinit var mockKinCareRepo: KinCareRepository
 
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         mockRepo = mockk()
         mockInvoiceRepo = mockk()
+        mockKinCareRepo = mockk()
         // Default stub: session fetch returns empty list so tests that only care
         // about invoice loading don't break on the new getKinCareSessionsForKinfolk call.
-        coEvery { mockRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
+        coEvery { mockKinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         // loadInvoice now also loads payments for the per-invoice join (spec 17).
         coEvery { mockInvoiceRepo.getPayments() } returns Result.success(emptyList<com.tribetails.auntieos.data.model.Payment>())
         // A8: loadInvoice also fetches business settings for the "How to pay" section.
@@ -46,7 +49,7 @@ class InvoiceDetailViewModelExtTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = InvoiceDetailViewModel(repository = mockRepo, invoiceRepository = mockInvoiceRepo)
+    private fun buildViewModel() = InvoiceDetailViewModel(repository = mockRepo, invoiceRepository = mockInvoiceRepo, kinCareRepository = mockKinCareRepo)
 
     @Test
     fun `initial state has no invoice and no error`() {

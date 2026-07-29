@@ -1,7 +1,7 @@
 package com.tribetails.auntieos.location
 
 import com.tribetails.auntieos.data.model.LocationPoint
-import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -57,7 +57,7 @@ class BreadcrumbDispatcherTest {
 
     @Test
     fun `send enqueues and drain calls repository addBreadcrumb once`() = runTest(UnconfinedTestDispatcher()) {
-        val repo = mockk<AuntieRepository>()
+        val repo = mockk<KinCareRepository>()
         coEvery { repo.addBreadcrumb(any(), any()) } returns Result.success("doc-id")
 
         val dispatcher = BreadcrumbDispatcher(repo, backgroundScope, capacity = 8)
@@ -70,7 +70,7 @@ class BreadcrumbDispatcherTest {
 
     @Test
     fun `send rejects blank sessionId without invoking repository`() = runTest(UnconfinedTestDispatcher()) {
-        val repo = mockk<AuntieRepository>()
+        val repo = mockk<KinCareRepository>()
         coEvery { repo.addBreadcrumb(any(), any()) } returns Result.success("doc-id")
 
         val dispatcher = BreadcrumbDispatcher(repo, backgroundScope, capacity = 8)
@@ -83,7 +83,7 @@ class BreadcrumbDispatcherTest {
 
     @Test
     fun `multiple sends drain in order`() = runTest(UnconfinedTestDispatcher()) {
-        val repo = mockk<AuntieRepository>()
+        val repo = mockk<KinCareRepository>()
         val captured = mutableListOf<LocationPoint>()
         val pointSlot = slot<LocationPoint>()
         coEvery { repo.addBreadcrumb(any(), capture(pointSlot)) } answers {
@@ -105,7 +105,7 @@ class BreadcrumbDispatcherTest {
 
     @Test
     fun `snapshotDroppedCount starts at zero`() = runTest(UnconfinedTestDispatcher()) {
-        val repo = mockk<AuntieRepository>()
+        val repo = mockk<KinCareRepository>()
         coEvery { repo.addBreadcrumb(any(), any()) } returns Result.success("doc-id")
         val dispatcher = BreadcrumbDispatcher(repo, backgroundScope, capacity = 8)
         assertEquals(0L, dispatcher.snapshotDroppedCount())

@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.GpsPoint
 import com.tribetails.auntieos.data.model.LocationPoint
-import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.delay
 import kotlin.math.PI
@@ -240,7 +240,7 @@ internal fun locationPointToGpsPoint(lp: LocationPoint): GpsPoint =
 /**
  * Subcollection-subscribed sibling of [RouteMap]. Given a `kin_care_sessions`
  * document id, streams the `breadcrumbs` subcollection via
- * [AuntieRepository.observeBreadcrumbs], converts each [LocationPoint] to a
+ * [KinCareRepository.observeBreadcrumbs], converts each [LocationPoint] to a
  * [GpsPoint], and delegates rendering to [RouteMap].
  *
  * Use this for live in-progress sessions and for replay once a session has
@@ -250,7 +250,7 @@ internal fun locationPointToGpsPoint(lp: LocationPoint): GpsPoint =
  * reading `routePoints` directly.
  *
  * Known limitation (Step 6 hardening will address): repository errors from
- * [AuntieRepository.observeBreadcrumbs] are mapped to an empty list, which
+ * [KinCareRepository.observeBreadcrumbs] are mapped to an empty list, which
  * renders [RouteMap]'s "Waiting for first GPS ping…" empty state. That is the
  * only user-visible signal of a failure right now - a fail-loud banner over
  * the map is the planned follow-up.
@@ -258,7 +258,7 @@ internal fun locationPointToGpsPoint(lp: LocationPoint): GpsPoint =
  * @param sessionId  `kin_care_sessions/{sessionId}` document id
  * @param live       true while the session is ARRIVED (latest point pulses);
  *                   false for replay (full polyline + start/end pins)
- * @param repository defaults to [AuntieOSApp.instance.repository] - the
+ * @param repository defaults to [AuntieOSApp.instance.kinCareRepository] - the
  *                   established singleton access pattern used by VMs across
  *                   the app; override in previews/tests.
  */
@@ -267,7 +267,7 @@ fun LiveRouteMap(
     sessionId: String,
     live: Boolean,
     modifier: Modifier = Modifier,
-    repository: AuntieRepository = AuntieOSApp.instance.repository,
+    repository: KinCareRepository = AuntieOSApp.instance.kinCareRepository,
 ) {
     val pointsResult by repository.observeBreadcrumbs(sessionId)
         .collectAsState(initial = Result.success(emptyList<LocationPoint>()))

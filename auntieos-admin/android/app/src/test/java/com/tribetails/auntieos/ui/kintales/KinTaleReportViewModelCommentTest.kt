@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.kintales
 
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.KinTaleCommentsRepository
 import com.tribetails.auntieos.data.repository.KinTaleCommentsRepository.CommentsState
 import com.tribetails.auntieos.data.repository.KinTaleCommentsRepository.KinTaleComment
@@ -36,12 +37,14 @@ class KinTaleReportViewModelCommentTest {
 
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var mockRepo: AuntieRepository
+    private lateinit var mockKinCareRepo: KinCareRepository
     private lateinit var mockComments: KinTaleCommentsRepository
 
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         mockRepo = mockk(relaxed = true)
+        mockKinCareRepo = mockk(relaxed = true)
         mockComments = mockk(relaxed = true)
     }
 
@@ -50,6 +53,7 @@ class KinTaleReportViewModelCommentTest {
 
     private fun vm() = KinTaleReportViewModel(
         repository = mockRepo,
+        kinCareRepository = mockKinCareRepo,
         mediaUploader = mockk<MediaUploadManager>(relaxed = true),
         notifier = mockk<VisitNotifier>(relaxed = true),
         commentsRepo = mockComments,

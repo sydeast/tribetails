@@ -23,7 +23,7 @@ import org.junit.Test
  * the build and go out on the wire missing.
  *
  * Kept pure so they run without Firebase static init, like
- * AssignAuntiePayloadTest / InvoiceContractsGeneratedTest.
+ * KinCareRepositoryTest / InvoiceContractsGeneratedTest.
  */
 class InvoiceRepositoryTest {
 

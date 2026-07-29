@@ -8,7 +8,9 @@ import org.junit.Test
  * Pure-helper TDD for breadcrumbs subcollection sort ordering.
  *
  * The `addBreadcrumb` / `getBreadcrumbs` / `observeBreadcrumbs` methods on
- * `AuntieRepository` rely on `breadcrumbsOrderedByTimestamp` to enforce a
+ * `KinCareRepository` (W4-3; they read and write the `breadcrumbs`
+ * subcollection of a kin-care session doc) rely on
+ * `breadcrumbsOrderedByTimestamp` to enforce a
  * deterministic ascending order on `LocationPoint.timestamp`. Firestore
  * `orderBy("timestamp")` enforces the same order server-side, but client-side
  * sort is the single source of truth for any in-memory list (e.g.
@@ -24,7 +26,7 @@ import org.junit.Test
  * unknown values is the head - matching Firestore's own `orderBy` semantics
  * for numeric fields with default values.
  */
-class AuntieRepositoryBreadcrumbsTest {
+class KinCareRepositoryBreadcrumbsTest {
 
     @Test
     fun `empty list returns empty list`() {

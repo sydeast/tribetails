@@ -4,6 +4,7 @@ import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.CapturingSlot
 import io.mockk.coEvery
 import io.mockk.mockk
@@ -32,6 +33,7 @@ class DirectoryViewModelPhotoTest {
     private lateinit var viewModel: DirectoryViewModel
     private val repository = mockk<AuntieRepository>(relaxed = true)
     private val invoiceRepository = mockk<InvoiceRepository>(relaxed = true)
+    private val kinCareRepository = mockk<KinCareRepository>(relaxed = true)
     private val testDispatcher = UnconfinedTestDispatcher()
 
     private val kinfolkWithPhoto = Kinfolk(
@@ -55,16 +57,16 @@ class DirectoryViewModelPhotoTest {
         Dispatchers.setMain(testDispatcher)
         coEvery { repository.getKinfolk() } returns Result.success(listOf(kinfolkWithPhoto))
         coEvery { repository.getAllKin() } returns Result.success(listOf(kinWithPhoto))
-        coEvery { repository.getKinCareSessions() } returns Result.success(emptyList())
+        coEvery { kinCareRepository.getKinCareSessions() } returns Result.success(emptyList())
         coEvery { repository.getKin("kf1") } returns Result.success(listOf(kinWithPhoto))
         coEvery { repository.getDossier(any()) } returns Result.success(null)
-        coEvery { repository.getAllKinCareReports() } returns Result.success(emptyList())
-        coEvery { repository.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
+        coEvery { kinCareRepository.getAllKinCareReports() } returns Result.success(emptyList())
+        coEvery { kinCareRepository.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { invoiceRepository.getInvoicesForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repository.get411ForKin(any()) } returns Result.failure(NoSuchElementException("none"))
         // Phase 2: loadProfile now reads HouseholdData for the dossier migration box.
         coEvery { repository.getHouseholdData(any()) } returns Result.success(null)
-        viewModel = DirectoryViewModel(repository, invoiceRepository)
+        viewModel = DirectoryViewModel(repository, invoiceRepository, kinCareRepository)
     }
 
     @After

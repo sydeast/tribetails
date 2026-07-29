@@ -57,6 +57,9 @@ fun KinCareDetailScreen(
     onViewRoute: (routeId: String, kinfolkName: String) -> Unit = { _, _ -> },
 ) {
     val repo = AuntieOSApp.instance.repository
+    // W4-3: the visit and its KinTales read from the KinCare repo; the kinfolk,
+    // kin and 411 reads on this screen are Directory domain and stay on [repo].
+    val kinCareRepo = AuntieOSApp.instance.kinCareRepository
     val notesRepo = remember { BookingNotesRepository() }
     val scope = rememberCoroutineScope()
 
@@ -70,7 +73,7 @@ fun KinCareDetailScreen(
     LaunchedEffect(kinCareId) {
         loading = true
         scope.launch {
-            repo.getKinCareSessions().onSuccess { all ->
+            kinCareRepo.getKinCareSessions().onSuccess { all ->
                 val s = all.firstOrNull { it.id == kinCareId }
                 session = s
                 if (s != null && s.kinfolkId.isNotBlank()) {
@@ -84,7 +87,7 @@ fun KinCareDetailScreen(
                         repo.getKinByIds(ids).onSuccess { kinById = it }
                         repo.get411ByKinIds(ids).onSuccess { fourOnes = it }
                     }
-                    repo.getReportsForSession(kinCareId).onSuccess { list ->
+                    kinCareRepo.getReportsForSession(kinCareId).onSuccess { list ->
                         reports = list.sortedByDescending { it.sentAt.orEmpty().ifBlank { it.createdAt } }
                     }
                 }
@@ -261,7 +264,7 @@ private fun AssignedAuntieSection(
     batchId: String,
     visitId: String,
 ) {
-    val repo = AuntieOSApp.instance.repository
+    val repo = AuntieOSApp.instance.kinCareRepository
     val scope = rememberCoroutineScope()
     val myUid = remember { FirebaseAuth.getInstance().currentUser?.uid }
     var assignedUid by remember(visitId) { mutableStateOf<String?>(null) }

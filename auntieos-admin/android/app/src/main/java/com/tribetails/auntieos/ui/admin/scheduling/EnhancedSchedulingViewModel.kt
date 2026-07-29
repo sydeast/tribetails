@@ -7,6 +7,7 @@ import com.tribetails.auntieos.data.admin.Event
 import com.tribetails.auntieos.data.admin.EventType
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
 import com.tribetails.auntieos.data.repository.GoogleCalendarPushSkip
 import com.tribetails.auntieos.data.repository.GoogleCalendarSummary
@@ -184,7 +185,10 @@ internal fun batchBookingSummary(result: com.tribetails.auntieos.data.repository
 class EnhancedSchedulingViewModel(
     private val bookingRepository: BookingRepository,
     private val serviceRepository: ServiceRepository,
-    private val auntieRepository: AuntieRepository = com.tribetails.auntieos.AuntieOSApp.instance.repository
+    private val auntieRepository: AuntieRepository = com.tribetails.auntieos.AuntieOSApp.instance.repository,
+    // W4-3: creating a visit, rescheduling it, patching its status and writing
+    // back onto the MyTribe booking envelope are all KinCare domain.
+    private val kinCareRepository: KinCareRepository = com.tribetails.auntieos.AuntieOSApp.instance.kinCareRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SchedulingState())
@@ -644,7 +648,7 @@ class EnhancedSchedulingViewModel(
                     serviceDurationMinutes = durationMinutes,
                     notes = booking.notes
                 )
-                auntieRepository.createKinCareSession(session)
+                kinCareRepository.createKinCareSession(session)
                     .onSuccess { kinCareSessionId ->
                         // Booking-envelope write-back: stamp the originating MyTribe
                         // kinCare doc so the kinfolk's live state resolves to confirmed
@@ -688,7 +692,7 @@ class EnhancedSchedulingViewModel(
             "sessionId" to kinCareSessionId,
             "updatedAt" to java.time.Instant.now().toString(),
         )
-        auntieRepository.patchKinCareDoc(
+        kinCareRepository.patchKinCareDoc(
             familyId = incoming.kinfolkId.ifBlank { incoming.familyId },
             batchId = incoming.batchId,
             visitId = incoming.visitId,
@@ -789,7 +793,7 @@ class EnhancedSchedulingViewModel(
         }
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true)
-            auntieRepository.rescheduleBooking(booking.id, times.first, times.second)
+            kinCareRepository.rescheduleBooking(booking.id, times.first, times.second)
                 .onSuccess {
                     com.tribetails.auntieos.data.admin.AuditLog.fire(
                         scope            = viewModelScope,
@@ -1389,7 +1393,7 @@ class EnhancedSchedulingViewModel(
     }
 
     private suspend fun findLinkedSessionIds(sourceBookingId: String): Result<List<String>> =
-        auntieRepository.getKinCareSessionsBySourceBookingId(sourceBookingId)
+        kinCareRepository.getKinCareSessionsBySourceBookingId(sourceBookingId)
             .map { sessions ->
                 sessions
                     .filter { it.status.uppercase() != VisitStatus.CANCELLED.name }
@@ -1406,7 +1410,7 @@ class EnhancedSchedulingViewModel(
         )
 
         sessionIds.forEach { sessionId ->
-            auntieRepository.patchKinCareSession(sessionId, patch)
+            kinCareRepository.patchKinCareSession(sessionId, patch)
                 .onFailure { e ->
                     Log.e("EnhancedSchedulingVM", "Failed to cancel linked KinCareSession $sessionId", e)
                     return Result.failure(e)

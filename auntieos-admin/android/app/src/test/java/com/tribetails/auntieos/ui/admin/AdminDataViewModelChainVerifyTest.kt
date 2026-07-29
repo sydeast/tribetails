@@ -42,7 +42,7 @@ class AdminDataViewModelChainVerifyTest {
         Dispatchers.resetMain()
     }
 
-    private fun vm() = AdminDataViewModel(repository = repo, invoiceRepository = mockk(relaxed = true))
+    private fun vm() = AdminDataViewModel(repository = repo, invoiceRepository = mockk(relaxed = true), kinCareRepository = mockk(relaxed = true))
 
     @Test
     fun `verifyChain success maps to Done with passing verdict`() = runTest(testDispatcher) {

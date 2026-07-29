@@ -13,6 +13,7 @@ import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.VisitStatus
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.flow.first
 import com.tribetails.auntieos.location.LocationTrackingService
@@ -93,6 +94,9 @@ class HomeViewModel(
     // W4-1: the revenue tile + Cash Flow widget read invoices, so the dashboard
     // injects the Invoice domain repo directly rather than through a facade.
     private val invoiceRepo: InvoiceRepository,
+    // W4-3: today's visits, the gatekeeper's session history and every
+    // lifecycle button on this dashboard are KinCare domain.
+    private val kinCareRepo: KinCareRepository,
     private val notifier: VisitNotifier = AuntieOSApp.instance.visitNotifier
 ) : ViewModel() {
 
@@ -216,14 +220,14 @@ class HomeViewModel(
                 val kinCount       = async { repo.getKinCount() }
                 val pendingDrafts  = async { repo.getPendingDraftCount() }
                 val recentDrafts   = async { repo.getRecentDrafts() }
-                val todaySessions  = async { repo.getKinCareSessionsForDay(todayStartIso(), todayEndIso()) }
+                val todaySessions  = async { kinCareRepo.getKinCareSessionsForDay(todayStartIso(), todayEndIso()) }
                 val settings       = async { repo.getBusinessSettings() }
                 // Invoices feed the "This week $" revenue tile + Cash Flow widget. A
                 // read failure degrades those tiles (logged), never blanks the dashboard.
                 val invoicesDef    = async { invoiceRepo.getInvoices() }
                 // Gatekeeper: all sessions (not just today's) to find each household's
                 // last completed visit. Same degrade-not-blank policy as invoices.
-                val allSessionsDef = async { repo.getKinCareSessions() }
+                val allSessionsDef = async { kinCareRepo.getKinCareSessions() }
                 // AO-24: the pack, for the Pets-by-type insight widget. Degrade-not-blank.
                 val allKinDef      = async { repo.getAllKin() }
 
@@ -317,14 +321,14 @@ class HomeViewModel(
 
                 if (eligibleForAutoComplete.isNotEmpty()) {
                     eligibleForAutoComplete.forEach { session ->
-                        repo.markSessionComplete(session.id).getOrElse { e ->
+                        kinCareRepo.markSessionComplete(session.id).getOrElse { e ->
                             throw IllegalStateException(
                                 "Failed to auto-complete session ${session.id} flagged autoCompleteEligible",
                                 e
                             )
                         }
                     }
-                    sessions = repo.getKinCareSessionsForDay(todayStartIso(), todayEndIso()).getOrElse { e ->
+                    sessions = kinCareRepo.getKinCareSessionsForDay(todayStartIso(), todayEndIso()).getOrElse { e ->
                         throw IllegalStateException("Auto-complete succeeded but session reload failed", e)
                     }
                     cards = hydrateCards(sessions)
@@ -436,7 +440,7 @@ class HomeViewModel(
 
     fun onMyWay(sessionId: String, etaMinutes: Int) {
         runOnSession(sessionId) { card ->
-            repo.markSessionOnMyWay(sessionId, etaMinutes).onSuccess {
+            kinCareRepo.markSessionOnMyWay(sessionId, etaMinutes).onSuccess {
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = repo,
@@ -457,7 +461,7 @@ class HomeViewModel(
     fun arrived(sessionId: String, context: Context) {
         runOnSession(sessionId) { card ->
             // Mark arrived first; the GPS service will fill in visitRouteId once tracking starts
-            repo.markSessionArrived(sessionId, visitRouteId = "").onSuccess {
+            kinCareRepo.markSessionArrived(sessionId, visitRouteId = "").onSuccess {
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = repo,
@@ -476,7 +480,7 @@ class HomeViewModel(
 
     fun departed(sessionId: String, context: Context) {
         runOnSession(sessionId) { card ->
-            repo.markSessionDeparted(sessionId).onSuccess {
+            kinCareRepo.markSessionDeparted(sessionId).onSuccess {
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = repo,
@@ -495,7 +499,7 @@ class HomeViewModel(
 
     fun complete(sessionId: String) {
         runOnSession(sessionId) { card ->
-            repo.markSessionComplete(sessionId).onSuccess {
+            kinCareRepo.markSessionComplete(sessionId).onSuccess {
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = repo,

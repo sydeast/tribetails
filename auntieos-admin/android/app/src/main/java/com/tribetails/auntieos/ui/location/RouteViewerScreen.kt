@@ -67,7 +67,7 @@ fun RouteViewerScreen(
     // kin_care_sessions/{sessionId}/breadcrumbs subcollection (per
     // [[bug-sprint-architecture-decisions]]). VisitRoute.routePoints array is
     // being dropped in Step 4c.
-    val repository = com.tribetails.auntieos.AuntieOSApp.instance.repository
+    val repository = com.tribetails.auntieos.AuntieOSApp.instance.kinCareRepository
     var historicPoints by remember(routeId) { mutableStateOf<List<com.tribetails.auntieos.data.model.LocationPoint>>(emptyList()) }
     LaunchedEffect(state.currentRoute?.kinCareSessionId) {
         val sid = state.currentRoute?.kinCareSessionId.orEmpty()

@@ -22,6 +22,7 @@ import com.tribetails.auntieos.domain.upcomingVisitsFor
 import com.tribetails.auntieos.domain.invoicesForKinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.joinDateForEdit
@@ -231,6 +232,8 @@ class DirectoryViewModel(
     private val repository: AuntieRepository,
     // W4-1: the household profile's invoice list is Invoice domain, injected directly.
     private val invoiceRepository: InvoiceRepository,
+    // W4-3: the household's visit history and its KinTales are KinCare domain.
+    private val kinCareRepository: KinCareRepository,
 ) : ViewModel() {
 
     private val _directoryState = MutableStateFlow(DirectoryUiState())
@@ -382,7 +385,7 @@ class DirectoryViewModel(
             // zero-KinTale signal. A sessions read failure must not blank the
             // directory itself: degrade those two card extras to empty (the cards
             // still render), and log it.
-            val sessionsDef = async { repository.getKinCareSessions() }
+            val sessionsDef = async { kinCareRepository.getKinCareSessions() }
 
             val kinfolkResult  = kinfolkDef.await()
             val kinResult      = kinDef.await()
@@ -464,8 +467,8 @@ class DirectoryViewModel(
                 // Fetch linked sub-records
                 val dossierDef = async { repository.getDossier(kinfolkId) }
                 val kinDef = async { repository.getKin(kinfolkId) }
-                val reportsDef = async { repository.getAllKinCareReports() }
-                val sessionsDef = async { repository.getKinCareSessionsForKinfolk(kinfolkId) }
+                val reportsDef = async { kinCareRepository.getAllKinCareReports() }
+                val sessionsDef = async { kinCareRepository.getKinCareSessionsForKinfolk(kinfolkId) }
                 val invoicesDef = async { invoiceRepository.getInvoicesForKinfolk(kinfolkId) }
                 // Phase 2: structured HouseholdData drives the migration box's gap list.
                 val householdDef = async { repository.getHouseholdData(kinfolkId) }

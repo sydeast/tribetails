@@ -173,7 +173,7 @@ class BookingRepository(
      *
      * This is additive alongside the existing enhanced_bookings pipeline: the
      * scheduling queue can surface these requested kinCares so staff can approve
-     * them (which then writes back via [AuntieRepository.patchKinCareDoc]). The
+     * them (which then writes back via [KinCareRepository.patchKinCareDoc]). The
      * familyId/batchId/visitId carried on each [IncomingKinCare] are the FK the
      * write-back path needs.
      *
@@ -894,7 +894,7 @@ data class BookingPriceCalculation(
  * An incoming MyTribe booking request surfaced from the kinCares collectionGroup
  * (families/{familyId}/bookings/{batchId}/kinCares/{visitId}, status="requested").
  * Carries the parent path components (familyId/batchId/visitId) so the approve
- * path can write status back via [AuntieRepository.patchKinCareDoc].
+ * path can write status back via [KinCareRepository.patchKinCareDoc].
  */
 data class IncomingKinCare(
     val familyId: String = "",
