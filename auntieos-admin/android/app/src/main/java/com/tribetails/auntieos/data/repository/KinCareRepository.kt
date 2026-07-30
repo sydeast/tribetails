@@ -144,14 +144,25 @@ class KinCareRepository(
     }.onFailure { AuntieLog.e("Failed to create kin care session", it) }
 
     /**
-     * Full-document overwrite of one session. No caller in the app today; carried
-     * over rather than deleted, because this repo predates its own git history
-     * and an absent caller here is not evidence a surface was never wired.
+     * Writes every modelled field of one session. No caller in the app today;
+     * carried over rather than deleted, because this repo predates its own git
+     * history and an absent caller here is not evidence a surface was never
+     * wired. Latent, therefore, but it is a loaded gun: the day something calls
+     * it, a bare set() would take the provenance fields with it.
+     *
+     * MERGE for the same reason as [updateKinCareReport] below. `kin_care_sessions`
+     * carries `_backfilledFrom`, `_backfilledAt`, and `_reason` on the stub
+     * sessions `cleanup_prod_data_pass2.py:87-89` created for pre-cutover orphan
+     * visit_logs. [KinCareSession] declares none of them, so a bare set() erases
+     * the only record of why those documents exist.
      */
     suspend fun updateKinCareSession(session: KinCareSession): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
         firestore.collection("kin_care_sessions").document(session.id)
-            .set(session.copy(updatedAt = getCurrentTimestamp()))
+            .set(
+                session.copy(updatedAt = getCurrentTimestamp()),
+                com.google.firebase.firestore.SetOptions.merge(),
+            )
             .await()
         Unit
     }.onFailure { AuntieLog.e("Failed to update kin care session ${session.id}", it) }
@@ -429,10 +440,51 @@ class KinCareRepository(
         docRef.id
     }.onFailure { AuntieLog.e("Failed to create kin care report", it) }
 
+    /**
+     * Saves an operator's edits to one KinTale.
+     *
+     * MERGE, never a bare set(). A bare set() replaces the whole document, so
+     * every field the backend writes but [KinCareReport] does not declare is
+     * DELETED by an ordinary draft save. On `kin_care_reports` that is not a
+     * hypothetical: `reconcile_comms.py` runs this collection through the same
+     * pending-queue as the comm logs (`LOG_COLLECTIONS[:43]`), selecting work
+     * with `.where("reconcileStatus", "==", "pending")` (`:704`) and stamping
+     * `reconcileStatus`, `reconciledAt`, `reconcileNotes` (`:731-734,748-751`)
+     * plus `reconcileClaimedAt` on the atomic claim (`:657,675`). None of those
+     * four are on the model. Erase `reconcileStatus` and the KinTale leaves the
+     * nightly pass PERMANENTLY - the query can no longer see it - so its content
+     * never reaches the kinfolk dossier, and nothing anywhere reports a failure.
+     * Also erased: `_migratedFrom` / `_migratedAt`, the provenance the May
+     * visit_logs migration stamped (`migrate_visit_logs_to_kin_care_reports.py:93-94`).
+     *
+     * NOT fixed by declaring the fields on [KinCareReport]. That would make this
+     * client an OWNER of pipeline state it does not manage, and swap a loud bug
+     * for a quiet one: `.set()` would round-trip whatever the client last read,
+     * so a save racing the pipeline writes `pending` back over the `in_progress`
+     * claim and the report gets reconciled twice; and any report loaded before
+     * the field existed decodes to the Kotlin default `""`, which matches no
+     * query at all. It would also cover only the fields we know about TODAY -
+     * the next server-side field added is silently deleted again. Merge closes
+     * the class, and is what `AuntieRepository.updateKinfolk`/`updateKin` chose
+     * on 07-21 for the identical bug; `kin_care_reports` was the site missed.
+     *
+     * Merge costs nothing here: the data class serialises every modelled field,
+     * including blanked ones, so a deliberate clear still ships. Subcollections
+     * (`comments`, `reactions` - `mytribe/functions/src/portal/kinTaleEngagement.ts`)
+     * were never at risk either way; a document write does not touch them.
+     *
+     * `updatedAt` stays [getCurrentTimestamp] rather than moving to
+     * `serverTimestamp()` as updateKinfolk did: [KinCareReport.updatedAt] is a
+     * `String` and every reader parses it as ISO-8601, so a Timestamp here would
+     * be type drift, not a fix.
+     */
     suspend fun updateKinCareReport(report: KinCareReport): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
         firestore.collection("kin_care_reports").document(report.id)
-            .set(report.copy(updatedAt = getCurrentTimestamp()))
+            .set(
+                report.copy(updatedAt = getCurrentTimestamp()),
+                com.google.firebase.firestore.SetOptions.merge(),
+            )
             .await()
         Unit
     }.onFailure { AuntieLog.e("Failed to update kin care report ${report.id}", it) }
