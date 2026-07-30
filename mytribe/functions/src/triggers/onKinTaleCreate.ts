@@ -4,6 +4,7 @@ import { wrapTrigger } from '../lib/wrapTrigger';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { claimKinTalePublish, clientAlreadyAnnouncedSend } from '../lib/kinTalePublishClaim';
+import { seedReconcileStatus } from '../lib/reconcileStatus';
 
 type KinCareReportDoc = {
   kinfolkId?: string;
@@ -28,6 +29,28 @@ type KinCareReportDoc = {
 export async function onKinTaleCreateHandler(event: any): Promise<void> {
   const reportId = event.params.reportId as string;
   const report = event.data?.data() as KinCareReportDoc | undefined;
+
+  // Enrol the report in the reconcile pipeline. Runs BEFORE the draft return
+  // below, because a draft is the normal create and still has to reconcile;
+  // gating it on SENT would leave the common case out. Never blocks the
+  // announcement: a report that fails to enrol is worth a log, not a silent
+  // kinfolk notification failure.
+  try {
+    const outcome = await seedReconcileStatus(reportId);
+    logEvent({
+      severity: 'info',
+      function: 'onKinTaleCreate',
+      event: `trigger.reconcile.${outcome}`,
+      extra: { reportId },
+    });
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'onKinTaleCreate',
+      event: 'trigger.reconcile.seed_failed',
+      extra: { reportId, err: (err as Error)?.message },
+    });
+  }
 
   // Not household-visible yet. A DRAFT create is the normal case for both admin
   // clients and must stay silent.
