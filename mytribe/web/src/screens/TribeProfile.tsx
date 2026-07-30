@@ -36,6 +36,26 @@ import { LaunchError } from './LaunchError';
 const ADDRESS_DEBOUNCE_MS = 250;
 
 /**
+ * Reads one of the three reserved home-access fields when a homeAccess schema
+ * is driving the form. Holding the key means the schema owns the field, so an
+ * emptied input has to save as null.
+ *
+ * This used to read `(values[key] ?? '').trim() || staticValue.trim() || null`.
+ * Emptying the schema input made the first operand falsy and the fallback
+ * re-sent the value loaded from the server, while the screen still printed
+ * "Saved.", so a kinfolk could not remove a compromised gate code, key
+ * location, or Wi-Fi password. The static (no-schema) path always cleared
+ * correctly; the behavior forked on whether an admin had authored a schema.
+ * The static value stays as the fallback for the case where the schema loaded
+ * before the profile did and the value map is not seeded yet.
+ */
+function schemaTextOrNull(values: Record<string, string>, key: string, staticValue: string): string | null {
+  const fromSchema = values[key];
+  if (fromSchema !== undefined) return fromSchema.trim() || null;
+  return staticValue.trim() || null;
+}
+
+/**
  * Tribe Profile editor: the full edit surface for household settings, ported
  * from ui-ideas/mytribe-tribe-2026-05-31.html (the mockup's entire body is
  * this screen — Family / Home Information / Vet Clinic cards + save bar).
@@ -157,6 +177,14 @@ export function TribeProfile() {
 
   const profileSchema = profileSchemaQ.data;
   const homeSchema = homeSchemaQ.data;
+
+  // The name that will actually be sent. In schema mode the input writes
+  // profileValues, so reading `displayName` here would check the value loaded
+  // from the server rather than the one on screen. handleSave sends this same
+  // value, so the Save guard and the payload cannot disagree.
+  const effectiveDisplayName = profileSchema && profileValues['displayName'] !== undefined
+    ? profileValues['displayName']
+    : displayName;
   const clinics = vetClinicsQ.data?.clinics ?? [];
   const contact = contactQ.data;
   const members = membersQ.data?.members.filter((m) => m.role !== 'PRIMARY') ?? [];
@@ -234,10 +262,9 @@ export function TribeProfile() {
         vetFields.push({ key: 'emergencyContactRelation', label: 'Emergency Contact Relation', value: emergencyRelation.trim() });
 
       const baseProfileFields = profile.data?.profile.customFields ?? [];
-      let nextDisplayName = displayName.trim();
+      const nextDisplayName = effectiveDisplayName.trim();
       let profileCustomFields = mergeReservedFields(baseProfileFields, vetFields, PROFILE_RESERVED_KEYS);
       if (profileSchema) {
-        nextDisplayName = (profileValues['displayName'] ?? '').trim() || displayName.trim();
         const schemaFields = profileSchema.sections.flatMap((s) => s.fields).filter((f) => f.key !== 'displayName');
         const fromSchema = schemaFields.map((f) => ({ key: f.key, label: f.label, value: profileValues[f.key] ?? '' }));
         profileCustomFields = mergeReservedFields(fromSchema, vetFields, PROFILE_RESERVED_KEYS);
@@ -258,9 +285,9 @@ export function TribeProfile() {
       let nextWifi: string | null = wifi.trim() || null;
       let homeCustomFields = mergeReservedFields(baseHomeFields, afterHoursFields, HOME_RESERVED_KEYS);
       if (homeSchema) {
-        nextGateCode = (homeValues['gateCode'] ?? '').trim() || gateCode.trim() || null;
-        nextKeyLocation = (homeValues['keyLocation'] ?? '').trim() || keyLocation.trim() || null;
-        nextWifi = (homeValues['wifiPassword'] ?? '').trim() || wifi.trim() || null;
+        nextGateCode = schemaTextOrNull(homeValues, 'gateCode', gateCode);
+        nextKeyLocation = schemaTextOrNull(homeValues, 'keyLocation', keyLocation);
+        nextWifi = schemaTextOrNull(homeValues, 'wifiPassword', wifi);
         const schemaFields = homeSchema.sections
           .flatMap((s) => s.fields)
           .filter((f) => f.key !== 'gateCode' && f.key !== 'keyLocation' && f.key !== 'wifiPassword');
@@ -552,7 +579,7 @@ export function TribeProfile() {
               {/* SAVE BAR */}
               <section style={{ marginTop: 6 }}>
                 <div className="savebar">
-                  <button className="btn grad" type="button" onClick={() => void handleSave()} disabled={saving || displayName.trim().length === 0}>
+                  <button className="btn grad" type="button" onClick={() => void handleSave()} disabled={saving || effectiveDisplayName.trim().length === 0}>
                     {'\u{1F4BE}'} {saving ? 'Saving…' : 'Save Changes'}
                   </button>
                   {status && (
@@ -561,7 +588,7 @@ export function TribeProfile() {
                       {status}
                     </span>
                   )}
-                  {displayName.trim().length === 0 && <span className="sub">Add a display name to save.</span>}
+                  {effectiveDisplayName.trim().length === 0 && <span className="sub">Add a display name to save.</span>}
                 </div>
               </section>
             </>
