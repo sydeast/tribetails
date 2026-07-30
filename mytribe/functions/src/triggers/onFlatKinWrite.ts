@@ -6,10 +6,13 @@ import { wrapTrigger } from '../lib/wrapTrigger';
 import {
   MIRROR_ORIGIN_FAMILY,
   MIRROR_ORIGIN_FLAT,
+  PARENT_OWNED_FIELDS,
   STAFF_EDITABLE_FIELDS,
+  omitKeys,
   pickDefined,
   projectChanged,
 } from './kinMirror';
+import { DEFAULT_KIN_STATUS } from '../lib/kinStatus';
 
 type FlatKinDoc = {
   kinfolkId?: string;
@@ -32,7 +35,10 @@ type FlatKinDoc = {
  *      (it flips `_mirrorOrigin` to `flat` but leaves staff fields identical).
  *
  * The reverse write EXCLUDES every parent-owned field so a stale staff doc can
- * never clobber what the parent just typed in the portal.
+ * never clobber what the parent just typed in the portal. The one exception is
+ * a `status` SEED (not a mirror): when the merge would otherwise create a
+ * statusless family doc, it is stamped `active` so the pet is visible in the
+ * portal. An existing status is never overwritten.
  */
 export async function mirrorFlatKinToFamily(
   before: FlatKinDoc | undefined,
@@ -52,19 +58,42 @@ export async function mirrorFlatKinToFamily(
     return { action: 'skipped', reason: 'no-change' };
   }
 
-  const payload = pickDefined(after, STAFF_EDITABLE_FIELDS);
+  // Inclusion list first, then strip every parent-owned field. The two lists are
+  // disjoint today, so the strip is a no-op; it is here so that adding a field
+  // to STAFF_EDITABLE_FIELDS can never silently hand staff a field the parent
+  // owns (`status` above all: AuntieOS writes `archived` onto the flat doc, and
+  // that must never travel back and un-memorialize a pet).
+  const payload = omitKeys(pickDefined(after, STAFF_EDITABLE_FIELDS), PARENT_OWNED_FIELDS);
   if (Object.keys(payload).length === 0) {
     return { action: 'skipped', reason: 'empty-projection' };
   }
 
-  await db().doc(familyKinPath).set(
-    {
-      ...payload,
-      _mirrorOrigin: MIRROR_ORIGIN_FLAT,
-      updatedAt: FieldValue.serverTimestamp(),
-    },
-    { merge: true },
-  );
+  // This is a merge write against a family kin doc that MAY NOT EXIST: staff can
+  // create the flat pet first and link it to a family path the portal has not
+  // written yet. A merge creates that doc, and it used to be created with no
+  // `status` at all, which dropped the pet out of the portal's Kin list.
+  //
+  // So seed the default, ONCE, and only into the gap. The parent stays the sole
+  // writer of the VALUE: an existing status, memorial included, is never
+  // touched. The read and the write share a transaction so a memorial the
+  // parent sets concurrently cannot be overwritten by a stale "absent" read.
+  const familyRef = db().doc(familyKinPath);
+  await db().runTransaction(async (tx) => {
+    const snap = await tx.get(familyRef);
+    const existing = (snap.data() as Record<string, unknown> | undefined)?.['status'];
+    const seedStatus =
+      typeof existing === 'string' && existing.length > 0 ? {} : { status: DEFAULT_KIN_STATUS };
+    tx.set(
+      familyRef,
+      {
+        ...payload,
+        ...seedStatus,
+        _mirrorOrigin: MIRROR_ORIGIN_FLAT,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
   return { action: 'mirrored' };
 }
 

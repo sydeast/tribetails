@@ -5,6 +5,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { isPortalHiddenKinStatus } from '../lib/kinStatus';
 
 interface GetMyKinRequest {
   kinfolkId?: string;
@@ -57,15 +58,27 @@ export async function getMyKinHandler(
   const firestore = db();
   const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, req.auth?.token?.admin === true, 'getMyKin');
 
+  // NO SERVER-SIDE STATUS FILTER. This used to be
+  // `.where('status', 'in', ['active', 'noLongerWithUs'])`, and Firestore's `in`
+  // also excludes every document MISSING the field, so a kin doc created by the
+  // flat -> family mirror (which merges staff fields into a doc that may not
+  // exist yet) disappeared from the portal with no error. Status is a two-value
+  // flag with a default; an inclusion filter is the wrong shape for it. The
+  // whole subcollection is fetched (a household has a handful of pets, and
+  // there is no `limit` here, so nothing about page sizes changes) and only the
+  // legacy admin spellings are dropped in memory below.
   const kinSnap = await firestore
     .collection('families')
     .doc(kinfolkId)
     .collection('kin')
-    .where('status', 'in', ['active', 'noLongerWithUs'])
     .get();
 
+  const visibleDocs = kinSnap.docs.filter(
+    (d) => !isPortalHiddenKinStatus((d.data() as Record<string, unknown>)['status']),
+  );
+
   const kin: KinDto[] = await Promise.all(
-    kinSnap.docs.map(async (d) => {
+    visibleDocs.map(async (d) => {
       const data = d.data() as Record<string, unknown>;
       const legacyKinId = stringOrNull(data['legacyKinId']);
       let aiBlurb: string | null = null;

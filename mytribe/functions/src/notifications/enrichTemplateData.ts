@@ -1,5 +1,6 @@
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
+import { isInactiveKinStatus } from '../lib/kinStatus';
 import { getNotificationDef } from './catalog';
 import type { Audience } from './types';
 
@@ -32,9 +33,6 @@ import type { Audience } from './types';
  * currently has configured and the zone the schedulers already run in.
  */
 const DEFAULT_TIME_ZONE = 'America/New_York';
-
-/** Kin (pet) statuses that should be excluded from the "family pets" name join. */
-const INACTIVE_KIN_STATUSES = new Set(['inactive', 'archived', 'noLongerWithUs']);
 
 /**
  * The exact `{{token}}` set each catalog key's templates reference, mirrored from
@@ -292,7 +290,10 @@ export async function enrichTemplateData(
     try {
       const snap = await firestore.collection('kin').where('kinfolkId', '==', familyId).get();
       const all = snap.docs.map((d) => d.data() as Record<string, unknown>);
-      const active = all.filter((d) => !INACTIVE_KIN_STATUSES.has(str(d.status)));
+      // Statuses that mean "not in active care", memorial included; see
+      // `lib/kinStatus.ts` for the one shared definition. A pet with NO status
+      // counts as active, so it still contributes its name here.
+      const active = all.filter((d) => !isInactiveKinStatus(d.status));
       const names = (active.length > 0 ? active : all)
         .map((d) => str(d.name))
         .filter((s) => s.length > 0);
