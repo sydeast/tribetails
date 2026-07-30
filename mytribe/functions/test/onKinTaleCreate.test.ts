@@ -5,7 +5,9 @@ const mocks = vi.hoisted(() => ({
   enqueue: vi.fn().mockResolvedValue(undefined),
   resolveUid: vi.fn(),
   claim: vi.fn().mockResolvedValue(true),
+  seedReconcile: vi.fn().mockResolvedValue('seeded'),
 }));
+vi.mock('../src/lib/reconcileStatus', () => ({ seedReconcileStatus: mocks.seedReconcile }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
@@ -26,6 +28,7 @@ beforeEach(() => {
   mocks.resolveUid.mockReset();
   mocks.dbFn.mockReset();
   mocks.claim.mockReset().mockResolvedValue(true);
+  mocks.seedReconcile.mockReset().mockResolvedValue('seeded');
 });
 
 import { onKinTaleCreateHandler } from '../src/triggers/onKinTaleCreate';
@@ -107,5 +110,23 @@ describe('onKinTaleCreate trigger', () => {
 
     expect(mocks.enqueue).not.toHaveBeenCalled();
     expect(mocks.claim).not.toHaveBeenCalled();
+  });
+
+  it('enrols a DRAFT create in the reconcile pipeline, which is the case the notification path skips', async () => {
+    // Both admin clients create a draft first, so gating enrolment on SENT
+    // would leave the normal KinTale out of the pipeline entirely.
+    await onKinTaleCreateHandler(makeEvent({ kinfolkId: 'fam3', status: 'DRAFT' }, 'r-draft'));
+
+    expect(mocks.seedReconcile).toHaveBeenCalledWith('r-draft');
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('still announces the send when enrolment throws', async () => {
+    mocks.seedReconcile.mockRejectedValue(new Error('firestore unavailable'));
+    mocks.resolveUid.mockResolvedValue('uid_kinfolk');
+
+    await onKinTaleCreateHandler(makeEvent({ kinfolkId: 'fam3', status: 'SENT', bodyCopy: 'tale' }));
+
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
   });
 });
