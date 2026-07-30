@@ -7,6 +7,35 @@ vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 beforeEach(() => mocks.dbFn.mockReset());
 
+/**
+ * Wraps the mock db so every `.where(...)` issued anywhere in the chain is
+ * recorded.
+ *
+ * The test double cannot ENFORCE a where clause (P0-10), so no assertion here
+ * can prove a filter is correct. It CAN prove a filter was never issued, and
+ * that is exactly the fix under test: the old
+ * `.where('status', 'in', ['active', 'noLongerWithUs'])` silently dropped every
+ * kin doc missing the field, which is how the mirror-created docs vanished.
+ */
+function recordWheres(db: any): { db: any; wheres: unknown[][] } {
+  const wheres: unknown[][] = [];
+  const wrap = (target: any): any =>
+    new Proxy(target, {
+      get(t, prop, recv) {
+        const value = Reflect.get(t, prop, recv);
+        if (typeof value !== 'function') return value;
+        return (...args: unknown[]) => {
+          if (prop === 'where') wheres.push(args);
+          const out = value.apply(t, args);
+          return out && typeof out === 'object' && typeof out.then !== 'function'
+            ? wrap(out)
+            : out;
+        };
+      },
+    });
+  return { db: wrap(db), wheres };
+}
+
 describe('getMyKinHandler', () => {
   it('rejects unauth', async () => {
     const { getMyKinHandler } = await import('../src/portal/getMyKin');
@@ -48,16 +77,70 @@ describe('getMyKinHandler', () => {
     expect(res.kin[0].aiBlurb).toBe('Mr Biggles is pure joy.');
   });
 
-  it('coerces unknown status to active', async () => {
+  // P0-9. The old fixture here seeded `status: 'random'` and asserted 'active',
+  // an outcome production could never reach: with the server-side `in` filter,
+  // real Firestore returned zero docs for it. A statusless doc is the shape
+  // production DOES produce (the flat -> family mirror merges into a family doc
+  // that may not exist yet), and it has to survive.
+  it('lists a kin doc that has NO status field at all, defaulting it to active', async () => {
     const ctx = buildDbMock({
       docs: { 'clients/u1': { kinfolkIds: ['3'] } },
       queryDocs: {
-        'families/3/kin': [{ id: 'k1', data: { name: 'X', status: 'random' } }],
+        'families/3/kin': [{ id: 'k1', data: { name: 'Ghost' } }],
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { getMyKinHandler } = await import('../src/portal/getMyKin');
     const res = await getMyKinHandler({ data: {}, auth: { uid: 'u1' } } as any);
+    expect(res.kin).toHaveLength(1);
+    expect(res.kin[0].name).toBe('Ghost');
     expect(res.kin[0].status).toBe('active');
+  });
+
+  it('never asks Firestore to filter kin by status', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      queryDocs: {
+        'families/3/kin': [{ id: 'k1', data: { name: 'Ghost' } }],
+      },
+    });
+    const tracked = recordWheres(ctx.db);
+    mocks.dbFn.mockReturnValue(tracked.db);
+    const { getMyKinHandler } = await import('../src/portal/getMyKin');
+    await getMyKinHandler({ data: {}, auth: { uid: 'u1' } } as any);
+    expect(tracked.wheres.filter((args) => args[0] === 'status')).toEqual([]);
+  });
+
+  it('keeps a memorial kin in the list and reports noLongerWithUs', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      queryDocs: {
+        'families/3/kin': [{ id: 'k1', data: { name: 'Biscuit', status: 'noLongerWithUs' } }],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinHandler } = await import('../src/portal/getMyKin');
+    const res = await getMyKinHandler({ data: {}, auth: { uid: 'u1' } } as any);
+    expect(res.kin).toHaveLength(1);
+    expect(res.kin[0].status).toBe('noLongerWithUs');
+  });
+
+  it('hides the legacy admin statuses (inactive, archived) and nothing else', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      queryDocs: {
+        'families/3/kin': [
+          { id: 'k1', data: { name: 'Buddy', status: 'active' } },
+          { id: 'k2', data: { name: 'Biscuit', status: 'noLongerWithUs' } },
+          { id: 'k3', data: { name: 'Ghost' } },
+          { id: 'k4', data: { name: 'OldInactive', status: 'inactive' } },
+          { id: 'k5', data: { name: 'OldArchived', status: 'archived' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinHandler } = await import('../src/portal/getMyKin');
+    const res = await getMyKinHandler({ data: {}, auth: { uid: 'u1' } } as any);
+    expect(res.kin.map((k) => k.name)).toEqual(['Buddy', 'Biscuit', 'Ghost']);
   });
 });

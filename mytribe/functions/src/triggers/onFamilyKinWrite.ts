@@ -8,10 +8,11 @@ import { enqueueNotification } from '../notifications/dispatcher';
 import {
   MIRROR_ORIGIN_FAMILY,
   MIRROR_ORIGIN_FLAT,
-  PARENT_OWNED_FIELDS,
+  FLAT_MIRROR_FIELDS,
   pickDefined,
   projectChanged,
 } from './kinMirror';
+import { isInactiveKinStatus } from '../lib/kinStatus';
 
 type KinDoc = {
   status?: string;
@@ -34,16 +35,15 @@ type KinDoc = {
   _mirrorOrigin?: string;
 };
 
-const INACTIVE_STATUSES = new Set(['noLongerWithUs', 'inactive', 'archived']);
-
 /**
  * Builds the flat `kin/{docId}` payload from a family kin doc. Only the
- * parent-owned fields are projected here. Staff-owned data (AuntieOS `the_411`
- * AI summary, plus AuntieOS-only flat-doc fields like `routine`, `vetInfo`)
- * is NEVER written by this trigger. One writer per field.
+ * parent-owned fields are projected here, minus `status`, which the paths below
+ * translate into the flat vocabulary explicitly. Staff-owned data (AuntieOS
+ * `the_411` AI summary, plus AuntieOS-only flat-doc fields like `routine`,
+ * `vetInfo`) is NEVER written by this trigger. One writer per field.
  */
 export function buildFlatMirrorPayload(after: KinDoc): Record<string, unknown> {
-  return pickDefined(after as Record<string, unknown>, PARENT_OWNED_FIELDS);
+  return pickDefined(after as Record<string, unknown>, FLAT_MIRROR_FIELDS);
 }
 
 /**
@@ -77,8 +77,7 @@ export async function mirrorFamilyKinToFlat(
     flatDocId = found;
   }
 
-  const afterInactive =
-    after.status != null && INACTIVE_STATUSES.has(after.status);
+  const afterInactive = isInactiveKinStatus(after.status);
 
   // CREATE path: no flat mirror exists yet -> create one and stamp both sides.
   if (!flatDocId) {
@@ -116,8 +115,7 @@ export async function mirrorFamilyKinToFlat(
 
   // ARCHIVE path: status crossed into an inactive value -> mark the mirror
   // inactive (soft), do not clobber parent-owned descriptive fields.
-  const beforeInactive =
-    before?.status != null && INACTIVE_STATUSES.has(before.status);
+  const beforeInactive = isInactiveKinStatus(before?.status);
   if (afterInactive && !beforeInactive) {
     await flatRef.set(
       {
@@ -141,7 +139,7 @@ export async function mirrorFamilyKinToFlat(
 
   // UPDATE path: skip when no parent-owned field actually changed (loop guard).
   const restored = beforeInactive && !afterInactive;
-  if (!restored && !projectChanged(before as Record<string, unknown> | undefined, after as Record<string, unknown>, PARENT_OWNED_FIELDS)) {
+  if (!restored && !projectChanged(before as Record<string, unknown> | undefined, after as Record<string, unknown>, FLAT_MIRROR_FIELDS)) {
     return { action: 'skipped', flatDocId };
   }
 
@@ -265,9 +263,8 @@ export const onFamilyKinWrite = onDocumentWritten(
     const afterStatus = after.status ?? null;
     const transitionedToInactive =
       afterStatus !== beforeStatus &&
-      afterStatus !== null &&
-      INACTIVE_STATUSES.has(afterStatus) &&
-      (beforeStatus === null || !INACTIVE_STATUSES.has(beforeStatus));
+      isInactiveKinStatus(afterStatus) &&
+      !isInactiveKinStatus(beforeStatus);
 
     if (transitionedToInactive) {
       await dispatch('pet.marked.inactive', { kinName: after.name ?? null, status: afterStatus });
@@ -288,7 +285,7 @@ export const onFamilyKinWrite = onDocumentWritten(
       });
       return;
     }
-    if (!projectChanged(before as Record<string, unknown> | undefined, after as Record<string, unknown>, PARENT_OWNED_FIELDS)) {
+    if (!projectChanged(before as Record<string, unknown> | undefined, after as Record<string, unknown>, FLAT_MIRROR_FIELDS)) {
       logEvent({
         severity: 'debug',
         function: 'onFamilyKinWrite',

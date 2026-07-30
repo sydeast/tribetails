@@ -12,7 +12,13 @@ vi.mock('firebase-admin/firestore', async () => {
 beforeEach(() => mocks.dbFn.mockReset());
 
 import { mirrorFlatKinToFamily, onFlatKinWrite } from '../src/triggers/onFlatKinWrite';
-import { MIRROR_ORIGIN_FAMILY, MIRROR_ORIGIN_FLAT } from '../src/triggers/kinMirror';
+import {
+  MIRROR_ORIGIN_FAMILY,
+  MIRROR_ORIGIN_FLAT,
+  PARENT_OWNED_FIELDS,
+  STAFF_EDITABLE_FIELDS,
+  omitKeys,
+} from '../src/triggers/kinMirror';
 
 const FAMILY_PATH = 'families/kf1/kin/pet1';
 
@@ -97,5 +103,101 @@ describe('mirrorFlatKinToFamily: REVERSE mirror of staff-editable fields', () =>
     expect(res.action).toBe('skipped');
     expect(res.reason).toBe('no-link');
     expect(ctx.writes).toHaveLength(0);
+  });
+});
+
+/**
+ * P0-9. This merge write CREATES the family kin doc when staff linked a flat pet
+ * to a family path the portal has not written yet. It used to create it with no
+ * `status`, and a statusless doc fell out of the portal's Kin list entirely.
+ */
+describe('mirrorFlatKinToFamily: status seed', () => {
+  it('seeds status active when the family doc does not exist yet', async () => {
+    const ctx = buildDbMock({ docs: {} });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await mirrorFlatKinToFamily(
+      { familyKinPath: FAMILY_PATH, routine: 'old' } as any,
+      { familyKinPath: FAMILY_PATH, routine: 'new' } as any,
+    );
+    expect(res.action).toBe('mirrored');
+
+    const fam = ctx.writes.find((w) => w.path === FAMILY_PATH);
+    expect(fam!.data.status).toBe('active');
+    expect(fam!.merge).toBe(true);
+  });
+
+  it('seeds status active when the family doc exists but carries no status', async () => {
+    const ctx = buildDbMock({ docs: { [FAMILY_PATH]: { name: 'Rex' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await mirrorFlatKinToFamily(
+      { familyKinPath: FAMILY_PATH, routine: 'old' } as any,
+      { familyKinPath: FAMILY_PATH, routine: 'new' } as any,
+    );
+    expect(res.action).toBe('mirrored');
+    expect(ctx.writes.find((w) => w.path === FAMILY_PATH)!.data.status).toBe('active');
+  });
+
+  it('NEVER overwrites a memorial status the parent already set', async () => {
+    const ctx = buildDbMock({
+      docs: { [FAMILY_PATH]: { name: 'Rex', status: 'noLongerWithUs' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await mirrorFlatKinToFamily(
+      { familyKinPath: FAMILY_PATH, routine: 'old' } as any,
+      { familyKinPath: FAMILY_PATH, routine: 'new', status: 'active' } as any,
+    );
+    expect(res.action).toBe('mirrored');
+
+    const fam = ctx.writes.find((w) => w.path === FAMILY_PATH);
+    expect(fam!.data).not.toHaveProperty('status');
+    expect(fam!.data.routine).toBe('new');
+  });
+
+  it('leaves an existing active status alone rather than rewriting it', async () => {
+    const ctx = buildDbMock({ docs: { [FAMILY_PATH]: { name: 'Rex', status: 'active' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await mirrorFlatKinToFamily(
+      { familyKinPath: FAMILY_PATH, routine: 'old' } as any,
+      { familyKinPath: FAMILY_PATH, routine: 'new' } as any,
+    );
+    expect(ctx.writes.find((w) => w.path === FAMILY_PATH)!.data).not.toHaveProperty('status');
+  });
+});
+
+describe('kinMirror field-ownership contract', () => {
+  it('declares status parent-owned, so no reverse mirror can ever carry it', () => {
+    expect(PARENT_OWNED_FIELDS).toContain('status');
+    expect(STAFF_EDITABLE_FIELDS).not.toContain('status');
+  });
+
+  it('keeps the two ownership lists disjoint', () => {
+    const overlap = PARENT_OWNED_FIELDS.filter((f) => STAFF_EDITABLE_FIELDS.includes(f));
+    expect(overlap).toEqual([]);
+  });
+
+  it('drops every parent-owned key from a payload that somehow contains one', () => {
+    const stripped = omitKeys(
+      { routine: 'new', status: 'active', name: 'STAFF_VALUE' },
+      PARENT_OWNED_FIELDS,
+    );
+    expect(stripped).toEqual({ routine: 'new' });
+  });
+
+  it('writes no parent-owned field into the family doc, whatever the flat doc carries', async () => {
+    const ctx = buildDbMock({ docs: { [FAMILY_PATH]: { status: 'noLongerWithUs' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    // A flat doc carrying every parent-owned field plus one real staff change.
+    const after: Record<string, unknown> = { familyKinPath: FAMILY_PATH, routine: 'new' };
+    for (const f of PARENT_OWNED_FIELDS) after[f] = 'STAFF_VALUE';
+
+    await mirrorFlatKinToFamily({ familyKinPath: FAMILY_PATH, routine: 'old' } as any, after as any);
+
+    const fam = ctx.writes.find((w) => w.path === FAMILY_PATH)!;
+    for (const f of PARENT_OWNED_FIELDS) expect(fam.data).not.toHaveProperty(f);
   });
 });
