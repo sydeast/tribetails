@@ -123,3 +123,83 @@
   border-top: none;
   padding-top: 0;
 }
+
+/* ── Setup checklist (Google Calendar over OAuth) ─────────────────────────────
+   An ordered list whose markers are the step numbers the operator is told to
+   work in, so "step 2" in the summary and in the server's own message points at
+   something they can see. The state word carries a colour AND its own text: a
+   state told only by colour is invisible to a third of the people who need it. */
+
+.settingsEdit__checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  counter-reset: setup-step;
+}
+
+.settingsEdit__checklistItem {
+  counter-increment: setup-step;
+  display: grid;
+  grid-template-columns: 1.5rem 1fr;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: var(--border-hairline) solid var(--color-border-soft);
+}
+.settingsEdit__checklistItem:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.settingsEdit__checklistItem::before {
+  content: counter(setup-step) '.';
+  font-family: var(--font-mono);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-faint);
+  line-height: 1.5;
+}
+
+.settingsEdit__checklistTitle {
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.settingsEdit__checklistState {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-left: var(--space-2);
+}
+.settingsEdit__checklistState--done {
+  color: var(--color-success);
+}
+.settingsEdit__checklistState--failing {
+  color: var(--color-error);
+}
+.settingsEdit__checklistState--unknown {
+  color: var(--color-text-faint);
+}
+
+.settingsEdit__checklistDetail {
+  margin: 0.15rem 0 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+/* Typed by a human into a console or a shell, so it is monospaced, selectable
+   and wraps rather than truncating: a redirect URI that differs by one
+   character is refused by Google outright. */
+.settingsEdit__checklistLiteral {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-card);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

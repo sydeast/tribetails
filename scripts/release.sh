@@ -471,6 +471,61 @@ elif [ -n "$LAST_RELEASED" ] && git cat-file -e "$LAST_RELEASED^{commit}" 2>/dev
   fi
 fi
 
+# A CHANGED SECRET IS A CHANGED DEPLOY, even though it changes no file.
+#
+# This is the second half of the skip above, and without it the skip has a hole
+# an operator falls into silently. `firebase functions:secrets:set` mints a new
+# Secret Manager VERSION and binds nothing: these are gcfv2 functions, which pin
+# the version resolved at DEPLOY time. So the sequence "set the secret, run the
+# release" leaves the runtime reading the old value, or no value, forever. The
+# git diff above sees an unchanged tree and skips the one step that would have
+# bound it, and the release reports success.
+#
+# That is not hypothetical. It is the Google Calendar report: both OAuth secrets
+# set several times, the feature still rejecting with `google_oauth_not_configured`,
+# and every release since saying "functions unchanged, skipped".
+#
+# So when the code is unchanged, ask whether any DECLARED secret has an enabled
+# version newer than the last released commit, and deploy if one does. Timestamps
+# are normalised to YYYYMMDDTHHMMSS (git's committer time forced to UTC, gcloud's
+# createTime already UTC) because one carries an offset and the other a fraction,
+# and comparing those as raw strings is wrong in a way that looks right.
+if [ "$FUNCTIONS_CHANGED" -eq 0 ]; then
+  STEP="checking whether a declared secret changed since the last release"
+  SINCE="$(TZ=UTC git show -s --format=%cd --date=iso-strict-local "$LAST_RELEASED" 2>/dev/null || true)"
+  SINCE_N="$(printf '%s' "$SINCE" | tr -d ':-' | cut -c1-15)"
+  SECRET_DECLARED="$(node "$ROOT/scripts/declared-secrets.js" 2>/dev/null || true)"
+  NEWER_SECRETS=""
+  if [ -z "$SINCE_N" ] || [ -z "$SECRET_DECLARED" ]; then
+    # Same posture as step 1b's "could not list": an unknown is reported, never
+    # rendered as a clean answer. Skipping stays the behaviour so a machine
+    # without gcloud does not start doing the ~200-function deploy every run,
+    # but the override is named so nobody has to guess it.
+    ylw "could not check whether a secret changed (are the functions built, is"
+    ylw "  gcloud signed in?). If you have just run functions:secrets:set, this"
+    ylw "  release will NOT bind it. Force with RELEASE_FORCE_FUNCTIONS=1."
+  else
+    for s in $SECRET_DECLARED; do
+      LATEST="$(gcloud secrets versions list "$s" --project "$PROJECT" \
+        --filter='state:ENABLED' --sort-by=~createTime --limit=1 \
+        --format='value(createTime)' 2>/dev/null || true)"
+      LATEST_N="$(printf '%s' "$LATEST" | tr -d ':-' | cut -c1-15)"
+      [ -z "$LATEST_N" ] && continue
+      if [[ "$LATEST_N" > "$SINCE_N" ]]; then
+        NEWER_SECRETS="$NEWER_SECRETS $s"
+      fi
+    done
+  fi
+  if [ -n "$NEWER_SECRETS" ]; then
+    FUNCTIONS_CHANGED=1
+    ylw "functions: code unchanged, but these secrets have a version newer than"
+    ylw "  the last release, and a set secret is not mounted until a deploy"
+    ylw "  resolves it:"
+    for s in $NEWER_SECRETS; do ylw "    $s"; done
+    ylw "  Deploying, because skipping would leave the new value unbound."
+  fi
+fi
+
 if [ "$FUNCTIONS_CHANGED" -eq 0 ]; then
   ylw "SKIPPED: mytribe/functions is unchanged since the last release"
   ylw "  ($(git rev-parse --short "$LAST_RELEASED")). The deployed functions are"

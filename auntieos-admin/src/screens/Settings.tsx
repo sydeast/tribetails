@@ -15,8 +15,7 @@ import {
   PAYMENT_FIELDS,
 } from './settings/sections';
 import { BrandingSection } from './settings/BrandingSection';
-import { CalendarSyncSection } from './settings/CalendarSyncSection';
-import { GoogleCalendarSection } from './settings/GoogleCalendarSection';
+import { CalendarSection } from './settings/CalendarSection';
 import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
 import { TimeOffEditor } from './settings/TimeOffEditor';
 import { KinCareRatesEditor } from './settings/KinCareRatesEditor';
@@ -45,6 +44,17 @@ import './Settings.css';
  * was deployed the whole time. It is now a full editor with a Run Sync action
  * and a last-run receipt (`settings/CalendarSyncSection.tsx`).
  *
+ * CALENDAR IS ONE SECTION, not two. It shipped as two nav items, `calendar`
+ * ("Calendar sync") and `googleCalendar` ("Google Calendar (editable)"), which
+ * asked an operator to know the difference between a service account reading
+ * busy time and an OAuth grant writing events before they could pick a tab.
+ * `settings/CalendarSection.tsx` renders both, sub-headed, under `calendar`; the
+ * `googleCalendar` id is retired. NOTHING DEEP-LINKS TO A SECTION: `/settings`
+ * takes no parameter, the selected section is React state, and no hash or
+ * `scrollIntoView` reads the `settings-panel-*` DOM ids that `SectionNav` mints.
+ * So retiring an id costs no URL. If section deep links ever arrive, they will
+ * need an alias from the retired id, and this is the note that says so.
+ *
  * Loads `business_settings/business_settings` once via the one-shot
  * `getBusinessSettings` (a direct Firestore `getDoc`, not a callable — see
  * `api/settings.ts`), not a live listener: a sole admin has no concurrent editor
@@ -65,8 +75,7 @@ type SectionId =
   | 'mytribe'
   | 'notifications'
   | 'tags'
-  | 'calendar'
-  | 'googleCalendar';
+  | 'calendar';
 
 /** Nav order. Matches the section order the operator saw approved for this screen. */
 const SECTIONS: readonly SectionNavItem<SectionId>[] = [
@@ -81,12 +90,12 @@ const SECTIONS: readonly SectionNavItem<SectionId>[] = [
   { id: 'mytribe', label: 'MyTribe portal' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'tags', label: 'Tags' },
-  { id: 'calendar', label: 'Calendar sync' },
-  // Task 7.2. Next to Calendar sync because an operator looking for "the Google
-  // thing" will look here, and separate from it because they are two features
-  // that fail separately: one reads busy time as a service account, the other
-  // writes visits as a signed-in Google account.
-  { id: 'googleCalendar', label: 'Google Calendar (editable)' },
+  // Both Google calendar capabilities: the free/busy import (Task 7.1) and the
+  // editable OAuth calendars (Task 7.2), sub-headed inside one panel. They are
+  // still two features that fail separately, which is why they are still two
+  // panels with their own receipts; they are one thing to LOOK for, which is why
+  // they are one tab.
+  { id: 'calendar', label: 'Calendar' },
 ];
 
 /** The section the screen opens on. Named (not `SECTIONS[0]`) so it stays a
@@ -195,8 +204,8 @@ export function Settings() {
 }
 
 /**
- * Renders one section's body. The two self-loading sub-editors ignore the shell's
- * `settings` (they fetch their own data); the other ten read it through
+ * Renders one section's body. The self-loading sub-editors ignore the shell's
+ * `settings` (they fetch their own data); the rest read it through
  * `AsyncRegion`, so a not-yet-loaded doc shows one honest loading/error state
  * inside the panel rather than a fabricated blank.
  */
@@ -208,10 +217,12 @@ function renderSection(
 ): ReactNode {
   if (id === 'notifications') return <NotificationGate />;
   if (id === 'tags') return <TagsEditor />;
-  // Also self-loading, and it has to be: the OAuth connection lives in a
-  // document `firestore.rules` denies to every client, so this panel cannot
-  // read it from `business_settings` like the others. It asks a callable.
-  if (id === 'googleCalendar') return <GoogleCalendarSection />;
+  // Calendar owns its own AsyncRegion rather than being wrapped in the shared
+  // one below, because only its free/busy half reads `business_settings`. Its
+  // OAuth half asks a callable (the connection document is denied to every
+  // client by `firestore.rules`), and must not be taken down by a settings load
+  // it does not depend on.
+  if (id === 'calendar') return <CalendarSection settings={settings} onSave={persist} />;
 
   return (
     <AsyncRegion
@@ -226,7 +237,7 @@ function renderSection(
   );
 }
 
-/** The ten sections that edit the loaded `business_settings` doc. */
+/** The sections that edit the loaded `business_settings` doc and nothing else. */
 function renderDataSection(
   id: SectionId,
   data: BusinessSettings,
@@ -276,8 +287,6 @@ function renderDataSection(
       return <BrandingSection data={data} onSave={persist} onServerChanged={applyServerChange} />;
     case 'mytribe':
       return <MyTribePortalSection data={data} onSave={persist} onServerChanged={applyServerChange} />;
-    case 'calendar':
-      return <CalendarSyncSection data={data} onSave={persist} />;
     default:
       return null;
   }

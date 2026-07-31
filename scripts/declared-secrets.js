@@ -2,6 +2,10 @@
 /**
  * Print, one per line, every secret name the built mytribe functions DECLARE.
  *
+ *   node scripts/declared-secrets.js                  every declared name
+ *   node scripts/declared-secrets.js --by-function    FUNCTION<tab>SECRET pairs
+ *   node scripts/declared-secrets.js --by-function GOOGLE_OAUTH   filtered
+ *
  * WHY THIS READS __endpoint AND NOT THE SOURCE
  * Firebase validates declared secrets before it uploads anything, and a secret
  * that is declared but never set fails the ENTIRE codebase deploy, not just the
@@ -15,6 +19,23 @@
  * The built output carries `__endpoint.secretEnvironmentVariables`, which is
  * the SAME structure the Firebase CLI itself reads. Asking the artifact rather
  * than the source means this check agrees with the validator by construction.
+ *
+ * WHY --by-function EXISTS. The flat list answers "will the deploy validate",
+ * which is what release.sh needs. It cannot answer the question an operator
+ * arrives with, which is "I set the secret and the feature still fails, so
+ * WHICH function was supposed to get it". A secret is mounted per function, so
+ * the binding is a pair, and a name present in the flat list can still be
+ * missing from the one function that reads it. That is not hypothetical: it is
+ * exactly the failure the retired GOOGLE_CALENDAR_SETUP.md shipped, a secret
+ * the operator set that no function ever declared or read.
+ *
+ * WHAT THIS CANNOT TELL YOU, and nothing static can: whether the secret has a
+ * VALUE, and whether the DEPLOYED function carries this declaration. Both live
+ * in the project, not in the artifact. These functions are gcfv2, which pins
+ * the secret VERSION resolved at deploy time, so a `functions:secrets:set` after
+ * the last deploy changes nothing until the next one. Compare against reality
+ * with `gcloud secrets list` (release.sh step 1b does) and
+ * `gcloud functions describe <name> --gen2 --region us-central1`.
  *
  * Requires `npm run build:functions` to have run (release.sh does this in
  * step 1, before calling here).
@@ -41,8 +62,13 @@ try {
   process.exit(1);
 }
 
+const args = process.argv.slice(2);
+const byFunction = args.includes('--by-function');
+const filter = args.find((a) => !a.startsWith('--')) || '';
+
 const names = new Set();
-for (const value of Object.values(mod)) {
+const pairs = [];
+for (const [exportName, value] of Object.entries(mod)) {
   // Each __endpoint is a getter that can throw (v1 providers build a resource
   // name from the environment). One throwing export must not blind the check to
   // the other two hundred, so failures are skipped rather than fatal — this
@@ -56,8 +82,20 @@ for (const value of Object.values(mod)) {
   }
   if (!ep || !Array.isArray(ep.secretEnvironmentVariables)) continue;
   for (const s of ep.secretEnvironmentVariables) {
-    if (s && s.key) names.add(s.key);
+    if (!s || !s.key) continue;
+    names.add(s.key);
+    pairs.push([exportName, s.key]);
   }
 }
 
-for (const n of [...names].sort()) console.log(n);
+if (byFunction) {
+  const rows = pairs
+    .filter(([fn, key]) => filter === '' || key.includes(filter) || fn.includes(filter))
+    .sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
+  // Silence is a real answer here and a misleading one, so say it on stderr
+  // rather than exiting 0 with an empty stdout that reads as "all clear".
+  if (rows.length === 0) console.error(`no declared secrets match ${filter || '(anything)'}`);
+  for (const [fn, key] of rows) console.log(`${fn}\t${key}`);
+} else {
+  for (const n of [...names].sort()) console.log(n);
+}

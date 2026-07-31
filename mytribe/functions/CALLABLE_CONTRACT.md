@@ -605,6 +605,19 @@ Both names are declared in the `secrets: [...]` of every function that needs the
 and both are READ in `src/lib/googleOAuth.ts`; `test/googleCalendarOAuth.test.ts`
 asserts the declaration on each function, because a secret nothing reads does
 nothing and a secret nothing declares is never mounted.
+`node scripts/declared-secrets.js --by-function GOOGLE_OAUTH` prints the five
+pairs out of the built artifact, which is the structure the Firebase CLI itself
+validates.
+
+**The third command is not a one-off.** These are gcfv2 functions, so each pins
+the secret VERSION resolved at deploy time. `functions:secrets:set` mints a new
+version and binds it to nothing: the running function keeps the old value, or no
+value at all, until a deploy resolves the name again. A secret set without a
+redeploy is indistinguishable from a secret never set, from every client, which
+is why `google_oauth_not_configured` names the deploy alongside the command and
+why the admin's Calendar section calls those two steps out together. `npm run
+deploy` covers it: release step 5 refuses to skip the functions deploy when a
+declared secret is newer than the last release.
 
 **Where the refresh token lives.** `integrations_config/googleCalendar`, a
 document `firestore.rules` denies to EVERY client, read and write, including a

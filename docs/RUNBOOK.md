@@ -175,7 +175,7 @@ order**, stops at the first failure, and names the step it died in.
 | 2 | Firestore indexes | Before the code that queries them. A query with no index fails at RUNTIME, not at build. |
 | 3 | Wait for indexes | The CLI returns when Firestore ACCEPTS an index, not when it is Enabled. The run blocks; the CLI will not. |
 | 4 | Firestore rules | From `mytribe` only. Refused outright if the admin mirror has drifted. |
-| 5 | Functions | Before the clients that call them. **Skipped when `mytribe/functions` is unchanged since the last release** — see below. |
+| 5 | Functions | Before the clients that call them. **Skipped when `mytribe/functions` is unchanged since the last release AND no declared secret is newer than it**. See below. |
 | 6 | Hosting | Admin, then portal. |
 | 6b | Android | Uploads the APK from step 1c to App Distribution, in the same run as the web. |
 | 7 | Verify | Fetches both live sites and compares the hashed bundle they reference against the one just built. |
@@ -192,6 +192,20 @@ last released commit is recorded in `.release-state` (gitignored, per machine);
 if nothing under `mytribe/functions` changed since then, the step is skipped and
 says so. Anything unknown deploys, because the safe default when you cannot
 prove code is current is to ship it.
+
+**And why it is not conditional on the code alone.** A changed secret is a
+changed deploy that changes no file, so the git diff above cannot see it. Setting
+a secret mints a Secret Manager version and binds it to nothing; a gcfv2 function
+keeps the version it was deployed with. Left there, the skip turned "set the
+secret, then release" into a loop that never binds anything and reports success
+every time. That is the Google Calendar report: both OAuth secrets set several
+times, the feature still rejecting with `google_oauth_not_configured`. So when
+the code is unchanged, step 5 asks whether any declared secret has an enabled
+version created after the last released commit, and deploys if one does, naming
+the secrets. If it cannot ask (functions not built, gcloud not signed in) it says
+so and still skips, because an unknown must not turn every run into a
+~200-function deploy; `RELEASE_FORCE_FUNCTIONS=1` is the override, and the
+warning names it.
 
 Step 7 is the one whose absence hid the stale admin. Hosting can report a
 successful release while browsers still get the old bundle. A release that
@@ -345,7 +359,32 @@ doc told the operator to set a `GOOGLE_CALENDAR_ID` no function ever read, so
 the setup looked complete and did nothing. Add a test that reads the function's
 `__endpoint` and asserts the name is declared.
 
-`grep -rn "secrets: \[" mytribe/functions/src` for the current list.
+**And setting a secret does nothing until the next deploy, every time, not just
+the first.** These are gcfv2 functions, which pin the secret VERSION resolved at
+deploy time. `functions:secrets:set` mints version N+1 and binds it to nothing;
+the running function keeps reading version N until a deploy resolves the name
+again. Rotating a value without redeploying leaves the old one live, and setting
+a value for the first time leaves the runtime reading nothing at all. Release
+step 5 checks for this now (see the deploy section); by hand it is
+`firebase deploy --only functions:mytribe`, with the codebase prefix, because a
+bare name matches nothing.
+
+Two ways to read the declarations out of the built artifact rather than guessing
+from source, which cannot see arrays built from spreads:
+
+```bash
+node scripts/declared-secrets.js                             # every declared name
+node scripts/declared-secrets.js --by-function GOOGLE_OAUTH  # which function gets what
+```
+
+The first answers "will the deploy validate". The second answers the question an
+operator actually arrives with, which is "I set it and the feature still fails,
+so which function was supposed to receive it": a secret is mounted per function,
+so the binding is a pair, and a name in the flat list can still be absent from
+the one function that reads it. Neither can tell you whether the secret has a
+VALUE or whether the DEPLOYED function carries the declaration; both live in the
+project. For those: `gcloud secrets list` and
+`gcloud functions describe <name> --gen2 --region us-central1`.
 
 `VITE_*` is different by mechanism, not by policy: Vite inlines
 `import.meta.env.VITE_*` into the bundle at build time, so it ships to every
@@ -387,6 +426,22 @@ Check the field type first.
 
 **A callable works locally and 500s in production.** The secret is set but not
 DECLARED in that function's `secrets: [...]`. See above.
+
+**A secret is set, set again, and the feature still says it is unset.** The
+declaration is not the problem; the deploy is. `functions:secrets:set` mints a
+version and binds nothing, and a gcfv2 function reads the version it was deployed
+with, so a value set after the last deploy is invisible to the running code.
+Confirm the declaration is there, then redeploy:
+
+```bash
+node scripts/declared-secrets.js --by-function GOOGLE_OAUTH   # the pairs
+firebase deploy --only functions:mytribe                       # from mytribe/
+```
+
+Release step 5 now refuses to skip the functions deploy when a declared secret is
+newer than the last release, so `npm run deploy` covers this. The AuntieOS
+Settings, Calendar section names which of the three setup steps is outstanding
+rather than reporting one generic failure.
 
 **A functions deploy fails with `Failed to validate secret versions ... not
 found or has no versions`.** The inverse trap: a secret the code DECLARES that

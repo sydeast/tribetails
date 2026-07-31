@@ -57,17 +57,99 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('GoogleCalendarSection, before anything is connected', () => {
-  it('names both secrets and the exact redirect URI the operator must register', async () => {
+/** A callable rejection shaped the way `lib/fns.ts` rethrows one: message plus `details`. */
+function callableError(message: string, details?: unknown): Error {
+  const err = new Error(message);
+  if (details !== undefined) Object.assign(err, { code: 'functions/failed-precondition', details });
+  return err;
+}
+
+const NOT_CONFIGURED_DETAILS = {
+  code: 'google_oauth_not_configured',
+  missing: ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET'],
+};
+
+describe('GoogleCalendarSection, the setup checklist', () => {
+  it('shows the three steps the operator owes, with the redirect URI and both commands verbatim', async () => {
+    // All three are typed by a human into a console or a shell. Google refuses
+    // the whole flow on a redirect URI that differs by a trailing slash, so this
+    // text is copied, not paraphrased.
     render(<GoogleCalendarSection />);
-    expect(
-      await screen.findByText(/GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/create the oauth client in google cloud console/i)).toBeInTheDocument();
+    expect(screen.getByText(/set both secret values/i)).toBeInTheDocument();
+    expect(screen.getByText(/redeploy, so the functions mount what you set/i)).toBeInTheDocument();
     expect(
       screen.getByText('https://us-central1-auntieos-ttpc.cloudfunctions.net/googleOAuthCallback'),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(/firebase functions:secrets:set GOOGLE_OAUTH_CLIENT_ID --project auntieos-ttpc/),
+    ).toBeInTheDocument();
+    expect(screen.getByText('firebase deploy --only functions:mytribe')).toBeInTheDocument();
   });
 
+  it('claims nothing it has not observed: every step starts unknown, none says done', async () => {
+    render(<GoogleCalendarSection />);
+    expect(await screen.findByText(/no step has failed yet/i)).toBeInTheDocument();
+    expect(screen.getAllByText('unknown')).toHaveLength(3);
+    expect(screen.queryByText('done')).not.toBeInTheDocument();
+  });
+
+  it('names the failing step and the exact secret, and calls the deploy out as the twin of it', async () => {
+    // THE REPORTED BUG. The operator ran functions:secrets:set several times and
+    // the feature kept failing, because setting a secret binds nothing until a
+    // deploy carries it. From a browser those two are one observation, so both
+    // steps go red together and step 3 says which one is likely left.
+    api.startGoogleCalendarConnect.mockRejectedValue(
+      callableError('Google Calendar is not set up on the server yet.', NOT_CONFIGURED_DETAILS),
+    );
+    render(<GoogleCalendarSection />);
+    await userEvent.click(await screen.findByRole('button', { name: /connect google calendar/i }));
+
+    expect(await screen.findByText('Step 2: Set both secret values.')).toBeInTheDocument();
+    expect(screen.getAllByText('not done')).toHaveLength(2);
+    expect(
+      screen.getByText(/server read GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET as empty/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/already run the command in step 2, this is the one that is outstanding/i)).toBeInTheDocument();
+  });
+
+  it('marks the values proven once the server hands back a consent URL', async () => {
+    // The server refuses to build one unless both values are non-empty, so
+    // holding one is the proof. It is NOT proof about Google's side.
+    api.startGoogleCalendarConnect.mockResolvedValue({ authUrl: 'https://accounts.google.com/x', expiresAt: '', redirectUri: '' });
+    render(<GoogleCalendarSection />);
+    await userEvent.click(await screen.findByRole('button', { name: /connect google calendar/i }));
+    expect(await screen.findByText(/only way it could have built a consent URL/i)).toBeInTheDocument();
+    expect(screen.getByText(/nothing here can check this one/i)).toBeInTheDocument();
+  });
+
+  it('blames the deploy, not the operator, when no callable answers at all', async () => {
+    api.getGoogleCalendarConnection.mockRejectedValue(new Error('internal: function not found.'));
+    render(<GoogleCalendarSection />);
+    expect(await screen.findByText(/the functions this feature needs are not reachable/i)).toBeInTheDocument();
+    // And it must not claim anything about values it never got to read.
+    expect(screen.queryByText(/read GOOGLE_OAUTH_CLIENT_ID/i)).not.toBeInTheDocument();
+  });
+
+  it('does not read an unrelated failure as evidence about the secrets', async () => {
+    // An offline blip says nothing about setup, and a checklist that treats it
+    // as an answer sends the operator to fix the wrong thing.
+    api.startGoogleCalendarConnect.mockRejectedValue(new Error('deadline-exceeded'));
+    render(<GoogleCalendarSection />);
+    await userEvent.click(await screen.findByRole('button', { name: /connect google calendar/i }));
+    expect(await screen.findByText('deadline-exceeded')).toBeInTheDocument();
+    expect(screen.getAllByText('unknown')).toHaveLength(3);
+  });
+
+  it('folds the checklist away once an account is connected, since the connection is the receipt', async () => {
+    api.getGoogleCalendarConnection.mockResolvedValue(connectionResult(CONNECTED));
+    render(<GoogleCalendarSection />);
+    await screen.findByText('auntie@tribetails.com');
+    expect(screen.queryByText(/set both secret values/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('GoogleCalendarSection, before anything is connected', () => {
   it('surfaces the setup instruction from the server VERBATIM instead of a friendly summary', async () => {
     // That text is the whole point: it says which secret is missing and the
     // command that sets it.
