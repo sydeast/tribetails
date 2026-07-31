@@ -36,6 +36,7 @@ function seed() {
     docs: {
       'kinfolk/kf1': { firstName: 'Jamie', lastName: 'Halbrook' },
       'base_services/svc_walk': { name: 'Dog Walk', priceCents: 2500 },
+      'families/kf1/kin/k1': { name: 'Fido' },
     },
   });
 }
@@ -106,6 +107,22 @@ describe('createMultiDateBookingRequest happy path', () => {
     const env = envelope(ctx);
     expect(env?.data.pattern).toBe('weekly');
     expect(env?.data.weeklyDays).toEqual([1, 3]);
+  });
+
+  it('resolves real kin names via the shared writeEnvelope (same fix as requestBooking)', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        kinIds: ['k1'],
+        visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Dog Walk', serviceId: 'svc_walk' }],
+      }),
+    );
+    const env = envelope(ctx);
+    const v = visitWrites(ctx)[0];
+    expect(env?.data.kinNames).toEqual(['Fido']);
+    expect(v?.data.kinNames).toEqual(['Fido']);
   });
 
   it('writes a BOOKING_SUBMITTED audit entry as the operator (AUNTIE)', async () => {

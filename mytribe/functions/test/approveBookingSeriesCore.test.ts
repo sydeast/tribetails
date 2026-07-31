@@ -72,6 +72,28 @@ describe('approveBookingSeriesCore', () => {
     );
   });
 
+  it('resolves real kin names onto the session it creates (not kinNames: [])', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'families/3/bookings/b1': { kinfolkName: 'Doe Household' },
+        'families/3/kin/k1': { name: 'Fido' },
+      },
+      queryDocs: {
+        'families/3/bookings/b1/kinCares': [
+          { id: 'v1', data: { startTime: '2026-07-01T10:00:00Z', endTime: '2026-07-01T11:00:00Z', kinIds: ['k1'], serviceType: 'walk' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { approveBookingSeriesCore } = await import('../src/admin/approveBookingSeriesCore');
+
+    await approveBookingSeriesCore({ kinfolkId: '3', batchId: 'b1', actorUid: 'sys', actorRole: 'SYSTEM' });
+
+    const s1 = ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_v1');
+    expect(s1?.data.kinIds).toEqual(['k1']);
+    expect(s1?.data.kinNames).toEqual(['Fido']);
+  });
+
   it('is idempotent: a re-approve with an existing session creates 0 sessions', async () => {
     const ctx = buildDbMock({
       docs: {
