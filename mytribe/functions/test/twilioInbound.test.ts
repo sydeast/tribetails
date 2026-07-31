@@ -43,7 +43,7 @@ vi.mock('../src/lib/firestoreAdmin', () => ({
           limit: (_n: number) => ({
             get: () => {
               if (mocks.kinfolkQueryThrows) return Promise.reject(new Error('kinfolk read boom'));
-              const hit = mocks.kinfolk.find((r) => (r as Record<string, unknown>)[field] === value);
+              const hit = mocks.kinfolk.find((r) => r[field as keyof KinfolkRow] === value);
               return Promise.resolve({
                 empty: !hit,
                 docs: hit ? [{ id: hit.id, data: () => hit }] : [],

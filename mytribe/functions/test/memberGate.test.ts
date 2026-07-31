@@ -71,13 +71,13 @@ describe('requireKinfolkPerm', () => {
       }),
     });
     const { requireKinfolkPerm } = await import('../src/lib/memberGate');
-    await expect(requireKinfolkPerm('u1', 'f1', 'kin_edit')).rejects.toMatchObject({
+    await expect(requireKinfolkPerm('u1', 'f1', 'kin_edit', false, 'memberGate.test')).rejects.toMatchObject({
       code: 'permission-denied',
     });
-    await expect(requireKinfolkPerm('u1', 'f1', 'billing_full')).rejects.toMatchObject({
+    await expect(requireKinfolkPerm('u1', 'f1', 'billing_full', false, 'memberGate.test')).rejects.toMatchObject({
       code: 'permission-denied',
     });
-    await expect(requireKinfolkPerm('u1', 'f1', 'messaging_direct')).rejects.toMatchObject({
+    await expect(requireKinfolkPerm('u1', 'f1', 'messaging_direct', false, 'memberGate.test')).rejects.toMatchObject({
       code: 'permission-denied',
     });
   });
@@ -93,11 +93,11 @@ describe('requireKinfolkPerm', () => {
     });
     const { requireKinfolkPerm } = await import('../src/lib/memberGate');
     // Returns the resolved member so callers can label audits with the real role.
-    await expect(requireKinfolkPerm('u1', 'f1', 'kin_edit')).resolves.toMatchObject({
+    await expect(requireKinfolkPerm('u1', 'f1', 'kin_edit', false, 'memberGate.test')).resolves.toMatchObject({
       role: 'SECONDARY',
     });
     // but still denied for one it does NOT hold
-    await expect(requireKinfolkPerm('u1', 'f1', 'billing_full')).rejects.toMatchObject({
+    await expect(requireKinfolkPerm('u1', 'f1', 'billing_full', false, 'memberGate.test')).rejects.toMatchObject({
       code: 'permission-denied',
     });
   });
@@ -108,8 +108,8 @@ describe('requireKinfolkPerm', () => {
       data: () => ({ role: 'PRIMARY', status: 'ACTIVE', permissions: {} }),
     });
     const { requireKinfolkPerm } = await import('../src/lib/memberGate');
-    await expect(requireKinfolkPerm('u1', 'f1', 'billing_full')).resolves.toMatchObject({ role: 'PRIMARY' });
-    await expect(requireKinfolkPerm('u1', 'f1', 'kin_edit')).resolves.toMatchObject({ role: 'PRIMARY' });
+    await expect(requireKinfolkPerm('u1', 'f1', 'billing_full', false, 'memberGate.test')).resolves.toMatchObject({ role: 'PRIMARY' });
+    await expect(requireKinfolkPerm('u1', 'f1', 'kin_edit', false, 'memberGate.test')).resolves.toMatchObject({ role: 'PRIMARY' });
   });
 
   it('DENIES an INACTIVE member even with the perm flag set', async () => {
@@ -122,7 +122,7 @@ describe('requireKinfolkPerm', () => {
       }),
     });
     const { requireKinfolkPerm } = await import('../src/lib/memberGate');
-    await expect(requireKinfolkPerm('u1', 'f1', 'kin_edit')).rejects.toMatchObject({
+    await expect(requireKinfolkPerm('u1', 'f1', 'kin_edit', false, 'memberGate.test')).rejects.toMatchObject({
       code: 'permission-denied',
     });
   });
@@ -131,7 +131,7 @@ describe('requireKinfolkPerm', () => {
     getMock.mockResolvedValue({ exists: false });
     const { requireKinfolkPerm } = await import('../src/lib/memberGate');
     // null (not a member doc) on the legacy anti-lockout branch.
-    await expect(requireKinfolkPerm('u1', 'f1', 'billing_full')).resolves.toBeNull();
+    await expect(requireKinfolkPerm('u1', 'f1', 'billing_full', false, 'memberGate.test')).resolves.toBeNull();
   });
 
   it('ALLOWS (bypass) an auntie operator without reading a member doc', async () => {
@@ -139,7 +139,7 @@ describe('requireKinfolkPerm', () => {
     getMock.mockReset(); // ensure no member-doc read is required
     const { requireKinfolkPerm } = await import('../src/lib/memberGate');
     // null (no member doc) on the operator-bypass branch.
-    await expect(requireKinfolkPerm('op-uid', 'f1', 'billing_full')).resolves.toBeNull();
+    await expect(requireKinfolkPerm('op-uid', 'f1', 'billing_full', false, 'memberGate.test')).resolves.toBeNull();
     expect(getMock).not.toHaveBeenCalled();
   });
 });

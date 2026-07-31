@@ -22,7 +22,14 @@ function mkRes() {
 
 async function callHandler(reqShape: { method: string; path: string; query?: Record<string, unknown> }, res: ReturnType<typeof mkRes>) {
   const { getShareLinkHandler } = await import('../src/share/getShareLink');
-  await getShareLinkHandler(reqShape, res as unknown as Parameters<typeof getShareLinkHandler>[1]);
+  // Both arguments are narrowed the same way the production entry point in
+  // src/share/getShareLink.ts does it: the handler's ReqShape is
+  // Pick<express.Request, 'method' | 'path' | 'query'>, and `query` is a full
+  // ParsedQs there, not the plain object a test wants to hand it.
+  await getShareLinkHandler(
+    reqShape as unknown as Parameters<typeof getShareLinkHandler>[0],
+    res as unknown as Parameters<typeof getShareLinkHandler>[1],
+  );
 }
 
 describe('getShareLink (handler shape)', () => {

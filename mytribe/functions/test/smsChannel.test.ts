@@ -29,6 +29,7 @@ import type { NotificationDef } from '../src/notifications/types';
 function def(overrides: Partial<NotificationDef> = {}): NotificationDef {
   return {
     key: 't.k',
+    label: 'Test notification',
     audience: 'kinfolk',
     audiences: { kinfolk: true },
     category: 'visit',

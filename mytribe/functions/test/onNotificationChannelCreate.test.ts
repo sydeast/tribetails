@@ -40,8 +40,14 @@ beforeEach(() => {
   mocks.writeAudit.mockClear().mockResolvedValue(undefined);
 });
 
+/** The channel-subdoc patch the trigger stamps; the assertions below read `status`/`skipReason`. */
+type ChannelPatch = Record<string, unknown>;
+
 function makeEvent(channel: string, parentData: Record<string, unknown>) {
-  const setSpy = vi.fn(async () => {});
+  // Typed on purpose: an untyped `vi.fn(async () => {})` records a zero-arg
+  // call signature, which makes `setSpy.mock.calls[n][0]` an out-of-range index
+  // on an empty tuple and silently un-typechecks every status assertion.
+  const setSpy = vi.fn(async (_patch: ChannelPatch) => {});
   const parentRef = {
     id: 'notif1',
     path: 'notifications/notif1',

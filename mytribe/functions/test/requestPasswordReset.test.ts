@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { callableRequest } from './_helpers/callableRequest';
 
 const getUserByEmailMock = vi.fn();
 const generateLinkMock = vi.fn();
@@ -53,7 +54,7 @@ afterAll(() => {
 describe('requestPasswordResetHandler', () => {
   it('generates link + enqueues notification for known email', async () => {
     const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    const result = await requestPasswordResetHandler({ data: { email: TEST_EMAIL } });
+    const result = await requestPasswordResetHandler(callableRequest({ email: TEST_EMAIL }));
 
     expect(result).toEqual({ ok: true });
     expect(generateLinkMock).toHaveBeenCalledWith(
@@ -79,14 +80,14 @@ describe('requestPasswordResetHandler', () => {
   it('skips audit emit when email not found', async () => {
     getUserByEmailMock.mockRejectedValue(new Error('auth/user-not-found'));
     const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    await requestPasswordResetHandler({ data: { email: 'ghost@example.com' } });
+    await requestPasswordResetHandler(callableRequest({ email: 'ghost@example.com' }));
     expect(writeAuditEntryMock).not.toHaveBeenCalled();
   });
 
   it('returns ok=true silently when email not found (no leak)', async () => {
     getUserByEmailMock.mockRejectedValue(new Error('auth/user-not-found'));
     const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    const result = await requestPasswordResetHandler({ data: { email: 'ghost@example.com' } });
+    const result = await requestPasswordResetHandler(callableRequest({ email: 'ghost@example.com' }));
 
     expect(result).toEqual({ ok: true });
     expect(enqueueMock).not.toHaveBeenCalled();
@@ -95,14 +96,14 @@ describe('requestPasswordResetHandler', () => {
   it('rejects missing email with invalid-argument', async () => {
     const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
     await expect(
-      requestPasswordResetHandler({ data: {} }),
+      requestPasswordResetHandler(callableRequest({})),
     ).rejects.toMatchObject({ code: 'invalid-argument' });
   });
 
   it('rejects malformed email with invalid-argument', async () => {
     const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
     await expect(
-      requestPasswordResetHandler({ data: { email: 'not-an-email' } }),
+      requestPasswordResetHandler(callableRequest({ email: 'not-an-email' })),
     ).rejects.toMatchObject({ code: 'invalid-argument' });
   });
 
@@ -113,7 +114,7 @@ describe('requestPasswordResetHandler', () => {
     );
     const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
     await expect(
-      requestPasswordResetHandler({ data: { email: TEST_EMAIL } }),
+      requestPasswordResetHandler(callableRequest({ email: TEST_EMAIL })),
     ).rejects.toMatchObject({ code: 'resource-exhausted' });
     expect(generateLinkMock).not.toHaveBeenCalled();
   });
@@ -121,7 +122,7 @@ describe('requestPasswordResetHandler', () => {
   it('uses email as displayName fallback when displayName is null', async () => {
     getUserByEmailMock.mockResolvedValue({ uid: TEST_UID, displayName: null });
     const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    await requestPasswordResetHandler({ data: { email: TEST_EMAIL } });
+    await requestPasswordResetHandler(callableRequest({ email: TEST_EMAIL }));
 
     expect(enqueueMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -134,7 +135,7 @@ describe('requestPasswordResetHandler', () => {
     const plusEmail = 'pepper+pet@tribetails.com';
     getUserByEmailMock.mockResolvedValue({ uid: TEST_UID, displayName: null });
     const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
-    await requestPasswordResetHandler({ data: { email: plusEmail } });
+    await requestPasswordResetHandler(callableRequest({ email: plusEmail }));
 
     const callArgs = generateLinkMock.mock.calls[0];
     expect(callArgs[1].url).toContain(encodeURIComponent(plusEmail));
@@ -179,7 +180,7 @@ describe('requestPasswordResetHandler', () => {
     try {
       const startMs = Date.now();
       let settledAtMs = -1;
-      const pending = requestPasswordResetHandler({ data: { email } }).then((result) => {
+      const pending = requestPasswordResetHandler(callableRequest({ email })).then((result) => {
         settledAtMs = Date.now();
         return result;
       });
@@ -199,12 +200,12 @@ describe('requestPasswordResetHandler', () => {
   it('does the same auth work for a known and an unknown email', async () => {
     const { requestPasswordResetHandler } = await import('../src/auth/requestPasswordReset');
 
-    const hitResult = await requestPasswordResetHandler({ data: { email: TEST_EMAIL } });
+    const hitResult = await requestPasswordResetHandler(callableRequest({ email: TEST_EMAIL }));
     const hitLookups = getUserByEmailMock.mock.calls.length;
     const hitLinks = generateLinkMock.mock.calls.length;
 
     stubUnknownEmail();
-    const missResult = await requestPasswordResetHandler({ data: { email: GHOST_EMAIL } });
+    const missResult = await requestPasswordResetHandler(callableRequest({ email: GHOST_EMAIL }));
     const missLookups = getUserByEmailMock.mock.calls.length - hitLookups;
     const missLinks = generateLinkMock.mock.calls.length - hitLinks;
 

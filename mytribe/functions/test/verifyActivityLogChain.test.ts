@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { callableRequest } from './_helpers/callableRequest';
 
 // Fake doc store. `chainEntries` holds the synthesised hash-chain in seq
 // order; `headDoc` is the chain-head pointer. Tests mutate these to model
@@ -111,7 +112,7 @@ beforeEach(() => {
 describe('verifyActivityLogChainHandler', () => {
   it('returns ok=true for empty chain', async () => {
     const { verifyActivityLogChainHandler } = await import('../src/admin/verifyActivityLogChain');
-    const result = await verifyActivityLogChainHandler({ data: {} });
+    const result = await verifyActivityLogChainHandler(callableRequest({}));
     expect(result).toEqual({
       ok: true,
       scanned: 0,
@@ -129,7 +130,7 @@ describe('verifyActivityLogChainHandler', () => {
       data: { seq: 3, lastHash: last.data.entryHash, lastEntryId: last.id },
     };
     const { verifyActivityLogChainHandler } = await import('../src/admin/verifyActivityLogChain');
-    const result = await verifyActivityLogChainHandler({ data: {} });
+    const result = await verifyActivityLogChainHandler(callableRequest({}));
     expect(result).toEqual({
       ok: true,
       scanned: 3,
@@ -152,7 +153,7 @@ describe('verifyActivityLogChainHandler', () => {
       },
     };
     const { verifyActivityLogChainHandler } = await import('../src/admin/verifyActivityLogChain');
-    const result = await verifyActivityLogChainHandler({ data: {} });
+    const result = await verifyActivityLogChainHandler(callableRequest({}));
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.anomaly.code).toBe('entry_hash_mismatch');
@@ -178,7 +179,7 @@ describe('verifyActivityLogChainHandler', () => {
       },
     };
     const { verifyActivityLogChainHandler } = await import('../src/admin/verifyActivityLogChain');
-    const result = await verifyActivityLogChainHandler({ data: {} });
+    const result = await verifyActivityLogChainHandler(callableRequest({}));
     expect(result.ok).toBe(false);
     if (!result.ok) {
       // Either seq_gap (we expected seq=2 next, got seq=3) or
@@ -200,7 +201,7 @@ describe('verifyActivityLogChainHandler', () => {
       data: { seq: 3, lastHash: 'a'.repeat(64), lastEntryId: 'entry-3' },
     };
     const { verifyActivityLogChainHandler } = await import('../src/admin/verifyActivityLogChain');
-    const result = await verifyActivityLogChainHandler({ data: {} });
+    const result = await verifyActivityLogChainHandler(callableRequest({}));
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.anomaly.code).toBe('head_mismatch');
@@ -218,7 +219,7 @@ describe('verifyActivityLogChainHandler', () => {
       data: { seq: 3, lastHash: last.data.entryHash, lastEntryId: last.id },
     };
     const { verifyActivityLogChainHandler } = await import('../src/admin/verifyActivityLogChain');
-    const result = await verifyActivityLogChainHandler({ data: {} });
+    const result = await verifyActivityLogChainHandler(callableRequest({}));
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.scanned).toBe(3);
@@ -237,7 +238,7 @@ describe('verifyActivityLogChainHandler', () => {
       },
     };
     const { verifyActivityLogChainHandler } = await import('../src/admin/verifyActivityLogChain');
-    const result = await verifyActivityLogChainHandler({ data: { since: 3 } });
+    const result = await verifyActivityLogChainHandler(callableRequest({ since: 3 }));
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.scanned).toBe(3);

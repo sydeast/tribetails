@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 import { FULL_PERMISSIONS, KINTALES_ONLY_PERMISSIONS } from '../src/lib/schema';
+import type { MemberPermissions } from '../src/lib/schema';
 
 const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
@@ -21,7 +22,7 @@ const primaryMemberDoc = (uid: string) => ({
   permissions: FULL_PERMISSIONS,
 });
 
-const secondaryMemberDoc = (uid: string, label: string, permissions: Record<string, unknown>, email?: string) => ({
+const secondaryMemberDoc = (uid: string, label: string, permissions: MemberPermissions, email?: string) => ({
   uid,
   displayName: 'Sam Secondary',
   role: 'SECONDARY',

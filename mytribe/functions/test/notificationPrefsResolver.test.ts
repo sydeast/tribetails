@@ -9,6 +9,7 @@ import type {
 function def(overrides: Partial<NotificationDef>): NotificationDef {
   return {
     key: 'test.key',
+    label: 'Test notification',
     audience: 'kinfolk',
     audiences: { kinfolk: true },
     category: 'visit',
