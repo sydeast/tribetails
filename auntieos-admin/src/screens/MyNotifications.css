@@ -1,7 +1,7 @@
 /**
- * My Notifications screen styling (read-only port of the wasm
+ * My Notifications screen styling (port of the wasm
  * MyNotificationsScreen.kt operator prefs view). Scoped to this screen and
- * imported directly by MyNotifications.tsx, the Account.css / Settings.css
+ * imported directly by MyNotificationsEdit.tsx, the Account.css / Settings.css
  * convention (a dedicated per-screen stylesheet), not folded into the shared
  * styles/screens.css. Every value comes from styles/tokens.css, no literal
  * colors, radii, or durations.
