@@ -12,6 +12,14 @@ concurrency:
   group: ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
+# Least privilege for the whole file: no job here writes to the repo, and the
+# kotlin job's jvmTest even rewrites tracked golden PNGs in its checkout, so a
+# read-only token is what makes "this job must never push" enforced rather
+# than asked nicely. The changes job re-declares its own block because the
+# paths filter also needs pull-requests: read.
+permissions:
+  contents: read
+
 jobs:
   changes:
     name: Detect changed paths
@@ -260,9 +268,10 @@ jobs:
   # auntieos-admin/CLAUDE.md both are off the delivery path by owner ruling:
   # the wasm admin is superseded by src/, and desktop parity is paused. No
   # PR needs this to go green, so it no longer runs on the path-filter
-  # trigger, only by hand: gh workflow run ci.yml --ref <branch> (or Actions
-  # tab -> CI -> Run workflow), same escape hatch every other job already
-  # answers to via workflow_dispatch.
+  # trigger. To run it, dispatch the workflow by hand: gh workflow run ci.yml
+  # --ref <branch>, or Actions tab -> CI -> Run workflow. Note a dispatch runs
+  # EVERY job gated on workflow_dispatch, not just this one; GitHub offers no
+  # per-job dispatch.
   kotlin:
     name: Shared + desktop (jvm)
     needs: changes
