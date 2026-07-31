@@ -7,18 +7,17 @@ import org.junit.Test
 
 class FeatureFlagsTest {
 
-    @Test fun defaults_onlyIntegrationManageOff() {
+    @Test fun defaults_onlyCommsRecapAndInboundCommsOff() {
         // #3: built features default ON (they live in ALWAYS_ON); only the genuinely-gated
         // flags still ship dark. Parity with web defaults (plus the android-only WARNING-8 flag).
         val map = FeatureFlags.DEFAULT.toMap()
         assertTrue(map.filterKeys { it in FeatureFlags.ALWAYS_ON }.values.all { it })
-        assertFalse(FeatureFlags.DEFAULT.settingsIntegrationManage)
-        // integrationManage, commsRecap, and the android-only WARNING-8 inboundComms flag
-        // are the only default-off flags. WARNING-8 ships dark (OFF) = today's behavior
-        // (client writes); the operator flips it ON to make the server authoritative.
+        // commsRecap and the android-only WARNING-8 inboundComms flag are the only
+        // default-off flags (integrationManage was retired, not just defaulted-off).
+        // WARNING-8 ships dark (OFF) = today's behavior (client writes); the operator
+        // flips it ON to make the server authoritative.
         assertEquals(
             setOf(
-                FeatureFlags.KEY_SETTINGS_INTEGRATION_MANAGE,
                 FeatureFlags.KEY_COMMUNICATE_COMMS_RECAP,
                 FeatureFlags.KEY_INBOUND_COMMS_SERVER_AUTHORITATIVE,
             ),
@@ -26,8 +25,8 @@ class FeatureFlagsTest {
         )
     }
 
-    @Test fun registry_has11Keys_allNamespaced() {
-        // 28 finished/always-on flags have been retired. The latest 6 (Stage 2 Step 2)
+    @Test fun registry_has10Keys_allNamespaced() {
+        // 29 finished/always-on flags have been retired. The latest 6 (Stage 2 Step 2)
         // were built for real, not gated, so their flags are gone:
         //   directory.lastVisit (per-kinfolk last-completed-visit date, lastVisitByKinfolk),
         //   directory.newBadge (isNewKinfolk = created < 14d OR zero KinTales),
@@ -46,11 +45,13 @@ class FeatureFlagsTest {
         // communicate.externalSend retired (Stage 2 Step 5): the external one-off
         // email/SMS send (+ recipient opt-out) is BUILT FOR REAL against the deployed
         // sendExternalMessage / suppressExternalRecipient callables, so the flag is
-        // gone. The shared-with-web registry target is 10; the android-only WARNING-8
+        // gone. settings.integrationManage retired (feature-flag cleanup): no backing
+        // code ever existed and none was built, so the flag is deleted rather than kept
+        // gated. The shared-with-web registry target is 9; the android-only WARNING-8
         // flag (auntieos.inboundComms.serverAuthoritative) adds one android key on top,
-        // so the android registry is 11 (web stays 10 - the inbound-push persistence path
+        // so the android registry is 10 (web stays 9 - the inbound-push persistence path
         // it gates is android-only).
-        assertEquals(11, FeatureFlags.KEYS.size)
+        assertEquals(10, FeatureFlags.KEYS.size)
         assertTrue(FeatureFlags.KEYS.all { it.startsWith("auntieos.") })
         assertEquals(FeatureFlags.KEYS.size, FeatureFlags.KEYS.toSet().size) // no dup keys
     }
@@ -74,13 +75,13 @@ class FeatureFlagsTest {
             ),
         )
         assertTrue(result.invoicesCreate)
-        assertFalse(result.settingsIntegrationManage) // untouched default (still off)
+        assertFalse(result.communicateCommsRecap) // untouched default (still off)
     }
 
     @Test fun fromOverrides_omittedKeysKeepDefaults() {
         val result = FeatureFlags.fromOverrides(mapOf(FeatureFlags.KEY_INVOICES_CREATE to true))
         assertTrue(result.invoicesCreate)
-        assertFalse(result.settingsIntegrationManage)
+        assertFalse(result.communicateCommsRecap)
     }
 
     // 2026-06-08 prod regression: a stale `auntieos.communicate.broadcast: false`
@@ -182,6 +183,9 @@ class FeatureFlagsTest {
             // Stage 2 Step 5: external one-off email/SMS send + recipient opt-out built
             // for real against sendExternalMessage / suppressExternalRecipient.
             "auntieos.communicate.externalSend",
+            // Feature-flag cleanup: settings.integrationManage had no backing code and
+            // none was built for it, so it is deleted outright rather than kept gated.
+            "auntieos.settings.integrationManage",
         )
         assertTrue(FeatureFlags.KEYS.none { it in retired })
     }

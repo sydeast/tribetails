@@ -297,8 +297,9 @@ internal fun GoogleCalendarSyncCard(
 
         if (!syncEnabled) {
             // Server callable not enabled yet (operator must set GOOGLE_CALENDAR_ID
-            // + share the calendar, then flip FF_SCHEDULING_SYNC). Ship dark with a
-            // visible banner, never a silent no-op button.
+            // and share the calendar). Ship dark with a visible banner, never a
+            // silent no-op button. (This screen's sole caller always passes
+            // syncEnabled = true today, so this branch is currently unreachable.)
             AuntieBanner(
                 tone = AuntieBannerTone.Suggestion,
                 dashed = true,

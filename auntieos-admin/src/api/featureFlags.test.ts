@@ -9,10 +9,10 @@ beforeEach(() => call.mockReset());
 
 describe('featureFlags api', () => {
   it('getFeatureFlags unwraps the { flags } envelope', async () => {
-    call.mockResolvedValue({ flags: { 'auntieos.settings.integrationManage': true } });
+    call.mockResolvedValue({ flags: { 'auntieos.communicate.commsRecap': true } });
     const flags = await getFeatureFlags();
     expect(call).toHaveBeenCalledWith('getFeatureFlags', {});
-    expect(flags).toEqual({ 'auntieos.settings.integrationManage': true });
+    expect(flags).toEqual({ 'auntieos.communicate.commsRecap': true });
   });
 
   it('getFeatureFlags defaults to {} when the callable returns no flags', async () => {

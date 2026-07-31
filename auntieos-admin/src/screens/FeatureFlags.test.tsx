@@ -19,9 +19,9 @@ beforeEach(() => {
 
 describe('FeatureFlags screen', () => {
   it('loads flags and reflects current state on the toggles', async () => {
-    getFeatureFlags.mockResolvedValue({ 'auntieos.settings.integrationManage': true });
+    getFeatureFlags.mockResolvedValue({ 'auntieos.communicate.commsRecap': true });
     render(<FeatureFlags />);
-    const t = await screen.findByRole('switch', { name: /integration manage/i });
+    const t = await screen.findByRole('switch', { name: /comms recap/i });
     expect(t).toHaveAttribute('aria-checked', 'true');
   });
 
@@ -52,7 +52,7 @@ describe('FeatureFlags screen', () => {
     expect(await screen.findByText(/offline/i)).toBeInTheDocument();
   });
 
-  it('disables every toggle while a save is in flight (single-flight)', async () => {
+  it('disables the toggle while a save is in flight (single-flight)', async () => {
     getFeatureFlags.mockResolvedValue({});
     let release!: () => void;
     setFeatureFlags.mockReturnValue(
@@ -62,10 +62,8 @@ describe('FeatureFlags screen', () => {
     );
     render(<FeatureFlags />);
     const recap = await screen.findByRole('switch', { name: /comms recap/i });
-    const integration = screen.getByRole('switch', { name: /integration manage/i });
     await userEvent.click(recap);
     expect(recap).toBeDisabled();
-    expect(integration).toBeDisabled();
     release();
     await waitFor(() => expect(recap).not.toBeDisabled());
   });
@@ -87,9 +85,6 @@ describe('FeatureFlags screen', () => {
     const saving = screen.getByRole('status');
     expect(saving).toHaveTextContent(/saving/i);
     expect(saving.closest('.flags__row')).toContainElement(recap);
-    // Not shown on the other, untouched row.
-    const integration = screen.getByRole('switch', { name: /integration manage/i });
-    expect(integration.closest('.flags__row')).not.toContainElement(saving);
     release();
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
   });

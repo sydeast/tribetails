@@ -665,6 +665,7 @@ private fun AuthenticatedNavHost(
                         onBack = { navController.popBackStack() },
                         onNavigateToAccount = { navController.navigate(Screen.AccountSettings.route) },
                         onNavigateToNotificationPrefs = { navController.navigate(Screen.AdminNotificationPrefs.route) },
+                        onNavigateToSchedule = { navController.navigate(Screen.AdminSchedule.route) },
                     )
                 }
             }
