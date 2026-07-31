@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getFeatureFlags, setFeatureFlags, type FeatureFlags as Flags } from '../api/featureFlags';
+import { KEY_COMMUNICATE_COMMS_RECAP } from '../lib/featureFlagsCatalog';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -7,7 +8,7 @@ import { Banner } from '../components/Banner';
 import { Toggle } from '../components/Toggle';
 
 /** One togglable flag: stable dotted key + operator label + what it gates. */
-interface FlagMeta {
+export interface FlagMeta {
   key: string;
   label: string;
   detail: string;
@@ -15,14 +16,15 @@ interface FlagMeta {
 
 /**
  * The genuinely-gated `auntieos.*` flags only. Built features that ship ON have
- * no row (they are not experimental), mirrors the wasm FeatureFlagsScreen's
- * curated FLAGS list. Keep in sync with the config's non-ALWAYS_ON keys; the
- * wasm side pins this with FeatureFlagsScreenCoverageTest, which should be
- * ported once a flag-config module lands in this repo (N1).
+ * no row (they are not experimental), mirrors the Kotlin clients' curated FLAGS
+ * lists. Keys come from the shared featureFlagsCatalog, not string literals, so
+ * a typo can never silently drop a row. FeatureFlags.coverage.test.ts pins this
+ * to exactly catalog KEYS minus ALWAYS_ON, the guarantee the Kotlin
+ * FeatureFlagsScreenCoverageTest gives those two clients, now ported here.
  */
-const FLAGS: readonly FlagMeta[] = [
+export const FLAGS: readonly FlagMeta[] = [
   {
-    key: 'auntieos.communicate.commsRecap',
+    key: KEY_COMMUNICATE_COMMS_RECAP,
     label: 'Communicate: comms recap',
     detail:
       'AI-generated 1-2 sentence recap of recent communications in the recipient context panel (recap_recent_comms callable).',
