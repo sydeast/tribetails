@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { DenPanel, DenScreenHeading, EmptyHint } from '../components/DenScreenKit';
 import { GhostButton } from '../components/Buttons';
@@ -44,7 +44,7 @@ import './Home.css';
  * from the JSX below: `lib/dashboardLayout.ts` holds the operator's list and
  * every transform on it, `api/dashboardLayout.ts` persists it to the one field
  * android reads, and this screen only maps a key to a component. Adding a
- * widget means adding a row to WIDGETS, never re-ordering markup.
+ * widget means adding a row to WEB_WIDGETS, never re-ordering markup.
  */
 
 /**
@@ -75,23 +75,37 @@ export const DASH_LABELS: Readonly<Record<DashKey, string>> = {
   supplies: 'Supplies tracker',
 };
 
+interface WidgetProps {
+  onOpenInbox: () => void;
+}
+
 /**
- * The keys this surface can actually draw. Android draws all nineteen; the
- * React admin has ported seven so far, and the rest are still to come in other
- * tasks. A stored layout naming an unported card is NOT dropped, because the
- * list is shared with android and quietly deleting the operator's phone board
- * on their first web reorder is the worst outcome available. It renders as a
- * named placeholder instead, so the seat it occupies is visible and movable.
+ * ONE widget key to one component, and the only list of what this surface can
+ * draw. Android draws all nineteen; the React admin has ported seven so far,
+ * and the rest are still to come in other tasks.
+ *
+ * The board body and the hidden-strip note both read THIS map, so a widget that
+ * gains a component cannot still be called phone-only by the pill beside it.
+ * They used to be a switch and a separate hand-kept Set, which is two lists to
+ * remember and one of them silently wrong the day they disagree.
+ *
+ * A stored layout naming an unported card is NOT dropped, because the list is
+ * shared with android and quietly deleting the operator's phone board on their
+ * first web reorder is the worst outcome available. It renders as a named
+ * placeholder instead, so the seat it occupies is visible and movable.
  */
-const PORTED: ReadonlySet<DashKey> = new Set<DashKey>([
-  'unreadMessages',
-  'safebox',
-  'careFlags',
-  'expirations',
-  'routeOptimizer',
-  'expenseLog',
-  'supplies',
-]);
+const WEB_WIDGETS: Readonly<Partial<Record<DashKey, (props: WidgetProps) => ReactElement>>> = {
+  unreadMessages: ({ onOpenInbox }) => <UnreadMessagesWidget onOpenInbox={onOpenInbox} />,
+  safebox: () => <SafeboxWidget />,
+  careFlags: () => <CareFlagsWidget />,
+  expirations: () => <ExpirationCountdownWidget />,
+  routeOptimizer: () => <RouteOptimizerWidget />,
+  expenseLog: () => <ExpenseQuickLogWidget />,
+  supplies: () => <SuppliesTrackerWidget />,
+};
+
+/** Derived, never hand-kept: the keys this surface can actually draw. */
+export const PORTED_KEYS: ReadonlySet<DashKey> = new Set(Object.keys(WEB_WIDGETS) as DashKey[]);
 
 /**
  * What an operator who has never customized ANYTHING sees here.
@@ -104,6 +118,11 @@ const PORTED: ReadonlySet<DashKey> = new Set<DashKey>([
  * it already had them. The moment either surface saves a layout, that saved
  * layout is honoured verbatim, unported cards included. Divergence from android
  * is confined to the never-touched state.
+ *
+ * It is NOT a first-paint placeholder. Drawing it before the stored layout has
+ * been read is how seven working widgets came to render and then be replaced by
+ * placeholders, which is what this file was fixed for. It is drawn only once the
+ * read has answered, or once the read has FAILED and the banner has said so.
  */
 export const WEB_DEFAULT_DASHBOARD: readonly DashWidget[] = [
   { key: 'safebox', size: 'compact' },
@@ -133,10 +152,13 @@ export function Home() {
   const auth = useAuth();
   const uid = auth.status === 'signedIn' ? auth.user.uid : '';
 
-  // `null` = the stored layout is not known yet. The board still paints the web
-  // default meanwhile, because an empty page is a worse first frame than the
-  // board the operator most likely has, but Customize stays off until we know
-  // what we would be writing over.
+  // `null` = the stored layout is not known yet. NOTHING is drawn on the board
+  // while that is true. Painting the web default meanwhile looks like a free
+  // head start and is not: an operator whose stored layout names cards this
+  // surface cannot draw watched seven working widgets render and then get
+  // replaced by "built in the phone app" a frame later. A board that has to be
+  // taken back is worse than a board that has not arrived. Customize also stays
+  // off until we know what we would be writing over.
   const [layout, setLayout] = useState<DashWidget[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -207,9 +229,21 @@ export function Home() {
     });
   }, []);
 
+  // A failed read is a different state from a slow one: the banner below says
+  // the board is the standard one rather than the operator's, so drawing it is
+  // disclosed rather than guessed. Only the not-yet-known case holds the board.
+  const stillLoading = layout === null && loadError === null;
   const shown = layout ?? webResolved(DEFAULT_DASHBOARD);
   const canCustomize = layout !== null;
   const hidden = hiddenKeys(shown);
+  // The operator arranged Home on the phone, so their board is seats this
+  // surface cannot draw while the cards it CAN draw sit hidden one click away.
+  // Without a word about that, the screen reads as "the web admin has no
+  // widgets", which is how this arrived as a bug report.
+  const strandedWebCards =
+    !stillLoading &&
+    shown.some((w) => !PORTED_KEYS.has(w.key)) &&
+    hidden.some((k) => PORTED_KEYS.has(k));
 
   const move = (index: number, direction: 'up' | 'down'): void => {
     const widget = shown[index];
@@ -289,33 +323,44 @@ export function Home() {
         </div>
       )}
 
-      <div className="home-dash d2">
-        {shown.map((w, i) => (
-          // Keyed by widget, not by index, so a reorder MOVES the node instead
-          // of rewriting two of them. That keeps the focused control focused
-          // through a keyboard move, which is the difference between a usable
-          // reorder and one that drops you back at the top of the page.
-          <div
-            key={w.key}
-            className={`home-dash__cell home-dash__cell--${w.size}`}
-            data-widget={w.key}
-          >
-            {editing && (
-              <WidgetEditBar
-                label={DASH_LABELS[w.key]}
-                size={w.size}
-                canMoveUp={i > 0}
-                canMoveDown={i < shown.length - 1}
-                canResize={w.key !== 'stats'}
-                onMoveUp={() => move(i, 'up')}
-                onMoveDown={() => move(i, 'down')}
-                onResize={(size) => resize(w.key, size)}
-                onRemove={() => remove(w.key)}
-              />
-            )}
-            <WidgetBody widgetKey={w.key} onOpenInbox={() => void navigate({ to: '/inbox' })} />
-          </div>
-        ))}
+      {strandedWebCards && (
+        <p className="home-dash__note">
+          Some cards on this board are only in the phone app. The ones that work here are under
+          Customize, in Hidden cards.
+        </p>
+      )}
+
+      <div className="home-dash d2" aria-busy={stillLoading}>
+        {stillLoading ? (
+          <p className="home-dash__loading">Loading your dashboard&hellip;</p>
+        ) : (
+          shown.map((w, i) => (
+            // Keyed by widget, not by index, so a reorder MOVES the node instead
+            // of rewriting two of them. That keeps the focused control focused
+            // through a keyboard move, which is the difference between a usable
+            // reorder and one that drops you back at the top of the page.
+            <div
+              key={w.key}
+              className={`home-dash__cell home-dash__cell--${w.size}`}
+              data-widget={w.key}
+            >
+              {editing && (
+                <WidgetEditBar
+                  label={DASH_LABELS[w.key]}
+                  size={w.size}
+                  canMoveUp={i > 0}
+                  canMoveDown={i < shown.length - 1}
+                  canResize={w.key !== 'stats'}
+                  onMoveUp={() => move(i, 'up')}
+                  onMoveDown={() => move(i, 'down')}
+                  onResize={(size) => resize(w.key, size)}
+                  onRemove={() => remove(w.key)}
+                />
+              )}
+              <WidgetBody widgetKey={w.key} onOpenInbox={() => void navigate({ to: '/inbox' })} />
+            </div>
+          ))
+        )}
       </div>
 
       {editing && hidden.length > 0 && (
@@ -334,7 +379,7 @@ export function Home() {
                       +
                     </span>
                     {DASH_LABELS[k]}
-                    {!PORTED.has(k) && (
+                    {!PORTED_KEYS.has(k) && (
                       <span className="home-hidden__pill-note">phone app only</span>
                     )}
                   </button>
@@ -348,40 +393,24 @@ export function Home() {
   );
 }
 
-interface WidgetBodyProps {
+interface WidgetBodyProps extends WidgetProps {
   widgetKey: DashKey;
-  onOpenInbox: () => void;
 }
 
 /**
- * One widget key to one component. The only place a key and a component meet.
- * An unported key gets a named placeholder rather than nothing, so the operator
- * can see the card is holding its seat and can move or remove it here.
+ * The card in one seat. An unported key gets a named placeholder rather than
+ * nothing, so the operator can see the card is holding its seat and can move or
+ * remove it here.
  */
 function WidgetBody({ widgetKey, onOpenInbox }: WidgetBodyProps) {
-  switch (widgetKey) {
-    case 'safebox':
-      return <SafeboxWidget />;
-    case 'unreadMessages':
-      return <UnreadMessagesWidget onOpenInbox={onOpenInbox} />;
-    case 'careFlags':
-      return <CareFlagsWidget />;
-    case 'expirations':
-      return <ExpirationCountdownWidget />;
-    case 'routeOptimizer':
-      return <RouteOptimizerWidget />;
-    case 'expenseLog':
-      return <ExpenseQuickLogWidget />;
-    case 'supplies':
-      return <SuppliesTrackerWidget />;
-    default:
-      return (
-        <DenPanel title={DASH_LABELS[widgetKey]} subtitle="Not on the web dashboard yet.">
-          <EmptyHint>
-            This card is built in the phone app. It keeps its place in your layout here, so
-            rearranging Home will not lose it.
-          </EmptyHint>
-        </DenPanel>
-      );
-  }
+  const Draw = WEB_WIDGETS[widgetKey];
+  if (Draw !== undefined) return <Draw onOpenInbox={onOpenInbox} />;
+  return (
+    <DenPanel title={DASH_LABELS[widgetKey]} subtitle="Not on the web dashboard yet.">
+      <EmptyHint>
+        This card is built in the phone app. It keeps its place in your layout here, so rearranging
+        Home will not lose it.
+      </EmptyHint>
+    </DenPanel>
+  );
 }

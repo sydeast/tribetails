@@ -41,7 +41,7 @@ vi.mock('./widgets/SuppliesTrackerWidget', () => ({
   SuppliesTrackerWidget: () => <p>supplies body</p>,
 }));
 
-import { Home, WEB_DEFAULT_DASHBOARD } from './Home';
+import { Home, PORTED_KEYS, WEB_DEFAULT_DASHBOARD } from './Home';
 
 /** The widget keys currently on the board, in rendered order. */
 function boardOrder(): string[] {
@@ -49,6 +49,25 @@ function boardOrder(): string[] {
     (el) => el.getAttribute('data-widget') ?? '',
   );
 }
+
+/** Everything rendered inside one widget's cell, edit chrome included. */
+function cellText(key: string): string {
+  return document.querySelector(`[data-widget="${key}"]`)?.textContent ?? '';
+}
+
+/**
+ * The marker each stubbed widget above renders. Finding it in a cell proves the
+ * board reached the real component for that key rather than the placeholder.
+ */
+const BODY_MARKER: Readonly<Record<string, string>> = {
+  unreadMessages: 'open inbox',
+  safebox: 'safebox body',
+  careFlags: 'care flags body',
+  expirations: 'expirations body',
+  routeOptimizer: 'route body',
+  expenseLog: 'expense body',
+  supplies: 'supplies body',
+};
 
 function w(key: string, size: 'compact' | 'wide' = 'compact'): DashWidget {
   return { key, size } as DashWidget;
@@ -101,11 +120,92 @@ describe('Home board order', () => {
   it('falls back to the seven cards this admin already had, only when nothing is stored', async () => {
     // getDashboardLayout resolves the SHIPPED default when the field is empty,
     // and that default names three cards the React admin has not built, so
-    // honouring it literally would give a new operator an empty Home.
+    // honouring it literally would give a new operator an empty Home. Mocked
+    // with the shipped default itself, because that is what the API returns for
+    // an empty field, and it is the substitution that is under test.
+    const { DEFAULT_DASHBOARD } = await import('../lib/dashboardLayout');
+    getDashboardLayout.mockResolvedValue(DEFAULT_DASHBOARD.map((x) => ({ ...x })));
     render(<Home />);
     await waitFor(() =>
       expect(boardOrder()).toEqual(WEB_DEFAULT_DASHBOARD.map((x) => x.key)),
     );
+  });
+});
+
+describe('Home first paint', () => {
+  it('paints no board at all until the stored layout has arrived', async () => {
+    // THE REPORTED REGRESSION. The board used to paint the seven web cards
+    // while the read was still in flight, so an operator whose stored layout
+    // names cards this surface cannot draw watched seven working widgets
+    // render and then get replaced by "built in the phone app". A first frame
+    // that guesses is a first frame that has to be taken back.
+    let land: (list: DashWidget[]) => void = () => undefined;
+    getDashboardLayout.mockReturnValue(
+      new Promise<DashWidget[]>((resolve) => {
+        land = resolve;
+      }),
+    );
+    render(<Home />);
+
+    expect(boardOrder()).toEqual([]);
+    expect(screen.queryByText('safebox body')).toBeNull();
+    expect(screen.queryByText(/built in the phone app/i)).toBeNull();
+    expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
+
+    await act(async () => {
+      land([w('cashFlow'), w('safebox')]);
+      await Promise.resolve();
+    });
+
+    // The first board the operator sees is the one they actually have, and
+    // nothing it shows is contradicted a frame later.
+    await waitFor(() => expect(boardOrder()).toEqual(['cashFlow', 'safebox']));
+    expect(cellText('cashFlow')).toMatch(/built in the phone app/i);
+    expect(cellText('safebox')).toContain('safebox body');
+  });
+
+  it('draws every ported widget from a SAVED layout, not only from the default board', async () => {
+    // The saved-layout path and the default path go through one component map,
+    // so a key this admin can draw draws from both. This is the whole key-set
+    // diff in one assertion: seven real bodies, twelve honest placeholders.
+    const { DASH_KEYS } = await import('../lib/dashboardLayout');
+    getDashboardLayout.mockResolvedValue(DASH_KEYS.map((k) => w(k)));
+    render(<Home />);
+    await waitFor(() => expect(boardOrder()).toEqual([...DASH_KEYS]));
+
+    for (const key of DASH_KEYS) {
+      if (PORTED_KEYS.has(key)) {
+        expect(cellText(key)).toContain(BODY_MARKER[key]);
+        expect(cellText(key)).not.toMatch(/built in the phone app/i);
+      } else {
+        expect(cellText(key)).toMatch(/built in the phone app/i);
+      }
+    }
+    expect(PORTED_KEYS.size).toBe(7);
+  });
+
+  it('says where the web cards are when the board is holding phone-only seats', async () => {
+    // An operator who arranged Home on the phone lands here with a board of
+    // placeholders and their working cards hidden. Without this the screen
+    // reads as "the web admin has no widgets", which is what was reported.
+    //
+    // The fixture adds a fourth card ON PURPOSE. The shipped default alone is
+    // substituted for the web board, so it never reaches this state; anything
+    // the operator actually arranged does.
+    const board = [w('stats', 'wide'), w('todaysPack'), w('kintales'), w('gatekeeper')];
+    getDashboardLayout.mockResolvedValue(board);
+    render(<Home />);
+    await waitFor(() => expect(boardOrder()).toEqual(board.map((x) => x.key)));
+
+    expect(screen.getByText(/under Customize, in Hidden cards/i)).toBeInTheDocument();
+  });
+
+  it('stays quiet when every card on the board is one this admin draws', async () => {
+    getDashboardLayout.mockResolvedValue([w('safebox'), w('supplies')]);
+    render(<Home />);
+    await waitFor(() => expect(boardOrder()).toEqual(['safebox', 'supplies']));
+
+    expect(screen.queryByText(/under Customize, in Hidden cards/i)).toBeNull();
   });
 });
 
