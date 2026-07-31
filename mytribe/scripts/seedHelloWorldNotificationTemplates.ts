@@ -12,16 +12,17 @@
  * `gcloud auth application-default login` or a service-account key
  * referenced via GOOGLE_APPLICATION_CREDENTIALS).
  */
-import * as admin from 'firebase-admin';
+import { initializeApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { NOTIFICATION_CATALOG } from '../functions/src/notifications/catalog';
 
 async function main(): Promise<void> {
   if (!process.env.GCLOUD_PROJECT) {
     throw new Error('GCLOUD_PROJECT env required (e.g. auntieos-ttpc)');
   }
-  admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT });
-  const db = admin.firestore();
-  const ts = admin.firestore.FieldValue.serverTimestamp();
+  initializeApp({ projectId: process.env.GCLOUD_PROJECT });
+  const db = getFirestore();
+  const ts = FieldValue.serverTimestamp();
   let count = 0;
 
   for (const def of Object.values(NOTIFICATION_CATALOG)) {

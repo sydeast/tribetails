@@ -129,7 +129,8 @@
  *     the runner at the bottom and is untested by vitest on purpose.
  */
 
-import * as admin from 'firebase-admin';
+import { getApps, initializeApp, applicationDefault } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import {
   MIRROR_ORIGIN_FAMILY,
   MIRROR_ORIGIN_FLAT,
@@ -678,9 +679,9 @@ function initAdmin(projectId: string): void {
         'Refusing to fall back silently.',
     );
   }
-  if (!admin.apps.length) {
-    admin.initializeApp({
-      ...(hasGac ? { credential: admin.credential.applicationDefault() } : {}),
+  if (!getApps().length) {
+    initializeApp({
+      ...(hasGac ? { credential: applicationDefault() } : {}),
       projectId,
     });
   }
@@ -694,7 +695,7 @@ interface RunResult {
 }
 
 async function run(args: Args): Promise<void> {
-  const db = admin.firestore();
+  const db = getFirestore();
 
   // 1. All provisioned portal families (identity mapping targets).
   const familiesSnap = await db.collection('families').select().get();
@@ -790,7 +791,7 @@ async function run(args: Args): Promise<void> {
     flatDocsStamped: 0,
     familiesProvisioned: new Set<string>(),
   };
-  const serverTs = admin.firestore.FieldValue.serverTimestamp();
+  const serverTs = FieldValue.serverTimestamp();
   for (const d of plan.decisions) {
     if (d.action === 'provision') {
       try {

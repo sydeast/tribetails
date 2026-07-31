@@ -47,7 +47,8 @@
  *     with no Firestore deps.
  */
 
-import * as admin from 'firebase-admin';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue, type Firestore } from 'firebase-admin/firestore';
 
 type Mode = 'dry-run' | 'apply';
 
@@ -469,7 +470,7 @@ function initAdmin(projectId: string): void {
       'backfillBookingEnvelopes: missing credentials. Set GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON path, or run against the Firestore emulator.',
     );
   }
-  if (!admin.apps.length) admin.initializeApp({ projectId });
+  if (!getApps().length) initializeApp({ projectId });
 }
 
 interface RunResult {
@@ -489,7 +490,7 @@ function bumpSkip(r: RunResult, reason: string): void {
 
 /** Copy `notes/` and `internalNotes/` from the old flat doc to the kinCare path. */
 async function copyNoteSubcollections(
-  db: admin.firestore.Firestore,
+  db: Firestore,
   familyId: string,
   batchId: string,
   oldDocId: string,
@@ -512,7 +513,7 @@ async function copyNoteSubcollections(
 }
 
 async function run(mode: Mode, finalize: boolean): Promise<RunResult> {
-  const db = admin.firestore();
+  const db = getFirestore();
   const result: RunResult = {
     familiesScanned: 0,
     docsScanned: 0,
@@ -641,7 +642,7 @@ async function main(): Promise<void> {
   summarise(result);
 
   if (args.mode === 'apply') {
-    const db = admin.firestore();
+    const db = getFirestore();
     await db.collection('activity_log').add({
       timestamp: new Date().toISOString(),
       actionType: 'BACKFILL_BOOKING_ENVELOPES',
@@ -653,7 +654,7 @@ async function main(): Promise<void> {
       severity: 'info',
       actorRole: 'SYSTEM',
       payload: { result, finalize: args.finalize },
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
     console.log('\nWrote activity_log entry (UNCHAINED — runs outside writeAuditEntry).');
   } else {

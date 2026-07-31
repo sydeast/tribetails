@@ -28,7 +28,8 @@
  * Application Default Credentials. Fails loud if creds missing.
  */
 
-import * as admin from 'firebase-admin';
+import { initializeApp } from 'firebase-admin/app';
+import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 
 // ---------------------------------------------------------------------------
 // Demo family ids — these must match the placeholders already in the
@@ -957,7 +958,7 @@ export function assertNoUserFacingCopy(writes: PlannedWrite[]): void {
 // ---------------------------------------------------------------------------
 // Firestore write loop. Fail-loud — any error throws and aborts the run.
 // ---------------------------------------------------------------------------
-async function writeAll(db: admin.firestore.Firestore, writes: PlannedWrite[]): Promise<number> {
+async function writeAll(db: Firestore, writes: PlannedWrite[]): Promise<number> {
   let written = 0;
   for (const w of writes) {
     // merge:true preserves any non-seeded fields written by AuntieOS later
@@ -1025,8 +1026,8 @@ async function main(): Promise<void> {
     `\n[init] projectId=${projectId} emulator=${usingEmulator} allowProd=${args.allowProd}`,
   );
 
-  admin.initializeApp({ projectId });
-  const db = admin.firestore();
+  initializeApp({ projectId });
+  const db = getFirestore();
 
   const written = await writeAll(db, writes);
   console.log(`\nfinal: written=${written} (idempotent: merge:true on deterministic ids)`);

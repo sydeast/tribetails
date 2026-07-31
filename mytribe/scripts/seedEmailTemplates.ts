@@ -1,4 +1,5 @@
-import * as admin from 'firebase-admin';
+import { initializeApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
 
@@ -10,8 +11,8 @@ interface Template {
 }
 
 async function main(): Promise<void> {
-  admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT });
-  const db = admin.firestore();
+  initializeApp({ projectId: process.env.GCLOUD_PROJECT });
+  const db = getFirestore();
   const dir = resolve(__dirname, '..', 'seeds', 'emailTemplates');
   const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
   for (const f of files) {
@@ -23,7 +24,7 @@ async function main(): Promise<void> {
       subject: tpl.subject,
       body: tpl.body,
       html: tpl.html ?? null,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
     console.log(`seeded emailTemplates/${tpl.key}`);
   }

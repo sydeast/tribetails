@@ -41,7 +41,8 @@
  *   ts-node --project ../scripts/tsconfig.json ../scripts/unify_settings_docs.ts --apply
  */
 
-import * as admin from 'firebase-admin';
+import { getApps, initializeApp, applicationDefault, getApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -199,8 +200,8 @@ function initAdmin(): void {
       'GOOGLE_APPLICATION_CREDENTIALS not set. Export the auntieos-ttpc service-account key path before running.',
     );
   }
-  if (!admin.apps.length) {
-    admin.initializeApp({ credential: admin.credential.applicationDefault() });
+  if (!getApps().length) {
+    initializeApp({ credential: applicationDefault() });
   }
 }
 
@@ -240,7 +241,7 @@ async function main(): Promise<void> {
   console.log(`unify_settings_docs  mode=${mode}  runId=${runId}`);
   initAdmin();
 
-  const db = admin.firestore();
+  const db = getFirestore();
   const [businessSnap, adminSnap] = await Promise.all([
     db.doc(BUSINESS_DOC_PATH).get(),
     db.doc(ADMIN_DOC_PATH).get(),
@@ -260,7 +261,7 @@ async function main(): Promise<void> {
   }
 
   // BACKUP FIRST, always, before any write path. Fail-loud on failure.
-  const projectId = (admin.app().options as { projectId?: string }).projectId ?? process.env.GCLOUD_PROJECT ?? 'unknown';
+  const projectId = (getApp().options as { projectId?: string }).projectId ?? process.env.GCLOUD_PROJECT ?? 'unknown';
   const backupPath = writeBackup({
     runId,
     project: projectId,
@@ -312,7 +313,7 @@ async function main(): Promise<void> {
     severity: 'info',
     actorRole: 'SYSTEM',
     payload: { runId, changedKeys: changed, backupPath },
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
   console.log('Wrote activity_log entry (UNCHAINED: runs outside the writeAuditEntry server callable).');
 }

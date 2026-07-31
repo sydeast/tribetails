@@ -11,6 +11,7 @@
     "baseUrl": ".",
     "paths": {
       "vitest": ["../functions/node_modules/vitest"],
+      "firebase-admin/*": ["../functions/node_modules/firebase-admin/lib/*"],
       "*": ["../functions/node_modules/*", "*"]
     }
   },
