@@ -3,12 +3,12 @@ import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    kotlin("multiplatform") version "2.2.20"
-    id("org.jetbrains.compose") version "1.10.1"
-    id("org.jetbrains.kotlin.plugin.compose") version "2.2.20"
-    id("org.jetbrains.kotlin.plugin.serialization") version "2.2.20"
+    kotlin("multiplatform") version "2.4.10"
+    id("org.jetbrains.compose") version "1.11.1"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.10"
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.10"
     id("com.android.application") version "8.7.2"
-    id("com.google.gms.google-services") version "4.4.2"
+    id("com.google.gms.google-services") version "4.5.0"
 }
 
 group = "com.kinfolk"
@@ -48,10 +48,10 @@ kotlin {
         val firebaseMain by creating {
             dependsOn(commonMain.get())
             dependencies {
-                implementation("dev.gitlive:firebase-auth:2.1.0")
-                implementation("dev.gitlive:firebase-firestore:2.1.0")
-                implementation("dev.gitlive:firebase-functions:2.1.0")
-                implementation("dev.gitlive:firebase-messaging:2.1.0")
+                implementation("dev.gitlive:firebase-auth:2.5.0")
+                implementation("dev.gitlive:firebase-firestore:2.5.0")
+                implementation("dev.gitlive:firebase-functions:2.5.0")
+                implementation("dev.gitlive:firebase-messaging:2.5.0")
             }
         }
         // firebaseMain = gitlive client SDK source set, only for android + js.
@@ -71,12 +71,12 @@ kotlin {
             // Bricolage Grotesque, DM Mono) from commonMain/composeResources/font
             // so all three targets render identical typography. See theme/Theme.kt.
             implementation(compose.components.resources)
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
-            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
             // Coil 3 multiplatform image loader for AsyncImage on Account avatar + KinTale media.
             // Per-platform network engines wired below (okhttp for android, ktor3 for js).
-            implementation("io.coil-kt.coil3:coil-compose:3.0.4")
+            implementation("io.coil-kt.coil3:coil-compose:3.5.0")
             // Routing (D-ROUTE1, chosen 2026-06-01): AndroidX Compose Navigation.
             // Spike confirmed it resolves + compiles on js(IR)/jvm/android with
             // Compose 1.10.1 / Kotlin 2.2.20. Migration off the hand-rolled TabShell
@@ -85,7 +85,7 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
             @OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
             implementation(compose.uiTest)
         }
@@ -104,7 +104,7 @@ kotlin {
             }
         }
         androidMain.dependencies {
-            implementation("com.google.firebase:firebase-analytics-ktx:22.1.0")
+            implementation("com.google.firebase:firebase-analytics-ktx:22.5.0")
             // Native Firebase Functions SDK — used by NativeAndroidFunctionsClient
             // to bypass gitlive 2.x's FirebaseEncoder, which throws
             //   SerializationException: Serializer for class 'Any' is not found
@@ -112,20 +112,20 @@ kotlin {
             // accepts HashMap and returns HashMap, no serializer layer.
             implementation("com.google.firebase:firebase-functions:21.1.0")
             // Task.await() for native Functions call() result.
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
-            implementation("androidx.activity:activity-compose:1.9.2")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.11.0")
+            implementation("androidx.activity:activity-compose:1.13.0")
             implementation("androidx.biometric:biometric:1.1.0")
-            implementation("androidx.core:core-ktx:1.13.1")
-            implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
+            implementation("androidx.core:core-ktx:1.19.0")
+            implementation("io.coil-kt.coil3:coil-network-okhttp:3.5.0")
             // Sentry — crash reporting. Init gated in KinfolkPortalApplication
             // on a non-blank DSN + non-robolectric fingerprint.
-            implementation("io.sentry:sentry-android:8.40.0")
+            implementation("io.sentry:sentry-android:8.50.1")
         }
         jsMain.dependencies {
             // Coil 3 ktor3 fetcher for the kinfolk web portal. Brought into jsMain only;
             // jvmMain still uses ktor 2.x for the Firebase REST shim and stays untouched.
-            implementation("io.coil-kt.coil3:coil-network-ktor3:3.0.4")
-            implementation("io.ktor:ktor-client-js:3.0.0")
+            implementation("io.coil-kt.coil3:coil-network-ktor3:3.5.0")
+            implementation("io.ktor:ktor-client-js:3.5.1")
         }
     }
 }
