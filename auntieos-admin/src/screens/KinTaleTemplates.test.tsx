@@ -252,9 +252,9 @@ describe('KinTaleTemplates: checklist bank quick-add', () => {
   it('offers the bank items for a scope, and only that scope', async () => {
     render(<KinTaleTemplates />);
     await screen.findByDisplayValue('Walk recap');
-    await waitFor(() => expect(bankRow('Per-pet items')).not.toBeNull());
+    await waitFor(() => expect(bankRow('Per-Kin items')).not.toBeNull());
 
-    const perPet = bankRow('Per-pet items');
+    const perPet = bankRow('Per-Kin items');
     expect(within(perPet).getByRole('button', { name: /fresh water provided/i })).toBeInTheDocument();
     expect(within(perPet).queryByRole('button', { name: /home secured/i })).toBeNull();
 
@@ -265,9 +265,9 @@ describe('KinTaleTemplates: checklist bank quick-add', () => {
   it('clicking a bank item inserts it as a real checklist row that survives the save', async () => {
     render(<KinTaleTemplates />);
     await screen.findByDisplayValue('Walk recap');
-    await waitFor(() => expect(bankRow('Per-pet items')).not.toBeNull());
+    await waitFor(() => expect(bankRow('Per-Kin items')).not.toBeNull());
 
-    await user.click(within(bankRow('Per-pet items')).getByRole('button', { name: /fresh water provided/i }));
+    await user.click(within(bankRow('Per-Kin items')).getByRole('button', { name: /fresh water provided/i }));
 
     expect(screen.getByDisplayValue('Fresh water provided')).toBeInTheDocument();
 
@@ -286,9 +286,9 @@ describe('KinTaleTemplates: checklist bank quick-add', () => {
     // there as an empty "Add from bank" heading (the archive's rule).
     render(<KinTaleTemplates />);
     await screen.findByDisplayValue('Walk recap');
-    await waitFor(() => expect(bankRow('Per-pet items')).not.toBeNull());
-    await user.click(within(bankRow('Per-pet items')).getByRole('button', { name: /fresh water provided/i }));
-    expect(bankRow('Per-pet items')).toBeNull();
+    await waitFor(() => expect(bankRow('Per-Kin items')).not.toBeNull());
+    await user.click(within(bankRow('Per-Kin items')).getByRole('button', { name: /fresh water provided/i }));
+    expect(bankRow('Per-Kin items')).toBeNull();
     // The per-visit row is untouched: exhausting one scope never hides another.
     expect(within(bankRow('Per-visit items')).getByRole('button', { name: /home secured/i })).toBeInTheDocument();
   });

@@ -459,13 +459,13 @@ function Step1KinSelect(props: {
   const { kin, allKinMode, onToggleAllMode, selectedIds, onToggle } = props;
   return (
     <>
-      <h3 className="title">Select Client &amp; Pets</h3>
+      <h3 className="title">Select Kin</h3>
       <p className="sub">
         Most bookings cover everyone. We&rsquo;ll default to all Kin in your home unless you&rsquo;d like to pick specific Kin for this visit.
       </p>
       {kin.length === 0 ? (
         <p className="sub" style={{ marginTop: 12 }}>
-          No Kin on file yet. Add your pets first: open the menu (top right) and choose The Kin.
+          No Kin on file yet. Add them first: open the menu (top right) and choose The Kin.
         </p>
       ) : (
         <>

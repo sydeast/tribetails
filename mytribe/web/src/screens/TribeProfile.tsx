@@ -722,7 +722,7 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
       <div className="msub">{subParts.join(' · ')}</div>
       <div className="mtoggles">
         <label className="togglerow">
-          <span className="tlabel">Can edit pets</span>
+          <span className="tlabel">Can edit Kin</span>
           <span className="toggle">
             <input type="checkbox" checked={canEditPets} onChange={(e) => setCanEditPets(e.target.checked)} />
             <span className="track">
@@ -802,7 +802,7 @@ function InviteKinfolkCard(props: { kinfolkId: string | undefined }) {
         </div>
       </div>
       <label className="togglerow">
-        <span className="tlabel">Can edit pets</span>
+        <span className="tlabel">Can edit Kin</span>
         <span className="toggle">
           <input type="checkbox" checked={canEditPets} onChange={(e) => setCanEditPets(e.target.checked)} />
           <span className="track">

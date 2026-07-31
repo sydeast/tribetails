@@ -454,7 +454,7 @@ export function Directory({
         blocking.
       */}
       {tab === 'kinfolk' && kinState.status === 'error' && (
-        <Banner tone="error" title="Couldn't load pet data">
+        <Banner tone="error" title="Couldn't load Kin data">
           Household cards below may be missing kin: {kinState.message}
         </Banner>
       )}

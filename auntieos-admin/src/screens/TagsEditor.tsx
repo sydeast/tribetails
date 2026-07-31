@@ -270,7 +270,7 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
       <DenScreenHeading
         kicker="The Den · Admin"
         title="Tags"
-        subtitle="Manage the tags you put on households and pets."
+        subtitle="Manage the tags you put on households and Kin."
         trailing={onBack ? <GhostButton label="Back to settings" onClick={onBack} disabled={busy} /> : undefined}
       />
 
@@ -304,8 +304,8 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
             />
 
             <TagVocabSection
-              title="Pet tags"
-              subtitle="Label a pet (a kin), e.g. Reactive or On meds."
+              title="Kin tags"
+              subtitle="Label a Kin, e.g. Reactive or On meds."
               scopeNoun="pet"
               tags={pet}
               onChange={editPet}

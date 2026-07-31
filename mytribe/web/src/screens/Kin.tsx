@@ -43,7 +43,7 @@ export function Kin() {
           <section className="glass card emptystate">
             <div className="ehug">{'\u{1F43E}'}</div>
             <h3>No Kin added yet</h3>
-            <p>Add the pets in your home, names, breeds, photos, care details. Tap each card for full profile.</p>
+            <p>Add the Kin in your home, names, breeds, photos, care details. Tap each card for full profile.</p>
             <span className="btn grad navlink-inert" style={{ marginTop: 20 }} title="Coming soon">
               + Add New
             </span>
