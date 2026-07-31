@@ -141,10 +141,10 @@ describe('getMyHomeHandler', () => {
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { getMyHomeHandler } = await import('../src/portal/getMyHome');
-    const res = (await getMyHomeHandler({
+    const res = await getMyHomeHandler({
       data: { kinfolkId: 'demo-1' },
       auth: { uid: 'u1' },
-    } as any)) as Record<string, unknown>;
+    } as any);
 
     expect(res).not.toHaveProperty('currentVisit');
     expect(res).not.toHaveProperty('upcomingBookings');

@@ -11,6 +11,7 @@ import type { NotificationDef } from '../src/notifications/types';
 function def(primary: NotificationDef['recipientResolver']): NotificationDef {
   return {
     key: 't.k',
+    label: 'Test notification',
     audience: 'kinfolk',
     audiences: { kinfolk: true },
     category: 'visit',

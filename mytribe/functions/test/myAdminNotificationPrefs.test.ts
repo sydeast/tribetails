@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
+import type { UserNotificationPrefs } from '../src/notifications/types';
 
 const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
@@ -72,7 +73,9 @@ describe('saveMyAdminNotificationPrefsHandler', () => {
     expect(res).toEqual({ ok: true });
     const write = ctx.writes.find((w) => w.path === 'staff/admin1');
     expect(write, 'must write to staff/admin1').toBeTruthy();
-    expect(write?.data?.notificationPrefs?.byKey?.['invoice.new']?.sms).toBe(true);
+    expect(
+      (write?.data?.notificationPrefs as UserNotificationPrefs | undefined)?.byKey?.['invoice.new']?.sms,
+    ).toBe(true);
   });
 
   it('rejects unknown channel keys', async () => {

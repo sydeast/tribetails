@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
+import type { MemberPermissions } from '../src/lib/schema';
 
 const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
@@ -42,7 +43,7 @@ describe('addSecondaryContactHandler', () => {
     expect(wrote!.data.tribeId).toBe('3');
     expect(wrote!.data.proposedRole).toBe('SECONDARY');
     // home_access defaults to false and is included in proposedPermissions
-    expect(wrote!.data.proposedPermissions.home_access).toBe(false);
+    expect((wrote!.data.proposedPermissions as MemberPermissions).home_access).toBe(false);
   });
 
   it('WARNING-19: rejects a SECONDARY member (privilege escalation) and mints nothing', async () => {
@@ -96,7 +97,7 @@ describe('addSecondaryContactHandler', () => {
     } as any);
     expect(res.inviteId).toBeTypeOf('string');
     const wrote = ctx.adds.find((a) => a.collection === 'inviteRequests');
-    expect(wrote!.data.proposedPermissions.home_access).toBe(true);
+    expect((wrote!.data.proposedPermissions as MemberPermissions).home_access).toBe(true);
   });
 });
 describe('addSecondaryContactHandler — pending-invite dedupe (S7-BLOCKER-2)', () => {

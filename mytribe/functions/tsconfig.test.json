@@ -1,0 +1,11 @@
+{
+  "//": "Type-checks the test suite. It is a SEPARATE config on purpose: tsconfig.json drives the deploy build (rootDir 'src' -> outDir 'lib'), so folding 'test' into its `include` would either be refused by rootDir or start emitting test files into the shipped bundle. This config emits nothing (`noEmit`) and only reads. The src/ modules the tests import are pulled in transitively, so they are not listed in `include` again. `npm run typecheck` runs it alongside the build config and the scripts config.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["test/**/*.ts", "vitest.config.ts", "vitest.ci.config.ts", "vitest.rules.config.ts"],
+  "//exclude": "`exclude` is NOT inherited usefully here: the base config excludes 'test', and exclude is applied AFTER include, so without this override the base's entry would filter out every file this config exists to check — silently, with a green 0-error run.",
+  "exclude": ["node_modules", "lib"]
+}

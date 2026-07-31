@@ -1,12 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 
+/**
+ * The slice of Stripe's `checkout.sessions.create` params this suite asserts
+ * on. Declaring it on the mock is what makes `mock.calls[0][0]` a real type
+ * instead of `never` — an untyped `vi.fn(async () => ...)` records a zero-arg
+ * call signature, so every assertion below was reaching into an empty tuple.
+ */
+interface CheckoutSessionParams {
+  line_items: Array<{ price_data: { unit_amount: number } }>;
+  metadata: Record<string, string>;
+  [key: string]: unknown;
+}
+
 const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   stripeMock: {
     checkout: {
       sessions: {
-        create: vi.fn(async () => ({
+        create: vi.fn(async (_params: CheckoutSessionParams) => ({
           id: 'cs_test_1',
           url: 'https://checkout.stripe.com/test',
           client_secret: null,
