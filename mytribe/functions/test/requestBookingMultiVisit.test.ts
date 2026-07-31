@@ -249,6 +249,63 @@ describe('requestBookingHandler — multi-visit envelope', () => {
     ).rejects.toThrow();
   });
 
+  it('resolves real kin names onto the envelope AND every visit (not kinNames: [])', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'families/3/kin/k1': { name: 'Fido' },
+        'families/3/kin/k2': { name: 'Whiskers' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    const res: any = await requestBookingHandler({
+      data: {
+        kinfolkId: '3',
+        kinIds: ['k1', 'k2'],
+        pattern: 'individual',
+        visits: [{ startTimeMs: future, serviceId: 's1', serviceName: 'Walk', priceCents: 100 }],
+      },
+      auth: { uid: 'u1' },
+    } as any);
+
+    const parent = ctx.writes.find((w) => w.path === `families/3/bookings/${res.batchId}`)!.data;
+    const visit = ctx.writes.find((w) =>
+      w.path.startsWith(`families/3/bookings/${res.batchId}/kinCares/`),
+    )!.data;
+    expect(parent.kinNames).toEqual(['Fido', 'Whiskers']);
+    expect(visit.kinNames).toEqual(['Fido', 'Whiskers']);
+  });
+
+  it('tolerates a missing kin doc: resolves the ones that exist, drops the rest, never fails the booking', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'families/3/kin/k1': { name: 'Fido' },
+        // k2 has no doc: deleted kin, or a stale id from the client.
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    const res: any = await requestBookingHandler({
+      data: {
+        kinfolkId: '3',
+        kinIds: ['k1', 'k2'],
+        pattern: 'individual',
+        visits: [{ startTimeMs: future, serviceId: 's1', serviceName: 'Walk', priceCents: 100 }],
+      },
+      auth: { uid: 'u1' },
+    } as any);
+
+    const parent = ctx.writes.find((w) => w.path === `families/3/bookings/${res.batchId}`)!.data;
+    // kinIds still carries both (nothing here about a missing pet), only
+    // kinNames narrows to what actually resolved.
+    expect(parent.kinIds).toEqual(['k1', 'k2']);
+    expect(parent.kinNames).toEqual(['Fido']);
+  });
+
   it('legacy single-visit shape still works (backward compat)', async () => {
     const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
     mocks.dbFn.mockReturnValue(ctx.db);

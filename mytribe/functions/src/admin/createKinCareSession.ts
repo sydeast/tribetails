@@ -8,6 +8,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { resolveKinNames } from '../lib/resolveKinNames';
 
 /**
  * 1E §A.9: server-bound creation of a kin_care_sessions doc (scheduleNewVisit).
@@ -49,9 +50,11 @@ export async function createKinCareSessionHandler(
     throw err;
   }
 
+  const kinNames = await resolveKinNames(args.kinfolkId, args.kinIds);
   const ref = await db().collection('kin_care_sessions').add({
     kinfolkId: args.kinfolkId,
     kinIds: args.kinIds,
+    kinNames,
     serviceType: args.serviceType,
     startTime: args.startTime,
     endTime: args.endTime,

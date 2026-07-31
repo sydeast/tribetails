@@ -10,6 +10,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { approveBookingSeriesCore } from '../admin/approveBookingSeriesCore';
 import { resolveDefaultAssignee, type Assignee } from '../lib/defaultAssignee';
+import { resolveKinNames } from '../lib/resolveKinNames';
 
 /**
  * #9 (2026-06-08): Auto-confirm repeat kinfolk. When the operator turns on
@@ -168,6 +169,11 @@ export async function writeEnvelope(opts: {
   const homogeneousServiceId = serviceIds.size === 1 ? [...serviceIds][0] : null;
   const homogeneousServiceName = serviceNames.size === 1 ? [...serviceNames][0] : null;
   const kinIdUnion = [...new Set(kinIds)];
+  // Resolved once for the whole envelope (every visit here shares the same
+  // kinIds today) and stamped on the envelope AND each visit, rather than the
+  // `kinNames: []` that used to leave the portal saying "your kin" and
+  // Android's Schedule with no Pets line at all.
+  const kinNames = await resolveKinNames(kinfolkId, kinIdUnion);
 
   const visitIds: string[] = [];
   await firestore.runTransaction(async (tx) => {
@@ -181,7 +187,7 @@ export async function writeEnvelope(opts: {
       serviceId: homogeneousServiceId,
       serviceName: homogeneousServiceName,
       kinIds: kinIdUnion,
-      kinNames: [],
+      kinNames,
       notes,
       visitCount: visits.length,
       confirmedCount: 0,
@@ -210,7 +216,7 @@ export async function writeEnvelope(opts: {
         startTime: Timestamp.fromMillis(v.startTimeMs),
         endTime: v.endTimeMs != null ? Timestamp.fromMillis(v.endTimeMs) : null,
         kinIds: kinIdUnion,
-        kinNames: [],
+        kinNames,
         // Default-assignee (2026-07-02): new visits start on the admin's plate;
         // onBookingsWrite fires assignment.assigned off this field.
         assignedAuntieUid: assignee?.uid ?? null,
