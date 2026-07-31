@@ -26,6 +26,7 @@ fun EditKinScreen(
 ) {
     val state by viewModel.editKinState.collectAsState()
     val breedBank by viewModel.breedBank.collectAsState()
+    val breedBankFailed by viewModel.breedBankFailed.collectAsState()
     val context = LocalContext.current
 
     // Phase 3: refresh-intelligence (synthesize) state + feedback. Synthesis is
@@ -125,14 +126,15 @@ fun EditKinScreen(
                                     val breedCatalog = breedCatalogForSpecies(
                                         state.species, breedBank.dogBreeds, breedBank.catBreeds,
                                     )
-                                    val wantsBank = state.species.equals("Dog", true) ||
-                                        state.species.equals("Cat", true)
                                     BreedDropdownField(
                                         value = state.breed,
                                         onValueChange = viewModel::updateEditKinBreed,
                                         catalog = breedCatalog,
-                                        note = if (wantsBank && breedCatalog.isEmpty())
-                                            "Breed list unavailable here, type it in." else null,
+                                        // breedBankNote covers BOTH silent-empty causes: a
+                                        // rejected getBreeds call AND a call that resolved
+                                        // but came back empty because dog_breeds / cat_breeds
+                                        // are not seeded. The two get distinct wording.
+                                        note = breedBankNote(state.species, breedCatalog, breedBankFailed),
                                         modifier = Modifier.weight(1f),
                                     )
                                 }

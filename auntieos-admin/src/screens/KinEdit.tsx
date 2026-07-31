@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useState } from 'react';
 import { getKin, type KinDetail } from '../api/kinView';
 import { updateKin, setKinArchived, type KinEditPatch } from '../api/directoryWrite';
 import { useBreedBanks } from '../api/breeds';
-import { breedCatalogForSpecies, speciesWantsBreedBank } from '../lib/breedSearch';
+import { breedBankNote, breedCatalogForSpecies } from '../lib/breedSearch';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -260,11 +260,21 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
                             breedBanks.catBreeds,
                           )}
                           disabled={busy}
-                          note={
-                            speciesWantsBreedBank(form.species) && breedBanksFailed
-                              ? 'Breed list unavailable right now, type it in.'
-                              : null
-                          }
+                          // breedBankNote covers BOTH silent-empty causes: a
+                          // rejected getBreeds call (breedBanksFailed) AND a call
+                          // that resolved but came back empty because dog_breeds /
+                          // cat_breeds are not seeded. Gating on breedBanksFailed
+                          // alone left the second case looking like an ordinary,
+                          // unremarked-on blank field.
+                          note={breedBankNote(
+                            form.species,
+                            breedCatalogForSpecies(
+                              form.species,
+                              breedBanks.dogBreeds,
+                              breedBanks.catBreeds,
+                            ),
+                            breedBanksFailed,
+                          )}
                         />
                       )}
                     </Fragment>

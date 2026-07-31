@@ -27,3 +27,34 @@ fun breedCatalogForSpecies(species: String, dogBreeds: List<String>, catBreeds: 
         "cat" -> catBreeds
         else  -> emptyList()
     }
+
+/** True when a species is expected to have a bank, so an empty one is a fault worth disclosing. Mirrors the web helper. */
+fun speciesWantsBreedBank(species: String): Boolean =
+    when (species.trim().lowercase()) {
+        "dog", "cat" -> true
+        else -> false
+    }
+
+/**
+ * What the Breed field's disclosure note should say, or null when nothing needs
+ * disclosing. Mirrors the web `breedBankNote`.
+ *
+ * Distinguishes a load FAILURE ([failed], the `getBreeds` callable rejected, a
+ * transient fault worth retrying) from a load that SUCCEEDED but returned an
+ * empty bank (the `dog_breeds` / `cat_breeds` collections are not seeded, an
+ * operator-actionable gap, not a network blip). A note gated on [failed] alone
+ * is the silent-empty bug this replaces: DirectoryViewModel.loadBreeds only
+ * ever reported success, so an empty-but-successful load and a rejected one
+ * were indistinguishable from the field's point of view -- both just an empty
+ * catalog, saying nothing.
+ *
+ * A species with no bank at all (Bird, Reptile, ...) gets neither: an empty
+ * catalog there is expected, not a fault.
+ */
+fun breedBankNote(species: String, catalog: List<String>, failed: Boolean): String? {
+    if (!speciesWantsBreedBank(species) || catalog.isNotEmpty()) return null
+    return if (failed)
+        "Breed list failed to load (getBreeds), type it in."
+    else
+        "Breed bank is empty (dog_breeds / cat_breeds not seeded), type it in."
+}

@@ -256,13 +256,25 @@ class DirectoryViewModel(
 
     // Run-4 #6: seeded dog/cat breed banks for the Kin breed dropdown. Loaded from the
     // screen (LaunchedEffect), not VM init, so strict-mockk unit tests stay isolated.
-    // A load failure leaves the banks empty -> the field degrades to free-text.
+    // A load failure leaves the banks empty -> the field degrades to free-text, AND
+    // is disclosed via breedBankFailed rather than only logged (AuntieRepository
+    // already logs it through AuntieLog.e, which never reaches the operator): an
+    // outright failure and dog_breeds/cat_breeds genuinely not being seeded must
+    // read differently on screen (see BreedSearch.breedBankNote), not collapse
+    // into the same silent empty field. See DirectoryViewModelBreedTest.
     private val _breedBank = MutableStateFlow(BreedBank())
     val breedBank: StateFlow<BreedBank> = _breedBank.asStateFlow()
+    private val _breedBankFailed = MutableStateFlow(false)
+    val breedBankFailed: StateFlow<Boolean> = _breedBankFailed.asStateFlow()
     fun loadBreeds() {
         if (_breedBank.value.dogBreeds.isNotEmpty() || _breedBank.value.catBreeds.isNotEmpty()) return
         viewModelScope.launch {
-            repository.getBreeds().onSuccess { _breedBank.value = it }
+            repository.getBreeds()
+                .onSuccess {
+                    _breedBank.value = it
+                    _breedBankFailed.value = false
+                }
+                .onFailure { _breedBankFailed.value = true }
         }
     }
 
