@@ -14,15 +14,12 @@ import {
   localDateIso,
   type ThreadReadState,
 } from '../lib/inboxFormat';
-import { NOTIFICATIONS_QUERY, type NotificationEntry } from '../api/notifications';
-import { useCollection } from '../lib/firestore';
-import { unreadNotificationCount } from '../lib/notificationsFeed';
-import { inboxSection, inboxUnreadTotal } from '../lib/inboxSections';
+import { inboxSection } from '../lib/inboxSections';
 import { type Async } from '../lib/async';
+import { useCollection } from '../lib/firestore';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, EmptyHint, ErrorHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { NotificationsDigest } from '../components/NotificationsDigest';
 import { GhostButton } from '../components/Buttons';
 import { ConversationThread } from './ConversationThread';
 import {
@@ -85,10 +82,10 @@ interface InboxProps {
 
 /**
  * Admin Inbox ("The Den · Inbox"), STACKED SECTIONS per the archive's
- * `InboxScreen.kt`: a Notifications digest above the kinfolk<->auntie message
- * threads. `lib/inboxSections.ts` owns the order and the cross-section unread
- * total; the header badge is the sum of every section that has actually
- * resolved, never a fabricated number for one that has not.
+ * `InboxScreen.kt`: kinfolk<->auntie message threads with an external Channels
+ * section below. `lib/inboxSections.ts` owns the section definitions; the
+ * header badge reflects message thread state only (product ruling D1: Inbox =
+ * conversations/messages, Notifications = alerts/bell).
  *
  * ── Channels, the archive's third section (Task 6.1) ──────────────────────
  * `ChannelsPanel` below merges the four external streams (voicemails, calls,
@@ -98,11 +95,10 @@ interface InboxProps {
  * `isAuntie()`-only and already listed in `SUPPRESSED_IN_TEST_MODE`, and the
  * suppression is applied centrally inside that hook.
  *
- * The header badge is UNCHANGED and still sums notifications and message
- * threads only. `lib/inboxChannels.ts` carries the full reasoning; the short
- * version is that the nav rail's number comes off one listener on
- * `conversations`, and a channel count folded in here but not there would print
- * two different numbers for one word.
+ * Channels do not contribute to the badge. `lib/inboxChannels.ts` carries the
+ * full reasoning; the short version is that the nav rail's number comes off one
+ * listener on `conversations`, and a channel count folded in here but not there
+ * would print two different numbers for one word.
  *
  * The message list loads once via the one-shot `listConversations` callable
  * (see `api/inbox.ts` for why this is a callable, not a `useCollection`
@@ -121,10 +117,6 @@ interface InboxProps {
  */
 export function Inbox({ onSelectThread }: InboxProps) {
   const [threads, setThreads] = useState<Async<ConversationSummary[]>>({ status: 'loading' });
-  // The SAME bounded listener the Notifications screen uses (createdAt desc,
-  // capped 200). Subscribed here rather than inside NotificationsDigest so the
-  // header badge can read its unread count without a second copy of the query.
-  const notifications = useCollection<NotificationEntry>(NOTIFICATIONS_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
   // The thread/detail view: a sibling VIEW of this list (the Communicate.tsx /
   // Templates.tsx pattern), not a route. Opening a row sets it; ConversationThread
@@ -168,14 +160,13 @@ export function Inbox({ onSelectThread }: InboxProps) {
 
   useEffect(() => load(), [load]);
 
-  // Per-section unread counts. `null` means "not resolved", NOT zero: a count
-  // is a claim, and a failed or in-flight read cannot support one (the
-  // StatCard / AsyncRegion policy this app follows throughout, see
-  // lib/async.ts). `inboxUnreadTotal` sums only what is genuinely known.
-  const unreadCount = inboxUnreadTotal([
-    notifications.status === 'ready' ? unreadNotificationCount(notifications.data) : null,
-    threads.status === 'ready' ? unreadThreadCount(threads.data) : null,
-  ]);
+  // Badge semantics: counts unread message threads only. The nav rail's count
+  // (lib/useUnreadInbox.ts) counts the SAME threads off ONE bounded listener
+  // to keep the two numbers in sync. Notifications live on the Notifications
+  // screen per product ruling D1. Channels badge counts "waiting on a reply"
+  // under a different noun to avoid collision with the rail's word.
+  const unreadCount =
+    threads.status === 'ready' ? unreadThreadCount(threads.data) : null;
 
   const messagesSection = inboxSection('messages');
 
@@ -200,15 +191,13 @@ export function Inbox({ onSelectThread }: InboxProps) {
       <DenScreenHeading
         kicker="The Den · Inbox"
         title="Inbox"
-        subtitle="Business alerts and two-way message threads with kinfolk, newest first."
+        subtitle="Two-way message threads with kinfolk, newest first."
         trailing={
           unreadCount !== null && unreadCount > 0 ? (
             <span className="inbox__badge">{unreadCount} unread</span>
           ) : undefined
         }
       />
-
-      <NotificationsDigest state={notifications} />
 
       <DenPanel title={messagesSection.title} subtitle={messagesSection.subtitle}>
         <AsyncRegion
