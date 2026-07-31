@@ -83,6 +83,23 @@ class InvoiceSessionLinkViewModelTest {
         // A8: loadInvoice also fetches business settings for the "How to pay" section.
         // A relaxed mock can't fabricate Result<BusinessSettings> (value class), so stub it.
         coEvery { mockRepo.getBusinessSettings() } returns Result.success(com.tribetails.auntieos.data.model.BusinessSettings())
+        // openEditMode now also asks the server which visits are still billable,
+        // which is what separates a real candidate from one already on another
+        // invoice. Same value-class problem as above: a relaxed mock returns a
+        // bare Object where a Result<ListUninvoicedSessionsResult> is expected,
+        // so it is stubbed. These tests are about the LINK decisions, so the
+        // billable answer is deliberately empty; the billable behaviour has its
+        // own file, InvoiceBillableSessionsViewModelTest.
+        coEvery { mockInvoiceRepo.listUninvoicedSessions(any(), any()) } returns Result.success(
+            com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResult(
+                sessions = emptyList(),
+                unpriceable = emptyList(),
+                unplaceable = emptyList(),
+                rateCardLoaded = true,
+                scanned = 0L,
+                truncated = false,
+            ),
+        )
     }
 
     @After

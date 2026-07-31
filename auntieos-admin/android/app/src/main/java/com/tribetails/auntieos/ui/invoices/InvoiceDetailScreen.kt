@@ -120,12 +120,19 @@ fun InvoiceDetailScreen(
     // Session-link edit dialog
     if (uiState.editMode) {
         LinkSessionsDialog(
-            available   = uiState.availableSessions,
-            selectedIds = uiState.pendingSessionIds,
-            onToggle    = { viewModel.toggleSessionInPending(it) },
-            onSave      = { viewModel.saveLinks() },
-            onDismiss   = { viewModel.closeEditMode() },
-            saveLoading = uiState.saveLoading,
+            available         = uiState.availableSessions,
+            selectedIds       = uiState.pendingSessionIds,
+            onToggle          = { viewModel.toggleSessionInPending(it) },
+            onSave            = { viewModel.saveLinks() },
+            onDismiss         = { viewModel.closeEditMode() },
+            saveLoading       = uiState.saveLoading,
+            billableIds       = uiState.billableSessionIds,
+            unpricedIds       = uiState.unpricedSessionIds,
+            rateCardLoaded    = uiState.rateCardLoaded,
+            unplaceableIds    = uiState.unplaceableSessionIds,
+            billableTruncated = uiState.billableTruncated,
+            billableLoading   = uiState.billableLoading,
+            billableError     = uiState.billableError,
         )
     }
 
@@ -998,6 +1005,22 @@ private fun LinkSessionsDialog(
     onSave: () -> Unit,
     onDismiss: () -> Unit,
     saveLoading: Boolean,
+    /**
+     * Ids the SERVER says are billable: completed, claimed by no invoice, inside
+     * the window. `available` is every session for the household with no
+     * predicate, so without this a visit already billed elsewhere and one that
+     * has not happened yet are indistinguishable from a real candidate.
+     */
+    billableIds: Set<String> = emptySet(),
+    /** Billable, but the rate card could not price it. Not a price of zero. */
+    unpricedIds: Set<String> = emptySet(),
+    rateCardLoaded: Boolean = true,
+    /** Billable work no date window can reach. Naming it is the only way it is seen. */
+    unplaceableIds: List<String> = emptyList(),
+    billableTruncated: Boolean = false,
+    billableLoading: Boolean = false,
+    /** The billable check failed. "None" and "we could not tell" must not look alike. */
+    billableError: String? = null,
 ) {
     val c = AuntieTheme.colors
     AuntieModal(
@@ -1010,6 +1033,55 @@ private fun LinkSessionsDialog(
             GhostButton(label = "Cancel", onClick = onDismiss)
         },
     ) {
+        // What the operator needs BEFORE picking, in the order it changes a
+        // decision: can we tell which are billable, are any priced at nothing,
+        // is work missing from the list entirely, is the list even complete.
+        when {
+            billableLoading -> Text(
+                text  = "Checking which visits are still un-billed\u2026",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+            billableError != null -> Text(
+                // Fail loud. Silence here reads as "nothing is billable", which
+                // is the same screen as "everything is already billed".
+                text  = "Could not check which visits are billable: $billableError. " +
+                    "Every session below is shown unchecked, so confirm before saving.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.warning,
+            )
+            !rateCardLoaded -> Text(
+                text  = "There is no service rate card, so nothing below could be priced automatically. " +
+                    "Anything you link still needs a price on the invoice.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.warning,
+            )
+            unpricedIds.isNotEmpty() -> Text(
+                text  = "${unpricedIds.size} of these has no rate on the card, so it will need a price " +
+                    "typed in. It is never billed at zero.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.warning,
+            )
+        }
+        if (unplaceableIds.isNotEmpty()) {
+            // Widening the dates cannot surface these, so the copy says what to
+            // fix rather than sending the operator back to the window.
+            Text(
+                text  = "${unplaceableIds.size} completed visit(s) for this household have no start time, " +
+                    "so no date range can find them and they cannot be billed here. Fix the start time on " +
+                    "the visit itself. Visit id(s): ${unplaceableIds.joinToString(", ")}",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.warning,
+            )
+        }
+        if (billableTruncated) {
+            Text(
+                text  = "The billable check hit the server's page limit, so there may be un-billed visits " +
+                    "it did not return.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.warning,
+            )
+        }
         if (available.isEmpty()) {
             Text(
                 text  = "No sessions found for this kinfolk.",
@@ -1026,10 +1098,25 @@ private fun LinkSessionsDialog(
                     val dateLabel = session.completedAt.orEmpty().take(10)
                         .ifBlank { session.startTime.take(10) }
                         .ifBlank { "-" }
-                    val chipLabel = "${session.serviceType.ifBlank { "Session" }} · $dateLabel"
+                    // A session the server did not call billable is either
+                    // already on another invoice or not finished. It stays
+                    // tappable, because a session ALREADY linked to this
+                    // invoice is excluded by the callable too and has to remain
+                    // unlinkable, but it says what it is rather than looking
+                    // like an ordinary candidate.
+                    val linkedHere = session.id in selectedIds
+                    val billable = session.id in billableIds
+                    val suffix = when {
+                        billableLoading || billableError != null -> ""
+                        billable && session.id in unpricedIds -> " · needs a price"
+                        billable -> ""
+                        linkedHere -> " · on this invoice"
+                        else -> " · not billable"
+                    }
+                    val chipLabel = "${session.serviceType.ifBlank { "Session" }} · $dateLabel$suffix"
                     AuntieChip(
                         label    = chipLabel,
-                        selected = session.id in selectedIds,
+                        selected = linkedHere,
                         onClick  = { onToggle(session.id) },
                     )
                 }

@@ -15,6 +15,7 @@ import com.tribetails.auntieos.domain.formatCentsUsd
 import com.tribetails.auntieos.domain.invoicePartPaid
 import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.util.AuntieLog
+import java.time.LocalDate
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +30,34 @@ data class InvoiceDetailUiState(
     val sessionsLoading: Boolean = false,
     val editMode: Boolean = false,
     val pendingSessionIds: Set<String> = emptySet(),
+    /**
+     * The server's answer to "which of this household's visits are actually
+     * billable": completed, claimed by no invoice, inside the window, priced
+     * from the rate card where possible.
+     *
+     * `availableSessions` above is every session for the household with no
+     * predicate at all, so an already-billed or unfinished visit sits in it
+     * looking exactly like a candidate. That list stays, because a session
+     * ALREADY linked to this invoice has to remain visible or it could never be
+     * unlinked, and the callable excludes it by design (it is claimed). These
+     * ids are what marks the rest as safe to add.
+     */
+    val billableSessionIds: Set<String> = emptySet(),
+    /** Billable ids the rate card could not price. NOT a price of zero. */
+    val unpricedSessionIds: Set<String> = emptySet(),
+    /** False when there is no rate card at all, which is a different problem from a missing entry. */
+    val rateCardLoaded: Boolean = true,
+    /**
+     * Completed, unclaimed visits with an empty startTime. No date window can
+     * reach them, so they can never appear in the list; naming them is the only
+     * way the operator learns the work exists.
+     */
+    val unplaceableSessionIds: List<String> = emptyList(),
+    /** The server hit its page cap, so the candidate set may be short of the truth. */
+    val billableTruncated: Boolean = false,
+    val billableLoading: Boolean = false,
+    /** Set when the billable read failed, so the screen says so instead of implying "none". */
+    val billableError: String? = null,
     val saveLoading: Boolean = false,
     val toastMessage: String = "",
     val toastVisible: Boolean = false,
@@ -239,9 +268,70 @@ class InvoiceDetailViewModel(
         }
     }
 
+    /**
+     * How far back the billable window reaches, in days. Matches the React
+     * admin's picker, which opens on the last 30 days.
+     */
+    private val billableWindowDays = 30L
+
+    /**
+     * Ask the server which of this household's visits are actually billable.
+     *
+     * The screen already lists every session for the household. That list
+     * cannot tell an operator which ones are safe to attach: a visit already
+     * billed on another invoice and one that has not happened yet both render
+     * as ordinary rows. This read is what separates them, and it carries the
+     * pricing and the two warnings that go with it.
+     *
+     * Deliberately additive: nothing is removed from `availableSessions`. A
+     * session already linked to THIS invoice is claimed, so the callable
+     * excludes it, and dropping the unfiltered list would make unlinking
+     * impossible.
+     *
+     * A failure here is recorded, never swallowed into an empty set. "No
+     * billable visits" and "we could not find out" look identical on screen
+     * otherwise, and the first invites the operator to attach nothing while the
+     * second should send them to look again.
+     */
+    private fun loadBillableSessions(kinfolkId: String, today: LocalDate = LocalDate.now()) {
+        if (kinfolkId.isBlank()) return
+        _uiState.value = _uiState.value.copy(billableLoading = true, billableError = null)
+        val from = today.minusDays(billableWindowDays).toString()
+        val to = today.toString()
+        viewModelScope.launch {
+            invoiceRepository.listUninvoicedSessions(from, to)
+                .onSuccess { result ->
+                    // The callable windows by DATE across the collection, not by
+                    // household, so the narrowing to this invoice's household
+                    // happens here.
+                    val mine = result.sessions.filter { it.kinfolkId == kinfolkId }
+                    val mineIds = mine.map { it.sessionId }.toSet()
+                    _uiState.value = _uiState.value.copy(
+                        billableSessionIds = mineIds,
+                        unpricedSessionIds = mine.filter { it.unitCents == null }.map { it.sessionId }.toSet(),
+                        rateCardLoaded = result.rateCardLoaded,
+                        unplaceableSessionIds = result.unplaceable
+                            .filter { it.kinfolkId == kinfolkId }
+                            .map { it.sessionId },
+                        billableTruncated = result.truncated,
+                        billableLoading = false,
+                    )
+                }
+                .onFailure { err ->
+                    AuntieLog.e("Failed to load billable sessions for $kinfolkId", err)
+                    _uiState.value = _uiState.value.copy(
+                        billableLoading = false,
+                        billableError = err.message ?: "Could not check which visits are billable",
+                    )
+                }
+        }
+    }
+
     fun openEditMode() {
         val current = _uiState.value.invoice?.sessionIds?.toSet() ?: emptySet()
         _uiState.value = _uiState.value.copy(editMode = true, pendingSessionIds = current)
+        val kinfolkId = _uiState.value.invoice?.kinfolkId.orEmpty()
+        loadBillableSessions(kinfolkId)
     }
 
     fun closeEditMode() {
