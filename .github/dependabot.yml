@@ -1,0 +1,85 @@
+# One entry per package manifest this repo actually builds from, not one per
+# language. Skipping a directory here means its dependencies age silently,
+# which is how a security patch sits unmerged for months because nothing ever
+# asked.
+#
+# Every ecosystem groups minor+patch together so a routine bump is one PR to
+# review instead of a dozen; a major bump still opens on its own since that is
+# the class of update actually worth looking at individually.
+version: 2
+updates:
+  - package-ecosystem: 'npm'
+    directory: '/auntieos-admin'
+    schedule:
+      interval: 'weekly'
+    groups:
+      minor-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  # AuntieOS-owned Cloud Functions (web/functions/, Firebase codebase
+  # `default`). Its own manifest and lockfile, so its own entry.
+  - package-ecosystem: 'npm'
+    directory: '/auntieos-admin/web/functions'
+    schedule:
+      interval: 'weekly'
+    groups:
+      minor-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  - package-ecosystem: 'npm'
+    directory: '/mytribe/functions'
+    schedule:
+      interval: 'weekly'
+    groups:
+      minor-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  - package-ecosystem: 'npm'
+    directory: '/mytribe/web'
+    schedule:
+      interval: 'weekly'
+    groups:
+      minor-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  # AuntieOS Android app. Kotlin/composeApp under auntieos-admin/web is CI's
+  # `kotlin` job, which per owner ruling (auntieos-admin/CLAUDE.md) is
+  # superseded/paused and not a delivery target, so it is deliberately left
+  # off this file rather than kept current for a surface nothing ships from.
+  - package-ecosystem: 'gradle'
+    directory: '/auntieos-admin/android'
+    schedule:
+      interval: 'weekly'
+    groups:
+      minor-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  - package-ecosystem: 'gradle'
+    directory: '/mytribe'
+    schedule:
+      interval: 'weekly'
+    groups:
+      minor-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    groups:
+      minor-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
