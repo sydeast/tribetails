@@ -37,20 +37,18 @@ interface MyNotificationsData {
 }
 
 /**
- * My Notifications, EDITABLE. The write/save surface `MyNotifications.tsx`
- * (read-only) deferred: same two-hat layout ("As the owner" / "As the
- * Auntie"), same gate-matrix read (`getNotificationMatrix`) and own-prefs read
- * (`getMyNotificationPrefs`), but every NON-forced channel's `Toggle` is now
- * live, and a Save bar in the heading commits the draft via
- * `saveMyAdminNotificationPrefs` (api/myNotificationsWrite.ts).
+ * My Notifications, EDITABLE. The only screen behind `/my-notifications`:
+ * two-hat layout ("As the owner" / "As the Auntie"), a gate-matrix read
+ * (`getNotificationMatrix`) and an own-prefs read (`getMyNotificationPrefs`),
+ * every NON-forced channel's `Toggle` live, and a Save bar in the heading that
+ * commits the draft via `saveMyAdminNotificationPrefs`
+ * (api/myNotificationsWrite.ts).
  *
- * A deliberate standalone file rather than an edit-mode flag folded into
- * `MyNotifications.tsx`: the two screens share every read/format helper
- * (`api/myNotifications.ts`, `lib/myNotificationsFormat.ts`) but the read
- * screen's `NotifHatSection` / `NotifBlock` are not exported, and giving them
- * an edit mode would touch a file this task was told to leave read-only. See
- * this repo's hand-off notes for the exact `MyNotifications.tsx` wiring edit
- * that swaps this screen in at the route level.
+ * It began as a standalone sibling of a read-only `MyNotifications.tsx` that
+ * deferred the write/save surface. That screen was routed out and deleted once
+ * this one took `/my-notifications`; the read/format helpers they shared
+ * (`api/myNotifications.ts`, `lib/myNotificationsFormat.ts`) stay, still read
+ * by `NotificationGate.tsx` as well.
  *
  * State model: `savedPrefs` (the AsyncRegion payload) is the baseline; `draft`
  * is the operator's in-progress edit, seeded from `savedPrefs` on every
