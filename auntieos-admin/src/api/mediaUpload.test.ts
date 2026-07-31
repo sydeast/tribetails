@@ -208,7 +208,7 @@ describe('writeMediaFileDoc', () => {
     expect(payload.entityType).toBe('KINFOLK');
   });
 
-  it('leaves kinfolkId blank for a KIN or BUSINESS target', async () => {
+  it('omits kinfolkId entirely for a KIN target: absent, never blank (the equality-on-empty-string Firestore trap, HANDOFF_2026-07-25)', async () => {
     await writeMediaFileDoc({
       entityId: 'pet1',
       entityType: 'KIN',
@@ -217,7 +217,19 @@ describe('writeMediaFileDoc', () => {
       cloudName: 'tribetails',
     });
     const [, payload] = addDoc.mock.calls[0] as [unknown, Record<string, unknown>];
-    expect(payload.kinfolkId).toBe('');
+    expect('kinfolkId' in payload).toBe(false);
+  });
+
+  it('omits kinfolkId entirely for a BUSINESS target too (Company / no household, operator ruling 2026-07-31)', async () => {
+    await writeMediaFileDoc({
+      entityId: BUSINESS_ENTITY_ID,
+      entityType: 'BUSINESS',
+      originalFileName: 'photo.jpg',
+      cloud: cloudResult(),
+      cloudName: 'tribetails',
+    });
+    const [, payload] = addDoc.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect('kinfolkId' in payload).toBe(false);
   });
 
   it('classifies fileType from Cloudinary\'s resource_type, never from the file extension', async () => {

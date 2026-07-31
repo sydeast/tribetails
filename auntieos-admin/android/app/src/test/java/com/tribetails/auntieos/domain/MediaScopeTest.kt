@@ -41,4 +41,33 @@ class MediaScopeTest {
         assertEquals("", base.withSandboxScope("").kinfolkId)
         assertSame(base, base.withSandboxScope("   "))
     }
+
+    // Operator ruling 2026-07-31: Kinfolk do not "own" media. A KIN/BUSINESS/...
+    // upload's kinfolkId must end up ABSENT from the persisted doc, never blank
+    // (HANDOFF_2026-07-25's equality-on-empty-string trap). saveMediaFile decides
+    // whether to delete the field via this pure predicate.
+
+    @Test
+    fun hasBlankKinfolkId_trueForBusinessOrKinTargets() {
+        val business = MediaFile(entityId = "business_settings", entityType = MediaEntityType.BUSINESS.name)
+        val kin = MediaFile(entityId = "pet1", entityType = MediaEntityType.KIN.name)
+        assertEquals(true, business.hasBlankKinfolkId())
+        assertEquals(true, kin.hasBlankKinfolkId())
+    }
+
+    @Test
+    fun hasBlankKinfolkId_falseForARealHousehold() {
+        val household = MediaFile(entityId = "kf1", entityType = MediaEntityType.KINFOLK.name, kinfolkId = "kf1")
+        assertEquals(false, household.hasBlankKinfolkId())
+    }
+
+    @Test
+    fun hasBlankKinfolkId_falseOnceSandboxScopeIsStamped() {
+        // withSandboxScope always stamps a REAL (non-blank) testTribeId when the
+        // test-admin sandbox is active, regardless of entityType, so a sandbox
+        // write is never blank by the time saveMediaFile checks this.
+        val base = MediaFile(entityId = "business_settings", entityType = MediaEntityType.BUSINESS.name)
+        val scoped = base.withSandboxScope("test-kinfolk-001")
+        assertEquals(false, scoped.hasBlankKinfolkId())
+    }
 }

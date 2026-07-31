@@ -42,6 +42,20 @@ class GalleryFiltersTest {
         assertEquals(listOf("k1", "k2"), galleryKinfolkIds(all))
     }
 
+    @Test fun filtersToUnattachedMediaOnly() {
+        val withCompany = all + media("d", "", MediaType.IMAGE, "2026-06-10")
+        assertEquals(listOf("d"), filterGalleryMedia(withCompany, GalleryFilter(kinfolkId = "")).map { it.id })
+    }
+
+    @Test fun hasUnattachedMediaTrueWhenAnyRowIsBlank() {
+        assertEquals(false, galleryHasUnattachedMedia(all))
+        assertEquals(true, galleryHasUnattachedMedia(all + media("d", "", MediaType.IMAGE, "2026-06-10")))
+    }
+
+    @Test fun hasUnattachedMediaFalseForNoRows() {
+        assertEquals(false, galleryHasUnattachedMedia(emptyList()))
+    }
+
     @Test fun taggedNamesResolveAndDropUnknown() {
         val m = media("x", tagged = listOf("k1", "ghost"))
         assertEquals(listOf("Waddles"), taggedKinNames(m, mapOf("k1" to Kin(id = "k1", name = "Waddles"))))

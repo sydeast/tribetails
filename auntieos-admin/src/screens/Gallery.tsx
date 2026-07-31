@@ -12,6 +12,8 @@ import {
   galleryMonths,
   galleryKinfolkIds,
   galleryFileTypes,
+  galleryHasUnattachedMedia,
+  UNATTACHED_KINFOLK_ID,
   GALLERY_FILTER_DEFAULT,
   type GalleryFilter,
   type MediaKind,
@@ -150,14 +152,22 @@ function GalleryGrid({ rows, filter, onFilterChange, kinfolkLabel }: GalleryGrid
   const months = useMemo(() => galleryMonths(rows), [rows]);
   const types = useMemo(() => galleryFileTypes(rows), [rows]);
   const kinfolkIds = useMemo(() => galleryKinfolkIds(rows), [rows]);
+  const hasUnattached = useMemo(() => galleryHasUnattachedMedia(rows), [rows]);
   const visible = useMemo(() => filterGalleryMedia(rows, filter), [rows, filter]);
 
   return (
     <>
       <div className="gallery__filters">
-        {kinfolkIds.length > 0 && (
+        {(kinfolkIds.length > 0 || hasUnattached) && (
           <FilterRow label="Household">
             <Chip label="All" active={filter.kinfolkId === null} onClick={() => onFilterChange((f) => ({ ...f, kinfolkId: null }))} />
+            {hasUnattached && (
+              <Chip
+                label="No household"
+                active={filter.kinfolkId === UNATTACHED_KINFOLK_ID}
+                onClick={() => onFilterChange((f) => ({ ...f, kinfolkId: toggleValue(f.kinfolkId, UNATTACHED_KINFOLK_ID) }))}
+              />
+            )}
             {kinfolkIds.map((id) => (
               <Chip
                 key={id}

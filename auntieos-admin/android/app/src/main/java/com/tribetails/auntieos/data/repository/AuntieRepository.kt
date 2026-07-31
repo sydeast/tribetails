@@ -15,6 +15,7 @@ import com.tribetails.auntieos.data.api.N8nApi
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.domain.TestMode
 import com.tribetails.auntieos.domain.allowsKinfolkDoc
+import com.tribetails.auntieos.domain.hasBlankKinfolkId
 import com.tribetails.auntieos.domain.kinfolkScopeFilter
 import com.tribetails.auntieos.domain.scopedKinfolkId
 import com.tribetails.auntieos.ui.admin.scheduling.CalendarSyncRun
@@ -1192,6 +1193,19 @@ class AuntieRepository(
             .copy(id = docRef.id, uploadedAt = getCurrentTimestamp())
             .withSandboxScope(mode.kinfolkScopeFilter())
         docRef.set(newMediaFile).await()
+        // Operator ruling 2026-07-31: Kinfolk do not "own" media, so a KIN/BUSINESS/
+        // ... upload's kinfolkId must be ABSENT, never blank. MediaFile#kinfolkId is
+        // a non-nullable `var kinfolkId: String = ""`, so the set() above always
+        // WRITES the key -- a data class field cannot omit itself. Delete it right
+        // after create when blank (hasBlankKinfolkId, domain/MediaScope.kt) rather
+        // than leave "": that is the exact equality-on-empty-string Firestore trap
+        // HANDOFF_2026-07-25 documents for invoiceId (a doc stamped "" and one that
+        // never had the field read as two different things to a future query).
+        // Never fires for a sandbox test-admin write: withSandboxScope above always
+        // stamps a real, non-blank testTribeId when that mode is active.
+        if (newMediaFile.hasBlankKinfolkId()) {
+            docRef.update("kinfolkId", FieldValue.delete()).await()
+        }
         docRef.id
     }.onFailure { AuntieLog.e("Failed to save media file", it) }
 

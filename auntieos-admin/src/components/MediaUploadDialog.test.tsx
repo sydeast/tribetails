@@ -51,6 +51,39 @@ describe('MediaUploadDialog', () => {
     const targetIdInput = screen.getByLabelText('Target ID');
     expect(targetIdInput).toHaveValue(BUSINESS_ENTITY_ID);
     expect(targetIdInput).toBeDisabled();
+    expect(screen.getByText(/company media, not tied to any household/i)).toBeInTheDocument();
+  });
+
+  it('labels the BUSINESS option as the "no household" choice, not a wire-format leak, so an operator can upload media unrelated to any kinfolk', () => {
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    expect(screen.getByRole('option', { name: /company \(no household\)/i })).toBeInTheDocument();
+  });
+
+  it('uploads a BUSINESS target with no kinfolk selected at all, never blocked on the household roster', async () => {
+    uploadMediaFile.mockResolvedValue('newMedia1');
+    const onUploaded = vi.fn();
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={onUploaded} />);
+
+    await userEvent.selectOptions(screen.getByLabelText('Target type'), 'BUSINESS');
+    await userEvent.upload(screen.getByLabelText('Photo or video'), photoFile());
+    await userEvent.click(screen.getByRole('button', { name: /^upload$/i }));
+
+    await waitFor(() => expect(uploadMediaFile).toHaveBeenCalledTimes(1));
+    const [call] = uploadMediaFile.mock.calls[0] as [{ entityType: string; entityId: string }];
+    expect(call.entityType).toBe('BUSINESS');
+    expect(call.entityId).toBe(BUSINESS_ENTITY_ID);
+    await waitFor(() => expect(onUploaded).toHaveBeenCalledOnce());
+  });
+
+  it('uploads a BUSINESS target even when the household roster is empty (Company never depends on a roster)', async () => {
+    uploadMediaFile.mockResolvedValue('newMedia1');
+    render(<MediaUploadDialog kinfolkOptions={[]} onClose={vi.fn()} onUploaded={vi.fn()} />);
+
+    await userEvent.selectOptions(screen.getByLabelText('Target type'), 'BUSINESS');
+    await userEvent.upload(screen.getByLabelText('Photo or video'), photoFile());
+    await userEvent.click(screen.getByRole('button', { name: /^upload$/i }));
+
+    await waitFor(() => expect(uploadMediaFile).toHaveBeenCalledTimes(1));
   });
 
   it('blocks Upload with a visible error when no file is chosen yet', async () => {

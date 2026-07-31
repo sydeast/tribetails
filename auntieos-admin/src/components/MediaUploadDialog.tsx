@@ -43,9 +43,13 @@ function stageLabel(stage: UploadStage): string {
  *             household filter's *sibling* concept), so there is no roster
  *             here to pick from yet. Disclosed via a hint under the field,
  *             not silently narrowed to KINFOLK-only.
- *   BUSINESS  the fixed `business_settings` id (Android's own
- *             `AdminSettingsViewModel#uploadLogo` constant): shown read-only,
- *             never editable, since there is nothing to pick.
+ *   BUSINESS  labeled "Company (no household)": the fixed `business_settings`
+ *             id (Android's own `AdminSettingsViewModel#uploadLogo`
+ *             constant), shown read-only since there is nothing to pick. This
+ *             is the operator's way to upload media that isn't about any one
+ *             household (operator ruling 2026-07-31: Kinfolk do not "own"
+ *             media). `writeMediaFileDoc` omits `kinfolkId` entirely for this
+ *             target, never stamps it blank.
  *
  * Fail-loud + disabled-while-busy: the fieldset locks during the upload, the
  * Dialog cannot be dismissed mid-upload, and a rejected upload at ANY of the
@@ -128,7 +132,7 @@ export function MediaUploadDialog({ kinfolkOptions, onClose, onUploaded }: Media
           >
             <option value="KINFOLK">Household (Kinfolk)</option>
             <option value="KIN">Kin (pet)</option>
-            <option value="BUSINESS">Business / general</option>
+            <option value="BUSINESS">Company (no household)</option>
           </select>
         </div>
 
@@ -190,6 +194,7 @@ export function MediaUploadDialog({ kinfolkOptions, onClose, onUploaded }: Media
               readOnly
               disabled
             />
+            <p className="media-upload__hint">Company media, not tied to any household.</p>
           </div>
         )}
 
