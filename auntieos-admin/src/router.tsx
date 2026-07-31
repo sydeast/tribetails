@@ -30,7 +30,8 @@ import { Inbox } from './screens/Inbox';
 import { Settings } from './screens/Settings';
 import { Communicate } from './screens/Communicate';
 import { AccountRouteView } from './screens/Account';
-import { MyNotificationsEdit } from './screens/MyNotificationsEdit';
+import { MyNotificationsEditRouteView } from './screens/MyNotificationsEdit';
+import { MyNotificationsRouteView } from './screens/MyNotifications';
 import { NotificationGate } from './screens/NotificationGate';
 import { Media } from './screens/Media';
 import { type MediaTargetType } from './lib/mediaScopeFormat';
@@ -387,7 +388,16 @@ const accountRoute = createRoute({
 const myNotificationsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'my-notifications',
-  component: MyNotificationsEdit,
+  component: MyNotificationsEditRouteView,
+});
+
+// The read-only twin of the screen above. A flat segment rather than
+// `my-notifications/view`, because `lib/nav.ts` resolves a destination from the
+// FIRST path segment and a nested slug would never match there.
+const myNotificationsViewRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'my-notifications-view',
+  component: MyNotificationsRouteView,
 });
 
 const notificationGateRoute = createRoute({
@@ -412,7 +422,7 @@ const mediaRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, directoryProfileRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, mediaRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, directoryProfileRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, myNotificationsViewRoute, notificationGateRoute, mediaRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

@@ -36,6 +36,7 @@ export type Destination =
   | 'mediaGallery'
   | 'accountSettings'
   | 'myNotifications'
+  | 'myNotificationsView'
   | 'notificationGate';
 
 export type NavGroup = 'den' | 'careOps' | 'more';
@@ -93,6 +94,16 @@ export const NAV: readonly NavEntry[] = [
     title: 'My notifications',
     group: 'more',
     slug: 'my-notifications',
+    contextual: true,
+  },
+  // The read-only companion to the editor above. One flat segment, not
+  // `my-notifications/view`, because `parseHash` resolves a destination from the
+  // FIRST segment only and a nested slug would never match.
+  {
+    dest: 'myNotificationsView',
+    title: 'My notifications (read only)',
+    group: 'more',
+    slug: 'my-notifications-view',
     contextual: true,
   },
   // The business notification gate matrix. Reached from Settings, not pinned.

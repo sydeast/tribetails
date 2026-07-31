@@ -162,6 +162,18 @@ const GLYPH_PATHS: Record<Destination, ReactNode> = {
       <circle cx="18" cy="5" r="2.5" />
     </>
   ),
+  // The read-only twin of myNotifications: same bell, an eye in place of the
+  // unread dot, so the pair reads as one family with the difference being what
+  // you do there rather than what it is about.
+  myNotificationsView: (
+    <>
+      <path d="M6 9a6 6 0 0 1 9-5" />
+      <path d="M18 11c0 6 2 7 2 7H4s2-1 2-7" />
+      <path d="M10 20a2 2 0 0 0 4 0" />
+      <path d="M14.5 5c1-1.4 2.5-2 3.5-2s2.5.6 3.5 2c-1 1.4-2.5 2-3.5 2s-2.5-.6-3.5-2z" />
+      <circle cx="18" cy="5" r="0.75" />
+    </>
+  ),
   notificationGate: (
     <>
       <path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z" />

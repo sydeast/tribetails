@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { STREAM_BUSINESS, STREAM_STAFF, type NotificationCatalogEntry, type NotificationMatrix } from '../api/myNotifications';
 
 const { getNotificationMatrix, getMyNotificationPrefs } = vi.hoisted(() => ({
@@ -114,7 +115,7 @@ describe('MyNotifications screen', () => {
     expect(toggle).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('every toggle on the screen is disabled: this is a read view, editing is deferred', async () => {
+  it('every toggle on the screen is disabled: this is the read view, the editor is a separate route', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [entry({})] }));
     render(<MyNotifications />);
     await screen.findByText('As the owner');
@@ -123,7 +124,7 @@ describe('MyNotifications screen', () => {
     }
   });
 
-  it('shows a read-only banner (editing is not wired yet)', async () => {
+  it('shows a read-only banner, so the disabled toggles are explained rather than looking broken', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [entry({})] }));
     render(<MyNotifications />);
     await screen.findByText('As the owner');
@@ -156,5 +157,45 @@ describe('MyNotifications screen', () => {
     getNotificationMatrix.mockRejectedValue(new Error('boom'));
     render(<MyNotifications />);
     expect(await screen.findByRole('button', { name: /retry/i })).toBeInTheDocument();
+  });
+
+  // This screen was deleted for being unreachable, and unreachable it was: the
+  // router only ever pointed at the editor. It has a route now, and a way back
+  // to the editor, because a read view you cannot leave is its own dead end.
+  it('offers a way to the editor when the route hands it one', async () => {
+    const onOpenEditor = vi.fn();
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [entry({})] }));
+    getMyNotificationPrefs.mockResolvedValue({
+      prefs: { byKey: {}, byCategory: {}, marketingOptIn: {} },
+      updatedAtMs: null,
+    });
+    render(<MyNotifications onOpenEditor={onOpenEditor} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: /change these settings/i }));
+    expect(onOpenEditor).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders standalone, with no editor link and no router, exactly as before', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [entry({})] }));
+    getMyNotificationPrefs.mockResolvedValue({
+      prefs: { byKey: {}, byCategory: {}, marketingOptIn: {} },
+      updatedAtMs: null,
+    });
+    render(<MyNotifications />);
+
+    await screen.findByText(/exactly what/i);
+    expect(screen.queryByRole('button', { name: /change these settings/i })).toBeNull();
+  });
+
+  it('no longer claims editing is unavailable, now that the editor exists', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [entry({})] }));
+    getMyNotificationPrefs.mockResolvedValue({
+      prefs: { byKey: {}, byCategory: {}, marketingOptIn: {} },
+      updatedAtMs: null,
+    });
+    render(<MyNotifications />);
+
+    expect(await screen.findByText(/exactly what/i)).toBeInTheDocument();
+    expect(screen.queryByText(/isn.t available here yet/i)).toBeNull();
   });
 });

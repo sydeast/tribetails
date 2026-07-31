@@ -28,6 +28,17 @@ describe('rail composition', () => {
   it('still resolves contextual destinations by URL, so nothing is unreachable', () => {
     expect(parseHash('#/account').dest).toBe('accountSettings');
     expect(parseHash('#/my-notifications').dest).toBe('myNotifications');
+    // The read-only twin. A screen with a component and no route is reachable
+    // in the same sense a deleted one is, which is what this pins.
+    expect(parseHash('#/my-notifications-view').dest).toBe('myNotificationsView');
+  });
+
+  it('keeps the read-only twin on ONE path segment, since parseHash reads only the first', () => {
+    // `my-notifications/view` would resolve to `myNotifications`, silently
+    // landing the operator on the editor they were trying to avoid.
+    const entry = NAV.find((e) => e.dest === 'myNotificationsView');
+    expect(entry?.slug).toBe('my-notifications-view');
+    expect(entry?.slug).not.toContain('/');
   });
 
   it('renders the three groups in Den, Care Ops, More order', () => {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import {
   getNotificationMatrix,
   getMyNotificationPrefs,
@@ -23,8 +24,19 @@ import { type Async } from '../lib/async';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+import { GhostButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
 import './MyNotifications.css';
+
+interface MyNotificationsProps {
+  /**
+   * Opens the editable twin. Optional so the screen still renders with no
+   * router at all, which is the Account.tsx convention: the screen stays a pure
+   * component and "does that button navigate" is a unit test rather than a
+   * full route mount.
+   */
+  onOpenEditor?: () => void;
+}
 
 interface MyNotificationsData {
   matrix: NotificationMatrix;
@@ -50,11 +62,13 @@ interface MyNotificationsData {
  * arbitrates loading/error/empty exactly once, same shape as Account.tsx and
  * Settings.tsx.
  *
- * Editing (per-channel toggle + save, `saveMyAdminNotificationPrefs`) is the
- * deferred surface. Every `Toggle` below renders `disabled`: a true read view,
- * not a control that looks live and silently no-ops on click.
+ * Every `Toggle` below renders `disabled`: a true read view, not a control that
+ * looks live and silently no-ops on click. Editing lives in the twin screen,
+ * `MyNotificationsEdit` at `/my-notifications`, and the banner links to it.
+ * This one is the surface for reading the settings back without any chance of
+ * changing them by touching the wrong row.
  */
-export function MyNotifications() {
+export function MyNotifications({ onOpenEditor }: MyNotificationsProps = {}) {
   const [state, setState] = useState<Async<MyNotificationsData>>({ status: 'loading' });
 
   // Hoisted so a failed load can hand AsyncRegion a real retry (the
@@ -93,7 +107,12 @@ export function MyNotifications() {
       />
 
       <Banner tone="info" dashed pillLabel="Read-only">
-        Changing what you receive isn&rsquo;t available here yet. Everything below is exactly what&rsquo;s saved.
+        Everything below is exactly what&rsquo;s saved. Nothing here can be changed by accident.
+        {onOpenEditor && (
+          <p className="mynotif__banner-action">
+            <GhostButton label="Change these settings" onClick={onOpenEditor} />
+          </p>
+        )}
       </Banner>
 
       <AsyncRegion
@@ -124,7 +143,7 @@ export function MyNotifications() {
             />
             <NotifHatSection
               title="As the Auntie"
-              subtitle="The care side: visit notes, KinTale comments, pet updates, your schedule digest."
+              subtitle="The care side: visit notes, KinTale comments, Kin updates, your schedule digest."
               matrix={matrix}
               prefs={prefs}
               stream={STREAM_STAFF}
@@ -212,4 +231,13 @@ function NotifBlock({ matrix, prefs, entry, stream }: NotifBlockProps) {
       </ul>
     </div>
   );
+}
+/**
+ * Router seam. Keeps `MyNotifications` itself free of router imports (the
+ * Account.tsx convention), so it renders in a test with no router mounted and
+ * the navigation is a one-line unit assertion instead of a route fixture.
+ */
+export function MyNotificationsRouteView() {
+  const navigate = useNavigate();
+  return <MyNotifications onOpenEditor={() => void navigate({ to: '/my-notifications' })} />;
 }

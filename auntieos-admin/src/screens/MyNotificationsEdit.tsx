@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import {
   getNotificationMatrix,
   getMyNotificationPrefs,
@@ -48,9 +49,13 @@ interface MyNotificationsData {
  * `MyNotifications.tsx`: the two screens share every read/format helper
  * (`api/myNotifications.ts`, `lib/myNotificationsFormat.ts`) but the read
  * screen's `NotifHatSection` / `NotifBlock` are not exported, and giving them
- * an edit mode would touch a file this task was told to leave read-only. See
- * this repo's hand-off notes for the exact `MyNotifications.tsx` wiring edit
- * that swaps this screen in at the route level.
+ * an edit mode would mean rewriting that file around a flag.
+ *
+ * Both are routed and each links to the other: this one owns
+ * `/my-notifications`, the read-only twin owns `/my-notifications-view`. Two
+ * routes rather than one screen with a mode, because the read view's whole
+ * value is that nothing on it can be changed by touching the wrong row, and a
+ * mode flag on a live editor cannot promise that.
  *
  * State model: `savedPrefs` (the AsyncRegion payload) is the baseline; `draft`
  * is the operator's in-progress edit, seeded from `savedPrefs` on every
@@ -63,7 +68,15 @@ interface MyNotificationsData {
  * multi-row draft on one network hiccup would erase everything else the
  * operator had already set).
  */
-export function MyNotificationsEdit() {
+interface MyNotificationsEditProps {
+  /**
+   * Opens the read-only twin. Optional so this screen still renders with no
+   * router mounted, the Account.tsx convention.
+   */
+  onOpenReadOnly?: () => void;
+}
+
+export function MyNotificationsEdit({ onOpenReadOnly }: MyNotificationsEditProps = {}) {
   const [state, setState] = useState<Async<MyNotificationsData>>({ status: 'loading' });
   const [draft, setDraft] = useState<AdminNotificationPrefs | null>(null);
   const [saving, setSaving] = useState(false);
@@ -152,6 +165,11 @@ export function MyNotificationsEdit() {
         receive within those, and how. Anything your business locked on stays required."
         trailing={
           <>
+            {/* The read-only twin. Offered here because a screen reachable only
+                by typing its URL is reachable in the same sense a deleted one
+                is. Placed before Discard so it never sits between the operator
+                and the save control. */}
+            {onOpenReadOnly && <GhostButton label="Read-only view" onClick={onOpenReadOnly} />}
             <GhostButton label="Discard" onClick={discard} disabled={!dirty || saving} />
             <PrimaryButton
               label={justSaved ? 'Saved' : saving ? 'Saving…' : 'Save changes'}
@@ -324,4 +342,12 @@ function NotifBlock({ matrix, prefs, entry, stream, onChannelChange }: NotifBloc
       </ul>
     </div>
   );
+}
+/**
+ * Router seam, matching MyNotifications.tsx: the screen above stays free of
+ * router imports so it renders in a test with no router mounted.
+ */
+export function MyNotificationsEditRouteView() {
+  const navigate = useNavigate();
+  return <MyNotificationsEdit onOpenReadOnly={() => void navigate({ to: '/my-notifications-view' })} />;
 }

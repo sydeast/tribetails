@@ -106,3 +106,9 @@
   gap: var(--space-2);
   flex: 0 0 auto;
 }
+/* The banner's "Change these settings" / "Read-only view" action. A block of
+   its own so the control sits under the sentence rather than colliding with the
+   dashed banner's inline text run. */
+.mynotif__banner-action {
+  margin: var(--space-2) 0 0;
+}
