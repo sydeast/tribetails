@@ -59,9 +59,28 @@ def needs_backfill(d: dict) -> bool:
 def init_firebase(allow_prod: bool):
     if allow_prod and os.environ.get("GCLOUD_PROJECT") != EXPECTED_PROJECT:
         sys.exit(f"[reconcileStatus] Refusing prod write: GCLOUD_PROJECT != '{EXPECTED_PROJECT}'.")
-    if not SERVICE_ACCOUNT.exists():
-        sys.exit(f"[reconcileStatus] Service account not found: {SERVICE_ACCOUNT}")
-    cred = credentials.Certificate(str(SERVICE_ACCOUNT))
+    # `.is_file()`, not `.exists()`: a DIRECTORY at this path passes an exists()
+    # check and then dies inside credentials.Certificate() with a bare
+    # IsADirectoryError, which is the confusing failure this guard exists to
+    # prevent. (One was sitting at exactly this path on 2026-07-30, a stray
+    # shell redirect that had created a directory named like the key.)
+    if SERVICE_ACCOUNT.is_file():
+        cred = credentials.Certificate(str(SERVICE_ACCOUNT))
+        print(f"[reconcileStatus] auth: service account {SERVICE_ACCOUNT.name}")
+    elif os.environ.get("ALLOW_ADC") == "1":
+        # Application Default Credentials, for a machine that has gcloud auth
+        # but not the key file. Opt-in and announced, because the acting
+        # identity is a person rather than the service account, and prod writes
+        # should never silently change who made them.
+        cred = credentials.ApplicationDefault()
+        print("[reconcileStatus] auth: application default credentials (ALLOW_ADC=1)")
+    else:
+        hint = " (that path is a DIRECTORY, not a file)" if SERVICE_ACCOUNT.is_dir() else ""
+        sys.exit(
+            f"[reconcileStatus] Service account not found: {SERVICE_ACCOUNT}{hint}\n"
+            f"[reconcileStatus] Either place the key there, or re-run with ALLOW_ADC=1 "
+            f"to use gcloud application default credentials."
+        )
     firebase_admin.initialize_app(cred, {"projectId": EXPECTED_PROJECT})
     return firestore.client()
 
