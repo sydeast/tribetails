@@ -46,6 +46,13 @@ export function Invoices() {
     },
   });
 
+  // These two used to fail silently — a rejected mutation just stopped the
+  // spinner with nothing telling the kinfolk why (same class of bug KinTales'
+  // comment-post had before it was fixed). Surface each distinctly.
+  function mutationErrorMessage(err: unknown, fallback: string): string {
+    return err instanceof Error && err.message ? err.message : fallback;
+  }
+
   const { signOut, signingOut } = useSignOut();
 
   if (invoices.isError) {
@@ -127,6 +134,7 @@ export function Invoices() {
                     divider={i > 0}
                     paying={pay.isPending && pay.variables === inv.id}
                     onPay={() => pay.mutate(inv.id)}
+                    payError={pay.isPending || pay.variables !== inv.id ? null : (pay.isError ? mutationErrorMessage(pay.error, "Couldn't open checkout. Try again.") : null)}
                   />
                 ))
               )}
@@ -157,6 +165,7 @@ export function Invoices() {
                     divider={i > 0}
                     redeeming={redeem.isPending && redeem.variables?.invoiceId === inv.id}
                     onRedeem={() => redeem.mutate({ invoiceId: inv.id })}
+                    redeemError={redeem.isPending || redeem.variables?.invoiceId !== inv.id ? null : (redeem.isError ? mutationErrorMessage(redeem.error, "Couldn't redeem this credit. Try again.") : null)}
                   />
                 ))}
               </section>
@@ -176,8 +185,8 @@ function invoiceTitle(inv: InvoiceDto): string {
   return inv.client ?? `Invoice #${inv.id}`;
 }
 
-function OpenRow(props: { invoice: InvoiceDto; divider: boolean; paying: boolean; onPay: () => void }) {
-  const { invoice: inv, paying, onPay } = props;
+function OpenRow(props: { invoice: InvoiceDto; divider: boolean; paying: boolean; onPay: () => void; payError?: string | null }) {
+  const { invoice: inv, paying, onPay, payError } = props;
   // Part-paid keeps the open bucket and the Pay button; only what the row SAYS
   // about itself changes. "PENDING" alone would hide a payment already made.
   const status = inv.partiallyPaid ? partPaidStatusInfo() : invoiceStatusInfo(inv.status, inv.creditRedeemedAtMs);
@@ -194,46 +203,49 @@ function OpenRow(props: { invoice: InvoiceDto; divider: boolean; paying: boolean
   const payable = inv.status === 'open' && inv.amountDue > 0;
 
   return (
-    <Link
-      className={`inv ${status.invClass}`}
-      to="/invoices/$invoiceId"
-      params={{ invoiceId: inv.id }}
-      style={props.divider ? undefined : { borderTop: 'none' }}
-    >
-      <div className="cal">
-        <div className="m">{tile.month}</div>
-        <div className="d">{tile.day}</div>
-      </div>
-      <div className="info">
-        <b>{invoiceTitle(inv)}</b>
-        <small className="id">
-          {inv.client ? `Invoice #${inv.id}` : dueLabel}
-          {inv.client ? ` · ${dueLabel}` : ''}
-        </small>
-      </div>
-      <div className="amt">
-        <span className="v">{formatUsd(inv.amountDue)}</span>
-        <span className="due">{partPaid ?? dueLabel}</span>
-      </div>
-      <div className="end">
-        <span className={`chip ${status.cssClass}`}>{status.chipLabel}</span>
-        {payable ? (
-          <button
-            className="btn grad sm"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onPay();
-            }}
-            disabled={paying}
-          >
-            {paying ? 'Opening…' : 'Pay now'}
-          </button>
-        ) : (
-          <span className="btn ghost sm">View</span>
-        )}
-      </div>
-    </Link>
+    <>
+      <Link
+        className={`inv ${status.invClass}`}
+        to="/invoices/$invoiceId"
+        params={{ invoiceId: inv.id }}
+        style={props.divider ? undefined : { borderTop: 'none' }}
+      >
+        <div className="cal">
+          <div className="m">{tile.month}</div>
+          <div className="d">{tile.day}</div>
+        </div>
+        <div className="info">
+          <b>{invoiceTitle(inv)}</b>
+          <small className="id">
+            {inv.client ? `Invoice #${inv.id}` : dueLabel}
+            {inv.client ? ` · ${dueLabel}` : ''}
+          </small>
+        </div>
+        <div className="amt">
+          <span className="v">{formatUsd(inv.amountDue)}</span>
+          <span className="due">{partPaid ?? dueLabel}</span>
+        </div>
+        <div className="end">
+          <span className={`chip ${status.cssClass}`}>{status.chipLabel}</span>
+          {payable ? (
+            <button
+              className="btn grad sm"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onPay();
+              }}
+              disabled={paying}
+            >
+              {paying ? 'Opening…' : 'Pay now'}
+            </button>
+          ) : (
+            <span className="btn ghost sm">View</span>
+          )}
+        </div>
+      </Link>
+      {payError && <p style={{ color: 'var(--red)', marginTop: 8 }}>{payError}</p>}
+    </>
   );
 }
 
@@ -267,8 +279,8 @@ function PaidRow(props: { invoice: InvoiceDto; divider: boolean }) {
   );
 }
 
-function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeeming: boolean; onRedeem: () => void }) {
-  const { invoice: inv, redeeming, onRedeem } = props;
+function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeeming: boolean; onRedeem: () => void; redeemError?: string | null }) {
+  const { invoice: inv, redeeming, onRedeem, redeemError } = props;
   const redeemed = inv.creditRedeemedAtMs !== null;
   const cents = inv.creditAmountCents ?? 0;
 
@@ -291,6 +303,7 @@ function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeeming: bo
             <button className="btn grad block" onClick={() => onRedeem()} disabled={redeeming}>
               {redeeming ? 'Working…' : 'Save to Account Balance'}
             </button>
+            {redeemError && <p style={{ color: 'var(--red)', marginTop: 8 }}>{redeemError}</p>}
           </div>
         )}
       </div>
