@@ -18,8 +18,9 @@ import { PrimaryButton, GhostButton } from '../../components/Buttons';
 import '../SettingsEdit.css';
 
 /**
- * Google Calendar sync: the Calendar ID the sync reads, a Run Sync action, and
- * what the last run actually did.
+ * Free/busy import: the Calendar ID the sync reads, a Run Sync action, and what
+ * the last run actually did. The first of the two sub-areas of the Calendar
+ * section; `GoogleCalendarSection` is the other.
  *
  * This panel was read-only from the port until 2026-07-25, on the stated
  * grounds that syncing needed "a Google sign-in that isn't wired into this
@@ -34,8 +35,11 @@ import '../SettingsEdit.css';
  *     (`syncGoogleCalendarBusyEvents`) has been deployed the whole time; the
  *     Compose admin and android both call it. Only this surface stopped.
  *   - EDITABLE CALENDARS (writing our visits back to Google). THAT needs an
- *     OAuth client, and it is a separate, not-yet-built thing. Nothing here
- *     depends on it.
+ *     OAuth client and two operator-set secrets, and it is the panel below this
+ *     one since the two were merged under a single Calendar nav item on
+ *     2026-07-31. Nothing here depends on it: this one keeps working when that
+ *     one is unconfigured, which is why they stayed two panels rather than
+ *     becoming one panel with two moods.
  *
  * TWO STEPS, NOT ONE, and the panel is explicit about the order. The callable
  * takes no calendar id: it resolves the id server-side from the saved
@@ -126,7 +130,7 @@ export function CalendarSyncSection({ data, onSave }: CalendarSyncSectionProps) 
 
   return (
     <DenPanel
-      title="Google Calendar sync"
+      title="Free/busy import"
       subtitle="Busy time on a shared Google calendar blocks out the same time here. Kinfolk see the block, never the event."
       trailing={<ServicePill serviceType="server sync" tone="teal" />}
     >

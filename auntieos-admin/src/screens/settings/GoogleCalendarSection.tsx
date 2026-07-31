@@ -10,26 +10,43 @@ import {
   type GoogleCalendarSummary,
 } from '../../api/googleCalendar';
 import {
-  GOOGLE_OAUTH_REDIRECT_URI,
-  GOOGLE_OAUTH_SECRET_NAMES,
   calendarPushRunLabel,
   canWriteToCalendar,
   storedCalendarPushRun,
   writeCalendarProblem,
 } from '../../lib/googleCalendarTargets';
+import {
+  GOOGLE_OAUTH_DECLARING_FUNCTIONS,
+  NO_SIGNALS,
+  googleOAuthSetupSteps,
+  googleOAuthSetupSummary,
+  readOAuthFailure,
+  type GoogleOAuthSetupSignals,
+} from '../../lib/googleOAuthSetup';
 import { DenPanel, ServicePill } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
 import '../SettingsEdit.css';
 
 /**
- * Google Calendar, the half that WRITES (Task 7.2).
+ * Google Calendar, the half that WRITES (Task 7.2). One of the two sub-areas of
+ * the Calendar section; the free/busy import is the other.
  *
- * A separate panel from Calendar sync on purpose, because they are separate
- * features that fail separately. That one imports busy time off a calendar
- * shared with a service account and needs nothing signed in. This one puts our
- * visits ON a calendar belonging to a Google account someone signs into, and is
- * the only surface in the app gated on secrets the operator sets by hand.
+ * A SEPARATE COMPONENT from the free/busy import, under one nav item since
+ * 2026-07-31. They are one thing to look for and two things that fail: this one
+ * puts our visits ON a calendar belonging to a Google account someone signs
+ * into, and is the only surface in the app gated on secrets the operator sets by
+ * hand. That one imports busy time off a calendar shared with a service account
+ * and needs nothing signed in. Merged panels, separate failures, separate
+ * receipts.
+ *
+ * THE SETUP CHECKLIST IS THE POINT OF THIS PANEL until it is connected. The
+ * three steps used to live in a commit message and a contract document, and the
+ * panel carried one paragraph naming all three at once. An operator who had done
+ * step 2 several times had no way to learn that step 3 was the outstanding one,
+ * because every unfinished state produced the same sentence. `lib/googleOAuthSetup.ts`
+ * derives a state per step from what the server has actually said, and says
+ * "only the server can answer this" rather than guessing where it cannot.
  *
  * THE CONSENT WINDOW IS NOT READABLE FROM HERE. Google redirects to a Cloud
  * Function, in a window this page cannot inspect (different origin, and the
@@ -56,6 +73,48 @@ interface Loaded {
   freeBusyCalendarId: string;
 }
 
+/** The word next to a step. Spelled out, never colour alone. */
+const STATE_WORD = { done: 'done', failing: 'not done', unknown: 'unknown' } as const;
+
+/**
+ * The three steps, with what is known about each. Rendered whenever nothing is
+ * connected, and folded away once it is: a finished checklist next to a working
+ * connection is noise, and the connection itself is the receipt.
+ */
+function SetupChecklist({ signals }: { signals: GoogleOAuthSetupSignals }) {
+  const steps = googleOAuthSetupSteps(signals);
+  return (
+    <div className="settingsEdit__subsection">
+      <p className="settingsEdit__hint">
+        Setup is done once, by whoever owns the Google Cloud project. Both secret names are already
+        declared in the {GOOGLE_OAUTH_DECLARING_FUNCTIONS.length} functions that read them, so the
+        code side is finished and only these three steps are left.
+      </p>
+      {/* role=status: the summary changes when a Connect attempt answers, and it
+          is the one line that says which step to look at. */}
+      <p className="settingsEdit__readonlyValue" role="status">
+        {googleOAuthSetupSummary(steps)}
+      </p>
+      <ol className="settingsEdit__checklist">
+        {steps.map((step) => (
+          <li key={step.id} className="settingsEdit__checklistItem">
+            <div>
+              <p className="settingsEdit__checklistTitle">
+                {step.title}
+                <span className={`settingsEdit__checklistState settingsEdit__checklistState--${step.state}`}>
+                  {STATE_WORD[step.state]}
+                </span>
+              </p>
+              <p className="settingsEdit__checklistDetail">{step.detail}</p>
+              {step.literal !== '' && <pre className="settingsEdit__checklistLiteral">{step.literal}</pre>}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 export function GoogleCalendarSection() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -71,6 +130,28 @@ export function GoogleCalendarSection() {
   const [consentTimedOut, setConsentTimedOut] = useState(false);
   const [pushNote, setPushNote] = useState<string | null>(null);
   const [disconnectNote, setDisconnectNote] = useState<string | null>(null);
+
+  // What the server has said about setup this session. Only ever written from a
+  // real answer: `missingSecrets` comes from the server's own `details.missing`,
+  // and `consentUrlIssued` from a URL it actually built. Nothing here is
+  // inferred from a message string.
+  const [observed, setObserved] = useState({
+    serverAnswered: true,
+    serverFailure: '',
+    missingSecrets: [] as string[],
+    consentUrlIssued: false,
+  });
+
+  /**
+   * Records what a rejection proves about setup, and nothing more. A failure
+   * that is not `google_oauth_not_configured` says nothing about the secrets, so
+   * it CLEARS no earlier finding and claims none: an offline blip must not read
+   * as "the secrets are fine now".
+   */
+  const noteFailure = useCallback((err: unknown) => {
+    const { missing } = readOAuthFailure(err);
+    if (missing.length > 0) setObserved((prev) => ({ ...prev, missingSecrets: missing }));
+  }, []);
 
   // Cleared on unmount so a poll started by a connect attempt cannot go on
   // firing (and setting state) after the operator leaves the section.
@@ -88,14 +169,21 @@ export function GoogleCalendarSection() {
       const result = await getGoogleCalendarConnection();
       setLoaded({ connection: result.connection, freeBusyCalendarId: result.freeBusyCalendarId });
       setDraftCalendarId(result.connection.writeCalendarId);
+      // This callable declares no OAuth secret and reads none, so answering
+      // proves only that the code is deployed. That is exactly the fact step 3
+      // needs, and it is not evidence about the values.
+      setObserved((prev) => ({ ...prev, serverAnswered: true, serverFailure: '' }));
       return result.connection;
     } catch (err) {
       // The server's text names the missing secret and the exact command that
       // sets it. Summarising it here would delete the instructions.
-      setLoadError(err instanceof Error ? err.message : 'Could not read the Google connection.');
+      const message = err instanceof Error ? err.message : 'Could not read the Google connection.';
+      setLoadError(message);
+      setObserved((prev) => ({ ...prev, serverAnswered: false, serverFailure: message }));
+      noteFailure(err);
       return null;
     }
-  }, []);
+  }, [noteFailure]);
 
   useEffect(() => {
     void load();
@@ -109,6 +197,10 @@ export function GoogleCalendarSection() {
     setConsentTimedOut(false);
     try {
       const { authUrl } = await startGoogleCalendarConnect();
+      // The server refuses to build this URL unless BOTH values are non-empty,
+      // so holding one is proof that steps 2 and 3 are done. Nothing else the
+      // panel can do proves it.
+      setObserved((prev) => ({ ...prev, consentUrlIssued: true, missingSecrets: [] }));
       // A new window rather than a redirect: the admin is a single-page app and
       // sending it away mid-flow would lose whatever else is half-edited.
       window.open(authUrl, '_blank', 'noopener,noreferrer');
@@ -132,6 +224,7 @@ export function GoogleCalendarSection() {
       }, POLL_EVERY_MS);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Could not start the connection.');
+      noteFailure(err);
     } finally {
       setBusy(false);
     }
@@ -147,6 +240,7 @@ export function GoogleCalendarSection() {
       setLoaded({ connection: result.connection, freeBusyCalendarId: result.freeBusyCalendarId });
     } catch (err) {
       setCalendarsError(err instanceof Error ? err.message : 'Could not list the calendars.');
+      noteFailure(err);
     } finally {
       setBusy(false);
     }
@@ -196,6 +290,7 @@ export function GoogleCalendarSection() {
       await load();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'The push failed.');
+      noteFailure(err);
       // The receipt the server stamped on the failure outlives this message, so
       // re-read it: after a reload it is the only record left.
       await load();
@@ -223,6 +318,7 @@ export function GoogleCalendarSection() {
       );
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Could not disconnect.');
+      noteFailure(err);
     } finally {
       setBusy(false);
     }
@@ -235,10 +331,18 @@ export function GoogleCalendarSection() {
       ? null
       : writeCalendarProblem(draftCalendarId, loaded.freeBusyCalendarId, loaded.connection.googleAccountEmail);
 
+  const signals: GoogleOAuthSetupSignals = {
+    ...NO_SIGNALS,
+    ...observed,
+    connected: connection?.connected === true,
+    connectedAccount: connection?.googleAccountEmail ?? '',
+    lastConnectError: connection?.connectLastError ?? '',
+  };
+
   return (
     <DenPanel
-      title="Google Calendar (editable)"
-      subtitle="Puts scheduled visits onto a Google calendar you sign in to. Separate from Calendar sync, which only reads busy time."
+      title="Editable calendars"
+      subtitle="Puts scheduled visits onto a Google calendar you sign in to. The import above only reads busy time; this half writes."
       trailing={<ServicePill serviceType="OAuth" tone="teal" />}
     >
       {loadError !== null && (
@@ -263,13 +367,10 @@ export function GoogleCalendarSection() {
         </p>
       )}
 
-      <p className="settingsEdit__hint">
-        Setup is done once, by whoever owns the Google Cloud project: create an OAuth client ID of
-        type Web application for project auntieos-ttpc, with the redirect URI{' '}
-        <strong>{GOOGLE_OAUTH_REDIRECT_URI}</strong>, then set{' '}
-        <strong>{GOOGLE_OAUTH_SECRET_NAMES.join(' and ')}</strong> as function secrets and redeploy.
-        Until that is done, Connect will say which piece is missing.
-      </p>
+      {/* Only while there is nothing connected. A connected account IS the
+          receipt for all three steps, and leaving a finished checklist above it
+          would bury the calendar picker under setup nobody has left to do. */}
+      {connection?.connected !== true && <SetupChecklist signals={signals} />}
 
       {connection === null ? (
         <p className="settingsEdit__hint" role="status">

@@ -13,6 +13,38 @@ vi.mock('../api/settings', async (orig) => ({
 const saveBusinessSettings = vi.fn();
 vi.mock('../api/settingsWrite', () => ({ saveBusinessSettings: (patch: unknown) => saveBusinessSettings(patch) }));
 
+// The Calendar section's OAuth half loads itself from callables. Mocked at the
+// api seam rather than stubbed as a component, so the merge is asserted on the
+// real panel: the whole complaint was that these two lived on separate tabs, and
+// a stub would let them "merge" without either one rendering.
+const googleCalendarApi = vi.hoisted(() => ({
+  getGoogleCalendarConnection: vi.fn(),
+  startGoogleCalendarConnect: vi.fn(),
+  listGoogleCalendars: vi.fn(),
+  setGoogleCalendarTargets: vi.fn(),
+  pushVisitsToGoogleCalendar: vi.fn(),
+  disconnectGoogleCalendar: vi.fn(),
+}));
+vi.mock('../api/googleCalendar', () => googleCalendarApi);
+
+const BLANK_GOOGLE_CONNECTION = {
+  connected: false,
+  googleAccountEmail: '',
+  connectedAt: '',
+  scopes: [],
+  writeCalendarId: '',
+  enabledCalendarIds: [],
+  disconnectedAt: '',
+  disconnectedError: '',
+  connectLastAttemptAt: '',
+  connectLastStatus: '',
+  connectLastError: '',
+  calendarPushLastRunAt: '',
+  calendarPushLastStatus: '',
+  calendarPushLastPushed: 0,
+  calendarPushLastError: '',
+};
+
 // Notifications and Tags are their own self-loading editors, exercised by
 // NotificationGate.test.tsx / TagsEditor.test.tsx. Here they are stubs so this
 // file asserts only Settings.tsx's OWN wiring: that a section mounts on its
@@ -120,6 +152,12 @@ async function openSection(tabName: string | RegExp): Promise<HTMLElement> {
 beforeEach(() => {
   getBusinessSettings.mockReset();
   saveBusinessSettings.mockReset();
+  for (const fn of Object.values(googleCalendarApi)) fn.mockReset();
+  googleCalendarApi.getGoogleCalendarConnection.mockResolvedValue({
+    connection: BLANK_GOOGLE_CONNECTION,
+    freeBusyCalendarId: '',
+    redirectUri: '',
+  });
 });
 
 describe('Settings — section nav shell', () => {
@@ -154,10 +192,12 @@ describe('Settings — section nav shell', () => {
     expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
 
     const tabs = within(tablist).getAllByRole('tab');
-    // 13 since Task 7.2 added "Google Calendar (editable)" beside "Calendar sync".
-    // Two tabs on purpose: one reads busy time as a service account, the other
-    // writes visits as a signed-in Google account, and they fail separately.
-    expect(tabs).toHaveLength(13);
+    // 12: back down from 13 on 2026-07-31, when "Calendar sync" and "Google
+    // Calendar (editable)" became one "Calendar" tab with two sub-headed panels.
+    // They are still two features that fail separately; they were never two
+    // things to go looking for.
+    expect(tabs).toHaveLength(12);
+    expect(screen.queryByRole('tab', { name: /google calendar/i })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Business profile' })).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -174,7 +214,7 @@ describe('Settings — section nav shell', () => {
   });
 });
 
-describe('Settings — Calendar sync is a real editor, not a view', () => {
+describe('Settings, Calendar is one section holding both capabilities', () => {
   // INVERTED on 2026-07-25. This case used to assert the opposite ("shows the id
   // read-only with a reason, no editable control"), which pinned a wrong belief
   // rather than a behaviour: the free/busy sync runs as a service account inside
@@ -185,7 +225,7 @@ describe('Settings — Calendar sync is a real editor, not a view', () => {
     render(<Settings />);
     await screen.findByLabelText('Business name');
 
-    const panel = await openSection('Calendar sync');
+    const panel = await openSection('Calendar');
     const field = within(panel).getByLabelText('Calendar ID');
     await userEvent.type(field, 'team@group.calendar.google.com');
     await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
@@ -195,6 +235,36 @@ describe('Settings — Calendar sync is a real editor, not a view', () => {
     expect(saveBusinessSettings).toHaveBeenCalledWith({
       calendarSyncId: 'team@group.calendar.google.com',
     });
+  });
+
+  it('carries BOTH capabilities in the one panel, each under its own sub-heading', async () => {
+    // The operator complaint this merge answers: two tabs for one question.
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+
+    const panel = await openSection('Calendar');
+    expect(within(panel).getByText('Free/busy import')).toBeInTheDocument();
+    expect(within(panel).getByText('Editable calendars')).toBeInTheDocument();
+    // The import's editor and the OAuth half's action, in the same tabpanel.
+    expect(within(panel).getByLabelText('Calendar ID')).toBeInTheDocument();
+    expect(
+      await within(panel).findByRole('button', { name: /connect google calendar/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the OAuth half alive when business_settings cannot be read', async () => {
+    // The two halves read different documents, so one being unreadable must not
+    // black out the other. Merging the tabs must not merge the failure modes.
+    getBusinessSettings.mockRejectedValue(new Error('permission-denied'));
+    render(<Settings />);
+    await screen.findByText(/permission-denied/i);
+
+    const panel = await openSection('Calendar');
+    expect(within(panel).queryByLabelText('Calendar ID')).not.toBeInTheDocument();
+    expect(
+      await within(panel).findByRole('button', { name: /connect google calendar/i }),
+    ).toBeInTheDocument();
   });
 
   it('MyTribe portal keeps the Home layout view-only while its other fields save', async () => {
