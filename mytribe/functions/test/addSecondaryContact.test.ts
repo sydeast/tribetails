@@ -10,12 +10,62 @@ vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return { ...actual, FieldValue: { serverTimestamp: () => '__SERVER_TS__' } };
 });
-beforeEach(() => mocks.dbFn.mockReset());
+beforeEach(() => {
+  mocks.dbFn.mockReset();
+  delete process.env.AUNTIE_OPERATOR_UIDS;
+});
 
 describe('addSecondaryContactHandler', () => {
   it('rejects unauth', async () => {
     const { addSecondaryContactHandler } = await import('../src/portal/addSecondaryContact');
     await expect(addSecondaryContactHandler({ data: { invitedEmail: 'a@x.com' }, auth: undefined } as any)).rejects.toMatchObject({ code: 'unauthenticated' });
+  });
+
+  it('STAFF GATE: denies a stranger (not staff, kinfolkIds does not include the target)', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/stranger': { kinfolkIds: ['other-fam'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { addSecondaryContactHandler } = await import('../src/portal/addSecondaryContact');
+    await expect(
+      addSecondaryContactHandler({ data: { kinfolkId: '3', invitedEmail: 'partner@x.com' }, auth: { uid: 'stranger' } } as any),
+    ).rejects.toMatchObject({ code: 'permission-denied' });
+    expect(ctx.adds.find((a) => a.collection === 'inviteRequests')).toBeUndefined();
+  });
+
+  it('STAFF GATE: an operator with the admin claim can mint an invite for a household that is not their own', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/op-uid': { kinfolkIds: [] },
+        'kinfolk/3': { firstName: 'Doe' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { addSecondaryContactHandler } = await import('../src/portal/addSecondaryContact');
+    const res = await addSecondaryContactHandler({
+      data: { kinfolkId: '3', invitedEmail: 'partner@x.com' },
+      auth: { uid: 'op-uid', token: { admin: true } },
+    } as any);
+    expect(res.inviteId).toBeTypeOf('string');
+    const wrote = ctx.adds.find((a) => a.collection === 'inviteRequests');
+    expect(wrote?.data.tribeId).toBe('3');
+  });
+
+  it('STAFF GATE: an operator on the AUNTIE_OPERATOR_UIDS allowlist (no admin claim) can mint an invite for a household that is not their own', async () => {
+    process.env.AUNTIE_OPERATOR_UIDS = 'op-uid';
+    const ctx = buildDbMock({
+      docs: {
+        'clients/op-uid': { kinfolkIds: [] },
+        'kinfolk/3': { firstName: 'Doe' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { addSecondaryContactHandler } = await import('../src/portal/addSecondaryContact');
+    const res = await addSecondaryContactHandler({
+      data: { kinfolkId: '3', invitedEmail: 'partner@x.com' },
+      auth: { uid: 'op-uid' },
+    } as any);
+    expect(res.inviteId).toBeTypeOf('string');
+    const wrote = ctx.adds.find((a) => a.collection === 'inviteRequests');
+    expect(wrote?.data.tribeId).toBe('3');
   });
 
   it('rejects malformed email', async () => {

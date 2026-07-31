@@ -7,6 +7,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { requireKinfolkPerm } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 
 const CustomFieldZ = z.object({
   key: z.string().min(1).max(80),
@@ -34,12 +35,14 @@ export async function saveHomeAccessHandler(req: CallableRequest<unknown>): Prom
 
   const args = Args.parse(req.data);
   const firestore = db();
-  const clientSnap = await firestore.collection('clients').doc(uid).get();
-  const allowedIds: string[] = (clientSnap.data()?.kinfolkIds ?? []) as string[];
-  if (allowedIds.length === 0) throw new HttpsError('failed-precondition', 'No tribes linked.');
-  const kinfolkId = args.kinfolkId ?? allowedIds[0];
-  if (!allowedIds.includes(kinfolkId)) throw new HttpsError('permission-denied', 'No access.');
-  await requireKinfolkPerm(uid, kinfolkId, 'home_access', req.auth?.token?.admin === true, 'saveHomeAccess');
+  const hasAdminClaim = req.auth?.token?.admin === true;
+  // Was a hard clients/{uid}.kinfolkIds check with no staff path, so an
+  // operator got permission-denied here even though requireKinfolkPerm below
+  // (and the read side) already knew how to let staff through. Same resolver
+  // getMyKin/getMyBookings use; a cross-tenant resolution is audit-logged
+  // inside it.
+  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, hasAdminClaim, 'saveHomeAccess');
+  await requireKinfolkPerm(uid, kinfolkId, 'home_access', hasAdminClaim, 'saveHomeAccess');
 
   const update: Record<string, unknown> = {
     updatedAt: FieldValue.serverTimestamp(),

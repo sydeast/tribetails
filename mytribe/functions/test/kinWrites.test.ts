@@ -75,11 +75,46 @@ describe('kinWrites CRITICAL-4 permission gate (kin_edit)', () => {
 
     it(`${variant.name}: ALLOWS an operator (bypass, no member doc)`, async () => {
       process.env.AUNTIE_OPERATOR_UIDS = 'op-uid';
-      const ctx = buildDbMock({ docs: { 'clients/op-uid': { kinfolkIds: ['3'] } } });
+      // The operator's OWN kinfolkIds must NOT include '3': otherwise the
+      // outer clients/{uid}.kinfolkIds check passes because the caller
+      // happens to be a member of that household, not because the operator
+      // path works. That was this fixture's bug before the fix: kinfolkIds:
+      // ['3'] made this pass for the wrong reason.
+      const ctx = buildDbMock({
+        docs: {
+          'clients/op-uid': { kinfolkIds: [] },
+          'kinfolk/3': { firstName: 'Doe' },
+        },
+      });
       mocks.dbFn.mockReturnValue(ctx.db);
       const mod = await import('../src/portal/kinWrites');
       const handler = (mod as any)[variant.import];
       await expect(handler({ data: variant.data, auth: { uid: 'op-uid' } } as any)).resolves.toBeTruthy();
+    });
+
+    it(`${variant.name}: ALLOWS an operator with the admin claim on a household that is not their own`, async () => {
+      const ctx = buildDbMock({
+        docs: {
+          'clients/op-uid': { kinfolkIds: [] },
+          'kinfolk/3': { firstName: 'Doe' },
+        },
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const mod = await import('../src/portal/kinWrites');
+      const handler = (mod as any)[variant.import];
+      await expect(
+        handler({ data: variant.data, auth: { uid: 'op-uid', token: { admin: true } } } as any),
+      ).resolves.toBeTruthy();
+    });
+
+    it(`${variant.name}: DENIES a stranger (not staff, kinfolkIds does not include the target)`, async () => {
+      const ctx = buildDbMock({ docs: { 'clients/stranger': { kinfolkIds: ['other-fam'] } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const mod = await import('../src/portal/kinWrites');
+      const handler = (mod as any)[variant.import];
+      await expect(
+        handler({ data: variant.data, auth: { uid: 'stranger' } } as any),
+      ).rejects.toMatchObject({ code: 'permission-denied' });
     });
   }
 });

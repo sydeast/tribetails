@@ -7,6 +7,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 
 const Args = z.object({
   kinfolkId: z.string().optional(),
@@ -43,15 +44,22 @@ export async function addSecondaryContactHandler(req: CallableRequest<unknown>):
   const firestore = db();
   const clientSnap = await firestore.collection('clients').doc(uid).get();
   const clientData = clientSnap.data() ?? {};
-  const allowed: string[] = (clientData.kinfolkIds ?? []) as string[];
-  if (allowed.length === 0) throw new HttpsError('failed-precondition', 'No tribes linked.');
-  const kinfolkId = args.kinfolkId ?? allowed[0];
-  if (!allowed.includes(kinfolkId)) throw new HttpsError('permission-denied', 'No access.');
+  // Was a hard clients/{uid}.kinfolkIds check with no staff path: an operator
+  // got permission-denied here even though requireKinfolkPrimary right below
+  // already knew how to bypass staff. Same resolver the read side uses; a
+  // cross-tenant resolution is audit-logged inside it.
+  const { kinfolkId } = await resolveKinfolkAccess(
+    uid,
+    args.kinfolkId,
+    req.auth?.token?.admin === true,
+    'addSecondaryContact',
+  );
 
   // WARNING-19: minting a secondary invite (especially one carrying billing_full)
-  // is a PRIMARY-only privilege. The `kinfolkIds` check above only proves the
-  // caller belongs to the family — a restricted SECONDARY also passes it. Gate on
-  // the member doc so a secondary cannot escalate by minting further invites.
+  // is a PRIMARY-only privilege. resolveKinfolkAccess above only proves the
+  // caller belongs to the family (or is staff) — a restricted SECONDARY also
+  // passes it. Gate on the member doc so a secondary cannot escalate by
+  // minting further invites.
   // requireKinfolkPrimary mirrors mintInviteFromPrimary's loadMember+requirePrimary:
   // operator bypasses, legacy single-primary (no member doc) falls back to allow,
   // an ACTIVE non-PRIMARY member is denied. Matches mintInviteFromPrimary.ts:33-37.

@@ -14,12 +14,62 @@ beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.writeAuditEntryFn.mockReset();
   mocks.writeAuditEntryFn.mockResolvedValue('audit-id');
+  delete process.env.AUNTIE_OPERATOR_UIDS;
 });
 
 describe('saveTribeProfileHandler', () => {
   it('rejects unauth', async () => {
     const { saveTribeProfileHandler } = await import('../src/portal/saveTribeProfile');
     await expect(saveTribeProfileHandler({ data: { displayName: 'X' }, auth: undefined } as any)).rejects.toMatchObject({ code: 'unauthenticated' });
+  });
+
+  it('STAFF GATE: denies a stranger (not staff, kinfolkIds does not include the target)', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/stranger': { kinfolkIds: ['other-fam'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveTribeProfileHandler } = await import('../src/portal/saveTribeProfile');
+    await expect(
+      saveTribeProfileHandler({ data: { kinfolkId: '3', displayName: 'X' }, auth: { uid: 'stranger' } } as any),
+    ).rejects.toMatchObject({ code: 'permission-denied' });
+    expect(ctx.writes.find((w) => w.path === 'families/3')).toBeUndefined();
+  });
+
+  it('STAFF GATE: an operator with the admin claim can save a household that is not their own', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/op-uid': { kinfolkIds: [] },
+        'kinfolk/3': { firstName: 'Doe' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveTribeProfileHandler } = await import('../src/portal/saveTribeProfile');
+    await expect(
+      saveTribeProfileHandler({
+        data: { kinfolkId: '3', displayName: 'Foster' },
+        auth: { uid: 'op-uid', token: { admin: true } },
+      } as any),
+    ).resolves.toEqual({ ok: true });
+    const w = ctx.writes.find((w) => w.path === 'families/3');
+    expect(w?.data.displayName).toBe('Foster');
+  });
+
+  it('STAFF GATE: an operator on the AUNTIE_OPERATOR_UIDS allowlist (no admin claim) can save a household that is not their own', async () => {
+    process.env.AUNTIE_OPERATOR_UIDS = 'op-uid';
+    const ctx = buildDbMock({
+      docs: {
+        'clients/op-uid': { kinfolkIds: [] },
+        'kinfolk/3': { firstName: 'Doe' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveTribeProfileHandler } = await import('../src/portal/saveTribeProfile');
+    await expect(
+      saveTribeProfileHandler({
+        data: { kinfolkId: '3', displayName: 'Foster' },
+        auth: { uid: 'op-uid' },
+      } as any),
+    ).resolves.toEqual({ ok: true });
+    const w = ctx.writes.find((w) => w.path === 'families/3');
+    expect(w?.data.displayName).toBe('Foster');
   });
 
   it('writes only fields that the caller passed', async () => {
