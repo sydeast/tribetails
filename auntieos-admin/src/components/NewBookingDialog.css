@@ -212,3 +212,321 @@
   font-size: var(--type-body-sm-size);
   color: var(--color-text-primary);
 }
+/* ── the 5-step wizard ───────────────────────────────────────────────────────
+   Layout for the wizard shell and its step bodies. The step order and the
+   pieces on each step come from ui-ideas/BookingWorkFlow/*.png; every value
+   here is a token from styles/tokens.css. */
+.nbw__steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0 0 var(--space-5);
+  padding: 0;
+}
+.nbw__step {
+  flex: 1 1 8rem;
+  min-width: 7rem;
+}
+.nbw__step-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-2);
+  font: inherit;
+  color: var(--color-text-faint);
+  background: none;
+  border: none;
+  border-top: 2px solid var(--color-border);
+  cursor: pointer;
+  text-align: center;
+}
+.nbw__step-button--static {
+  cursor: default;
+}
+.nbw__step-button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.nbw__step--done .nbw__step-button {
+  color: var(--color-text-dim);
+  border-top-color: var(--color-success);
+}
+.nbw__step--current .nbw__step-button {
+  color: var(--color-text-primary);
+  border-top-color: var(--color-primary);
+}
+.nbw__step-num {
+  display: grid;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+}
+.nbw__step--current .nbw__step-num {
+  background: var(--color-primary);
+  color: var(--color-background);
+}
+.nbw__step--done .nbw__step-num {
+  background: color-mix(in srgb, var(--color-success) 25%, transparent);
+  color: var(--color-success);
+}
+.nbw__step-label {
+  font-size: var(--type-label-sm-size);
+}
+.nbw__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.nbw__title {
+  margin: 0;
+  font-family: var(--font-fraunces);
+  font-size: var(--type-title-lg-size);
+  font-weight: var(--type-title-lg-weight);
+  color: var(--color-text-primary);
+}
+.nbw__sub {
+  margin: 0;
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+}
+.nbw__kin,
+.nbw__services,
+.nbw__modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.nbw__kin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.nbw__kin-chip--on {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+.nbw__service {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  flex: 1 1 12rem;
+  padding: var(--space-3);
+  font: inherit;
+  text-align: left;
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  cursor: pointer;
+}
+.nbw__service:hover {
+  border-color: var(--color-primary);
+}
+.nbw__service--on {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+}
+.nbw__service-name {
+  font-weight: var(--type-title-md-weight);
+}
+.nbw__service-price {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+.nbw__mode {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  flex: 1 1 14rem;
+  padding: var(--space-3);
+  font: inherit;
+  text-align: left;
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  cursor: pointer;
+}
+.nbw__mode--on {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+}
+.nbw__mode-title {
+  font-weight: var(--type-title-md-weight);
+}
+.nbw__mode-blurb {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+.nbw__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+.nbw__panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.nbw__panel-title {
+  margin: 0;
+  font-size: var(--type-title-md-size);
+  font-weight: var(--type-title-md-weight);
+  color: var(--color-text-primary);
+}
+.nbw__visits {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+.nbw__visit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3);
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+}
+.nbw__visit-num {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-faint);
+}
+.nbw__visit-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.nbw__visit-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1 1 9rem;
+}
+.nbw__daylist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.nbw__day {
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+}
+.nbw__day-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3);
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.nbw__day-head:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.nbw__day-date {
+  font-weight: var(--type-title-md-weight);
+}
+.nbw__day-summary {
+  flex: 1 1 auto;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+.nbw__total-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: 0;
+}
+.nbw__total {
+  font-family: var(--font-mono);
+  font-size: var(--type-title-lg-size);
+  color: var(--color-text-primary);
+}
+.nbw__warn {
+  margin: 0;
+  color: var(--color-warning);
+  font-size: var(--type-body-sm-size);
+}
+.nbw__review-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.nbw__review-head {
+  display: block;
+  font-weight: var(--type-title-md-weight);
+  color: var(--color-text-primary);
+}
+.nbw__review-sub {
+  display: block;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+.nbw__choice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+.nbw__choice--on {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+}
+.nbw__choice-title {
+  font-weight: var(--type-title-md-weight);
+  color: var(--color-text-primary);
+}
+.nbw__choice-blurb {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+.nbw__toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  cursor: pointer;
+}
+.nbw__toggle input {
+  margin-top: 0.2rem;
+  accent-color: var(--color-primary);
+}
+.nbw__toggle-blurb {
+  display: block;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}

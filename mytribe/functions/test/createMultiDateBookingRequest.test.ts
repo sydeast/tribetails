@@ -182,3 +182,178 @@ describe('createMultiDateBookingRequest validation + auth', () => {
     ).rejects.toMatchObject({ code: 'unauthenticated' });
   });
 });
+/**
+ * The 5-step wizard's additions. Every one is OPTIONAL, and the first test
+ * below is the reason: the single-page dialog this wizard replaces is still
+ * deployed in older bundles and sends none of them.
+ */
+describe('createMultiDateBookingRequest wizard fields (per-visit location, billing, communication)', () => {
+  it('still accepts the frozen legacy payload, which carries none of the new fields', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createMultiDateBookingRequestHandler(
+      req({ kinfolkId: 'kf1', visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Walk' }] }),
+    );
+    expect(res.visitCount).toBe(1);
+    // Absent is persisted as a DECISION, not left undefined for a reader to
+    // guess at: no billing stated, and both communication toggles off.
+    const env = envelope(ctx);
+    expect(env?.data.billing).toBeNull();
+    expect(env?.data.communication).toEqual({ emailConfirmation: false, timeVisibility: false });
+    expect(visitWrites(ctx)[0]?.data.location).toBeNull();
+  });
+  it('persists a per-visit location on the visit doc, not on the envelope', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        visits: [
+          { startTimeMs: Date.now() + DAY, serviceName: 'Walk', location: 'Back gate' },
+          { startTimeMs: Date.now() + 2 * DAY, serviceName: 'Walk', location: 'Boarding kennel' },
+        ],
+      }),
+    );
+    // Two places in one series is the case that would be lost by rolling this
+    // up to the envelope, so it is the case the test pins.
+    expect(visitWrites(ctx).map((w) => w.data.location)).toEqual(['Back gate', 'Boarding kennel']);
+    expect(envelope(ctx)?.data).not.toHaveProperty('location');
+  });
+  it('trims a padded location rather than storing the operator\'s whitespace', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Walk', location: '  Back gate  ' }],
+      }),
+    );
+    expect(visitWrites(ctx)[0]?.data.location).toBe('Back gate');
+  });
+  it('rejects a blank location instead of storing an empty label', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await expect(
+      createMultiDateBookingRequestHandler(
+        req({
+          kinfolkId: 'kf1',
+          visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Walk', location: '   ' }],
+        }),
+      ),
+    ).rejects.toBeTruthy();
+  });
+  it('accepts an explicit null location, the "no particular place" the wizard sends', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Walk', location: null }],
+      }),
+    );
+    expect(visitWrites(ctx)[0]?.data.location).toBeNull();
+  });
+  it('persists the billing preference on the envelope', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        billing: { mode: 'new-invoice' },
+        visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Walk' }],
+      }),
+    );
+    expect(envelope(ctx)?.data.billing).toEqual({ mode: 'new-invoice' });
+  });
+  it('rejects a billing mode the enum does not name, rather than storing free text', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await expect(
+      createMultiDateBookingRequestHandler(
+        req({
+          kinfolkId: 'kf1',
+          billing: { mode: 'bill-them-later' },
+          visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Walk' }],
+        }),
+      ),
+    ).rejects.toBeTruthy();
+  });
+  it('persists both communication toggles exactly as sent', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        communication: { emailConfirmation: true, timeVisibility: true },
+        visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Walk' }],
+      }),
+    );
+    expect(envelope(ctx)?.data.communication).toEqual({
+      emailConfirmation: true,
+      timeVisibility: true,
+    });
+  });
+  it('rejects a half-stated communication object rather than defaulting the missing half', async () => {
+    // Silently defaulting `emailConfirmation` is how a household gets an email
+    // nobody chose to send.
+    mocks.dbFn.mockReturnValue(seed().db);
+    await expect(
+      createMultiDateBookingRequestHandler(
+        req({
+          kinfolkId: 'kf1',
+          communication: { timeVisibility: true },
+          visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Walk' }],
+        }),
+      ),
+    ).rejects.toBeTruthy();
+  });
+  it("still accepts ANDROID's exact payload, which the wizard has not reached yet", async () => {
+    // BookingRepository.createMultiDateBookingRequest builds precisely these
+    // keys (kinfolkId, pattern, notes, weeklyDays, kinIds, and per visit
+    // startTimeMs/endTimeMs/serviceId/serviceName). Android ships the
+    // single-page form against this callable, so this is the payload that must
+    // keep parsing for the phone to keep working while its wizard is built.
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const t = Date.now() + DAY;
+    const res = await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        pattern: 'weekly',
+        notes: 'Gate code 1234',
+        weeklyDays: [1, 3],
+        kinIds: ['k1'],
+        visits: [
+          { startTimeMs: t, endTimeMs: t + 30 * 60_000, serviceName: 'Dog Walk', serviceId: 'svc_walk' },
+        ],
+      }),
+    );
+    expect(res.visitCount).toBe(1);
+    const env = envelope(ctx);
+    expect(env?.data.pattern).toBe('weekly');
+    expect(env?.data.notes).toBe('Gate code 1234');
+    expect(env?.data.kinIds).toEqual(['k1']);
+  });
+  it('carries a different service and time per visit, which the wizard now produces', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const t1 = Date.now() + DAY;
+    const t2 = Date.now() + DAY + 4 * 60 * 60 * 1000; // same day, later
+    await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        visits: [
+          { startTimeMs: t1, serviceName: 'Dog Walk', serviceId: 'svc_walk' },
+          { startTimeMs: t2, serviceName: 'Drop In' },
+        ],
+      }),
+    );
+    const visits = visitWrites(ctx);
+    expect(visits).toHaveLength(2);
+    // Two visits on one day, at two times, with two services: none of which the
+    // single-page dialog could express (it sent one service and one time for
+    // every date).
+    expect(visits[0]?.data.serviceName).toBe('Dog Walk');
+    expect(visits[1]?.data.serviceName).toBe('Drop In');
+    expect(visits[0]?.data.priceCents).toBe(2500);
+    expect(visits[1]?.data.priceCents).toBeNull();
+  });
+});
