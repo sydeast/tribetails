@@ -249,7 +249,11 @@ describe('getIntegrationsHealth, the free probes', () => {
 
   it('points at the Calendar section rather than rebuilding the connect flow', async () => {
     const gcal = row(await run(), 'googleCalendar');
-    expect(gcal.ownedBySection).toBe('googleCalendar');
+    // 'calendar' is the merged Settings tab (#145 folded the googleCalendar tab
+    // into it). The web client still aliases the retired 'googleCalendar' id so
+    // an older deployed server stays routable; the server itself sends the
+    // current id.
+    expect(gcal.ownedBySection).toBe('calendar');
     expect(gcal.status).toBe('configured');
     expect(gcal.summary).toContain('No Google account has been connected');
   });
