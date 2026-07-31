@@ -23,7 +23,6 @@ jobs:
       admin: ${{ steps.filter.outputs.admin }}
       adminE2e: ${{ steps.filter.outputs.adminE2e }}
       functions: ${{ steps.filter.outputs.functions }}
-      kotlin: ${{ steps.filter.outputs.kotlin }}
       android: ${{ steps.filter.outputs.android }}
       mytribe: ${{ steps.filter.outputs.mytribe }}
       portal: ${{ steps.filter.outputs.portal }}
@@ -59,10 +58,6 @@ jobs:
             functions:
               - 'auntieos-admin/web/functions/**'
               - '.github/workflows/ci.yml'
-            kotlin:
-              - 'auntieos-admin/web/composeApp/**'
-              - 'auntieos-admin/web/*.gradle.kts'
-              - 'auntieos-admin/web/gradle/**'
             android:
               - 'auntieos-admin/android/**'
             mytribe:
@@ -170,7 +165,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+          cache: npm
+          cache-dependency-path: auntieos-admin/web/functions/package-lock.json
+      - run: npm ci
       # The generate tests read the brand-voice corpus from web/functions/voice/,
       # which is gitignored on purpose (it carries per-client material). Those
       # specific tests are skipped in CI rather than shipping the corpus to a
@@ -259,10 +256,17 @@ jobs:
       - name: Write local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
       - run: ./gradlew :jvmTest --no-daemon
+  # composeApp builds the wasm admin and the desktop (jvm) app, and per
+  # auntieos-admin/CLAUDE.md both are off the delivery path by owner ruling:
+  # the wasm admin is superseded by src/, and desktop parity is paused. No
+  # PR needs this to go green, so it no longer runs on the path-filter
+  # trigger, only by hand: gh workflow run ci.yml --ref <branch> (or Actions
+  # tab -> CI -> Run workflow), same escape hatch every other job already
+  # answers to via workflow_dispatch.
   kotlin:
     name: Shared + desktop (jvm)
     needs: changes
-    if: needs.changes.outputs.kotlin == 'true' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     defaults:
       run:
