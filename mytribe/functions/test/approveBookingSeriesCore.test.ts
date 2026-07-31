@@ -90,4 +90,63 @@ describe('approveBookingSeriesCore', () => {
     expect(r.sessionsCreated).toBe(0);
     expect(r.affectedVisits).toBe(1);
   });
+
+  // `toIso` degrades anything it cannot read to ''. Every window over
+  // kin_care_sessions is a LEXICAL range on the ISO string, so a session
+  // stored with startTime '' sorts before every real date and is invisible to
+  // listUninvoicedSessions, optimizeRoute and the calendar push. It is a real
+  // visit that can never be billed, and nothing raises. These pin the refusal.
+  for (const [label, startTime] of [
+    ['missing', undefined],
+    ['null', null],
+    ['a number the SDK never returns', 1_767_000_000_000],
+    ['an object that is not a Timestamp', { seconds: 1 }],
+  ] as Array<[string, unknown]>) {
+    it(`refuses to create an unbillable session when startTime is ${label}`, async () => {
+      const ctx = buildDbMock({
+        docs: { 'families/3/bookings/b1': { kinfolkName: 'Doe Household' } },
+        queryDocs: {
+          'families/3/bookings/b1/kinCares': [
+            { id: 'v1', data: { startTime, endTime: '2026-07-01T11:00:00Z', kinIds: ['k1'], serviceType: 'walk' } },
+          ],
+        },
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { approveBookingSeriesCore } = await import('../src/admin/approveBookingSeriesCore');
+
+      const r = await approveBookingSeriesCore({ kinfolkId: '3', batchId: 'b1', actorUid: 'sys', actorRole: 'SYSTEM' });
+
+      // No session doc at all. A missing visit the operator can see beats an
+      // invisible one they cannot.
+      expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_v1')).toBeUndefined();
+      expect(r.sessionsCreated).toBe(0);
+      expect(r.failedVisits).toBe(1);
+      // The child is NOT flipped to confirmed, so a retry can still fix it.
+      expect(ctx.writes.find((w) => w.path === 'families/3/bookings/b1/kinCares/v1')).toBeUndefined();
+      // And the envelope refuses to claim it is done.
+      expect(r.envelopeStatus).toBe('requested');
+    });
+  }
+
+  it('one unreadable visit does not stop the readable ones in the same batch', async () => {
+    const ctx = buildDbMock({
+      docs: { 'families/3/bookings/b1': { kinfolkName: 'Doe Household' } },
+      queryDocs: {
+        'families/3/bookings/b1/kinCares': [
+          { id: 'bad', data: { startTime: null, endTime: '2026-07-01T11:00:00Z', kinIds: [], serviceType: 'walk' } },
+          { id: 'good', data: { startTime: '2026-07-02T10:00:00Z', endTime: '2026-07-02T11:00:00Z', kinIds: [], serviceType: 'walk' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { approveBookingSeriesCore } = await import('../src/admin/approveBookingSeriesCore');
+
+    const r = await approveBookingSeriesCore({ kinfolkId: '3', batchId: 'b1', actorUid: 'sys', actorRole: 'SYSTEM' });
+
+    expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_good')).toBeDefined();
+    expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_bad')).toBeUndefined();
+    expect(r.sessionsCreated).toBe(1);
+    expect(r.failedVisits).toBe(1);
+    expect(r.envelopeStatus).toBe('requested');
+  });
 });

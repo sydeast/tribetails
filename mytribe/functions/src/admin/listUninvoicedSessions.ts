@@ -115,6 +115,15 @@ export const Result = z
     sessions: z.array(UninvoicedSessionSchema),
     /** Sessions returned above with no usable rate, so the caller can prompt for one. */
     unpriceable: z.array(z.object({ sessionId: z.string(), serviceType: z.string() }).strict()),
+    /**
+     * Billable sessions carrying an EMPTY `startTime`, which no date window can
+     * ever reach. The window above is a lexical range on the ISO string, so ''
+     * sorts before every real date and such a session is invisible to this
+     * callable, to `optimizeRoute` and to the calendar push. Reported rather
+     * than dropped: an unbillable visit that nobody can see is how real work
+     * goes unpaid, and the operator can only fix what is named.
+     */
+    unplaceable: z.array(z.object({ sessionId: z.string(), kinfolkId: z.string() }).strict()),
     /** False when `business_settings.serviceRates` is missing, so a miss is not a real miss. */
     rateCardLoaded: z.boolean(),
     /** Rows read before filtering. An empty result over 400 scanned rows means something. */
@@ -199,8 +208,36 @@ export async function listUninvoicedSessionsHandler(
     typeof rawRates === 'object' && rawRates !== null && !Array.isArray(rawRates);
   const rates = rateCardLoaded ? (rawRates as Record<string, unknown>) : {};
 
+  // The window above cannot reach a session whose startTime is ''. One extra
+  // equality read finds exactly those. It needs no composite index (equality on
+  // a single field is served by the automatic index), and it is bounded by the
+  // same page size. A session MISSING the field entirely is still unreachable,
+  // because Firestore cannot query for absence; no writer produces that shape
+  // (`createKinCareSession` requires min(1) and `approveBookingSeriesCore` now
+  // refuses an empty one), and prod carries none, so the gap is documented
+  // rather than papered over with a full-collection scan.
+  const unplaceableSnap = await firestore
+    .collection(SESSIONS_COLLECTION)
+    .where('startTime', '==', '')
+    .limit(MAX_SESSIONS)
+    .get();
+
   const sessions: UninvoicedSession[] = [];
   const unpriceable: Array<{ sessionId: string; serviceType: string }> = [];
+  const unplaceable: Array<{ sessionId: string; kinfolkId: string }> = [];
+
+  for (const d of unplaceableSnap.docs) {
+    const data = d.data() as Record<string, unknown>;
+    // Same two filters the window uses, so this reports only sessions that
+    // WOULD be billable. An already-invoiced or unfinished visit with a broken
+    // startTime is a different problem and not this callable's to raise.
+    if (!isCompleted(data['status'])) continue;
+    if (!isUnclaimed(data['invoiceId'])) continue;
+    unplaceable.push({
+      sessionId: d.id,
+      kinfolkId: typeof data['kinfolkId'] === 'string' ? data['kinfolkId'] : '',
+    });
+  }
 
   for (const d of snap.docs) {
     const data = d.data() as Record<string, unknown>;
@@ -233,6 +270,7 @@ export async function listUninvoicedSessionsHandler(
       scanned: snap.docs.length,
       matched: sessions.length,
       unpriceable: unpriceable.length,
+      unplaceable: unplaceable.length,
       rateCardLoaded,
     },
   });
@@ -240,6 +278,7 @@ export async function listUninvoicedSessionsHandler(
   return validateResponse('listUninvoicedSessions', Result, {
     sessions,
     unpriceable,
+    unplaceable,
     rateCardLoaded,
     scanned: snap.docs.length,
     truncated: snap.docs.length >= MAX_SESSIONS,

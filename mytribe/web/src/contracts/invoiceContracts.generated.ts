@@ -287,11 +287,20 @@ export interface ListUninvoicedSessionsResultUnpriceable {
 }
 
 /**
+ * Nested in the `listUninvoicedSessions` contract.
+ */
+export interface ListUninvoicedSessionsResultUnplaceable {
+  sessionId: string;
+  kinfolkId: string;
+}
+
+/**
  * Response from the `listUninvoicedSessions` callable.
  */
 export interface ListUninvoicedSessionsResult {
   sessions: ListUninvoicedSessionsResultSession[];
   unpriceable: ListUninvoicedSessionsResultUnpriceable[];
+  unplaceable: ListUninvoicedSessionsResultUnplaceable[];
   rateCardLoaded: boolean;
   scanned: number;
   truncated: boolean;

@@ -87,6 +87,20 @@ export async function approveBookingSeriesCore(opts: {
       if (!existing.exists) {
         const startIso = toIso(data.startTime);
         const endIso = toIso(data.endTime);
+        // A session with no usable startTime is UNBILLABLE and silently so.
+        // `toIso` degrades anything it cannot read to '', and every window over
+        // this collection is a lexical range on the ISO string, so '' sorts
+        // before any real date and the visit never appears in
+        // listUninvoicedSessions, optimizeRoute, or the calendar push. The
+        // household is never billed for work that was really done, and nothing
+        // raises. Refuse instead: this throw lands in the per-visit catch
+        // below, so the visit counts as failed, the envelope stays 'requested'
+        // rather than claiming confirmed, and the operator sees it and retries.
+        if (!startIso) {
+          throw new Error(
+            `kinCares/${id} has no readable startTime (${typeof data.startTime}); refusing to create an unbillable session`,
+          );
+        }
         const kinIds = Array.isArray(data.kinIds)
           ? (data.kinIds as unknown[]).filter((k): k is string => typeof k === 'string')
           : [];

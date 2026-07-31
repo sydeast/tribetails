@@ -232,3 +232,56 @@ describe('listUninvoicedSessions argument + auth failures', () => {
     ).rejects.toMatchObject({ code: 'permission-denied' });
   });
 });
+
+// A session stored with startTime '' is billable work that NO date window can
+// reach: the window is a lexical range on the ISO string, and '' sorts before
+// every real date. Before this it was omitted in silence, which is how a real
+// visit goes unpaid with nothing to look at. It is now reported.
+describe('listUninvoicedSessions unplaceable sessions', () => {
+  it('reports a billable session whose startTime is empty, instead of dropping it', async () => {
+    const ctx = seed([
+      session('s-ok', { status: 'COMPLETED', serviceType: 'dogWalking30' }),
+      session('s-lost', { status: 'COMPLETED', serviceType: 'dogWalking30', startTime: '', kinfolkId: 'fam9' }),
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await listUninvoicedSessionsHandler(req(RANGE));
+
+    // It cannot appear in the window, which is the bug, so the window result is
+    // unchanged and the news arrives on its own channel.
+    expect(res.sessions.map((s) => s.sessionId)).toEqual(['s-ok']);
+    expect(res.unplaceable).toEqual([{ sessionId: 's-lost', kinfolkId: 'fam9' }]);
+  });
+
+  it('says nothing when every session carries a real startTime', async () => {
+    const ctx = seed([session('s-ok', { status: 'COMPLETED', serviceType: 'dogWalking30' })]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await listUninvoicedSessionsHandler(req(RANGE));
+
+    expect(res.unplaceable).toEqual([]);
+  });
+
+  it('does not report an unplaceable session that is already invoiced or unfinished', async () => {
+    // Those are different problems. This callable raises money left on the
+    // table, and a noisy channel is one an operator learns to ignore.
+    const ctx = seed([
+      session('s-billed', { status: 'COMPLETED', startTime: '', invoiceId: 'inv_1' }),
+      session('s-scheduled', { status: 'SCHEDULED', startTime: '' }),
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await listUninvoicedSessionsHandler(req(RANGE));
+
+    expect(res.unplaceable).toEqual([]);
+  });
+
+  it('treats a lowercase completed status as completed here too', async () => {
+    const ctx = seed([session('s-lost', { status: 'completed', startTime: '', kinfolkId: 'fam4' })]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await listUninvoicedSessionsHandler(req(RANGE));
+
+    expect(res.unplaceable).toEqual([{ sessionId: 's-lost', kinfolkId: 'fam4' }]);
+  });
+});
