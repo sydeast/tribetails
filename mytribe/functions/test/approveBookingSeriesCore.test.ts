@@ -171,4 +171,35 @@ describe('approveBookingSeriesCore', () => {
     expect(r.failedVisits).toBe(1);
     expect(r.envelopeStatus).toBe('requested');
   });
+
+  // A busy import can land AFTER the request was submitted but BEFORE it is
+  // approved, which is exactly why this is re-checked here and not trusted
+  // from request time alone. Isolated per-visit, same as an unreadable
+  // startTime above: no override surface at this stage.
+  it('a visit that now conflicts with a GOOGLE_BUSY_IMPORT slot fails that visit only, like any other unusable one', async () => {
+    const ctx = buildDbMock({
+      docs: { 'families/3/bookings/b1': { kinfolkName: 'Doe Household' } },
+      queryDocs: {
+        'families/3/bookings/b1/kinCares': [
+          { id: 'busy', data: { startTime: '2026-07-01T10:15:00.000Z', endTime: '2026-07-01T10:45:00.000Z', kinIds: [], serviceType: 'walk' } },
+          { id: 'clear', data: { startTime: '2026-07-02T10:00:00.000Z', endTime: '2026-07-02T11:00:00.000Z', kinIds: [], serviceType: 'walk' } },
+        ],
+        booking_time_slots: [
+          { id: 'gbi-1', data: { date: '2026-07-01', startTime: '10:00', endTime: '11:00', source: 'GOOGLE_BUSY_IMPORT' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { approveBookingSeriesCore } = await import('../src/admin/approveBookingSeriesCore');
+
+    const r = await approveBookingSeriesCore({ kinfolkId: '3', batchId: 'b1', actorUid: 'sys', actorRole: 'SYSTEM' });
+
+    expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_clear')).toBeDefined();
+    expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_busy')).toBeUndefined();
+    // Not flipped to confirmed either, exactly like the unreadable-startTime case.
+    expect(ctx.writes.find((w) => w.path === 'families/3/bookings/b1/kinCares/busy')).toBeUndefined();
+    expect(r.sessionsCreated).toBe(1);
+    expect(r.failedVisits).toBe(1);
+    expect(r.envelopeStatus).toBe('requested');
+  });
 });

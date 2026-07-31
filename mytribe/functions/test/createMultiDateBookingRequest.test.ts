@@ -357,3 +357,71 @@ describe('createMultiDateBookingRequest wizard fields (per-visit location, billi
     expect(visits[1]?.data.priceCents).toBeNull();
   });
 });
+
+describe('createMultiDateBookingRequest busy-conflict guard', () => {
+  function seedWithBusySlot(startMs: number, endMs: number) {
+    const startIso = new Date(startMs).toISOString();
+    const endIso = new Date(endMs).toISOString();
+    return buildDbMock({
+      docs: {
+        'kinfolk/kf1': { firstName: 'Jamie', lastName: 'Halbrook' },
+        'base_services/svc_walk': { name: 'Dog Walk', priceCents: 2500 },
+      },
+      queryDocs: {
+        booking_time_slots: [
+          {
+            id: 'gbi-1',
+            data: {
+              date: startIso.slice(0, 10),
+              startTime: startIso.slice(11, 16),
+              endTime: endIso.slice(11, 16),
+              source: 'GOOGLE_BUSY_IMPORT',
+            },
+          },
+        ],
+      },
+    });
+  }
+
+  it('rejects a visit landing on a GOOGLE_BUSY_IMPORT slot, naming it, and writes nothing', async () => {
+    const start = Date.now() + DAY;
+    const ctx = seedWithBusySlot(start, start + 3600_000);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createMultiDateBookingRequestHandler(
+        req({ kinfolkId: 'kf1', visits: [{ startTimeMs: start + 60_000, serviceName: 'Walk' }] }),
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(visitWrites(ctx)).toHaveLength(0);
+    expect(envelope(ctx)).toBeUndefined();
+  });
+
+  it('the admin picker never blocks: overrideBusyConflict:true writes the visit through and audits the override', async () => {
+    const start = Date.now() + DAY;
+    const ctx = seedWithBusySlot(start, start + 3600_000);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        visits: [{ startTimeMs: start + 60_000, serviceName: 'Walk' }],
+        overrideBusyConflict: true,
+      }),
+    );
+    expect(res.visitCount).toBe(1);
+    expect(visitWrites(ctx)).toHaveLength(1);
+    expect(writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'BOOKING_BUSY_CONFLICT_OVERRIDDEN', actorRole: 'AUNTIE', actorUid: 'admin1' }),
+    );
+  });
+
+  it('a non-conflicting visit passes unchanged even with a busy slot elsewhere on the calendar', async () => {
+    const start = Date.now() + DAY;
+    const ctx = seedWithBusySlot(start + 30 * DAY, start + 30 * DAY + 3600_000);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createMultiDateBookingRequestHandler(
+      req({ kinfolkId: 'kf1', visits: [{ startTimeMs: start, serviceName: 'Walk' }] }),
+    );
+    expect(res.visitCount).toBe(1);
+    expect(visitWrites(ctx)).toHaveLength(1);
+  });
+});

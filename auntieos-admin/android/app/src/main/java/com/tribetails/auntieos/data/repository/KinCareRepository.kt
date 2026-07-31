@@ -116,8 +116,19 @@ class KinCareRepository(
         snapshot.toObjects(KinCareSession::class.java)
     }.onFailure { AuntieLog.e("Failed to get kin care sessions for source booking $sourceBookingId", it) }
 
+    /**
+     * Writes straight to Firestore with no callable in between (unlike the
+     * server-bound `createKinCareSession` Cloud Function), so
+     * [assertNoBookingBusyConflict] runs here instead of relying on a
+     * server-side guard that cannot see this write. No override parameter:
+     * neither call site ([AdminDataViewModel.createKinCareSession],
+     * [EnhancedSchedulingViewModel]'s booking-approval bridge) shows the
+     * operator a conflict before calling this, so there is no existing
+     * deliberate-override gesture to mirror. See `BookingBusyConflict.kt`.
+     */
     suspend fun createKinCareSession(session: KinCareSession): Result<String> = runCatching {
         authGate.ensureAuthenticated()
+        assertNoBookingBusyConflict(firestore, session.startTime, session.endTime)
         // Write stamp, not a query: scopedKinfolkId forces the sandbox scope in
         // test mode and passes the caller's kinfolkId through otherwise.
         val mode = authGate.requireTestMode()

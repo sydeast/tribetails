@@ -9,6 +9,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinNames } from '../lib/resolveKinNames';
+import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 
 /**
  * 1E §A.9: server-bound creation of a kin_care_sessions doc (scheduleNewVisit).
@@ -24,6 +25,8 @@ const Args = z.object({
   endTime: z.string().min(1).max(40),
   serviceDurationMinutes: z.number().int().min(0).max(24 * 60).optional(),
   notes: z.string().max(4000).optional(),
+  /** Additive, optional. See `overrideBusyConflict` on `createMultiDateBookingRequest.ts` Args for the full rationale; this is the same admin-only escape hatch. */
+  overrideBusyConflict: z.boolean().optional(),
 });
 
 export interface CreateKinCareSessionResult {
@@ -49,6 +52,15 @@ export async function createKinCareSessionHandler(
     }
     throw err;
   }
+
+  await guardBookingBusyConflict({
+    firestore: db(),
+    visits: [{ startTimeMs: Date.parse(args.startTime), endTimeMs: Date.parse(args.endTime) }],
+    actorUid: uid,
+    actorRole: 'AUNTIE',
+    override: args.overrideBusyConflict,
+    auditContext: { kinfolkId: args.kinfolkId },
+  });
 
   const kinNames = await resolveKinNames(args.kinfolkId, args.kinIds);
   const ref = await db().collection('kin_care_sessions').add({

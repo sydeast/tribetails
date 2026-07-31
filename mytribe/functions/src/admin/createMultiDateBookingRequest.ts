@@ -9,6 +9,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveDefaultAssignee } from '../lib/defaultAssignee';
 import { writeEnvelope, resolveService, type NormalizedVisit } from '../portal/requestBooking';
+import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 
 /**
  * AO-25: admin-side multi-date / recurring booking request.
@@ -71,6 +72,17 @@ const Args = z.object({
   communication: z
     .object({ emailConfirmation: z.boolean(), timeVisibility: z.boolean() })
     .optional(),
+  /**
+   * Additive, optional. The admin booking picker (`NewBookingDialog.tsx` /
+   * `bookingAvailability.ts`) already treats a busy-block clash as a warning
+   * the operator can knowingly submit past, never a hard stop ("the operator
+   * is the business"). This is that same affordance, honored server-side: a
+   * real `GOOGLE_BUSY_IMPORT` conflict refuses the request unless this is
+   * `true`, in which case it is written anyway and audited
+   * (`BOOKING_BUSY_CONFLICT_OVERRIDDEN`). Never set by `requestBooking`,
+   * which has no override precedent for a kinfolk-initiated request.
+   */
+  overrideBusyConflict: z.boolean().optional(),
 });
 
 export async function createMultiDateBookingRequestHandler(
@@ -96,6 +108,14 @@ export async function createMultiDateBookingRequestHandler(
     if (v.endTimeMs && v.endTimeMs <= v.startTimeMs) {
       throw new HttpsError('invalid-argument', 'endTime must be after startTime.');
     }
+  });
+  await guardBookingBusyConflict({
+    firestore: db(),
+    visits: args.visits,
+    actorUid: uid,
+    actorRole: 'AUNTIE',
+    override: args.overrideBusyConflict,
+    auditContext: { kinfolkId: args.kinfolkId },
   });
 
   const pattern = args.pattern ?? 'individual';
