@@ -844,6 +844,8 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'sessions[].startTime',
       'sessions[].unitCents',
       'truncated',
+      'unplaceable[].kinfolkId',
+      'unplaceable[].sessionId',
       'unpriceable[].serviceType',
       'unpriceable[].sessionId',
     ],

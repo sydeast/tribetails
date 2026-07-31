@@ -32,9 +32,14 @@ function seed() {
   return buildDbMock({
     docs: { 'families/kf1/bookings/b1': { envelopeStatus: 'requested', visitCount: 2, confirmedCount: 0, cancelledCount: 0 } },
     queryDocs: {
+      // Every writer of a kinCares child stamps startTime as a Timestamp:
+      // requestBooking requires it through zod (`startTimeMs` positive int) and
+      // writes `Timestamp.fromMillis`, and the sandbox seed does the same. A
+      // child without one is a shape production cannot reach, and approve now
+      // refuses it rather than minting a session no date window can ever find.
       'families/kf1/bookings/b1/kinCares': [
-        { id: 'v1', data: { status: 'requested' } },
-        { id: 'v2', data: { status: 'requested' } },
+        { id: 'v1', data: { status: 'requested', startTime: { toDate: () => new Date('2026-06-03T09:00:00Z') } } },
+        { id: 'v2', data: { status: 'requested', startTime: { toDate: () => new Date('2026-06-04T09:00:00Z') } } },
       ],
     },
   });
@@ -80,7 +85,9 @@ describe('manageBookingSeries', () => {
       queryDocs: {
         'families/kf1/bookings/b1/kinCares': [
           { id: 'v1', data: { status: 'requested', serviceType: 'Walk', kinIds: ['k1'], startTime: { toDate: () => new Date('2026-06-03T09:00:00Z') }, endTime: { toDate: () => new Date('2026-06-03T10:00:00Z') } } },
-          { id: 'v2', data: { status: 'requested', serviceType: 'Walk', kinIds: ['k1'] } },
+          // endTime is legitimately absent here, which is why the duration
+          // assertion below expects 0 for this one. startTime is not optional.
+          { id: 'v2', data: { status: 'requested', serviceType: 'Walk', kinIds: ['k1'], startTime: { toDate: () => new Date('2026-06-04T09:00:00Z') } } },
         ],
       },
     });

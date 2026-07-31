@@ -132,6 +132,7 @@ function uninvoicedResult(over: Record<string, unknown> = {}): Record<string, un
       },
     ],
     unpriceable: [],
+    unplaceable: [],
     rateCardLoaded: true,
     scanned: 1,
     truncated: false,
@@ -387,6 +388,10 @@ const CASES: Array<{
         }),
       ],
       ['an empty window, honestly reported', uninvoicedResult({ sessions: [], scanned: 0 })],
+      [
+        'a billable visit no date window can reach, reported rather than dropped',
+        uninvoicedResult({ unplaceable: [{ sessionId: 'vis_lost', kinfolkId: 'fam1' }] }),
+      ],
     ],
     refuses: [
       // Absent would let a client read it as 0 and bill a household nothing

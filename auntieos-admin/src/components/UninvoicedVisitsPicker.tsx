@@ -85,6 +85,10 @@ export function UninvoicedVisitsPicker({ kinfolkId, onAdd, onClose }: Uninvoiced
   // the panel says that the count it shows is after that narrowing.
   const forHousehold = (result?.sessions ?? []).filter((s) => s.kinfolkId === kinfolkId);
   const unpriceableIds = new Set((result?.unpriceable ?? []).map((u) => u.sessionId));
+  // Completed, un-invoiced visits the date window can never reach, because
+  // their start time is empty. They cannot appear in the list below however the
+  // dates are set, so the only honest thing is to say they exist.
+  const unplaceableForHousehold = (result?.unplaceable ?? []).filter((u) => u.kinfolkId === kinfolkId);
   const selectedUnpriced = forHousehold.filter((s) => selected.has(s.sessionId) && s.unitCents === null);
 
   const load = useCallback(async () => {
@@ -182,6 +186,21 @@ export function UninvoicedVisitsPicker({ kinfolkId, onAdd, onClose }: Uninvoiced
             <Banner tone="warning" title="More visits than fit">
               This window hit the server's page limit, so there may be visits it did not return.
               Narrow the dates to be sure you are seeing everything.
+            </Banner>
+          )}
+
+          {/* Changing the dates cannot surface these, so the banner says what to
+              do instead of implying a wider window would help. */}
+          {unplaceableForHousehold.length > 0 && (
+            <Banner tone="warning" title="Visits with no start time">
+              {unplaceableForHousehold.length === 1
+                ? '1 completed visit for this household has no start time'
+                : `${String(unplaceableForHousehold.length)} completed visits for this household have no start time`}
+              , so no date window can find {unplaceableForHousehold.length === 1 ? 'it' : 'them'} and{' '}
+              {unplaceableForHousehold.length === 1 ? 'it' : 'they'} cannot be billed from this
+              screen. Fix the start time on the visit itself, then search again. Visit{' '}
+              {unplaceableForHousehold.length === 1 ? 'id' : 'ids'}:{' '}
+              {unplaceableForHousehold.map((u) => u.sessionId).join(', ')}
             </Banner>
           )}
 

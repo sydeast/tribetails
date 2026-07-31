@@ -474,7 +474,7 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### listUninvoicedSessions
 - req `{ from: string /* YYYY-MM-DD, inclusive */, to: string /* YYYY-MM-DD, inclusive */ }`
-- res `{ sessions: Array<{ sessionId: string, kinfolkId: string, serviceType: string, durationMinutes: number, startTime: string /* ISO */, unitCents: number | null }>, unpriceable: Array<{ sessionId: string, serviceType: string }>, rateCardLoaded: boolean, scanned: number, truncated: boolean }`
+- res `{ sessions: Array<{ sessionId: string, kinfolkId: string, serviceType: string, durationMinutes: number, startTime: string /* ISO */, unitCents: number | null }>, unpriceable: Array<{ sessionId: string, serviceType: string }>, unplaceable: Array<{ sessionId: string, kinfolkId: string }>, rateCardLoaded: boolean, scanned: number, truncated: boolean }`
 - Read only. Completed visits in the window that no invoice has claimed, priced
   from `business_settings.serviceRates` where that is possible.
 - `unitCents` is NULL, never 0, when the visit cannot be priced, and the session
@@ -495,6 +495,18 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - The window is a LEXICAL range on `startTime`, which is an ISO-8601 STRING on
   this collection, not a Timestamp. Firestore orders every timestamp after every
   string, so a `Timestamp` bound here returns nothing and does not error.
+- **`unplaceable` is the escape hatch that lexical window leaves open.** An empty
+  `startTime` sorts before every real date, so a billable visit stored with one
+  is unreachable by ANY window the operator picks, here and in `optimizeRoute`
+  and the calendar push alike. A second equality read (`startTime == ''`, served
+  by the automatic single-field index) finds exactly those and reports them, with
+  the same completed + unclaimed filters so only money-on-the-table is raised.
+  Widening the dates cannot surface them, which is why the admin banner tells the
+  operator to repair the visit rather than to search again. A session MISSING the
+  field entirely remains unreachable, since Firestore cannot query for absence;
+  no writer produces that shape (`createKinCareSession` requires `min(1)`,
+  `approveBookingSeriesCore` refuses an unreadable `startTime` outright) and prod
+  carries none, verified 2026-07-30 across all 100 sessions.
 - Capped at 500 rows. `scanned` and `truncated` report the page honestly, so an
   empty result is distinguishable from a truncated one.
 

@@ -546,10 +546,28 @@ internal fun decodeListUninvoicedSessionsResultUnpriceable(raw: Map<String, Any?
         serviceType = (raw?.get("serviceType") as? String).orEmpty(),
     )
 
+/** Nested in the `listUninvoicedSessions` contract. */
+data class ListUninvoicedSessionsResultUnplaceable(
+    val sessionId: String,
+    val kinfolkId: String,
+)
+
+/**
+ * Fail-soft decode of `ListUninvoicedSessionsResultUnplaceable` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeListUninvoicedSessionsResultUnplaceable(raw: Map<String, Any?>?): ListUninvoicedSessionsResultUnplaceable =
+    ListUninvoicedSessionsResultUnplaceable(
+        sessionId = (raw?.get("sessionId") as? String).orEmpty(),
+        kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
+    )
+
 /** Response from the `listUninvoicedSessions` callable. */
 data class ListUninvoicedSessionsResult(
     val sessions: List<ListUninvoicedSessionsResultSession>,
     val unpriceable: List<ListUninvoicedSessionsResultUnpriceable>,
+    val unplaceable: List<ListUninvoicedSessionsResultUnplaceable>,
     val rateCardLoaded: Boolean,
     val scanned: Long,
     val truncated: Boolean,
@@ -564,6 +582,7 @@ internal fun decodeListUninvoicedSessionsResult(raw: Map<String, Any?>?): ListUn
     ListUninvoicedSessionsResult(
         sessions = (raw?.get("sessions") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeListUninvoicedSessionsResultSession(nested) } },
         unpriceable = (raw?.get("unpriceable") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeListUninvoicedSessionsResultUnpriceable(nested) } },
+        unplaceable = (raw?.get("unplaceable") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeListUninvoicedSessionsResultUnplaceable(nested) } },
         rateCardLoaded = raw?.get("rateCardLoaded") as? Boolean ?: false,
         scanned = (raw?.get("scanned") as? Number)?.toLong() ?: 0L,
         truncated = raw?.get("truncated") as? Boolean ?: false,

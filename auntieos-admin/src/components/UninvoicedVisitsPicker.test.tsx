@@ -31,6 +31,7 @@ function result(over: Partial<ListUninvoicedSessionsResult> = {}): ListUninvoice
   return {
     sessions: [session()],
     unpriceable: [],
+    unplaceable: [],
     rateCardLoaded: true,
     scanned: 12,
     truncated: false,
@@ -160,6 +161,41 @@ describe('UninvoicedVisitsPicker', () => {
     await userEvent.click(screen.getByRole('button', { name: /find visits/i }));
     expect(await screen.findByText(/no un-invoiced completed visits/i)).toBeInTheDocument();
     expect(screen.getByText(/40 visits were checked/i)).toBeInTheDocument();
+  });
+
+  // A visit stored with no start time cannot be reached by ANY date window, so
+  // it never reaches the list below. Before this it was simply absent, which
+  // reads as "there is nothing to bill" and is how real work goes unpaid.
+  it('names visits that no date window can reach, rather than leaving them out', async () => {
+    listUninvoicedSessions.mockResolvedValueOnce(
+      result({ unplaceable: [{ sessionId: 'vis_lost', kinfolkId: 'kf1' }] }),
+    );
+    render(<UninvoicedVisitsPicker kinfolkId="kf1" onAdd={vi.fn()} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /find visits/i }));
+
+    expect(await screen.findByText(/visits with no start time/i)).toBeInTheDocument();
+    expect(screen.getByText(/vis_lost/)).toBeInTheDocument();
+    // The banner must not suggest a wider window, because a wider window cannot help.
+    expect(screen.getByText(/fix the start time on the visit itself/i)).toBeInTheDocument();
+  });
+
+  it('does not raise another household\'s unplaceable visits on this household\'s panel', async () => {
+    listUninvoicedSessions.mockResolvedValueOnce(
+      result({ unplaceable: [{ sessionId: 'vis_other', kinfolkId: 'kf-someone-else' }] }),
+    );
+    render(<UninvoicedVisitsPicker kinfolkId="kf1" onAdd={vi.fn()} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /find visits/i }));
+
+    await screen.findByText(/1 un-invoiced completed visit/i);
+    expect(screen.queryByText(/visits with no start time/i)).toBeNull();
+  });
+
+  it('stays quiet when every visit has a start time', async () => {
+    render(<UninvoicedVisitsPicker kinfolkId="kf1" onAdd={vi.fn()} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /find visits/i }));
+
+    await screen.findByText(/1 un-invoiced completed visit/i);
+    expect(screen.queryByText(/visits with no start time/i)).toBeNull();
   });
 
   it('refuses a backwards window before spending a call on it', async () => {
