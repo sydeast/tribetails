@@ -31,6 +31,7 @@ import com.composables.icons.lucide.BookOpen
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.TriangleAlert
+import com.tribetails.auntieos.config.LocalFeatureFlags
 import com.tribetails.auntieos.data.model.TrainingDocument
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
@@ -55,18 +56,14 @@ import com.tribetails.auntieos.ui.components.StatCard
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
 // ── feature flag ─────────────────────────────────────────────────────────────
-// auntieos.trainingDocs.create. The "Add intel" trigger + Add/Edit form + the
+// auntieos.trainingDocs.create, read via the ambient LocalFeatureFlags (central
+// registry, ALWAYS_ON). Gates the "Add intel" trigger + Add/Edit form + the
 // per-row Edit/Delete controls. LIVE (spec 23): backed by the
 // createTrainingDocument / updateTrainingDocument / deleteTrainingDocument admin
 // callables, with attachments via the TRIBAL_INTEL media pipeline and a real
-// Kinfolk/Kin target picker.
-//
-// The header comment here used to say this mirrored a READ-ONLY web screen and
-// that anything writing ships dark. Both halves are now stale: the web Tribal
-// Intel screen has the same create/edit/delete surface (auntieos-admin/src/
-// screens/TribalIntel.tsx + components/TribalIntelForm.tsx), and this flag has
-// been on since the callables deployed.
-private const val FF_TRAINING_DOC_CREATE = true
+// Kinfolk/Kin target picker. The web Tribal Intel screen has the same
+// create/edit/delete surface (auntieos-admin/src/screens/TribalIntel.tsx +
+// components/TribalIntelForm.tsx).
 
 /**
  * Pure client-side comm-type narrowing: when a comm type is selected, keep only
@@ -111,9 +108,10 @@ fun TrainingDocumentsScreen(
     val error by viewModel.error.collectAsState()
     val queuedMessage by viewModel.trainingDocQueuedMessage.collectAsState()
     val c = AuntieTheme.colors
+    val flags = LocalFeatureFlags.current
 
     var searchQuery by remember { mutableStateOf("") }
-    // Add/Edit form visibility. Gated behind FF_TRAINING_DOC_CREATE.
+    // Add/Edit form visibility. Gated behind flags.trainingDocsCreate.
     var showAddForm by remember { mutableStateOf(false) }
     // The doc currently being edited (null = creating a new entry).
     var editingDoc by remember { mutableStateOf<TrainingDocument?>(null) }
@@ -149,7 +147,7 @@ fun TrainingDocumentsScreen(
                         accentTail = "Intel.",
                         subtitle = "Guides and educational resources for care delivery",
                         trailing = {
-                            if (FF_TRAINING_DOC_CREATE) {
+                            if (flags.trainingDocsCreate) {
                                 AuntieDashedAddButton(
                                     text = "Add intel",
                                     onClick = {
@@ -178,8 +176,8 @@ fun TrainingDocumentsScreen(
                     }
                 }
 
-                // Add/Edit form panel. Only reachable while FF_TRAINING_DOC_CREATE is on.
-                if (FF_TRAINING_DOC_CREATE && showAddForm) {
+                // Add/Edit form panel. Only reachable while flags.trainingDocsCreate is on.
+                if (flags.trainingDocsCreate && showAddForm) {
                     item {
                         AddDocumentForm(
                             viewModel = viewModel,
@@ -282,7 +280,7 @@ fun TrainingDocumentsScreen(
                                         DocRow(
                                             doc = doc,
                                             showDivider = i < docs.lastIndex,
-                                            canManage = FF_TRAINING_DOC_CREATE,
+                                            canManage = flags.trainingDocsCreate,
                                             onEdit = {
                                                 editingDoc = doc
                                                 viewModel.setTrainingDocAttachments(doc.attachments)

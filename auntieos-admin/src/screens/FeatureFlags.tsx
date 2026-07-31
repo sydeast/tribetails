@@ -22,11 +22,6 @@ interface FlagMeta {
  */
 const FLAGS: readonly FlagMeta[] = [
   {
-    key: 'auntieos.settings.integrationManage',
-    label: 'Settings: integration manage',
-    detail: 'Manage / Connect on integration cards (needs OAuth/connect).',
-  },
-  {
     key: 'auntieos.communicate.commsRecap',
     label: 'Communicate: comms recap',
     detail:
@@ -101,7 +96,7 @@ export function FeatureFlags() {
 
       <DenPanel
         title="Central flags"
-        subtitle="Each flag ships dark by default. Some also need backing code/backend before they do anything."
+        subtitle="Every flag here is a finished feature. Flipping it on switches it on, nothing left to build."
       >
         <AsyncRegion
           state={flags}

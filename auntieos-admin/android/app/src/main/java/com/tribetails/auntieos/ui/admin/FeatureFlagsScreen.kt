@@ -43,7 +43,6 @@ internal data class FlagMeta(val key: String, val label: String, val detail: Str
  *  are not experimental. FeatureFlagsScreenCoverageTest keeps this == KEYS - ALWAYS_ON,
  *  so a new gated flag can never be silently missing. Mirrors the web FLAGS list. */
 internal val FLAGS: List<FlagMeta> = listOf(
-    FlagMeta(FeatureFlags.KEY_SETTINGS_INTEGRATION_MANAGE, "Settings: integration manage", "Manage / Connect on integration cards (needs OAuth/connect)."),
     FlagMeta(FeatureFlags.KEY_COMMUNICATE_COMMS_RECAP, "Communicate: AI comms recap", "AI-summarised 'where things last left off' box in the recipient-context panel (Phase 1)."),
     FlagMeta(FeatureFlags.KEY_INBOUND_COMMS_SERVER_AUTHORITATIVE, "Inbound comms: server authoritative (WARNING-8)", "ON = stop this device writing inbound call/voicemail/SMS records from FCM pushes; the server Twilio webhooks become the sole writer (closes the spoofed-push vuln). Flip ON only AFTER verifying the server path, or records may be lost."),
 )
@@ -94,7 +93,7 @@ fun FeatureFlagsScreen(onBack: () -> Unit) {
 
             DenPanel(
                 title = "Central flags",
-                subtitle = "Each flag ships dark by default. Some also need backing code/backend before they do anything.",
+                subtitle = "Every flag here is a finished feature. Flipping it on switches it on, nothing left to build.",
             ) {
                 val ov = overrides
                 if (ov == null) {

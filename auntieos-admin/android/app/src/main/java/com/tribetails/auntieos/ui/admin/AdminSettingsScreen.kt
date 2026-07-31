@@ -146,13 +146,6 @@ import com.tribetails.auntieos.ui.components.tagToneRole
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
 
-// ── Local feature flags (ship dark; mirrors the web SettingsScreen) ───────────
-// Scheduling / Google-Calendar sync has no BusinessSettings field or callable on
-// the Android VM either. Keep dark with a fail-loud banner rather than faking it.
-private const val FF_SCHEDULING_SYNC = false // TODO(flag): auntieos.settings.schedulingSync
-// Per-integration Manage/Connect (OAuth/connect flow) has no backend. Keep dark.
-private const val FF_INTEGRATION_MANAGE = false // TODO(flag): auntieos.settings.integrationManage
-
 /**
  * Admin Settings, rebuilt in the Den aesthetic by adapting the redesigned web
  * SettingsScreen while preserving the Android [AdminSettingsViewModel] contract.
@@ -163,11 +156,14 @@ private const val FF_INTEGRATION_MANAGE = false // TODO(flag): auntieos.settings
  * Integrations, Security, Time off, Developer tools). Each section uses the Den
  * row vocabulary (AuntieSettingRow / AuntieToggle / AuntieFieldLabel).
  *
- * Fail-loud notes (mirroring the web flags):
- *  - Scheduling toggles have no backing field or callable on the VM, so the panel
- *    ships dark (FF_SCHEDULING_SYNC) behind a Not-wired banner instead of pretending.
- *  - Per-integration Manage/Connect has no backend (FF_INTEGRATION_MANAGE): the
- *    Integrations panel shows a Not-wired banner under the live health rows.
+ * Fail-loud notes:
+ *  - Google Calendar sync has a real backend (syncGoogleCalendarBusyEvents) and a
+ *    real UI (SchedulingOptionsScreen's GoogleCalendarSyncCard). Selecting that
+ *    section calls onNavigateToSchedule to open the real screen there, instead of
+ *    an inline panel.
+ *  - Per-integration Manage/Connect has no backend and no flag: the Integrations
+ *    panel shows Stripe Connect honestly as "Needs your keys" (a named external
+ *    secret) and add-ons as "Coming soon", never a dead Manage button.
  *  - Unlike web, Android DOES have a real avatar upload pipeline (uploadAvatar),
  *    so the profile picture control stays LIVE here, not gated.
  *  - Integration pills reflect the VM's live health probe (Firestore + FCM are
@@ -311,6 +307,7 @@ fun AdminSettingsScreen(
     onBack: () -> Unit,
     onNavigateToAccount: () -> Unit = {},
     onNavigateToNotificationPrefs: () -> Unit = {},
+    onNavigateToSchedule: () -> Unit = {},
     viewModel: AdminSettingsViewModel = viewModel<AdminSettingsViewModel>()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -397,7 +394,15 @@ fun AdminSettingsScreen(
         ) {
             AdminSettingsSectionNav(
                 selected = selectedSection,
-                onSelect = { selectedSection = it },
+                onSelect = { section ->
+                    // Google Calendar sync is a real, live screen of its own
+                    // (SchedulingOptionsScreen), not an inline detail panel here.
+                    if (section == SettingsSection.CalendarSync) {
+                        onNavigateToSchedule()
+                    } else {
+                        selectedSection = section
+                    }
+                },
                 onBackToList = { selectedSection = null },
                 listHeader = {
                     // The operator's OWN account + receive-prefs each live on their
@@ -463,7 +468,10 @@ fun AdminSettingsScreen(
                             onSave = { viewModel.updateBusinessHours(uiState.businessHours) },
                         )
 
-                        SettingsSection.CalendarSync -> GcalSyncPanel()
+                        // Unreachable: onSelect above routes this section to the real
+                        // SchedulingOptionsScreen via onNavigateToSchedule instead of
+                        // opening a detail panel. Kept so this `when` stays exhaustive.
+                        SettingsSection.CalendarSync -> Unit
 
                         SettingsSection.TimeOff -> TimeOffPanel(
                             settings = uiState.businessSettings,
@@ -1420,116 +1428,6 @@ private fun NotifCell(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Scheduling (no backing field/callable on the VM; ships dark)
-// ─────────────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun SchedulingPanel() {
-    val c = AuntieTheme.colors
-    val dims = AuntieTheme.dims
-    DenPanel(
-        title = "Scheduling",
-        subtitle = "Behavior for the calendar and Google Calendar sync.",
-        trailing = {
-            AuntieStatusPill(label = "Needs calendar share", tone = AuntieStatusTone.Warning, mono = true)
-        },
-    ) {
-        Column {
-            if (!FF_SCHEDULING_SYNC) {
-                AuntieBanner(
-                    tone = AuntieBannerTone.Suggestion,
-                    dashed = true,
-                    title = "Needs Google Calendar share",
-                    pillLabel = "Operator action",
-                    body = {
-                        Text(
-                            "Google Calendar busy-sync is gated on sharing your calendar with the sync service " +
-                                "account (auntieos-admin-calendar-sync@auntieos-ttpc.iam.gserviceaccount.com), an owner " +
-                                "action in Google Calendar. These toggles stay read-only until that share is done.",
-                            style = AuntieTheme.typography.bodySmall,
-                            color = c.textDim,
-                        )
-                    },
-                )
-                Spacer(Modifier.height(dims.space3))
-            }
-            SchedulingPlaceholderRow(
-                title = "Sync Google Calendar busy events",
-                description = "Show external commitments as read-only blocks on the schedule.",
-                showDivider = true,
-            )
-            SchedulingPlaceholderRow(
-                title = "Block bookings during busy events",
-                description = "Stop new visits from landing on top of a Google Calendar block.",
-                showDivider = true,
-            )
-            SchedulingPlaceholderRow(
-                title = "Snap drag-to-reschedule to 15 min",
-                description = "Visits align to quarter-hour slots when dragged.",
-                showDivider = true,
-            )
-            SchedulingPlaceholderRow(
-                title = "Auto-confirm repeat clients",
-                description = "Trusted kinfolk bookings skip manual approval.",
-                showDivider = false,
-            )
-        }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// #7 restructure: old "Scheduling" panel split. GcalSyncPanel (calendar share +
-// busy-block) renders under Business Hours; BookingBehaviorPanel (auto-confirm +
-// snap) is the Booking grouping. (KinCare types is web-only by design.)
-// ─────────────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun GcalSyncPanel() {
-    val c = AuntieTheme.colors
-    val dims = AuntieTheme.dims
-    DenPanel(
-        title = "Google Calendar sync",
-        subtitle = "Import your shared calendar's busy events as private blocks on the schedule.",
-        collapsible = true,
-        initiallyExpanded = false,
-        trailing = {
-            AuntieStatusPill(label = "Needs calendar share", tone = AuntieStatusTone.Warning, mono = true)
-        },
-    ) {
-        Column {
-            if (!FF_SCHEDULING_SYNC) {
-                AuntieBanner(
-                    tone = AuntieBannerTone.Suggestion,
-                    dashed = true,
-                    title = "Needs Google Calendar share",
-                    pillLabel = "Operator action",
-                    body = {
-                        Text(
-                            "Google Calendar busy-sync is gated on sharing your calendar with the sync service " +
-                                "account (auntieos-admin-calendar-sync@auntieos-ttpc.iam.gserviceaccount.com), an owner " +
-                                "action in Google Calendar. These toggles stay read-only until that share is done.",
-                            style = AuntieTheme.typography.bodySmall,
-                            color = c.textDim,
-                        )
-                    },
-                )
-                Spacer(Modifier.height(dims.space3))
-            }
-            SchedulingPlaceholderRow(
-                title = "Sync Google Calendar busy events",
-                description = "Show external commitments as read-only blocks on the schedule.",
-                showDivider = true,
-            )
-            SchedulingPlaceholderRow(
-                title = "Block bookings during busy events",
-                description = "Stop new visits from landing on top of a Google Calendar block.",
-                showDivider = false,
-            )
-        }
-    }
-}
-
 @Composable
 private fun BookingBehaviorPanel(
     settings: com.tribetails.auntieos.data.model.BusinessSettings,
@@ -1570,28 +1468,6 @@ private fun BookingBehaviorPanel(
             )
         }
     }
-}
-
-/**
- * Mockup-only scheduling row. Read-only: the toggle is disabled because no backend
- * field exists yet (fail-loud, never faked).
- */
-@Composable
-private fun SchedulingPlaceholderRow(
-    title: String,
-    description: String,
-    showDivider: Boolean,
-) {
-    AuntieSettingRow(
-        title = title,
-        description = description,
-        leadingIcon = Lucide.CalendarClock,
-        iconTone = AuntieStatusTone.Muted,
-        showDivider = showDivider,
-        trailing = {
-            AuntieToggle(checked = false, onCheckedChange = {}, enabled = false)
-        },
-    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

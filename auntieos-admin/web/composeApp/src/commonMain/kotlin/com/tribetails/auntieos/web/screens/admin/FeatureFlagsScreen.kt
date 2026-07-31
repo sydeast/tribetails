@@ -42,7 +42,6 @@ internal data class FlagMeta(val key: String, val label: String, val detail: Str
  *  are not experimental. FeatureFlagsScreenCoverageTest keeps this == KEYS - ALWAYS_ON,
  *  so a new gated flag can never be silently missing from the admin toggles. */
 internal val FLAGS: List<FlagMeta> = listOf(
-    FlagMeta(FeatureFlags.KEY_SETTINGS_INTEGRATION_MANAGE, "Settings: integration manage", "Manage / Connect on integration cards (needs OAuth/connect)."),
     FlagMeta(FeatureFlags.KEY_COMMUNICATE_COMMS_RECAP, "Communicate: comms recap", "AI-generated 1-2 sentence recap of recent communications in the recipient context panel (recap_recent_comms callable)."),
 )
 
@@ -87,7 +86,7 @@ fun FeatureFlagsScreen() {
 
         DenPanel(
             title = "Central flags",
-            subtitle = "Each flag ships dark by default. Some also need backing code/backend before they do anything.",
+            subtitle = "Every flag here is a finished feature. Flipping it on switches it on, nothing left to build.",
         ) {
             if (overrides == null) {
                 EmptyHint("Loading flags…")

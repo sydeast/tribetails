@@ -30,8 +30,6 @@ data class FeatureFlags(
     val communicateBroadcast: Boolean = true,
     /** Settings: profile-picture upload (real avatar upload pipeline; slice 7). */
     val settingsProfilePicUpload: Boolean = true,
-    /** Settings: integration Manage/Connect (needs OAuth/connect). */
-    val settingsIntegrationManage: Boolean = false,
     /** Invoices: create invoice (slice 2: createInvoice callable live). */
     val invoicesCreate: Boolean = true,
     /** Invoices: generate receipt (slice 2: generateReceipt callable live). */
@@ -53,7 +51,6 @@ data class FeatureFlags(
     fun toMap(): Map<String, Boolean> = mapOf(
         KEY_COMMUNICATE_BROADCAST to communicateBroadcast,
         KEY_SETTINGS_PROFILE_PIC_UPLOAD to settingsProfilePicUpload,
-        KEY_SETTINGS_INTEGRATION_MANAGE to settingsIntegrationManage,
         KEY_INVOICES_CREATE to invoicesCreate,
         KEY_INVOICES_GENERATE_RECEIPT to invoicesGenerateReceipt,
         KEY_KINTALE_PET_MOOD to kintalePetMoodPills,
@@ -67,7 +64,6 @@ data class FeatureFlags(
         // 0D promoted keys
         const val KEY_COMMUNICATE_BROADCAST = "auntieos.communicate.broadcast"
         const val KEY_SETTINGS_PROFILE_PIC_UPLOAD = "auntieos.settings.profilePicUpload"
-        const val KEY_SETTINGS_INTEGRATION_MANAGE = "auntieos.settings.integrationManage"
         const val KEY_INVOICES_CREATE = "auntieos.invoices.create"
         const val KEY_INVOICES_GENERATE_RECEIPT = "auntieos.invoices.generateReceipt"
         const val KEY_KINTALE_PET_MOOD = "auntieos.kintale.petMoodPills"
@@ -107,7 +103,6 @@ data class FeatureFlags(
             return FeatureFlags(
                 communicateBroadcast = v(KEY_COMMUNICATE_BROADCAST, d.communicateBroadcast),
                 settingsProfilePicUpload = v(KEY_SETTINGS_PROFILE_PIC_UPLOAD, d.settingsProfilePicUpload),
-                settingsIntegrationManage = v(KEY_SETTINGS_INTEGRATION_MANAGE, d.settingsIntegrationManage),
                 invoicesCreate = v(KEY_INVOICES_CREATE, d.invoicesCreate),
                 invoicesGenerateReceipt = v(KEY_INVOICES_GENERATE_RECEIPT, d.invoicesGenerateReceipt),
                 kintalePetMoodPills = v(KEY_KINTALE_PET_MOOD, d.kintalePetMoodPills),

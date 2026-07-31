@@ -81,14 +81,14 @@ import com.tribetails.auntieos.ui.components.RouteMap
 import com.tribetails.auntieos.ui.components.ServicePill
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
-// ── Local feature flags ──
+// ── Feature flags (read via the central ambient LocalFeatureFlags) ──
 // Pet-mood is LIVE: the default template ships petMoodEnabled=true with mood
 // options, the editor authors petMoodSelections, and the report renders them.
+// Reads the central kintalePetMoodPills flag (default on).
 // The comment thread is LIVE too: it reads the central kintaleCommentThread flag
 // (LocalFeatureFlags, default on) and posts via the addKinTaleComment callable.
 // View-as-kinfolk is now LIVE: a real read-only preview + a Share link action that
 // mints a kinfolk-facing URL via the createShareLink callable (no flag gate).
-private const val FF_PET_MOOD = true         // auntieos.kintale.petMoodPills (live)
 
 /**
  * KinTale report screen (Den redesign), adapted from the web counterpart.
@@ -96,8 +96,8 @@ private const val FF_PET_MOOD = true         // auntieos.kintale.petMoodPills (l
  * Layout is the Den editor: a serif [DenScreenHeading] with a Sent/Draft status
  * pill + Back, an orange→pink gradient cover hero, then stacked [DenPanel]
  * sections for the Narrative, Photos, per-kin Checklist, and visit/recipient
- * meta. Suggestion-only sections (pet mood, comment thread, view-as-kinfolk)
- * are gated dark behind FF_ flags and surface a fail-loud banner when enabled.
+ * meta. Pet mood and the comment thread are live, gated only by an ALWAYS_ON
+ * kill-switch (LocalFeatureFlags); view-as-kinfolk has no flag gate at all.
  *
  * Wiring is preserved verbatim from the prior screen: report load, in-memory
  * field edits, draft persistence on blur / section change, media upload/remove,
@@ -262,7 +262,7 @@ fun KinTaleReportScreen(
 
                     // Per-pet mood pills (live). Renders only when the template
                     // enables pet mood and has options, and there are kin to tag.
-                    if (FF_PET_MOOD &&
+                    if (LocalFeatureFlags.current.kintalePetMoodPills &&
                         state.template.petMoodEnabled &&
                         state.template.moodOptions.isNotEmpty() &&
                         state.kinList.isNotEmpty()
