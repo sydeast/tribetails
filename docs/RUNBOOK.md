@@ -180,6 +180,7 @@ order**, stops at the first failure, and names the step it died in.
 | 6b | Android | Uploads the APK from step 1c to App Distribution, in the same run as the web. |
 | 7 | Verify | Fetches both live sites and compares the hashed bundle they reference against the one just built. |
 | 8 | Prune revisions | Deletes old Cloud Run revisions, keeping the newest 10 per service and every serving one. Runs after verification, because those revisions are rollback targets. |
+| 9 | Tag the release | Annotates `release/YYYY.MM.DD-<sha>`, naming what actually shipped, and pushes just that tag to origin. Runs after step 7, so nothing gets tagged unless it was verified live. |
 
 **Why step 5 is conditional.** Redeploying the codebase mints a new Cloud Run
 revision for every one of its ~200 functions even when nothing changed, and a
@@ -213,6 +214,27 @@ Knobs, all off by default:
 | `RELEASE_SKIP_PRUNE=1` | Skip the step 8 retention prune. Revisions then accumulate until someone prunes by hand |
 | `RELEASE_PREDEPLOY_KEEP=N` | Prune to N per service before the functions deploy. Off by default and unproven; see the quota entry below |
 | `RELEASE_KEEP_REVISIONS=N` | Revisions kept per service in step 8 (default 10) |
+
+### Every release is tagged
+
+Step 9 names what just went live: an annotated tag `release/YYYY.MM.DD-<sha>`,
+pushed to `origin` and nothing else. Its message lists what actually shipped
+that run (hosting, functions or the reason it was skipped, Android distributed
+or not), so `git show <tag>` answers "what was live" without reconstructing it
+from the deploy log.
+
+`DRY_RUN=1` skips this step too: a dry run tags and pushes nothing. A tagging
+or push failure does not fail the release: by step 9 the web is already live
+and verified, so the run reports the problem and leaves it for you to tag by
+hand rather than call a good deploy broken.
+
+List releases oldest-first with `git tag -l 'release/*' | sort`. To revert:
+hosting rolls back instantly from the Firebase console, as above. Functions
+and rules do not, and `release.sh` itself only runs from `main`, so it cannot
+redeploy a tag directly. Either check the tag out somewhere other than your
+`main` worktree and run `scripts/safe-deploy.sh` against it target by target
+(see below), or `git revert` forward to that state on `main` and release
+normally.
 
 ### The Android client ships with the web
 
