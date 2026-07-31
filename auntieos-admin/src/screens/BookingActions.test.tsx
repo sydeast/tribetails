@@ -22,7 +22,7 @@ vi.mock('../api/bookingsWrite', () => ({
   rescheduleBooking,
 }));
 
-import { BookingActions } from './BookingActions';
+import { BookingActions, BookingStatusActions } from './BookingActions';
 
 function fakeTs(iso: string): Timestamp {
   return { toDate: () => new Date(iso) } as unknown as Timestamp;
@@ -257,5 +257,76 @@ describe('BookingActions: Reschedule', () => {
     fireEvent.change(inputs[1] as HTMLInputElement, { target: { value: '2026-07-20T10:00' } });
     await userEvent.click(screen.getByRole('button', { name: /save new time/i }));
     expect(await screen.findByText(/rescheduleBooking failed:.*not found/i)).toBeInTheDocument();
+  });
+});
+/**
+ * `BookingStatusActions` is the same decision as the dialog above, rendered as
+ * a panel so it can be composed into `BookingDetailModal` (Bookings.tsx does
+ * exactly that). These cases pin the parts that are NOT shared with the dialog:
+ * the in-place confirm step (no nested modal) and `onDone` firing only after
+ * the write lands.
+ */
+describe('BookingStatusActions (the panel composed into the detail sheet)', () => {
+  it('offers Approve and Reject on a pending booking, the same pair as the dialog', () => {
+    render(<BookingStatusActions entry={entry({ status: 'PENDING' })} onDone={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+  });
+  it('offers Mark Completed and Cancel on a scheduled booking', () => {
+    render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Mark Completed' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+  });
+  it('offers nothing on a terminal booking, and says so rather than rendering a bare empty panel', () => {
+    render(<BookingStatusActions entry={entry({ status: 'COMPLETED' })} onDone={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.getByText(/reached a final state/i)).toBeInTheDocument();
+  });
+  it('names an unrecognized status instead of guessing at an action for it', () => {
+    render(<BookingStatusActions entry={entry({ status: 'WEIRD' })} onDone={vi.fn()} />);
+    expect(screen.getByText(/"WEIRD"/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+  });
+  it('confirms IN PLACE, never by opening a second dialog inside the sheet', async () => {
+    render(<BookingStatusActions entry={entry({ status: 'PENDING' })} onDone={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    expect(screen.getByText(/request is cancelled\. This cannot be undone\./i)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(rejectBooking).not.toHaveBeenCalled();
+  });
+  it('Back returns to the buttons without writing anything', async () => {
+    render(<BookingStatusActions entry={entry({ status: 'PENDING' })} onDone={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+    expect(approveBooking).not.toHaveBeenCalled();
+  });
+  it('writes the booking id and calls onDone once the confirm is pressed', async () => {
+    approveBooking.mockResolvedValue(undefined);
+    const onDone = vi.fn();
+    render(<BookingStatusActions entry={entry({ _id: 'ses-9', status: 'PENDING' })} onDone={onDone} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Approve booking' }));
+    expect(approveBooking).toHaveBeenCalledWith('ses-9');
+    expect(onDone).toHaveBeenCalledOnce();
+  });
+  it('marks completed with a parseable ISO stamp, the same payload the dialog sends', async () => {
+    markBookingCompleted.mockResolvedValue(undefined);
+    render(<BookingStatusActions entry={entry({ _id: 'ses-3', status: 'SCHEDULED' })} onDone={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
+    await userEvent.click(screen.getByRole('button', { name: /^mark completed$/i }));
+    expect(markBookingCompleted).toHaveBeenCalledWith('ses-3', expect.any(String));
+    const [, iso] = markBookingCompleted.mock.calls[0] as [string, string];
+    expect(Number.isNaN(Date.parse(iso))).toBe(false);
+  });
+  it('fails loud on a rejected write, stays on the confirm step, and does NOT call onDone', async () => {
+    cancelBooking.mockRejectedValue(new Error('permission-denied'));
+    const onDone = vi.fn();
+    render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={onDone} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel visit' }));
+    expect(await screen.findByText(/cancel failed: permission-denied/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel visit' })).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
   });
 });

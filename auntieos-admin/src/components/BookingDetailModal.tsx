@@ -68,6 +68,20 @@ export interface BookingDetailModalProps {
   onOpenKinfolk?: (kinfolkId: string) => void;
   /** Route to a sent KinTale. Same omit-means-static rule. */
   onOpenKinTale?: (kinTaleId: string) => void;
+  /**
+   * A caller-owned panel of status transitions, rendered directly under the
+   * booking facts. Bookings.tsx passes `BookingStatusActions` (Approve /
+   * Reject / Cancel / Mark Completed on the flat `kin_care_sessions` row);
+   * Schedule.tsx omits it, and then nothing renders in that slot.
+   *
+   * A SLOT rather than a `showActions` flag, and rather than importing the
+   * write surface here, because this component deliberately knows nothing
+   * about which status transitions its caller is allowed to offer. The
+   * lifecycle rules live in one place (`BookingActions.tsx`'s `actionsFor`),
+   * not half here and half there, and this sheet stays usable from a screen
+   * that has no business approving anything.
+   */
+  actions?: React.ReactNode;
   /** Injected clock for the note cutoff, so the lock is testable. */
   nowMs?: () => number;
 }
@@ -115,6 +129,7 @@ export function BookingDetailModal({
   onClose,
   onOpenKinfolk,
   onOpenKinTale,
+  actions,
   nowMs = Date.now,
 }: BookingDetailModalProps) {
   const kinfolkId = str(entry.kinfolkId);
@@ -167,6 +182,10 @@ export function BookingDetailModal({
             </Fact>
           </dl>
         </DenPanel>
+
+        {/* Directly under the facts: the operator reads what was asked for,
+            then decides on it, before the staffing/KinTale/reschedule detail. */}
+        {actions}
 
         <AssignedAuntiePanel
           kinfolkId={kinfolkId}

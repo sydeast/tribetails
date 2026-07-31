@@ -177,6 +177,24 @@ describe('BookingDetailModal fact rows', () => {
   });
 });
 
+describe('BookingDetailModal actions slot', () => {
+  it('renders the caller-owned status transitions inside the sheet', () => {
+    open({}, { actions: <button type="button">Approve</button> });
+    expect(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Approve' }),
+    ).toBeInTheDocument();
+  });
+
+  it('renders NOTHING in that slot when the caller passes none, so a screen with no transitions to offer shows no empty panel', () => {
+    open();
+    // Schedule.tsx opens this same sheet without an actions slot. The three
+    // panels it does own still render; nothing stands in for the missing one.
+    expect(screen.getByText('Staffing')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByText('Actions')).toBeNull();
+  });
+});
+
 describe('BookingDetailModal notes', () => {
   it('adds a kinfolk-facing note through the portal callable', async () => {
     addBookingNote.mockResolvedValue({ noteId: 'n1' });

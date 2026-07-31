@@ -9,23 +9,42 @@ import {
 } from '../api/bookingsWrite';
 import { bookingState, bookingStateInfo, bookingWhen, type BookingState } from '../lib/bookingFormat';
 import { Dialog } from '../components/Dialog';
+import { Banner } from '../components/Banner';
+import { DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import './BookingActions.css';
 
 /**
- * The Bookings write surface: Approve / Reject / Cancel / Mark Completed /
- * Reschedule on ONE `kin_care_sessions` row, opened from Bookings.tsx's
- * onSelectBooking hook (see that file's wiring). Every transition here is the
- * same POSITIVE, enumerated `BookingState` read the list uses (never a
- * negation), so the actions offered can never drift from the chip the operator
- * is looking at.
+ * WHO STILL USES WHAT IN THIS FILE (read before editing):
  *
- * `entry` is the row straight out of Bookings.tsx's own live BOOKINGS_QUERY
- * listener, not a second fetch: the moment a write here round-trips through
- * Firestore, the SAME listener updates `entry` and this dialog reflects the new
- * status without any extra plumbing. `entry === null` means the id no longer
- * resolves to a row (deleted, or a stale id), which gets its own honest
- * "unavailable" dialog rather than rendering a blank or fabricated detail.
+ *   `BookingStatusActions` (bottom of the file) is the LIVE surface. It is the
+ *   same Approve / Reject / Cancel / Mark Completed decision, rendered as an
+ *   in-sheet PANEL rather than its own dialog, and it is what Bookings.tsx
+ *   composes into `BookingDetailModal` now that a row opens the full detail
+ *   sheet instead of the thin dialog below.
+ *
+ *   `BookingActions` (the dialog) has NO app caller since that rewiring. It is
+ *   kept, not deleted: deleting a working write surface is a separate decision
+ *   from moving where it is reached from, and its own suite still pins the
+ *   transition semantics both surfaces share. Do not wire it back into
+ *   Bookings.tsx without deciding what happens to the sheet.
+ *
+ * Both read the state through the same POSITIVE, enumerated `bookingState`
+ * (never a negation) and offer actions from the same `actionsFor` map, so what
+ * is offered can never drift from the chip the operator is looking at, and the
+ * two surfaces can never drift from each other.
+ */
+
+/**
+ * The Bookings write surface: Approve / Reject / Cancel / Mark Completed /
+ * Reschedule on ONE `kin_care_sessions` row.
+ *
+ * `entry` is the row straight out of a live BOOKINGS_QUERY listener, not a
+ * second fetch: the moment a write here round-trips through Firestore, the SAME
+ * listener updates `entry` and this dialog reflects the new status without any
+ * extra plumbing. `entry === null` means the id no longer resolves to a row
+ * (deleted, or a stale id), which gets its own honest "unavailable" dialog
+ * rather than rendering a blank or fabricated detail.
  */
 export interface BookingActionsProps {
   entry: BookingEntry | null;
@@ -334,5 +353,124 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
         </p>
       )}
     </Dialog>
+  );
+}
+
+// ── the same decision, as a panel ────────────────────────────────────────────
+
+export interface BookingStatusActionsProps {
+  /** The row, by value, from the caller's own live `kin_care_sessions` listener. */
+  entry: BookingEntry;
+  /**
+   * Called once a transition has LANDED. The caller closes its sheet from here,
+   * matching what the dialog above does on success and what the sheet's own
+   * `ReschedulePanel` already does: the write is confirmed, and the list
+   * listener carries the new status back on its own.
+   */
+  onDone: () => void;
+}
+
+/**
+ * Approve / Reject / Cancel / Mark Completed on one `kin_care_sessions` row,
+ * rendered as a `DenPanel` so it can be composed INTO `BookingDetailModal`
+ * (which is a Dialog) instead of being a second, competing dialog. Same
+ * `actionsFor` map, same `api/bookingsWrite` calls, same confirm copy as the
+ * dialog above; only the container and the confirm STEP differ, which swaps
+ * into this panel in place rather than pushing a nested modal.
+ *
+ * Reschedule is deliberately NOT here: the sheet this panel lives in already
+ * owns a full reschedule panel (date + time, end recomputed from the service
+ * duration), which is strictly more than the dialog's two datetime fields. Two
+ * reschedule controls in one sheet would be the only way to "lose" nothing by
+ * duplicating something.
+ */
+export function BookingStatusActions({ entry, onDone }: BookingStatusActionsProps) {
+  const [confirming, setConfirming] = useState<ActionDef | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const state = bookingState({ status: entry.status ?? '' });
+  const actions = actionsFor(state);
+  const kinfolkName = entry.kinfolkName ?? '';
+  const displayName = kinfolkName.trim() !== '' ? kinfolkName : 'Unnamed Kinfolk';
+
+  async function run(action: ActionDef) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await action.run(entry._id);
+      setBusy(false);
+      onDone();
+    } catch (err) {
+      // Fail loud, and stay on the confirm step: the operator sees which
+      // transition failed next to the reason, rather than a bare list of
+      // buttons that gives no clue which one they just pressed.
+      setBusy(false);
+      setError(`${action.kind} failed: ${err instanceof Error ? err.message : 'Write failed'}`);
+    }
+  }
+
+  return (
+    <DenPanel title="Actions" subtitle="What this booking can move to from here.">
+      {actions.length === 0 ? (
+        <EmptyHint>
+          {state === 'unknown'
+            ? `This booking's status ("${entry.status ?? ''}") isn't recognized, so no actions are offered.`
+            : 'This booking has reached a final state. No further actions apply.'}
+        </EmptyHint>
+      ) : confirming === null ? (
+        <div className="booking-actions__row">
+          {actions.map((action) =>
+            action.tone === 'primary' ? (
+              <PrimaryButton
+                key={action.kind}
+                label={action.label}
+                onClick={() => {
+                  setError(null);
+                  setConfirming(action);
+                }}
+              />
+            ) : (
+              <GhostButton
+                key={action.kind}
+                label={action.label}
+                onClick={() => {
+                  setError(null);
+                  setConfirming(action);
+                }}
+              />
+            ),
+          )}
+        </div>
+      ) : (
+        <>
+          <p className="booking-actions__confirm">{confirming.confirmBody(displayName)}</p>
+          <div className="booking-actions__row">
+            <GhostButton
+              label="Back"
+              disabled={busy}
+              onClick={() => {
+                if (busy) return;
+                setError(null);
+                setConfirming(null);
+              }}
+            />
+            <PrimaryButton
+              label={busy ? 'Working…' : confirming.confirmLabel}
+              onClick={() => void run(confirming)}
+              busy={busy}
+              disabled={busy}
+            />
+          </div>
+        </>
+      )}
+
+      {error !== null && (
+        <Banner tone="error" title="That change did not go through">
+          {error}
+        </Banner>
+      )}
+    </DenPanel>
   );
 }

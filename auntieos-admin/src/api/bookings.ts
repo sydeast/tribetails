@@ -1,4 +1,5 @@
 import { type CollectionSpec } from '../lib/firestore';
+import type { SessionEntry } from './sessions';
 import type { Timestamp } from 'firebase/firestore';
 
 /**
@@ -50,18 +51,35 @@ import type { Timestamp } from 'firebase/firestore';
  *
  * Do NOT "fix" a compile error here by restoring the non-null type. Default the
  * READ instead: `?? ''`, or `str()` from lib/coerce.
+ *
+ * EXTENDS `SessionEntry` (api/sessions.ts) rather than re-declaring its own
+ * flat field list, because the two were never two shapes: both are a row of
+ * `kin_care_sessions`, the same collection, read by two independent listeners
+ * (`api/schedule.ts` makes the same point in the other direction, aliasing
+ * `ScheduleSessionEntry = SessionEntry`). Two hand-maintained copies of one
+ * document's fields is how a screen ends up unable to open a component that
+ * reads the SAME doc: before this, Bookings could not hand a row to
+ * `BookingDetailModal` even though every field that sheet reads
+ * (`kinCareBatchId`, `kinCareVisitId`, `serviceDurationMinutes`, `reportIds`)
+ * is stamped on these very documents by `approveBookingSeriesCore.ts`. They
+ * were absent from the TYPE, never from the data.
+ *
+ * The three fields declared here are the ones `SessionEntry` does not carry:
+ * `departedAt` and `kinfolkNotes`, which only this list's `bookingWhen` /
+ * note-preview read, and `createdAt`, which is this query's sort key.
  */
-export interface BookingEntry {
-  _id: string;
-  kinfolkId?: string | undefined;
-  kinfolkName?: string | undefined;
-  serviceType?: string | undefined;
-  status?: string | undefined;
-  startTime?: string | undefined;
-  completedAt?: string | undefined;
+export interface BookingEntry extends SessionEntry {
+  /** Free-text stamp, same opaque-string caveat as `startTime`; one of the
+   *  fallbacks `lib/bookingFormat.ts#bookingWhen` walks for a legacy row whose
+   *  `startTime` is blank. */
   departedAt?: string | undefined;
-  notes?: string | undefined;
+  /** The household's own note on the request, preferred over the staff `notes`
+   *  in this list's row preview. */
   kinfolkNotes?: string | undefined;
+  /** A real `FieldValue.serverTimestamp()`, unlike every other time on this
+   *  doc, which is why BOOKINGS_QUERY sorts by it. Required (nullable), not
+   *  optional: `useCollection` hands back `null` while the local write is
+   *  pending rather than omitting the key. */
   createdAt: Timestamp | null;
 }
 
