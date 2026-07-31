@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getBusinessContact } from '../api/portal';
+import { SecretField } from '../components/SecretField';
 import {
   addSecondaryContact,
   clinicAlreadyOnList,
@@ -407,16 +408,31 @@ export function TribeProfile() {
                   <>
                     <div className="grid2">
                       <div className="field">
-                        <label htmlFor="gate">Gate / Door Code</label>
-                        <input id="gate" className="inp mono" type="text" value={gateCode} onChange={(e) => setGateCode(e.target.value)} />
+                        <SecretField
+                          id="gate"
+                          className="inp mono"
+                          label="Gate / Door Code"
+                          value={gateCode}
+                          onChange={setGateCode}
+                        />
                       </div>
                       <div className="field">
-                        <label htmlFor="key">Key Location</label>
-                        <input id="key" className="inp" type="text" value={keyLocation} onChange={(e) => setKeyLocation(e.target.value)} />
+                        <SecretField
+                          id="key"
+                          className="inp"
+                          label="Key Location"
+                          value={keyLocation}
+                          onChange={setKeyLocation}
+                        />
                       </div>
                       <div className="field full">
-                        <label htmlFor="wifi">Wi-Fi Password</label>
-                        <input id="wifi" className="inp mono" type="text" value={wifi} onChange={(e) => setWifi(e.target.value)} />
+                        <SecretField
+                          id="wifi"
+                          className="inp mono"
+                          label="Wi-Fi Password"
+                          value={wifi}
+                          onChange={setWifi}
+                        />
                         <span className="hint">Handy for overnight stays and rainy day visits.</span>
                       </div>
                     </div>
@@ -674,6 +690,23 @@ function SchemaFieldInput(props: { field: FormFieldDto; value: string; onChange:
             </option>
           ))}
         </select>
+        {field.helperText && <span className="hint">{field.helperText}</span>}
+      </div>
+    );
+  }
+
+  // Secret fields (gate code, key location, wifi password) should use the masked reveal component.
+  const isSecretField = ['gateCode', 'keyLocation', 'wifiPassword'].includes(field.key);
+  if (isSecretField) {
+    return (
+      <div className={wrapperClass}>
+        <SecretField
+          label={`${field.label}${field.required ? ' *' : ''}`}
+          value={value}
+          onChange={onChange}
+          {...(field.placeholder ? { placeholder: field.placeholder } : {})}
+          className="inp"
+        />
         {field.helperText && <span className="hint">{field.helperText}</span>}
       </div>
     );
