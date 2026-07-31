@@ -281,11 +281,18 @@ describe('syncGoogleCalendarBusyEvents handler', () => {
   });
 
   it('DEDUP: existing externalEventId merges onto the same doc, not a new one', async () => {
-    // queryDocs keyed by the collection path returns a pre-existing match so the
-    // handler takes the "doc by id" merge branch.
+    // The dedup lookup is `.where('externalEventId','==',slot.externalEventId)`,
+    // and that id is derived from the calendar id plus the busy interval's
+    // epoch bounds. The fixture has to carry that exact value or real Firestore
+    // returns nothing and the handler mints a new doc.
+    const existingEventId = `busy_team-cal@group.calendar.google.com_${Date.parse(
+      '2026-06-10T14:00:00.000Z',
+    )}_${Date.parse('2026-06-10T15:00:00.000Z')}`;
     const ctx = buildDbMock({
       queryDocs: {
-        booking_time_slots: [{ id: 'existing-slot-1', data: { externalEventId: 'x' } }],
+        booking_time_slots: [
+          { id: 'existing-slot-1', data: { externalEventId: existingEventId } },
+        ],
         business_settings: [
           { id: 'business_settings', data: { calendarSyncId: 'team-cal@group.calendar.google.com' } },
         ],
