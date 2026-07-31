@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import { BOOKINGS_QUERY, type BookingEntry } from '../api/bookings';
 import {
   bookingState,
@@ -14,8 +15,10 @@ import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/D
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
 import { Banner } from '../components/Banner';
-import { PrimaryButton } from '../components/Buttons';
-import { BookingActions } from './BookingActions';
+import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { Dialog } from '../components/Dialog';
+import { BookingDetailModal } from '../components/BookingDetailModal';
+import { BookingStatusActions } from './BookingActions';
 import { NewBookingDialog } from '../components/NewBookingDialog';
 import type { CreateMultiDateBookingResult } from '../api/bookingsWrite';
 import './Bookings.css';
@@ -50,12 +53,11 @@ interface BookingsProps {
   /**
    * Row-select hook. The router mounts this screen propless (no detail ROUTE
    * exists), so by default this screen wires its OWN handler: selecting a row
-   * opens BookingActions (Approve / Reject / Cancel / Mark Completed /
-   * Reschedule) as an in-screen overlay, fed from the SAME live BOOKINGS_QUERY
-   * stream this list already reads (no second fetch, see the `detailEntry`
-   * lookup below). Passing `onSelectBooking` explicitly overrides that
-   * default, letting a future detail ROUTE (or a test) own selection instead;
-   * when overridden, this screen's own overlay never renders (see the
+   * opens `BookingDetailModal`, the full detail sheet, fed from the SAME live
+   * BOOKINGS_QUERY stream this list already reads (no second fetch, see the
+   * `detailEntry` lookup below). Passing `onSelectBooking` explicitly overrides
+   * that default, letting a future detail ROUTE (or a test) own selection
+   * instead; when overridden, this screen's own overlay never renders (see the
    * `!onSelectBooking` guard it renders under).
    */
   onSelectBooking?: (bookingId: string) => void;
@@ -78,17 +80,31 @@ function rowViewsFor(rows: BookingEntry[]): RowView[] {
  * through the enumerated `bookingState` (never by negation, see
  * lib/bookingFormat.ts) for both the summary stat strip and the filter tabs.
  *
- * Selecting a row opens BookingActions (Approve / Reject / Cancel / Mark
- * Completed / Reschedule); see BookingsProps.onSelectBooking's doc for the
- * exact wiring. Still NOT built here: creating/editing a booking
- * (BookingCreateScreen's Kinfolk picker + KinCare-type + date/time form), and
- * the wasm's SEPARATE "Incoming requests" panel (MyTribe booking-envelope
- * collection-group query + `manageBookingSeries`/`batchUpdateBookings`, which
- * act on a different, NESTED collection than the rows here), see the
- * OUT-OF-SCOPE notes in api/bookings.ts and api/bookingsWrite.ts for exactly
- * why those two callables don't apply to this list's rows.
+ * SELECTING A ROW opens `BookingDetailModal`, the same full detail sheet the
+ * Schedule agenda opens (household link, service address, requested services,
+ * duration, status, assigned Auntie, KinTale link, reschedule, and both note
+ * threads), with this screen's Approve / Reject / Cancel / Mark Completed
+ * composed into its `actions` slot as `BookingStatusActions`.
+ *
+ * It used to open `BookingActions` instead, a thin dialog carrying the status
+ * chip, service, when, one notes line and those buttons. Nothing was wrong with
+ * it except that the operator asked for the opposite: a card should open the
+ * FULLER record, and the sheet that already held it was reachable from Schedule
+ * only. Nothing that dialog offered was dropped in the move: its four
+ * transitions are the composed panel, and its two-field reschedule is a strict
+ * subset of the sheet's own reschedule panel (which recomputes the end from the
+ * stored service duration instead of asking the operator to retype it).
+ *
+ * Still NOT built here: creating/editing a booking (BookingCreateScreen's
+ * Kinfolk picker + KinCare-type + date/time form), and the wasm's SEPARATE
+ * "Incoming requests" panel (MyTribe booking-envelope collection-group query +
+ * `manageBookingSeries`/`batchUpdateBookings`, which act on a different, NESTED
+ * collection than the rows here), see the OUT-OF-SCOPE notes in api/bookings.ts
+ * and api/bookingsWrite.ts for exactly why those two callables don't apply to
+ * this list's rows.
  */
 export function Bookings({ onSelectBooking }: BookingsProps) {
+  const navigate = useNavigate();
   const rows = useCollection<BookingEntry>(BOOKINGS_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
   // The overlay's own selection state, used only when no external
@@ -146,11 +162,11 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
       ).length,
   );
 
-  // The row BookingActions shows, resolved from the SAME live stream `rows`
+  // The row the detail sheet shows, resolved from the SAME live stream `rows`
   // already holds (never a second fetch): once a write round-trips through
   // Firestore, this listener's next snapshot updates `detailEntry` too. `null`
   // (stream not ready, or the id no longer resolves to a row) gets its own
-  // honest "unavailable" dialog inside BookingActions rather than a blank one.
+  // honest "unavailable" dialog below rather than a blank sheet.
   const detailEntry =
     detailId !== null && rows.status === 'ready' ? (rows.data.find((r) => r._id === detailId) ?? null) : null;
 
@@ -234,10 +250,38 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
 
       {/* Only this screen's OWN selection renders its own overlay; an external
           onSelectBooking (see the prop's doc) means the caller owns the detail
-          UI instead. */}
-      {!onSelectBooking && detailId !== null && (
-        <BookingActions entry={detailEntry} onClose={() => setDetailId(null)} />
-      )}
+          UI instead. A selected id that no longer resolves to a row says so,
+          rather than opening a sheet with nothing in it. */}
+      {!onSelectBooking &&
+        detailId !== null &&
+        (detailEntry === null ? (
+          <Dialog
+            title="Booking unavailable"
+            onClose={() => setDetailId(null)}
+            footer={<GhostButton label="Done" onClick={() => setDetailId(null)} />}
+          >
+            <p className="bookings__hint">
+              This booking is no longer available. It may have been cancelled or removed.
+            </p>
+          </Dialog>
+        ) : (
+          <BookingDetailModal
+            entry={detailEntry}
+            onClose={() => setDetailId(null)}
+            actions={
+              <BookingStatusActions entry={detailEntry} onDone={() => setDetailId(null)} />
+            }
+            onOpenKinfolk={(kinfolkId) =>
+              void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })
+            }
+            onOpenKinTale={(kinTaleId) =>
+              // Search param, not a path: the convention lib/notificationActions.ts
+              // set for invoice and kintale deep links, and the one Schedule.tsx
+              // already passes to this same sheet.
+              void navigate({ to: '/kintales', search: { kinTaleId } })
+            }
+          />
+        ))}
 
       {showCreate && (
         <NewBookingDialog onClose={() => setShowCreate(false)} onCreated={handleCreated} />

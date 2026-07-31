@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
 import type { Timestamp } from 'firebase/firestore';
 import { type Async } from '../lib/async';
 import { type BookingEntry } from '../api/bookings';
@@ -9,11 +10,15 @@ import { type BookingEntry } from '../api/bookings';
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
-// BookingActions is rendered by this screen's own overlay once a row is
-// selected; its write calls go through api/bookingsWrite, which this screen
-// test has no reason to exercise (BookingActions.test.tsx owns that), so it
-// is mocked here the same way every other screen test mocks its api/ module,
-// to keep this file from ever touching the real Firebase client.
+// This screen navigates from the detail sheet's kinfolk / KinTale links. No
+// suite in this tree mounts a RouterProvider, so the hook is stubbed rather
+// than the whole router stood up (the Schedule.test.tsx convention).
+const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
+vi.mock('@tanstack/react-router', () => ({ useNavigate: () => navigate }));
+
+// The status transitions composed into the sheet call api/bookingsWrite. The
+// module is mocked here the same way every other screen test mocks its api/
+// module, to keep this file from ever touching the real Firebase client.
 const {
   approveBooking,
   rejectBooking,
@@ -33,6 +38,41 @@ vi.mock('../api/bookingsWrite', () => ({
   cancelBooking,
   markBookingCompleted,
   rescheduleBooking,
+}));
+
+/**
+ * The detail sheet is stubbed, exactly as Schedule.test.tsx stubs it: its own
+ * behaviour (fact rows, address read, the 3h note lock, reschedule, optimistic
+ * assign) is covered directly in `components/BookingDetailModal.test.tsx`, and
+ * mounting the real one here would drag this screen suite into mocking the
+ * staff roster, the kinfolk profile read, and four more callables.
+ *
+ * The stub DOES render `props.actions` verbatim, because that slot is the one
+ * part of the sheet this screen owns: the Approve / Reject / Cancel / Mark
+ * Completed panel it composes in. Stubbing that too would leave nothing
+ * asserting that the transitions survived the move off `BookingActions`.
+ */
+vi.mock('../components/BookingDetailModal', () => ({
+  BookingDetailModal: (props: {
+    entry: { _id: string; kinfolkId?: string | undefined };
+    onClose: () => void;
+    actions?: ReactNode;
+    onOpenKinfolk?: (id: string) => void;
+    onOpenKinTale?: (id: string) => void;
+  }) => (
+    <div role="dialog" data-testid="booking-detail-modal" data-entry-id={props.entry._id}>
+      <button type="button" onClick={() => props.onOpenKinfolk?.(props.entry.kinfolkId ?? '')}>
+        stub open kinfolk
+      </button>
+      <button type="button" onClick={() => props.onOpenKinTale?.('rep1')}>
+        stub open kintale
+      </button>
+      <button type="button" onClick={props.onClose}>
+        stub close
+      </button>
+      {props.actions}
+    </div>
+  ),
 }));
 
 import { Bookings } from './Bookings';
@@ -60,6 +100,12 @@ function entry(over: Partial<BookingEntry>): BookingEntry {
 
 beforeEach(() => {
   useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] } satisfies Async<BookingEntry[]>);
+  navigate.mockReset();
+  approveBooking.mockReset().mockResolvedValue(undefined);
+  rejectBooking.mockReset().mockResolvedValue(undefined);
+  cancelBooking.mockReset().mockResolvedValue(undefined);
+  markBookingCompleted.mockReset().mockResolvedValue(undefined);
+  rescheduleBooking.mockReset().mockResolvedValue(undefined);
 });
 
 describe('Bookings screen', () => {
@@ -185,18 +231,17 @@ describe('Bookings screen', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('clicking a row with no external onSelectBooking opens this screen\'s own BookingActions overlay', async () => {
+  it('clicking a row with no external onSelectBooking opens the FULL detail sheet for that booking, not a thin action dialog', async () => {
     useCollection.mockReturnValue({
       status: 'ready',
       data: [entry({ _id: 'ses-42', kinfolkName: 'The Whitfields' })],
     });
     render(<Bookings />);
     await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText(/the whitfields · booking/i)).toBeInTheDocument();
+    expect(screen.getByTestId('booking-detail-modal')).toHaveAttribute('data-entry-id', 'ses-42');
   });
 
-  it('closing the built-in overlay returns to the plain list, with no lingering dialog', async () => {
+  it('closing the sheet returns to the plain list, with no lingering dialog', async () => {
     useCollection.mockReturnValue({
       status: 'ready',
       data: [entry({ _id: 'ses-42', kinfolkName: 'The Whitfields' })],
@@ -204,7 +249,77 @@ describe('Bookings screen', () => {
     render(<Bookings />);
     await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /^done$/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'stub close' }));
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('says the booking is unavailable when the selected id stops resolving, rather than opening an empty sheet', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 'ses-42', kinfolkName: 'The Whitfields' })],
+    });
+    const { rerender } = render(<Bookings />);
+    await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    expect(screen.getByTestId('booking-detail-modal')).toBeInTheDocument();
+
+    // The row leaves the bounded stream (deleted, or pushed past the 200 cap).
+    useCollection.mockReturnValue({ status: 'ready', data: [] });
+    rerender(<Bookings />);
+    expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
+    expect(screen.getByText(/no longer available/i)).toBeInTheDocument();
+  });
+
+  it('the sheet carries this screen\'s status transitions: a pending booking still offers Approve and Reject', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 'ses-42', status: 'PENDING' })],
+    });
+    render(<Bookings />);
+    await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    const sheet = screen.getByTestId('booking-detail-modal');
+    expect(within(sheet).getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(within(sheet).getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+  });
+
+  it('a scheduled booking still offers Mark Completed and Cancel, the pair BookingActions offered', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 'ses-42', status: 'SCHEDULED' })],
+    });
+    render(<Bookings />);
+    await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    const sheet = screen.getByTestId('booking-detail-modal');
+    expect(within(sheet).getByRole('button', { name: 'Mark Completed' })).toBeInTheDocument();
+    expect(within(sheet).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+  });
+
+  it('approving from the sheet confirms first, then writes, then closes the sheet', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 'ses-42', status: 'PENDING' })],
+    });
+    render(<Bookings />);
+    await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(approveBooking).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Approve booking' }));
+    expect(approveBooking).toHaveBeenCalledWith('ses-42');
+    expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
+  });
+
+  it('the sheet\'s kinfolk and KinTale links reach the router', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 'ses-42', kinfolkId: 'kf-9' })],
+    });
+    render(<Bookings />);
+    await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'stub open kinfolk' }));
+    expect(navigate).toHaveBeenCalledWith({
+      to: '/directory/$kinfolkId',
+      params: { kinfolkId: 'kf-9' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'stub open kintale' }));
+    expect(navigate).toHaveBeenCalledWith({ to: '/kintales', search: { kinTaleId: 'rep1' } });
   });
 });
