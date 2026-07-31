@@ -15,15 +15,15 @@
     "e2e:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
-    "@fontsource-variable/fraunces": "^5.2.5",
-    "@fontsource/hanken-grotesk": "^5.2.5",
-    "@fontsource/spline-sans-mono": "^5.2.5",
-    "@sentry/react": "^10.67.0",
-    "@tanstack/react-query": "^5.62.0",
+    "@fontsource-variable/fraunces": "^5.3.0",
+    "@fontsource/hanken-grotesk": "^5.3.0",
+    "@fontsource/spline-sans-mono": "^5.3.0",
+    "@sentry/react": "^10.68.0",
+    "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-router": "^1.95.0",
     "firebase": "^12.16.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -31,7 +31,7 @@
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.1.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.4",
