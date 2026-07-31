@@ -14,6 +14,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.theme.AuntieTheme
@@ -39,8 +41,16 @@ fun BreedDropdownField(
             value = value,
             onValueChange = onValueChange,
             label = if (catalog.isEmpty()) "Breed" else "Breed (type to search)",
-            modifier = Modifier
-                .fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            // onFocusChanged MUST attach here, not to `modifier` above: AuntieField
+            // applies `modifier` to its own outer Column, which is never itself the
+            // focused leaf node, so `.isFocused` read there is always false and the
+            // suggestion list below could never open, for ANY catalog. fieldModifier
+            // is the parameter AuntieField documents for exactly this: it lands on
+            // the real BasicTextField (see AdminLoginScreen for the same pattern).
+            // The contentDescription also gives this field a stable test/ a11y hook.
+            fieldModifier = Modifier
+                .semantics { contentDescription = "Breed" }
                 .onFocusChanged { focused = it.isFocused },
         )
         if (note != null) {

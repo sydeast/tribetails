@@ -191,7 +191,24 @@ describe('KinEdit vet rule (fix-backlog 5.4: vets attach to the Kinfolk)', () =>
       getKin.mockResolvedValue(kin({ species: 'Dog', breed: '' }));
       render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
       expect(await screen.findByTestId('breedfield-note')).toHaveTextContent(
-        'Breed list unavailable right now, type it in.',
+        'Breed list failed to load (getBreeds), type it in.',
+      );
+    });
+
+    // The regression this pins: useBreedBanks's `failed` is only true when the
+    // getBreeds call itself throws. When it resolves normally but the bank is
+    // genuinely empty (dog_breeds / cat_breeds not seeded in this environment),
+    // `failed` stays false, and a note gated on that flag alone renders NOTHING,
+    // an operator-facing silent-empty field indistinguishable from "nothing to
+    // see here". This must disclose too, and name the collections since it is a
+    // seeding gap, not a fault a retry would fix.
+    it('discloses an EMPTY bank load, not just a failed one, for a species that should have one', async () => {
+      breedBanks.current = { dogBreeds: [], catBreeds: [] };
+      breedsFailed.current = false;
+      getKin.mockResolvedValue(kin({ species: 'Dog', breed: '' }));
+      render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+      expect(await screen.findByTestId('breedfield-note')).toHaveTextContent(
+        'Breed bank is empty (dog_breeds / cat_breeds not seeded), type it in.',
       );
     });
 

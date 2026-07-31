@@ -91,6 +91,32 @@ export function speciesWantsBreedBank(species: string): boolean {
   return s === 'dog' || s === 'cat';
 }
 
+/**
+ * What the Breed field's disclosure note should say, or null when nothing needs
+ * disclosing.
+ *
+ * Distinguishes a load FAILURE (the `getBreeds` callable rejected, a transient
+ * fault worth retrying) from a load that SUCCEEDED but returned an empty bank
+ * (the `dog_breeds` / `cat_breeds` collections are not seeded, an
+ * operator-actionable gap, not a network blip). Collapsing the two into one
+ * message, or worse, showing nothing at all when `failed` happens to be false,
+ * is the silent-empty bug this replaces: a species that should have a bank but
+ * doesn't must never render as an ordinary, unremarked-on empty field.
+ *
+ * A species with no bank at all (Bird, Reptile, ...) gets neither: an empty
+ * catalog there is expected, not a fault.
+ */
+export function breedBankNote(
+  species: string,
+  catalog: readonly string[],
+  failed: boolean,
+): string | null {
+  if (!speciesWantsBreedBank(species) || catalog.length > 0) return null;
+  return failed
+    ? 'Breed list failed to load (getBreeds), type it in.'
+    : 'Breed bank is empty (dog_breeds / cat_breeds not seeded), type it in.';
+}
+
 /** True when the current value already names a breed in the bank, exactly. */
 export function isExactBreed(value: string, catalog: readonly string[]): boolean {
   const v = value.trim().toLowerCase();

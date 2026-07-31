@@ -68,4 +68,53 @@ class BreedSearchTest {
         assertEquals(emptyList<String>(), breedCatalogForSpecies("Bird", listOf("Pug"), listOf("Siamese")))
         assertEquals(emptyList<String>(), breedCatalogForSpecies("", listOf("Pug"), listOf("Siamese")))
     }
+
+    @Test fun wantsBreedBank_isTrueOnlyForDogAndCat() {
+        assertTrue(speciesWantsBreedBank("Dog"))
+        assertTrue(speciesWantsBreedBank("cat"))
+        assertEquals(false, speciesWantsBreedBank("Bird"))
+        assertEquals(false, speciesWantsBreedBank(""))
+    }
+
+    // The regression this class pins: DirectoryViewModel.loadBreeds only ever
+    // reported success, so a rejected getBreeds call and a call that resolved
+    // to an empty bank (dog_breeds / cat_breeds not seeded) looked identical to
+    // the field -- both just an empty catalog and no note. breedBankNote is the
+    // pure decision the fixed ViewModel + screens now defer to, so the two
+    // causes get different, collection-naming wording instead of one shared
+    // silence.
+    @Test fun breedBankNote_isNullOnceTheCatalogHasAnything() {
+        val dogs = listOf("Pug")
+        assertEquals(null, breedBankNote("Dog", dogs, failed = true))
+        assertEquals(null, breedBankNote("Dog", dogs, failed = false))
+    }
+
+    @Test fun breedBankNote_isNullForASpeciesWithNoBank_evenWhenNothingLoaded() {
+        assertEquals(null, breedBankNote("Bird", emptyList(), failed = true))
+        assertEquals(null, breedBankNote("Bird", emptyList(), failed = false))
+    }
+
+    @Test fun breedBankNote_namesTheCallableOnAnOutrightFailure() {
+        assertEquals(
+            "Breed list failed to load (getBreeds), type it in.",
+            breedBankNote("Dog", emptyList(), failed = true),
+        )
+    }
+
+    @Test fun breedBankNote_namesTheCollectionsWhenTheCallSucceededButTheBankIsEmpty() {
+        assertEquals(
+            "Breed bank is empty (dog_breeds / cat_breeds not seeded), type it in.",
+            breedBankNote("Dog", emptyList(), failed = false),
+        )
+        assertEquals(
+            "Breed bank is empty (dog_breeds / cat_breeds not seeded), type it in.",
+            breedBankNote("Cat", emptyList(), failed = false),
+        )
+    }
+
+    @Test fun breedBankNote_givesTheTwoCausesDistinctWording() {
+        val failed = breedBankNote("Dog", emptyList(), failed = true)
+        val empty = breedBankNote("Dog", emptyList(), failed = false)
+        assertTrue(failed != empty)
+    }
 }

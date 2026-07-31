@@ -51,6 +51,10 @@ every source, per spec.
   breed page); the real Chihuahua is retained.
 
 ## Firestore write status
-Not yet written to a live project — the seeder is verified in `--dry-run` over
-all 581 docs. To execute the write, provide the admin-SDK key path (a secret I
-won't supply) and run step 3 with `--allow-prod`.
+SEEDED in `auntieos-ttpc` on 2026-06-13: live `dog_breeds`/`cat_breeds` docs
+carry `_seededAt: 2026-06-13T05:42:29Z` (verified by a direct read on
+2026-07-31). This section previously said "not yet written to a live project",
+which was stale and misled a debugging pass into hunting a data gap that did
+not exist; the real 2026-07-31 dropdown bug was a client focus-wiring defect.
+Re-running the seeder is a safe idempotent upsert: provide the admin-SDK key
+path and run step 3 with `--allow-prod`.

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  breedBankNote,
   breedCatalogForSpecies,
   breedDropdownOptions,
   breedSuggestions,
@@ -98,6 +99,42 @@ describe('speciesWantsBreedBank', () => {
     expect(speciesWantsBreedBank('cat')).toBe(true);
     expect(speciesWantsBreedBank('Bird')).toBe(false);
     expect(speciesWantsBreedBank('')).toBe(false);
+  });
+});
+
+describe('breedBankNote', () => {
+  it('is null once the catalog has anything in it, regardless of a stale failed flag', () => {
+    expect(breedBankNote('Dog', DOGS, true)).toBeNull();
+    expect(breedBankNote('Dog', DOGS, false)).toBeNull();
+  });
+
+  it('is null for a species with no seeded bank, even with nothing loaded', () => {
+    expect(breedBankNote('Bird', [], true)).toBeNull();
+    expect(breedBankNote('Bird', [], false)).toBeNull();
+  });
+
+  it('names the callable for an outright load failure', () => {
+    expect(breedBankNote('Dog', [], true)).toBe('Breed list failed to load (getBreeds), type it in.');
+  });
+
+  // The regression this pins: a SUCCESSFUL call that comes back empty (the
+  // dog_breeds / cat_breeds collections are not seeded) is not a network
+  // failure, so a note gated on "failed" alone stays null and the field goes
+  // silent. This must say something too, and it must name the collections so
+  // it reads as a seeding gap rather than an unexplained blank dropdown.
+  it('names the collections when the call succeeded but the bank is empty', () => {
+    expect(breedBankNote('Dog', [], false)).toBe(
+      'Breed bank is empty (dog_breeds / cat_breeds not seeded), type it in.',
+    );
+    expect(breedBankNote('Cat', [], false)).toBe(
+      'Breed bank is empty (dog_breeds / cat_breeds not seeded), type it in.',
+    );
+  });
+
+  it('gives the two causes distinct wording, so one is never mistaken for the other', () => {
+    const failed = breedBankNote('Dog', [], true);
+    const empty = breedBankNote('Dog', [], false);
+    expect(failed).not.toBe(empty);
   });
 });
 
