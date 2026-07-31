@@ -37,7 +37,7 @@ jobs:
       mytribeGradle: ${{ steps.filter.outputs.mytribeGradle }}
       scripts: ${{ steps.filter.outputs.scripts }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: filter
         uses: dorny/paths-filter@v3
         with:
@@ -100,7 +100,7 @@ jobs:
       run:
         working-directory: auntieos-admin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -123,7 +123,7 @@ jobs:
       run:
         working-directory: auntieos-admin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -169,7 +169,7 @@ jobs:
       run:
         working-directory: auntieos-admin/web/functions
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -193,7 +193,7 @@ jobs:
       run:
         working-directory: mytribe/functions
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -220,7 +220,7 @@ jobs:
       run:
         working-directory: mytribe/web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -238,7 +238,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run the deploy-guard test if present
         run: |
           if [ -f scripts/safe-deploy.test.sh ]; then
@@ -255,7 +255,7 @@ jobs:
       run:
         working-directory: mytribe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -281,7 +281,7 @@ jobs:
       run:
         working-directory: auntieos-admin/web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -301,7 +301,7 @@ jobs:
       run:
         working-directory: auntieos-admin/android
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
