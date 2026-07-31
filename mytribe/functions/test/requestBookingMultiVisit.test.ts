@@ -262,3 +262,87 @@ describe('requestBookingHandler — multi-visit envelope', () => {
     expect(res.batchId).toBeDefined();
   });
 });
+/**
+ * The portal half of the wizard fields. `createMultiDateBookingRequest.test.ts`
+ * covers the admin callable; these pin that the SAME schema additions reached
+ * the kinfolk-facing one, because both write through the same `writeEnvelope`
+ * and a field one accepts and the other rejects would mean a booking a
+ * household can file and an operator cannot.
+ */
+describe('requestBookingHandler wizard fields', () => {
+  function portalDb() {
+    return buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'base_services/s1': { name: "Auntie's In", priceCents: 1500 },
+      },
+    });
+  }
+  it('persists per-visit location, booking-level billing and communication', async () => {
+    const ctx = portalDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    const res: any = await requestBookingHandler({
+      data: {
+        kinfolkId: '3',
+        billing: { mode: 'new-invoice' },
+        communication: { emailConfirmation: true, timeVisibility: false },
+        visits: [
+          { startTimeMs: future, serviceId: 's1', serviceName: "Auntie's In", location: 'Side door' },
+        ],
+      },
+      auth: { uid: 'u1' },
+    } as any);
+    const envelope = ctx.writes.find((w) => w.path === `families/3/bookings/${res.batchId}`);
+    expect(envelope?.data?.billing).toEqual({ mode: 'new-invoice' });
+    expect(envelope?.data?.communication).toEqual({
+      emailConfirmation: true,
+      timeVisibility: false,
+    });
+    const visit = ctx.writes.find((w) =>
+      w.path.startsWith(`families/3/bookings/${res.batchId}/kinCares/`),
+    );
+    expect(visit?.data?.location).toBe('Side door');
+  });
+  it('a payload with none of the new fields still writes, with both toggles off', async () => {
+    const ctx = portalDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    const res: any = await requestBookingHandler({
+      data: {
+        kinfolkId: '3',
+        visits: [{ startTimeMs: future, serviceId: 's1', serviceName: "Auntie's In" }],
+      },
+      auth: { uid: 'u1' },
+    } as any);
+    const envelope = ctx.writes.find((w) => w.path === `families/3/bookings/${res.batchId}`);
+    expect(envelope?.data?.billing).toBeNull();
+    expect(envelope?.data?.communication).toEqual({
+      emailConfirmation: false,
+      timeVisibility: false,
+    });
+  });
+  it('the LEGACY single-visit payload still writes its 1-visit envelope unchanged', async () => {
+    const ctx = portalDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    const res: any = await requestBookingHandler({
+      data: { kinfolkId: '3', serviceType: 'Dog Walk', startTimeMs: future },
+      auth: { uid: 'u1' },
+    } as any);
+    const envelope = ctx.writes.find((w) => w.path === `families/3/bookings/${res.batchId}`);
+    expect(envelope?.data?.visitCount).toBe(1);
+    expect(envelope?.data?.billing).toBeNull();
+    expect(envelope?.data?.communication).toEqual({
+      emailConfirmation: false,
+      timeVisibility: false,
+    });
+    const visit = ctx.writes.find((w) =>
+      w.path.startsWith(`families/3/bookings/${res.batchId}/kinCares/`),
+    );
+    expect(visit?.data?.location).toBeNull();
+  });
+});

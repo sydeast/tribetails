@@ -34,12 +34,30 @@ import { writeEnvelope, resolveService, type NormalizedVisit } from '../portal/r
  * admin-created request lands in the same Incoming-requests queue for an
  * explicit approve, rather than silently auto-confirming sessions.
  */
+/**
+ * MIRRORS `requestBooking`'s VisitArgs/MultiArgs field for field, on purpose:
+ * the two callables write the same envelope through the same `writeEnvelope`,
+ * so a field one accepts and the other rejects would mean a booking an operator
+ * can file and a household cannot, or the reverse. See requestBooking.ts for
+ * what `location`, `billing` and `communication` mean and why each is shaped
+ * the way it is; this file does not restate it.
+ *
+ * `serviceId` is the one deliberate difference and predates this: the admin may
+ * omit it (a service the operator has not put in the catalog yet), where the
+ * portal requires it.
+ *
+ * Every field added here is OPTIONAL, which is what keeps the frozen legacy
+ * payload valid: the single-page dialog that shipped before the wizard sends
+ * `{ kinfolkId, visits: [{ startTimeMs, serviceName }] }` and nothing else, and
+ * there is a test that fails if it ever stops parsing.
+ */
 const VisitArgs = z.object({
   startTimeMs: z.number().int().positive(),
   endTimeMs: z.number().int().positive().nullable().optional(),
   serviceId: z.string().min(1).nullable().optional(),
   serviceName: z.string().min(1).max(120),
   priceCents: z.number().int().nonnegative().nullable().optional(),
+  location: z.string().trim().min(1).max(120).nullable().optional(),
 });
 
 const Args = z.object({
@@ -49,6 +67,10 @@ const Args = z.object({
   pattern: z.enum(['individual', 'weekly']).optional(),
   weeklyDays: z.array(z.number().int().min(0).max(6)).optional(),
   visits: z.array(VisitArgs).min(1).max(60),
+  billing: z.object({ mode: z.enum(['new-invoice']) }).optional(),
+  communication: z
+    .object({ emailConfirmation: z.boolean(), timeVisibility: z.boolean() })
+    .optional(),
 });
 
 export async function createMultiDateBookingRequestHandler(
@@ -90,6 +112,7 @@ export async function createMultiDateBookingRequestHandler(
         serviceName: resolved.serviceName,
         priceCents: resolved.priceCents,
         title: resolved.serviceName ?? v.serviceName,
+        location: v.location ?? null,
       };
     }),
   );
@@ -105,6 +128,8 @@ export async function createMultiDateBookingRequestHandler(
     notes: args.notes ?? null,
     visits: normalized,
     assignee: await resolveDefaultAssignee(),
+    billing: args.billing ?? null,
+    ...(args.communication ? { communication: args.communication } : {}),
   });
 
   logEvent({

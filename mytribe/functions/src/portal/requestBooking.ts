@@ -58,6 +58,23 @@ const LegacyArgs = z.object({
   notes: z.string().max(1000).optional(),
 });
 
+/**
+ * WHERE a visit happens, as a free-text LABEL.
+ *
+ * Not a foreign key, and that is a finding rather than a shortcut: this
+ * codebase has no property or location model. The only addresses that exist
+ * are free-text fields on the household doc (`optimizeRoute.ts` reads
+ * `serviceAddress` / `homeAddress` / `address` in that order), so there is no
+ * id to point at. A label is what an operator can actually supply for "the
+ * back gate", "the boarding house", or a second property the household owns.
+ *
+ * Optional and nullable, so the frozen legacy payload still validates: every
+ * client that has ever called this omits it, and every visit already written
+ * has none. Absent means "wherever this household's address says", which is
+ * exactly what the whole collection means today.
+ */
+const VisitLocationArgs = z.string().trim().min(1).max(120).nullable().optional();
+
 /** Multi-visit (new wizard) shape. */
 const VisitArgs = z.object({
   startTimeMs: z.number().int().positive(),
@@ -65,7 +82,57 @@ const VisitArgs = z.object({
   serviceId: z.string().min(1),
   serviceName: z.string().min(1).max(120),
   priceCents: z.number().int().nonnegative().nullable().optional(),
+  location: VisitLocationArgs,
 });
+
+/**
+ * HOW the booking is meant to be billed, recorded as the operator's stated
+ * intent, NOT as an instruction this callable acts on.
+ *
+ * The enum has exactly one member because the wizard's Review step offers
+ * exactly one choice: "New Invoice". A second member would be a branch nothing
+ * can produce, nothing has tested, and no reader could tell was real. Adding
+ * one is a schema change AND a UI change, together.
+ *
+ * Nothing here raises an invoice. This system has no path that turns an
+ * approved booking into an invoice automatically: invoices are created by
+ * `createInvoice` and the completed sessions are attached with
+ * `linkInvoiceSessions`. Persisting the preference is what lets that later step
+ * know what was promised, and the wizard's own copy says so rather than
+ * claiming an invoice appears on its own.
+ */
+const BillingArgs = z
+  .object({
+    mode: z.enum(['new-invoice']),
+  })
+  .optional();
+
+/**
+ * What the household is told, and how much of it.
+ *
+ * Both default FALSE, per the mock, which shows both with a red cross:
+ * "Email confirmation: Won't send" and "Time visibility: Time windows".
+ *
+ *   emailConfirmation  send the household a confirmation email for this
+ *                      booking. Off means the operator is telling them another
+ *                      way.
+ *   timeVisibility     show the household the EXACT start time of each visit.
+ *                      Off means they see the time window instead, which is the
+ *                      honest thing to show when an Auntie's arrival depends on
+ *                      the visit before it.
+ *
+ * Optional as a whole: an absent object means both false, so a legacy payload
+ * and an explicit `{ emailConfirmation: false, timeVisibility: false }` persist
+ * identically. Neither field is optional WITHIN the object: a half-specified
+ * preference is a caller bug, and defaulting one of two booleans silently is
+ * how a household gets an email nobody chose to send.
+ */
+const CommunicationArgs = z
+  .object({
+    emailConfirmation: z.boolean(),
+    timeVisibility: z.boolean(),
+  })
+  .optional();
 
 const MultiArgs = z.object({
   kinfolkId: z.string().optional(),
@@ -74,7 +141,24 @@ const MultiArgs = z.object({
   pattern: z.enum(['individual', 'weekly']).optional(),
   weeklyDays: z.array(z.number().int().min(0).max(6)).optional(),
   visits: z.array(VisitArgs).min(1),
+  billing: BillingArgs,
+  communication: CommunicationArgs,
 });
+
+/** The billing preference as persisted. `null` when the caller stated none. */
+export type BookingBilling = { mode: 'new-invoice' } | null;
+
+/** The communication preference as persisted. Always concrete, never null. */
+export interface BookingCommunication {
+  emailConfirmation: boolean;
+  timeVisibility: boolean;
+}
+
+/** Both preferences default to the mock's OFF, so an absent object is not an absent decision. */
+export const COMMUNICATION_DEFAULT: BookingCommunication = {
+  emailConfirmation: false,
+  timeVisibility: false,
+};
 
 interface RequestBookingResult {
   /** The envelope id (parent `bookings/{batchId}` doc). */
@@ -96,6 +180,8 @@ export interface NormalizedVisit {
   serviceName: string | null;
   priceCents: number | null;
   title: string | null;
+  /** Free-text place label, or null. See `VisitLocationArgs` for why it is a label. */
+  location?: string | null;
 }
 
 /**
@@ -154,8 +240,18 @@ export async function writeEnvelope(opts: {
   visits: NormalizedVisit[];
   /** Default-assignee (2026-07-02): the Auntie every new visit starts assigned to. */
   assignee: Assignee | null;
+  /** Stated billing intent, or null when the caller stated none. */
+  billing?: BookingBilling;
+  /** Stated communication preference. Absent means both false, never "unknown". */
+  communication?: BookingCommunication;
 }): Promise<{ batchId: string; visitIds: string[] }> {
   const { kinfolkId, uid, batchId, pattern, weeklyDays, kinIds, notes, visits, assignee } = opts;
+  // Resolved HERE rather than at each call site, so every writer, portal and
+  // admin, persists the same concrete pair. A missing preference is a decision
+  // (the mock's default is off for both), not an unknown to leave undefined for
+  // a reader to guess at.
+  const billing = opts.billing ?? null;
+  const communication = opts.communication ?? COMMUNICATION_DEFAULT;
   const firestore = db();
   const parentRef = firestore.doc(`families/${kinfolkId}/bookings/${batchId}`);
 
@@ -183,6 +279,11 @@ export async function writeEnvelope(opts: {
       kinIds: kinIdUnion,
       kinNames: [],
       notes,
+      // Booking-level preferences, stated once for the whole request. They are
+      // not per-visit: an operator does not send one confirmation email per
+      // visit, and does not bill half a series to a different invoice.
+      billing,
+      communication,
       visitCount: visits.length,
       confirmedCount: 0,
       completedCount: 0,
@@ -206,6 +307,11 @@ export async function writeEnvelope(opts: {
         serviceName: v.serviceName,
         serviceType: v.serviceName,
         priceCents: v.priceCents,
+        // Per-visit, unlike billing/communication above: a series can genuinely
+        // run at two places (the house on weekdays, the boarding kennel while
+        // the household travels), and rolling it to the envelope would lose
+        // that. `null` means "wherever this household's address says".
+        location: v.location ?? null,
         title: v.title ?? v.serviceName,
         startTime: Timestamp.fromMillis(v.startTimeMs),
         endTime: v.endTimeMs != null ? Timestamp.fromMillis(v.endTimeMs) : null,
@@ -282,6 +388,7 @@ export async function requestBookingHandler(
           serviceName: resolved.serviceName,
           priceCents: resolved.priceCents,
           title: resolved.serviceName ?? v.serviceName,
+          location: v.location ?? null,
         };
       }),
     );
@@ -296,6 +403,8 @@ export async function requestBookingHandler(
       notes: args.notes ?? null,
       visits: normalized,
       assignee: await resolveDefaultAssignee(),
+      billing: args.billing ?? null,
+      ...(args.communication ? { communication: args.communication } : {}),
     });
 
     logEvent({

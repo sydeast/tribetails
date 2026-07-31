@@ -125,6 +125,31 @@ export interface NewBookingVisit {
   /** Optional catalog id; when set the server resolves the canonical name+price. */
   serviceId?: string | null;
   serviceName: string;
+  /**
+   * WHERE this visit happens, as a free-text label ("Back gate", "the boarding
+   * kennel"), or null for "wherever this household's address says".
+   *
+   * A label rather than an id because this system has no property or location
+   * model: the only addresses that exist are free-text fields on the household
+   * doc. The server's schema takes the same label and REJECTS a blank one, so
+   * "no particular place" is spelled `null`, never `''`.
+   */
+  location?: string | null;
+}
+
+/** How the booking is meant to be billed. See the server's own BillingArgs for
+ *  why the union has one member: the wizard's Invoice Options step offers one
+ *  choice, and a second here would be a branch nothing can produce. */
+export interface NewBookingBilling {
+  mode: 'new-invoice';
+}
+
+/** What the household is told. Both default false, per the mock. */
+export interface NewBookingCommunication {
+  /** Send a confirmation email for this booking. */
+  emailConfirmation: boolean;
+  /** Show exact start times. Off means the household sees the window instead. */
+  timeVisibility: boolean;
 }
 
 export interface CreateMultiDateBookingArgs {
@@ -134,6 +159,10 @@ export interface CreateMultiDateBookingArgs {
   pattern?: 'individual' | 'weekly';
   weeklyDays?: number[];
   visits: NewBookingVisit[];
+  /** Omitted entirely by the pre-wizard caller; the server stores null then. */
+  billing?: NewBookingBilling;
+  /** Omitted entirely by the pre-wizard caller; the server stores both false then. */
+  communication?: NewBookingCommunication;
 }
 
 export interface CreateMultiDateBookingResult {
