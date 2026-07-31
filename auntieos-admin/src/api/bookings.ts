@@ -81,6 +81,20 @@ export interface BookingEntry extends SessionEntry {
    *  optional: `useCollection` hands back `null` while the local write is
    *  pending rather than omitting the key. */
   createdAt: Timestamp | null;
+  /**
+   * BACK-REFERENCE TO THE ENVELOPE MODEL, stamped by
+   * `approveBookingSeriesCore.ts` on every session it creates from an approved
+   * booking request (`kinCareVisitId: id`, alongside the deterministic
+   * `vis_{id}` session doc id). It names the
+   * `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}` doc this row
+   * is the admin-side copy of.
+   *
+   * ABSENT on a legacy or ad-hoc session, which has no envelope counterpart at
+   * all. That is not a data gap to paper over: it is the difference between a
+   * row whose household-facing copy must be kept in step and a row that has
+   * none. `lib/bookingBulk.ts` is where that distinction is acted on.
+   */
+  kinCareVisitId?: string | undefined;
 }
 
 /**
