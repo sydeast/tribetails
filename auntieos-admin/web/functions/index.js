@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const Anthropic = require('@anthropic-ai/sdk');
 const { runGenerate } = require('./generate');
 const { enforceGenerateRateLimit } = require('./generateRateLimit');
+const { enforceWindowedRateLimit } = require('./rateLimit');
+const { validateDocId, validateDraftPayload } = require('./draftValidation');
 
 admin.initializeApp();
 
@@ -169,6 +171,51 @@ const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
 // timing-unsafe secret compare and the unbounded `n8nIpAllowed.timestamps`
 // array are both gone with the code that held them, and `requireAdminToken`
 // verifies a signed token instead of comparing a string.
+//
+// The RATE LIMIT survives the move, re-keyed from source IP to verified uid
+// (see rateLimit.js). Dropping it along with the secret would have been a
+// straight regression: identity and volume are different questions, and a
+// leaked admin token or a runaway client loop is precisely the case where the
+// identity question has a good answer and the damage happens anyway. One
+// bucket is shared across all three endpoints, so a loop that rotates between
+// them is capped by the same budget it would hit on any one of them.
+const DRAFT_RATE_COLLECTION = 'draft_rate_limits';
+const DRAFT_RATE_WINDOW_MS = 60 * 1000;
+const DRAFT_RATE_LIMIT = 60;
+
+/**
+ * Auth, then budget, then input. Consuming budget BEFORE validating the body is
+ * deliberate: a caller flooding malformed requests is exactly the traffic worth
+ * capping, and validating first would let it spend our CPU for free.
+ *
+ * @returns {string|null} the caller uid, or null when a response was sent.
+ */
+async function requireAdminWithDraftBudget(req, res, scope) {
+  const decoded = await requireAdminToken(req, res, scope);
+  if (!decoded) return null;
+  try {
+    await enforceWindowedRateLimit(admin.firestore(), {
+      collection: DRAFT_RATE_COLLECTION,
+      uid: decoded.uid,
+      nowMs: Date.now(),
+      windowMs: DRAFT_RATE_WINDOW_MS,
+      cap: DRAFT_RATE_LIMIT,
+    });
+  } catch (err) {
+    if (err && err.status === 429) {
+      console.warn('%s: rate-limited uid=%s', scope, decoded.uid);
+      res.status(429).json({ error: 'rate_limit_exceeded' });
+      return null;
+    }
+    // The limiter itself failed (Firestore unavailable). Fail CLOSED: an
+    // unmetered endpoint is the thing this function exists to prevent, so a
+    // broken meter means no service rather than unlimited service.
+    console.error('%s: rate limiter failed', scope, err);
+    res.status(503).json({ error: 'rate_limiter_unavailable' });
+    return null;
+  }
+  return decoded.uid;
+}
 
 // Verifies the Bearer Firebase ID token and enforces the caller is a real admin
 // (`admin === true`). When `allowTestAdmin` is set, a Stage-0I sandbox test-admin
@@ -205,10 +252,18 @@ exports.writeDraft = onRequest({ cors: false }, async (req, res) => {
     res.status(405).json({ error: 'POST only' });
     return;
   }
-  if (!(await requireAdminToken(req, res, 'writeDraft'))) return;
+  if (!(await requireAdminWithDraftBudget(req, res, 'writeDraft'))) return;
   const { docId, draft } = req.body || {};
-  if (!draft || typeof draft !== 'object') {
-    res.status(400).json({ error: 'draft (object) required in body' });
+  if (docId !== undefined) {
+    const idError = validateDocId(docId);
+    if (idError) {
+      res.status(400).json({ error: idError });
+      return;
+    }
+  }
+  const draftError = validateDraftPayload(draft);
+  if (draftError) {
+    res.status(400).json({ error: draftError });
     return;
   }
   try {
@@ -262,10 +317,11 @@ function projectN8nDocResponse(id, data) {
 
 // Same shape but reads a single training document. Used by Update Profiles n8n workflow.
 exports.getTrainingDoc = onRequest({ cors: false }, async (req, res) => {
-  if (!(await requireAdminToken(req, res, 'getTrainingDoc'))) return;
+  if (!(await requireAdminWithDraftBudget(req, res, 'getTrainingDoc'))) return;
   const id = (req.query.id || '').toString();
-  if (!id) {
-    res.status(400).json({ error: 'id query param required' });
+  const idError = validateDocId(id);
+  if (idError) {
+    res.status(400).json({ error: id ? idError : 'id query param required' });
     return;
   }
   try {
@@ -283,10 +339,11 @@ exports.getTrainingDoc = onRequest({ cors: false }, async (req, res) => {
 
 // Same shape but reads a single draft. Used by Update Profiles n8n workflow.
 exports.getDraft = onRequest({ cors: false }, async (req, res) => {
-  if (!(await requireAdminToken(req, res, 'getDraft'))) return;
+  if (!(await requireAdminWithDraftBudget(req, res, 'getDraft'))) return;
   const id = (req.query.id || '').toString();
-  if (!id) {
-    res.status(400).json({ error: 'id query param required' });
+  const idError = validateDocId(id);
+  if (idError) {
+    res.status(400).json({ error: id ? idError : 'id query param required' });
     return;
   }
   try {
