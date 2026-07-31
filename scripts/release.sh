@@ -311,6 +311,10 @@ banner "1c. Android release build"
 ANDROID_DIR="$ROOT/auntieos-admin/android"
 ANDROID_APK="$ANDROID_DIR/app/build/outputs/apk/release/app-release.apk"
 ANDROID_BUILT=0
+# Tracked separately from ANDROID_BUILT: an APK that assembled but failed to
+# upload (see the non-fatal warning in 6b) shipped nothing, and the closing
+# tag must say so rather than claim every client landed.
+ANDROID_DISTRIBUTED=0
 
 STEP="assembling the Android release APK"
 if [ "${RELEASE_SKIP_ANDROID:-0}" = "1" ]; then
@@ -601,6 +605,7 @@ else
       --release-notes "$ANDROID_NOTES" \
       "${ANDROID_AUDIENCE_ARGS[@]}"; then
       grn "android: distributed to $ANDROID_AUDIENCE_DESC"
+      ANDROID_DISTRIBUTED=1
     else
       # The APK is built and signed on disk either way. Failing the release
       # here would report a landed web deploy as broken; saying nothing would
@@ -712,10 +717,77 @@ fi
 STEP="recording the released commit"
 git rev-parse HEAD > "$ROOT/.release-state"
 
+# ---------------------------------------------------------------------------
+# 9. Tag what shipped.
+# ---------------------------------------------------------------------------
+banner "9. Tag the release"
+
+# By this point the web is live and step 7 has PROVEN it, so the tag names a
+# release that actually happened rather than one this run merely attempted.
+# Anything short of here already stopped the script (set -e) before reaching
+# this step, so there is no separate "did it really succeed" check to write.
+STEP="tagging the release"
+TAG=""
+TAG_PUSHED=0
+if [ "${DRY_RUN:-0}" = "1" ]; then
+  ylw "DRY_RUN=1: skipping the release tag. Nothing shipped in this run, so"
+  ylw "  there is nothing to tag or push."
+else
+  TAG="release/$(date +%Y.%m.%d)-$(git rev-parse --short HEAD)"
+
+  # Named honestly from the same state the run already tracked, not a
+  # blanket "shipped everything": a skipped or failed piece says so here too.
+  SHIPPED="hosting: admin + kinfolk portal
+firestore: indexes + rules (mytribe)"
+  if [ "$FUNCTIONS_CHANGED" -eq 1 ]; then
+    SHIPPED="$SHIPPED
+functions: mytribe"
+  else
+    SHIPPED="$SHIPPED
+functions: mytribe (skipped, unchanged since the last release)"
+  fi
+  if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
+    SHIPPED="$SHIPPED
+functions: auntieos-admin (default, reconcile)"
+  fi
+  if [ "$ANDROID_DISTRIBUTED" -eq 1 ]; then
+    SHIPPED="$SHIPPED
+android: distributed ($ANDROID_AUDIENCE_DESC)"
+  elif [ "$ANDROID_BUILT" -eq 1 ]; then
+    SHIPPED="$SHIPPED
+android: built, distribution did not confirm (see 6b above)"
+  else
+    SHIPPED="$SHIPPED
+android: skipped"
+  fi
+
+  TAG_MSG="$(git log -1 --format='%h %s')
+
+Shipped:
+$SHIPPED"
+
+  if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+    ylw "tag: $TAG already exists locally; not recreating it."
+  elif ! git tag -a "$TAG" -m "$TAG_MSG"; then
+    ylw "tag: could not create $TAG (see above)."
+    ylw "  The release itself is fine; tag it by hand once you see why:"
+    ylw "  git tag -a $TAG -m '...' && git push origin $TAG"
+  elif ! git push origin "$TAG"; then
+    ylw "tag: $TAG created locally but the push failed (see above)."
+    ylw "  The release itself is fine. Push it by hand: git push origin $TAG"
+  else
+    TAG_PUSHED=1
+    grn "tag: $TAG pushed"
+  fi
+fi
+
 trap - EXIT
 STEP="done"
 banner "Released"
 grn "Commit $(git rev-parse --short HEAD) is live and verified."
+if [ "$TAG_PUSHED" -eq 1 ]; then
+  grn "Tagged $TAG and pushed it to origin."
+fi
 grn ""
 grn "If something looks wrong, the previous hosting release can be rolled back"
 grn "from the Firebase console (Hosting -> release history). Functions and"
