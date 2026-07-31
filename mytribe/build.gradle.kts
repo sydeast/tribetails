@@ -92,10 +92,10 @@ kotlin {
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
             // Ktor client + JSON for Firebase REST (Auth + Firestore).
-            implementation("io.ktor:ktor-client-core:2.3.13")
-            implementation("io.ktor:ktor-client-cio:2.3.13")
-            implementation("io.ktor:ktor-client-content-negotiation:2.3.13")
-            implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.13")
+            implementation("io.ktor:ktor-client-core:3.5.1")
+            implementation("io.ktor:ktor-client-cio:3.5.1")
+            implementation("io.ktor:ktor-client-content-negotiation:3.5.1")
+            implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.1")
         }
         val jvmTest by getting {
             dependencies {
