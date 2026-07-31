@@ -8,6 +8,7 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 
 const CustomFieldZ = z.object({
   key: z.string().min(1).max(80),
@@ -35,11 +36,18 @@ export async function saveTribeProfileHandler(req: CallableRequest<unknown>): Pr
 
   const args = Args.parse(req.data);
   const firestore = db();
-  const clientSnap = await firestore.collection('clients').doc(uid).get();
-  const allowedIds: string[] = (clientSnap.data()?.kinfolkIds ?? []) as string[];
-  if (allowedIds.length === 0) throw new HttpsError('failed-precondition', 'No tribes linked.');
-  const kinfolkId = args.kinfolkId ?? allowedIds[0];
-  if (!allowedIds.includes(kinfolkId)) throw new HttpsError('permission-denied', 'No access.');
+  // Was a hard clients/{uid}.kinfolkIds check with no staff path: an operator
+  // impersonating a household loaded it fine (reads already went through
+  // resolveKinfolkAccess) and got permission-denied here on save. Same
+  // resolver the read side (getMyKin, etc.) uses, so an operator on either
+  // the admin claim or the AUNTIE_OPERATOR_UIDS allowlist gets through, and a
+  // cross-tenant resolution is audit-logged inside the resolver itself.
+  const { kinfolkId, isOperator } = await resolveKinfolkAccess(
+    uid,
+    args.kinfolkId,
+    req.auth?.token?.admin === true,
+    'saveTribeProfile',
+  );
 
   const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (args.displayName !== undefined) update['displayName'] = args.displayName;
@@ -53,7 +61,10 @@ export async function saveTribeProfileHandler(req: CallableRequest<unknown>): Pr
   await writeAuditEntry({
     event: AUDIT_EVENTS.PROFILE_UPDATED,
     severity: 'info',
-    actorRole: 'PRIMARY',
+    // Matches the AUNTIE/PRIMARY split requestBooking already draws: a
+    // kinfolk PRIMARY writes their own profile, an operator writes on the
+    // household's behalf and is labeled AUNTIE, never falsely as PRIMARY.
+    actorRole: isOperator ? 'AUNTIE' : 'PRIMARY',
     actorUid: uid,
     targetUid: kinfolkId,
     targetCollection: 'families',
@@ -69,6 +80,10 @@ export async function saveTribeProfileHandler(req: CallableRequest<unknown>): Pr
 }
 
 export const saveTribeProfile = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  // AUNTIE_OPERATOR_UIDS is required because resolveKinfolkAccess -> isStaff
+  // reads it. Binding it is not optional: without it the allowlist arm
+  // silently evaluates false and an operator not yet holding the admin claim
+  // gets permission-denied with no indication why.
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'] },
   wrapCallable('saveTribeProfile', saveTribeProfileHandler),
 );

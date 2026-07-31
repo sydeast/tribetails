@@ -123,10 +123,48 @@ describe('saveHomeAccess permission gate (home_access)', () => {
 
   it('ALLOWS an operator (bypass, no member doc)', async () => {
     process.env.AUNTIE_OPERATOR_UIDS = 'op-uid';
-    const ctx = buildDbMock({ docs: { 'clients/op-uid': { kinfolkIds: ['3'] } } });
+    // The operator's OWN kinfolkIds must NOT include the target: this is what
+    // makes it a genuine cross-tenant bypass rather than the operator simply
+    // being a member of the same household by coincidence. Before the fix
+    // this fixture had 'clients/op-uid': { kinfolkIds: ['3'] }, which passed
+    // for the wrong reason — the outer clients/{uid}.kinfolkIds check never
+    // saw an operator at all, it saw a caller whose own kinfolkIds happened
+    // to include '3'.
+    const ctx = buildDbMock({
+      docs: {
+        'clients/op-uid': { kinfolkIds: [] },
+        'kinfolk/3': { firstName: 'Doe' },
+      },
+    });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { saveHomeAccessHandler } = await import('../src/portal/saveHomeAccess');
     await expect(saveHomeAccessHandler({ data: homeData, auth: { uid: 'op-uid' } } as any)).resolves.toEqual({ ok: true });
+    expect(ctx.writes.find((w) => w.path === HOME_ACCESS_PATH)).toBeDefined();
+  });
+
+  it('ALLOWS an operator with the admin claim (no allowlist) on a household that is not their own', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/op-uid': { kinfolkIds: [] },
+        'kinfolk/3': { firstName: 'Doe' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveHomeAccessHandler } = await import('../src/portal/saveHomeAccess');
+    await expect(
+      saveHomeAccessHandler({ data: homeData, auth: { uid: 'op-uid', token: { admin: true } } } as any),
+    ).resolves.toEqual({ ok: true });
+    expect(ctx.writes.find((w) => w.path === HOME_ACCESS_PATH)).toBeDefined();
+  });
+
+  it('DENIES a stranger (not staff, kinfolkIds does not include the target)', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/stranger': { kinfolkIds: ['other-fam'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveHomeAccessHandler } = await import('../src/portal/saveHomeAccess');
+    await expect(
+      saveHomeAccessHandler({ data: homeData, auth: { uid: 'stranger' } } as any),
+    ).rejects.toMatchObject({ code: 'permission-denied' });
+    expect(ctx.writes.find((w) => w.path === HOME_ACCESS_PATH)).toBeUndefined();
   });
 });
 

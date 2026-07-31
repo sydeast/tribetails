@@ -7,6 +7,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { requireKinfolkPerm } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 
 /** Only http(s) URLs allowed, defends against javascript:, data:, file: payloads. */
 const SafeUrl = z
@@ -48,12 +49,19 @@ const ArchiveArgs = z.object({
   reason: z.enum(['noLongerWithUs', 'restore']),
 });
 
-async function resolveKinfolkId(uid: string, requested: string | undefined): Promise<string> {
-  const clientSnap = await db().collection('clients').doc(uid).get();
-  const allowed: string[] = (clientSnap.data()?.kinfolkIds ?? []) as string[];
-  if (allowed.length === 0) throw new HttpsError('failed-precondition', 'No tribes linked.');
-  const kinfolkId = requested ?? allowed[0];
-  if (!allowed.includes(kinfolkId)) throw new HttpsError('permission-denied', 'No access.');
+// Was a hard clients/{uid}.kinfolkIds check with no staff path: an operator
+// impersonating a household got permission-denied here, before ever reaching
+// requireKinfolkPerm below (which already knew how to bypass staff). Now
+// delegates to the same resolver the read side uses, so staff (admin claim OR
+// the AUNTIE_OPERATOR_UIDS allowlist) resolve any existing kinfolkId, and a
+// cross-tenant resolution is audit-logged inside the resolver itself.
+async function resolveKinfolkId(
+  uid: string,
+  requested: string | undefined,
+  hasAdminClaim: boolean,
+  functionName: string,
+): Promise<string> {
+  const { kinfolkId } = await resolveKinfolkAccess(uid, requested, hasAdminClaim, functionName);
   return kinfolkId;
 }
 
@@ -62,8 +70,9 @@ export async function addKinHandler(req: CallableRequest<unknown>): Promise<{ ki
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = AddArgs.parse(req.data);
-  const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId);
-  await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', req.auth?.token?.admin === true, 'addKin');
+  const hasAdminClaim = req.auth?.token?.admin === true;
+  const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId, hasAdminClaim, 'addKin');
+  await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', hasAdminClaim, 'addKin');
 
   const ref = await db().collection(`families/${kinfolkId}/kin`).add({
     ...args.kin,
@@ -81,8 +90,9 @@ export async function updateKinHandler(req: CallableRequest<unknown>): Promise<{
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = UpdateArgs.parse(req.data);
-  const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId);
-  await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', req.auth?.token?.admin === true, 'updateKin');
+  const hasAdminClaim = req.auth?.token?.admin === true;
+  const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId, hasAdminClaim, 'updateKin');
+  await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', hasAdminClaim, 'updateKin');
 
   await db().doc(`families/${kinfolkId}/kin/${args.kinId}`).set(
     {
@@ -101,8 +111,9 @@ export async function archiveKinHandler(req: CallableRequest<unknown>): Promise<
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = ArchiveArgs.parse(req.data);
-  const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId);
-  await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', req.auth?.token?.admin === true, 'archiveKin');
+  const hasAdminClaim = req.auth?.token?.admin === true;
+  const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId, hasAdminClaim, 'archiveKin');
+  await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', hasAdminClaim, 'archiveKin');
 
   const status = args.reason === 'restore' ? 'active' : 'noLongerWithUs';
   await db().doc(`families/${kinfolkId}/kin/${args.kinId}`).set(
