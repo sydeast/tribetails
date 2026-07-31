@@ -238,10 +238,44 @@ describe('Gallery screen, filters', () => {
     expect(screen.queryByText('July shot')).toBeNull();
   });
 
-  it('does not render a filter row for an axis with no distinct values', () => {
+  it('does not render a filter row for an axis with no distinct values (Type, when every row omits it)', () => {
+    mediaAsync = { status: 'ready', data: [media({ kinfolkId: 'kf1', fileType: '' })] };
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
+    render(<Gallery />);
+    expect(screen.queryByText('Type')).toBeNull();
+  });
+
+  it('shows a "No household" chip (never hides the Household axis) when every row is unattached', () => {
     mediaAsync = { status: 'ready', data: [media({ kinfolkId: '' })] };
     render(<Gallery />);
-    expect(screen.queryByText('Household')).toBeNull();
+    expect(screen.getByText('Household')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'No household' })).toBeInTheDocument();
+  });
+
+  it('the "No household" chip does not appear when every row already has a household', () => {
+    mediaAsync = { status: 'ready', data: [media({ kinfolkId: 'kf1' })] };
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
+    render(<Gallery />);
+    expect(screen.queryByRole('button', { name: 'No household' })).toBeNull();
+  });
+
+  it('filters the grid to unattached media only when the "No household" chip is clicked, and toggles back to All', async () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [
+        media({ _id: 'a', description: 'Company party photo', kinfolkId: '' }),
+        media({ _id: 'b', description: 'Household photo', kinfolkId: 'kf1' }),
+      ],
+    };
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
+    render(<Gallery />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'No household' }));
+    expect(screen.getByText('Company party photo')).toBeInTheDocument();
+    expect(screen.queryByText('Household photo')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'No household' }));
+    expect(screen.getByText('Household photo')).toBeInTheDocument();
   });
 
   it('shows the visible-of-total count, updated as filters narrow the grid', async () => {

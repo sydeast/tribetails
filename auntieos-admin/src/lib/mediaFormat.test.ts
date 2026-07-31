@@ -10,6 +10,8 @@ import {
   galleryMonths,
   galleryKinfolkIds,
   galleryFileTypes,
+  galleryHasUnattachedMedia,
+  UNATTACHED_KINFOLK_ID,
   GALLERY_FILTER_DEFAULT,
   type GalleryFilter,
   type GalleryRow,
@@ -220,5 +222,25 @@ describe('galleryFileTypes', () => {
   it('returns distinct, non-blank fileTypes, alphabetical', () => {
     const rows = [row({ fileType: 'VIDEO' }), row({ fileType: 'IMAGE' }), row({ fileType: 'VIDEO' })];
     expect(galleryFileTypes(rows)).toEqual(['IMAGE', 'VIDEO']);
+  });
+});
+
+describe('galleryHasUnattachedMedia (Company / no household facet)', () => {
+  it('is true when at least one row has no resolvable kinfolkId', () => {
+    expect(galleryHasUnattachedMedia([row({ kinfolkId: 'a' }), row({ kinfolkId: '' })])).toBe(true);
+  });
+
+  it('is false when every row already has a household', () => {
+    expect(galleryHasUnattachedMedia([row({ kinfolkId: 'a' }), row({ kinfolkId: 'b' })])).toBe(false);
+  });
+
+  it('is false for no rows: never a fabricated facet', () => {
+    expect(galleryHasUnattachedMedia([])).toBe(false);
+  });
+
+  it('UNATTACHED_KINFOLK_ID filters to exactly the unattached rows via filterGalleryMedia', () => {
+    const rows = [row({ kinfolkId: 'a' }), row({ kinfolkId: '' })];
+    const filter: GalleryFilter = { kinfolkId: UNATTACHED_KINFOLK_ID, fileType: null, monthPrefix: null };
+    expect(filterGalleryMedia(rows, filter)).toEqual([row({ kinfolkId: '' })]);
   });
 });

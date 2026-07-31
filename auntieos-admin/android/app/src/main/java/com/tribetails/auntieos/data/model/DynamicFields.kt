@@ -184,6 +184,16 @@ enum class MediaEntityType {
     }
 }
 
+/**
+ * The fixed entityId for BUSINESS-targeted media: there is no per-business
+ * roster to pick from (exactly one operator business), so this is a constant,
+ * not a picker. Matches web's `BUSINESS_ENTITY_ID` (`mediaUpload.ts`) and the
+ * same literal already hardcoded at `AdminSettingsViewModel.kt`'s logo upload.
+ * Used by the Gallery upload picker's "Company (no household)" target
+ * (operator ruling 2026-07-31: Kinfolk do not "own" media).
+ */
+const val BUSINESS_ENTITY_ID = "business_settings"
+
 @Keep
 data class MediaMetadata(
     var width: Int? = null,

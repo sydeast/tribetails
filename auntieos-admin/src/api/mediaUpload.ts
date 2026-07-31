@@ -244,16 +244,27 @@ export interface WriteMediaFileInput {
  * `lib/mediaFormat.ts#mediaCaption` calls `.trim()` on `description`
  * unconditionally, so a doc missing either field would throw the moment the
  * Gallery grid tried to render it, not degrade gracefully.
+ *
+ * KINFOLKID IS OMITTED, NEVER BLANK, FOR A NON-KINFOLK TARGET. Kinfolk do not
+ * "own" media (operator ruling 2026-07-31): KIN/BUSINESS uploads (company
+ * media, pet media, anything unrelated to a household) leave `kinfolkId` off
+ * the document entirely, the same conditional-field pattern width/height
+ * already use below. Stamping `''` instead (the previous behavior) is the
+ * exact Firestore trap HANDOFF_2026-07-25 documents for `invoiceId`: equality
+ * on `''` silently SKIPS documents that never had the field at all, so a doc
+ * explicitly written blank and one that genuinely predates this feature would
+ * read as two different things to any future `where('kinfolkId', '==', ...)`.
+ * Absent is the one representation every reader (this app's own `str()`
+ * coercion, a migration script, a support query) already has to handle
+ * anyway, so it is also the only one that never lies.
  */
 export async function writeMediaFileDoc(input: WriteMediaFileInput): Promise<string> {
   const isVideo = input.cloud.resourceType.trim().toLowerCase() === 'video';
-  const kinfolkId = input.entityType === 'KINFOLK' ? input.entityId : '';
   const uploadedBy = auth.currentUser?.uid?.trim() || 'auntie';
 
   const fields: Record<string, unknown> = {
     entityId: input.entityId,
     entityType: input.entityType,
-    kinfolkId,
     fileType: isVideo ? 'VIDEO' : 'IMAGE',
     storageUrl: input.cloud.secureUrl,
     thumbnailUrl: cloudinaryThumbnailUrl(input.cloudName, input.cloud.publicId, isVideo),
@@ -264,6 +275,7 @@ export async function writeMediaFileDoc(input: WriteMediaFileInput): Promise<str
     isProfilePhoto: false,
     durationSeconds: input.cloud.durationSeconds ?? 0,
   };
+  if (input.entityType === 'KINFOLK') fields.kinfolkId = input.entityId;
   if (typeof input.cloud.width === 'number') fields.width = input.cloud.width;
   if (typeof input.cloud.height === 'number') fields.height = input.cloud.height;
 

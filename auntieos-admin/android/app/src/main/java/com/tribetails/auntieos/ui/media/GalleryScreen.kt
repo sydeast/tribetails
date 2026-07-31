@@ -47,12 +47,16 @@ import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.FileText
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Music
+import com.tribetails.auntieos.data.model.BUSINESS_ENTITY_ID
 import com.tribetails.auntieos.data.model.Kin
+import com.tribetails.auntieos.data.model.Kinfolk
+import com.tribetails.auntieos.data.model.MediaEntityType
 import com.tribetails.auntieos.data.model.MediaFile
 import com.tribetails.auntieos.data.model.MediaType
 import com.tribetails.auntieos.domain.GalleryFilter
 import com.tribetails.auntieos.domain.filterGalleryMedia
 import com.tribetails.auntieos.domain.galleryFileTypes
+import com.tribetails.auntieos.domain.galleryHasUnattachedMedia
 import com.tribetails.auntieos.domain.galleryKinfolkIds
 import com.tribetails.auntieos.domain.galleryMonths
 import com.tribetails.auntieos.domain.taggableKin
@@ -78,11 +82,13 @@ fun GalleryScreen(
     var selected by remember { mutableStateOf<MediaFile?>(null) }
     // A1 (A8): tapping a tile opens a full-size viewer (was: jumped straight to tagging).
     var pendingView by remember { mutableStateOf<MediaFile?>(null) }
-    // #3 (2026-06-08): upload from the gallery. Pick a household, then the system
-    // media picker opens (MediaPickerDialog); the upload stamps that household's
-    // kinfolkId so kin-tagging scopes correctly.
-    var showHouseholdPicker by remember { mutableStateOf(false) }
-    var uploadHousehold by remember { mutableStateOf<com.tribetails.auntieos.data.model.Kinfolk?>(null) }
+    // #3 (2026-06-08): upload from the gallery. Pick a household or Company, then
+    // the system media picker opens (MediaPickerDialog); a household stamps its
+    // kinfolkId so kin-tagging scopes correctly, Company leaves kinfolkId absent
+    // (operator ruling 2026-07-31: Kinfolk do not "own" media -- there is company
+    // media and other uploads unrelated to any kinfolk/kin).
+    var showTargetPicker by remember { mutableStateOf(false) }
+    var uploadTarget by remember { mutableStateOf<UploadTarget?>(null) }
 
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.load() }
 
@@ -90,6 +96,7 @@ fun GalleryScreen(
     val months = galleryMonths(state.media)
     val types = galleryFileTypes(state.media)
     val kinfolkIds = galleryKinfolkIds(state.media)
+    val hasUnattachedMedia = galleryHasUnattachedMedia(state.media)
     val kinfolkLabel = state.kinfolk.associate { it.id to it.lastName.ifBlank { it.id.take(6) } }
     val kinById = state.kin.associateBy { it.id }
 
@@ -103,17 +110,16 @@ fun GalleryScreen(
             Spacer(Modifier.height(12.dp))
             PrimaryButton(
                 label = "Upload media",
-                onClick = { showHouseholdPicker = true },
-                enabled = state.kinfolk.isNotEmpty(),
+                onClick = { showTargetPicker = true },
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(12.dp))
 
-            if (kinfolkIds.isNotEmpty()) {
+            if (kinfolkIds.isNotEmpty() || hasUnattachedMedia) {
                 FilterRow(
                     label = "Household",
-                    options = listOf(null) + kinfolkIds,
-                    labelOf = { it?.let { id -> kinfolkLabel[id] ?: "Household" } ?: "All" },
+                    options = listOf<String?>(null) + (if (hasUnattachedMedia) listOf("") else emptyList()) + kinfolkIds,
+                    labelOf = { it?.let { id -> if (id.isEmpty()) "No household" else kinfolkLabel[id] ?: "Household" } ?: "All" },
                     selected = state.filter.kinfolkId,
                     onSelect = { viewModel.setFilter(state.filter.copy(kinfolkId = it)) },
                 )
@@ -184,16 +190,30 @@ fun GalleryScreen(
         )
     }
 
-    // #3: choose which household this upload belongs to.
-    if (showHouseholdPicker) {
+    // #3 / operator ruling 2026-07-31: choose which household this upload belongs
+    // to, or Company for media unrelated to any household. Company is always
+    // listed first and is always selectable, even with zero households on file
+    // (kinfolk do not "own" media, so Upload is never blocked on the roster).
+    if (showTargetPicker) {
         androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showHouseholdPicker = false },
+            onDismissRequest = { showTargetPicker = false },
             confirmButton = {},
-            title = { Text("Upload to which household?") },
+            title = { Text("Where should this upload go?") },
             text = {
                 androidx.compose.foundation.lazy.LazyColumn(
                     modifier = Modifier.heightIn(max = 360.dp),
                 ) {
+                    item {
+                        Text(
+                            text = "Company (no household)",
+                            style = AuntieTheme.typography.bodyLarge,
+                            color = AuntieTheme.colors.textPrimary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showTargetPicker = false; uploadTarget = UploadTarget.Company }
+                                .padding(vertical = 12.dp),
+                        )
+                    }
                     items(state.kinfolk.size) { i ->
                         val kf = state.kinfolk[i]
                         Text(
@@ -202,7 +222,7 @@ fun GalleryScreen(
                             color = AuntieTheme.colors.textPrimary,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { showHouseholdPicker = false; uploadHousehold = kf }
+                                .clickable { showTargetPicker = false; uploadTarget = UploadTarget.Household(kf) }
                                 .padding(vertical = 12.dp),
                         )
                     }
@@ -211,17 +231,42 @@ fun GalleryScreen(
         )
     }
 
-    // #3: once a household is chosen, the system media picker + upload runs. The
-    // upload stamps kinfolkId (entityType KINFOLK -> entityId is the kinfolkId).
-    uploadHousehold?.let { kf ->
+    // #3: once a target is chosen, the system media picker + upload runs. A
+    // household stamps kinfolkId (entityId is the kinfolkId); Company (BUSINESS)
+    // leaves it absent (operator ruling 2026-07-31).
+    uploadTarget?.let { target ->
         MediaPickerDialog(
-            entityId = kf.id,
-            entityType = com.tribetails.auntieos.data.model.MediaEntityType.KINFOLK,
-            entityName = kf.displayName,
-            onDismiss = { uploadHousehold = null },
-            onMediaUploaded = { uploadHousehold = null; viewModel.load() },
+            entityId = target.entityId,
+            entityType = target.entityType,
+            entityName = target.entityName,
+            onDismiss = { uploadTarget = null },
+            onMediaUploaded = { uploadTarget = null; viewModel.load() },
             viewModel = uploadViewModel,
         )
+    }
+}
+
+/**
+ * The Gallery upload dialog's target: a household (KINFOLK, kinfolkId stamped
+ * from its id), or Company (BUSINESS, the fixed [BUSINESS_ENTITY_ID], kinfolkId
+ * left absent by `saveMediaFile`). Operator ruling 2026-07-31: Kinfolk do not
+ * "own" media, so Company is always offered, even with zero households on file.
+ */
+private sealed class UploadTarget {
+    abstract val entityId: String
+    abstract val entityType: MediaEntityType
+    abstract val entityName: String
+
+    data class Household(val kinfolk: Kinfolk) : UploadTarget() {
+        override val entityId get() = kinfolk.id
+        override val entityType get() = MediaEntityType.KINFOLK
+        override val entityName get() = kinfolk.displayName
+    }
+
+    object Company : UploadTarget() {
+        override val entityId = BUSINESS_ENTITY_ID
+        override val entityType = MediaEntityType.BUSINESS
+        override val entityName = "Company"
     }
 }
 

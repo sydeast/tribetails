@@ -200,6 +200,27 @@ export function galleryKinfolkIds(all: GalleryRow[]): string[] {
   return [...seen];
 }
 
+/**
+ * The `GalleryFilter.kinfolkId` value for the "Company / no household" facet:
+ * media genuinely unrelated to any kinfolk (operator ruling 2026-07-31).
+ * Deliberately NOT a new sentinel: `''` is already the value `str()` reduces
+ * both a missing `kinfolkId` field and an explicitly blank one to (see
+ * `api/gallery.ts`'s `MediaFile` comment), so filtering on it is exact, not an
+ * approximation. Distinguishable from "All" (`null`) by TYPE alone.
+ */
+export const UNATTACHED_KINFOLK_ID = '';
+
+/**
+ * True when at least one row has no resolvable kinfolkId. Gates the "Company /
+ * no household" chip in `Gallery.tsx`: it should appear exactly when it would
+ * match something, the same "only offer a facet with real rows behind it"
+ * discipline `galleryKinfolkIds`/`galleryFileTypes` already apply to their own
+ * chips.
+ */
+export function galleryHasUnattachedMedia(all: GalleryRow[]): boolean {
+  return all.some((m) => str(m.kinfolkId).trim() === '');
+}
+
 /** Distinct fileTypes present, alphabetical. Ports `galleryFileTypes`. */
 export function galleryFileTypes(all: GalleryRow[]): string[] {
   const set = new Set<string>();

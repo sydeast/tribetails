@@ -35,6 +35,16 @@ fun galleryMonths(all: List<MediaFile>): List<String> =
 fun galleryKinfolkIds(all: List<MediaFile>): List<String> =
     all.map { it.kinfolkId }.filter { it.isNotBlank() }.distinct()
 
+/**
+ * True when at least one row has no resolvable kinfolkId: media genuinely
+ * unrelated to any household (operator ruling 2026-07-31: Kinfolk do not
+ * "own" media). Gates the "No household" chip in GalleryScreen the same way
+ * [galleryKinfolkIds]/[galleryFileTypes] already gate their own chip rows:
+ * only offer a facet with real rows behind it. Mirrors web's
+ * `galleryHasUnattachedMedia` (mediaFormat.ts).
+ */
+fun galleryHasUnattachedMedia(all: List<MediaFile>): Boolean = all.any { it.kinfolkId.isBlank() }
+
 /** Distinct fileTypes present. */
 fun galleryFileTypes(all: List<MediaFile>): List<MediaType> =
     all.map { it.fileType }.distinct().sortedBy { it.name }
