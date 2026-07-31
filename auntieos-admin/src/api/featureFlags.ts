@@ -1,4 +1,5 @@
 import { call } from '../lib/fns';
+import { fromOverrides } from '../lib/featureFlagsCatalog';
 
 /** A flag map: dotted `auntieos.*` key -> enabled. */
 export type FeatureFlags = Record<string, boolean>;
@@ -11,7 +12,13 @@ export type FeatureFlags = Record<string, boolean>;
  */
 
 /**
- * getFeatureFlags -> { flags }. The merged global + per-user flag map.
+ * getFeatureFlags -> { flags }, resolved through the shared catalog before it
+ * reaches the caller: every known key comes back populated (an omitted key
+ * falls back to its compile-time default, never `undefined`), and an
+ * ALWAYS_ON key ignores a remote `false` rather than trusting it (the same
+ * immunity the Kotlin registries have carried since the 2026-06-08 prod
+ * incident, a stale `broadcast: false` doc that dark-gated a live feature).
+ * Unknown remote keys are dropped rather than surfaced.
  *
  * Backend asymmetry, inherited from the wasm admin (not a port bug): the READ
  * merges global `business_settings/feature_flags` with the caller's own
@@ -21,7 +28,7 @@ export type FeatureFlags = Record<string, boolean>;
  */
 export async function getFeatureFlags(): Promise<FeatureFlags> {
   const res = await call<Record<string, never>, { flags: FeatureFlags }>('getFeatureFlags', {});
-  return res.flags ?? {};
+  return fromOverrides(res.flags ?? {});
 }
 
 /**
