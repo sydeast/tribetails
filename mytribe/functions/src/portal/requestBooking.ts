@@ -11,6 +11,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { approveBookingSeriesCore } from '../admin/approveBookingSeriesCore';
 import { resolveDefaultAssignee, type Assignee } from '../lib/defaultAssignee';
 import { resolveKinNames } from '../lib/resolveKinNames';
+import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 
 /**
  * #9 (2026-06-08): Auto-confirm repeat kinfolk. When the operator turns on
@@ -379,6 +380,8 @@ export async function requestBookingHandler(
         throw new HttpsError('invalid-argument', 'endTime must be after startTime.');
       }
     });
+    // Kinfolk have no override: a busy-import conflict always refuses the request.
+    await guardBookingBusyConflict({ firestore, visits: args.visits, actorUid: uid, actorRole: 'PRIMARY' });
 
     const batchId = `req_${now}_${Math.random().toString(36).slice(2, 8)}`;
     const pattern = args.pattern ?? 'individual';
@@ -448,6 +451,13 @@ export async function requestBookingHandler(
   if (args.startTimeMs < Date.now() - 60_000) {
     throw new HttpsError('invalid-argument', 'startTime must be in the future.');
   }
+  // Kinfolk have no override: a busy-import conflict always refuses the request.
+  await guardBookingBusyConflict({
+    firestore,
+    visits: [{ startTimeMs: args.startTimeMs, endTimeMs: args.endTimeMs }],
+    actorUid: uid,
+    actorRole: 'PRIMARY',
+  });
 
   const batchId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   await writeEnvelope({

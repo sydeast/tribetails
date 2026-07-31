@@ -4,6 +4,7 @@ import { logEvent } from '../lib/logger';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { resolveKinNames } from '../lib/resolveKinNames';
+import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 
 /**
  * Shared APPROVE core for a booking series (parent envelope
@@ -17,6 +18,10 @@ import { resolveKinNames } from '../lib/resolveKinNames';
  * auntie actually runs (deterministic id `vis_{visitId}` so a double-approve
  * collapses to ONE doc), rolls the envelope status + counts, and writes the
  * audit entry. Each visit is isolated so one bad visit cannot abort the series.
+ *
+ * Each visit is also checked against Google Calendar busy imports
+ * (`lib/bookingBusyConflict.ts`) immediately before its session is created,
+ * same isolation: a conflict fails that one visit rather than the batch.
  */
 
 /** kinCares stores start/end as Firestore Timestamps; kin_care_sessions stores
@@ -102,6 +107,17 @@ export async function approveBookingSeriesCore(opts: {
             `kinCares/${id} has no readable startTime (${typeof data.startTime}); refusing to create an unbillable session`,
           );
         }
+        // Re-checked here, not just at request time: this is the moment a
+        // REAL kin_care_sessions doc is created, possibly long after the
+        // request was submitted, and a new Google busy import can have landed
+        // in between. A conflict throws into the catch below like any other
+        // unusable visit (isolated per-visit; no override surface here).
+        await guardBookingBusyConflict({
+          firestore: db(),
+          visits: [{ startTimeMs: Date.parse(startIso), endTimeMs: endIso ? Date.parse(endIso) : null }],
+          actorUid,
+          actorRole,
+        });
         const kinIds = Array.isArray(data.kinIds)
           ? (data.kinIds as unknown[]).filter((k): k is string => typeof k === 'string')
           : [];

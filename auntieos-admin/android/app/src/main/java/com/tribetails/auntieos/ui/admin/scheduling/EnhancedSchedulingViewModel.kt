@@ -1350,7 +1350,10 @@ class EnhancedSchedulingViewModel(
                     bookingRepository.updateBooking(booking)
                         .map { booking.id }
                 } else {
-                    bookingRepository.createBooking(booking)
+                    // The operator already chose "Force Create" past a shown
+                    // conflict; that IS the deliberate override, so the busy-import
+                    // guard the repository would otherwise run is skipped.
+                    bookingRepository.createBooking(booking, overrideBusyConflict = true)
                 }
 
                 if (result.isSuccess) {

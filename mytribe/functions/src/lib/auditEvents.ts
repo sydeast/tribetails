@@ -137,6 +137,13 @@ export const AUDIT_EVENTS = {
   BOOKING_BATCH_ACTION: 'BOOKING_BATCH_ACTION',
   // B6: admin manually blocks a window so kinfolk can't book it (createBlockedTimeSlot).
   CREATE_BLOCKED_TIME_SLOT: 'CREATE_BLOCKED_TIME_SLOT',
+  // Booking-write busy-conflict guard (`lib/bookingBusyConflict.ts`): an admin
+  // explicitly booked over a Google Calendar busy import via
+  // `overrideBusyConflict: true`. Never emitted for a kinfolk-initiated
+  // request, which has no override. Logged because it is the one moment the
+  // operator knowingly double-books their own calendar, which is exactly the
+  // state a later "why is this visit here" question needs to find.
+  BOOKING_BUSY_CONFLICT_OVERRIDDEN: 'BOOKING_BUSY_CONFLICT_OVERRIDDEN',
 
   // O-8 AI copy gen: staff creates a tale-title backfill batch
   // (aiBackfillTaleTitles callable) and the poll cron applies the finished

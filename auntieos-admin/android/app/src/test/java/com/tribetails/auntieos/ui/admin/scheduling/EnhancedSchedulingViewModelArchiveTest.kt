@@ -162,7 +162,11 @@ class EnhancedSchedulingViewModelArchiveTest {
     fun `resolveConflict forceCreate=true with blank booking id still creates`() =
         runTest(testDispatcher) {
             val booking = EnhancedBooking(id = "", kinfolkName = "New")
-            coEvery { bookingRepo.createBooking(any()) } returns Result.success("new-id")
+            // Force Create IS the deliberate busy-conflict override; the call
+            // must carry overrideBusyConflict=true, not the createBooking
+            // default, or the repository's own guard would refuse exactly the
+            // conflict the operator just chose to force past.
+            coEvery { bookingRepo.createBooking(any(), true) } returns Result.success("new-id")
             val vm = buildViewModel()
             advanceUntilIdle()
 
@@ -170,7 +174,7 @@ class EnhancedSchedulingViewModelArchiveTest {
             vm.resolveConflict(forceCreate = true)
             advanceUntilIdle()
 
-            coVerify(exactly = 1) { bookingRepo.createBooking(any()) }
+            coVerify(exactly = 1) { bookingRepo.createBooking(any(), true) }
             coVerify(exactly = 0) { bookingRepo.updateBooking(any()) }
             coVerify {
                 auntieRepo.logActivity(match<ActivityLogEntry> {

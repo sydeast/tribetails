@@ -23,8 +23,20 @@ class BookingRepository(
 
     // === Enhanced Bookings ===
 
-    suspend fun createBooking(booking: EnhancedBooking): Result<String> = runCatching {
+    /**
+     * [overrideBusyConflict] mirrors the server's `overrideBusyConflict` arg
+     * (`createMultiDateBookingRequest.ts`): this repository writes straight to
+     * Firestore with no callable in between, so rules cannot express the
+     * overlap check a server would otherwise run, and [assertNoBookingBusyConflict]
+     * runs here instead. Defaults false; the one caller that sets it true is
+     * [EnhancedSchedulingViewModel.resolveConflict]'s "Force Create", the
+     * existing deliberate override affordance this mirrors.
+     */
+    suspend fun createBooking(booking: EnhancedBooking, overrideBusyConflict: Boolean = false): Result<String> = runCatching {
         AuntieLog.i("Creating enhanced booking for kinfolk: ${booking.kinfolkId}")
+        if (!overrideBusyConflict) {
+            assertNoBookingBusyConflict(firestore, booking.startDateTime, booking.endDateTime)
+        }
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         val bookingWithTimestamp = booking.copy(
             createdAt = now,
