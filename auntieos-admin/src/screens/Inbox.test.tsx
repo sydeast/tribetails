@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type ConversationSummary } from '../api/inbox';
 import { type NotificationEntry } from '../api/notifications';
@@ -34,11 +34,14 @@ vi.mock('../api/inboxThread', async (orig) => ({
   getConversationThread,
 }));
 
-// FIVE bounded listeners come through this hook now: the Notifications digest
-// strip (NOTIFICATIONS_QUERY, the same one the Notifications screen uses) and
-// the four Channels streams added by Task 6.1. The mock therefore dispatches on
+// FOUR bounded listeners come through this hook: the four Channels streams
+// (voicemails, calls_log, sms_messages, emails). The mock dispatches on
 // `spec.path` rather than answering every call the same way: a single
-// mockReturnValue would hand notification documents to the voicemail mapper.
+// mockReturnValue would hand voicemail documents to the call mapper. Note:
+// Notifications were removed from Inbox in the product ruling D1 separation
+// (Inbox = messages, Notifications screen = alerts). Tests still mock
+// notifications for coverage of edge cases, but the component no longer
+// subscribes to NOTIFICATIONS_QUERY.
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
@@ -94,7 +97,8 @@ function thread(over: Partial<ConversationSummary>): ConversationSummary {
   };
 }
 
-/** The five collection paths this screen listens to, keyed for the mock below. */
+/** Collection paths the screen listens to (keyed for the mock). Notifications
+ * included for test setup but no longer subscribed by Inbox per product D1. */
 type StreamPath = 'notifications' | 'voicemails' | 'calls_log' | 'sms_messages' | 'emails';
 
 /**
@@ -326,78 +330,43 @@ describe('Inbox screen', () => {
 });
 
 /**
- * Task 2.2: the archive stacked Notifications above Messages on one Inbox
- * screen, with Channels below them (added by Task 6.1). These pin the section
- * STRUCTURE and the cross-section unread total.
+ * Badge semantics after separation: Inbox counts message threads only.
+ * Notifications are on the Notifications screen per product ruling D1.
  */
-describe('Inbox sections', () => {
-  it('stacks the Notifications digest above Messages', async () => {
-    listConversations.mockResolvedValue([thread({})]);
-    streams({ notifications: ready([notif({})]) });
-    render(<Inbox />);
-    await screen.findByText('The Alvarez Household');
-
-    const titles = [...document.querySelectorAll('.den-panel-title')].map((n) => n.textContent);
-    expect(titles).toEqual(['Notifications', 'Messages', 'Channels']);
-  });
-
-  it('renders the unread notifications the digest is given', async () => {
-    listConversations.mockResolvedValue([]);
-    streams({ notifications: ready([notif({ _id: 'n1', title: 'Invoice overdue' })]) });
-    render(<Inbox />);
-    expect(await screen.findByText('Invoice overdue')).toBeInTheDocument();
-  });
-
-  it('sums the header badge across BOTH sections', async () => {
+describe('Inbox badge semantics', () => {
+  it('badge counts unread message threads only, never notifications', async () => {
     listConversations.mockResolvedValue([
       thread({ kinfolkId: 'k1', unreadForAdmin: true }),
       thread({ kinfolkId: 'k2', unreadForAdmin: true }),
     ]);
     streams({ notifications: ready([notif({ _id: 'n1' }), notif({ _id: 'n2' }), notif({ _id: 'n3' })]) });
     render(<Inbox />);
-    // 3 unread notifications + 2 unread threads.
-    expect(await screen.findByText('5 unread')).toBeInTheDocument();
-  });
-
-  it('counts a resolved section even while the other is still loading, and never fabricates the missing half', async () => {
-    listConversations.mockReturnValue(new Promise(() => {})); // never settles
-    streams({ notifications: ready([notif({ _id: 'n1' }), notif({ _id: 'n2' })]) });
-    render(<Inbox />);
+    // 2 unread threads. The 3 notifications are on the Notifications screen, not here.
     expect(await screen.findByText('2 unread')).toBeInTheDocument();
+    expect(screen.queryByText('5 unread')).toBeNull();
   });
 
-  it('a failed notifications stream does not blank the Messages section', async () => {
-    listConversations.mockResolvedValue([thread({})]);
-    streams({ notifications: { status: 'error', message: 'notifications listener detached' } });
+  it('shows badge when threads load unread, even if notifications still loading', async () => {
+    listConversations.mockResolvedValue([thread({ kinfolkId: 'k1', unreadForAdmin: true })]);
+    streams({ notifications: { status: 'loading' } });
     render(<Inbox />);
-    expect(await screen.findByText('The Alvarez Household')).toBeInTheDocument();
-    expect(screen.getByText(/notifications listener detached/)).toBeInTheDocument();
+    expect(await screen.findByText('1 unread')).toBeInTheDocument();
   });
 
-  it('a failed conversations load does not blank the Notifications section', async () => {
-    listConversations.mockRejectedValue(new Error('permission-denied'));
-    streams({ notifications: ready([notif({ _id: 'n1', title: 'Still here' })]) });
-    render(<Inbox />);
-    expect(await screen.findByText(/listConversations failed: permission-denied/)).toBeInTheDocument();
-    expect(screen.getByText('Still here')).toBeInTheDocument();
-  });
-
-  it('an empty-looking inbox with a failing load reads as a failure, not as "no messages"', async () => {
-    listConversations.mockRejectedValue(new Error('deadline-exceeded'));
-    render(<Inbox />);
-    await screen.findByRole('alert');
-    expect(screen.queryByText(/no messages yet/i)).toBeNull();
-    expect(screen.getByText(/Messages unavailable while the load is failing/i)).toBeInTheDocument();
-  });
-
-  it('bulk mark-read from the digest reaches bulkMarkNotificationsRead', async () => {
-    listConversations.mockResolvedValue([]);
+  it('hides badge when threads load but none are unread, even with unread notifications present', async () => {
+    listConversations.mockResolvedValue([thread({ kinfolkId: 'k1', unreadForAdmin: false })]);
     streams({ notifications: ready([notif({ _id: 'n1' })]) });
     render(<Inbox />);
-    const digest = (await screen.findByText('Notifications')).closest('section') as HTMLElement;
-    await userEvent.click(within(digest).getAllByRole('checkbox')[0] as HTMLElement);
-    await userEvent.click(within(digest).getByRole('button', { name: 'Mark read (1)' }));
-    expect(bulkMarkNotificationsRead).toHaveBeenCalledWith(['n1']);
+    await screen.findByText('The Alvarez Household');
+    expect(screen.queryByText(/\d+ unread/)).toBeNull();
+  });
+
+  it('does NOT render the Notifications section, even when notifications present', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({ notifications: ready([notif({ _id: 'n1', title: 'Invoice overdue' })]) });
+    render(<Inbox />);
+    expect(screen.queryByText('Invoice overdue')).toBeNull();
+    expect(screen.queryByText('Notifications')).toBeNull();
   });
 });
 /**
@@ -543,15 +512,16 @@ describe('Inbox channels', () => {
     render(<Inbox />);
     expect(await screen.findByText('2 waiting on a reply')).toBeInTheDocument();
   });
-  it('leaves the header unread badge counting notifications and threads only', async () => {
+  it('badge counts threads only, excludes channels', async () => {
     listConversations.mockResolvedValue([thread({ kinfolkId: 'k1', unreadForAdmin: true })]);
     streams({
       notifications: ready([notif({ _id: 'n1' })]),
       voicemails: ready([voicemail({ _id: 'a' }), voicemail({ _id: 'b' })]),
     });
     render(<Inbox />);
-    // 1 notification + 1 thread. The two unanswered voicemails are NOT added.
+    // 1 thread. Notifications and voicemails are NOT included in the badge.
     expect(await screen.findByText('1 unread')).toBeInTheDocument();
+    expect(screen.queryByText('2 unread')).toBeNull();
     expect(screen.queryByText('3 unread')).toBeNull();
   });
   it('opens the actions sheet for the row that was clicked, and closes it again', async () => {
