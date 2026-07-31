@@ -2,7 +2,9 @@ package com.tribetails.auntieos.ui.directory
 
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kinfolk
+import com.tribetails.auntieos.data.model.SubmitVetClinicResult
 import com.tribetails.auntieos.data.model.VetClinic
+import com.tribetails.auntieos.data.model.VetClinicsSnapshot
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
@@ -20,6 +22,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -72,8 +76,10 @@ class DirectoryViewModelVetPickerTest {
         coEvery { repository.getKinfolk() } returns Result.success(listOf(legacyHousehold))
         coEvery { repository.getAllKin() } returns Result.success(emptyList<Kin>())
         coEvery { kinCareRepository.getKinCareSessions() } returns Result.success(emptyList())
-        coEvery { repository.observeVetClinics() } returns flowOf(listOf(riverside, petEr))
-        coEvery { repository.submitVetClinic(any()) } returns Result.success("new-clinic")
+        coEvery { repository.observeVetClinicsOrFail() } returns
+            flowOf(VetClinicsSnapshot(clinics = listOf(riverside, petEr)))
+        coEvery { repository.submitVetClinicDetailed(any()) } returns
+            Result.success(SubmitVetClinicResult(clinicId = "new-clinic", created = true, pending = false))
         viewModel = DirectoryViewModel(repository, invoiceRepository, kinCareRepository)
     }
 
@@ -142,7 +148,7 @@ class DirectoryViewModelVetPickerTest {
         advanceUntilIdle()
 
         coVerify {
-            repository.submitVetClinic(
+            repository.submitVetClinicDetailed(
                 match {
                     it.name == "Barton Springs Animal Clinic" &&
                         it.phone == "(512) 555-0400" &&
@@ -155,6 +161,8 @@ class DirectoryViewModelVetPickerTest {
         assertEquals("new-clinic", s.vetClinicId)
         assertEquals("Barton Springs Animal Clinic", s.vetClinicName)
         assertEquals("(512) 555-0400", s.vetClinicPhone)
+        // A genuine create (not a dedupe hit): nothing to disclose.
+        assertNull(viewModel.vetClinicDedupeNote.value)
     }
 
     @Test
@@ -167,11 +175,12 @@ class DirectoryViewModelVetPickerTest {
             )
             advanceUntilIdle()
 
-            coVerify { repository.submitVetClinic(match { it.isEmergency }) }
+            coVerify { repository.submitVetClinicDetailed(match { it.isEmergency }) }
             val s = viewModel.editKinfolkState.value
             assertEquals("new-clinic", s.emergencyVetClinicId)
             assertEquals("Night Owl Pet ER", s.emergencyVetClinicName)
             assertEquals("", s.vetClinicId)
+            assertNull(viewModel.emergencyVetClinicDedupeNote.value)
         }
 
     /**
@@ -182,7 +191,8 @@ class DirectoryViewModelVetPickerTest {
      */
     @Test
     fun `a dedupe hit selects the CATALOG copy, not the hastily retyped one`() = runTest(testDispatcher) {
-        coEvery { repository.submitVetClinic(any()) } returns Result.success("riverside")
+        coEvery { repository.submitVetClinicDetailed(any()) } returns
+            Result.success(SubmitVetClinicResult(clinicId = "riverside", created = false, pending = false))
         // vetClinicsFlow is WhileSubscribed, so it only holds a value while a
         // collector is attached. The edit screen is that collector in production
         // (it renders the picker from this very flow), and the create control
@@ -201,10 +211,104 @@ class DirectoryViewModelVetPickerTest {
         assertEquals("1 Mill St", s.vetClinicAddress)
     }
 
+    /**
+     * A dedupe hit is not an error and must not be silent: the operator asked
+     * to CREATE a clinic and got an EXISTING one selected instead. Mirrors web
+     * VetClinicPicker's `dedupedName` note, which exists for the same reason
+     * (see its own comment: "the difference between that reading as 'it
+     * worked' and as 'nothing happened'").
+     */
+    @Test
+    fun `a dedupe hit discloses which clinic the household was linked to instead`() =
+        runTest(testDispatcher) {
+            coEvery { repository.submitVetClinicDetailed(any()) } returns
+                Result.success(SubmitVetClinicResult(clinicId = "riverside", created = false, pending = false))
+            backgroundScope.launch { viewModel.vetClinicsFlow.collect {} }
+            advanceUntilIdle()
+
+            viewModel.createVetClinicFromSearch(name = "riverside animal hospital", phone = "")
+            advanceUntilIdle()
+
+            assertEquals(
+                "Riverside Animal Hospital was already in the catalog, so this household is linked to " +
+                    "that record instead of a duplicate.",
+                viewModel.vetClinicDedupeNote.value,
+            )
+            // The OTHER picker is untouched by a day-vet dedupe.
+            assertNull(viewModel.emergencyVetClinicDedupeNote.value)
+        }
+
+    @Test
+    fun `an emergency dedupe hit discloses on the emergency note, not the day one`() =
+        runTest(testDispatcher) {
+            coEvery { repository.submitVetClinicDetailed(any()) } returns
+                Result.success(SubmitVetClinicResult(clinicId = "er1", created = false, pending = false))
+            backgroundScope.launch { viewModel.vetClinicsFlow.collect {} }
+            advanceUntilIdle()
+
+            viewModel.createVetClinicFromSearch(name = "austin pet er", isEmergency = true, forEmergencySlot = true)
+            advanceUntilIdle()
+
+            assertEquals(
+                "Austin Pet ER was already in the catalog, so this household is linked to that record " +
+                    "instead of a duplicate.",
+                viewModel.emergencyVetClinicDedupeNote.value,
+            )
+            assertNull(viewModel.vetClinicDedupeNote.value)
+        }
+
+    @Test
+    fun `a genuine create clears any stale dedupe note from an earlier attempt`() =
+        runTest(testDispatcher) {
+            coEvery { repository.submitVetClinicDetailed(any()) } returns
+                Result.success(SubmitVetClinicResult(clinicId = "riverside", created = false, pending = false))
+            backgroundScope.launch { viewModel.vetClinicsFlow.collect {} }
+            advanceUntilIdle()
+            viewModel.createVetClinicFromSearch(name = "riverside animal hospital")
+            advanceUntilIdle()
+            assertTrue(viewModel.vetClinicDedupeNote.value != null)
+
+            coEvery { repository.submitVetClinicDetailed(any()) } returns
+                Result.success(SubmitVetClinicResult(clinicId = "new-clinic", created = true, pending = false))
+            viewModel.createVetClinicFromSearch(name = "Barton Springs Animal Clinic")
+            advanceUntilIdle()
+
+            assertNull(viewModel.vetClinicDedupeNote.value)
+        }
+
+    @Test
+    fun `selecting a clinic directly clears a stale dedupe note`() = runTest(testDispatcher) {
+        coEvery { repository.submitVetClinicDetailed(any()) } returns
+            Result.success(SubmitVetClinicResult(clinicId = "riverside", created = false, pending = false))
+        backgroundScope.launch { viewModel.vetClinicsFlow.collect {} }
+        advanceUntilIdle()
+        viewModel.createVetClinicFromSearch(name = "riverside animal hospital")
+        advanceUntilIdle()
+        assertTrue(viewModel.vetClinicDedupeNote.value != null)
+
+        viewModel.selectVetClinic(petEr)
+        assertNull(viewModel.vetClinicDedupeNote.value)
+    }
+
+    @Test
+    fun `clearing the vet clinic clears a stale dedupe note`() = runTest(testDispatcher) {
+        coEvery { repository.submitVetClinicDetailed(any()) } returns
+            Result.success(SubmitVetClinicResult(clinicId = "riverside", created = false, pending = false))
+        backgroundScope.launch { viewModel.vetClinicsFlow.collect {} }
+        advanceUntilIdle()
+        viewModel.createVetClinicFromSearch(name = "riverside animal hospital")
+        advanceUntilIdle()
+        assertTrue(viewModel.vetClinicDedupeNote.value != null)
+
+        viewModel.clearVetClinic()
+        assertNull(viewModel.vetClinicDedupeNote.value)
+    }
+
     @Test
     fun `a failed create selects nothing rather than a clinic that was never written`() =
         runTest(testDispatcher) {
-            coEvery { repository.submitVetClinic(any()) } returns Result.failure(Exception("permission-denied"))
+            coEvery { repository.submitVetClinicDetailed(any()) } returns
+                Result.failure(Exception("permission-denied"))
             viewModel.createVetClinicFromSearch(name = "Barton Springs")
             advanceUntilIdle()
 
@@ -217,7 +321,57 @@ class DirectoryViewModelVetPickerTest {
     fun `a blank name never reaches the callable`() = runTest(testDispatcher) {
         viewModel.createVetClinicFromSearch(name = "   ")
         advanceUntilIdle()
-        coVerify(exactly = 0) { repository.submitVetClinic(any()) }
+        coVerify(exactly = 0) { repository.submitVetClinicDetailed(any()) }
+    }
+
+    // ── catalog load failure (AuntieRepository.observeVetClinicsOrFail) ──────
+
+    /**
+     * The regression this pins: observeVetClinics (still used by
+     * VetClinicsViewModel) collapses a load error into emptyList(), which is
+     * indistinguishable from a genuinely empty catalog. The Kinfolk edit
+     * screen's picker has a household vet field that read could silently look
+     * unset because of; observeVetClinicsOrFail is what keeps the two apart.
+     */
+    @Test
+    fun `a catalog load failure is disclosed via vetClinicsLoadFailed`() = runTest(testDispatcher) {
+        coEvery { repository.observeVetClinicsOrFail() } returns flowOf(VetClinicsSnapshot(failed = true))
+        val vm = DirectoryViewModel(repository, invoiceRepository, kinCareRepository)
+        backgroundScope.launch { vm.vetClinicsFlow.collect {} }
+        backgroundScope.launch { vm.vetClinicsLoadFailed.collect {} }
+        advanceUntilIdle()
+
+        assertTrue(vm.vetClinicsLoadFailed.value)
+        assertEquals(emptyList<VetClinic>(), vm.vetClinicsFlow.value)
+    }
+
+    @Test
+    fun `a successful catalog load carries no failure`() = runTest(testDispatcher) {
+        backgroundScope.launch { viewModel.vetClinicsFlow.collect {} }
+        backgroundScope.launch { viewModel.vetClinicsLoadFailed.collect {} }
+        advanceUntilIdle()
+
+        assertFalse(viewModel.vetClinicsLoadFailed.value)
+        assertEquals(listOf(riverside, petEr), viewModel.vetClinicsFlow.value)
+    }
+
+    /**
+     * A picker mid-edit should not go blank because of a transient blip: the
+     * household's own vet fields did not come from this read (mirrors web's
+     * comment on the same point in KinfolkEdit.tsx), so a failure keeps
+     * whatever clinic list was last good rather than clearing it.
+     */
+    @Test
+    fun `a failure after a good load keeps the last good clinic list`() = runTest(testDispatcher) {
+        coEvery { repository.observeVetClinicsOrFail() } returns
+            flowOf(VetClinicsSnapshot(clinics = listOf(riverside, petEr)), VetClinicsSnapshot(failed = true))
+        val vm = DirectoryViewModel(repository, invoiceRepository, kinCareRepository)
+        backgroundScope.launch { vm.vetClinicsFlow.collect {} }
+        backgroundScope.launch { vm.vetClinicsLoadFailed.collect {} }
+        advanceUntilIdle()
+
+        assertTrue(vm.vetClinicsLoadFailed.value)
+        assertEquals(listOf(riverside, petEr), vm.vetClinicsFlow.value)
     }
 
     // ── legacy string-only households ────────────────────────────────────────

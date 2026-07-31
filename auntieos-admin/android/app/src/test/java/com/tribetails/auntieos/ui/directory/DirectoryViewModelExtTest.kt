@@ -42,7 +42,7 @@ class DirectoryViewModelExtTest {
         coEvery { mockRepo.getAllKin() } returns Result.success(emptyList<Kin>())
         coEvery { mockKinCareRepo.getKinCareSessions() } returns Result.success(emptyList())
         coEvery { mockRepo.logActivity(any()) } returns Result.success(Unit)
-        every { mockRepo.observeVetClinics() } returns emptyFlow()
+        every { mockRepo.observeVetClinicsOrFail() } returns emptyFlow()
     }
 
     @After
