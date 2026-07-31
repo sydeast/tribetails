@@ -84,3 +84,16 @@
   flex: 1;
   min-width: 10rem;
 }
+
+.timeOff__presetRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.timeOff__presetButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TimeOffEditor } from './TimeOffEditor';
 
@@ -135,5 +135,165 @@ describe('TimeOffEditor', () => {
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
     expect(await screen.findByText(/offline/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^save$/i })).toBeEnabled();
+  });
+});
+
+/**
+ * Recurrence support, added 2026-07-31: a company holiday like a US national
+ * holiday should recur yearly instead of demanding a fresh YYYY-MM-DD every
+ * year. `lib/closureRecurrence.ts` carries the resolver's own exhaustive unit
+ * tests (nth-weekday, last-weekday, leap day, range-crossing-a-year); these
+ * cover the EDITOR behavior on top of it: the recurrence selector, the "no
+ * year when yearly" requirement, and the one-click US holiday presets.
+ */
+describe('TimeOffEditor: recurrence', () => {
+  it('defaults the Add row to "One time", showing the dated YYYY-MM-DD field', () => {
+    render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+    expect(screen.getByRole('combobox', { name: 'Recurrence' })).toHaveValue('once');
+    expect(screen.getByPlaceholderText('2026-12-25')).toBeInTheDocument();
+  });
+
+  it('picking a yearly recurrence renders NO year input at all', async () => {
+    render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Recurrence' }), 'yearly-fixed');
+
+    // The company-holiday date input is gone (its placeholder is unique to
+    // that field; special hours below keeps its OWN "Date (YYYY-MM-DD)" input
+    // untouched, so a blanket "no YYYY-MM-DD text anywhere" assertion would be
+    // wrong, not stricter).
+    expect(screen.queryByPlaceholderText('2026-12-25')).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Month' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Day' })).toBeInTheDocument();
+  });
+
+  it('yearly-fixed: Add stays disabled until month and day are both picked, then saves the tagged wire format', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<TimeOffEditor data={EMPTY} onSave={onSave} />);
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Recurrence' }), 'yearly-fixed');
+    const addBtn = screen.getAllByRole('button', { name: /^add$/i })[0]!;
+    expect(addBtn).toBeDisabled();
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Month' }), '7');
+    expect(addBtn).toBeDisabled(); // day still unpicked
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Day' }), '4');
+    expect(addBtn).toBeDisabled(); // name still blank
+
+    await userEvent.type(screen.getByPlaceholderText('Christmas closure'), 'Independence Day');
+    expect(addBtn).toBeEnabled();
+
+    await userEvent.click(addBtn);
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ companyHolidays: ['yearly:07-04|Independence Day'] }),
+    );
+  });
+
+  it('yearly-nth-weekday: Month + Weekday + Occurrence all gate Add, saves the tagged wire format', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<TimeOffEditor data={EMPTY} onSave={onSave} />);
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Recurrence' }), 'yearly-nth-weekday');
+    const addBtn = screen.getAllByRole('button', { name: /^add$/i })[0]!;
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Month' }), '11');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Weekday' }), '4');
+    expect(addBtn).toBeDisabled(); // occurrence still unpicked
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Occurrence' }), '4');
+    await userEvent.type(screen.getByPlaceholderText('Christmas closure'), 'Thanksgiving');
+    expect(addBtn).toBeEnabled();
+
+    await userEvent.click(addBtn);
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ companyHolidays: ['yearly-nth:11-4-4|Thanksgiving'] }),
+    );
+  });
+
+  it('yearly-last-weekday: no Occurrence field at all (there is no Nth for "last")', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<TimeOffEditor data={EMPTY} onSave={onSave} />);
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Recurrence' }), 'yearly-last-weekday');
+
+    expect(screen.queryByRole('combobox', { name: 'Occurrence' })).not.toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Month' }), '5');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Weekday' }), '1');
+    await userEvent.type(screen.getByPlaceholderText('Christmas closure'), 'Memorial Day');
+    await userEvent.click(screen.getAllByRole('button', { name: /^add$/i })[0]!);
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ companyHolidays: ['yearly-last:05-1|Memorial Day'] }),
+    );
+  });
+
+  it('displays a recurring entry with its human recurrence description, not a raw date', () => {
+    render(
+      <TimeOffEditor
+        data={{ ...EMPTY, companyHolidays: ['yearly:07-04|Independence Day'] }}
+        onSave={vi.fn()}
+      />,
+    );
+    // "Independence Day" also names the US_HOLIDAYS observed-toggle row and the
+    // one-click preset button, so this scopes to the dated-list ROW the
+    // recurrence description sits inside, rather than asserting on the text
+    // anywhere in the document.
+    const row = screen.getByText('Every year, July 4').closest('li');
+    expect(row).not.toBeNull();
+    expect(within(row!).getByText('Independence Day')).toBeInTheDocument();
+  });
+
+  it('adding a yearly entry resets the Add row back to "One time"', async () => {
+    render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Recurrence' }), 'yearly-fixed');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Month' }), '7');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Day' }), '4');
+    await userEvent.type(screen.getByPlaceholderText('Christmas closure'), 'Independence Day');
+    await userEvent.click(screen.getAllByRole('button', { name: /^add$/i })[0]!);
+
+    expect(screen.getByRole('combobox', { name: 'Recurrence' })).toHaveValue('once');
+  });
+});
+
+describe('TimeOffEditor: one-click US holiday presets', () => {
+  it('offers all eleven ruling holidays as one-click buttons', () => {
+    render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+    expect(screen.getByRole('button', { name: "New Year's Day" })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Memorial Day' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Thanksgiving' })).toBeInTheDocument();
+  });
+
+  it('one click adds the holiday directly, with no intermediate form fill', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<TimeOffEditor data={EMPTY} onSave={onSave} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Independence Day' }));
+
+    expect(screen.getByText('Every year, July 4')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ companyHolidays: ['yearly:07-04|Independence Day'] }),
+    );
+  });
+
+  it('Memorial Day is added as the REAL last-Monday-of-May rule, never a fixed date', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<TimeOffEditor data={EMPTY} onSave={onSave} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Memorial Day' }));
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ companyHolidays: ['yearly-last:05-1|Memorial Day'] }),
+    );
+  });
+
+  it('a preset already on the list is disabled, so one click cannot add the same holiday twice', () => {
+    render(
+      <TimeOffEditor
+        data={{ ...EMPTY, companyHolidays: ['yearly:07-04|Independence Day'] }}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Independence Day' })).toBeDisabled();
   });
 });

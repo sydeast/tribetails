@@ -1836,6 +1836,29 @@ private val US_HOLIDAYS = listOf(
     "christmas" to "Christmas Day",
 )
 
+/** Full month names for the closure-recurrence pickers below (index 0 = January). */
+private val CLOSURE_MONTH_NAMES = listOf(
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+
+/** Index 0 = ISO weekday 1 (Monday), matching [ClosureEntry.weekday]'s convention. */
+private val CLOSURE_WEEKDAY_NAMES =
+    listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+private val CLOSURE_NTH_LABELS = listOf("1st", "2nd", "3rd", "4th")
+
+private data class RecurrenceOption(val kind: ClosureRecurrenceKind, val label: String)
+
+/** Order matches the web `RECURRENCE_OPTIONS` in `TimeOffEditor.tsx`. */
+private val CLOSURE_RECURRENCE_OPTIONS = listOf(
+    RecurrenceOption(ClosureRecurrenceKind.ONCE, "One time (pick a date)"),
+    RecurrenceOption(ClosureRecurrenceKind.YEARLY_FIXED, "Every year, same date"),
+    RecurrenceOption(ClosureRecurrenceKind.YEARLY_NTH_WEEKDAY, "Every year, same week and day (e.g. 4th Thursday)"),
+    RecurrenceOption(ClosureRecurrenceKind.YEARLY_LAST_WEEKDAY, "Every year, last weekday of the month (e.g. last Monday)"),
+)
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TimeOffPanel(
     settings: com.tribetails.auntieos.data.model.BusinessSettings,
@@ -1844,10 +1867,32 @@ private fun TimeOffPanel(
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val observed = settings.observedUsHolidays.toSet()
+
+    // The company-holiday add-row. `newHolidayRecurrence` gates which fields
+    // below are shown/required: ONCE uses `newHolidayDate` (unchanged); every
+    // YEARLY_* kind uses `newHolidayMonth` plus whichever of day/weekday/nth its
+    // shape needs, and NEVER a year -- the entire point of the 2026-07-31
+    // ruling this panel answers. `null` means "not yet picked".
+    var newHolidayRecurrence by remember { mutableStateOf(ClosureRecurrenceKind.ONCE) }
     var newHolidayDate by remember { mutableStateOf("") }
     var newHolidayName by remember { mutableStateOf("") }
+    var newHolidayMonth by remember { mutableStateOf<Int?>(null) }
+    var newHolidayDay by remember { mutableStateOf<Int?>(null) }
+    var newHolidayWeekday by remember { mutableStateOf<Int?>(null) }
+    var newHolidayNth by remember { mutableStateOf<Int?>(null) }
+
     var newSpecialDate by remember { mutableStateOf("") }
     var newSpecialHours by remember { mutableStateOf("") }
+
+    val holidayAddEnabled = companyHolidayAddEnabled(
+        recurrence = newHolidayRecurrence,
+        name = newHolidayName,
+        date = newHolidayDate,
+        month = newHolidayMonth,
+        day = newHolidayDay,
+        weekday = newHolidayWeekday,
+        nth = newHolidayNth,
+    )
 
     DenPanel(
         title = "Time Off",
@@ -1880,21 +1925,21 @@ private fun TimeOffPanel(
 
             AuntieFieldLabel(text = "Company Holidays")
             Text(
-                "Custom dates this business is closed (e.g. owner anniversary). Format: YYYY-MM-DD.",
+                "Dates this business is closed: one-time, or repeating every year (e.g. a US national holiday).",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
 
             settings.companyHolidays.forEachIndexed { idx, entry ->
-                val parts = entry.split("|", limit = 2)
+                val parsed = parseClosureEntry(entry)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(parts.getOrElse(1) { "Holiday" }, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
-                        Text(parts.getOrElse(0) { entry }, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        Text(parsed.name.ifBlank { "Holiday" }, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                        Text(describeClosureRecurrence(parsed), style = AuntieTheme.typography.bodySmall, color = c.textDim)
                     }
                     GhostButton(
                         label = "Remove",
@@ -1909,38 +1954,119 @@ private fun TimeOffPanel(
                 }
             }
 
-            Row(
+            Text(
+                "Add a US holiday with one click. It already repeats every year.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(dims.space2), verticalArrangement = Arrangement.spacedBy(dims.space2)) {
+                US_HOLIDAY_PRESETS.forEach { preset ->
+                    val wire = formatClosureEntry(closureEntryFromPreset(preset))
+                    GhostButton(
+                        label = preset.name,
+                        onClick = { onSettingsChange(settings.copy(companyHolidays = settings.companyHolidays + wire)) },
+                        enabled = wire !in settings.companyHolidays,
+                    )
+                }
+            }
+
+            AuntieDropdownField(
+                value = CLOSURE_RECURRENCE_OPTIONS.first { it.kind == newHolidayRecurrence },
+                options = CLOSURE_RECURRENCE_OPTIONS,
+                onSelect = { newHolidayRecurrence = it.kind },
+                displayText = { it.label },
+                label = "Recurrence",
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(dims.space2),
-                verticalAlignment = Alignment.Bottom,
-            ) {
+            )
+
+            if (newHolidayRecurrence == ClosureRecurrenceKind.ONCE) {
                 AuntieField(
                     value = newHolidayDate,
                     onValueChange = { newHolidayDate = it },
                     label = "Date (YYYY-MM-DD)",
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                AuntieField(
-                    value = newHolidayName,
-                    onValueChange = { newHolidayName = it },
-                    label = "Name",
-                    modifier = Modifier.weight(1f),
-                )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(dims.space2),
+                ) {
+                    AuntieDropdownField(
+                        value = newHolidayMonth,
+                        options = (1..12).toList(),
+                        onSelect = { newHolidayMonth = it },
+                        displayText = { CLOSURE_MONTH_NAMES[it - 1] },
+                        label = "Month",
+                        placeholder = "Pick a month",
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (newHolidayRecurrence == ClosureRecurrenceKind.YEARLY_FIXED) {
+                        AuntieDropdownField(
+                            value = newHolidayDay,
+                            options = (1..31).toList(),
+                            onSelect = { newHolidayDay = it },
+                            displayText = { it.toString() },
+                            label = "Day",
+                            placeholder = "Pick a day",
+                            modifier = Modifier.weight(1f),
+                        )
+                    } else {
+                        AuntieDropdownField(
+                            value = newHolidayWeekday,
+                            options = (1..7).toList(),
+                            onSelect = { newHolidayWeekday = it },
+                            displayText = { CLOSURE_WEEKDAY_NAMES[it - 1] },
+                            label = "Weekday",
+                            placeholder = "Pick a weekday",
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (newHolidayRecurrence == ClosureRecurrenceKind.YEARLY_NTH_WEEKDAY) {
+                            AuntieDropdownField(
+                                value = newHolidayNth,
+                                options = (1..4).toList(),
+                                onSelect = { newHolidayNth = it },
+                                displayText = { CLOSURE_NTH_LABELS[it - 1] },
+                                label = "Occurrence",
+                                placeholder = "Pick",
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
             }
+
+            AuntieField(
+                value = newHolidayName,
+                onValueChange = { newHolidayName = it },
+                label = "Name",
+                modifier = Modifier.fillMaxWidth(),
+            )
             PrimaryButton(
                 label = "Add Company Holiday",
                 onClick = {
-                    if (newHolidayDate.length == 10 && newHolidayName.isNotBlank()) {
-                        onSettingsChange(
-                            settings.copy(
-                                companyHolidays = settings.companyHolidays + "$newHolidayDate|$newHolidayName"
+                    if (holidayAddEnabled) {
+                        val wire = formatClosureEntry(
+                            ClosureEntry(
+                                recurrence = newHolidayRecurrence,
+                                name = newHolidayName,
+                                date = newHolidayDate,
+                                month = newHolidayMonth ?: 0,
+                                day = newHolidayDay ?: 0,
+                                weekday = newHolidayWeekday ?: 0,
+                                nth = newHolidayNth ?: 0,
                             )
                         )
+                        onSettingsChange(settings.copy(companyHolidays = settings.companyHolidays + wire))
+                        newHolidayRecurrence = ClosureRecurrenceKind.ONCE
                         newHolidayDate = ""
                         newHolidayName = ""
+                        newHolidayMonth = null
+                        newHolidayDay = null
+                        newHolidayWeekday = null
+                        newHolidayNth = null
                     }
                 },
-                enabled = newHolidayDate.length == 10 && newHolidayName.isNotBlank(),
+                enabled = holidayAddEnabled,
                 modifier = Modifier.fillMaxWidth(),
             )
 
