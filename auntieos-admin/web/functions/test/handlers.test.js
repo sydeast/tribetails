@@ -322,6 +322,188 @@ describe('signCloudinaryUpload handler (onRequest)', () => {
 });
 
 // ===========================================================================
+// writeDraft / getDraft / getTrainingDoc (onRequest)
+//
+// These three carried the n8n shared secret (`x-auntie-key`) until n8n was
+// retired and the secret destroyed. They now take the same Bearer admin token
+// as generateAuntieCopy, the generator they serve. The gate is the thing that
+// changed, so the gate is what these pin: an unauthenticated caller must not
+// reach Firestore, and a signed-in non-admin must not either.
+// ===========================================================================
+describe('draft endpoints: admin-token gate', () => {
+  const ENDPOINTS = [
+    { name: 'writeDraft', call: (req, res) => idx.writeDraft(req, res), body: { draft: { copy: 'hi' } } },
+    { name: 'getDraft', call: (req, res) => idx.getDraft(req, res), query: { id: 'd1' } },
+    { name: 'getTrainingDoc', call: (req, res) => idx.getTrainingDoc(req, res), query: { communication_type: 'sms' } },
+  ];
+
+  for (const ep of ENDPOINTS) {
+    it(`${ep.name}: 401 when the bearer token is missing`, async () => {
+      // A firestore that throws proves the gate ran BEFORE any read/write: if
+      // the handler reached Firestore the test fails on the throw, not the code.
+      installAdmin({ firestore: () => { throw new Error(`${ep.name} reached Firestore unauthenticated`); } });
+      const res = makeRes();
+      await ep.call(makeReq({ method: ep.query ? 'GET' : 'POST', headers: {}, body: ep.body ?? {}, query: ep.query ?? {} }), res);
+      assert.strictEqual(res.statusCode, 401);
+      assert.strictEqual(res.jsonBody.error, 'missing_bearer_token');
+    });
+
+    it(`${ep.name}: 403 when the caller is signed in but not an admin`, async () => {
+      installAdmin({
+        auth: authReturning({ uid: 'u1', admin: false }),
+        firestore: () => { throw new Error(`${ep.name} reached Firestore without the admin claim`); },
+      });
+      const res = makeRes();
+      await ep.call(makeReq({ method: ep.query ? 'GET' : 'POST', headers: ADMIN_BEARER, body: ep.body ?? {}, query: ep.query ?? {} }), res);
+      assert.strictEqual(res.statusCode, 403);
+      assert.strictEqual(res.jsonBody.error, 'admin_required');
+    });
+
+    it(`${ep.name}: 401 when the token is expired or forged`, async () => {
+      installAdmin({
+        auth: authThrowing(new Error('token expired')),
+        firestore: () => { throw new Error(`${ep.name} reached Firestore on a bad token`); },
+      });
+      const res = makeRes();
+      await ep.call(makeReq({ method: ep.query ? 'GET' : 'POST', headers: ADMIN_BEARER, body: ep.body ?? {}, query: ep.query ?? {} }), res);
+      assert.strictEqual(res.statusCode, 401);
+      assert.strictEqual(res.jsonBody.error, 'invalid_bearer_token');
+    });
+  }
+
+  // A Firestore double that serves BOTH collections these handlers touch: the
+  // draft collection and the rate-limit bucket. `bucket` seeds the caller's
+  // current budget state; `transactionError` makes the limiter itself fail.
+  function fakeFirestore({ bucket, transactionError } = {}) {
+    const writes = [];
+    const store = { bucket };
+    const makeDoc = (collection, id) => ({
+      id,
+      _collection: collection,
+      get: async () => ({
+        exists: collection === 'draft_rate_limits' && store.bucket !== undefined,
+        data: () => store.bucket,
+      }),
+      set: async (data, opts) => { writes.push({ collection, id, data, opts }); },
+    });
+    const db = () => ({
+      collection: (name) => ({ doc: (id) => makeDoc(name, id ?? 'generated-id') }),
+      runTransaction: async (fn) => {
+        if (transactionError) throw transactionError;
+        return fn({
+          get: (ref) => ref.get(),
+          set: (ref, data, opts) => {
+            if (ref._collection === 'draft_rate_limits') store.bucket = { ...(store.bucket || {}), ...data };
+            writes.push({ collection: ref._collection, id: ref.id, data, opts });
+          },
+        });
+      },
+    });
+    return { db, writes, store, drafts: () => writes.filter((w) => w.collection === 'generated_drafts') };
+  }
+
+  const CURRENT_WINDOW = () => Math.floor(Date.now() / 60000);
+
+  it('writeDraft: an admin write lands in generated_drafts and returns its id', async () => {
+    const fs = fakeFirestore();
+    installAdmin({ auth: authReturning({ uid: 'admin1', admin: true }), firestore: fs.db });
+    const res = makeRes();
+    await idx.writeDraft(makeReq({ headers: ADMIN_BEARER, body: { docId: 'd7', draft: { copy: 'Buddy had a great walk.' } } }), res);
+    assert.strictEqual(res.statusCode, 200);
+    assert.deepStrictEqual(res.jsonBody, { ok: true, id: 'd7' });
+    const drafts = fs.drafts();
+    assert.strictEqual(drafts.length, 1);
+    assert.strictEqual(drafts[0].data.copy, 'Buddy had a great walk.');
+    assert.deepStrictEqual(drafts[0].opts, { merge: true });
+    // The call consumed budget, so the meter reflects served traffic.
+    assert.strictEqual(fs.store.bucket.count, 1);
+  });
+
+  it('429 once the caller has spent its window budget, and nothing is written', async () => {
+    // The regression this guards: moving these endpoints onto admin tokens
+    // deleted the old per-IP limiter. A verified identity does not bound
+    // volume, so a leaked token or a looping client would have had free rein.
+    const fs = fakeFirestore({ bucket: { window: CURRENT_WINDOW(), count: 60 } });
+    installAdmin({ auth: authReturning({ uid: 'admin1', admin: true }), firestore: fs.db });
+    const res = makeRes();
+    await idx.writeDraft(makeReq({ headers: ADMIN_BEARER, body: { draft: { copy: 'x' } } }), res);
+    assert.strictEqual(res.statusCode, 429);
+    assert.strictEqual(res.jsonBody.error, 'rate_limit_exceeded');
+    assert.strictEqual(fs.drafts().length, 0);
+    // A blocked caller does not advance its own counter.
+    assert.strictEqual(fs.store.bucket.count, 60);
+  });
+
+  it('the budget is shared, so a loop cannot rotate between the three endpoints', async () => {
+    const fs = fakeFirestore({ bucket: { window: CURRENT_WINDOW(), count: 60 } });
+    installAdmin({ auth: authReturning({ uid: 'admin1', admin: true }), firestore: fs.db });
+    for (const call of [
+      (r) => idx.getDraft(makeReq({ method: 'GET', headers: ADMIN_BEARER, query: { id: 'd1' } }), r),
+      (r) => idx.getTrainingDoc(makeReq({ method: 'GET', headers: ADMIN_BEARER, query: { id: 't1' } }), r),
+    ]) {
+      const res = makeRes();
+      await call(res);
+      assert.strictEqual(res.statusCode, 429);
+    }
+  });
+
+  it('503 when the limiter itself is broken: no meter, no service', async () => {
+    // Fail closed. An unmetered endpoint is the exact thing the limiter exists
+    // to prevent, so a broken meter must not degrade to unlimited access.
+    const fs = fakeFirestore({ transactionError: new Error('firestore unavailable') });
+    installAdmin({ auth: authReturning({ uid: 'admin1', admin: true }), firestore: fs.db });
+    const res = makeRes();
+    await idx.writeDraft(makeReq({ headers: ADMIN_BEARER, body: { draft: { copy: 'x' } } }), res);
+    assert.strictEqual(res.statusCode, 503);
+    assert.strictEqual(res.jsonBody.error, 'rate_limiter_unavailable');
+    assert.strictEqual(fs.drafts().length, 0);
+  });
+
+  it('rejects a docId that is a PATH, so a write cannot land in a subcollection', async () => {
+    // `collection('generated_drafts').doc('a/b/c')` resolves to
+    // generated_drafts/a/b/c, a document no query over the collection sees.
+    const fs = fakeFirestore();
+    installAdmin({ auth: authReturning({ uid: 'admin1', admin: true }), firestore: fs.db });
+    const res = makeRes();
+    await idx.writeDraft(makeReq({ headers: ADMIN_BEARER, body: { docId: 'a/b/c', draft: { copy: 'x' } } }), res);
+    assert.strictEqual(res.statusCode, 400);
+    assert.match(res.jsonBody.error, /must not contain/);
+    assert.strictEqual(fs.drafts().length, 0);
+    // Budget is spent before validation on purpose: a flood of malformed
+    // requests is traffic worth capping, not free CPU.
+    assert.strictEqual(fs.store.bucket.count, 1);
+  });
+
+  it('rejects a draft that tries to forge the server-written _writtenAt field', async () => {
+    const fs = fakeFirestore();
+    installAdmin({ auth: authReturning({ uid: 'admin1', admin: true }), firestore: fs.db });
+    const res = makeRes();
+    await idx.writeDraft(makeReq({ headers: ADMIN_BEARER, body: { draft: { _writtenAt: 'yesterday' } } }), res);
+    assert.strictEqual(res.statusCode, 400);
+    assert.match(res.jsonBody.error, /reserved/);
+    assert.strictEqual(fs.drafts().length, 0);
+  });
+
+  it('getDraft rejects a path id too, and never reads', async () => {
+    const fs = fakeFirestore();
+    installAdmin({ auth: authReturning({ uid: 'admin1', admin: true }), firestore: fs.db });
+    const res = makeRes();
+    await idx.getDraft(makeReq({ method: 'GET', headers: ADMIN_BEARER, query: { id: 'x/y/z' } }), res);
+    assert.strictEqual(res.statusCode, 400);
+    assert.match(res.jsonBody.error, /must not contain/);
+  });
+
+  it('still reports a missing id as a missing id, not as a malformed one', async () => {
+    const fs = fakeFirestore();
+    installAdmin({ auth: authReturning({ uid: 'admin1', admin: true }), firestore: fs.db });
+    const res = makeRes();
+    await idx.getTrainingDoc(makeReq({ method: 'GET', headers: ADMIN_BEARER, query: {} }), res);
+    assert.strictEqual(res.statusCode, 400);
+    assert.strictEqual(res.jsonBody.error, 'id query param required');
+  });
+});
+
+// ===========================================================================
 // searchMapbox (onRequest)
 // ===========================================================================
 describe('searchMapbox handler (onRequest)', () => {
