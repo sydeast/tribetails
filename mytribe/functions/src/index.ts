@@ -97,6 +97,11 @@ export { unarchiveInvoice } from './admin/unarchiveInvoice';
 export { repairInvoicePayments } from './admin/repairInvoicePayments';
 // Task 5.1 (#18): the read half of turning completed visits into an invoice.
 export { listUninvoicedSessions } from './admin/listUninvoicedSessions';
+// Settings > Integrations. The one source both clients render for Stripe,
+// Twilio, SMTP2GO, Cloudinary, Mapbox, Google Calendar and Sentry. It binds
+// every secret it reports on (that binding is why its answer is trustworthy;
+// see its header) and it returns no secret value under any key.
+export { getIntegrationsHealth } from './admin/getIntegrationsHealth';
 export { setKinfolkClaim } from './admin/setKinfolkClaim';
 export { revokeKinfolkClaim } from './admin/revokeKinfolkClaim';
 // `signCloudinaryUpload` is deliberately NOT exported here. AuntieOS owns that

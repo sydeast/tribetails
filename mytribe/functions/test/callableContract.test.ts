@@ -935,3 +935,94 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     }
   });
 });
+/**
+ * Settings > Integrations (`getIntegrationsHealth`).
+ *
+ * Frozen from birth, and for a reason the money surface does not have: this
+ * response is a SAFETY BOUNDARY, not only a contract. It is the one callable
+ * that reads every third-party credential the business runs on, so a field
+ * added here without thought is how a secret value or a prefix of one starts
+ * reaching two clients and their logs. The signature below is the whole list of
+ * what may cross that line, and a new field turns this red before review has to
+ * catch it.
+ *
+ * It is also mirrored twice over (`auntieos-admin/src/api/integrations.ts` and
+ * android's `IntegrationsRepository`), which is the ordinary reason everything
+ * else in this file is frozen.
+ */
+describe('callable contract drift guard (Settings > Integrations)', () => {
+  it('takes no arguments, and that is the contract', async () => {
+    const { Args } = await import('../src/admin/getIntegrationsHealth');
+    expect(shapeKeys(Args as z.ZodObject<z.ZodRawShape>)).toEqual([]);
+  });
+  it('response signature is unchanged (update both client mirrors + CALLABLE_CONTRACT.md if this fails)', async () => {
+    const { Result } = await import('../src/admin/getIntegrationsHealth');
+    expect(shapeSignature(Result)).toEqual(
+      [
+        'checkedAt',
+        'declaredError',
+        'declaredKnown',
+        'integrations[].externalStep',
+        'integrations[].key',
+        'integrations[].liveness.detail',
+        'integrations[].liveness.outcome',
+        'integrations[].name',
+        'integrations[].ownedBySection',
+        'integrations[].purpose',
+        'integrations[].remediation',
+        'integrations[].secrets[].declared',
+        'integrations[].secrets[].length',
+        'integrations[].secrets[].name',
+        'integrations[].secrets[].purpose',
+        'integrations[].secrets[].required',
+        'integrations[].secrets[].resolves',
+        'integrations[].status',
+        'integrations[].summary',
+      ].sort(),
+    );
+  });
+  /**
+   * The rule the signature above enforces, stated so a reader knows WHY the
+   * list is closed rather than merely that it is. `length` is the only number
+   * derived from a value and it is a count, not a sample.
+   */
+  it('carries nothing that could hold a secret value', async () => {
+    const { Result } = await import('../src/admin/getIntegrationsHealth');
+    const secretFields = shapeSignature(Result).filter((p) => p.startsWith('integrations[].secrets[].'));
+    expect(secretFields.map((p) => p.split('.').pop())).toEqual(
+      ['declared', 'length', 'name', 'purpose', 'required', 'resolves'].sort(),
+    );
+  });
+  /**
+   * The four statuses both clients switch on. `unknown` is the load-bearing
+   * one: a check that could not be made must never render as a check that
+   * passed, so dropping it from this enum would let a UI collapse the two.
+   */
+  it('freezes the four status names both clients map to a pill', async () => {
+    const { Result } = await import('../src/admin/getIntegrationsHealth');
+    const shape = (Result as z.ZodObject<z.ZodRawShape>).shape;
+    const element = (shape['integrations'] as unknown as { def: { element: z.ZodTypeAny } }).def.element;
+    const status = (element as z.ZodObject<z.ZodRawShape>).shape['status'] as unknown as {
+      def: { entries: Record<string, string> };
+    };
+    expect(Object.keys(status.def.entries).sort()).toEqual(['configured', 'missing', 'unknown', 'working']);
+  });
+  /**
+   * The callable must BIND every secret it reports on. `process.env` in a Cloud
+   * Function holds only what that function declared, so an unbound name is
+   * reported absent whether or not it exists: a confident wrong answer that
+   * sends the operator to reset a working key. This is the assertion that
+   * catches a catalog entry added without the matching binding.
+   */
+  it('binds every secret in the catalog, plus the operator allowlist the admin gate reads', async () => {
+    const { getIntegrationsHealth } = await import('../src/admin/getIntegrationsHealth');
+    const { INTEGRATION_SECRET_NAMES } = await import('../src/lib/integrationCatalog');
+    const bound = (
+      getIntegrationsHealth as unknown as {
+        __endpoint: { secretEnvironmentVariables: Array<{ key: string }> };
+      }
+    ).__endpoint.secretEnvironmentVariables.map((s) => s.key);
+    for (const name of INTEGRATION_SECRET_NAMES) expect(bound).toContain(name);
+    expect(bound).toContain('AUNTIE_OPERATOR_UIDS');
+  });
+});

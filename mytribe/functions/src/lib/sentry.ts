@@ -34,6 +34,20 @@ export function initSentry(): void {
   });
 }
 
+/**
+ * Whether `initSentry` actually took a DSN and initialised the client.
+ *
+ * The one honest liveness check this integration has, and it costs nothing: no
+ * event is sent, no network is touched. It reads the flag `initSentry` sets,
+ * which is only ever true after a real `Sentry.init`, so it separates "the DSN
+ * is set" (a `process.env` fact) from "error reporting is actually on" (this
+ * one). They come apart on a cold start where the secret had not mounted yet,
+ * which is precisely the case an operator would otherwise never see.
+ */
+export function isSentryInitialized(): boolean {
+  return initialized;
+}
+
 export function captureFunctionError(
   err: unknown,
   context: Record<string, unknown> = {},

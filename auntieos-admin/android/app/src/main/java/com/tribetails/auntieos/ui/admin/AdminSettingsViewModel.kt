@@ -11,6 +11,7 @@ import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.MediaEntityType
 import com.tribetails.auntieos.data.model.UserProfile
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.IntegrationsRepository
 import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.ui.branding.withBranding
 import com.tribetails.auntieos.ui.branding.nextLogoRemovedAt
@@ -40,16 +41,39 @@ data class AdminSettingsUiState(
     val error: String? = null,
     val saveSuccess: Boolean = false,
     val profileSaveSuccess: Boolean = false,
-    val integrationsHealth: List<IntegrationHealth> = listOf(
-        IntegrationHealth("Firestore",     "Read/Write",                  IntegrationHealthState.UNKNOWN),
-        IntegrationHealth("n8n Webhooks",  "Generate + Update Profiles",  IntegrationHealthState.CONFIGURED),
-        IntegrationHealth("FCM",           "Push Notifications",          IntegrationHealthState.UNKNOWN),
-        IntegrationHealth("Twilio Studio", "Voice + SMS",                 IntegrationHealthState.CONFIGURED),
+    /**
+     * The two facts a server genuinely cannot see, because they are about the
+     * handset in the operator's hand rather than about the business.
+     *
+     * The other two rows this list used to hold are gone, and their removal is
+     * the point of the change: "n8n Webhooks: CONFIGURED" was a fixed string
+     * that outlived the retirement of n8n by more than a year, and "Twilio
+     * Studio: CONFIGURED" asserted a state nothing had checked. Both are
+     * server-side questions, and the server now answers them in
+     * [integrationsHealth].
+     */
+    val deviceProbes: List<IntegrationHealth> = listOf(
+        IntegrationHealth("Firestore", "This device's read/write round-trip", IntegrationHealthState.UNKNOWN),
+        IntegrationHealth("Push notifications", "This device's FCM registration", IntegrationHealthState.UNKNOWN),
     ),
+    /** The server's answer for every outside service. Null until it comes back. */
+    val integrationsHealth: IntegrationsHealth? = null,
+    val integrationsLoading: Boolean = false,
+    /**
+     * Fail loud, and separately from [error]: a failed integrations read must
+     * show as its own banner on its own panel, never as an empty list that
+     * reads like a clean bill of health.
+     */
+    val integrationsError: String? = null,
 )
 
 class AdminSettingsViewModel(
-    private val repository: AuntieRepository = AuntieOSApp.instance.repository
+    private val repository: AuntieRepository = AuntieOSApp.instance.repository,
+    // Its own domain repo rather than another method on AuntieRepository: this
+    // reaches one callable and shares no state with the rest of settings, the
+    // same shape BookingRepository / InvoiceRepository have. Default-constructed
+    // so existing call sites are unchanged; JVM tests pass a mock.
+    private val integrationsRepository: IntegrationsRepository = IntegrationsRepository(),
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AdminSettingsUiState())
@@ -431,38 +455,69 @@ class AdminSettingsViewModel(
         _uiState.value = _uiState.value.copy(profileSaveSuccess = false)
     }
 
-    // ---- Integrations health probe ----
+    // ---- Integrations ----
 
-    fun probeIntegrations() {
+    /**
+     * The server's verdict on every outside service, plus this device's two
+     * probes.
+     *
+     * TWO SOURCES, DELIBERATELY, AND THEY DO NOT OVERLAP. The callable owns
+     * every question about the business (is Stripe's key set, did Cloudinary's
+     * signing work, is a Google account connected), so the React admin and this
+     * screen cannot disagree. The device probes own the two questions the server
+     * cannot answer at all, because they are about this handset: can IT reach
+     * Firestore, does IT hold an FCM token. A server answer to either would be
+     * about a different machine.
+     *
+     * A FAILED READ IS RECORDED, NEVER FOLDED INTO AN EMPTY RESULT. "Nothing is
+     * wrong" and "we could not find out" are the same screen otherwise, and the
+     * first one is the one that stops an operator looking.
+     */
+    fun loadIntegrations() {
         viewModelScope.launch {
-            // Flip Firestore + FCM to CHECKING so the UI shows live activity.
             _uiState.value = _uiState.value.copy(
-                integrationsHealth = _uiState.value.integrationsHealth.map { row ->
-                    when (row.name) {
-                        "Firestore", "FCM" -> row.copy(state = IntegrationHealthState.CHECKING)
-                        else               -> row
-                    }
-                }
+                integrationsLoading = true,
+                integrationsError = null,
+                // Flip the device rows to CHECKING so the panel shows live activity.
+                deviceProbes = _uiState.value.deviceProbes.map { it.copy(state = IntegrationHealthState.CHECKING) },
             )
 
-            // Firestore probe: getBusinessSettings round-trip.
-            val firestoreOk = repository.getBusinessSettings().isSuccess
-            val firestoreState = firestoreHealthFromProbe(firestoreOk)
+            integrationsRepository.getIntegrationsHealth().fold(
+                onSuccess = { health ->
+                    _uiState.value = _uiState.value.copy(
+                        integrationsHealth = health,
+                        integrationsLoading = false,
+                        integrationsError = null,
+                    )
+                },
+                onFailure = { e ->
+                    // The server's own text names the missing secret and the exact
+                    // command that sets it. Summarising it here would delete the
+                    // only instructions the operator gets.
+                    _uiState.value = _uiState.value.copy(
+                        integrationsLoading = false,
+                        integrationsError = e.message ?: "The integrations check did not come back.",
+                    )
+                },
+            )
 
-            // FCM probe: ask FirebaseMessaging for the registration token.
+            // This device's Firestore round-trip.
+            val firestoreState = firestoreHealthFromProbe(repository.getBusinessSettings().isSuccess)
+
+            // This device's FCM registration token.
             val fcmHasToken = runCatching {
                 FirebaseMessaging.getInstance().token.await().isNotBlank()
             }.getOrDefault(false)
             val fcmState = fcmHealthFromTokenPresence(fcmHasToken)
 
             _uiState.value = _uiState.value.copy(
-                integrationsHealth = _uiState.value.integrationsHealth.map { row ->
+                deviceProbes = _uiState.value.deviceProbes.map { row ->
                     when (row.name) {
                         "Firestore" -> row.copy(state = firestoreState)
-                        "FCM"       -> row.copy(state = fcmState)
-                        else        -> row
+                        "Push notifications" -> row.copy(state = fcmState)
+                        else -> row
                     }
-                }
+                },
             )
         }
     }

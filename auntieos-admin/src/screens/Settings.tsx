@@ -16,6 +16,7 @@ import {
 } from './settings/sections';
 import { BrandingSection } from './settings/BrandingSection';
 import { CalendarSection } from './settings/CalendarSection';
+import { IntegrationsSection } from './settings/IntegrationsSection';
 import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
 import { TimeOffEditor } from './settings/TimeOffEditor';
 import { KinCareRatesEditor } from './settings/KinCareRatesEditor';
@@ -75,7 +76,8 @@ type SectionId =
   | 'mytribe'
   | 'notifications'
   | 'tags'
-  | 'calendar';
+  | 'calendar'
+  | 'integrations';
 
 /** Nav order. Matches the section order the operator saw approved for this screen. */
 const SECTIONS: readonly SectionNavItem<SectionId>[] = [
@@ -96,6 +98,9 @@ const SECTIONS: readonly SectionNavItem<SectionId>[] = [
   // panels with their own receipts; they are one thing to LOOK for, which is why
   // they are one tab.
   { id: 'calendar', label: 'Calendar' },
+  // Last because it is the one section that reports rather than edits: the place
+  // an operator goes when something ELSE on this screen stopped working.
+  { id: 'integrations', label: 'Integrations' },
 ];
 
 /** The section the screen opens on. Named (not `SECTIONS[0]`) so it stays a
@@ -193,7 +198,7 @@ export function Settings() {
                 tabIndex={0}
                 hidden={!active}
               >
-                {renderSection(section.id, settings, persist, applyServerChange)}
+                {renderSection(section.id, settings, persist, applyServerChange, selectSection)}
               </div>
             );
           })}
@@ -214,6 +219,7 @@ function renderSection(
   settings: Async<BusinessSettings>,
   persist: (patch: Partial<BusinessSettings>) => Promise<void>,
   applyServerChange: (patch: Partial<BusinessSettings>) => void,
+  selectSection: (id: SectionId) => void,
 ): ReactNode {
   if (id === 'notifications') return <NotificationGate />;
   if (id === 'tags') return <TagsEditor />;
@@ -223,6 +229,29 @@ function renderSection(
   // client by `firestore.rules`), and must not be taken down by a settings load
   // it does not depend on.
   if (id === 'calendar') return <CalendarSection settings={settings} onSave={persist} />;
+  // Self-loading too, and for a stronger reason: no client can read a Cloud
+  // Functions secret at all, so this section's whole answer is a callable's.
+  // `onOpenSection` is what makes its Google Calendar link real rather than a
+  // sentence telling the operator to go and find the section themselves; the
+  // server's `ownedBySection: googleCalendar` ids from before the calendar tabs
+  // merged resolve to 'calendar' below.
+  if (id === 'integrations') {
+    return (
+      <IntegrationsSection
+        onOpenSection={(next) => {
+          // Checked against the real nav rather than cast. The id arrives from
+          // the server (`ownedBySection`), and selecting one this screen does
+          // not have would leave the panel area blank with no nav item lit: a
+          // dead button that looks like it worked. The retired 'googleCalendar'
+          // id aliases to the merged 'calendar' tab; any other unknown id is
+          // ignored, and the row's own copy still names where to go.
+          const target = next === 'googleCalendar' ? 'calendar' : next;
+          const match = SECTIONS.find((section) => section.id === target);
+          if (match) selectSection(match.id);
+        }}
+      />
+    );
+  }
 
   return (
     <AsyncRegion
