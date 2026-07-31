@@ -260,7 +260,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: Write local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
       - run: ./gradlew :jvmTest --no-daemon
@@ -286,7 +286,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       # NOTE: jvmTest rewrites tracked golden PNGs under visual/desktop/. That is
       # harmless on a runner (the checkout is thrown away) but it is the reason
       # this job must never commit or push anything.
@@ -306,7 +306,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       # local.properties is gitignored (it holds the keystore and SDK paths), so
       # CI writes the one line the SDK needs. Release signing is NOT available
       # here, which is why this runs the debug unit tests and never assembles a
