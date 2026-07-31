@@ -322,6 +322,81 @@ describe('signCloudinaryUpload handler (onRequest)', () => {
 });
 
 // ===========================================================================
+// writeDraft / getDraft / getTrainingDoc (onRequest)
+//
+// These three carried the n8n shared secret (`x-auntie-key`) until n8n was
+// retired and the secret destroyed. They now take the same Bearer admin token
+// as generateAuntieCopy, the generator they serve. The gate is the thing that
+// changed, so the gate is what these pin: an unauthenticated caller must not
+// reach Firestore, and a signed-in non-admin must not either.
+// ===========================================================================
+describe('draft endpoints: admin-token gate', () => {
+  const ENDPOINTS = [
+    { name: 'writeDraft', call: (req, res) => idx.writeDraft(req, res), body: { draft: { copy: 'hi' } } },
+    { name: 'getDraft', call: (req, res) => idx.getDraft(req, res), query: { id: 'd1' } },
+    { name: 'getTrainingDoc', call: (req, res) => idx.getTrainingDoc(req, res), query: { communication_type: 'sms' } },
+  ];
+
+  for (const ep of ENDPOINTS) {
+    it(`${ep.name}: 401 when the bearer token is missing`, async () => {
+      // A firestore that throws proves the gate ran BEFORE any read/write: if
+      // the handler reached Firestore the test fails on the throw, not the code.
+      installAdmin({ firestore: () => { throw new Error(`${ep.name} reached Firestore unauthenticated`); } });
+      const res = makeRes();
+      await ep.call(makeReq({ method: ep.query ? 'GET' : 'POST', headers: {}, body: ep.body ?? {}, query: ep.query ?? {} }), res);
+      assert.strictEqual(res.statusCode, 401);
+      assert.strictEqual(res.jsonBody.error, 'missing_bearer_token');
+    });
+
+    it(`${ep.name}: 403 when the caller is signed in but not an admin`, async () => {
+      installAdmin({
+        auth: authReturning({ uid: 'u1', admin: false }),
+        firestore: () => { throw new Error(`${ep.name} reached Firestore without the admin claim`); },
+      });
+      const res = makeRes();
+      await ep.call(makeReq({ method: ep.query ? 'GET' : 'POST', headers: ADMIN_BEARER, body: ep.body ?? {}, query: ep.query ?? {} }), res);
+      assert.strictEqual(res.statusCode, 403);
+      assert.strictEqual(res.jsonBody.error, 'admin_required');
+    });
+
+    it(`${ep.name}: 401 when the token is expired or forged`, async () => {
+      installAdmin({
+        auth: authThrowing(new Error('token expired')),
+        firestore: () => { throw new Error(`${ep.name} reached Firestore on a bad token`); },
+      });
+      const res = makeRes();
+      await ep.call(makeReq({ method: ep.query ? 'GET' : 'POST', headers: ADMIN_BEARER, body: ep.body ?? {}, query: ep.query ?? {} }), res);
+      assert.strictEqual(res.statusCode, 401);
+      assert.strictEqual(res.jsonBody.error, 'invalid_bearer_token');
+    });
+  }
+
+  it('writeDraft: an admin write lands in generated_drafts and returns its id', async () => {
+    const writes = [];
+    const docRef = (id) => ({
+      id,
+      set: async (data, opts) => { writes.push({ id, data, opts }); },
+    });
+    installAdmin({
+      auth: authReturning({ uid: 'admin1', admin: true }),
+      firestore: () => ({
+        collection: (name) => {
+          assert.strictEqual(name, 'generated_drafts');
+          return { doc: (id) => docRef(id ?? 'generated-id') };
+        },
+      }),
+    });
+    const res = makeRes();
+    await idx.writeDraft(makeReq({ headers: ADMIN_BEARER, body: { docId: 'd7', draft: { copy: 'Buddy had a great walk.' } } }), res);
+    assert.strictEqual(res.statusCode, 200);
+    assert.deepStrictEqual(res.jsonBody, { ok: true, id: 'd7' });
+    assert.strictEqual(writes.length, 1);
+    assert.strictEqual(writes[0].data.copy, 'Buddy had a great walk.');
+    assert.deepStrictEqual(writes[0].opts, { merge: true });
+  });
+});
+
+// ===========================================================================
 // searchMapbox (onRequest)
 // ===========================================================================
 describe('searchMapbox handler (onRequest)', () => {

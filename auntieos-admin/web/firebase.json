@@ -7,6 +7,9 @@
     "rewrites": [
       { "source": "/api/cloudinary/sign-upload", "function": "signCloudinaryUpload" },
       { "source": "/api/generate", "function": "generateAuntieCopy" },
+      { "source": "/api/draft/write", "function": "writeDraft" },
+      { "source": "/api/draft/get", "function": "getDraft" },
+      { "source": "/api/training-doc", "function": "getTrainingDoc" },
       { "source": "/api/mapbox/sign-search", "function": "searchMapbox" },
       { "source": "/api/mapbox/retrieve", "function": "retrieveMapbox" },
       { "source": "**", "destination": "/index.html" }

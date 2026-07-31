@@ -137,15 +137,15 @@ exports.listAdmins = onCall(async (req) => {
   return { admins: snap.docs.map((d) => ({ uid: d.id, ...d.data() })) };
 });
 
-// HTTP-callable proxy for n8n workflows that need to write a draft doc to Firestore.
-// Auth: shared secret in `x-auntie-key` header. Avoids embedding firebase-admin in n8n.
+// Draft persistence for the copy generator. `generateAuntieCopy` writes its own
+// draft inline; these endpoints are the out-of-band way to write one, re-read
+// one, and fetch the training doc that shapes the prompt.
 //
 // POST /writeDraft
-// Headers: { "x-auntie-key": "<N8N_SHARED_SECRET>" }
+// Headers: { "Authorization": "Bearer <Firebase ID token, admin === true>" }
 // Body: { docId?: string, draft: { ... } }
 // Response: { ok: true, id: string }
 const { defineSecret } = require('firebase-functions/params');
-const N8N_SHARED_SECRET = defineSecret('N8N_SHARED_SECRET');
 const CLOUDINARY_CLOUD_NAME = defineSecret('CLOUDINARY_CLOUD_NAME');
 const CLOUDINARY_API_KEY = defineSecret('CLOUDINARY_API_KEY');
 const CLOUDINARY_API_SECRET = defineSecret('CLOUDINARY_API_SECRET');
@@ -159,46 +159,16 @@ const MAPBOX_ACCESS_TOKEN = defineSecret('MAPBOX_ACCESS_TOKEN');
 // n8n Claude call. Set via `firebase functions:secrets:set ANTHROPIC_API_KEY`.
 const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
 
-// IP rate limit for the n8n shared-secret HTTP endpoints. If
-// `N8N_SHARED_SECRET` ever leaks, this caps abuse to ~60 calls/min per source
-// IP rather than unlimited drive. Bucket doc is server-written only;
-// firestore.rules denies client writes to `n8nIpRateLimits/*`.
-const N8N_RATE_WINDOW_MS = 60 * 1000;
-const N8N_RATE_LIMIT = 60;
-
-async function n8nIpAllowed(rawIp) {
-  const hashed = crypto.createHash('sha256').update(rawIp).digest('hex').slice(0, 32);
-  const ref = admin.firestore().collection('n8nIpRateLimits').doc(hashed);
-  const nowMs = Date.now();
-  const cutoff = nowMs - N8N_RATE_WINDOW_MS;
-  return admin.firestore().runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    const timestamps = (snap.exists && Array.isArray(snap.data().timestamps))
-      ? snap.data().timestamps
-      : [];
-    const recent = timestamps.filter((t) => t >= cutoff);
-    if (recent.length >= N8N_RATE_LIMIT) return false;
-    recent.push(nowMs);
-    tx.set(ref, { timestamps: recent, updatedAtMs: nowMs }, { merge: true });
-    return true;
-  });
-}
-
-async function n8nKeyAuth(req, res, scope) {
-  const provided = req.get('x-auntie-key');
-  if (!provided || provided !== N8N_SHARED_SECRET.value()) {
-    res.status(401).json({ error: 'unauthorized' });
-    return false;
-  }
-  const ip = (req.get('x-forwarded-for') || '').split(',')[0].trim() || req.ip || 'unknown';
-  const allowed = await n8nIpAllowed(ip);
-  if (!allowed) {
-    console.warn('%s: rate-limited ip=%s', scope, ip);
-    res.status(429).json({ error: 'rate_limited' });
-    return false;
-  }
-  return true;
-}
+// The draft endpoints below used to authenticate with the `N8N_SHARED_SECRET`
+// header (`x-auntie-key`) plus a per-IP bucket in `n8nIpRateLimits`, because
+// their only caller was an n8n workflow that could not hold a Firebase identity.
+// n8n is retired and that secret is gone, so they now take the same Bearer
+// Firebase ID token as `generateAuntieCopy`, the generator they serve.
+//
+// That also retires AO-33 on its own terms rather than by hardening: the
+// timing-unsafe secret compare and the unbounded `n8nIpAllowed.timestamps`
+// array are both gone with the code that held them, and `requireAdminToken`
+// verifies a signed token instead of comparing a string.
 
 // Verifies the Bearer Firebase ID token and enforces the caller is a real admin
 // (`admin === true`). When `allowTestAdmin` is set, a Stage-0I sandbox test-admin
@@ -230,12 +200,12 @@ async function requireAdminToken(req, res, scope, { allowTestAdmin = false } = {
   }
 }
 
-exports.writeDraft = onRequest({ secrets: [N8N_SHARED_SECRET], cors: false }, async (req, res) => {
+exports.writeDraft = onRequest({ cors: false }, async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'POST only' });
     return;
   }
-  if (!(await n8nKeyAuth(req, res, 'writeDraft'))) return;
+  if (!(await requireAdminToken(req, res, 'writeDraft'))) return;
   const { docId, draft } = req.body || {};
   if (!draft || typeof draft !== 'object') {
     res.status(400).json({ error: 'draft (object) required in body' });
@@ -291,8 +261,8 @@ function projectN8nDocResponse(id, data) {
 }
 
 // Same shape but reads a single training document. Used by Update Profiles n8n workflow.
-exports.getTrainingDoc = onRequest({ secrets: [N8N_SHARED_SECRET], cors: false }, async (req, res) => {
-  if (!(await n8nKeyAuth(req, res, 'getTrainingDoc'))) return;
+exports.getTrainingDoc = onRequest({ cors: false }, async (req, res) => {
+  if (!(await requireAdminToken(req, res, 'getTrainingDoc'))) return;
   const id = (req.query.id || '').toString();
   if (!id) {
     res.status(400).json({ error: 'id query param required' });
@@ -312,8 +282,8 @@ exports.getTrainingDoc = onRequest({ secrets: [N8N_SHARED_SECRET], cors: false }
 });
 
 // Same shape but reads a single draft. Used by Update Profiles n8n workflow.
-exports.getDraft = onRequest({ secrets: [N8N_SHARED_SECRET], cors: false }, async (req, res) => {
-  if (!(await n8nKeyAuth(req, res, 'getDraft'))) return;
+exports.getDraft = onRequest({ cors: false }, async (req, res) => {
+  if (!(await requireAdminToken(req, res, 'getDraft'))) return;
   const id = (req.query.id || '').toString();
   if (!id) {
     res.status(400).json({ error: 'id query param required' });
