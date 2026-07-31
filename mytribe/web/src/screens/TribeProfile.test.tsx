@@ -130,6 +130,58 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe('TribeProfile secret field masking', () => {
+  it('secret fields in the schema path are masked by default', async () => {
+    const { findByDisplayValue } = await renderTribeProfile({ homeSchema: HOME_SCHEMA });
+
+    // The SecretField component renders inputs as type="password" by default
+    const gateCodeInput = (await findByDisplayValue('4242')) as HTMLInputElement;
+    expect(gateCodeInput.type).toBe('password');
+
+    const keyLocationInput = (await findByDisplayValue('Under the blue planter')) as HTMLInputElement;
+    expect(keyLocationInput.type).toBe('password');
+
+    const wifiInput = (await findByDisplayValue('hunter2-old')) as HTMLInputElement;
+    expect(wifiInput.type).toBe('password');
+  });
+
+  it('secret fields show a reveal toggle button', async () => {
+    const { getAllByRole, findByDisplayValue } = await renderTribeProfile({ homeSchema: HOME_SCHEMA });
+
+    // Wait for the schema fields to load
+    await findByDisplayValue('4242');
+
+    // Each secret field should have a "Show" button
+    const showButtons = getAllByRole('button', { name: /Show|Hide/i });
+    // We should have at least 3 show buttons for the 3 secret fields
+    expect(showButtons.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('secret field values round-trip correctly while masked', async () => {
+    const { findByDisplayValue, findByRole } = await renderTribeProfile({ homeSchema: HOME_SCHEMA });
+
+    // Edit a secret field while it's masked
+    const gateCodeInput = (await findByDisplayValue('4242')) as HTMLInputElement;
+    expect(gateCodeInput.type).toBe('password');
+
+    await userEvent.clear(gateCodeInput);
+    await userEvent.type(gateCodeInput, '5555');
+    await userEvent.click(await findByRole('button', { name: /Save Changes/ }));
+
+    expect(await saveHomeAccessArgs()).toMatchObject({ gateCode: '5555' });
+  });
+
+  it('cleared secret field values round-trip correctly', async () => {
+    const { findByDisplayValue, findByRole } = await renderTribeProfile({ homeSchema: HOME_SCHEMA });
+
+    const gateCodeInput = (await findByDisplayValue('4242')) as HTMLInputElement;
+    await userEvent.clear(gateCodeInput);
+    await userEvent.click(await findByRole('button', { name: /Save Changes/ }));
+
+    expect(await saveHomeAccessArgs()).toMatchObject({ gateCode: null });
+  });
+});
+
 describe('TribeProfile schema-mode save', () => {
   it('saves null for a gate code the kinfolk emptied, instead of re-sending the loaded value', async () => {
     const { findByDisplayValue, findByRole } = await renderTribeProfile({ homeSchema: HOME_SCHEMA });
