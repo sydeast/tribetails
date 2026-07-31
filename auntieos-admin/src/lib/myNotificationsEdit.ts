@@ -10,9 +10,8 @@ import { adminChannelForced, adminGateEnabledChannels } from './myNotificationsF
 /**
  * Pure draft-editing helpers for the My Notifications EDITOR
  * (`screens/MyNotificationsEdit.tsx`). `myNotificationsFormat.ts` stays
- * read-only (it backs this screen and `screens/NotificationGate.tsx`); the
- * write-side logic lives here so neither file has to know about the other's
- * concern.
+ * read-only (it backs both the read screen and this one); the write-side
+ * logic lives here so neither file has to know about the other's concern.
  *
  * One rule drives `setUserChannelChoice`: a toggle the operator clicks is
  * always a per-notification choice (`byKey`), never a category-wide one.
