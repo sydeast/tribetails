@@ -244,3 +244,87 @@ describe('getMyKinTalesHandler', () => {
     expect(wrong.petMoods).toBeUndefined();
   });
 });
+
+/**
+ * `kin_care_reports` is a FLAT collection, so the tenant predicate, the draft
+ * exclusion (`sentAt > ''`) and the `before` cursor are the whole contract of
+ * this read. None of them were verifiable while the double answered every query
+ * with the entire fixture (P0-10).
+ */
+describe('getMyKinTalesHandler query semantics', () => {
+  const tale = (id: string, kinfolkId: string, sentAt: string) => ({
+    id,
+    data: { kinfolkId, bodyCopy: 'x', mediaFileIds: [], sharedAsIds: [], sentAt },
+  });
+
+  function ctxFor(rows: Array<{ id: string; data: Record<string, unknown> }>) {
+    return buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
+      queryDocs: { kin_care_reports: rows },
+    });
+  }
+
+  it('TENANT: another household\'s tales never appear', async () => {
+    const ctx = ctxFor([
+      tale('mine-1', 'fam3', '2026-07-01T00:00:00.000Z'),
+      tale('theirs-1', 'fam9', '2026-07-02T00:00:00.000Z'),
+      tale('mine-2', 'fam3', '2026-07-03T00:00:00.000Z'),
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({
+      data: { kinfolkId: 'fam3' },
+      auth: { uid: 'u1' },
+    } as any);
+
+    expect(res.tales.map((t) => t.id)).toEqual(['mine-2', 'mine-1']);
+  });
+
+  it('DRAFTS: an empty sentAt, and a report with no sentAt at all, stay hidden', async () => {
+    const ctx = ctxFor([
+      tale('sent', 'fam3', '2026-07-03T00:00:00.000Z'),
+      tale('draft-empty', 'fam3', ''),
+      { id: 'draft-missing', data: { kinfolkId: 'fam3', bodyCopy: 'x', mediaFileIds: [], sharedAsIds: [] } },
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({
+      data: { kinfolkId: 'fam3' },
+      auth: { uid: 'u1' },
+    } as any);
+
+    expect(res.tales.map((t) => t.id)).toEqual(['sent']);
+  });
+
+  it('CURSOR: `before` resumes strictly past the previous page', async () => {
+    const rows = ['05', '04', '03', '02', '01'].map((d) =>
+      tale(`t${d}`, 'fam3', `2026-07-${d}T00:00:00.000Z`),
+    );
+    const ctx = ctxFor(rows);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const page1 = await getMyKinTalesHandler({
+      data: { kinfolkId: 'fam3', limit: 2 },
+      auth: { uid: 'u1' },
+    } as any);
+    expect(page1.tales.map((t) => t.id)).toEqual(['t05', 't04']);
+    expect(page1.hasMore).toBe(true);
+
+    const page2 = await getMyKinTalesHandler({
+      data: { kinfolkId: 'fam3', limit: 2, before: page1.tales[1].sentAtMs },
+      auth: { uid: 'u1' },
+    } as any);
+    expect(page2.tales.map((t) => t.id)).toEqual(['t03', 't02']);
+    expect(page2.hasMore).toBe(true);
+
+    const page3 = await getMyKinTalesHandler({
+      data: { kinfolkId: 'fam3', limit: 2, before: page2.tales[1].sentAtMs },
+      auth: { uid: 'u1' },
+    } as any);
+    expect(page3.tales.map((t) => t.id)).toEqual(['t01']);
+    expect(page3.hasMore).toBe(false);
+  });
+});

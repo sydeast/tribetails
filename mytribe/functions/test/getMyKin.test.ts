@@ -11,9 +11,10 @@ beforeEach(() => mocks.dbFn.mockReset());
  * Wraps the mock db so every `.where(...)` issued anywhere in the chain is
  * recorded.
  *
- * The test double cannot ENFORCE a where clause (P0-10), so no assertion here
- * can prove a filter is correct. It CAN prove a filter was never issued, and
- * that is exactly the fix under test: the old
+ * The shared double now enforces `where` (P0-10 is fixed), so the statusless
+ * fixture below would genuinely vanish if the filter came back. This proxy is
+ * still the direct guard: it proves the filter was never ISSUED at all, which
+ * is exactly the fix under test. The old
  * `.where('status', 'in', ['active', 'noLongerWithUs'])` silently dropped every
  * kin doc missing the field, which is how the mirror-created docs vanished.
  */

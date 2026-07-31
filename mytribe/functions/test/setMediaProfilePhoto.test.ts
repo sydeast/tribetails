@@ -89,9 +89,12 @@ describe('setMediaProfilePhoto validation', () => {
 describe('setMediaProfilePhoto effects', () => {
   it('KINFOLK: marks chosen, clears sibling, stamps kinfolk.profilePictureUrl', async () => {
     const ctx = ctxFor({
+      // The sibling scan filters on entityId + entityType + isProfilePhoto, so
+      // a fixture carrying only the flag is a doc real Firestore would never
+      // return for this query.
       siblings: [
-        { id: 'm0', data: { isProfilePhoto: true } },
-        { id: 'm1', data: { isProfilePhoto: true } },
+        { id: 'm0', data: { entityId: 'fam1', entityType: 'KINFOLK', isProfilePhoto: true } },
+        { id: 'm1', data: { entityId: 'fam1', entityType: 'KINFOLK', isProfilePhoto: true } },
       ],
     });
     mocks.dbFn.mockReturnValue(ctx.db);

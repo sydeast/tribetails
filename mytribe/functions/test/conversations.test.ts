@@ -248,9 +248,13 @@ describe('getMyConversation (portal)', () => {
     const ctx = buildDbMock({
       docs: { 'conversations/kf1': { unreadForKinfolk: true } },
       queryDocs: {
+        // Every message doc is created with an explicit `readAt: null`
+        // (conversations.ts:80). Omitting it here would put the fixture outside
+        // the `.where('readAt','==',null)` index, so markMessagesRead would
+        // match nothing and this test would pass through its fallback branch.
         'conversations/kf1/messages': [
-          { id: 'm2', data: { senderRole: 'auntie', body: 'second', createdAtMs: 200 } },
-          { id: 'm1', data: { senderRole: 'kinfolk', body: 'first', createdAtMs: 100 } },
+          { id: 'm2', data: { senderRole: 'auntie', body: 'second', createdAtMs: 200, readAt: null } },
+          { id: 'm1', data: { senderRole: 'kinfolk', body: 'first', createdAtMs: 100, readAt: null } },
         ],
       },
     });
@@ -283,7 +287,11 @@ describe('getConversationThread (admin)', () => {
   it('returns the thread and clears admin unread', async () => {
     const ctx = buildDbMock({
       docs: { 'conversations/kf1': { unreadForAdmin: true } },
-      queryDocs: { 'conversations/kf1/messages': [{ id: 'm1', data: { senderRole: 'kinfolk', body: 'hi', createdAtMs: 1 } }] },
+      queryDocs: {
+        'conversations/kf1/messages': [
+          { id: 'm1', data: { senderRole: 'kinfolk', body: 'hi', createdAtMs: 1, readAt: null } },
+        ],
+      },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await getConversationThreadHandler(req({ kinfolkId: 'kf1' }));
@@ -345,11 +353,10 @@ describe('markConversationRead (admin)', () => {
   });
 
   it('stamps readAt on the unread kinfolk messages the where() clause matched', async () => {
-    // The mock doesn't simulate real Firestore query filtering (`.where()` is
-    // a pass-through), so `queryDocs` here represents what a real
-    // `.where('senderRole','==','kinfolk').where('readAt','==',null)` query
-    // would already have filtered down to — the admin is reading, so it's
-    // kinfolk-authored unread messages this correlates against.
+    // The double now applies
+    // `.where('senderRole','==','kinfolk').where('readAt','==',null)` for real,
+    // so the fixture is the raw subcollection and the filter picks the match.
+    // The admin is reading, so kinfolk-authored unread messages are the target.
     const ctx = buildDbMock({
       docs: { 'conversations/kf1': { unreadForAdmin: true } },
       queryDocs: {
