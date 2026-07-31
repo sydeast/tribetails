@@ -267,4 +267,84 @@ class InvoiceContractsGeneratedTest {
         assertEquals(setOf("description", "qty", "unitCents"), lines[0].keys)
         assertEquals(2000L, lines[0]["unitCents"])
     }
+
+    // ── listUninvoicedSessions: the read half of "bill last month's work" ─────
+    @Test
+    fun `listUninvoicedSessions payload carries exactly the window`() {
+        val payload = ListUninvoicedSessionsArgs(from = "2026-07-01", to = "2026-07-31").toPayload()
+        assertEquals(setOf("from", "to"), payload.keys)
+        assertEquals("2026-07-01", payload["from"])
+        assertEquals("2026-07-31", payload["to"])
+    }
+    @Test
+    fun `an unpriceable visit decodes as NULL cents, never zero`() {
+        // The whole point of the field. A silent 0 bills a household nothing for
+        // real work and looks entirely deliberate on the finished invoice.
+        val decoded = decodeListUninvoicedSessionsResult(
+            mapOf(
+                "sessions" to listOf(
+                    mapOf(
+                        "sessionId" to "s1",
+                        "kinfolkId" to "fam1",
+                        "serviceType" to "Overnight",
+                        "durationMinutes" to 720,
+                        "startTime" to "2026-07-01T22:00:00.000Z",
+                        "unitCents" to null,
+                    ),
+                ),
+                "unpriceable" to listOf(mapOf("sessionId" to "s1", "serviceType" to "Overnight")),
+                "rateCardLoaded" to true,
+                "scanned" to 1,
+                "truncated" to false,
+            ),
+        )
+        assertEquals(1, decoded.sessions.size)
+        assertNull(decoded.sessions[0].unitCents)
+        assertEquals("s1", decoded.unpriceable[0].sessionId)
+    }
+    @Test
+    fun `unplaceable visits decode, so work no date window can reach is not lost`() {
+        // A session with an empty startTime is invisible to every window the
+        // operator can pick. It arrives on its own channel or not at all.
+        val decoded = decodeListUninvoicedSessionsResult(
+            mapOf(
+                "sessions" to emptyList<Any?>(),
+                "unpriceable" to emptyList<Any?>(),
+                "unplaceable" to listOf(mapOf("sessionId" to "vis_lost", "kinfolkId" to "fam9")),
+                "rateCardLoaded" to true,
+                "scanned" to 40,
+                "truncated" to false,
+            ),
+        )
+        assertEquals(1, decoded.unplaceable.size)
+        assertEquals("vis_lost", decoded.unplaceable[0].sessionId)
+        assertEquals("fam9", decoded.unplaceable[0].kinfolkId)
+    }
+    @Test
+    fun `a junk or empty response degrades instead of throwing`() {
+        // This response lands AFTER the read has already happened; a decoder
+        // that threw would render as a failed load with a retry button, which
+        // is a lie about what the server said.
+        val decoded = decodeListUninvoicedSessionsResult(null)
+        assertTrue(decoded.sessions.isEmpty())
+        assertTrue(decoded.unpriceable.isEmpty())
+        assertTrue(decoded.unplaceable.isEmpty())
+        assertEquals(0L, decoded.scanned)
+        assertTrue(!decoded.truncated)
+        assertTrue(!decoded.rateCardLoaded)
+        // A list entry of the wrong type is dropped, not fatal.
+        val mixed = decodeListUninvoicedSessionsResult(
+            mapOf("sessions" to listOf("not a map", mapOf("sessionId" to "s2"))),
+        )
+        assertEquals(1, mixed.sessions.size)
+        assertEquals("s2", mixed.sessions[0].sessionId)
+    }
+    @Test
+    fun `truncated survives the decode, so a short list is never read as a complete one`() {
+        val decoded = decodeListUninvoicedSessionsResult(
+            mapOf("sessions" to emptyList<Any?>(), "scanned" to 500, "truncated" to true),
+        )
+        assertTrue(decoded.truncated)
+        assertEquals(500L, decoded.scanned)
+    }
 }

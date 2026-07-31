@@ -9,6 +9,8 @@ import com.tribetails.auntieos.data.contracts.GenerateInvoicePdfArgs
 import com.tribetails.auntieos.data.contracts.GenerateReceiptArgs
 import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsArgs
 import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsResult
+import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsArgs
+import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResult
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidArgs
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.PostInvoiceEventArgs
@@ -19,6 +21,7 @@ import com.tribetails.auntieos.data.contracts.decodeCreateInvoiceResult
 import com.tribetails.auntieos.data.contracts.decodeCreateQuoteResult
 import com.tribetails.auntieos.data.contracts.decodeGenerateInvoicePdfResult
 import com.tribetails.auntieos.data.contracts.decodeLinkInvoiceSessionsResult
+import com.tribetails.auntieos.data.contracts.decodeListUninvoicedSessionsResult
 import com.tribetails.auntieos.data.contracts.decodeMarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult
 import com.tribetails.auntieos.data.contracts.decodeSendInvoiceReminderResult
@@ -322,6 +325,54 @@ class InvoiceRepository(
             AuntieLog.i("Linked ${it.sessionIds.size} session(s) to invoice $invoiceId (+${it.added.size}/-${it.removed.size})")
         }
     }.onFailure { AuntieLog.e("linkInvoiceSessions failed for $invoiceId", it) }
+
+    /**
+     * Completed visits in a date window that no invoice has claimed yet, priced
+     * from the rate card where that is possible. The READ half of "turn last
+     * month's work into an invoice"; `linkInvoiceSessions` above is the write.
+     *
+     * Android has been able to LINK sessions to an invoice since W4-1, but had
+     * no way to FIND them: the operator had to already know a session id. That
+     * is the gap this closes, and it is why this is a read on a screen that
+     * already had its write.
+     *
+     * Three things in the response are not decoration, and the UI is expected to
+     * surface each rather than reduce them to a list of rows:
+     *
+     *  - `unitCents` is NULL, never 0, for a visit the rate card could not
+     *    price. A silent zero bills a household nothing for real work and looks
+     *    deliberate on the invoice. `rateCardLoaded` separates "this service is
+     *    not on the card" from "there is no card at all", which are different
+     *    operator problems.
+     *  - `unplaceable` is billable work NO date window can reach, because the
+     *    session carries an empty startTime and the server's window is a lexical
+     *    range on that string. Widening the dates cannot surface these, so a UI
+     *    that only offers "try a bigger window" sends the operator in circles.
+     *  - `truncated` means the server hit its page cap, so a short list is not
+     *    the same as a complete one.
+     *
+     * The window is not scoped by household server-side; it windows by date
+     * across the collection, so a caller showing one household's visits filters
+     * by `kinfolkId` itself and says that its count is after that narrowing.
+     */
+    suspend fun listUninvoicedSessions(from: String, to: String): Result<ListUninvoicedSessionsResult> = runCatching {
+        authGate.ensureAuthenticated()
+        require(from.isNotBlank() && to.isNotBlank()) { "listUninvoicedSessions requires a from and to date" }
+        // Cheap client-side guard on the one cross-field rule the generated Args
+        // cannot express (the server's zod `.refine`). Catching it here turns a
+        // round trip into an immediate, readable failure.
+        require(from <= to) { "listUninvoicedSessions window starts after it ends ($from > $to)" }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listUninvoicedSessions")
+            .call(ListUninvoicedSessionsArgs(from = from, to = to).toPayload())
+            .await().data as? Map<String, Any?>
+        decodeListUninvoicedSessionsResult(raw).also {
+            AuntieLog.i(
+                "listUninvoicedSessions $from..$to -> ${it.sessions.size} session(s), " +
+                    "${it.unpriceable.size} unpriced, ${it.unplaceable.size} unplaceable, scanned ${it.scanned}",
+            )
+        }
+    }.onFailure { AuntieLog.e("listUninvoicedSessions failed for $from..$to", it) }
 
     // --- Payments ---
 
