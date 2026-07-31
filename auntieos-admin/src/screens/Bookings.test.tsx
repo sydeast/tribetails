@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import type { Timestamp } from 'firebase/firestore';
@@ -25,12 +25,14 @@ const {
   cancelBooking,
   markBookingCompleted,
   rescheduleBooking,
+  batchUpdateBookings,
 } = vi.hoisted(() => ({
   approveBooking: vi.fn(),
   rejectBooking: vi.fn(),
   cancelBooking: vi.fn(),
   markBookingCompleted: vi.fn(),
   rescheduleBooking: vi.fn(),
+  batchUpdateBookings: vi.fn(),
 }));
 vi.mock('../api/bookingsWrite', () => ({
   approveBooking,
@@ -38,6 +40,7 @@ vi.mock('../api/bookingsWrite', () => ({
   cancelBooking,
   markBookingCompleted,
   rescheduleBooking,
+  batchUpdateBookings,
 }));
 
 /**
@@ -106,7 +109,18 @@ beforeEach(() => {
   cancelBooking.mockReset().mockResolvedValue(undefined);
   markBookingCompleted.mockReset().mockResolvedValue(undefined);
   rescheduleBooking.mockReset().mockResolvedValue(undefined);
+  batchUpdateBookings
+    .mockReset()
+    .mockResolvedValue({ ok: true, action: 'APPROVE', updated: 0, failed: [] });
 });
+
+/** Turn Select on, then tick the checkbox for each named household. */
+async function pick(...names: string[]) {
+  await userEvent.click(screen.getByRole('button', { name: 'Select' }));
+  for (const name of names) {
+    await userEvent.click(screen.getByRole('checkbox', { name: new RegExp(`Select ${name}`) }));
+  }
+}
 
 describe('Bookings screen', () => {
   it('renders a streamed row with its household, service, when, and status chip', () => {
@@ -321,5 +335,236 @@ describe('Bookings screen', () => {
     });
     await userEvent.click(screen.getByRole('button', { name: 'stub open kintale' }));
     expect(navigate).toHaveBeenCalledWith({ to: '/kintales', search: { kinTaleId: 'rep1' } });
+  });
+});
+/**
+ * The mock's Select toggle + floating bulk bar. What these own is the SCREEN's
+ * half: selection state, when the bar appears, which ids reach which write, and
+ * that a partial failure is rendered per booking. The decision logic behind it
+ * (which rows a transition applies to, how the two legs' results fold together)
+ * has its own direct suite in `lib/bookingBulk.test.ts`.
+ */
+describe('Bookings bulk actions', () => {
+  const pendingPair = [
+    entry({ _id: 's1', kinfolkName: 'Household One', status: 'PENDING', kinCareVisitId: 'v1' }),
+    entry({ _id: 's2', kinfolkName: 'Household Two', status: 'PENDING', kinCareVisitId: 'v2' }),
+  ];
+  it('shows no checkboxes until Select is turned on', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+  });
+  it('Select reveals one checkbox per row, and the bar stays hidden until something is picked', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await userEvent.click(screen.getByRole('button', { name: 'Select' }));
+    expect(screen.getAllByRole('checkbox')).toHaveLength(2);
+    expect(screen.queryByRole('group', { name: 'Bulk actions' })).toBeNull();
+  });
+  it('the bar appears with the live count once rows are picked', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One');
+    const bar = screen.getByRole('group', { name: 'Bulk actions' });
+    expect(within(bar).getByText('1')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('checkbox', { name: /Select Household Two/ }));
+    expect(within(bar).getByText('2')).toBeInTheDocument();
+  });
+  it('unticking a row takes it back out of the count', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('checkbox', { name: /Select Household Two/ }));
+    expect(within(screen.getByRole('group', { name: 'Bulk actions' })).getByText('1')).toBeInTheDocument();
+  });
+  it('Clear empties the selection and hides the bar, leaving Select on', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(screen.queryByRole('group', { name: 'Bulk actions' })).toBeNull();
+    expect(screen.getAllByRole('checkbox')).toHaveLength(2);
+  });
+  it('leaving Select mode drops the checkboxes and the selection with them', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One');
+    await userEvent.click(screen.getByRole('button', { name: 'Done selecting' }));
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(screen.queryByRole('group', { name: 'Bulk actions' })).toBeNull();
+  });
+  it('asks before it writes, naming how many, and writes nothing until confirmed', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(screen.getByText(/Approve 2 bookings\?/)).toBeInTheDocument();
+    expect(approveBooking).not.toHaveBeenCalled();
+    expect(batchUpdateBookings).not.toHaveBeenCalled();
+  });
+  it('Back leaves the selection intact and still writes nothing', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(rejectBooking).not.toHaveBeenCalled();
+    expect(within(screen.getByRole('group', { name: 'Bulk actions' })).getByText('2')).toBeInTheDocument();
+  });
+  it('writes the flat session row for every picked booking, one call per id', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
+    await waitFor(() => expect(approveBooking).toHaveBeenCalledTimes(2));
+    expect(approveBooking.mock.calls.map((c) => c[0]).sort()).toEqual(['s1', 's2']);
+  });
+  it('calls batchUpdateBookings with the ENVELOPE visit ids, never the session doc ids', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
+    // 'v1'/'v2', not 's1'/'s2'. The callable resolves ids through
+    // collectionGroup('kinCares'), where a kin_care_sessions doc id resolves to
+    // nothing at all, so sending those would be a guaranteed silent no-op.
+    await waitFor(() => expect(batchUpdateBookings).toHaveBeenCalledTimes(1));
+    const [ids, action] = batchUpdateBookings.mock.calls[0] as [string[], string];
+    expect(ids.slice().sort()).toEqual(['v1', 'v2']);
+    expect(action).toBe('APPROVE');
+  });
+  it('skips the callable entirely when no picked row has an envelope counterpart', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 'legacy', kinfolkName: 'Legacy Household', status: 'PENDING' })],
+    });
+    render(<Bookings />);
+    await pick('Legacy Household');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 1/ }));
+    await waitFor(() => expect(approveBooking).toHaveBeenCalledWith('legacy'));
+    // `ids: []` is rejected by the callable's own zod contract (min 1).
+    expect(batchUpdateBookings).not.toHaveBeenCalled();
+  });
+  it('cancels scheduled visits through cancelBooking and the CANCEL transition', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 's9', kinfolkName: 'Booked Household', status: 'SCHEDULED', kinCareVisitId: 'v9' })],
+    });
+    render(<Bookings />);
+    await pick('Booked Household');
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, cancel 1/ }));
+    await waitFor(() => expect(cancelBooking).toHaveBeenCalledWith('s9'));
+    expect(batchUpdateBookings).toHaveBeenCalledWith(['v9'], 'CANCEL');
+  });
+  it('reports the outcome per booking, naming each household, never one generic error', async () => {
+    approveBooking.mockImplementation((id: string) =>
+      id === 's2' ? Promise.reject(new Error('permission-denied')) : Promise.resolve(undefined),
+    );
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
+    expect(await screen.findByText('Approved 1 of 2 selected bookings.')).toBeInTheDocument();
+    const failure = screen.getByText('Household Two', { selector: 'li strong' }).closest('li');
+    expect(failure).not.toBeNull();
+    expect(failure?.textContent).toMatch(/permission-denied/);
+    // The one that landed is not listed as a failure.
+    expect(screen.queryByText('Household One', { selector: 'li strong' })).toBeNull();
+  });
+  it('surfaces a per-id callable failure against the household, not the raw envelope id', async () => {
+    batchUpdateBookings.mockResolvedValue({
+      ok: true,
+      action: 'APPROVE',
+      updated: 1,
+      failed: [{ id: 'v2', error: 'not-found' }],
+    });
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
+    expect(await screen.findByText('Approved 1 of 2 selected bookings.')).toBeInTheDocument();
+    const failure = screen.getByText('Household Two', { selector: 'li strong' }).closest('li');
+    expect(failure?.textContent).toMatch(/the household's copy of it was not \(not-found\)/i);
+  });
+  it('says so, separately, when the whole callable throws rather than reporting per-id failures', async () => {
+    batchUpdateBookings.mockRejectedValue(new Error('unauthenticated'));
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
+    expect(await screen.findByText(/unauthenticated/)).toBeInTheDocument();
+    expect(screen.getByText(/could not be updated/i)).toBeInTheDocument();
+  });
+  it('lists a row the action does not apply to as SKIPPED, and never writes it', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        entry({ _id: 's1', kinfolkName: 'Household One', status: 'PENDING' }),
+        entry({ _id: 'sx', kinfolkName: 'Done Household', status: 'COMPLETED' }),
+      ],
+    });
+    render(<Bookings />);
+    await pick('Household One', 'Done Household');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
+    expect(await screen.findByText('Approved 1 of 2 selected bookings.')).toBeInTheDocument();
+    expect(screen.getByText(/Skipped, nothing was written/)).toBeInTheDocument();
+    expect(
+      screen.getByText('Done Household', { selector: 'li strong' }).closest('li')?.textContent,
+    ).toMatch(/Already completed/);
+    expect(approveBooking).toHaveBeenCalledTimes(1);
+    expect(approveBooking).toHaveBeenCalledWith('s1');
+  });
+  it('keeps the rows that did not land selected, so a retry is one press', async () => {
+    approveBooking.mockImplementation((id: string) =>
+      id === 's2' ? Promise.reject(new Error('permission-denied')) : Promise.resolve(undefined),
+    );
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
+    expect(await screen.findByText('Approved 1 of 2 selected bookings.')).toBeInTheDocument();
+    expect(within(screen.getByRole('group', { name: 'Bulk actions' })).getByText('1')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Select Household Two/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Select Household One/ })).not.toBeChecked();
+  });
+  it('does not send the envelope leg for a row whose flat write just failed', async () => {
+    approveBooking.mockImplementation((id: string) =>
+      id === 's2' ? Promise.reject(new Error('permission-denied')) : Promise.resolve(undefined),
+    );
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
+    // Confirming 'v2' in the household's copy while the admin's own list still
+    // shows it pending is the exact divergence this bar exists to avoid.
+    await waitFor(() => expect(batchUpdateBookings).toHaveBeenCalledTimes(1));
+    expect(batchUpdateBookings).toHaveBeenCalledWith(['v1'], 'APPROVE');
+  });
+  it('a clean run says every selected booking was updated, with no failure list', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
+    expect(await screen.findByText('Approved 2 of 2 selected bookings.')).toBeInTheDocument();
+    expect(screen.getByText(/Every selected booking was updated/)).toBeInTheDocument();
+    expect(screen.queryByText(/Not applied/)).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Bulk actions' })).toBeNull();
+  });
+  it('the row still opens its detail while Select is on: picking is a sibling control, not a mode that eats the click', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
+    render(<Bookings />);
+    await pick('Household One');
+    await userEvent.click(screen.getByRole('button', { name: /Household Two/i }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });

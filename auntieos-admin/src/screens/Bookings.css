@@ -73,10 +73,37 @@
 }
 
 .bookings__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   border-bottom: var(--border-hairline) solid var(--color-border-soft);
 }
 .bookings__row:last-child {
   border-bottom: none;
+}
+/* Picked reads on the ROW, not only on the checkbox: at 20 rows the operator
+   is scanning the list, not the 20px control at its left edge. */
+.bookings__row--picked {
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  border-radius: var(--radius-card);
+}
+
+.bookings__row-pick {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  padding-left: var(--space-2);
+  cursor: pointer;
+}
+.bookings__row-pick input {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+.bookings__row-pick input:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .bookings__row-main {
@@ -187,4 +214,63 @@
 .bookings__chip--unknown {
   background: var(--color-surface-2);
   color: var(--color-text-faint);
+}
+/* ── bulk bar ────────────────────────────────────────────────────────────── */
+/* Floating, centred, above the list, per the mock's `.bulkbar`. It is fixed
+   rather than sticky so a long list does not push it off screen mid-selection:
+   the count it carries is the only place the selection size is stated. */
+.bookings__bulkbar {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-5);
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  max-width: min(56rem, calc(100vw - 2 * var(--space-4)));
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-primary);
+  border-radius: var(--radius-card);
+  padding: var(--space-3) var(--space-4);
+  /* The one shadow token this app declares (styles/base.css), the same one
+     `.lift` spends on every raised card. A floating bar needs to read as
+     detached from the list behind it, and inventing a second shadow value here
+     is how two surfaces at the same elevation stop matching. */
+  box-shadow: var(--lift-shadow);
+}
+.bookings__bulkbar-count {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size);
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+.bookings__bulkbar-count b {
+  color: var(--color-primary);
+  font-size: var(--type-title-md-size);
+}
+.bookings__bulkbar-sep {
+  width: var(--border-hairline);
+  align-self: stretch;
+  background: var(--color-border);
+  flex: 0 0 auto;
+}
+.bookings__bulkbar-confirm {
+  color: var(--color-text-primary);
+  font-size: var(--type-body-sm-size);
+}
+/* ── bulk result ─────────────────────────────────────────────────────────── */
+.bookings__bulk-result-head {
+  margin: var(--space-2) 0 var(--space-1);
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+}
+.bookings__bulk-result {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--type-body-sm-size);
 }
