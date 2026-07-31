@@ -55,6 +55,7 @@ fun EditKinfolkScreen(
     onDeleted: () -> Unit
 ) {
     val state by viewModel.editKinfolkState.collectAsState()
+    val vetClinicsLoadFailed by viewModel.vetClinicsLoadFailed.collectAsState()
     // K3 (A8): the dossier (with householdNotes) lives in profileState, loaded when the
     // operator opened this kinfolk's profile — which is the only way into this editor.
     // We guard on the id match so a stale profile never bleeds into the wrong editor.
@@ -424,8 +425,27 @@ fun EditKinfolkScreen(
                 // record away from the bank everything else reads. A clinic with
                 // wrong details is fixed on the clinic, in the Vet Clinics admin
                 // screen, once, for every household that uses it.
+                //
+                // The catalog read is deliberately NOT what gates this section:
+                // a failed listener still renders the picker with whatever it last
+                // held (see AuntieRepository.observeVetClinicsOrFail), because the
+                // household's own vet fields did not come from that read. Hiding
+                // the section on a catalog outage would make the outage look like
+                // missing household data and block editing the vet on file. So the
+                // failure is stated, loudly, above a picker that still works.
+                if (vetClinicsLoadFailed) {
+                    item {
+                        AuntieBanner(tone = AuntieBannerTone.Warning, title = "The shared clinic catalog didn't load") {
+                            Text(
+                                "Searching is unavailable, and the clinic already on file is shown below and still saves.",
+                                style = AuntieTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
                 item {
                     val vetClinics by viewModel.vetClinicsFlow.collectAsState()
+                    val dedupeNote by viewModel.vetClinicDedupeNote.collectAsState()
                     AuntieCard(modifier = Modifier.fillMaxWidth()) {
                         Column(
                             modifier = Modifier.padding(16.dp),
@@ -446,6 +466,8 @@ fun EditKinfolkScreen(
                                 ),
                                 clinics = vetClinics,
                                 onSelectionChange = { sel ->
+                                    // selectVetClinic/clearVetClinic each clear any
+                                    // stale dedupe note themselves.
                                     if (sel.hasSelection) {
                                         viewModel.selectVetClinic(
                                             VetClinic(
@@ -470,6 +492,19 @@ fun EditKinfolkScreen(
                                 },
                                 enabled = !state.isSaving,
                             )
+                            // Not an error and not silent: the operator asked to
+                            // CREATE a clinic and got an EXISTING one selected
+                            // instead. Saying which is the difference between
+                            // that reading as "it worked" and as "nothing
+                            // happened" (mirrors web VetClinicPicker's
+                            // dedupedName note, verbatim).
+                            if (dedupeNote != null) {
+                                Text(
+                                    dedupeNote!!,
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = AuntieTheme.colors.textDim,
+                                )
+                            }
                         }
                     }
                 }
@@ -480,6 +515,7 @@ fun EditKinfolkScreen(
                 item {
                     val vetClinics by viewModel.vetClinicsFlow.collectAsState()
                     val erClinics = emergencyVetClinics(vetClinics)
+                    val dedupeNote by viewModel.emergencyVetClinicDedupeNote.collectAsState()
                     AuntieCard(modifier = Modifier.fillMaxWidth()) {
                         Column(
                             modifier = Modifier.padding(16.dp),
@@ -500,6 +536,8 @@ fun EditKinfolkScreen(
                                 ),
                                 clinics = erClinics,
                                 onSelectionChange = { sel ->
+                                    // selectEmergencyVetClinic/clearEmergencyVetClinic
+                                    // each clear any stale dedupe note themselves.
                                     if (sel.hasSelection) {
                                         viewModel.selectEmergencyVetClinic(
                                             VetClinic(
@@ -529,6 +567,13 @@ fun EditKinfolkScreen(
                                 createAsEmergency = true,
                                 enabled = !state.isSaving,
                             )
+                            if (dedupeNote != null) {
+                                Text(
+                                    dedupeNote!!,
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = AuntieTheme.colors.textDim,
+                                )
+                            }
                         }
                     }
                 }

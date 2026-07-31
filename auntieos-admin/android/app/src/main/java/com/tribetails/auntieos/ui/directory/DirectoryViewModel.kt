@@ -17,6 +17,8 @@ import com.tribetails.auntieos.data.model.MediaEntityType
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
+import com.tribetails.auntieos.data.model.SubmitVetClinicResult
+import com.tribetails.auntieos.data.model.VetClinicsSnapshot
 import com.tribetails.auntieos.domain.recentTalesFor
 import com.tribetails.auntieos.domain.upcomingVisitsFor
 import com.tribetails.auntieos.domain.invoicesForKinfolk
@@ -31,6 +33,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -649,6 +653,10 @@ class DirectoryViewModel(
     // save back untouched. What is forbidden is creating new free-text vets,
     // not displaying old ones.
 
+    // A stale dedupe note (see _vetClinicDedupeNote below) belongs to whatever
+    // create attempt produced it. Any OTHER change to the selection -- a fresh
+    // pick, or an explicit clear -- makes it stale, so all four entry points
+    // clear it themselves rather than relying on every caller to remember to.
     fun selectVetClinic(clinic: com.tribetails.auntieos.data.model.VetClinic) {
         val sel = vetClinicSelectionOf(clinic)
         _editKinfolkState.value = _editKinfolkState.value.copy(
@@ -657,6 +665,7 @@ class DirectoryViewModel(
             vetClinicPhone   = sel.phone,
             vetClinicAddress = sel.address,
         )
+        _vetClinicDedupeNote.value = null
     }
 
     /** Empties ALL FOUR fields. A cleared vet must not leave a name behind. */
@@ -664,6 +673,7 @@ class DirectoryViewModel(
         _editKinfolkState.value = _editKinfolkState.value.copy(
             vetClinicId = "", vetClinicName = "", vetClinicPhone = "", vetClinicAddress = "",
         )
+        _vetClinicDedupeNote.value = null
     }
 
     fun selectEmergencyVetClinic(clinic: com.tribetails.auntieos.data.model.VetClinic) {
@@ -674,6 +684,7 @@ class DirectoryViewModel(
             emergencyVetClinicPhone   = sel.phone,
             emergencyVetClinicAddress = sel.address,
         )
+        _emergencyVetClinicDedupeNote.value = null
     }
 
     fun clearEmergencyVetClinic() {
@@ -681,7 +692,21 @@ class DirectoryViewModel(
             emergencyVetClinicId = "", emergencyVetClinicName = "",
             emergencyVetClinicPhone = "", emergencyVetClinicAddress = "",
         )
+        _emergencyVetClinicDedupeNote.value = null
     }
+
+    // A dedupe hit is not an error and must not be silent: the operator asked to
+    // CREATE a clinic and got an EXISTING one selected instead, and saying which
+    // clinic is the difference between that reading as "it worked" and as
+    // "nothing happened" (mirrors web VetClinicPicker's dedupedName). Kept as a
+    // pair, one per picker instance, so a dedupe on the day vet does not render
+    // under the emergency vet's card or vice versa.
+    private val _vetClinicDedupeNote = MutableStateFlow<String?>(null)
+    val vetClinicDedupeNote: StateFlow<String?> = _vetClinicDedupeNote.asStateFlow()
+    private val _emergencyVetClinicDedupeNote = MutableStateFlow<String?>(null)
+    val emergencyVetClinicDedupeNote: StateFlow<String?> = _emergencyVetClinicDedupeNote.asStateFlow()
+    fun clearVetClinicDedupeNote() { _vetClinicDedupeNote.value = null }
+    fun clearEmergencyVetClinicDedupeNote() { _emergencyVetClinicDedupeNote.value = null }
 
     /**
      * The pinned "create this clinic" action under the search dropdown.
@@ -707,7 +732,7 @@ class DirectoryViewModel(
         val trimmed = name.trim()
         if (trimmed.isBlank()) return
         viewModelScope.launch {
-            repository.submitVetClinic(
+            repository.submitVetClinicDetailed(
                 com.tribetails.auntieos.data.model.VetClinic(
                     name = trimmed,
                     phone = phone.trim(),
@@ -715,30 +740,59 @@ class DirectoryViewModel(
                     website = website.trim(),
                     isEmergency = isEmergency,
                 )
-            ).onSuccess { clinicId ->
-                // On a DEDUPE hit the callable returns the id of a clinic already
-                // in the bank. Prefer that record's stored details over what was
-                // just typed: the bank's copy is the curated one, and replacing a
-                // good phone number with a blank from a hurried retype is the
-                // failure this guards. Falls back to the typed values for a
-                // genuinely new clinic, which is not in the catalog snapshot yet.
-                val existing = vetClinicsFlow.value.firstOrNull { it.id == clinicId }
+            ).onSuccess { result ->
+                // On a DEDUPE hit (result.created == false) the callable returns
+                // the id of a clinic already in the bank. Prefer that record's
+                // stored details over what was just typed: the bank's copy is the
+                // curated one, and replacing a good phone number with a blank
+                // from a hurried retype is the failure this guards. Falls back to
+                // the typed values for a genuinely new clinic, which is not in
+                // the catalog snapshot yet.
+                val existing = vetClinicsFlow.value.firstOrNull { it.id == result.clinicId }
                 val selected = existing ?: com.tribetails.auntieos.data.model.VetClinic(
-                    id = clinicId,
+                    id = result.clinicId,
                     name = trimmed,
                     phone = phone.trim(),
                     address = address.trim(),
                     website = website.trim(),
                     isEmergency = isEmergency,
                 )
-                if (forEmergencySlot) selectEmergencyVetClinic(selected) else selectVetClinic(selected)
+                val dedupeNote = if (result.created) null else
+                    "${selected.name} was already in the catalog, so this household is linked to that record instead of a duplicate."
+                // select*VetClinic clears its dedupe note as part of committing a
+                // selection (see the note above those two functions), so it MUST
+                // run before the note below is set, not after, or the note this
+                // create just produced would be wiped by its own selection.
+                if (forEmergencySlot) {
+                    selectEmergencyVetClinic(selected)
+                    _emergencyVetClinicDedupeNote.value = dedupeNote
+                } else {
+                    selectVetClinic(selected)
+                    _vetClinicDedupeNote.value = dedupeNote
+                }
             }
         }
     }
 
-    val vetClinicsFlow: kotlinx.coroutines.flow.StateFlow<List<com.tribetails.auntieos.data.model.VetClinic>> =
-        repository.observeVetClinics()
-            .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
+    // observeVetClinicsOrFail (not the plain observeVetClinics) so a load
+    // FAILURE stays distinguishable from a genuinely empty catalog: scan() folds
+    // each VetClinicsSnapshot into a running state that keeps the last good
+    // clinic list on a failure (a picker mid-edit should not blank out because
+    // of a network blip) while still flipping vetClinicsLoadFailed so the screen
+    // can disclose it. See EditKinfolkScreen's banner and
+    // DirectoryViewModelVetPickerTest's load-failure cases.
+    private val vetClinicsState: StateFlow<VetClinicsSnapshot> =
+        repository.observeVetClinicsOrFail()
+            .scan(VetClinicsSnapshot()) { acc, next -> if (next.failed) acc.copy(failed = true) else next }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VetClinicsSnapshot())
+
+    val vetClinicsFlow: StateFlow<List<com.tribetails.auntieos.data.model.VetClinic>> =
+        vetClinicsState.map { it.clinics }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val vetClinicsLoadFailed: StateFlow<Boolean> =
+        vetClinicsState.map { it.failed }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     // ---- Address autocomplete (Mapbox via Functions) ----
     private val mapboxClient = com.tribetails.auntieos.data.api.MapboxClient(repository)

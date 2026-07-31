@@ -1043,6 +1043,34 @@ data class VetClinic(
 )
 
 /**
+ * `observeVetClinicsOrFail`'s emission: the catalog list, PLUS whether the last
+ * listener callback was a failure. A load failure keeps whatever [clinics] it
+ * last held rather than clearing it, so a transient blip does not blank a
+ * picker that was already showing a good list; [failed] is the separate signal
+ * a screen discloses instead of guessing from an empty list, which is also
+ * what a genuinely empty (but healthy) catalog looks like.
+ */
+data class VetClinicsSnapshot(
+    val clinics: List<VetClinic> = emptyList(),
+    val failed: Boolean = false,
+)
+
+/**
+ * `submitVetClinic`'s full callable response (`mytribe/functions/src/portal/
+ * submitVetClinic.ts`'s `{ clinicId, created, pending }`). [created] is false
+ * on a DEDUPE hit (the callable matched an existing clinic by normalized name
+ * instead of writing a new one), which is what lets a caller disclose "already
+ * in the catalog" rather than the create silently resolving to someone else's
+ * record. [pending] is true only for a kinfolk-submitted clinic awaiting
+ * approval; a staff/operator submission is never pending.
+ */
+data class SubmitVetClinicResult(
+    val clinicId: String,
+    val created: Boolean,
+    val pending: Boolean,
+)
+
+/**
  * Single doc per Firebase Auth uid in the `users` Firestore collection.
  * Mirrors the web `UserProfile` shape so admin profile state stays in sync
  * across web + Android. Photo upload goes through MediaUploadManager →

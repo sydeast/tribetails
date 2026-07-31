@@ -28,6 +28,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -2011,15 +2012,31 @@ class AuntieRepository(
 
     // ---- Vet clinics shared catalog (matches web `vet_clinics` collection) ----
 
-    fun observeVetClinics(): Flow<List<VetClinic>> = callbackFlow {
-        val reg = firestore.collection("vet_clinics")
+    /** Ordered/capped exactly like the web `VET_CLINICS_QUERY` (name ascending, 500). */
+    private fun vetClinicsQuery() = firestore.collection("vet_clinics").orderBy("name").limit(500)
+
+    fun observeVetClinics(): Flow<List<VetClinic>> = observeVetClinicsOrFail().map { it.clinics }
+
+    /**
+     * Same underlying `vet_clinics` listener as [observeVetClinics], but keeps a
+     * load FAILURE distinguishable from a genuinely empty catalog -- exactly the
+     * distinction [observeVetClinics] collapses (both become `emptyList()`),
+     * which is fine for [com.tribetails.auntieos.ui.admin.VetClinicsViewModel]'s
+     * settings screen (there is no household vet field there for a network blip
+     * to look like it blanked). The Kinfolk edit screen's picker has that field,
+     * so it uses this instead: an operator who cannot tell "no clinics on file"
+     * from "the read is broken" may save a household believing there truly is no
+     * vet on file, when the truth is the catalog never loaded.
+     */
+    fun observeVetClinicsOrFail(): Flow<VetClinicsSnapshot> = callbackFlow {
+        val reg = vetClinicsQuery()
             .addSnapshotListener { snap, err ->
                 if (err != null) {
-                    AuntieLog.e("observeVetClinics failed", err)
-                    trySend(emptyList())
+                    AuntieLog.e("observeVetClinicsOrFail failed", err)
+                    trySend(VetClinicsSnapshot(failed = true))
                     return@addSnapshotListener
                 }
-                trySend(snap?.toObjects(VetClinic::class.java).orEmpty())
+                trySend(VetClinicsSnapshot(clinics = snap?.toObjects(VetClinic::class.java).orEmpty()))
             }
         awaitClose { reg.remove() }
     }
@@ -2043,7 +2060,21 @@ class AuntieRepository(
      *
      * Returns the clinic id, whether newly created or matched.
      */
-    suspend fun submitVetClinic(clinic: VetClinic): Result<String> = runCatching {
+    suspend fun submitVetClinic(clinic: VetClinic): Result<String> =
+        submitVetClinicDetailed(clinic).map { it.clinicId }
+
+    /**
+     * Same call as [submitVetClinic], but keeps `created` and `pending` off the
+     * callable response instead of discarding them. `created` is what tells a
+     * DEDUPE hit (the callable matched an existing clinic by normalized name)
+     * apart from an actual new row, which is what web's picker reads
+     * (`vetClinicsWrite.ts`'s `SubmitVetClinicResult`) to disclose "already in
+     * the catalog" instead of a create silently resolving to someone else's
+     * record. [submitVetClinic] stays a plain id for
+     * [com.tribetails.auntieos.ui.admin.VetClinicsViewModel], which has no
+     * dedupe-disclosure UI to feed.
+     */
+    suspend fun submitVetClinicDetailed(clinic: VetClinic): Result<SubmitVetClinicResult> = runCatching {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("submitVetClinic")
@@ -2058,7 +2089,12 @@ class AuntieRepository(
             )
             .await().data as? Map<String, Any?>
             ?: error("submitVetClinic: non-map payload")
-        (raw["clinicId"] as? String).orEmpty().ifBlank { error("submitVetClinic: no clinicId") }
+        val clinicId = (raw["clinicId"] as? String).orEmpty().ifBlank { error("submitVetClinic: no clinicId") }
+        SubmitVetClinicResult(
+            clinicId = clinicId,
+            created = raw["created"] as? Boolean ?: true,
+            pending = raw["pending"] as? Boolean ?: false,
+        )
     }.onFailure { AuntieLog.e("Failed to submit vet clinic", it) }
 
     // ---- Mapbox Search Box, proxied (no Mapbox key ships in this app) ----
