@@ -137,15 +137,7 @@ exports.listAdmins = onCall(async (req) => {
   return { admins: snap.docs.map((d) => ({ uid: d.id, ...d.data() })) };
 });
 
-// HTTP-callable proxy for n8n workflows that need to write a draft doc to Firestore.
-// Auth: shared secret in `x-auntie-key` header. Avoids embedding firebase-admin in n8n.
-//
-// POST /writeDraft
-// Headers: { "x-auntie-key": "<N8N_SHARED_SECRET>" }
-// Body: { docId?: string, draft: { ... } }
-// Response: { ok: true, id: string }
 const { defineSecret } = require('firebase-functions/params');
-const N8N_SHARED_SECRET = defineSecret('N8N_SHARED_SECRET');
 const CLOUDINARY_CLOUD_NAME = defineSecret('CLOUDINARY_CLOUD_NAME');
 const CLOUDINARY_API_KEY = defineSecret('CLOUDINARY_API_KEY');
 const CLOUDINARY_API_SECRET = defineSecret('CLOUDINARY_API_SECRET');
@@ -158,47 +150,6 @@ const MAPBOX_ACCESS_TOKEN = defineSecret('MAPBOX_ACCESS_TOKEN');
 // Anthropic API key for the Auntie copy generator (`generate`), replacing the
 // n8n Claude call. Set via `firebase functions:secrets:set ANTHROPIC_API_KEY`.
 const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
-
-// IP rate limit for the n8n shared-secret HTTP endpoints. If
-// `N8N_SHARED_SECRET` ever leaks, this caps abuse to ~60 calls/min per source
-// IP rather than unlimited drive. Bucket doc is server-written only;
-// firestore.rules denies client writes to `n8nIpRateLimits/*`.
-const N8N_RATE_WINDOW_MS = 60 * 1000;
-const N8N_RATE_LIMIT = 60;
-
-async function n8nIpAllowed(rawIp) {
-  const hashed = crypto.createHash('sha256').update(rawIp).digest('hex').slice(0, 32);
-  const ref = admin.firestore().collection('n8nIpRateLimits').doc(hashed);
-  const nowMs = Date.now();
-  const cutoff = nowMs - N8N_RATE_WINDOW_MS;
-  return admin.firestore().runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    const timestamps = (snap.exists && Array.isArray(snap.data().timestamps))
-      ? snap.data().timestamps
-      : [];
-    const recent = timestamps.filter((t) => t >= cutoff);
-    if (recent.length >= N8N_RATE_LIMIT) return false;
-    recent.push(nowMs);
-    tx.set(ref, { timestamps: recent, updatedAtMs: nowMs }, { merge: true });
-    return true;
-  });
-}
-
-async function n8nKeyAuth(req, res, scope) {
-  const provided = req.get('x-auntie-key');
-  if (!provided || provided !== N8N_SHARED_SECRET.value()) {
-    res.status(401).json({ error: 'unauthorized' });
-    return false;
-  }
-  const ip = (req.get('x-forwarded-for') || '').split(',')[0].trim() || req.ip || 'unknown';
-  const allowed = await n8nIpAllowed(ip);
-  if (!allowed) {
-    console.warn('%s: rate-limited ip=%s', scope, ip);
-    res.status(429).json({ error: 'rate_limited' });
-    return false;
-  }
-  return true;
-}
 
 // Verifies the Bearer Firebase ID token and enforces the caller is a real admin
 // (`admin === true`). When `allowTestAdmin` is set, a Stage-0I sandbox test-admin
@@ -230,107 +181,20 @@ async function requireAdminToken(req, res, scope, { allowTestAdmin = false } = {
   }
 }
 
-exports.writeDraft = onRequest({ secrets: [N8N_SHARED_SECRET], cors: false }, async (req, res) => {
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'POST only' });
-    return;
-  }
-  if (!(await n8nKeyAuth(req, res, 'writeDraft'))) return;
-  const { docId, draft } = req.body || {};
-  if (!draft || typeof draft !== 'object') {
-    res.status(400).json({ error: 'draft (object) required in body' });
-    return;
-  }
-  try {
-    const col = admin.firestore().collection('generated_drafts');
-    const ref = docId ? col.doc(docId) : col.doc();
-    await ref.set(
-      { ...draft, _writtenAt: admin.firestore.FieldValue.serverTimestamp() },
-      { merge: true }
-    );
-    res.status(200).json({ ok: true, id: ref.id });
-  } catch (err) {
-    console.error('writeDraft failed', err);
-    res.status(500).json({ error: err.message || 'internal error' });
-  }
-});
-
-// AO-32 (W11): getTrainingDoc / getDraft used to return the ENTIRE Firestore
-// document on shared-secret auth alone. That leaked internal/sensitive fields
-// the caller never needs — operator raw_notes, createdBy uid, attachment storage
-// URLs / cloudinaryPublicId, kinfolk PII (kinfolk_id/kinfolk_name/recipient),
-// model/source/status metadata, reconcile bookkeeping, etc.
-//
-// The ONLY consumer is the n8n "Update Profiles" workflow's "Build Update
-// Prompts" node, which reads exactly these fields off the returned row
-// (create_n8n_workflows.py:834-835, and patch_update_profiles_firestore.py:140
-// which adds the camelCase communicationType variant):
-//   new_content  = row.generated_copy || row.content
-//   content_type = row.communicationType || row.communication_type || row.title
-// (the trigger's kinfolk_id / row_id come from the workflow's own trigger body,
-// not from this response.)
-//
-// So project ONLY those fields (plus the doc id) — nothing else crosses the
-// boundary. Keys absent on a given collection simply don't appear in the
-// response. Exported for hermetic unit tests.
-const N8N_DOC_RESPONSE_FIELDS = [
-  'generated_copy', // generated_drafts: draft body -> new_content
-  'content', // training_documents: doc body -> new_content
-  'communicationType', // training_documents: content_type (camelCase)
-  'communication_type', // generated_drafts: content_type (snake_case)
-  'title', // both: content_type fallback
-];
-
-function projectN8nDocResponse(id, data) {
-  const out = { id };
-  const src = data || {};
-  for (const key of N8N_DOC_RESPONSE_FIELDS) {
-    if (Object.prototype.hasOwnProperty.call(src, key)) out[key] = src[key];
-  }
-  return out;
-}
-
-// Same shape but reads a single training document. Used by Update Profiles n8n workflow.
-exports.getTrainingDoc = onRequest({ secrets: [N8N_SHARED_SECRET], cors: false }, async (req, res) => {
-  if (!(await n8nKeyAuth(req, res, 'getTrainingDoc'))) return;
-  const id = (req.query.id || '').toString();
-  if (!id) {
-    res.status(400).json({ error: 'id query param required' });
-    return;
-  }
-  try {
-    const snap = await admin.firestore().collection('training_documents').doc(id).get();
-    if (!snap.exists) {
-      res.status(404).json({ error: `training_documents/${id} not found` });
-      return;
-    }
-    res.status(200).json(projectN8nDocResponse(snap.id, snap.data()));
-  } catch (err) {
-    console.error('getTrainingDoc failed', err);
-    res.status(500).json({ error: err.message || 'internal error' });
-  }
-});
-
-// Same shape but reads a single draft. Used by Update Profiles n8n workflow.
-exports.getDraft = onRequest({ secrets: [N8N_SHARED_SECRET], cors: false }, async (req, res) => {
-  if (!(await n8nKeyAuth(req, res, 'getDraft'))) return;
-  const id = (req.query.id || '').toString();
-  if (!id) {
-    res.status(400).json({ error: 'id query param required' });
-    return;
-  }
-  try {
-    const snap = await admin.firestore().collection('generated_drafts').doc(id).get();
-    if (!snap.exists) {
-      res.status(404).json({ error: `generated_drafts/${id} not found` });
-      return;
-    }
-    res.status(200).json(projectN8nDocResponse(snap.id, snap.data()));
-  } catch (err) {
-    console.error('getDraft failed', err);
-    res.status(500).json({ error: err.message || 'internal error' });
-  }
-});
+// writeDraft / getTrainingDoc / getDraft (REMOVED 2026-07-30, AO-4 Phase B).
+// Three shared-secret HTTP endpoints that existed only so n8n workflows could
+// read and write Firestore without embedding firebase-admin. The workflows were
+// deleted months ago; the 2026-07-21 outage traced a failure to exactly that.
+// The operator has confirmed nothing targets them, and Cloud Run logged zero
+// requests across three months. Deleted with them: the `N8N_SHARED_SECRET`
+// secret, the `n8nKeyAuth` wrapper, the `n8nIpAllowed` per-IP rate limiter and
+// its `n8nIpRateLimits` ledger, and the AO-32 `projectN8nDocResponse` field
+// projection that existed only to narrow their responses. AO-33's three
+// hardening findings (timing-unsafe compare, unbounded timestamp array, raw
+// body forwarding) are resolved by this deletion rather than by a fix.
+// The `n8nIpRateLimits` firestore.rules block was already deleted 2026-07-23.
+// Drafts are written directly by `generate` (generate.js); training documents
+// are read through MyTribe's admin callables.
 
 // sendMessage (REMOVED 2026-07-23). It was a bare HTTP proxy to
 // https://n8n.tribetails.com/webhook/auntie-send-message. n8n was retired, so
@@ -781,5 +645,3 @@ module.exports.__resetCloudinaryCredentialCache = () => {
 };
 module.exports.assertAdminRemovalAllowed = assertAdminRemovalAllowed;
 module.exports.mergeAdminClaim = mergeAdminClaim;
-module.exports.projectN8nDocResponse = projectN8nDocResponse;
-module.exports.N8N_DOC_RESPONSE_FIELDS = N8N_DOC_RESPONSE_FIELDS;
