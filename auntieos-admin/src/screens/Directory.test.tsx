@@ -130,7 +130,7 @@ describe('Directory screen, Kinfolk tab', () => {
     // The household still renders...
     expect(screen.getByText('Jamie Halbrook')).toBeInTheDocument();
     // ...but the failure is disclosed, not hidden behind a false "No kin on file".
-    expect(screen.getByText(/couldn.t load pet data/i)).toBeInTheDocument();
+    expect(screen.getByText(/couldn.t load Kin data/i)).toBeInTheDocument();
     expect(screen.getByText(/deadline-exceeded/i)).toBeInTheDocument();
   });
 

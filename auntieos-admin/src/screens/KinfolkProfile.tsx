@@ -245,7 +245,7 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkP
                 </DenPanel>
               )}
 
-              <DenPanel title={`Kin${kin.length > 0 ? ` · ${kin.length}` : ''}`} subtitle="Pets in this household.">
+              <DenPanel title={`Kin${kin.length > 0 ? ` · ${kin.length}` : ''}`} subtitle="Kin in this household.">
                 {kin.length === 0 ? (
                   <EmptyHint>No kin on file for this household.</EmptyHint>
                 ) : (

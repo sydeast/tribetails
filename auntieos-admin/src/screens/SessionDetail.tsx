@@ -149,7 +149,7 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
               )}
 
               {kinCount > 0 && (
-                <DenPanel title="Kin" subtitle="Pets this visit covers.">
+                <DenPanel title="Kin" subtitle="Kin this visit covers.">
                   <dl className="sdetail__facts">
                     <Fact label="Kin covered" value={String(kinCount)} />
                   </dl>

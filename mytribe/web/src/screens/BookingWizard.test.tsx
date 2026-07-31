@@ -85,7 +85,7 @@ function renderWizard(onComplete = vi.fn()) {
 }
 
 async function goToStep2(user: ReturnType<typeof userEvent.setup>) {
-  await screen.findByText('Select Client & Pets');
+  await screen.findByText('Select Kin');
   await user.click(screen.getByRole('button', { name: 'Next' }));
   await screen.findByText('Choose Service');
 }

@@ -198,7 +198,7 @@ export function MyNotificationsEdit() {
               />
               <NotifHatSection
                 title="As the Auntie"
-                subtitle="The care side: visit notes, KinTale comments, pet updates, your schedule digest."
+                subtitle="The care side: visit notes, KinTale comments, Kin updates, your schedule digest."
                 matrix={matrix}
                 prefs={draft}
                 stream={STREAM_STAFF}

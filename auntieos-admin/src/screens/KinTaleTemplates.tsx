@@ -415,8 +415,8 @@ function TemplateEditor({ draft, patch, bank, onSaveToBank, displacesDefault }: 
           onChange={(v) => patch({ nextAppointmentEnabled: v })}
         />
         <ToggleRow
-          label="Pet mood"
-          description="Let Auntie tag each pet's mood from the palette below."
+          label="Kin mood"
+          description="Let Auntie tag each Kin's mood from the palette below."
           checked={draft.petMoodEnabled}
           onChange={(v) => patch({ petMoodEnabled: v })}
         />
@@ -431,10 +431,10 @@ function TemplateEditor({ draft, patch, bank, onSaveToBank, displacesDefault }: 
       {draft.checklistEnabled && (
         <>
           <ChecklistSection
-            title="Per-pet items"
-            subtitle="These appear once for each pet in the visit."
+            title="Per-Kin items"
+            subtitle="These appear once for each Kin in the visit."
             scope="PER_PET"
-            addLabel="Add per-pet item"
+            addLabel="Add per-Kin item"
             items={draft.checklistItems}
             onItems={(items) => patch({ checklistItems: items })}
             bank={bank}
@@ -812,7 +812,7 @@ function MoodEditor({ moods, onMoods }: MoodEditorProps) {
   return (
     <DenPanel
       title="Mood options"
-      subtitle="The palette Auntie tags each pet's mood from."
+      subtitle="The palette Auntie tags each Kin's mood from."
       trailing={<GhostButton label="Add mood" onClick={() => onMoods(addMood(moods))} />}
     >
       {rows.length === 0 ? (

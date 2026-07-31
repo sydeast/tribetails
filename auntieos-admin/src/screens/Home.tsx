@@ -63,7 +63,7 @@ export const DASH_LABELS: Readonly<Record<DashKey, string>> = {
   heatIndex: 'Heat Stroke Index',
   weeklyCapacity: 'Weekly capacity',
   overdueTracker: 'Overdue visits',
-  petBreakdown: 'Pets by type',
+  petBreakdown: 'Kin by type',
   frequentFlyers: 'Frequent flyers',
   holidayRunway: 'Holiday runway',
   unreadMessages: 'Unread messages',
