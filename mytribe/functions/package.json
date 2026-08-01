@@ -22,7 +22,7 @@
     "contracts:generate": "ts-node --project scripts/tsconfig.json scripts/generateContracts.ts",
     "contracts:check": "ts-node --project scripts/tsconfig.json scripts/generateContracts.ts --check",
     "backfill:invoice-state": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillInvoiceStateStamp.ts",
-    "backfill:household-vet": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillHouseholdVetToKinfolk.ts",
+    "backfill:household-vet": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillKinfolkVetToHousehold.ts",
     "seed:emails": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/seedEmailTemplates.ts",
     "seed:notif-templates": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/seedNotificationTemplates.ts",
     "seed:demo-kinfolk": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/seedDemoKinfolk.ts"
