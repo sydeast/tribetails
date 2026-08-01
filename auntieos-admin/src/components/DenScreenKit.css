@@ -329,3 +329,38 @@
 .den-hint--error {
   color: var(--color-error);
 }
+/* ── Phone width ──────────────────────────────────────────────────────────
+   `.den-heading` and `.den-panel-header` are flex rows whose trailing block is
+   `flex: none`, which is right on a desktop and is what pushed the action
+   buttons off the right edge of the phone. On 2026-08-01 that measured as 43px
+   of horizontal overflow on Bookings, 76px on Templates and 354px on Packages
+   (whose trailing block is a wrapping row of package suggestions, 683px wide
+   and forbidden to shrink), and on every screen with a wide trailing block it
+   squeezed the title and the subtitle into a ribbon three or four words across.
+   Below the breakpoint the trailing block goes under the text instead of beside
+   it and is allowed to wrap. Nothing about the desktop row changes. */
+@media (max-width: 720px) {
+  .den-heading {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+  }
+  .den-heading-trailing,
+  .den-panel-trailing {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+  .den-panel-header {
+    flex-wrap: wrap;
+  }
+  /* Below the toggle, full width, rather than a fourth item crushed into the
+     same line as the title, the subtitle and the chevron. */
+  .den-panel-trailing {
+    flex: 1 1 100%;
+  }
+  .den-panel {
+    padding: var(--space-4);
+  }
+}

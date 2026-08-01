@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 
 const { useRouteContext } = vi.hoisted(() => ({ useRouteContext: vi.fn() }));
@@ -353,5 +354,222 @@ describe('AppShell brand mark', () => {
     // read "A AuntieOS".
     expect(mark).toHaveAttribute('aria-hidden', 'true');
     expect(within(rail).getByText('AuntieOS')).toBeInTheDocument();
+  });
+});
+/**
+ * PHONE NAVIGATION.
+ *
+ * `styles/shell.css` answered `max-width: 720px` with `.shell__rail { display:
+ * none }` and built nothing in its place, so on a phone browser the admin had
+ * no navigation at all: every screen was reachable by typing its URL and by
+ * nothing else. The fix makes the SAME rail a drawer rather than adding a
+ * second nav, which is what these tests hold.
+ *
+ * jsdom has no cascade, so the `display: none` half is not testable here and is
+ * covered in `e2e/mobile-nav.spec.ts`, which drives a real browser at 390px.
+ * What IS testable here is everything that decides whether the drawer is usable
+ * once the cascade has turned it on: the toggle's state, where focus goes, what
+ * closes it, and whether it still reaches every destination.
+ */
+describe('AppShell phone navigation', () => {
+  function toggle() {
+    return screen.getByRole('button', { name: 'Navigation' });
+  }
+  function closeButton() {
+    return screen.getByRole('button', { name: 'Close navigation' });
+  }
+  function rail() {
+    return screen.getByRole('complementary', { name: /primary navigation/i });
+  }
+  it('gives the phone a real toggle button, closed to begin with', () => {
+    render(<AppShell />);
+    const button = toggle();
+    expect(button.tagName).toBe('BUTTON');
+    expect(button).toHaveAttribute('type', 'button');
+    expect(button).toHaveAttribute('aria-expanded', 'false');
+    // Points at the rail itself, not at a second copy of the nav.
+    expect(button).toHaveAttribute('aria-controls', 'shell-rail');
+    expect(rail()).toHaveAttribute('id', 'shell-rail');
+  });
+  it('opens and closes, and says so on aria-expanded both times', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(toggle());
+    expect(toggle()).toHaveAttribute('aria-expanded', 'true');
+    await user.click(closeButton());
+    expect(toggle()).toHaveAttribute('aria-expanded', 'false');
+  });
+  it('marks the open drawer on the shell, which is what the cascade slides', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<AppShell />);
+    expect(container.querySelector('.shell')).not.toHaveClass('shell--nav-open');
+    await user.click(toggle());
+    expect(container.querySelector('.shell')).toHaveClass('shell--nav-open');
+  });
+  it('moves focus into the panel on open and back to the toggle on close', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(toggle());
+    expect(closeButton()).toHaveFocus();
+    expect(rail()).toContainElement(document.activeElement as HTMLElement);
+    await user.click(closeButton());
+    expect(toggle()).toHaveFocus();
+  });
+  it('does not steal focus on first render, when nothing has been opened', () => {
+    render(<AppShell />);
+    expect(document.body).toHaveFocus();
+  });
+  it('closes on Escape and restores focus, from anywhere in the document', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(toggle());
+    await user.keyboard('{Escape}');
+    expect(toggle()).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle()).toHaveFocus();
+  });
+  it('ignores Escape while closed rather than yanking focus to the toggle', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(screen.getByRole('link', { name: /account/i }));
+    await user.keyboard('{Escape}');
+    expect(toggle()).not.toHaveFocus();
+  });
+  it('closes when the scrim is clicked', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<AppShell />);
+    expect(container.querySelector('.shell__scrim')).toBeNull();
+    await user.click(toggle());
+    const scrim = container.querySelector('.shell__scrim');
+    expect(scrim).not.toBeNull();
+    // Decoration over an inert page: it must not turn up as a landmark or a
+    // control for anyone reading the document.
+    expect(scrim).toHaveAttribute('aria-hidden', 'true');
+    await user.click(scrim as HTMLElement);
+    expect(toggle()).toHaveAttribute('aria-expanded', 'false');
+  });
+  it('closes when a destination is chosen, instead of covering the screen it opened', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(toggle());
+    await user.click(screen.getByRole('link', { name: 'Invoices' }));
+    expect(toggle()).toHaveAttribute('aria-expanded', 'false');
+  });
+  it('stays open when the drawer is clicked somewhere that is not a destination', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(toggle());
+    await user.click(screen.getByText('The Den'));
+    expect(toggle()).toHaveAttribute('aria-expanded', 'true');
+  });
+  it('makes the page behind the drawer inert, so tab and screen readers stay in it', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    const main = screen.getByRole('main');
+    expect(main).not.toHaveAttribute('inert');
+    await user.click(toggle());
+    expect(main).toHaveAttribute('inert');
+    await user.click(closeButton());
+    expect(main).not.toHaveAttribute('inert');
+  });
+  it('locks the page behind the drawer against scrolling, and gives it back', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(toggle());
+    expect(document.body.style.overflow).toBe('hidden');
+    await user.click(closeButton());
+    expect(document.body.style.overflow).toBe('');
+  });
+  it('reaches EVERY rail destination from the phone, out of one navigation', async () => {
+    const user = userEvent.setup();
+    render(<AppShell counts={{ inbox: 4 }} />);
+    await user.click(toggle());
+    // Exactly one element in the document claims to be the primary navigation.
+    // A drawer built as a second copy of the rail is the easy wrong answer here
+    // and it would leave two, or move the label off the rail and leave none.
+    expect(screen.getAllByLabelText('Primary navigation')).toHaveLength(1);
+    const panel = rail();
+    for (const entry of railEntries()) {
+      const links = within(panel).getAllByRole('link', {
+        name: new RegExp(`^${entry.title}( \\d+)?$`),
+      });
+      expect(links, `${entry.title} is unreachable on a phone`).toHaveLength(1);
+    }
+    // Not vacuous: the drawer holds the rail's whole set and nothing extra.
+    expect(within(panel).getAllByRole('link')).toHaveLength(railEntries().length);
+    // Including the group headings, so the nineteen destinations arrive sorted
+    // rather than as one undifferentiated list.
+    for (const label of ['The Den', 'Care Ops', 'More']) {
+      expect(within(panel).getByRole('navigation', { name: label })).toBeInTheDocument();
+    }
+  });
+  it('carries the live count into the drawer, since it is the same rail', async () => {
+    const user = userEvent.setup();
+    render(<AppShell counts={{ inbox: 4 }} />);
+    await user.click(toggle());
+    expect(within(rail()).getByRole('link', { name: 'Inbox 4' })).toBeInTheDocument();
+  });
+  it('closes itself when the window is widened past the breakpoint', async () => {
+    const user = userEvent.setup();
+    // jsdom has no layout, so `matchMedia` is stubbed to answer the one query
+    // the shell asks and to hand back the listener it registers.
+    let listener: (() => void) | null = null;
+    let isDesktop = false;
+    const media = {
+      get matches() {
+        return isDesktop;
+      },
+      addEventListener: (_: string, fn: () => void) => {
+        listener = fn;
+      },
+      removeEventListener: () => {
+        listener = null;
+      },
+    };
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue(media));
+    render(<AppShell />);
+    await user.click(toggle());
+    expect(toggle()).toHaveAttribute('aria-expanded', 'true');
+    isDesktop = true;
+    await act(async () => {
+      (listener as unknown as () => void)();
+    });
+    // Otherwise `aria-expanded="true"` describes a panel the cascade has turned
+    // back into a static column, and the scrim covers the desktop app.
+    expect(toggle()).toHaveAttribute('aria-expanded', 'false');
+    vi.unstubAllGlobals();
+  });
+  it('renders on a browser with no matchMedia at all rather than throwing', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('matchMedia', undefined);
+    render(<AppShell />);
+    await user.click(toggle());
+    expect(toggle()).toHaveAttribute('aria-expanded', 'true');
+    vi.unstubAllGlobals();
+  });
+});
+/**
+ * The other half of the ruling: the desktop rail must behave exactly as it did.
+ * The suites above this one are the ones that were already here and they all
+ * still pass; these are the properties the drawer work could most plausibly
+ * have broken without any of them noticing.
+ */
+describe('AppShell desktop rail is unchanged by the drawer', () => {
+  it('renders the rail with no drawer state involved, closed by default', () => {
+    render(<AppShell />);
+    const rail = screen.getByRole('complementary', { name: /primary navigation/i });
+    // No `shell--nav-open`, nothing fixed, no scrim: the desktop DOM is the rail
+    // it always was plus one button the cascade hides.
+    expect(document.querySelector('.shell__scrim')).toBeNull();
+    expect(document.querySelector('.shell')).toHaveClass('shell');
+    expect(document.querySelector('.shell')).not.toHaveClass('shell--nav-open');
+    expect(within(rail).getAllByRole('link')).toHaveLength(railEntries().length);
+    expect(screen.getByRole('main')).not.toHaveAttribute('inert');
+  });
+  it('keeps the rail ahead of the main region in the document, as it renders', () => {
+    render(<AppShell />);
+    const rail = screen.getByRole('complementary', { name: /primary navigation/i });
+    const main = screen.getByRole('main');
+    // eslint-disable-next-line no-bitwise
+    expect(rail.compareDocumentPosition(main) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

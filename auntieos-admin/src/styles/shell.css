@@ -4,15 +4,6 @@
   grid-template-columns: 15rem 1fr;
 }
 
-@media (max-width: 720px) {
-  .shell {
-    grid-template-columns: 1fr;
-  }
-  .shell__rail {
-    display: none;
-  }
-}
-
 .shell__rail {
   padding: 1.25rem 1rem;
   border-right: 1px solid var(--color-border-soft);
@@ -237,4 +228,142 @@
 .shell__account-role {
   font-size: 0.72rem;
   color: var(--color-text-dim);
+}
+/* ── Phone width: the rail becomes a drawer ───────────────────────────────
+   Until 2026-08-01 this file answered `max-width: 720px` with
+   `.shell__rail { display: none }` and nothing else, so the element carrying
+   `aria-label="Primary navigation"` was removed from the phone layout and no
+   replacement was ever built. Every screen stayed reachable by typing its URL
+   and by nothing else.
+   The rail is not duplicated for the phone. The SAME element becomes a fixed
+   panel, so there is one "Primary navigation" landmark in the document, one
+   copy of every destination, and one place to add the next screen. Above the
+   breakpoint none of these rules apply and the rail is the column it has
+   always been.
+   The two controls are `display: none` by default and turned on inside the
+   media query, which is also what keeps `navOpen` from ever being true on a
+   desktop: nothing there can be clicked to set it. */
+.shell__navtoggle,
+.shell__navclose {
+  display: none;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-glass);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+.shell__navtoggle:hover,
+.shell__navclose:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.shell__navtoggle:hover .nav-glyph,
+.shell__navclose:hover .nav-glyph {
+  color: var(--color-primary);
+}
+.shell__navtoggle:focus-visible,
+.shell__navclose:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+}
+/* Pushed to the trailing edge of the drawer's brand row. */
+.shell__navclose {
+  margin-left: auto;
+}
+/* Rendered only while open, and only ever seen below the breakpoint. Same
+   scrim recipe as `Dialog.css`: the theme-INVARIANT brand navy, because a
+   scrim has to darken the page in both schemes. It sits one layer under the
+   drawer and both sit under `.dialog__backdrop` (z-index 100), so a modal
+   opened from a screen still covers the navigation. */
+.shell__scrim {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: color-mix(in srgb, var(--tt-brand-navy) 45%, transparent);
+  backdrop-filter: blur(2px);
+}
+@media (max-width: 720px) {
+  /* `minmax(0, 1fr)`, not `1fr`. A grid track's automatic minimum is the
+     min-content of what is in it, so one unshrinkable control anywhere on a
+     screen widens the whole column past the viewport and the PAGE scrolls
+     sideways. Bookings did exactly that: 392.7px of <main> inside a 390px
+     window, with nothing on screen actually wider than the window. */
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .shell__scrim {
+    display: block;
+  }
+  .shell__navtoggle,
+  .shell__navclose {
+    display: inline-flex;
+  }
+  /* `display`, not `visibility`, and that is the hard-won part.
+     The obvious version keeps the panel in the layout at `visibility: hidden`
+     and slides it in with a transform, so it can slide back OUT as well.
+     Chromium then leaves the panel's DESCENDANTS holding the stale inherited
+     value on the way in: instrumented at 390px, the aside computed
+     `visibility: visible` in the same tick the class landed while its own brand
+     row and close button still computed `hidden`, and a forced full-document
+     reflow did not clear it. An element inside a hidden subtree is not
+     focusable, so the shell's `closeRef.focus()` was a silent no-op and the
+     drawer opened with focus on <body>, which is the whole keyboard contract.
+     `display` is not inherited, so toggling it has no such propagation to wait
+     on, and the button is focusable in the tick the panel opens.
+     The entrance is then an ANIMATION rather than a transition, because there
+     is no from-state to transition out of when the element has just been laid
+     out. `base.css` turns it off for `prefers-reduced-motion: reduce` with
+     every other animation in the app, at the root, so there is no guard here.
+     Closing has no animation: the panel goes when the class does. */
+  .shell__rail {
+    display: none;
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 91;
+    width: min(17rem, 84vw);
+    border-right: var(--border-hairline) solid var(--color-border);
+    background: var(--color-surface);
+    backdrop-filter: none;
+  }
+  .shell--nav-open .shell__rail {
+    display: block;
+    animation: shell-drawer-in var(--dur-base) var(--ease-standard) both;
+  }
+  @keyframes shell-drawer-in {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+  /* 2rem of side padding on a 360px screen is 18 percent of the viewport. */
+  .shell__main {
+    padding: var(--space-4);
+  }
+  /* Three controls on one line at 360px. The chip is the only one that can
+     give ground, so it is the only one told it may. */
+  .shell__account {
+    min-width: 0;
+  }
+  .shell__account-text {
+    min-width: 0;
+  }
+  .shell__account-name,
+  .shell__account-role {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }

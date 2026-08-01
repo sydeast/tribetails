@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { Link, Outlet, linkOptions, useRouteContext } from '@tanstack/react-router';
 import { signOut, useAuth } from '../lib/auth';
 import { useUnreadInbox } from '../lib/useUnreadInbox';
@@ -16,6 +16,53 @@ import { GhostButton } from './Buttons';
 import { Banner } from './Banner';
 
 const GROUP_ORDER: NavGroup[] = ['den', 'careOps', 'more'];
+
+/**
+ * The width at which the rail stops being a column and becomes a drawer.
+ *
+ * WRITTEN TWICE ON PURPOSE, here and in `styles/shell.css`. CSS cannot read a
+ * custom property inside a media query, so the breakpoint has to be a literal
+ * there; this constant is what closes the drawer when a phone-width window is
+ * widened past it, so `aria-expanded` cannot keep saying "open" about a panel
+ * the cascade has already turned back into a static rail.
+ */
+const PHONE_MAX_WIDTH_PX = 720;
+
+/** Chrome glyphs for the drawer's two controls. Same idiom as `NavGlyphs.tsx`
+ *  (24-unit viewBox, no fill, `currentColor` stroke, out of the a11y tree), but
+ *  keyed to nothing in `Destination`, so they live with the shell that uses
+ *  them rather than in the destination-keyed map. */
+function ChromeGlyph({ children }: { children: ReactNode }) {
+  return (
+    <svg
+      className="nav-glyph"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {children}
+    </svg>
+  );
+}
+
+const MenuGlyph = () => (
+  <ChromeGlyph>
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  </ChromeGlyph>
+);
+
+const CloseGlyph = () => (
+  <ChromeGlyph>
+    <path d="M6 6l12 12M18 6L6 18" />
+  </ChromeGlyph>
+);
 
 /**
  * The rail links to SHIPPED screens only. Each entry is a typed `linkOptions`, so
@@ -174,9 +221,121 @@ export function AppShell({ counts }: { counts?: RailCounts } = {}) {
   const liveCounts: RailCounts = unreadInbox.kind === 'value' ? { inbox: unreadInbox.value } : {};
   const railCounts = counts ?? liveCounts;
 
+  /**
+   * PHONE NAVIGATION.
+   *
+   * Below 720px the rail used to be `display: none` with nothing in its place
+   * (`styles/shell.css`), so every screen in the admin was reachable only by
+   * typing its URL. The operator's ruling is that mobile web is the desktop
+   * product in a phone shape, not a reduced one, so the SAME rail is still the
+   * navigation: the cascade turns it into a drawer, this state opens it, and
+   * there is still exactly one element in the document labelled "Primary
+   * navigation" and exactly one copy of every destination.
+   *
+   * A drawer rather than a bottom bar because the rail carries nineteen pinned
+   * destinations in three labelled groups. A bottom bar holds four or five, so
+   * it would have had to choose fourteen to drop, which is the reduced product
+   * the ruling rejects.
+   */
+  const [navOpen, setNavOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  // Distinguishes "closed because it was just closed" from "closed because the
+  // app has only ever been on a desktop", so a first render never steals focus.
+  const hasOpened = useRef(false);
+
+  /**
+   * Focus in on open, back to the toggle on close. The landing spot is the
+   * close button rather than the first destination: it is the way back out, and
+   * a screen reader user should hear that before nineteen links.
+   *
+   * IT DEPENDS ON `shell.css` OPENING THE DRAWER WITH `display`. An element
+   * that is not being rendered is not focusable and `focus()` on it is a silent
+   * no-op, so the panel has to be laid out by the time this effect runs. The
+   * earlier `visibility` version was not, for a reason worth reading, and the
+   * reason is written down next to the rule rather than here.
+   */
+  useEffect(() => {
+    if (navOpen) {
+      hasOpened.current = true;
+      closeRef.current?.focus();
+      return;
+    }
+    if (hasOpened.current) {
+      hasOpened.current = false;
+      toggleRef.current?.focus();
+    }
+  }, [navOpen]);
+
+  // Escape closes. Bound on the document, not on the panel: focus can legally
+  // sit on the scrim-covered page after a click, and the key still has to work.
+  useEffect(() => {
+    if (!navOpen) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setNavOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [navOpen]);
+
+  // The page behind a drawer must not scroll under it.
+  useEffect(() => {
+    if (!navOpen) return undefined;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [navOpen]);
+
+  // Widening past the breakpoint turns the drawer back into the static rail
+  // by cascade alone, which would leave `aria-expanded="true"` describing a
+  // panel that is no longer a panel, and a scrim over a desktop app.
+  // `matchMedia` is optional-chained for jsdom, which has no layout.
+  useEffect(() => {
+    if (!navOpen) return undefined;
+    const query = window.matchMedia?.(`(min-width: ${String(PHONE_MAX_WIDTH_PX + 1)}px)`);
+    if (query === undefined) return undefined;
+    const onChange = () => {
+      if (query.matches) setNavOpen(false);
+    };
+    onChange();
+    query.addEventListener('change', onChange);
+    return () => {
+      query.removeEventListener('change', onChange);
+    };
+  }, [navOpen]);
+
+  /**
+   * Following a link closes the drawer. Delegated from the panel rather than
+   * put on each `RailItem`, so `RailItem` stays the same component the rail and
+   * the drawer both render and gains no knowledge of which one it is in.
+   */
+  const closeOnNavigate = (event: MouseEvent<HTMLElement>) => {
+    if (!navOpen) return;
+    if ((event.target as HTMLElement).closest('a') === null) return;
+    setNavOpen(false);
+  };
+
   return (
-    <div className="shell">
-      <aside className="shell__rail" aria-label="Primary navigation">
+    <div className={navOpen ? 'shell shell--nav-open' : 'shell'}>
+      {/* Only while open, and only ever visible below the breakpoint (the class
+          is `display: none` above it). Clicking it closes, which is the gesture
+          every drawer has; the keyboard equivalent is Escape. */}
+      {navOpen ? (
+        <div className="shell__scrim" onClick={() => { setNavOpen(false); }} aria-hidden="true" />
+      ) : null}
+
+      <aside
+        id="shell-rail"
+        className="shell__rail"
+        aria-label="Primary navigation"
+        onClick={closeOnNavigate}
+      >
         {/* The brand mark, per the mock rail: a conic-gradient tile carrying the
             monogram, with the wordmark beside it. The tile is the first and only
             place the three brand hues appear at any size in the shell. The "A"
@@ -187,6 +346,18 @@ export function AppShell({ counts }: { counts?: RailCounts } = {}) {
             A
           </span>
           <span className="shell__brand-word">AuntieOS</span>
+          {/* The way out of the drawer, for a pointer and for the keyboard.
+              `display: none` above the breakpoint, where the rail is a column
+              and there is nothing to close. */}
+          <button
+            ref={closeRef}
+            type="button"
+            className="shell__navclose"
+            aria-label="Close navigation"
+            onClick={() => { setNavOpen(false); }}
+          >
+            <CloseGlyph />
+          </button>
         </div>
         {GROUP_ORDER.map((group) => (
           <nav key={group} className="shell__group" aria-label={NAV_GROUP_LABEL[group]}>
@@ -202,8 +373,32 @@ export function AppShell({ counts }: { counts?: RailCounts } = {}) {
         ))}
       </aside>
 
-      <main className="shell__main">
+      {/* `inert` while the drawer is open is the whole modality: it takes the
+          screen behind the scrim out of the tab order AND out of the
+          accessibility tree, so Tab cycles the drawer and a screen reader does
+          not wander into a page the operator cannot see. It replaces a
+          hand-rolled focus trap, and it can only ever be set below the
+          breakpoint, because the toggle that sets `navOpen` is `display: none`
+          above it. */}
+      <main className="shell__main" inert={navOpen}>
         <header className="shell__topbar">
+          {/* The drawer's opener. A real button carrying `aria-expanded` and
+              `aria-controls`, not a link and not a div, and `display: none`
+              above the breakpoint so the desktop topbar is untouched. */}
+          <button
+            ref={toggleRef}
+            type="button"
+            id="shell-nav-toggle"
+            className="shell__navtoggle"
+            aria-label="Navigation"
+            aria-expanded={navOpen}
+            aria-controls="shell-rail"
+            onClick={() => {
+              setNavOpen(true);
+            }}
+          >
+            <MenuGlyph />
+          </button>
           {/* The operator's way into their own account: phone, email, password.
               Account is a contextual destination (nav.ts), so it is deliberately
               absent from the rail; this chip is its entry point, which is where
