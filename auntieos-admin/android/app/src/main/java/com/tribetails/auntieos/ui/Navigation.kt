@@ -157,6 +157,15 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     object MediaGallery : Screen("media_gallery/{entityId}/{entityType}/{entityName}", "Media Gallery", Lucide.Users) {
         fun createRoute(entityId: String, entityType: String, entityName: String) = "media_gallery/$entityId/$entityType/$entityName"
     }
+    /**
+     * B1. Household members and invites. The household name is free text, so it
+     * is URL-encoded the way RouteViewer encodes a kinfolk name; the id never is
+     * (a Firestore doc id is already path-safe).
+     */
+    object HouseholdMembers : Screen("household_members/{kinfolkId}/{kinfolkName}", "Members and invites", Lucide.Users) {
+        fun createRoute(kinfolkId: String, kinfolkName: String) =
+            "household_members/$kinfolkId/${java.net.URLEncoder.encode(kinfolkName, "UTF-8")}"
+    }
 
     // KinTale report (visit recap to kinfolk). reportId is optional ("new" = blank draft).
     object KinTaleReport : Screen("kintale/{sessionId}?reportId={reportId}", "KinTale", Lucide.Pencil) {
@@ -599,6 +608,10 @@ private fun AuthenticatedNavHost(
                     onNavigateToMediaGallery = { kinfolkId, kinfolkName ->
                         navController.navigate(Screen.MediaGallery.createRoute(kinfolkId, "KINFOLK", kinfolkName))
                     },
+                    // B1: who can reach this household in MyTribe, and its invites.
+                    onNavigateToMembers = { kinfolkId, kinfolkName ->
+                        navController.navigate(Screen.HouseholdMembers.createRoute(kinfolkId, kinfolkName))
+                    },
                     // K1 (A8): a recent KinTale row opens its report.
                     onOpenReport = { sessionId ->
                         navController.navigate(Screen.KinTaleReport.createRoute(sessionId))
@@ -877,6 +890,28 @@ private fun AuthenticatedNavHost(
                     kinfolkName = kinfolkName,
                     onBack = { navController.popBackStack() }
                 )
+            }
+            // B1: household members and invites. Behind AdminGate because every
+            // callable it drives (listInvites, mintInvite, revokeInvite,
+            // setMemberPermissions, removeMember) is admin-gated server-side;
+            // the gate here means a non-admin is turned back at the door rather
+            // than shown a screen whose every control returns permission-denied.
+            composable(Screen.HouseholdMembers.route) { backStackEntry ->
+                val kinfolkId = backStackEntry.arguments?.getString("kinfolkId") ?: return@composable
+                val kinfolkName = java.net.URLDecoder.decode(
+                    backStackEntry.arguments?.getString("kinfolkName") ?: return@composable,
+                    "UTF-8",
+                )
+                com.tribetails.auntieos.ui.admin.AdminGate(
+                    repository = app.repository,
+                    onDenied = { navController.popBackStack() },
+                ) {
+                    com.tribetails.auntieos.ui.members.HouseholdMembersScreen(
+                        kinfolkId = kinfolkId,
+                        kinfolkName = kinfolkName,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
             }
             composable(Screen.MediaGallery.route) { backStackEntry ->
                 val entityId = backStackEntry.arguments?.getString("entityId") ?: return@composable

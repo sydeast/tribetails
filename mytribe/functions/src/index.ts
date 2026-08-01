@@ -71,6 +71,14 @@ export { provisionTribe } from './admin/provisionTribe';
 export { mintInvite } from './admin/mintInvite';
 export { inviteKinfolkToPortal } from './admin/inviteKinfolkToPortal';
 export { revokeInvite } from './admin/revokeInvite';
+// B1: the READ side of the invite surface. mintInvite / revokeInvite /
+// inviteKinfolkToPortal all wrote `inviteRequests` and expireStaleInvites swept
+// it nightly, but nothing could ever read it back, so an operator could send an
+// invite and never learn what became of it. See listInvites.ts for why it is a
+// callable rather than a client query (the tribeId+createdAt composite index
+// does not exist) and why it reconciles expiry at read time (the sweep is
+// nightly, so a lapsed invite reads live for up to a day).
+export { listInvites } from './admin/listInvites';
 export { setMemberPermissions } from './admin/setMemberPermissions';
 export { removeMember } from './admin/removeMember';
 export { setTribePin } from './admin/setTribePin';

@@ -1,0 +1,278 @@
+/**
+ * Household members and invites, the READ half. (B1)
+ *
+ * TRANSPORT: callables, not direct Firestore reads, and deliberately so.
+ * `firestore.rules` does grant `isAuntie()` a read of both
+ * `families/{fid}/members/{uid}` and `inviteRequests`, so a direct read would
+ * be permitted. Two things make the callables the right seam anyway:
+ *
+ *  - `inviteRequests` has no `tribeId` + `createdAt` composite index
+ *    (`mytribe/firestore.indexes.json` carries only status + expiresAt, for the
+ *    nightly sweep), so a client-side ordered query would need an index deploy.
+ *  - `listInvites` reconciles expiry at read time. `expireStaleInvites` is a
+ *    02:00 nightly job, so a lapsed invite still READS as EMAIL_SENT in
+ *    Firestore for up to a day. Doing that reconciliation here would mean doing
+ *    it again, identically, in the Android mirror. The server does it once.
+ *
+ * The write half is `membersWrite.ts`. Nothing in this file catches: a failed
+ * read propagates so the screen can say so, per the fail-loud rule.
+ */
+
+import { call } from '../lib/fns';
+
+export type MemberRole = 'PRIMARY' | 'SECONDARY';
+export type MemberStatus = 'INVITED' | 'ACTIVE' | 'SUSPENDED';
+export type InviteStatus = 'PENDING' | 'EMAIL_SENT' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED';
+
+export interface MemberPermissions {
+  billing_full: boolean;
+  messaging_direct: boolean;
+  messaging_group: boolean;
+  kin_edit: boolean;
+  kintales_only: boolean;
+  home_access: boolean;
+}
+
+export type PermissionKey = keyof MemberPermissions;
+
+export interface PermissionMeta {
+  readonly key: PermissionKey;
+  readonly label: string;
+  readonly description: string;
+  /**
+   * Only `setMemberPermissions` (admin-gated) can move this one; the
+   * household's own PRIMARY cannot, and it is audited at severity `warn`.
+   */
+  readonly adminOnly?: true;
+  /**
+   * The server refuses to change it. `mintInvite` forces `kintales_only: true`
+   * on every invite and `setMemberPermissions` does not accept the key at all,
+   * so rendering it as a live toggle would be a control that no-ops.
+   */
+  readonly serverLocked?: true;
+}
+
+/** Order is the order rendered. Mirrors `lib/schema.ts` MemberPermissions. */
+export const PERMISSION_META: readonly PermissionMeta[] = [
+  {
+    key: 'billing_full',
+    label: 'Full billing',
+    description: 'Full access to invoices and payment methods.',
+    adminOnly: true,
+  },
+  {
+    key: 'messaging_direct',
+    label: 'Direct messaging',
+    description: 'One to one messages with the Auntie.',
+  },
+  {
+    key: 'messaging_group',
+    label: 'Group messaging',
+    description: 'Takes part in the household group thread.',
+  },
+  {
+    key: 'kin_edit',
+    label: 'Edit kin',
+    description: 'Adds or edits the household pet records.',
+  },
+  {
+    key: 'home_access',
+    label: 'Home access',
+    description: 'Sees the household home details, including entry notes.',
+  },
+  {
+    key: 'kintales_only',
+    label: 'KinTales feed',
+    description: 'Always reads the household KinTales feed. Locked on by the server.',
+    serverLocked: true,
+  },
+];
+
+/** The five keys `setMemberPermissions` will accept. `kintales_only` is absent. */
+export const EDITABLE_PERMISSION_KEYS: readonly PermissionKey[] = PERMISSION_META.filter(
+  (p) => p.serverLocked !== true,
+).map((p) => p.key);
+
+export interface HouseholdMember {
+  uid: string;
+  secondaryLabel: string | null;
+  role: MemberRole;
+  status: MemberStatus;
+  permissions: MemberPermissions;
+  invitedEmail: string | null;
+}
+
+export interface HouseholdInvite {
+  /**
+   * Also the claim-link bearer token (`?invite=<inviteId>`). Shown truncated so
+   * the operator can match a row to an audit entry; never rendered as a URL and
+   * never offered for copy. See listInvites.ts.
+   */
+  inviteId: string;
+  tribeId: string;
+  invitedEmail: string;
+  secondaryLabel: string | null;
+  proposedRole: MemberRole;
+  proposedPermissions: MemberPermissions;
+  requiresAuntieAck: boolean;
+  /** Raw document status. Prefer `effectiveStatus` for anything the eye sees. */
+  status: InviteStatus;
+  /** `status`, except a lapsed PENDING/EMAIL_SENT reads EXPIRED. */
+  effectiveStatus: InviteStatus;
+  /** True only when `acceptInvite` would still accept this invite today. */
+  redeemable: boolean;
+  createdAt: string | null;
+  sentToInviteeAt: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  acceptedUid: string | null;
+}
+
+function str(v: unknown): string | null {
+  return typeof v === 'string' && v !== '' ? v : null;
+}
+
+function bool(v: unknown): boolean {
+  return v === true;
+}
+
+/** Complete permission shape from an arbitrary payload; absent flags read false. */
+function asPermissions(v: unknown): MemberPermissions {
+  const p = (v ?? {}) as Record<string, unknown>;
+  return {
+    billing_full: bool(p['billing_full']),
+    messaging_direct: bool(p['messaging_direct']),
+    messaging_group: bool(p['messaging_group']),
+    kin_edit: bool(p['kin_edit']),
+    kintales_only: bool(p['kintales_only']),
+    home_access: bool(p['home_access']),
+  };
+}
+
+function asRole(v: unknown): MemberRole {
+  return v === 'PRIMARY' ? 'PRIMARY' : 'SECONDARY';
+}
+
+function asMemberStatus(v: unknown): MemberStatus {
+  return v === 'ACTIVE' || v === 'SUSPENDED' ? v : 'INVITED';
+}
+
+const INVITE_STATUSES: readonly InviteStatus[] = [
+  'PENDING',
+  'EMAIL_SENT',
+  'ACCEPTED',
+  'REVOKED',
+  'EXPIRED',
+];
+
+function asInviteStatus(v: unknown): InviteStatus {
+  return INVITE_STATUSES.includes(v as InviteStatus) ? (v as InviteStatus) : 'PENDING';
+}
+
+/**
+ * The household roster.
+ *
+ * `listMembers` is the shared portal callable: an operator may target any
+ * household (audited cross-tenant server-side) and MUST pass a kinfolkId,
+ * because staff have no default household of their own.
+ */
+export async function listHouseholdMembers(kinfolkId: string): Promise<HouseholdMember[]> {
+  const id = kinfolkId.trim();
+  if (id === '') throw new Error('listHouseholdMembers requires a household id');
+
+  const res = await call<{ kinfolkId: string }, { members?: unknown }>('listMembers', {
+    kinfolkId: id,
+  });
+  const rows = Array.isArray(res?.members) ? res.members : [];
+  return rows
+    .map((row) => (row ?? {}) as Record<string, unknown>)
+    .filter((row) => typeof row['uid'] === 'string' && row['uid'] !== '')
+    .map((row) => ({
+      uid: row['uid'] as string,
+      secondaryLabel: str(row['secondaryLabel']),
+      role: asRole(row['role']),
+      status: asMemberStatus(row['status']),
+      permissions: asPermissions(row['permissions']),
+      invitedEmail: str(row['invitedEmail']),
+    }));
+}
+
+/** Every invite ever minted for one household, newest first. */
+export async function listHouseholdInvites(familyId: string): Promise<HouseholdInvite[]> {
+  const id = familyId.trim();
+  if (id === '') throw new Error('listHouseholdInvites requires a household id');
+
+  const res = await call<{ familyId: string }, { invites?: unknown }>('listInvites', {
+    familyId: id,
+  });
+  const rows = Array.isArray(res?.invites) ? res.invites : [];
+  return rows
+    .map((row) => (row ?? {}) as Record<string, unknown>)
+    .filter((row) => typeof row['inviteId'] === 'string' && row['inviteId'] !== '')
+    .map((row) => ({
+      inviteId: row['inviteId'] as string,
+      tribeId: typeof row['tribeId'] === 'string' ? (row['tribeId'] as string) : '',
+      invitedEmail: typeof row['invitedEmail'] === 'string' ? (row['invitedEmail'] as string) : '',
+      secondaryLabel: str(row['secondaryLabel']),
+      proposedRole: asRole(row['proposedRole']),
+      proposedPermissions: asPermissions(row['proposedPermissions']),
+      requiresAuntieAck: bool(row['requiresAuntieAck']),
+      status: asInviteStatus(row['status']),
+      effectiveStatus: asInviteStatus(row['effectiveStatus'] ?? row['status']),
+      // Absent `redeemable` must NOT default true: offering Revoke on an invite
+      // the server considers dead is a control that fails when clicked.
+      redeemable: bool(row['redeemable']),
+      createdAt: str(row['createdAt']),
+      sentToInviteeAt: str(row['sentToInviteeAt']),
+      expiresAt: str(row['expiresAt']),
+      revokedAt: str(row['revokedAt']),
+      acceptedUid: str(row['acceptedUid']),
+    }));
+}
+
+/** Display name for a member row. Never blank: falls back to the uid. */
+export function memberLabel(member: HouseholdMember): string {
+  return member.invitedEmail ?? member.secondaryLabel ?? member.uid;
+}
+
+export type PillTone = 'success' | 'warning' | 'error' | 'muted' | 'neutral';
+
+export function inviteStatusTone(status: InviteStatus): PillTone {
+  if (status === 'ACCEPTED') return 'success';
+  if (status === 'EMAIL_SENT' || status === 'PENDING') return 'warning';
+  if (status === 'REVOKED') return 'error';
+  if (status === 'EXPIRED') return 'muted';
+  return 'neutral';
+}
+
+export function memberStatusTone(status: MemberStatus): PillTone {
+  if (status === 'ACTIVE') return 'success';
+  if (status === 'INVITED') return 'warning';
+  if (status === 'SUSPENDED') return 'error';
+  return 'neutral';
+}
+
+/** Human status text. EXPIRED-by-lapse and EXPIRED-by-sweep read the same. */
+export function inviteStatusLabel(status: InviteStatus): string {
+  if (status === 'EMAIL_SENT') return 'Email sent';
+  return status.charAt(0) + status.slice(1).toLowerCase();
+}
+
+/**
+ * `2026-05-20` from an ISO string. Returns null for null or unparseable input
+ * rather than a today's-date stand-in, so a missing timestamp reads as missing.
+ */
+export function formatInviteDate(iso: string | null): string | null {
+  if (iso === null) return null;
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return null;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/**
+ * A short, non-reversible handle for an invite, for matching a row against the
+ * activity log. Truncated on purpose: the full id is the claim token.
+ */
+export function inviteHandle(inviteId: string): string {
+  return inviteId.length <= 8 ? inviteId : `${inviteId.slice(0, 8)}…`;
+}

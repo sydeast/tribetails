@@ -517,6 +517,145 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - Capped at 500 rows. `scanned` and `truncated` report the page honestly, so an
   empty result is distinguishable from a truncated one.
 
+## Household members and invites (admin-gated; B1)
+
+The write half of this surface predates the read half by months:
+`mintInvite`, `inviteKinfolkToPortal` and `revokeInvite` all wrote
+`inviteRequests`, `setMemberPermissions` and `removeMember` wrote
+`families/{familyId}/members/{uid}`, and the nightly `expireStaleInvites`
+swept the collection, but no callable could read `inviteRequests` back.
+`listInvites` closes that, and the AuntieOS admin's Members-and-invites screen
+(`auntieos-admin/src/screens/HouseholdMembers.tsx`, Android
+`ui/members/HouseholdMembersScreen.kt`) is the first surface for any of it.
+
+The AuntieOS `kinfolk/{kinfolkId}` doc id IS the MyTribe `families/{familyId}`
+id, so `familyId` and `kinfolkId` are the same value on every call below.
+
+### listInvites (B1, net-new 2026-08-01)
+- req `{ familyId: string /* 1..200, the kinfolk/family doc id */, limit?: number /* int 1..200, default 100 */ }`
+- res `{ invites: Array<{ inviteId: string, tribeId: string, invitedEmail: string,
+  secondaryLabel: string | null, proposedRole: 'PRIMARY' | 'SECONDARY',
+  proposedPermissions: { billing_full, messaging_direct, messaging_group, kin_edit,
+  kintales_only, home_access: boolean }, requiresAuntieAck: boolean,
+  status: 'PENDING' | 'EMAIL_SENT' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED',
+  effectiveStatus: same union, redeemable: boolean,
+  createdAt: string | null /* ISO-8601 */, sentToInviteeAt: string | null,
+  expiresAt: string | null, revokedAt: string | null, acceptedUid: string | null }>,
+  scanned: number }`
+- GATE: `wrapAdminCallable` (admin claim, or the `AUNTIE_OPERATOR_UIDS`
+  transition allowlist per RULING O-6). No kinfolk path: a household reads its
+  own roster through `listMembers`, never the invite documents.
+- Errors: `not-found` when `familyId` names no `kinfolk` doc (mirrors
+  `resolveKinfolkAccess` hardening 1, so a typo says so instead of returning a
+  plausible empty list); `invalid-argument` with `details.validationErrors` for a
+  bad `familyId` / `limit`.
+- **`effectiveStatus` is the field the UI renders, not `status`.**
+  `expireStaleInvites` runs at 02:00 America/New_York, so a PENDING/EMAIL_SENT
+  invite past its `expiresAt` still READS as live in Firestore for up to a day.
+  `effectiveStatus` reconciles that at read time, and `redeemable` is the single
+  boolean a client gates the Revoke button on. Terminal statuses
+  (ACCEPTED/REVOKED/EXPIRED) are never re-derived, matching `acceptInvite`'s own
+  precedence.
+- Equality-only query (`tribeId ==`) capped by `limit`, then sorted newest-first
+  in memory. There is no `tribeId`+`createdAt` composite index and this ships
+  without adding one; `scanned` reports the pre-sort row count so an empty list is
+  distinguishable from a capped page.
+- **`inviteId` is a bearer token.** The claim link is
+  `${CLAIM_LINK_BASE_URL}?invite=${inviteId}`, so the document id doubles as the
+  secret. It is returned because `revokeInvite` takes it and because
+  `firestore.rules` already grants `isAuntie()` a read of the whole document, but
+  it is deliberately absent from `logEvent` (count only), and **no client may
+  render or offer to copy the claim URL**. Possession of the id alone still does
+  not redeem: `acceptInvite` additionally requires the caller's VERIFIED token
+  email to equal `invitedEmail`.
+- Read only apart from one best-effort `OPERATOR_CROSSTENANT_ACCESS` audit entry,
+  mirroring `resolveKinfolkAccess`: staff reaching into a household they have no
+  member doc for is cross-tenant by definition.
+
+### mintInvite (pre-existing, documented here 2026-08-01)
+- req `{ familyId: string, invitedEmail: string /* email */, secondaryLabel?: string /* <=24, default 'Folk' */, proposedRole?: 'PRIMARY' | 'SECONDARY' /* default SECONDARY */, proposedPermissions: { billing_full, messaging_direct, messaging_group, kin_edit, kintales_only, home_access: boolean } }`
+- res `{ inviteId: string }`
+- GATE: `wrapAdminCallable`.
+- `proposedPermissions` requires ALL SIX booleans; a partial object is a Zod
+  failure. The server then FORCES `kintales_only: true` regardless of what was
+  sent, so clients render that toggle locked on rather than as a control that
+  appears to do something.
+- `secondaryLabel` is sanitised server-side (`[<>{} -]` stripped, trimmed, capped
+  at `SECONDARY_LABEL_MAX` = 24, empty falling back to `'Folk'`), so the stored
+  label can differ from what was typed.
+- Writes one `inviteRequests` doc with an `INVITE_TTL_DAYS` (14) expiry, sends
+  `invite.primary` / `invite.secondary`, flips the doc to `EMAIL_SENT`, and audits
+  `MEMBERSHIP_INVITE_SENT`.
+
+### revokeInvite (pre-existing, documented here 2026-08-01)
+- req `{ inviteId: string }`
+- res `{ ok: true }`
+- GATE: `wrapAdminCallable`. Not scoped to a family: any admin may revoke any
+  invite by id.
+- Errors: `not-found` for an unknown `inviteId`.
+- Sets `status: 'REVOKED'` + `revokedAt` unconditionally, including on an already
+  ACCEPTED invite, which does NOT un-join the member (use `removeMember` for
+  that). Audits `MEMBERSHIP_INVITE_REVOKED`.
+
+### inviteKinfolkToPortal (pre-existing, documented here 2026-08-01)
+- req `{ kinfolkId: string /* 1..200 */ }`
+- res `{ kinfolkId: string, status: 'sent' | 'already_active' | 'no_email', inviteId?: string }`
+- GATE: `wrapAdminCallable`.
+- Errors: `not-found` when `kinfolkId` names no `kinfolk` doc; `invalid-argument`
+  with `details.validationErrors` otherwise.
+- **The two non-`sent` outcomes are SUCCESS responses, not failures**, so a client
+  must branch on `status` and say which happened. `no_email` means the kinfolk
+  record carries no email; `already_active` means the household already has a
+  claimed ACTIVE PRIMARY and was deliberately not re-spammed. Rendering either as
+  "invite sent" is a fabricated success.
+- Idempotent and safe for an invite-all sweep. Ensures the `families/{kinfolkId}`
+  envelope exists, then mints a PRIMARY invite with `FULL_PERMISSIONS`.
+
+### setMemberPermissions (pre-existing, documented here 2026-08-01)
+- req `{ familyId: string, targetUid: string, permissions: { billing_full?, messaging_direct?, messaging_group?, kin_edit?, home_access?: boolean } }`
+- res `{ ok: true }`
+- GATE: `wrapAdminCallable`. This is the ADMIN path; the primary-of-the-household
+  path is `updateSecondaryPermissions`, which cannot touch `billing_full`.
+- Errors: `not-found` when `families/{familyId}/members/{targetUid}` does not exist.
+- **`kintales_only` is not in the argument schema at all**, so no caller on any
+  path can turn it off. Clients render it locked on.
+- Every key present is a field-level merge (`permissions.<k>`), so a partial
+  object is the normal call. Each flag is audited separately; `billing_full` uses
+  `PERM_BILLING_GRANTED` / `PERM_BILLING_REVOKED` at severity `warn`, everything
+  else `PERM_GRANTED` / `PERM_REVOKED` at `info`.
+- Cannot escalate the caller: it writes only household member permission flags
+  under `families/*`, and admin authority is the `admin` custom claim, which this
+  callable never reads or writes. There is no path from here to staff access.
+
+### removeMember (pre-existing, documented here 2026-08-01)
+- req `{ familyId: string, targetUid: string }`
+- res `{ ok: true }`
+- GATE: `wrapAdminCallable`.
+- Errors: `not-found` when the member doc does not exist.
+- SOFT delete: sets the member `status: 'SUSPENDED'`, removes `familyId` from
+  `clients/{targetUid}.kinfolkIds`, and revokes the user's refresh tokens. The
+  member doc is retained. Audits `MEMBERSHIP_MEMBER_REMOVED` at severity `warn`.
+
+### listMembers (pre-existing, admin + household primary; documented here 2026-08-01)
+- req `{ kinfolkId?: string }`
+- res `{ members: Array<{ uid: string, secondaryLabel: string | null, role: 'PRIMARY' | 'SECONDARY', status: 'INVITED' | 'ACTIVE' | 'SUSPENDED', permissions: { billing_full, messaging_direct, messaging_group, kin_edit, kintales_only, home_access: boolean }, invitedEmail: string | null }> }`
+- GATE: `wrapCallable` + `resolveKinfolkAccess` + `requireKinfolkPrimary`. An
+  operator may target any household (audited cross-tenant); a household PRIMARY
+  may read only their own; a SECONDARY is denied. An operator MUST pass
+  `kinfolkId` (they have no default household).
+- `displayName` is deliberately NOT surfaced (it can hold PII) and no address is
+  fabricated from another field, so `invitedEmail` is null when the member doc
+  carries no `email`.
+- Read only.
+
+### expireStaleInvites (scheduled, NOT a callable)
+- `onSchedule('every day 02:00', 'America/New_York')`. There is no client trigger,
+  and no admin "expire now" button exists or should be built: nothing in the
+  functions tree exposes it over HTTPS. Clients reconcile expiry for display via
+  `listInvites.effectiveStatus` instead of asking the server to sweep.
+- Flips PENDING/EMAIL_SENT invites past `expiresAt` to `EXPIRED` (500 per run),
+  audits `MEMBERSHIP_INVITE_EXPIRED`, and enqueues `invite.expired`.
+
 ## Shared catalogs
 
 ### getVetClinics

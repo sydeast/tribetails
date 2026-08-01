@@ -17,6 +17,7 @@ import { Notifications } from './screens/Notifications';
 import { FormSchemas } from './screens/FormSchemas';
 import { Invoices } from './screens/Invoices';
 import { Directory } from './screens/Directory';
+import { HouseholdMembers } from './screens/HouseholdMembers';
 import { Bookings } from './screens/Bookings';
 import { Sessions } from './screens/Sessions';
 import { KinTales } from './screens/KinTales';
@@ -227,6 +228,31 @@ const directoryProfileRoute = createRoute({
   component: DirectoryProfileRouteView,
 });
 
+/**
+ * B1. `/household-members/{kinfolkId}` — members and invites for ONE household.
+ *
+ * Its own route rather than a fourth Directory sub-view, because it is the
+ * destination of the household profile's "Members and invites" action and has
+ * to be linkable on its own. Closing it returns to that household's profile,
+ * which is where it was opened from, so the URL and the screen never disagree.
+ */
+function HouseholdMembersRouteView() {
+  const { kinfolkId } = householdMembersRoute.useParams();
+  const navigate = useNavigate();
+  return (
+    <HouseholdMembers
+      kinfolkId={kinfolkId}
+      onBack={() => void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })}
+    />
+  );
+}
+
+const householdMembersRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'household-members/$kinfolkId',
+  component: HouseholdMembersRouteView,
+});
+
 const bookingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'bookings',
@@ -412,7 +438,7 @@ const mediaRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, directoryProfileRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, mediaRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, mediaRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

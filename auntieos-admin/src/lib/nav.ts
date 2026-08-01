@@ -36,7 +36,8 @@ export type Destination =
   | 'mediaGallery'
   | 'accountSettings'
   | 'myNotifications'
-  | 'notificationGate';
+  | 'notificationGate'
+  | 'householdMembers';
 
 export type NavGroup = 'den' | 'careOps' | 'more';
 
@@ -101,6 +102,18 @@ export const NAV: readonly NavEntry[] = [
     title: 'Notification gate',
     group: 'more',
     slug: 'notification-gate',
+    contextual: true,
+  },
+  // B1. Household members and invites, always about ONE household, so it is
+  // reached from that household's profile and never pinned: a rail entry would
+  // have no household to open. page-specs Decision 8 (LOCKED) re-homed this out
+  // of Settings and under Directory / Households / {household} / Members, which
+  // is exactly where the entry point lives.
+  {
+    dest: 'householdMembers',
+    title: 'Members and invites',
+    group: 'den',
+    slug: 'household-members',
     contextual: true,
   },
 ];
