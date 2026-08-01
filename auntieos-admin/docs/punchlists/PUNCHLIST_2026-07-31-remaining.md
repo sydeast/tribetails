@@ -329,6 +329,69 @@ or invoice context. A1's second half has nowhere to land until this exists.
 Low urgency, code already fine: Kinfolk Edit (05), Template Assignment (25),
 Business Hours (29).
 
+### F6. Can a household reschedule, or only request one?
+
+Raised 2026-08-01 during B3, and it is a policy call before it is a build.
+
+Two controls in the portal do nothing: **Reply to Auntie** and **Reschedule
+visit**. The reschedule half is not a missing callable in the usual sense.
+`rescheduleBooking` exists at `mytribe/functions/src/admin/rescheduleBooking.ts:83`
+and is wrapped in `wrapAdminCallable`, so it is admin-only and absent from the
+portal allowlist (`mytribe/web/src/api/callables.ts`). A household cannot reach
+it by design.
+
+So the question is what a household is allowed to do:
+
+- **Request, not act.** A new `requestBookingReschedule` mirroring
+  `requestBookingCancellation`, which #194 just wired: the household proposes,
+  the operator disposes. Consistent with how cancellation already works, and it
+  never lets a household move a visit onto a slot the operator cannot staff.
+- **Act directly, inside rules.** Extend the callable to admit a kinfolk caller
+  under constraints (own booking only, outside the cutoff window, no busy
+  conflict). More capable, more ways to be wrong, and it needs the busy-conflict
+  guard from #183 applied to a caller who cannot see the calendar.
+
+Reply to Auntie needs the same kind of ruling about inbound messaging, which
+touches the Twilio path rather than bookings.
+
+Under the flags-ship-functional ruling, leaving both inert is not an option. The
+only question is which of the two shapes gets built.
+
+### F7. What does `createdAt` mean on a KinTale?
+
+Raised by the operator 2026-08-01: every KinTale in the system today is a
+historical visit report imported from the previous system, and `createdAt` should
+belong to reports created in AuntieOS.
+
+The field is worse than ambiguous, it is currently two formats in one column.
+Verified against prod on 2026-08-01:
+
+- Legacy rows carry free text, `"September 3, 2025 2:02pm"`, written by
+  `migrate_visit_logs_to_kin_care_reports.py:90` from `visit_logs.submitted`.
+- Everything else carries ISO, `"2025-12-02T19:00:00.000Z"`.
+
+Firestore orders strings by UTF-8 byte, so letters beat digits: every legacy row
+sorts ABOVE every ISO row in a `createdAt desc` query, and the legacy block sorts
+among itself **alphabetically by month name**. The first page of the KinTales
+list in prod today is September, September, September, and onward through the
+alphabet. That ordering is not a nuance, it is the list being wrong.
+
+The operator's proposal, which resolves both problems, is to redate the legacy
+rows to their date added. The ingest stamp is already on every row as
+`_migratedAt` (`"2026-05-16T20:36:39Z"`), and the original human date is already
+preserved twice, in `visitDate` and `sentAt`, so nothing is lost.
+
+Two open sub-questions before anyone writes to prod:
+
+1. Should `visitDate` also be parsed from free text into ISO, so the real visit
+   order is sortable? Otherwise the legacy block collapses to one identical
+   ingest timestamp and their true sequence is only readable by a human.
+2. The migration script still writes free text at line 90. It must be corrected
+   in the same change, or a re-run reintroduces exactly this.
+
+This is a prod data write, so it needs the operator's explicit go-ahead and
+belongs in the runbook rather than an improvised session.
+
 ---
 
 ## Closed during this batch
