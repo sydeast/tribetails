@@ -1,8 +1,34 @@
-# Visual Regression Runbook: capture, verify, approve (updated 2026-07-25)
+# Visual Regression Runbook: capture, verify, approve (updated 2026-08-01)
+
+## 2026-08-01: the goldens and the mockup renders are gone, the harness is not
+
+Operator ruling: `visual/mockups/` and `visual/baselines/` held designs nobody
+ships, and agents kept reading them as current. Both directories are deleted. The
+harness that writes them stays, so the rest of this runbook still describes a
+working tool.
+
+What that means for a run today:
+
+- **Verify exits 2** ("no goldens exist at all") until someone re-records. That is
+  the honest answer: the 60 goldens were captures of the superseded Compose app,
+  36 of them were unreviewed drift nobody had approved, and a green run against
+  them would have meant nothing.
+- **Mockup capture is now the only way to get `visual/mockups/`,** and it renders
+  from live `ui-ideas/` at the moment it runs. Nothing under
+  `ui-ideas/WrongUIDesigns-UpdateKill/` can be rendered: `capture-mockups.mjs`
+  refuses the whole run if the manifest names one.
+- **The manifest is 13 screens, not 20.** Seven have no live mockup and sit in
+  `manifest.pendingRemock`, each with the rejected filename that used to serve it.
+  Five of those are the operator re-mocks F1 to F5 in
+  `docs/punchlists/PUNCHLIST_2026-07-31-remaining.md`. A screen leaves
+  `pendingRemock` when a replacement mockup lands in `ui-ideas/`, not before.
+
+Design authority is `page-specs/` and `ui-ideas/`. `visual/mockups/` is rendered
+output of the second and is never itself a source. See `CLAUDE.md`.
 
 The visual harness has two halves that are easy to confuse. **Capture** re-renders each screen and overwrites the PNGs under `visual/<surface>/`. **Verify** compares those captures against the operator-approved goldens under `visual/baselines/<surface>/` and fails on drift. Capture alone proves nothing: until 2026-07-21 nothing in the repo ever invoked the verify step, so the goldens recorded history instead of guarding it. Design doc: `docs/2026-05-31-visual-testing-design.md`. Verify implementation: `web/visual/baseline.mjs`.
 
-Three surfaces, 20 screens each: `web` (Playwright against the Compose wasm canvas), `desktop` (Compose JVM / Skia, `runDesktopComposeUiTest`), `android` (Roborazzi under Robolectric). Screens are declared once in `web/visual/manifest.json`.
+Three surfaces, 13 screens each since 2026-08-01: `web` (Playwright against the Compose wasm canvas), `desktop` (Compose JVM / Skia, `runDesktopComposeUiTest`), `android` (Roborazzi under Robolectric). Screens are declared once in `web/visual/manifest.json`, and the seven withdrawn ones are listed there under `pendingRemock` rather than deleted, so nobody has to reconstruct why a screen left.
 
 ## The sharp edge: capture mutates tracked files
 
@@ -91,9 +117,13 @@ Do not read a green verify run as a statement about the React admin. Whatever br
 
 Closing the gap means a fourth surface whose capture step drives the React app and whose verify step is this same `baseline.mjs`, so there stays one tolerance policy and one report. It needs a Firebase emulator and a seeded admin, which the e2e harness already provides, and it needs the non-deterministic parts of those screens pinned first: the sign-in orbs drift, and most list screens render relative timestamps. Capturing before that is done produces a golden that fails on the next run for reasons nobody can name, which is how a harness gets ignored.
 
-## Known state as of 2026-07-25
+## Known state as of 2026-07-25 (superseded 2026-08-01)
 
-A verify run against the committed captures reports **24 ok, 36 regressions, 0 unbaselined** (exit 1): 19 desktop screens and 17 android screens, from 0.69 percent to 19.76 percent changed. Web is clean on all 20. This is accumulated drift from sessions that captured without ever verifying, so it is unreviewed and deliberately **not** approved. Someone has to walk `visual/report/regress/` screen by screen and decide which diffs are intended UI changes before the goldens are promoted. Until that happens the harness is wired but the baselines are stale.
+Kept because it is the evidence behind the deletion at the top of this file, not
+because it still describes the tree. The goldens and the report it describes are
+gone; the captures under `visual/<surface>/` remain.
+
+A verify run against the committed captures reported **24 ok, 36 regressions, 0 unbaselined** (exit 1): 19 desktop screens and 17 android screens, from 0.69 percent to 19.76 percent changed. Web is clean on all 20. This is accumulated drift from sessions that captured without ever verifying, so it is unreviewed and deliberately **not** approved. Someone has to walk `visual/report/regress/` screen by screen and decide which diffs are intended UI changes before the goldens are promoted. Until that happens the harness is wired but the baselines are stale.
 
 **The tracked report was lying, and the lie was the reassuring direction.** Until 2026-07-25 `visual/report/regression.md` in git listed all 60 screens as `ok | 0`, because it was last written immediately after an approve, when captures and goldens were by definition identical, and never regenerated as the tree moved on. It has been regenerated here so the tracked report describes the tracked PNGs. Anyone who opened that file instead of running the check read a clean bill of health for a harness that was 36 screens red, which is worse than having no report at all. If you run verify and do not commit the result, restore it (`git restore visual/report/`) rather than leaving a half-updated one behind.
 
