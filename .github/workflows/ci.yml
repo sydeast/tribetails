@@ -76,6 +76,11 @@ jobs:
               # since PR #184. Without this line that coverage never fires, which
               # is how those scripts stayed broken under firebase-admin ^14.
               - 'mytribe/scripts/**'
+              # Every other filter in this block self-triggers on the workflow
+              # file; mytribe was the one that did not, so a change to the job's
+              # own definition never re-ran it. Proven on the PR that added the
+              # line above: MyTribe functions reported "skipping".
+              - '.github/workflows/ci.yml'
               # ADR-0001: the generated Contracts module is committed INSIDE the
               # consuming projects, so the regen gate has to run when one of
               # those copies changes too. Without these lines a hand edit to a
