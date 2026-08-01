@@ -31,11 +31,11 @@ assume your default is wrong: re-check, then build it — backend + web + deskto
 
 When you need to know what a screen should look like, read these, in this order:
 
-1. `page-specs/*.md` — 31 numbered specs, each with an archived/live banner.
+1. `page-specs/*.md`, 31 numbered specs, each with an archived/live banner.
    Start at `00-INDEX.md` (spec to screen) and `00-DEPENDENCIES.md`. These are
    gitignored, so they exist in the main checkout only and are invisible inside a
    git worktree; use the absolute path rather than concluding they are missing.
-2. `ui-ideas/*.html` — the operator's mockups. Two rules that are not optional:
+2. `ui-ideas/*.html`, the operator's mockups. Two rules that are not optional:
    anything under `ui-ideas/WrongUIDesigns-UpdateKill/` is a REJECTED design and
    must never be built from, and a filename carrying a directive
    (`...-cardsShouldOpenDisplayingFullerDetails.html`) means that directive is
