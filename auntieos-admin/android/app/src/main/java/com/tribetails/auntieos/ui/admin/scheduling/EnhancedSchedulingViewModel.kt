@@ -6,7 +6,11 @@ import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.data.admin.Event
 import com.tribetails.auntieos.data.admin.EventType
 import com.tribetails.auntieos.data.model.*
+import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsBilling
+import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsCommunication
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.BOOKING_BUSY_CONFLICT_CODE
+import com.tribetails.auntieos.data.repository.BookingRequestRefusedException
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
 import com.tribetails.auntieos.data.repository.GoogleCalendarPushSkip
@@ -45,6 +49,22 @@ data class SchedulingState(
     val showNewRequestDialog: Boolean = false,
     val newRequestInFlight: Boolean = false,
     val newRequestError: String? = null,
+    // D1: true only when [newRequestError] came back as a GOOGLE_BUSY_IMPORT
+    // clash, the ONE refusal `overrideBusyConflict` lets an operator knowingly
+    // go past. The wizard turns this into a "Create anyway" retry. A company
+    // holiday sets newRequestError but never this: `guardCompanyHolidayConflict`
+    // has no override parameter, so offering a retry would be offering a button
+    // that cannot work.
+    val newRequestBusyOverridable: Boolean = false,
+    // D1: kin on the household picked at wizard step 1, for the kinIds chips.
+    // Loaded on demand rather than in init{}, so opening the Schedule screen does
+    // not read a kin roster for a wizard nobody opened.
+    val newRequestKin: List<Kin> = emptyList(),
+    val newRequestKinLoading: Boolean = false,
+    // Fail-loud, never silent: an unreadable roster says so, because "this
+    // household has no kin" and "the kin could not be read" must not look the
+    // same to the operator.
+    val newRequestKinError: String? = null,
     val showConflictDialog: Boolean = false,
     val dragState: DragState? = null,
     val availabilityResult: BookingAvailabilityResult? = null,
@@ -1286,12 +1306,63 @@ class EnhancedSchedulingViewModel(
     }
 
     fun showNewRequestDialog() {
-        _state.value = _state.value.copy(showNewRequestDialog = true, newRequestError = null)
+        _state.value = _state.value.copy(
+            showNewRequestDialog = true,
+            newRequestError = null,
+            newRequestBusyOverridable = false,
+        )
     }
 
     fun hideNewRequestDialog() {
         if (_state.value.newRequestInFlight) return
-        _state.value = _state.value.copy(showNewRequestDialog = false, newRequestError = null)
+        _state.value = _state.value.copy(
+            showNewRequestDialog = false,
+            newRequestError = null,
+            newRequestBusyOverridable = false,
+            newRequestKin = emptyList(),
+            newRequestKinError = null,
+            newRequestKinLoading = false,
+        )
+    }
+
+    /**
+     * D1 wizard step 1: the kin on [kinfolkId], for the optional `kinIds` chips.
+     *
+     * Only the ACTIVE kin, matching `KinCareRepository.createKinCareSession`'s
+     * own `status == "active"` filter, so the wizard cannot put a kin on a
+     * booking that the session writer would then drop.
+     *
+     * A blank id (the operator cleared the household) empties the list rather
+     * than reading the whole roster.
+     */
+    fun loadKinForNewRequest(kinfolkId: String) {
+        if (kinfolkId.isBlank()) {
+            _state.value = _state.value.copy(
+                newRequestKin = emptyList(),
+                newRequestKinLoading = false,
+                newRequestKinError = null,
+            )
+            return
+        }
+        _state.value = _state.value.copy(newRequestKinLoading = true, newRequestKinError = null)
+        viewModelScope.launch {
+            auntieRepository.getKin(kinfolkId)
+                .onSuccess { kin ->
+                    _state.value = _state.value.copy(
+                        newRequestKin = kin.filter { it.status == "active" },
+                        newRequestKinLoading = false,
+                        newRequestKinError = null,
+                    )
+                }
+                .onFailure { t ->
+                    _state.value = _state.value.copy(
+                        newRequestKin = emptyList(),
+                        newRequestKinLoading = false,
+                        newRequestKinError = t.message
+                            ?: "The Kin roster could not be read. The booking still covers the whole household.",
+                    )
+                }
+        }
     }
 
     /**
@@ -1308,9 +1379,19 @@ class EnhancedSchedulingViewModel(
         pattern: String,
         weeklyDays: List<Int>?,
         overrideBusyConflict: Boolean = false,
+        // D1: the three fields the five-step wizard added. Defaulted to null so
+        // the AO-25 call shape stays valid and the callable keeps receiving the
+        // same payload it always did from any caller that has no wizard.
+        kinIds: List<String>? = null,
+        billing: CreateMultiDateBookingRequestArgsBilling? = null,
+        communication: CreateMultiDateBookingRequestArgsCommunication? = null,
     ) {
         if (_state.value.newRequestInFlight) return
-        _state.value = _state.value.copy(newRequestInFlight = true, newRequestError = null)
+        _state.value = _state.value.copy(
+            newRequestInFlight = true,
+            newRequestError = null,
+            newRequestBusyOverridable = false,
+        )
         viewModelScope.launch {
             bookingRepository.createMultiDateBookingRequest(
                 kinfolkId = kinfolkId,
@@ -1318,18 +1399,31 @@ class EnhancedSchedulingViewModel(
                 notes = notes,
                 pattern = pattern,
                 weeklyDays = weeklyDays,
+                kinIds = kinIds?.takeIf { it.isNotEmpty() },
+                billing = billing,
+                communication = communication,
                 overrideBusyConflict = overrideBusyConflict,
             ).onSuccess { result ->
                 _state.value = _state.value.copy(
                     newRequestInFlight = false,
                     showNewRequestDialog = false,
+                    newRequestBusyOverridable = false,
+                    newRequestKin = emptyList(),
+                    newRequestKinError = null,
                     seriesActionMessage = "Booking request created: ${result.visitCount} visit(s) submitted for approval. " +
                         "It enters the Incoming-requests queue and appears above once approved.",
                 )
             }.onFailure { t ->
+                // A busy clash is the only refusal the operator can knowingly
+                // override, and only when they have not already overridden it:
+                // re-offering "Create anyway" after an override already failed
+                // would be offering the same losing move twice.
+                val busy = !overrideBusyConflict &&
+                    (t as? BookingRequestRefusedException)?.code == BOOKING_BUSY_CONFLICT_CODE
                 _state.value = _state.value.copy(
                     newRequestInFlight = false,
                     newRequestError = t.message ?: "Failed to create the booking request.",
+                    newRequestBusyOverridable = busy,
                 )
             }
         }

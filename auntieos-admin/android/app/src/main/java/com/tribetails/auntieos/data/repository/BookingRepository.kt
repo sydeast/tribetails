@@ -3,6 +3,7 @@ package com.tribetails.auntieos.data.repository
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.FirebaseFunctionsException
 import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgs
 import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsBilling
 import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsCommunication
@@ -82,16 +83,25 @@ class BookingRepository(
      * doesn't collect them yet", but "there was nowhere on the wire for them to
      * go even if it did." Now the payload is built through the generated
      * `CreateMultiDateBookingRequestArgs`/`...Visit`, which has a slot for
-     * every one of those five. [NewBookingVisit] still has no `priceCents` or
-     * `location` field (no screen collects either today), so those travel as
-     * an honest `null` -- the same thing an omitted key meant before, and
-     * still accepted identically by the server (see the comment on the
-     * server's `Args` in `requestBooking.ts` for why). [billing] and
-     * [communication] default to `null` (no screen offers either choice on
-     * this path today, same honesty). [overrideBusyConflict] now has a real
-     * parameter, default `false`, so a future "force create past a busy
-     * conflict" affordance on this dialog has somewhere to plug in without
-     * another repository rewrite; nothing calls it `true` yet.
+     * every one of those five.
+     *
+     * D1 filled four of them in. The five-step wizard
+     * (`NewBookingWizard.kt`) collects a per-visit place, the kin on the
+     * booking, the billing mode and the two communication switches, so
+     * [NewBookingVisit.location], [kinIds], [billing] and [communication] now
+     * carry real operator input instead of a placeholder null. `priceCents`
+     * stays null on purpose and is the one field no screen will ever fill:
+     * `resolveService` overwrites a client price with the catalog's (NOTE-56).
+     *
+     * [overrideBusyConflict] is now really used: the wizard offers "Create
+     * anyway" after a [BOOKING_BUSY_CONFLICT_CODE] refusal, the same knowing
+     * override [EnhancedSchedulingViewModel.resolveConflict]'s Force Create
+     * has always had on the direct-write path. A company-holiday refusal has
+     * no equivalent and must not grow one; see `companyHolidayConflict.ts`.
+     *
+     * A rejection from the callable surfaces as [BookingRequestRefusedException]
+     * carrying the server's `details.code`, so callers branch on a code rather
+     * than on the wording of a sentence.
      */
     suspend fun createMultiDateBookingRequest(
         kinfolkId: String,
@@ -117,15 +127,27 @@ class BookingRepository(
                     endTimeMs = v.endTimeMs,
                     serviceId = v.serviceId?.takeIf { it.isNotBlank() },
                     serviceName = v.serviceName,
+                    // Still null, and still honest: `resolveService` discards a
+                    // client price (NOTE-56), so no screen collects one.
                     priceCents = null,
-                    location = null,
+                    location = v.location?.takeIf { it.isNotBlank() },
                 )
             },
             billing = billing,
             communication = communication,
             overrideBusyConflict = overrideBusyConflict,
         )
-        val raw = functions.getHttpsCallable("createMultiDateBookingRequest").call(args.toPayload()).await().data
+        val raw = try {
+            functions.getHttpsCallable("createMultiDateBookingRequest").call(args.toPayload()).await().data
+        } catch (e: FirebaseFunctionsException) {
+            // Translate at the boundary so nothing above this line has to know
+            // about Firebase types to tell a busy conflict (overridable) from a
+            // company holiday (not) from a plain bad argument.
+            throw BookingRequestRefusedException(
+                code = conflictCodeFrom(e.details),
+                message = e.message ?: "The booking request was refused.",
+            )
+        }
         @Suppress("UNCHECKED_CAST")
         val result = decodeCreateMultiDateBookingRequestResult(raw as? Map<String, Any?>)
         MultiDateBookingResult(
@@ -984,7 +1006,42 @@ data class NewBookingVisit(
     val serviceName: String,
     val endTimeMs: Long? = null,
     val serviceId: String? = null,
+    /**
+     * D1: the per-visit place, the callable's `location` (`z.string().trim()
+     * .min(1).max(120).nullable()`). Null means "no place given"; `""` is NOT a
+     * legal value on the wire, so a caller must null a blank rather than send it.
+     *
+     * There is deliberately still no `priceCents` here. The field exists on the
+     * callable, but `resolveService` overwrites whatever a client sends with the
+     * catalog price (NOTE-56), so a price control on this path would be a box
+     * whose value is discarded. Web's wizard omits it for the same reason.
+     */
+    val location: String? = null,
 )
+
+/**
+ * D1: a booking callable refused the request with a machine-readable reason.
+ *
+ * [code] is the server's `details.code` verbatim, so a client branches on
+ * [BOOKING_BUSY_CONFLICT_CODE] rather than pattern-matching a human sentence
+ * that is free to be reworded. Null when the refusal carried no code (a plain
+ * `invalid-argument`, a transport failure, anything that is not one of the
+ * guards).
+ */
+class BookingRequestRefusedException(val code: String?, message: String) : Exception(message)
+
+/** `details.code` from `guardBookingBusyConflict`; the one refusal an operator may override. */
+const val BOOKING_BUSY_CONFLICT_CODE = "booking_busy_conflict"
+
+/** `details.code` from `guardCompanyHolidayConflict`. Never overridable, by design. */
+const val COMPANY_HOLIDAY_CONFLICT_CODE = "company_holiday_conflict"
+
+/**
+ * Pulls `details.code` out of a callable rejection's `details` payload. Pure and
+ * total: any shape that is not a map carrying a string `code` yields null.
+ */
+internal fun conflictCodeFrom(details: Any?): String? =
+    (details as? Map<*, *>)?.get("code") as? String
 
 /** AO-25: createMultiDateBookingRequest result (the created envelope + its visits). */
 data class MultiDateBookingResult(

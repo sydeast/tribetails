@@ -3,6 +3,7 @@ package com.tribetails.auntieos.data.repository
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.FirebaseFunctionsException
 import com.google.firebase.functions.HttpsCallableReference
 import com.google.firebase.functions.HttpsCallableResult
 import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsBilling
@@ -103,5 +104,64 @@ class BookingRepositoryCreateMultiDateTest {
         )
 
         assertEquals(false, payload.captured["overrideBusyConflict"])
+    }
+
+    // -----------------------------------------------------------------------
+    // D1: the wizard fills the slots the drift fix opened.
+    // -----------------------------------------------------------------------
+    @Test
+    fun `D1 - a per-visit place reaches the wire, trimmed to null when blank`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val payload = stub(functions, mapOf("batchId" to "batch1", "visitIds" to listOf("v1", "v2"), "visitCount" to 2))
+        repoWith(functions).createMultiDateBookingRequest(
+            kinfolkId = "kf1",
+            visits = listOf(
+                NewBookingVisit(startTimeMs = 1000L, serviceName = "Dog Walking", location = "Back gate"),
+                // The callable's `location` is `.trim().min(1)`, so a blank must
+                // travel as null; sending "" would be refused outright.
+                NewBookingVisit(startTimeMs = 2000L, serviceName = "Dog Walking", location = "   "),
+            ),
+        )
+        @Suppress("UNCHECKED_CAST")
+        val visits = payload.captured["visits"] as List<Map<String, Any?>>
+        assertEquals("Back gate", visits[0]["location"])
+        assertEquals(null, visits[1]["location"])
+    }
+    @Test
+    fun `D1 - kinIds reach the wire when the wizard collected any`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val payload = stub(functions, mapOf("batchId" to "batch1", "visitIds" to listOf("v1"), "visitCount" to 1))
+        repoWith(functions).createMultiDateBookingRequest(
+            kinfolkId = "kf1",
+            visits = listOf(NewBookingVisit(startTimeMs = 1000L, serviceName = "Dog Walking")),
+            kinIds = listOf("kin-a", "kin-b"),
+        )
+        assertEquals(listOf("kin-a", "kin-b"), payload.captured["kinIds"])
+    }
+    @Test
+    fun `D1 - a callable rejection becomes a typed refusal carrying details dot code`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val ref = mockk<HttpsCallableReference>()
+        val refusal = mockk<FirebaseFunctionsException>()
+        every { refusal.details } returns mapOf("code" to "booking_busy_conflict")
+        every { refusal.message } returns "This time is not available."
+        every { ref.call(any<Map<String, Any?>>()) } throws refusal
+        every { functions.getHttpsCallable("createMultiDateBookingRequest") } returns ref
+        val result = repoWith(functions).createMultiDateBookingRequest(
+            kinfolkId = "kf1",
+            visits = listOf(NewBookingVisit(startTimeMs = 1000L, serviceName = "Dog Walking")),
+        )
+        val error = result.exceptionOrNull()
+        assertTrue("expected a typed refusal, got $error", error is BookingRequestRefusedException)
+        assertEquals(BOOKING_BUSY_CONFLICT_CODE, (error as BookingRequestRefusedException).code)
+        assertEquals("This time is not available.", error.message)
+    }
+    @Test
+    fun `D1 - conflictCodeFrom is total, never throwing on a shape it did not expect`() {
+        assertEquals("booking_busy_conflict", conflictCodeFrom(mapOf("code" to "booking_busy_conflict")))
+        assertEquals(null, conflictCodeFrom(null))
+        assertEquals(null, conflictCodeFrom("not a map"))
+        assertEquals(null, conflictCodeFrom(mapOf("code" to 7)))
+        assertEquals(null, conflictCodeFrom(emptyMap<String, Any?>()))
     }
 }

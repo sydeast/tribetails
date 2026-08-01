@@ -599,14 +599,48 @@ fun ScheduleViewScreen(
         }
 
         if (state.showNewRequestDialog) {
-            NewBookingRequestDialog(
-                allKinfolk   = state.allKinfolk,
-                serviceRates = state.businessSettings.serviceRates,
-                inFlight     = state.newRequestInFlight,
-                error        = state.newRequestError,
-                onDismiss    = { viewModel.hideNewRequestDialog() },
-                onCreate     = { kinfolkId, visits, notes, pattern, weeklyDays ->
-                    viewModel.createBookingRequest(kinfolkId, visits, notes, pattern, weeklyDays)
+            // D1: the five-step wizard, matching the web wizard PR #157 shipped.
+            // Availability is decoded ONCE here from state the screen already
+            // holds, so no composable inside the wizard touches Firestore.
+            val availability = remember(
+                state.businessSettings.companyHolidays,
+                state.timeSlots,
+                state.businessHours,
+                state.busyError,
+            ) {
+                BookingAvailability(
+                    closures = state.businessSettings.companyHolidays.map(::parseClosureEntry),
+                    blockedByDate = blockedSlotsByDate(state.timeSlots),
+                    businessHours = state.businessHours,
+                    // Fail loud: a broken busy stream must read as "availability
+                    // unknown" in the wizard, never as "nothing is blocked".
+                    unknown = state.busyError?.let { "Blocked time couldn't be read ($it)." },
+                )
+            }
+            NewBookingWizard(
+                allKinfolk      = state.allKinfolk,
+                kin             = state.newRequestKin,
+                kinLoading      = state.newRequestKinLoading,
+                kinError        = state.newRequestKinError,
+                serviceRates    = state.businessSettings.serviceRates,
+                availability    = availability,
+                inFlight        = state.newRequestInFlight,
+                error           = state.newRequestError,
+                busyOverridable = state.newRequestBusyOverridable,
+                onKinfolkSelected = { viewModel.loadKinForNewRequest(it) },
+                onDismiss       = { viewModel.hideNewRequestDialog() },
+                onCreate        = { submission ->
+                    viewModel.createBookingRequest(
+                        kinfolkId = submission.kinfolkId,
+                        visits = submission.visits,
+                        notes = submission.notes,
+                        pattern = submission.pattern,
+                        weeklyDays = submission.weeklyDays,
+                        overrideBusyConflict = submission.overrideBusyConflict,
+                        kinIds = submission.kinIds,
+                        billing = submission.billing,
+                        communication = submission.communication,
+                    )
                 },
             )
         }
