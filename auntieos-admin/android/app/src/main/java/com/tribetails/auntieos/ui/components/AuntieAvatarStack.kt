@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -129,7 +131,14 @@ private fun AvatarCircle(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.size(size).clip(circle),
             ) {
-                when (painter.state) {
+                // `painter.state` is a StateFlow<State> in coil3, not a State, so
+                // matching on it directly compared a flow against the state types
+                // and never matched. The initials fallback below has therefore been
+                // dead since the coil3 upgrade: a broken avatar url rendered nothing
+                // instead of the monogram. Kotlin called it a warning until 2.4.10
+                // promoted it to an error, which is how it finally surfaced.
+                val imageState by painter.state.collectAsState()
+                when (imageState) {
                     is AsyncImagePainter.State.Loading,
                     is AsyncImagePainter.State.Error -> InitialsFace(initials, size)
                     else -> SubcomposeAsyncImageContent()

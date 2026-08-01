@@ -52,7 +52,16 @@ val missingReleaseSigningProps = requiredReleaseSigningProps.filter { localProps
 val canSignReleaseApk = missingReleaseSigningProps.isEmpty()
 android {
     namespace = "com.tribetails.auntieos"
-    compileSdk = 36
+    // 37 because androidx.core 1.19.0 and androidx.lifecycle 2.11.0 both declare
+    // a minimum compileSdk of 37 in their AAR metadata, and `checkDebugAarMetadata`
+    // fails the build rather than warning. Raised WITH the dependency bump that
+    // required it (#180), not ahead of it.
+    //
+    // compileSdk is which APIs the code may reference. It is NOT targetSdk, which
+    // stays 36 below: raising that changes runtime behaviour on device and is its
+    // own change with its own testing. Moving them together is how a compile-only
+    // bump turns into a behaviour change nobody asked for.
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.tribetails.auntieos"
