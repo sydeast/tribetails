@@ -244,6 +244,26 @@ internal fun decodeCreateInvoiceResult(raw: Map<String, Any?>?): CreateInvoiceRe
 
 // ---------- createQuote ----------
 
+/** Nested in the `createQuote` contract. */
+data class CreateQuoteArgsLineItem(
+    val description: String,
+    val qty: Double,
+    val unitCents: Long,
+    /** Optional: omitted from the payload when null. */
+    val discountCents: Long? = null,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("description", description)
+        put("qty", qty)
+        put("unitCents", unitCents)
+        if (discountCents != null) put("discountCents", discountCents)
+    }
+}
+
 /** Request payload for the `createQuote` callable. */
 data class CreateQuoteArgs(
     val familyId: String,
@@ -268,6 +288,10 @@ data class CreateQuoteArgs(
     val status: String = "",
     /** The server defaults this to `emptyList()`. */
     val sessionIds: List<String> = emptyList(),
+    /** Optional: omitted from the payload when null. */
+    val lineItems: List<CreateQuoteArgsLineItem>? = null,
+    /** Optional: omitted from the payload when null. */
+    val invoiceDiscountCents: Long? = null,
     /** The server defaults this to `false`. */
     val sendToKinfolk: Boolean = false,
 ) {
@@ -289,6 +313,8 @@ data class CreateQuoteArgs(
         put("amountDue", amountDue)
         put("status", status)
         put("sessionIds", sessionIds)
+        if (lineItems != null) put("lineItems", lineItems.map { it.toPayload() })
+        if (invoiceDiscountCents != null) put("invoiceDiscountCents", invoiceDiscountCents)
         put("sendToKinfolk", sendToKinfolk)
     }
 }

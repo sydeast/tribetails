@@ -248,18 +248,6 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
     };
 
     try {
-      // KNOWN DEFECT, RECORDED RATHER THAN PATCHED HERE: an ITEMIZED QUOTE
-      // LOSES ITS LINES. `CreateQuoteArgs` has no `lineItems` and no
-      // `invoiceDiscountCents` (see the contracts module), and the server's zod
-      // object strips both silently rather than refusing, so the quote is stored
-      // with the right total and none of the lines behind it. The money-mode
-      // toggle above is not gated on `isQuote`, so an operator can reach this
-      // today. The spread below still carries both keys because that is what
-      // ships now and this change is a type adoption, not a behaviour change:
-      // TypeScript does not excess-property-check a spread, so nothing here
-      // fails, which is exactly why the comment has to. Fixing it means either
-      // giving `createQuote` line items server-side or gating itemization out of
-      // quote mode, and that is a decision about the product, not a type.
       const result = isQuote ? await createQuote({ ...base, sendToKinfolk }) : await createInvoice(base);
       setSubmitting(false);
       onCreated?.(result.invoiceId);

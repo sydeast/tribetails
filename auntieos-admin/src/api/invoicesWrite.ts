@@ -76,11 +76,13 @@ export async function createInvoice(
  * createQuote (admin): a quote is an invoice the server always mints in QUOTE
  * status, whatever `status` the caller sends.
  *
- * IT IS NOT createInvoice'S SHAPE PLUS ONE FLAG, which is what this file
- * claimed until the contracts module was generated. `CreateQuoteArgs` has NO
- * `lineItems` and NO `invoiceDiscountCents`: the server's zod object strips
- * both without complaint, so an itemized quote is stored with its total and
- * none of the lines behind it. See the note in `screens/InvoiceCreate.tsx`.
+ * `CreateQuoteArgs.lineItems` and `CreateQuoteArgs.invoiceDiscountCents` are
+ * ADDITIVE, exactly as they are on `createInvoice`. Omit them and the
+ * caller's `total` / `amountDue` are stored verbatim. Supply them and the
+ * server owns the money: every figure is recomputed from the lines, and a
+ * total that disagrees is refused (`invoice_total_mismatch`) rather than
+ * silently overwritten. Use the same `lib/invoiceMath.ts` computation the
+ * composer runs to show a live total while the operator types.
  */
 export async function createQuote(
   input: CreateQuoteArgs,

@@ -126,6 +126,16 @@ export interface CreateInvoiceResult {
 // ---------- createQuote ----------
 
 /**
+ * Nested in the `createQuote` contract.
+ */
+export interface CreateQuoteArgsLineItem {
+  description: string;
+  qty: number;
+  unitCents: number;
+  discountCents?: number;
+}
+
+/**
  * Request payload for the `createQuote` callable.
  */
 export interface CreateQuoteArgs {
@@ -151,6 +161,8 @@ export interface CreateQuoteArgs {
   status?: string;
   /** Optional in the request; the server defaults it to []. */
   sessionIds?: string[];
+  lineItems?: CreateQuoteArgsLineItem[];
+  invoiceDiscountCents?: number;
   /** Optional in the request; the server defaults it to false. */
   sendToKinfolk?: boolean;
 }
