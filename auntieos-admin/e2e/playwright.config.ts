@@ -74,7 +74,7 @@ export default defineConfig({
     },
     {
       name: 'operator',
-      testMatch: /(bookings|no-production-egress)\.spec\.ts/,
+      testMatch: /(bookings|no-production-egress|mobile-nav)\.spec\.ts/,
       dependencies: ['setup'],
       use: { ...devices['Desktop Chrome'], storageState: './e2e/.auth/operator.json' },
     },
