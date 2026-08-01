@@ -49,6 +49,8 @@ fun KinfolkProfileScreen(
     onNavigateToHouseholdData: (String, String) -> Unit = { _, _ -> },
     onNavigateToMediaGallery: (String, String) -> Unit = { _, _ -> },
     onOpenReport: (sessionId: String) -> Unit = {},
+    /** B1: (kinfolkId, kinfolkName) -> the members and invites screen. */
+    onNavigateToMembers: (String, String) -> Unit = { _, _ -> },
 ) {
     val state by viewModel.profileState.collectAsState()
     // #14: portal invite state + Toast feedback on each outcome.
@@ -167,6 +169,25 @@ fun KinfolkProfileScreen(
                         loading = inviteBusy,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                }
+                // B1: the members-and-invites surface for THIS household. It sits
+                // next to "Invite to portal" because the two are the same job at
+                // different stages: that button gets the household in, this
+                // screen manages who else is in and what each of them may do.
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        GhostButton(
+                            label = "Members and invites",
+                            onClick = { onNavigateToMembers(kinfolk.id, kinfolk.displayName) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "Who else can reach this household in MyTribe, what each of them may " +
+                                "do, and every invite it has been sent.",
+                            style = AuntieTheme.typography.labelSmall,
+                            color = AuntieTheme.colors.textDim,
+                        )
+                    }
                 }
                 // Phase 3: rebuild this household's dossier + every pet's 411 from
                 // recent history via the synthesize callable. In-flight guarded; the

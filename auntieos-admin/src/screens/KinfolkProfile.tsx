@@ -14,6 +14,7 @@ import { MaskedValue } from '../components/MaskedValue';
 import { PrimaryButton } from '../components/Buttons';
 import { KinfolkEdit } from './KinfolkEdit';
 import { HouseholdData } from './HouseholdData';
+import { HouseholdMembers } from './HouseholdMembers';
 import './KinfolkProfile.css';
 
 interface KinfolkProfileProps {
@@ -71,7 +72,7 @@ function any(...vals: string[]): boolean {
  * switch the same way, so the editor and the household record stay local state
  * rather than routes, matching `KinView`'s existing precedent.
  */
-type ProfileView = 'profile' | 'edit' | 'household';
+type ProfileView = 'profile' | 'edit' | 'household' | 'members';
 export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkProfileProps) {
   const [view, setView] = useState<ProfileView>('profile');
   const [profile, setProfile] = useState<Async<Profile>>({ status: 'loading' });
@@ -119,6 +120,20 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkP
       <HouseholdData kinfolkId={kinfolkId} kinfolkName={kinfolkName} onBack={() => setView('profile')} />
     );
   }
+  // B1. The members and invites surface, opened as a sub-view here for the same
+  // reason the editor and household record are: it is about THIS household, and
+  // page-specs Decision 8 puts it under Directory / Households / {household} /
+  // Members. It is also its own route (`/household-members/{kinfolkId}`) so the
+  // screen can be linked to directly.
+  if (view === 'members') {
+    return (
+      <HouseholdMembers
+        kinfolkId={kinfolkId}
+        kinfolkName={kinfolkName}
+        onBack={() => setView('profile')}
+      />
+    );
+  }
   return (
     <div className="screen">
       <DenScreenHeading
@@ -128,6 +143,7 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkP
         trailing={
           <div className="kinfolk-profile__actions">
             <GhostButton label="Household data" onClick={() => setView('household')} />
+            <GhostButton label="Members and invites" onClick={() => setView('members')} />
             <PrimaryButton label="Edit" onClick={() => setView('edit')} />
             <GhostButton label="Back to Directory" onClick={onBack} />
           </div>

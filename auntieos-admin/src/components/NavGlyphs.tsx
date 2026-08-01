@@ -168,6 +168,14 @@ const GLYPH_PATHS: Record<Destination, ReactNode> = {
       <path d="M9 12l2 2 4-4" />
     </>
   ),
+  householdMembers: (
+    <>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M3 20c0-3.5 2.7-5.5 6-5.5" />
+      <path d="M18 9v6" />
+      <path d="M21 12h-6" />
+    </>
+  ),
 };
 
 /**

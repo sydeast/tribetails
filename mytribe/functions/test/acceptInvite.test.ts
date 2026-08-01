@@ -69,6 +69,80 @@ describe('acceptInviteHandler', () => {
     ).rejects.toMatchObject({ code: 'failed-precondition' });
   });
 
+  /**
+   * B1. The admin can now revoke an invite from the Members-and-invites screen,
+   * so "the operator revoked it and the invitee clicked the link anyway" stopped
+   * being hypothetical the day that button shipped. These two pin the refusal
+   * for the two ways an invite dies, and pin that NOTHING is written on the way
+   * out: no member doc, no clients arrayUnion, no partial join.
+   */
+  it('B1: refuses a REVOKED invite and writes nothing', async () => {
+    inviteGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'REVOKED',
+        tribeId: 't1',
+        invitedEmail: 'a@b',
+        // Still inside its TTL: it is the status, not the clock, that kills it.
+        expiresAt: { toMillis: () => Date.now() + 100000 },
+      }),
+    });
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    await expect(
+      acceptInviteHandler({
+        auth: { uid: 'u1', token: { email: 'a@b', email_verified: true } },
+        data: { inviteId: 'i1' },
+      } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(memberSet).not.toHaveBeenCalled();
+    expect(inviteUpdate).not.toHaveBeenCalled();
+    expect(syncClaim).not.toHaveBeenCalled();
+  });
+
+  it('B1: refuses an already-EXPIRED invite (the nightly sweep stamped it) and writes nothing', async () => {
+    inviteGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'EXPIRED',
+        tribeId: 't1',
+        invitedEmail: 'a@b',
+        expiresAt: { toMillis: () => Date.now() - 100000 },
+      }),
+    });
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    await expect(
+      acceptInviteHandler({
+        auth: { uid: 'u1', token: { email: 'a@b', email_verified: true } },
+        data: { inviteId: 'i1' },
+      } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(memberSet).not.toHaveBeenCalled();
+    expect(inviteUpdate).not.toHaveBeenCalled();
+  });
+
+  it('B1: a revoked invite is refused BEFORE the email check, so the link never reveals whose it was', async () => {
+    // The wrong-email path answers permission-denied and the dead-invite path
+    // answers failed-precondition. A revoked invite must take the dead branch
+    // regardless of who is holding it, or the two answers together would tell a
+    // stranger whether they guessed the invited address.
+    inviteGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'REVOKED',
+        tribeId: 't1',
+        invitedEmail: 'a@b',
+        expiresAt: { toMillis: () => Date.now() + 100000 },
+      }),
+    });
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    await expect(
+      acceptInviteHandler({
+        auth: { uid: 'stranger', token: { email: 'stranger@x', email_verified: true } },
+        data: { inviteId: 'i1' },
+      } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+  });
+
   it('rejects when token email mismatches invite', async () => {
     inviteGet.mockResolvedValue({
       exists: true,
