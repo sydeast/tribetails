@@ -68,3 +68,28 @@
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }
+/* ── Phone width ──────────────────────────────────────────────────────────
+   `auto 1fr auto`, the same shape as `.notif-row` in styles/screens.css and
+   given the same answer, so the digest strip on Inbox and the full feed on
+   Notifications do not disagree about a row an operator sees in both places.
+   The timestamp goes under the title rather than beside it; the checkbox keeps
+   the leading column. */
+@media (max-width: 720px) {
+  .notif-digest__row {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      'select body'
+      'select time';
+    gap: var(--space-1) var(--space-3);
+  }
+  .notif-digest__row .notif-digest__select {
+    grid-area: select;
+  }
+  .notif-digest__row .notif-digest__body {
+    grid-area: body;
+  }
+  .notif-digest__row .notif-digest__time {
+    grid-area: time;
+    justify-self: start;
+  }
+}

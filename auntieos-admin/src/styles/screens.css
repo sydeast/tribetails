@@ -316,3 +316,67 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* ── Phone width: Activity Log and Notifications rows ─────────────────────
+   Both are `auto 1fr auto[ auto]` with every trailing column `white-space:
+   nowrap`, so the one flexible column is what pays for all of them.
+   MEASURED AT 390x844 ON 2026-08-01, against four seeded activity rows and
+   three notifications. Neither overflowed the page, which is why #209's sweep
+   passed them and why they are here anyway:
+   - `.log__body` got 162-170px of a 324px row, against 29px of sequence
+     number, 59-66px of status pill, 31px of timestamp and 36px of gaps. It
+     carries an action type and a full sentence of description, and the action
+     type alone is a single unbreakable token: `CANCEL_BOOKING_SERIES` measured
+     6px WIDER than the column it was given, so on a real failure row the name
+     of the action that failed ran out of its own box.
+   - `.notif-row__body` got 178px, carrying a household, a target pill, a
+     title, a description, a channel list and a status. It fits; it is thin.
+   In both, the metadata drops to a second line under the body and the leading
+   column keeps the full height of the row. Same parts, same order, nothing
+   hidden. The Activity Log's timestamp stays at the trailing edge, where a
+   column of times still lines up. */
+@media (max-width: 720px) {
+  .log__row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'seq body   body'
+      'seq status time';
+    gap: var(--space-1) var(--space-3);
+  }
+  .log__row .log__seq {
+    grid-area: seq;
+    align-self: start;
+  }
+  .log__row .log__body {
+    grid-area: body;
+  }
+  .log__row .log__status {
+    grid-area: status;
+    justify-self: start;
+  }
+  .log__row .log__time {
+    grid-area: time;
+    justify-self: end;
+  }
+  .notif-row {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      'select body'
+      'select side';
+  }
+  .notif-row .notif-row__select {
+    grid-area: select;
+  }
+  .notif-row .notif-row__body {
+    grid-area: body;
+  }
+  .notif-row .notif-row__side {
+    grid-area: side;
+    /* A column of right-aligned items under a full-width body would leave the
+       time stranded on the far edge with nothing above it. */
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-2);
+  }
+}

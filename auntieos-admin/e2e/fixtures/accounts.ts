@@ -25,8 +25,22 @@ export const KINFOLK = {
   password: 'e2e-emulator-kinfolk-pw',
 } as const;
 
-/** Seeded `kin_care_sessions` rows the bookings spec asserts against. */
+/**
+ * Seeded `kin_care_sessions` rows the bookings spec asserts against.
+ *
+ * `today` was added on 2026-08-01 and is not decoration. Schedule's agenda
+ * lists the SELECTED day and the selection defaults to today, so a database
+ * whose nearest visit is three days out renders an empty agenda and its row
+ * grid cannot be measured at any viewport. Its household name is long on
+ * purpose: a two-word name fits any layout, so a row that only ever holds one
+ * proves nothing about the column widths.
+ */
 export const SEEDED_BOOKINGS = {
+  today: {
+    id: 'e2e-sess-today',
+    kinfolkName: 'Constance Fairweather-Okonkwo',
+    serviceType: 'Overnight stay',
+  },
   scheduled: { id: 'e2e-sess-scheduled', kinfolkName: 'Wanda Thorne', serviceType: 'Drop-in visit' },
   completed: { id: 'e2e-sess-completed', kinfolkName: 'Nora Halbrook', serviceType: 'Overnight stay' },
   cancelled: { id: 'e2e-sess-cancelled', kinfolkName: 'Tessa Brooks', serviceType: 'Dog walk' },

@@ -211,3 +211,28 @@
 .communicate__reload {
   margin-top: var(--space-4);
 }
+/* ── Phone width ──────────────────────────────────────────────────────────
+   The recipient row, `1.8fr auto`. Same failure class as `Invoices.css` and
+   `Inbox.css`: an `auto` trailing column takes its min-content and the only
+   flexible column pays for it, so the household and the subject shrink to
+   whatever the timestamp and the channel pill leave behind.
+   NOT MEASURED AT THIS WIDTH, and it cannot be from here. These rows are the
+   Recent tab, which loads through the `listRecentSends` callable because
+   `external_messages` has no client Firestore read rule at all
+   (`api/communicate.ts`), so under the e2e harness the tab renders its error
+   state whatever is seeded. This is the same two-column stack applied to the
+   same shape of row, reasoned from the CSS rather than photographed. The
+   compose form above it does read correctly at 390px. */
+@media (max-width: 720px) {
+  .communicate__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+  .communicate__row-side {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-2);
+  }
+}

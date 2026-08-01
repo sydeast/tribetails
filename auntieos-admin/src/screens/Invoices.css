@@ -276,3 +276,52 @@
   color: var(--color-text-faint);
   border: 1px dashed var(--color-text-faint);
 }
+/* ── Phone width ──────────────────────────────────────────────────────────
+   `5.5rem 1.7fr 1.1fr auto auto` in 324px of row.
+   Measured at 390x844 on 2026-08-01, against three seeded invoices: the fixed
+   88px number column plus four 16px gaps take 152px before a single flexible
+   column is served, and the amount (72px) and the status chip (72px) are both
+   `auto`, so `min-content` is the floor and neither gives ground. That left
+   28px for two `fr` tracks, and `.invoices__row-who` computed **0.0px wide on
+   two of the three rows**. The household name was not truncated, it was gone:
+   width zero, with an overflowing chip 22px past the end of the row. On the
+   screen an operator uses to find an invoice, every row said only a number, a
+   date and an amount.
+   Below the breakpoint the same five parts become three lines of two columns.
+   Nothing is dropped, nothing is added, and the reading order is unchanged:
+   the number and its status, then who and how much, then the dates. Placement
+   is by area rather than by source order so the amount can sit beside the name
+   it belongs to. Desktop keeps the single-line row. */
+@media (max-width: 720px) {
+  .invoices__row-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'number chip'
+      'who    amount'
+      'meta   meta';
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+  }
+  .invoices__row-main .invoices__row-number {
+    grid-area: number;
+  }
+  .invoices__row-main .invoices__row-who {
+    grid-area: who;
+  }
+  .invoices__row-main .invoices__row-meta {
+    grid-area: meta;
+    /* Two short mono lines on desktop, side by side on a phone, because the
+       row already spends two lines above this one. */
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+  }
+  .invoices__row-main .invoices__row-amount {
+    grid-area: amount;
+    justify-self: end;
+  }
+  .invoices__row-main .invoices__chip {
+    grid-area: chip;
+    justify-self: end;
+  }
+}

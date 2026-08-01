@@ -24,7 +24,11 @@ test.beforeEach(async ({ page }) => {
 
 test('the seeded visits arrive through the real rules and listener', async ({ page }) => {
   const list = page.locator('.bookings__list');
-  await expect(list.locator('li')).toHaveCount(3);
+  // Four since 2026-08-01, when `SEEDED_BOOKINGS.today` was added so that
+  // Schedule's agenda (which lists the SELECTED day, defaulting to today) has a
+  // row to render at all. The loop below is what carries the weight; the count
+  // is here so an unexpected EXTRA row is a failure too.
+  await expect(list.locator('li')).toHaveCount(4);
 
   for (const seeded of Object.values(SEEDED_BOOKINGS)) {
     await expect(page.getByText(seeded.kinfolkName, { exact: true })).toBeVisible();

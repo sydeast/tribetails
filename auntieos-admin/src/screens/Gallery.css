@@ -193,3 +193,16 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* ── Phone width ──────────────────────────────────────────────────────────
+   `justify-content: flex-end` puts "Upload media" alone at the trailing edge.
+   That reads as a toolbar on a desktop, where it sits under a heading whose
+   own action block is also on the right. Below 720px `DenScreenKit.css` stacks
+   the heading and drops its trailing block to the LEADING edge, so on a phone
+   this was the one screen in the admin whose primary action was somewhere
+   different from every other screen's. Alignment only: the button, the screen
+   and the desktop layout are untouched. */
+@media (max-width: 720px) {
+  .gallery__actions {
+    justify-content: flex-start;
+  }
+}

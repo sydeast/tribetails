@@ -357,3 +357,38 @@
   background: var(--color-surface-2);
   color: var(--color-text-faint);
 }
+/* ── Phone width ──────────────────────────────────────────────────────────
+   The agenda row, `auto 1.8fr auto`, gets the same treatment as
+   `Sessions.css`: the two are the same row with the columns in a different
+   order, and they should not diverge on a phone when they agree everywhere
+   else. The time leads on desktop; below the breakpoint the household leads
+   and the time sits under it, because a list of visits for ONE day is read by
+   who, not by when.
+   Not touched here, and reported rather than fixed: the seven-day week strip
+   above (`.schedule__week`, `repeat(7, minmax(0, 1fr))`) is about 40px per day
+   at 390px. It fits and it does not overflow, but a cell that narrow can only
+   ever show a count. Making a phone default to the Day or Month view is a
+   change to what the screen IS, not to how it wraps, and belongs to whoever
+   owns the design rather than to a responsive repair. */
+@media (max-width: 720px) {
+  .schedule__row-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'who  chip'
+      'when chip';
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+  }
+  .schedule__row-main .schedule__row-who {
+    grid-area: who;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+  }
+  .schedule__row-main .schedule__row-when {
+    grid-area: when;
+  }
+  .schedule__row-main .schedule__chip {
+    grid-area: chip;
+    justify-self: end;
+  }
+}
