@@ -47,11 +47,21 @@ class AuntieRepository(
      * whole invariant; the gate itself is public either way.
      */
     internal val authGate: AuthGate = AuthGate.shared,
+    /**
+     * Test seam only. Production call sites never pass this, so `functions`
+     * below still resolves `FirebaseFunctions.getInstance(...)` lazily on
+     * first callable use, same as before. A test supplies a mocked
+     * [FirebaseFunctions] here to exercise a real repository method (e.g.
+     * [batchUpdateBookings]) without Firebase's static init, the same seam
+     * [BookingRepository] and [KinCareRepository] already take as a
+     * constructor param.
+     */
+    functionsOverride: FirebaseFunctions? = null,
 ) {
     private val firestore by lazy { FirebaseFirestore.getInstance() }
     private val storage by lazy { FirebaseStorage.getInstance() }
     private val auth by lazy { FirebaseAuth.getInstance() }
-    private val functions by lazy { FirebaseFunctions.getInstance("us-central1") }
+    private val functions by lazy { functionsOverride ?: FirebaseFunctions.getInstance("us-central1") }
     private val authMutex = Mutex()
 
     data class SessionUser(
