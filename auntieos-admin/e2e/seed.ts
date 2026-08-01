@@ -95,7 +95,11 @@ function enc(v: unknown): Record<string, unknown> {
   throw new Error(`e2e seed cannot encode ${typeof v}`);
 }
 
-async function put(collection: string, id: string, doc: Record<string, unknown>): Promise<void> {
+export async function put(
+  collection: string,
+  id: string,
+  doc: Record<string, unknown>,
+): Promise<void> {
   const url = `${FIRESTORE}/v1/projects/${PROJECT}/databases/(default)/documents/${collection}?documentId=${id}`;
   const fields = Object.fromEntries(Object.entries(doc).map(([k, v]) => [k, enc(v)]));
   await must(
@@ -116,7 +120,26 @@ async function put(collection: string, id: string, doc: Record<string, unknown>)
  * data, which is the whole failure mode an e2e harness exists to catch.
  */
 function isoDaysFromNow(days: number): string {
-  return new Date(Date.now() + days * 86_400_000).toISOString();
+  return new Date(seedNow() + days * 86_400_000).toISOString();
+}
+
+/**
+ * The instant "now" means for this seed, in ms.
+ *
+ * Real wall clock by default, so `npm run e2e` behaves exactly as it always
+ * has. `E2E_SEED_NOW` overrides it with a fixed ISO instant, which is what the
+ * VISUAL surface sets: a screenshot golden of a row that says "in 3 days" is
+ * only reproducible if the seed and the browser's frozen clock agree on the same
+ * origin. Nothing else may set it, and a malformed value is fatal rather than
+ * silently falling back, because a seed that quietly reverts to the wall clock
+ * produces goldens that fail tomorrow for no nameable reason.
+ */
+export function seedNow(): number {
+  const pinned = process.env.E2E_SEED_NOW;
+  if (pinned === undefined || pinned === '') return Date.now();
+  const ms = Date.parse(pinned);
+  if (Number.isNaN(ms)) throw new Error(`E2E_SEED_NOW is not a date: "${pinned}"`);
+  return ms;
 }
 
 export default async function seed(): Promise<void> {

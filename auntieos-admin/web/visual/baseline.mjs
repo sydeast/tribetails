@@ -23,7 +23,12 @@ const root = join(here, "..", "..");
 const visualDir = join(root, "visual");
 const baselineDir = join(visualDir, "baselines");
 const reportDir = join(visualDir, "report");
-const SURFACES = ["web", "desktop", "android"];
+// `react` is the fourth surface: the React admin at auntie.tribetails.com, captured by
+// `auntieos-admin/e2e/visual.capture.spec.ts`. The other three all render the superseded
+// Compose app. It verifies THROUGH THIS FILE deliberately, so all four share one tolerance
+// policy and one report rather than growing a second golden store under Playwright's own
+// snapshot directory.
+const SURFACES = ["web", "desktop", "android", "react"];
 
 const REGRESSION_PCT = Number(process.env.REGRESSION_PCT ?? "0.5");
 const PIXEL_THRESHOLD = Number(process.env.PIXEL_THRESHOLD ?? "0.1");

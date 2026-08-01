@@ -110,11 +110,30 @@ parallel workers would race each other's writes and an assertion about a seeded
 row would stop meaning anything. Leave it at 1. If the suite gets slow enough to
 hurt, the fix is a seed per worker, not a higher worker count.
 
+## The visual harness borrows this one
+
+`web/visual`'s fourth surface (`react`) is a capture-only Playwright project in
+this same config, gated behind `VISUAL_CAPTURE=1` and run with
+`npm run visual:react`. It reuses the emulators, `auth.setup.ts`'s real-form
+login and the saved operator session rather than growing a second credential
+path, which is what the Compose `web` surface did and why that one needs a
+`.env` nobody has. Its seed, `e2e/seed.visual.ts`, calls this one and then adds
+rows, so `seed.ts` keeps the exact database the specs above assert against,
+counts included. See `docs/runbooks/visual-regression.md`.
+
 ## Not covered yet
 
 Callables. The functions emulator is not started, so nothing here exercises
 `createInvoice`, `markInvoicePaid` or any other callable, and no spec drives a
-screen whose first paint depends on one. `bookings.spec.ts` works because
+screen whose first paint depends on one.
+
+Worth knowing, and not the same statement: `src/lib/firebase.ts` connects the
+auth and Firestore emulators and **never calls `connectFunctionsEmulator`**, so
+a callable in this harness is not merely unserved, it is dialled against
+PRODUCTION `us-central1` with an emulator-minted token. Nothing succeeds, but
+the failures are real outbound requests whose timing depends on the network. The
+visual surface aborts every non-localhost request for exactly that reason; the
+specs here do not, because none of them drives a screen that fires one. `bookings.spec.ts` works because
 `BOOKINGS_QUERY` reads Firestore directly through the client SDK. The e2e cases
 named in Phase 8.1 of the port plan (account, tribal intel, invoices, booking
 approval, inbox, widgets) still need writing, and the invoice one needs Task
