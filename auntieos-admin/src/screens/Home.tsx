@@ -134,16 +134,22 @@ export const WEB_DEFAULT_DASHBOARD: readonly DashWidget[] = [
   { key: 'supplies', size: 'compact' },
 ];
 
-/** True when a resolved layout is the shipped default, i.e. nothing is stored. */
-function isShippedDefault(list: readonly DashWidget[]): boolean {
-  return (
-    list.length === DEFAULT_DASHBOARD.length &&
-    list.every((w, i) => w.key === DEFAULT_DASHBOARD[i]?.key && w.size === DEFAULT_DASHBOARD[i]?.size)
-  );
-}
-
-function webResolved(list: readonly DashWidget[]): DashWidget[] {
-  const source = isShippedDefault(list) ? WEB_DEFAULT_DASHBOARD : list;
+/**
+ * `list` is what `getDashboardLayout` resolved; `isStored` is whether that
+ * came off the document or is the shipped default substituted because nothing
+ * readable was there (see `api/dashboardLayout.ts`'s `DashboardLayoutResult`).
+ *
+ * Substituting on VALUE (list happens to equal `DEFAULT_DASHBOARD`) instead of
+ * on `isStored` was the bug: an operator whose real, saved layout is exactly
+ * those three widgets (plausible on android, where that IS the whole
+ * customized board) looked indistinguishable from an operator with nothing
+ * stored. The web board then substituted its own seven-card default for
+ * display, and the operator's first edit here saved THAT, seven widgets
+ * replacing three, over a layout they deliberately arranged elsewhere. Only
+ * `isStored` says which case this is; the widget values never can.
+ */
+function webResolved(list: readonly DashWidget[], isStored: boolean): DashWidget[] {
+  const source = isStored ? list : WEB_DEFAULT_DASHBOARD;
   return source.map((w) => ({ ...w }));
 }
 
@@ -188,9 +194,9 @@ export function Home() {
     let live = true;
     setLoadError(null);
     void getDashboardLayout(uid)
-      .then((stored) => {
+      .then(({ widgets, isStored }) => {
         if (!live) return;
-        const resolved = webResolved(stored);
+        const resolved = webResolved(widgets, isStored);
         confirmedRef.current = resolved;
         setLayout(resolved);
       })
@@ -233,7 +239,7 @@ export function Home() {
   // the board is the standard one rather than the operator's, so drawing it is
   // disclosed rather than guessed. Only the not-yet-known case holds the board.
   const stillLoading = layout === null && loadError === null;
-  const shown = layout ?? webResolved(DEFAULT_DASHBOARD);
+  const shown = layout ?? webResolved(DEFAULT_DASHBOARD, false);
   const canCustomize = layout !== null;
   const hidden = hiddenKeys(shown);
   // The operator arranged Home on the phone, so their board is seats this

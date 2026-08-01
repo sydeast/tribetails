@@ -73,12 +73,31 @@ function w(key: string, size: 'compact' | 'wide' = 'compact'): DashWidget {
   return { key, size } as DashWidget;
 }
 
+/**
+ * What `getDashboardLayout` resolves for an operator with a REAL, saved
+ * layout. Most fixtures below represent that case. `isStored` is the bit C2
+ * fixed: the API used to hand back only a widget list, so a caller could not
+ * tell "genuinely saved" apart from "nothing saved, default substituted" when
+ * the two happened to hold the same values, and the web screen used to guess
+ * from the VALUES instead of being told. See `notStored` below for the other
+ * case, and `api/dashboardLayout.test.ts` for the same contract at the API
+ * boundary.
+ */
+function stored(widgets: DashWidget[]): { widgets: DashWidget[]; isStored: boolean } {
+  return { widgets, isStored: true };
+}
+
+/** What `getDashboardLayout` resolves for an operator who has never customized. */
+function notStored(widgets: DashWidget[]): { widgets: DashWidget[]; isStored: boolean } {
+  return { widgets, isStored: false };
+}
+
 beforeEach(() => {
   navigate.mockReset();
   getDashboardLayout.mockReset();
   saveDashboardLayout.mockReset();
   useAuth.mockReturnValue({ status: 'signedIn', user: { uid: 'op-1' } });
-  getDashboardLayout.mockResolvedValue(WEB_DEFAULT_DASHBOARD.map((x) => ({ ...x })));
+  getDashboardLayout.mockResolvedValue(stored(WEB_DEFAULT_DASHBOARD.map((x) => ({ ...x }))));
   saveDashboardLayout.mockImplementation((list: readonly DashWidget[]) =>
     Promise.resolve(list.map((x) => ({ ...x }))),
   );
@@ -88,7 +107,7 @@ describe('Home board order', () => {
   it('renders the widgets in the MODEL order, not in source order', async () => {
     // The proof that the board is model-driven: this order exists nowhere in
     // Home.tsx's markup, and no arrangement of that markup could produce it.
-    getDashboardLayout.mockResolvedValue([w('supplies'), w('careFlags'), w('safebox')]);
+    getDashboardLayout.mockResolvedValue(stored([w('supplies'), w('careFlags'), w('safebox')]));
     render(<Home />);
 
     await waitFor(() => expect(boardOrder()).toEqual(['supplies', 'careFlags', 'safebox']));
@@ -96,7 +115,7 @@ describe('Home board order', () => {
   });
 
   it('gives a wide widget the full-width cell and a compact one a single track', async () => {
-    getDashboardLayout.mockResolvedValue([w('supplies', 'wide'), w('careFlags')]);
+    getDashboardLayout.mockResolvedValue(stored([w('supplies', 'wide'), w('careFlags')]));
     render(<Home />);
 
     await waitFor(() => expect(boardOrder()).toEqual(['supplies', 'careFlags']));
@@ -109,7 +128,7 @@ describe('Home board order', () => {
   it('keeps a card this surface has not ported, as a named placeholder', async () => {
     // Dropping it would delete the operator's phone board on their first web
     // reorder, because both surfaces write ONE list.
-    getDashboardLayout.mockResolvedValue([w('cashFlow'), w('supplies')]);
+    getDashboardLayout.mockResolvedValue(stored([w('cashFlow'), w('supplies')]));
     render(<Home />);
 
     await waitFor(() => expect(boardOrder()).toEqual(['cashFlow', 'supplies']));
@@ -118,16 +137,57 @@ describe('Home board order', () => {
   });
 
   it('falls back to the seven cards this admin already had, only when nothing is stored', async () => {
-    // getDashboardLayout resolves the SHIPPED default when the field is empty,
-    // and that default names three cards the React admin has not built, so
-    // honouring it literally would give a new operator an empty Home. Mocked
-    // with the shipped default itself, because that is what the API returns for
-    // an empty field, and it is the substitution that is under test.
+    // `getDashboardLayout` resolves { widgets: shipped default, isStored: false }
+    // when the field is empty, and that default names three cards the React
+    // admin has not built, so honouring it literally would give a new operator
+    // an empty Home. `isStored: false` is what marks this "nothing is stored";
+    // it is the substitution under test, not the widget values (see the next
+    // test, where those same values ARE stored and must NOT substitute).
     const { DEFAULT_DASHBOARD } = await import('../lib/dashboardLayout');
-    getDashboardLayout.mockResolvedValue(DEFAULT_DASHBOARD.map((x) => ({ ...x })));
+    getDashboardLayout.mockResolvedValue(notStored(DEFAULT_DASHBOARD.map((x) => ({ ...x }))));
     render(<Home />);
     await waitFor(() =>
       expect(boardOrder()).toEqual(WEB_DEFAULT_DASHBOARD.map((x) => x.key)),
+    );
+  });
+
+  it('C2: honours a REAL stored layout even when it matches the shipped default token for token, and never saves the web substitute over it', async () => {
+    // The clobber bug. An operator can genuinely save exactly stats +
+    // Today's Pack + KinTales, in that order (that is android's whole board
+    // before any customization, so it is a completely ordinary thing to have
+    // saved). Before the fix, the web screen could not tell that apart from
+    // "nothing is stored" because it compared VALUES against
+    // `DEFAULT_DASHBOARD` instead of trusting `isStored`, so it painted its
+    // own seven-card substitute here, and the first edit on this screen saved
+    // seven widgets over the three the operator actually chose — quite
+    // possibly on the phone, since this exact layout is what an
+    // un-customized phone shows too.
+    const { DEFAULT_DASHBOARD } = await import('../lib/dashboardLayout');
+    getDashboardLayout.mockResolvedValue(stored(DEFAULT_DASHBOARD.map((x) => ({ ...x }))));
+    render(<Home />);
+
+    // The board shown is the three REAL widgets, not the seven-card web
+    // substitute.
+    await waitFor(() =>
+      expect(boardOrder()).toEqual(DEFAULT_DASHBOARD.map((x) => x.key)),
+    );
+    expect(screen.queryByText('safebox body')).toBeNull();
+
+    // Merely loading and sitting on the screen never calls the save path,
+    // stored or not.
+    expect(saveDashboardLayout).not.toHaveBeenCalled();
+
+    // A deliberate edit against this REAL board persists a transform of
+    // THOSE three widgets, never the seven-card substitute.
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove KinTales from Home' }));
+
+    expect(boardOrder()).toEqual(['stats', 'todaysPack']);
+    await waitFor(() =>
+      expect(saveDashboardLayout).toHaveBeenCalledWith([
+        { key: 'stats', size: 'wide' },
+        { key: 'todaysPack', size: 'compact' },
+      ]),
     );
   });
 });
@@ -139,9 +199,9 @@ describe('Home first paint', () => {
     // names cards this surface cannot draw watched seven working widgets
     // render and then get replaced by "built in the phone app". A first frame
     // that guesses is a first frame that has to be taken back.
-    let land: (list: DashWidget[]) => void = () => undefined;
+    let land: (result: { widgets: DashWidget[]; isStored: boolean }) => void = () => undefined;
     getDashboardLayout.mockReturnValue(
-      new Promise<DashWidget[]>((resolve) => {
+      new Promise<{ widgets: DashWidget[]; isStored: boolean }>((resolve) => {
         land = resolve;
       }),
     );
@@ -153,7 +213,7 @@ describe('Home first paint', () => {
     expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
 
     await act(async () => {
-      land([w('cashFlow'), w('safebox')]);
+      land(stored([w('cashFlow'), w('safebox')]));
       await Promise.resolve();
     });
 
@@ -169,7 +229,7 @@ describe('Home first paint', () => {
     // so a key this admin can draw draws from both. This is the whole key-set
     // diff in one assertion: seven real bodies, twelve honest placeholders.
     const { DASH_KEYS } = await import('../lib/dashboardLayout');
-    getDashboardLayout.mockResolvedValue(DASH_KEYS.map((k) => w(k)));
+    getDashboardLayout.mockResolvedValue(stored(DASH_KEYS.map((k) => w(k))));
     render(<Home />);
     await waitFor(() => expect(boardOrder()).toEqual([...DASH_KEYS]));
 
@@ -193,7 +253,7 @@ describe('Home first paint', () => {
     // substituted for the web board, so it never reaches this state; anything
     // the operator actually arranged does.
     const board = [w('stats', 'wide'), w('todaysPack'), w('kintales'), w('gatekeeper')];
-    getDashboardLayout.mockResolvedValue(board);
+    getDashboardLayout.mockResolvedValue(stored(board));
     render(<Home />);
     await waitFor(() => expect(boardOrder()).toEqual(board.map((x) => x.key)));
 
@@ -201,7 +261,7 @@ describe('Home first paint', () => {
   });
 
   it('stays quiet when every card on the board is one this admin draws', async () => {
-    getDashboardLayout.mockResolvedValue([w('safebox'), w('supplies')]);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox'), w('supplies')]));
     render(<Home />);
     await waitFor(() => expect(boardOrder()).toEqual(['safebox', 'supplies']));
 
@@ -211,7 +271,7 @@ describe('Home first paint', () => {
 
 describe('Home customize mode', () => {
   it('toggles Customize and Done, showing the edit bar per widget', async () => {
-    getDashboardLayout.mockResolvedValue([w('safebox'), w('supplies')]);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox'), w('supplies')]));
     render(<Home />);
     await screen.findByRole('button', { name: 'Customize' });
 
@@ -229,7 +289,7 @@ describe('Home customize mode', () => {
   });
 
   it('bounds the move controls at the ends of the board', async () => {
-    getDashboardLayout.mockResolvedValue([w('safebox'), w('supplies')]);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox'), w('supplies')]));
     render(<Home />);
     fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
 
@@ -238,7 +298,7 @@ describe('Home customize mode', () => {
   });
 
   it('moves a widget, persists the new order and announces the move', async () => {
-    getDashboardLayout.mockResolvedValue([w('safebox'), w('supplies'), w('careFlags')]);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox'), w('supplies'), w('careFlags')]));
     render(<Home />);
     fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
 
@@ -258,7 +318,7 @@ describe('Home customize mode', () => {
   });
 
   it('resizes a widget and says which way', async () => {
-    getDashboardLayout.mockResolvedValue([w('supplies'), w('careFlags')]);
+    getDashboardLayout.mockResolvedValue(stored([w('supplies'), w('careFlags')]));
     render(<Home />);
     fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
 
@@ -272,7 +332,7 @@ describe('Home customize mode', () => {
   });
 
   it('removes a widget and offers it back from the hidden strip', async () => {
-    getDashboardLayout.mockResolvedValue([w('safebox'), w('supplies')]);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox'), w('supplies')]));
     render(<Home />);
     fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
 
@@ -289,7 +349,7 @@ describe('Home customize mode', () => {
   });
 
   it('marks the hidden cards this surface cannot draw yet', async () => {
-    getDashboardLayout.mockResolvedValue([w('safebox')]);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox')]));
     render(<Home />);
     fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
 
@@ -302,7 +362,7 @@ describe('Home customize mode', () => {
 
   it('hides the strip when every known card is on the board', async () => {
     const { DASH_KEYS } = await import('../lib/dashboardLayout');
-    getDashboardLayout.mockResolvedValue(DASH_KEYS.map((k) => w(k)));
+    getDashboardLayout.mockResolvedValue(stored(DASH_KEYS.map((k) => w(k))));
     render(<Home />);
     fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
 
@@ -315,7 +375,7 @@ describe('Home keyboard reorder', () => {
     // A reorder that dumps focus back at the top of the document is unusable
     // with a keyboard: you cannot move a card two places without hunting for
     // the button again. Keying the cell by widget makes React MOVE the node.
-    getDashboardLayout.mockResolvedValue([w('safebox'), w('supplies'), w('careFlags')]);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox'), w('supplies'), w('careFlags')]));
     render(<Home />);
     fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
 
@@ -330,7 +390,7 @@ describe('Home keyboard reorder', () => {
   });
 
   it('announces every kind of change through one polite region', async () => {
-    getDashboardLayout.mockResolvedValue([w('safebox'), w('supplies')]);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox'), w('supplies')]));
     render(<Home />);
     // Present from the first render: a live region created at the same moment
     // as its text is not announced.
@@ -346,7 +406,7 @@ describe('Home keyboard reorder', () => {
 
 describe('Home layout persistence failures', () => {
   it('fails loud AND puts the board back when a save is rejected', async () => {
-    getDashboardLayout.mockResolvedValue([w('safebox'), w('supplies'), w('careFlags')]);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox'), w('supplies'), w('careFlags')]));
     saveDashboardLayout.mockRejectedValue(new Error('permission-denied'));
     render(<Home />);
     fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
@@ -362,7 +422,7 @@ describe('Home layout persistence failures', () => {
   });
 
   it('abandons the rest of a queued run once one save has failed', async () => {
-    getDashboardLayout.mockResolvedValue([w('safebox'), w('supplies'), w('careFlags')]);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox'), w('supplies'), w('careFlags')]));
     const rejecters: Array<(e: Error) => void> = [];
     saveDashboardLayout.mockImplementation(
       () =>
@@ -393,7 +453,7 @@ describe('Home layout persistence failures', () => {
   });
 
   it('serializes saves so a fast run of moves cannot land out of order', async () => {
-    getDashboardLayout.mockResolvedValue([w('safebox'), w('supplies'), w('careFlags')]);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox'), w('supplies'), w('careFlags')]));
     const sent: DashWidget[][] = [];
     const release: Array<() => void> = [];
     saveDashboardLayout.mockImplementation(
@@ -426,7 +486,7 @@ describe('Home layout persistence failures', () => {
   });
 
   it('never reads the profile before writing, so it cannot clobber a field saved elsewhere', async () => {
-    getDashboardLayout.mockResolvedValue([w('safebox'), w('supplies')]);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox'), w('supplies')]));
     render(<Home />);
     fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
     getDashboardLayout.mockClear();
@@ -454,7 +514,7 @@ describe('Home layout persistence failures', () => {
 
   it('retries the load from the banner', async () => {
     getDashboardLayout.mockRejectedValueOnce(new Error('offline'));
-    getDashboardLayout.mockResolvedValue([w('supplies')]);
+    getDashboardLayout.mockResolvedValue(stored([w('supplies')]));
     render(<Home />);
     await screen.findByRole('alert');
 
@@ -468,7 +528,7 @@ describe('Home layout persistence failures', () => {
 
 describe('Home wiring that predates edit mode', () => {
   it('still opens the Inbox from the unread-messages widget', async () => {
-    getDashboardLayout.mockResolvedValue([w('unreadMessages')]);
+    getDashboardLayout.mockResolvedValue(stored([w('unreadMessages')]));
     render(<Home />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'open inbox' }));
