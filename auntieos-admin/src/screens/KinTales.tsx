@@ -24,6 +24,7 @@ import {
 } from '../components/ListToolbar';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
+import { NeedsTriageSection } from '../components/NeedsTriageSection';
 import './KinTales.css';
 
 function PlusGlyph() {
@@ -120,10 +121,17 @@ interface KinTalesProps {
  * scope is now visible instead of implied by an invisible cap.
  *
  * List/feed only: composing or editing a KinTale (KinTaleComposeScreen), the
- * per-report detail/comment-thread/share-link view (KinTaleReportScreen), the
- * orphan-migration triage actions (assign/mark-duplicate/archive) and template
- * editing are separate surfaces. `onSelect` is this screen's only hook into
- * that later work.
+ * per-report detail/comment-thread/share-link view (KinTaleReportScreen), and
+ * template editing are separate surfaces. `onSelect` is this screen's only
+ * hook into that later work.
+ *
+ * B2: the orphan-migration triage actions (assign/mark-duplicate/archive) DO
+ * live here now, above the toolbar (`NeedsTriageSection`). They read and
+ * write through their own one-shot callable client (`api/kinTaleTriage.ts`),
+ * not this screen's windowed `usePagedCollection` stream: the orphans this
+ * section surfaces are old migration rows, not recent ones, so the main
+ * list's date-windowed, 25-per-page query is the wrong source for them (see
+ * `NeedsTriageSection.tsx`'s own header for why).
  */
 export function KinTales({ onSelect, onNew }: KinTalesProps) {
   const [filter, setFilter] = useState<FilterKey>('all');
@@ -196,6 +204,10 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
           trailing={
             <PrimaryButton label="New KinTale" {...(onNew ? { onClick: () => onNew() } : {})} leading={<PlusGlyph />} />
           }
+        />
+        <NeedsTriageSection
+          kinfolk={households}
+          candidateReports={rows.status === 'ready' ? rows.data : []}
         />
       </div>
 
