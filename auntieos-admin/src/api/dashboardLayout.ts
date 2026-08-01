@@ -1,7 +1,12 @@
 import { doc, getDoc } from 'firebase/firestore';
 import { call } from '../lib/fns';
 import { db } from '../lib/firebase';
-import { parseDashboard, resolvedDashboard, toTokens, type DashWidget } from '../lib/dashboardLayout';
+import {
+  DEFAULT_DASHBOARD,
+  parseDashboard,
+  toTokens,
+  type DashWidget,
+} from '../lib/dashboardLayout';
 
 /**
  * 17.3 Dashboard customization: persistence for the operator's Home widget
@@ -50,18 +55,44 @@ function readTokens(raw: unknown): string[] {
 }
 
 /**
+ * `getDashboardLayout`'s result. `widgets` is what to render; `isStored` is
+ * the fact `widgets` alone cannot carry: whether those widgets came off the
+ * document, or are the shipped default substituted because nothing readable
+ * was there.
+ *
+ * That bit has to survive the trip out of this file. A caller that only sees
+ * `widgets` cannot tell "this operator has no layout" from "this operator's
+ * layout happens to equal the shipped default" (three widgets, that exact
+ * order, un-customized-looking on its face but genuinely chosen, e.g. arranged
+ * that way on android). Collapsing the two looks harmless until the caller
+ * substitutes ITS OWN richer default for display and later saves that
+ * richer substitute back, at which point a real stored layout that merely
+ * looked like the shipped default is gone, overwritten by a display fallback
+ * nobody asked for. See `screens/Home.tsx`'s `webResolved`, the caller this
+ * exists for.
+ */
+export interface DashboardLayoutResult {
+  widgets: DashWidget[];
+  isStored: boolean;
+}
+
+/**
  * The operator's saved layout, or the shipped default when nothing readable is
  * stored (a new operator, or a document written before this feature existed).
  * A genuine read rejection propagates.
  */
-export async function getDashboardLayout(uid: string): Promise<DashWidget[]> {
+export async function getDashboardLayout(uid: string): Promise<DashboardLayoutResult> {
   const id = uid.trim();
   if (id === '') throw new Error('getDashboardLayout requires a uid');
 
   const snap = await getDoc(doc(db, 'users', id));
-  if (!snap.exists()) return resolvedDashboard([]);
-  const raw = (snap.data() as Record<string, unknown> | undefined)?.['dashboardWidgets'];
-  return resolvedDashboard(readTokens(raw));
+  const raw = snap.exists()
+    ? (snap.data() as Record<string, unknown> | undefined)?.['dashboardWidgets']
+    : undefined;
+  const parsed = parseDashboard(readTokens(raw));
+  return parsed.length > 0
+    ? { widgets: parsed, isStored: true }
+    : { widgets: DEFAULT_DASHBOARD.map((x) => ({ ...x })), isStored: false };
 }
 
 /**
