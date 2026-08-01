@@ -30,7 +30,8 @@
  *   - Deletes happen ONLY after a successful copy and ONLY with --allow-prod.
  */
 
-import * as admin from 'firebase-admin';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 type Mode = 'dry-run' | 'apply';
 
@@ -147,7 +148,7 @@ function initAdmin(projectId: string): void {
       'backfillNestedInvoices: missing credentials. Set GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON path, or run against the Firestore emulator.',
     );
   }
-  if (!admin.apps.length) admin.initializeApp({ projectId });
+  if (!getApps().length) initializeApp({ projectId });
 }
 
 interface RunResult {
@@ -162,7 +163,7 @@ function bumpSkip(r: RunResult, reason: string): void {
 }
 
 async function run(mode: Mode): Promise<RunResult> {
-  const db = admin.firestore();
+  const db = getFirestore();
   const result: RunResult = { scanned: 0, copied: 0, deleted: 0, skipped: {} };
 
   // collectionGroup('invoices') matches BOTH flat `invoices/*` and nested
@@ -239,7 +240,7 @@ async function main(): Promise<void> {
   summarise(result);
 
   if (args.mode === 'apply') {
-    const db = admin.firestore();
+    const db = getFirestore();
     await db.collection('activity_log').add({
       timestamp: new Date().toISOString(),
       actionType: 'BACKFILL_NESTED_INVOICES',
@@ -251,7 +252,7 @@ async function main(): Promise<void> {
       severity: 'info',
       actorRole: 'SYSTEM',
       payload: { result },
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
     console.log('\nWrote activity_log entry (UNCHAINED — runs outside writeAuditEntry).');
   } else {

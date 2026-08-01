@@ -38,7 +38,8 @@
  *     auditable + non-repudiable.
  */
 
-import * as admin from 'firebase-admin';
+import { getApps, initializeApp, applicationDefault } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 type Mode = 'dry-run' | 'apply';
 
@@ -65,7 +66,7 @@ function initAdmin(): void {
       'GOOGLE_APPLICATION_CREDENTIALS not set. Export the service-account key path before running.',
     );
   }
-  if (!admin.apps.length) admin.initializeApp({ credential: admin.credential.applicationDefault() });
+  if (!getApps().length) initializeApp({ credential: applicationDefault() });
 }
 
 /** Returns the kinfolk display name from a doc, computing it if denormalized field absent. */
@@ -94,7 +95,7 @@ function bumpSkip(r: PassResult, reason: string): void {
 }
 
 async function pass1ReportNames(mode: Mode): Promise<PassResult> {
-  const db = admin.firestore();
+  const db = getFirestore();
   const result = emptyResult();
 
   // Preload kinfolk map: { kinfolkId → displayName }. Single read avoids N+1.
@@ -132,7 +133,7 @@ async function pass1ReportNames(mode: Mode): Promise<PassResult> {
 }
 
 async function pass2SessionLinks(mode: Mode): Promise<PassResult> {
-  const db = admin.firestore();
+  const db = getFirestore();
   const result = emptyResult();
   const kinfolkSnap = await db.collection('kinfolk').get();
   const kinfolkNames = new Map<string, string>();
@@ -222,7 +223,7 @@ async function main(): Promise<void> {
   if (p2) summarise('Pass 2 — kin_care_sessions kinfolkId+kinfolkName backfill', p2);
 
   if (args.mode === 'apply') {
-    const db = admin.firestore();
+    const db = getFirestore();
     await db.collection('activity_log').add({
       timestamp: new Date().toISOString(),
       actionType: 'BACKFILL_KINFOLK_NAME_DENORMALIZATION',
@@ -234,7 +235,7 @@ async function main(): Promise<void> {
       severity: 'info',
       actorRole: 'SYSTEM',
       payload: { pass1: p1, pass2: p2 },
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
     console.log('\nWrote activity_log entry (note: this entry is UNCHAINED — runs outside writeAuditEntry server callable).');
   } else {

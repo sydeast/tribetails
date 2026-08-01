@@ -74,8 +74,9 @@
  *   npx ts-node --project ../scripts/tsconfig.json ../scripts/seed_test_sandbox.ts --apply --password=<pw>
  */
 
-import * as admin from 'firebase-admin';
-import { Timestamp } from 'firebase-admin/firestore';
+import { getApps, initializeApp, applicationDefault } from 'firebase-admin/app';
+import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
 
 // ---------------------------------------------------------------------------
 // Fixed identity. Deterministic so re-runs converge and the rules match
@@ -956,7 +957,7 @@ export function assertAllScoped(writes: PlannedWrite[], uid: string = TEST_ADMIN
 // creates with the FIXED uid so clients/{uid} lines up.
 // ---------------------------------------------------------------------------
 async function ensureTestAdminUser(password: string | null): Promise<string> {
-  const auth = admin.auth();
+  const auth = getAuth();
   let uid: string;
   try {
     const existing = await auth.getUserByEmail(TEST_ADMIN_EMAIL);
@@ -1020,8 +1021,8 @@ async function main(): Promise<void> {
   }
 
   const projectId = args.projectId ?? process.env.GCLOUD_PROJECT ?? 'auntieos-ttpc';
-  if (!admin.apps.length) {
-    admin.initializeApp({ credential: admin.credential.applicationDefault(), projectId });
+  if (!getApps().length) {
+    initializeApp({ credential: applicationDefault(), projectId });
   }
   console.log(`\n[init] projectId=${projectId}`);
 
@@ -1032,7 +1033,7 @@ async function main(): Promise<void> {
   const writes = uid === TEST_ADMIN_UID ? planPreview : planAllWrites(now, uid);
   assertAllScoped(writes, uid);
 
-  const db = admin.firestore();
+  const db = getFirestore();
   let written = 0;
   for (const w of writes) {
     // merge:false + fixed doc ids -> re-runs RESET the sandbox to this exact

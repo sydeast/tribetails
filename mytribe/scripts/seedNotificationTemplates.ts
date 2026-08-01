@@ -1,4 +1,5 @@
-import * as admin from 'firebase-admin';
+import { initializeApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import {
@@ -128,9 +129,9 @@ async function main(): Promise<void> {
   }
   console.log(`[init] projectId=${projectId} emulator=${usingEmulator} allowProd=${args.allowProd}`);
 
-  admin.initializeApp({ projectId });
-  const db = admin.firestore();
-  const stamp = (): admin.firestore.FieldValue => admin.firestore.FieldValue.serverTimestamp();
+  initializeApp({ projectId });
+  const db = getFirestore();
+  const stamp = (): FieldValue => FieldValue.serverTimestamp();
 
   let seeded = 0;
   let errors = 0;
