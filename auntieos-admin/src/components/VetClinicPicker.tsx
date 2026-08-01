@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { clinicDetail, clinicName, type VetClinic } from '../api/vetClinics';
 import { vetClinicSuggestions } from '../lib/vetClinicSearch';
-import { submitVetClinic } from '../api/vetClinicsWrite';
+import { submitVetClinic, type ClinicCandidate } from '../api/vetClinicsWrite';
 import './VetClinicPicker.css';
 
 /**
@@ -249,7 +249,6 @@ export function VetClinicPicker({
           fieldName={name}
           initialName={query.trim()}
           initialEmergency={createAsEmergency}
-          knownClinics={clinics}
           onCancel={() => {
             setCreating(false);
             setOpen(false);
@@ -281,7 +280,6 @@ interface CreateClinicFormProps {
   fieldName: string;
   initialName: string;
   initialEmergency: boolean;
-  knownClinics: readonly VetClinic[];
   onCancel: () => void;
   onCreated: (selection: VetClinicSelection, deduped: boolean) => void;
 }
@@ -295,7 +293,6 @@ function CreateClinicForm({
   fieldName,
   initialName,
   initialEmergency,
-  knownClinics,
   onCancel,
   onCreated,
 }: CreateClinicFormProps) {
@@ -307,10 +304,17 @@ function CreateClinicForm({
   const [nameError, setNameError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Near-matches the server offered. While this is non-empty NOTHING has been
+   * written and the operator has a choice to make: use one of these, or say the
+   * clinic really is different (operator ruling 2026-08-01). Silently taking
+   * the first match is exactly what this replaces.
+   */
+  const [candidates, setCandidates] = useState<ClinicCandidate[]>([]);
 
   const idFor = (part: string) => `vetpick-${fieldName}-new-${part}`;
 
-  async function save() {
+  async function save(acknowledged: readonly string[] = []) {
     if (saving) return;
     if (name.trim() === '') {
       setNameError("Clinic name can't be blank.");
@@ -320,27 +324,32 @@ function CreateClinicForm({
     setSaving(true);
     setError(null);
     try {
-      const res = await submitVetClinic({ name, phone, address, website, isEmergency });
-      // On a dedupe hit the backend returns the EXISTING id. Prefer that
-      // clinic's stored details over what was just typed: the bank's copy is
-      // the curated one, and overwriting it from a hurried retype is how a good
-      // phone number gets replaced with a blank.
-      const existing = knownClinics.find((c) => c._id === res.clinicId);
-      const selection: VetClinicSelection =
-        res.created || existing === undefined
-          ? { clinicId: res.clinicId, name: name.trim(), phone: phone.trim(), address: address.trim() }
-          : {
-              clinicId: existing._id,
-              name: clinicName(existing),
-              phone: (existing.phone ?? '').trim(),
-              address: (existing.address ?? '').trim(),
-            };
+      const res = await submitVetClinic(
+        { name, phone, address, website, isEmergency },
+        acknowledged,
+      );
       setSaving(false);
-      onCreated(selection, !res.created);
+      if (res.status === 'needs_choice') {
+        // NOT an error, and NOT a silent selection. The bank already holds
+        // something that looks like this practice, and which one this household
+        // should point at is the operator's call, not the server's.
+        setCandidates(res.candidates);
+        return;
+      }
+      setCandidates([]);
+      onCreated(
+        { clinicId: res.clinicId, name: name.trim(), phone: phone.trim(), address: address.trim() },
+        false,
+      );
     } catch (err) {
       setSaving(false);
       setError(`submitVetClinic failed: ${err instanceof Error ? err.message : 'Save failed'}`);
     }
+  }
+  /** Use an offered clinic. Pure client-side: it already has the id. */
+  function useCandidate(c: ClinicCandidate) {
+    setCandidates([]);
+    onCreated({ clinicId: c.id, name: c.name, phone: c.phone, address: c.address }, true);
   }
 
   return (
@@ -424,6 +433,38 @@ function CreateClinicForm({
         </p>
       )}
 
+      {/* THE CHOICE. The bank already holds something that looks like this
+          practice, and nothing has been written. Using an existing clinic is
+          listed first; creating a second record is the deliberate fallback. */}
+      {candidates.length > 0 && (
+        <div className="vetpick__candidates" role="group" aria-label="Possible matches">
+          <p className="vetpick__createTitle">
+            A clinic like this is already in the bank. Use it, or add yours separately.
+          </p>
+          {candidates.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className="vetpick__candidate"
+              onClick={() => useCandidate(c)}
+            >
+              <b>{c.isEmergency ? `${c.name} · 24hr` : c.name}</b>
+              <small>
+                {[c.address, c.phone].filter((v) => v !== '').join(' · ')}
+                {!c.verified && ' · waiting for approval'}
+              </small>
+            </button>
+          ))}
+          <button
+            type="button"
+            className="vetpick__ghost"
+            disabled={saving}
+            onClick={() => void save(candidates.map((c) => c.id))}
+          >
+            {saving ? 'Saving…' : `No, add "${name.trim()}" as a different clinic`}
+          </button>
+        </div>
+      )}
       <div className="vetpick__createActions">
         <button type="button" className="vetpick__ghost" disabled={saving} onClick={onCancel}>
           Cancel

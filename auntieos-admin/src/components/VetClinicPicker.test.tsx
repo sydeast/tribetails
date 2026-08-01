@@ -226,7 +226,7 @@ describe('VetClinicPicker: the inline create form', () => {
   });
 
   it('saves through submitVetClinic and SELECTS the new clinic', async () => {
-    submitVetClinic.mockResolvedValue({ clinicId: 'new-1', created: true, pending: false });
+    submitVetClinic.mockResolvedValue({ status: 'created', clinicId: 'new-1', created: true, pending: false, candidates: [] });
     const { onChange } = await openCreateForm();
 
     await userEvent.type(screen.getByLabelText('Clinic phone'), '(512) 555-0400');
@@ -234,13 +234,17 @@ describe('VetClinicPicker: the inline create form', () => {
     await userEvent.click(screen.getByRole('button', { name: /^save clinic$/i }));
 
     await waitFor(() =>
-      expect(submitVetClinic).toHaveBeenCalledWith({
-        name: 'Barton Springs Animal Clinic',
-        phone: '(512) 555-0400',
-        address: '2 Barton Rd',
-        website: '',
-        isEmergency: false,
-      }),
+      expect(submitVetClinic).toHaveBeenCalledWith(
+        {
+          name: 'Barton Springs Animal Clinic',
+          phone: '(512) 555-0400',
+          address: '2 Barton Rd',
+          website: '',
+          isEmergency: false,
+        },
+        // Empty on a first attempt: the safe path is the default.
+        [],
+      ),
     );
     await waitFor(() =>
       expect(onChange).toHaveBeenCalledWith({
@@ -253,31 +257,83 @@ describe('VetClinicPicker: the inline create form', () => {
   });
 
   it('sends isEmergency when the toggle is on', async () => {
-    submitVetClinic.mockResolvedValue({ clinicId: 'new-2', created: true, pending: false });
+    submitVetClinic.mockResolvedValue({ status: 'created', clinicId: 'new-2', created: true, pending: false, candidates: [] });
     await openCreateForm('Night Owl Pet ER');
     await userEvent.click(screen.getByLabelText(/24 hour \/ emergency clinic/i));
     await userEvent.click(screen.getByRole('button', { name: /^save clinic$/i }));
     await waitFor(() =>
-      expect(submitVetClinic).toHaveBeenCalledWith(expect.objectContaining({ isEmergency: true })),
+      expect(submitVetClinic).toHaveBeenCalledWith(
+        expect.objectContaining({ isEmergency: true }),
+        // Empty on a first attempt: the safe path is the default.
+        [],
+      ),
     );
   });
 
   /**
-   * The dedupe path. The backend hands back the id of the clinic already in the
-   * bank; the picker must SELECT that one rather than reporting a create that
-   * did not happen.
+   * Operator ruling 2026-08-01: a near match must OFFER a choice, never take
+   * one. This block previously asserted the opposite, that the picker silently
+   * accepted whichever clinic the backend substituted. Two practices genuinely
+   * can share a name in different cities, so that could point a household at a
+   * different phone number on the record read in an emergency.
    */
-  it('selects the EXISTING clinic when the backend deduped', async () => {
-    submitVetClinic.mockResolvedValue({ clinicId: 'riverside', created: false, pending: false });
+  const RIVERSIDE_MATCH = {
+    id: 'riverside',
+    name: 'Riverside Animal Hospital',
+    address: '418 Mill St',
+    phone: '(512) 555-0100',
+    isEmergency: false,
+    verified: true,
+    reason: 'name' as const,
+  };
+  const NEEDS_CHOICE = {
+    status: 'needs_choice' as const,
+    clinicId: '',
+    created: false,
+    pending: false,
+    candidates: [RIVERSIDE_MATCH],
+  };
+
+  it('OFFERS the match instead of selecting it, and selects nothing yet', async () => {
+    submitVetClinic.mockResolvedValue(NEEDS_CHOICE);
     const { onChange } = await openCreateForm('riverside animal hospital');
     await userEvent.click(screen.getByRole('button', { name: /^save clinic$/i }));
+
+    expect(await screen.findByText(/already in the bank/i)).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('selects the offered clinic when the operator picks it, with no second call', async () => {
+    submitVetClinic.mockResolvedValue(NEEDS_CHOICE);
+    const { onChange } = await openCreateForm('riverside animal hospital');
+    await userEvent.click(screen.getByRole('button', { name: /^save clinic$/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /Riverside Animal Hospital/ }));
 
     await waitFor(() =>
       expect(onChange).toHaveBeenCalledWith(
         expect.objectContaining({ clinicId: 'riverside', name: 'Riverside Animal Hospital' }),
       ),
     );
-    expect(screen.getByText(/already in the catalog/i)).toBeInTheDocument();
+    // Choosing an existing clinic is pure client-side: it already has the id.
+    expect(submitVetClinic).toHaveBeenCalledTimes(1);
+  });
+
+  it('echoes the offered ids when the operator says it really is different', async () => {
+    submitVetClinic.mockResolvedValueOnce(NEEDS_CHOICE).mockResolvedValueOnce({
+      status: 'created',
+      clinicId: 'new-3',
+      created: true,
+      pending: false,
+      candidates: [],
+    });
+
+    await openCreateForm('riverside animal hospital');
+    await userEvent.click(screen.getByRole('button', { name: /^save clinic$/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /as a different clinic/i }));
+
+    await waitFor(() => expect(submitVetClinic).toHaveBeenCalledTimes(2));
+    // The echo is the evidence the operator saw the match; a boolean would not be.
+    expect(submitVetClinic.mock.calls[1]?.[1]).toEqual(['riverside']);
   });
 
   it('fails loud when the create is rejected, and keeps the form filled in', async () => {

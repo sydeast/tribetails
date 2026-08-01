@@ -1074,10 +1074,26 @@ data class VetClinicsSnapshot(
  * record. [pending] is true only for a kinfolk-submitted clinic awaiting
  * approval; a staff/operator submission is never pending.
  */
+/** One clinic offered as a possible match, for the operator to choose between. */
+data class VetClinicCandidate(
+    val id: String = "",
+    val name: String = "",
+    val address: String = "",
+    val phone: String = "",
+    val isEmergency: Boolean = false,
+    /** False for a submission still awaiting operator approval. */
+    val verified: Boolean = true,
+)
 data class SubmitVetClinicResult(
     val clinicId: String,
     val created: Boolean,
     val pending: Boolean,
+    /**
+     * True when the callable found near-matches and wrote NOTHING. [candidates]
+     * must be shown and the operator must choose (operator ruling 2026-08-01).
+     */
+    val needsChoice: Boolean = false,
+    val candidates: List<VetClinicCandidate> = emptyList(),
 )
 
 /**

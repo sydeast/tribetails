@@ -2786,6 +2786,33 @@ private fun VetClinicsPanel(
                 )
             }
             AddVetClinicForm(onCreate = { draft -> vm.add(draft) })
+            // THE CHOICE. The bank already holds something that looks like the
+            // clinic just typed, and nothing was written. Using an existing
+            // record is listed first; creating a second one is the deliberate
+            // fallback (operator ruling 2026-08-01).
+            val choice by vm.pendingChoice.collectAsState()
+            if (choice.isNotEmpty()) {
+                AuntieBanner(tone = AuntieBannerTone.Warning, title = "A clinic like that is already in the bank") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Nothing was added. Use one of these, or say yours is a separate practice.",
+                            style = AuntieTheme.typography.bodySmall, color = c.textDim,
+                        )
+                        choice.forEach { cand ->
+                            Text(
+                                listOf(cand.name, cand.address, cand.phone)
+                                    .filter { it.isNotBlank() }.joinToString(" · ") +
+                                    if (!cand.verified) " · waiting for approval" else "",
+                                style = AuntieTheme.typography.bodySmall, color = c.textPrimary,
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            GhostButton(label = "Add mine as a different clinic", onClick = { vm.addAnyway() })
+                            GhostButton(label = "Cancel", onClick = { vm.clearPendingChoice() })
+                        }
+                    }
+                }
+            }
             if (retired.isNotEmpty()) {
                 Text("Retired (${retired.size})", style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
                 Text(

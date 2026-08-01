@@ -31,12 +31,27 @@ export interface NewVetClinic {
   isEmergency?: boolean;
 }
 
+/** A possible match the user must choose between. */
+export interface ClinicCandidate {
+  id: string;
+  name: string;
+  address: string;
+  phone: string;
+  isEmergency: boolean;
+  /** False for a submission still awaiting operator approval. */
+  verified: boolean;
+  reason: 'name' | 'phone' | 'similar';
+}
 export interface SubmitVetClinicResult {
+  /** `needs_choice` means NOTHING was written and `candidates` must be shown. */
+  status: 'created' | 'needs_choice';
+  /** '' when the caller still has a choice to make. */
   clinicId: string;
-  /** False when the backend matched an existing clinic and returned its id. */
+  /** True only on `status: 'created'`. */
   created: boolean;
   /** True only for a submission still awaiting approval; false for staff writes. */
   pending: boolean;
+  candidates: ClinicCandidate[];
 }
 
 /**
@@ -46,12 +61,31 @@ export interface SubmitVetClinicResult {
  * round trip to be told the field the operator can see is empty is a round trip
  * spent to say nothing new.
  */
-export async function submitVetClinic(clinic: NewVetClinic): Promise<SubmitVetClinicResult> {
+export async function submitVetClinic(
+  clinic: NewVetClinic,
+  /**
+   * The ids of near-matches the operator was SHOWN and chose not to use.
+   * Sending them is what authorizes a create over the top of a match.
+   *
+   * Deliberately NOT a `confirmCreate` boolean: a boolean could be set by a
+   * client that rendered nothing, whereas these ids can only have come from the
+   * previous response, so echoing them back is evidence the choice was
+   * presented. See `functions/src/lib/vetClinicMatch.ts#acknowledgesAll`.
+   */
+  acknowledgedMatchIds: readonly string[] = [],
+): Promise<SubmitVetClinicResult> {
   const name = clinic.name.trim();
   if (name === '') throw new Error('A clinic name is required.');
 
   return call<
-    { name: string; phone: string; address: string; website: string; isEmergency: boolean },
+    {
+      name: string;
+      phone: string;
+      address: string;
+      website: string;
+      isEmergency: boolean;
+      acknowledgedMatchIds: string[];
+    },
     SubmitVetClinicResult
   >('submitVetClinic', {
     name,
@@ -59,6 +93,7 @@ export async function submitVetClinic(clinic: NewVetClinic): Promise<SubmitVetCl
     address: (clinic.address ?? '').trim(),
     website: (clinic.website ?? '').trim(),
     isEmergency: clinic.isEmergency ?? false,
+    acknowledgedMatchIds: [...acknowledgedMatchIds],
   });
 }
 

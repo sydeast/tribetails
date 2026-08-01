@@ -1,6 +1,8 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.data.model.SubmitVetClinicResult
 import com.tribetails.auntieos.data.model.VetClinic
+import com.tribetails.auntieos.data.model.VetClinicCandidate
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -132,24 +134,61 @@ class VetClinicsViewModelTest {
      */
     @Test
     fun `add and save reach the repo`() = runTest {
-        coEvery { repo.submitVetClinic(any()) } returns Result.success("new-id")
+        coEvery { repo.submitVetClinicDetailed(any(), any()) } returns
+            Result.success(SubmitVetClinicResult(clinicId = "new-id", created = true, pending = false))
         coEvery { repo.updateVetClinic(any()) } returns Result.success(0)
         val vm = VetClinicsViewModel(repo)
         vm.add(clinic).join()
         vm.save(clinic).join()
-        coVerify { repo.submitVetClinic(clinic) }
+        coVerify { repo.submitVetClinicDetailed(clinic, emptyList()) }
         coVerify { repo.updateVetClinic(clinic) }
         assertNull(vm.error.value)
     }
 
     @Test
     fun `add failure then later success clears the error`() = runTest {
-        coEvery { repo.submitVetClinic(any()) } returns Result.failure(Exception("boom"))
+        coEvery { repo.submitVetClinicDetailed(any(), any()) } returns Result.failure(Exception("boom"))
         val vm = VetClinicsViewModel(repo)
         vm.add(clinic).join()
         assertTrue(vm.error.value != null)
-        coEvery { repo.submitVetClinic(any()) } returns Result.success("ok")
+        coEvery { repo.submitVetClinicDetailed(any(), any()) } returns
+            Result.success(SubmitVetClinicResult(clinicId = "ok", created = true, pending = false))
         vm.add(clinic).join()
         assertNull(vm.error.value)
+    }
+
+    /**
+     * Operator ruling 2026-08-01: a near match OFFERS a choice. Nothing is
+     * written and nothing is selected until the operator decides.
+     */
+    @Test
+    fun `a near match surfaces the candidates instead of adding`() = runTest {
+        coEvery { repo.submitVetClinicDetailed(any(), any()) } returns Result.success(
+            SubmitVetClinicResult(
+                clinicId = "", created = false, pending = false, needsChoice = true,
+                candidates = listOf(VetClinicCandidate(id = "riverside", name = "Riverside")),
+            )
+        )
+        val vm = VetClinicsViewModel(repo)
+        vm.add(clinic).join()
+        assertEquals(listOf("riverside"), vm.pendingChoice.value.map { it.id })
+        assertNull(vm.notice.value)
+    }
+    /** Creating anyway echoes the ids the server just offered. */
+    @Test
+    fun `addAnyway echoes the acknowledged ids`() = runTest {
+        coEvery { repo.submitVetClinicDetailed(any(), emptyList()) } returns Result.success(
+            SubmitVetClinicResult(
+                clinicId = "", created = false, pending = false, needsChoice = true,
+                candidates = listOf(VetClinicCandidate(id = "riverside", name = "Riverside")),
+            )
+        )
+        coEvery { repo.submitVetClinicDetailed(any(), listOf("riverside")) } returns
+            Result.success(SubmitVetClinicResult(clinicId = "new", created = true, pending = false))
+        val vm = VetClinicsViewModel(repo)
+        vm.add(clinic).join()
+        vm.addAnyway().join()
+        coVerify { repo.submitVetClinicDetailed(clinic, listOf("riverside")) }
+        assertTrue(vm.pendingChoice.value.isEmpty())
     }
 }

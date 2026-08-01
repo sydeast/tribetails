@@ -2103,17 +2103,22 @@ class AuntieRepository(
         submitVetClinicDetailed(clinic).map { it.clinicId }
 
     /**
-     * Same call as [submitVetClinic], but keeps `created` and `pending` off the
-     * callable response instead of discarding them. `created` is what tells a
-     * DEDUPE hit (the callable matched an existing clinic by normalized name)
-     * apart from an actual new row, which is what web's picker reads
-     * (`vetClinicsWrite.ts`'s `SubmitVetClinicResult`) to disclose "already in
-     * the catalog" instead of a create silently resolving to someone else's
-     * record. [submitVetClinic] stays a plain id for
-     * [com.tribetails.auntieos.ui.admin.VetClinicsViewModel], which has no
-     * dedupe-disclosure UI to feed.
+     * Same call as [submitVetClinic], but keeps the whole callable response.
+     *
+     * A NEAR MATCH IS A CHOICE, NOT A SUBSTITUTION (operator ruling
+     * 2026-08-01). The callable used to return the id of a clinic already in
+     * the bank; it now returns `status: "needs_choice"` with `candidates` and
+     * writes NOTHING, so the caller must show them and let the user decide.
+     *
+     * [acknowledgedMatchIds] echoes back the ids the caller was just shown, and
+     * is what authorizes creating over the top of a match. It is deliberately
+     * not a boolean: a boolean could be sent by a client that rendered nothing,
+     * whereas these ids can only have come from the previous response.
      */
-    suspend fun submitVetClinicDetailed(clinic: VetClinic): Result<SubmitVetClinicResult> = runCatching {
+    suspend fun submitVetClinicDetailed(
+        clinic: VetClinic,
+        acknowledgedMatchIds: List<String> = emptyList(),
+    ): Result<SubmitVetClinicResult> = runCatching {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("submitVetClinic")
@@ -2124,15 +2129,42 @@ class AuntieRepository(
                     "address" to clinic.address.trim(),
                     "website" to clinic.website.trim(),
                     "isEmergency" to clinic.isEmergency,
+                    "acknowledgedMatchIds" to acknowledgedMatchIds,
                 )
             )
             .await().data as? Map<String, Any?>
             ?: error("submitVetClinic: non-map payload")
+        val status = (raw["status"] as? String).orEmpty()
+        @Suppress("UNCHECKED_CAST")
+        val candidates = (raw["candidates"] as? List<Map<String, Any?>>).orEmpty().map { c ->
+            VetClinicCandidate(
+                id = (c["id"] as? String).orEmpty(),
+                name = (c["name"] as? String).orEmpty(),
+                address = (c["address"] as? String).orEmpty(),
+                phone = (c["phone"] as? String).orEmpty(),
+                isEmergency = c["isEmergency"] as? Boolean ?: false,
+                verified = c["verified"] as? Boolean ?: true,
+            )
+        }
+        if (status == "needs_choice") {
+            // No id, and that is correct: nothing was written. Erroring on the
+            // blank id here (as the old parser did) would turn a question into
+            // a failure and hide the choice from the operator entirely.
+            return@runCatching SubmitVetClinicResult(
+                clinicId = "",
+                created = false,
+                pending = false,
+                needsChoice = true,
+                candidates = candidates,
+            )
+        }
         val clinicId = (raw["clinicId"] as? String).orEmpty().ifBlank { error("submitVetClinic: no clinicId") }
         SubmitVetClinicResult(
             clinicId = clinicId,
             created = raw["created"] as? Boolean ?: true,
             pending = raw["pending"] as? Boolean ?: false,
+            needsChoice = false,
+            candidates = emptyList(),
         )
     }.onFailure { AuntieLog.e("Failed to submit vet clinic", it) }
 

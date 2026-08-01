@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.admin
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tribetails.auntieos.data.model.VetClinicCandidate
 import com.tribetails.auntieos.data.model.VetClinic
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,6 +71,18 @@ class VetClinicsViewModel(
     fun clearError() { _error.value = null }
 
     fun clearNotice() { _notice.value = null }
+    /**
+     * Near-matches the server offered on the last add. While this is non-empty
+     * NOTHING was written and the operator has a choice to make (operator
+     * ruling 2026-08-01). Silently taking the first match is what this replaces.
+     */
+    private val _pendingChoice = MutableStateFlow<List<VetClinicCandidate>>(emptyList())
+    val pendingChoice: StateFlow<List<VetClinicCandidate>> = _pendingChoice.asStateFlow()
+    private var pendingDraft: VetClinic? = null
+    fun clearPendingChoice() {
+        _pendingChoice.value = emptyList()
+        pendingDraft = null
+    }
 
     /** Sets a human message on failure; clears the error on success. */
     private fun report(label: String, result: Result<*>) {
@@ -85,8 +98,30 @@ class VetClinicsViewModel(
      * an operator-added clinic is live immediately and does not queue itself for
      * the operator's own approval below.
      */
-    fun add(clinic: VetClinic) =
-        viewModelScope.launch { report("Couldn't add ${clinic.name}", repository.submitVetClinic(clinic)) }
+    fun add(clinic: VetClinic, acknowledgedMatchIds: List<String> = emptyList()) =
+        viewModelScope.launch {
+            val result = repository.submitVetClinicDetailed(clinic, acknowledgedMatchIds)
+            report("Couldn't add ${clinic.name}", result)
+            val res = result.getOrNull() ?: return@launch
+            if (res.needsChoice) {
+                // A question, not a failure: the bank holds something that looks
+                // like this practice and the operator decides which record wins.
+                pendingDraft = clinic
+                _pendingChoice.value = res.candidates
+                return@launch
+            }
+            clearPendingChoice()
+            _notice.value = if (res.pending) {
+                "${clinic.name} was sent for approval."
+            } else {
+                "${clinic.name} was added to the bank."
+            }
+        }
+    /** "No, mine really is different." Echoes the ids the server just offered. */
+    fun addAnyway() = viewModelScope.launch {
+        val draft = pendingDraft ?: return@launch
+        add(draft, _pendingChoice.value.map { it.id }).join()
+    }
 
     /**
      * Save a correction, through the `updateVetClinic` callable.

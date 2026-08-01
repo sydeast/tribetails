@@ -94,12 +94,12 @@ const PROFILE_SCHEMA: FormSchemaDto = {
   version: 1,
 };
 
-async function renderTribeProfile(opts: { profileSchema?: FormSchemaDto; homeSchema?: FormSchemaDto }) {
+async function renderTribeProfile(opts: { profileSchema?: FormSchemaDto; homeSchema?: FormSchemaDto; clinics?: Parameters<typeof vi.fn>[0] extends never ? never : any[] }) {
   const tribeApi = await import('../api/tribeApi');
   const portal = await import('../api/portal');
 
   vi.mocked(tribeApi.getMyTribeProfile).mockResolvedValue(PROFILE);
-  vi.mocked(tribeApi.getVetClinics).mockResolvedValue({ clinics: [] });
+  vi.mocked(tribeApi.getVetClinics).mockResolvedValue({ clinics: opts.clinics ?? [] });
   vi.mocked(tribeApi.listMembers).mockResolvedValue({ members: [] });
   vi.mocked(tribeApi.saveTribeProfile).mockResolvedValue({ ok: true });
   vi.mocked(tribeApi.saveHomeAccess).mockResolvedValue({ ok: true });
@@ -253,5 +253,103 @@ describe('TribeProfile schema-mode save', () => {
     await userEvent.click(await findByRole('button', { name: /Save Changes/ }));
 
     expect(await saveHomeAccessArgs()).toMatchObject({ gateCode: null, keyLocation: 'Under the blue planter' });
+  });
+});
+/**
+ * Operator ruling 2026-08-01. Two things this pins:
+ *  - the vet is a search-and-select, not a free-text box, so the portal can no
+ *    longer author a third, uncorrectable copy of a household's vet;
+ *  - a near match OFFERS a choice. A picker that silently selects the first
+ *    match defeats the whole design.
+ */
+describe('TribeProfile: the vet is chosen, never typed', () => {
+  const RIVERSIDE = {
+    id: 'c1',
+    name: 'Riverside Animal Hospital',
+    phone: '(512) 555 0100',
+    address: '418 Mill St',
+    website: '',
+    googleMapsUrl: '',
+    isEmergency: false,
+  };
+  it('offers no free-text clinic boxes', async () => {
+    const { queryByLabelText, findByLabelText } = await renderTribeProfile({});
+    await findByLabelText(/Search vet clinics/i);
+    expect(queryByLabelText('Clinic Name')).toBeNull();
+    expect(queryByLabelText('Clinic Phone')).toBeNull();
+    expect(queryByLabelText('Clinic Address')).toBeNull();
+  });
+  it('puts the create affordance LAST, after the existing clinics', async () => {
+    const { findByLabelText, container } = await renderTribeProfile({ clinics: [RIVERSIDE] });
+    const search = await findByLabelText(/Search vet clinics/i);
+    await userEvent.type(search, 'river');
+    await waitFor(() => {
+      const rows = [...container.querySelectorAll('.suggestrow b')].map((n) => n.textContent ?? '');
+      expect(rows[0]).toContain('Riverside Animal Hospital');
+      expect(rows[rows.length - 1]).toContain('as a new clinic');
+    });
+  });
+  it('shows the candidates instead of selecting one, when the server asks', async () => {
+    const tribeApi = await import('../api/tribeApi');
+    vi.mocked(tribeApi.submitVetClinic).mockResolvedValue({
+      status: 'needs_choice',
+      clinicId: '',
+      created: false,
+      pending: false,
+      candidates: [{ ...RIVERSIDE, verified: true, reason: 'name' as const }],
+    });
+    const { findByLabelText, findByText } = await renderTribeProfile({});
+    const search = await findByLabelText(/Search vet clinics/i);
+    await userEvent.type(search, 'Riverside Animal Hospital');
+    await userEvent.click(await findByText(/as a new clinic/));
+    expect(await findByText(/already on the shared list/i)).toBeTruthy();
+    expect(await findByText(/as a different clinic/)).toBeTruthy();
+  });
+  it('echoes the offered ids when the user insists it is different', async () => {
+    const tribeApi = await import('../api/tribeApi');
+    // The echo is what the server checks. A boolean would let a client claim a
+    // confirmation it never obtained.
+    vi.mocked(tribeApi.submitVetClinic)
+      .mockResolvedValueOnce({
+        status: 'needs_choice',
+        clinicId: '',
+        created: false,
+        pending: false,
+        candidates: [{ ...RIVERSIDE, verified: true, reason: 'name' as const }],
+      })
+      .mockResolvedValueOnce({
+        status: 'created',
+        clinicId: 'new1',
+        created: true,
+        pending: true,
+        candidates: [],
+      });
+    const { findByLabelText, findByText } = await renderTribeProfile({});
+    const search = await findByLabelText(/Search vet clinics/i);
+    await userEvent.type(search, 'Riverside Animal Hospital');
+    await userEvent.click(await findByText(/as a new clinic/));
+    await userEvent.click(await findByText(/as a different clinic/));
+    await waitFor(() => expect(tribeApi.submitVetClinic).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(tribeApi.submitVetClinic).mock.calls[1]?.[0]).toMatchObject({
+      acknowledgedMatchIds: ['c1'],
+    });
+  });
+  it('sends NO acknowledgement on the first attempt, so the safe path is the default', async () => {
+    const tribeApi = await import('../api/tribeApi');
+    vi.mocked(tribeApi.submitVetClinic).mockResolvedValue({
+      status: 'created',
+      clinicId: 'new1',
+      created: true,
+      pending: true,
+      candidates: [],
+    });
+    const { findByLabelText, findByText } = await renderTribeProfile({});
+    const search = await findByLabelText(/Search vet clinics/i);
+    await userEvent.type(search, 'Somewhere New');
+    await userEvent.click(await findByText(/as a new clinic/));
+    await waitFor(() => expect(tribeApi.submitVetClinic).toHaveBeenCalled());
+    expect(vi.mocked(tribeApi.submitVetClinic).mock.calls[0]?.[0]).toMatchObject({
+      acknowledgedMatchIds: [],
+    });
   });
 });
