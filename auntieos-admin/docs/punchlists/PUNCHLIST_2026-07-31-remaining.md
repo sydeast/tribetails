@@ -1,7 +1,9 @@
 # Remaining work after the 2026-07-31 batch
 
-**Date:** 2026-07-31
-**Baseline:** `origin/main` at `5fba1d6`, after PRs #139 to #184 merged.
+**Date:** 2026-07-31, blocked-work section updated 2026-08-01
+**Baseline:** `origin/main` at `5fba1d6`, after every PR from #139 to #183 that
+merged. #184, #185 and #186 were open when this was written and are tracked
+under "Blocked right now" rather than counted as landed.
 **Grounded against:** live source on `origin/main`, re-checked line by line for this
 document. Where an item disagrees with the 2026-07-31 mock-adherence audit, the
 source won and the difference is stated.
@@ -20,9 +22,12 @@ Sizes are S (under a day), M (one to three days), L (a week or more).
 
 ## Blocked right now
 
-### main is RED on Android. Fix is PR #187.
+### main was RED on Android. PR #187 merged 2026-08-01 and it is green.
 
-`origin/main` at `5fba1d6` fails `:app:testDebugUnitTest`, and the CI run for the
+Kept in full because the three defects it describes are the reason to run a
+local Android build after any grouped dependency bump, not just history.
+
+`origin/main` at `5fba1d6` failed `:app:testDebugUnitTest`, and the CI run for the
 #181 merge reports it. PR #180 bumped 36 Android dependencies at once and broke
 three separate things. CI only ever reported the first, because the build stops
 there.
@@ -43,16 +48,28 @@ there.
    shipped APK never had. It now asserts the real invariant, which is that
    grpc-api and grpc-core agree.
 
-Merge #187 before anything else. 1899 tests, 0 failures with it applied.
+Merged as `436b3ac`. 1899 tests, 0 failures.
 
-### PR #185, visual harness retirement, needs an operator push
+### PR #185, visual harness retirement, is re-scoped and no longer a full retirement
 
-Rebased onto `5fba1d6` locally, conflicts resolved (`ci.yml` took main's
-`setup-gradle@v6`, `libs.versions.toml` dropped the roborazzi entry dependabot
-had bumped to 1.70.0). It cannot be force-pushed from this session: the branch
-edits `.github/workflows/ci.yml`, and the available credential is an OAuth token
-without `workflow` scope. Needs one push from a session with SSH or a
-workflow-scoped token.
+Operator ruling 2026-08-01, overruling the wider scope this PR shipped with:
+delete the wrong designs, keep the machinery. `visual/mockups/` and
+`visual/baselines/` go, because they are the superseded Compose captures and the
+pre-ruling concept round an agent should never read. The Playwright harness under
+`web/visual/`, the roborazzi wiring and `auntieos-admin/e2e/` all stay.
+
+So the `.github/workflows/ci.yml` edit is out of scope now, which also removes
+the push blocker: the earlier branch could not be force-pushed from a background
+session, because the available OAuth token has no `workflow` scope.
+
+### PR #184, scripts migrated to modular firebase-admin, has never run CI
+
+`mytribe/scripts` still calls the legacy `admin.firestore()` namespace, which
+`firebase-admin ^14` removed, so every backfill and seed script throws at
+runtime. The fix is written and open. Its checks sit at `action_required`:
+GitHub holds workflow runs on pull requests from the Copilot agent until a
+maintainer approves them, and nobody has. The PR is also still a draft.
+Needs one click on "Approve and run workflows", then a normal review.
 
 ---
 
@@ -327,9 +344,12 @@ audit's top ten:
 
 Also landed: the breed and vet-clinic dropdowns (#151, #152), yearly company
 holidays (#150), gallery uploads without a kinfolk (#144), the merged Calendar
-section (#145), Home widget flash (#158), the Integrations report (#182), the
-busy-import booking guard (#183), feature flags shipping functional (#153, #154),
-and the CI and release-tagging work (#142, #143).
+section (#145), Home widget flash (#158), the busy-import booking guard (#183),
+feature flags shipping functional (#153, #154), and the CI and release-tagging
+work (#142, #143).
+
+The Integrations report (#182) was written during the batch, sat open while this
+list was, and merged 2026-08-01 once #187 had unblocked its Android job.
 
 ## Sequencing
 
@@ -337,7 +357,7 @@ Green main first, then money and safety, then the built-but-unreachable
 backends, because those are the cheapest ratio of operator pain to engineering
 time.
 
-0. PR #187, main is red (already open)
+0. PR #187, main is red (merged 2026-08-01)
 1. A4, one argument, restores audit truth (S)
 2. A1, once F2 lands (M)
 3. A2 plus B4 together, since fixing the authoring is worth less than fixing it
