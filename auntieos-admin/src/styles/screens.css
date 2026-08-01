@@ -316,6 +316,69 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* The Den stat strip, on the screen that was the last list without one. Same
+   shape as `.invoices__summary` so the two lists read as one system. */
+.notif-summary {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+.notif-summary > * {
+  flex: 1 1 12rem;
+}
+/* The archive facet, in the panel's trailing slot. Deliberately a select rather
+   than a fourth chip: the chips answer "which category", and archived-ness is a
+   different axis (an archived booking notification is still a booking one). */
+.notif-facet {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.notif-facet__label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+.notif-facet__select {
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+.notif-facet__select:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.notif-selectall {
+  display: flex;
+  margin-bottom: var(--space-3);
+}
+/* An archived row, visible only under the Included / Only archived facet. Muted
+   and marked, because a row that is out of the feed but on the screen, offering
+   Restore where its neighbours offer Archive, has to say which one it is. */
+.notif-row--archived {
+  opacity: 0.72;
+  border-style: dashed;
+}
+.notif-row__archived {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.08rem var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-2);
+  color: var(--color-text-faint);
+  white-space: nowrap;
+}
 /* ── Phone width: Activity Log and Notifications rows ─────────────────────
    Both are `auto 1fr auto[ auto]` with every trailing column `white-space:
    nowrap`, so the one flexible column is what pays for all of them.

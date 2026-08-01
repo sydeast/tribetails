@@ -127,15 +127,30 @@
   flex-direction: column;
 }
 
+/* The row is now the clickable main block PLUS a trailing quick-action block,
+   which is why it became a flex row. The action button has to live OUTSIDE the
+   row button (a button inside a button is invalid HTML and its click never
+   arrives), so the two are siblings and the main block takes the slack. */
 .invoices__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   border-bottom: var(--border-hairline) solid var(--color-border-soft);
 }
 .invoices__row:last-child {
   border-bottom: none;
 }
 
+.invoices__row-action {
+  flex: 0 0 auto;
+  padding-right: var(--space-2);
+}
+
 .invoices__row-main {
-  width: 100%;
+  /* `flex: 1` rather than `width: 100%`: the row is a flex container now and the
+     action block sits beside this. The grid inside is untouched. */
+  flex: 1 1 auto;
+  min-width: 0;
   box-sizing: border-box;
   display: grid;
   grid-template-columns: 5.5rem 1.7fr 1.1fr auto auto;
@@ -205,6 +220,13 @@
   color: var(--color-accent);
 }
 
+/* What has come in and what is still owed on a part-paid invoice. Warning-toned
+   to match its chip, because the row's big figure beside it is the TOTAL and
+   these two are the correction to it. */
+.invoices__row-partial {
+  color: var(--color-warning);
+}
+
 .invoices__row-amount {
   font-family: var(--font-fraunces);
   font-size: var(--type-title-lg-size);
@@ -213,6 +235,16 @@
 }
 
 /* ── status chip ─────────────────────────────────────────────────────────── */
+
+/* The state chip, plus the archive marker when one applies. Column rather than
+   row so a marked row keeps the same width as its neighbours instead of pushing
+   the grid's last track wider than every other row's. */
+.invoices__row-chips {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+}
 
 .invoices__chip {
   font-family: var(--font-mono);
@@ -276,6 +308,15 @@
   color: var(--color-text-faint);
   border: 1px dashed var(--color-text-faint);
 }
+/* NOT a state, and styled so it cannot be mistaken for one: it sits UNDER the
+   state chip, and an archived invoice still has whatever state it had. It says
+   only that the row is out of the working list, and out of the Outstanding and
+   Billed totals at the top of this screen. */
+.invoices__chip--archived {
+  background: transparent;
+  color: var(--color-text-faint);
+  border: var(--border-hairline) dashed var(--color-border);
+}
 /* ── Phone width ──────────────────────────────────────────────────────────
    `5.5rem 1.7fr 1.1fr auto auto` in 324px of row.
    Measured at 390x844 on 2026-08-01, against three seeded invoices: the fixed
@@ -320,8 +361,25 @@
     grid-area: amount;
     justify-self: end;
   }
-  .invoices__row-main .invoices__chip {
+  /* Targets the CHIP STACK, not `.invoices__chip`. The state chip now shares
+     its grid cell with the ARCHIVED marker inside `.invoices__row-chips`, so the
+     chip itself is no longer a direct child of this grid and a rule aimed at it
+     would place nothing. */
+  .invoices__row-main .invoices__row-chips {
     grid-area: chip;
     justify-self: end;
+  }
+  /* THE ROW'S QUICK ACTION GOES UNDER THE ROW, not beside it. On desktop the
+     action block is a sibling of the main block and takes its own width; at
+     390px that width comes straight out of `.invoices__row-who`, which is the
+     column this whole media query exists to protect. Wrapping drops it to its
+     own full-width line instead. */
+  .invoices__row {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+  .invoices__row-action {
+    flex: 1 1 100%;
+    padding: 0 var(--space-2) var(--space-3);
   }
 }

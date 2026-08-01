@@ -46,3 +46,35 @@ export async function bulkArchiveNotifications(ids: string[]): Promise<number> {
   });
   return res.archived;
 }
+
+/**
+ * THE WAY BACK. Puts one notification into the active feed again.
+ *
+ * `archiveNotification` above had no inverse until now, and no client listed
+ * archived rows, so Archive was a one-way door: a row filed away by mistake was
+ * unreachable from every surface in the product. The Invoices screen already
+ * refuses that shape, with `unarchiveInvoice` plus a three-state archive facet,
+ * and a notification is not the thing that should be harder to undo.
+ *
+ * The server merge-writes `archivedAt: null` rather than deleting the field (see
+ * CALLABLE_CONTRACT.md for the query reasoning), which is why
+ * `isNotificationArchived` in lib/notificationsFeed.ts tests for a PRESENT,
+ * non-null value rather than for the key existing at all. A restored row would
+ * otherwise stay hidden forever, silently, which is the worst possible outcome
+ * for an undo.
+ *
+ * Same skip-not-throw rule as the archive pair: a 0 means the server declined,
+ * and the caller must say so rather than reading the resolve as success.
+ */
+export async function unarchiveNotification(id: string): Promise<number> {
+  const res = await call<{ id: string }, { unarchived: number }>('unarchiveNotification', { id });
+  return res.unarchived;
+}
+
+/** Restore a selected batch. Same per-id skip rule; capped at 200 ids server-side. */
+export async function bulkUnarchiveNotifications(ids: string[]): Promise<number> {
+  const res = await call<{ ids: string[] }, { unarchived: number }>('bulkUnarchiveNotifications', {
+    ids,
+  });
+  return res.unarchived;
+}

@@ -201,6 +201,37 @@ export function isInvoiceOverdue(state: InvoiceState | null, dueDate: string, to
 }
 
 /**
+ * How many whole days past its due date an OPEN invoice is, or null.
+ *
+ * Null for every case that is not a real, dated, overdue balance: another state,
+ * an unparseable or absent `dueDate`, a due date today or later. The caller then
+ * has nothing to print, which is the point. "0 days overdue" and "NaN days
+ * overdue" are both worse than the plain date.
+ *
+ * Gated on `isInvoiceOverdue` rather than re-deriving the verdict, so the number
+ * and the chip can never disagree about whether an invoice is late.
+ *
+ * ARITHMETIC ON UTC MIDNIGHTS, deliberately. Both ends are already local
+ * calendar dates (`localDateIso` for today, an ISO day prefix for the due date),
+ * so parsing them at UTC midnight compares two labels rather than two instants
+ * and cannot be shifted by a DST boundary between them.
+ */
+export function invoiceDaysOverdue(
+  state: InvoiceState | null,
+  dueDate: string,
+  todayIso: string,
+): number | null {
+  if (!isInvoiceOverdue(state, dueDate, todayIso)) return null;
+  const due = isoDatePrefixOrNull(dueDate);
+  if (due === null) return null;
+  const dueMs = Date.parse(`${due}T00:00:00Z`);
+  const todayMs = Date.parse(`${todayIso}T00:00:00Z`);
+  if (!Number.isFinite(dueMs) || !Number.isFinite(todayMs)) return null;
+  const days = Math.round((todayMs - dueMs) / 86_400_000);
+  return days > 0 ? days : null;
+}
+
+/**
  * Today as a local YYYY-MM-DD prefix, injected via `now` so it's testable at a
  * fixed instant.
  *

@@ -12,8 +12,11 @@ import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/director
 import {
   formatUsd,
   humanizeDate,
+  invoiceActionsFor,
+  invoiceDaysOverdue,
   invoiceStateInfo,
   invoicePartialPayment,
+  type InvoiceAction,
   type InvoicePartialPayment,
   isInvoiceOverdue,
   localDateIso,
@@ -121,12 +124,55 @@ function rangeLabel(range: DateRangeKey): string {
   return `the ${preset.label.toLowerCase()}`;
 }
 
+/**
+ * THE ROW'S QUICK ACTION, mirroring Android's `RowAction`.
+ *
+ * Android offers exactly one state-appropriate action per row, drawn from the
+ * shared `invoiceActionsFor`, so an operator working a list of overdue invoices
+ * sends reminders without drilling into each one. The web list offered none: the
+ * only path to any action was to open the detail modal, which is a click, a read
+ * and a close per invoice.
+ *
+ * WHAT THIS DOES NOT DO IS FIRE THE CALLABLE FROM THE ROW. Every one of these
+ * actions reaches a real household (a reminder email, a receipt, a draft
+ * becoming a real bill), and this app's convention is that such a thing is
+ * confirmed before it happens (see InvoiceDetail's confirm panel, whose copy
+ * spells out what each action does to a person). Android has no such step, and
+ * copying its behaviour rather than its information architecture would mean
+ * either shipping an unconfirmed one-click send or writing a second confirm
+ * flow whose wording could drift from the first.
+ *
+ * So the row's button OPENS THE DETAIL ARMED ON THAT ACTION: one click lands on
+ * the confirm step that already exists, with the same copy, the same callable
+ * and the same fail-loud reporting. The parity gap that mattered was that the
+ * action was invisible from the list, and that is what closes.
+ *
+ * `markPaid` is deliberately not offered here, exactly as on Android: recording
+ * a payment needs the amount / method / reference fields, so a row button for it
+ * would be a button that only ever means "open the detail".
+ */
+const ROW_ACTION_LABELS: Readonly<Record<InvoiceAction, string>> = {
+  reminder: 'Send reminder',
+  reviewSend: 'Review and send',
+  receipt: 'Receipt',
+  markPaid: 'Record payment',
+};
+
+/** The one action a row offers, or null. Order is the offer precedence. */
+function rowActionFor(state: InvoiceState | null): InvoiceAction | null {
+  if (state === null) return null;
+  const allowed = invoiceActionsFor(state);
+  return allowed.find((a) => a === 'reviewSend' || a === 'reminder' || a === 'receipt') ?? null;
+}
+
 /** One row's display facts, read once per render pass. */
 interface RowView {
   entry: InvoiceEntry;
   /** The STORED state stamp (ADR-0002). Null when the doc carries none: fail-soft, never re-derived. */
   state: InvoiceState | null;
   overdue: boolean;
+  /** Whole days past due, or null when the invoice is not a dated overdue balance. */
+  daysOverdue: number | null;
   /** Non-null when money has come in that does not cover the invoice. */
   partial: InvoicePartialPayment | null;
 }
@@ -143,6 +189,7 @@ function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
       entry,
       state,
       overdue: isInvoiceOverdue(state, entry.dueDate, todayIso),
+      daysOverdue: invoiceDaysOverdue(state, entry.dueDate, todayIso),
       // Like `overdue`, a display refinement of `open` rather than a state of
       // its own, so it changes the chip and never the actions.
       partial: invoicePartialPayment(state, entry),
@@ -214,6 +261,11 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   const [kinfolkId, setKinfolkId] = useState('');
   const [archived, setArchived] = useState<ArchivedMode>('hide');
   const [selectedId, setSelectedId] = useState<string | null>(initialInvoiceId ?? null);
+  // Which action the detail should open ALREADY ON its confirm step, set by a
+  // row's quick-action button. Null when the row itself was clicked, which opens
+  // the detail as it always did. Cleared alongside `selectedId` on close, so
+  // reopening the same invoice from the row never re-arms a stale action.
+  const [armedAction, setArmedAction] = useState<InvoiceAction | null>(null);
   // Seeded only on mount: reopening the composer from the "New quote" button
   // later must start blank, not silently re-seed the household from a stale URL.
   const [creating, setCreating] = useState<CreatingState | null>(
@@ -288,11 +340,34 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   );
   const archivedHidden = views.length - inScope.length;
 
+  const openRows = useMemo(() => inScope.filter((r) => r.state === 'open'), [inScope]);
+  const overdueRows = useMemo(() => inScope.filter((r) => r.overdue), [inScope]);
+
   const outstandingTotal = asyncScalar(rows, () =>
-    inScope.filter((r) => r.state === 'open').reduce((sum, r) => sum + r.entry.amountDue, 0),
+    openRows.reduce((sum, r) => sum + r.entry.amountDue, 0),
   );
   const billedTotal = asyncScalar(rows, () => inScope.reduce((sum, r) => sum + r.entry.total, 0));
-  const overdueCount = asyncScalar(rows, () => inScope.filter((r) => r.overdue).length);
+  const overdueCount = asyncScalar(rows, () => overdueRows.length);
+
+  /**
+   * WHO IS WORST, and by how long. Android's Overdue card carries this and the
+   * web card said only "past their due date", which is the one thing the number
+   * above it already told you.
+   *
+   * Named from the loaded rows, so it is a fact about what is on screen rather
+   * than a claim about the books; the stats note directly below already states
+   * that scope for all three cards. An overdue row whose age cannot be computed
+   * contributes its household and no number rather than a fabricated one.
+   */
+  const worstOverdue = useMemo(() => {
+    let worst: RowView | null = null;
+    for (const row of overdueRows) {
+      if (worst === null || (row.daysOverdue ?? 0) > (worst.daysOverdue ?? 0)) worst = row;
+    }
+    if (worst === null) return null;
+    const who = worst.entry.kinfolkName || worst.entry.client || 'a household';
+    return worst.daysOverdue === null ? who : `${who}, ${String(worst.daysOverdue)} days past`;
+  }, [overdueRows]);
 
   const windowLabel = rangeLabel(range);
   const loaded = rows.status === 'ready' ? inScope.length : null;
@@ -342,7 +417,10 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
         <StatCard
           label="Outstanding"
           value={outstandingTotal}
-          trend="open invoices"
+          // The count, like Android's, rather than the bare word "open": a
+          // $4,000 outstanding total means something different across 2 invoices
+          // than across 40. The trend only ever renders beside a proven number.
+          trend={`across ${String(openRows.length)} open invoice${openRows.length === 1 ? '' : 's'}`}
           tone={outstandingTotal.kind === 'value' && outstandingTotal.value > 0 ? 'orange' : 'success'}
           feature={outstandingTotal.kind === 'value' && outstandingTotal.value > 0}
           formatValue={formatUsd}
@@ -351,7 +429,10 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
         <StatCard
           label="Overdue"
           value={overdueCount}
-          trend="past their due date"
+          // Names the worst offender and how long, matching Android. "all clear"
+          // rather than a blank when there are none, because an empty subline
+          // under a zero reads as a card that failed to finish rendering.
+          trend={worstOverdue ?? 'all clear'}
           tone={overdueCount.kind === 'value' && overdueCount.value > 0 ? 'error' : 'muted'}
           feature={overdueCount.kind === 'value' && overdueCount.value > 0}
         />
@@ -449,7 +530,19 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
                 ) : (
                   <ul className="invoices__list">
                     {visible.map((v) => (
-                      <InvoiceRow key={v.entry._id} view={v} todayIso={todayIso} onSelect={setSelectedId} />
+                      <InvoiceRow
+                        key={v.entry._id}
+                        view={v}
+                        todayIso={todayIso}
+                        onSelect={(id) => {
+                          setArmedAction(null);
+                          setSelectedId(id);
+                        }}
+                        onAction={(id, action) => {
+                          setArmedAction(action);
+                          setSelectedId(id);
+                        }}
+                      />
                     ))}
                   </ul>
                 )}
@@ -484,7 +577,16 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
         </AsyncRegion>
       </DenPanel>
 
-      {selected && <InvoiceDetail invoice={selected} onClose={() => setSelectedId(null)} />}
+      {selected && (
+        <InvoiceDetail
+          invoice={selected}
+          {...(armedAction ? { initialAction: armedAction } : {})}
+          onClose={() => {
+            setSelectedId(null);
+            setArmedAction(null);
+          }}
+        />
+      )}
 
       {creating && (
         <InvoiceCreate
@@ -501,10 +603,12 @@ interface InvoiceRowProps {
   view: RowView;
   todayIso: string;
   onSelect: (invoiceId: string) => void;
+  /** The row's one quick action: opens the detail already on that confirm step. */
+  onAction: (invoiceId: string, action: InvoiceAction) => void;
 }
 
-function InvoiceRow({ view, todayIso, onSelect }: InvoiceRowProps) {
-  const { entry, state, overdue, partial } = view;
+function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
+  const { entry, state, overdue, daysOverdue, partial } = view;
   // Overdue is a display-level refinement of "open" (see FILTERS' comment),
   // it never becomes its own InvoiceState, it just outranks the plain "Open"
   // chip visually, the same relationship the wasm's InvoiceRow renders.
@@ -522,14 +626,23 @@ function InvoiceRow({ view, todayIso, onSelect }: InvoiceRowProps) {
         : invoiceStateInfo(state);
   const household = entry.kinfolkName || entry.client || 'Unknown';
   const secondary = entry.client && entry.client !== entry.kinfolkName ? entry.client : null;
+  // "12 days overdue" over "due May 21" on an overdue row: the age is the thing
+  // that decides what to do about it, and it is the same stored dueDate either
+  // way. Android's meta line reads the same. An overdue invoice whose age cannot
+  // be computed keeps the plain due date rather than inventing a number.
   const dateLine =
-    state === 'open' && entry.dueDate
-      ? `due ${humanizeDate(entry.dueDate, todayIso)}`
-      : entry.date
-        ? `${state === 'paid' ? 'paid' : 'dated'} ${humanizeDate(entry.date, todayIso)}`
-        : entry.dueDate
-          ? `due ${humanizeDate(entry.dueDate, todayIso)}`
-          : 'no date';
+    daysOverdue !== null
+      ? `${String(daysOverdue)} day${daysOverdue === 1 ? '' : 's'} overdue`
+      : state === 'open' && entry.dueDate
+        ? `due ${humanizeDate(entry.dueDate, todayIso)}`
+        : entry.date
+          ? `${state === 'paid' ? 'paid' : 'dated'} ${humanizeDate(entry.date, todayIso)}`
+          : entry.dueDate
+            ? `due ${humanizeDate(entry.dueDate, todayIso)}`
+            : 'no date';
+
+  const archived = isArchivedInvoice(entry);
+  const action = rowActionFor(state);
 
   const body = (
     <>
@@ -547,11 +660,30 @@ function InvoiceRow({ view, todayIso, onSelect }: InvoiceRowProps) {
             linked to {entry.sessionIds.length} visit{entry.sessionIds.length === 1 ? '' : 's'}
           </span>
         ) : null}
+        {/* WHAT IS ACTUALLY STILL OWED. The screen already computed this to
+            decide the PART PAID chip and then threw the figures away, so the row
+            said "$40.00" for an invoice with $20 left on it. On a money surface
+            the chip naming a condition without naming the amount is the half of
+            the fact that does not help anyone collect. */}
+        {partial ? (
+          <span className="invoices__row-partial">
+            {formatUsd(partial.paidCents / 100)} paid, {formatUsd(partial.remainingCents / 100)} still
+            owed
+          </span>
+        ) : null}
       </span>
 
       <span className="invoices__row-amount">{formatUsd(entry.total)}</span>
 
-      <span className={`invoices__chip invoices__chip--${info.cssClass}`}>{info.chipLabel}</span>
+      <span className="invoices__row-chips">
+        <span className={`invoices__chip invoices__chip--${info.cssClass}`}>{info.chipLabel}</span>
+        {/* Only ever rendered under the Included / Only archived facet, since the
+            default hides these rows entirely. Without it an archived invoice sits
+            among active ones looking identical while being excluded from the
+            Outstanding and Billed totals directly above, which makes those totals
+            impossible to check by eye. */}
+        {archived ? <span className="invoices__chip invoices__chip--archived">ARCHIVED</span> : null}
+      </span>
     </>
   );
 
@@ -560,6 +692,16 @@ function InvoiceRow({ view, todayIso, onSelect }: InvoiceRowProps) {
       <button type="button" className="invoices__row-main lift" onClick={() => onSelect(entry._id)}>
         {body}
       </button>
+      {/* OUTSIDE the row button, not inside it: a button inside a button is
+          invalid HTML and the inner click would be swallowed by the outer one. */}
+      {action ? (
+        <div className="invoices__row-action">
+          <GhostButton
+            label={ROW_ACTION_LABELS[action]}
+            onClick={() => onAction(entry._id, action)}
+          />
+        </div>
+      ) : null}
     </li>
   );
 }

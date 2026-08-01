@@ -63,7 +63,12 @@ export { addKinTaleComment, getKinTaleReaction, toggleKinTaleLove } from './port
 export { getKinTaleComments } from './portal/getKinTaleComments';
 export { markNotificationRead, markNotificationUnread } from './portal/markNotificationRead';
 export { bulkMarkNotificationsRead } from './portal/bulkMarkNotificationsRead';
-export { archiveNotification, bulkArchiveNotifications } from './portal/archiveNotification';
+export {
+  archiveNotification,
+  bulkArchiveNotifications,
+  unarchiveNotification,
+  bulkUnarchiveNotifications,
+} from './portal/archiveNotification';
 export { addBookingNote } from './portal/addBookingNote';
 export { submitRating } from './portal/submitRating';
 

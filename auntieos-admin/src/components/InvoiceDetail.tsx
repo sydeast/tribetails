@@ -99,6 +99,23 @@ const ACTIONS: readonly ActionMeta[] = [
 
 interface InvoiceDetailProps {
   invoice: InvoiceEntry;
+  /**
+   * Open ALREADY ON this action's confirm step, set by the Invoices list's
+   * per-row quick action (Send reminder / Review and send / Receipt).
+   *
+   * It arms the confirm panel; it does not perform anything. The step, the copy
+   * describing what the action does to a real household, and the callable are
+   * all the ones this panel already had, so a row button and the detail button
+   * cannot come to mean different things.
+   *
+   * VALIDATED AGAINST THE STORED STATE below rather than trusted. The list
+   * derives it from the same `invoiceActionsFor(state)` this panel uses, but the
+   * live listener can deliver a newer doc between the click and this render, and
+   * arming an action the invoice no longer permits would present a confirm step
+   * for something the server is about to refuse. A stale one falls back to the
+   * plain action list.
+   */
+  initialAction?: InvoiceAction;
   onClose: () => void;
 }
 
@@ -149,8 +166,11 @@ interface ArchivePrompt {
  * unlike FormSchemas' one-shot load(): the invoices collection is already a
  * live subscription, not a one-shot fetch.
  */
-export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
-  const [pending, setPending] = useState<PendingAction | null>(null);
+export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetailProps) {
+  // Seeded ONCE, from the mount. A row's quick action opens this panel, so the
+  // arming happens at open; re-deriving it from the prop on every render would
+  // re-open the confirm step the moment the operator cancelled out of it.
+  const [pending, setPending] = useState<PendingAction | null>(initialAction ?? null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -220,7 +240,15 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
   const allowed = state === null ? [] : invoiceActionsFor(state);
   const available = ACTIONS.filter((a) => allowed.includes(a.key));
 
-  const meta = pending ? ACTIONS.find((a) => a.key === pending) : undefined;
+  // `allowed.includes` is the guard on an ARMED action (see `initialAction`).
+  // The list derives its row button from this same function, but the live
+  // listener can deliver a newer doc between the click and this render: someone
+  // else marks the invoice paid, and a "Send reminder" confirm would then be
+  // offered for an invoice the server will refuse to remind about. A stale arm
+  // silently falls back to the plain action list, which is what the operator
+  // would have seen had they clicked the row instead.
+  const meta =
+    pending && allowed.includes(pending) ? ACTIONS.find((a) => a.key === pending) : undefined;
 
   // The stored itemization. NULL means never itemized, which is not the same as
   // an empty list and must not be rendered as an empty items table: a heading

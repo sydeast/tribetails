@@ -176,6 +176,13 @@ export const AUDIT_EVENTS = {
   // `archivedAt`; recipient-scoped exactly like the mark-read guard.
   NOTIFICATIONS_ARCHIVE: 'NOTIFICATIONS_ARCHIVE',
 
+  // The inverse (unarchiveNotification / bulkUnarchiveNotifications): a row put
+  // back into the active inbox. Its own event rather than a flag inside
+  // NOTIFICATIONS_ARCHIVE's payload, because the audit trail is queried by
+  // `event`, and folding a restore into the archive event would make "what did
+  // this operator file away last week" answerable only by reading payloads.
+  NOTIFICATIONS_UNARCHIVE: 'NOTIFICATIONS_UNARCHIVE',
+
   // Tribal Intel generator (Phase 12 / spec 23): admin create/update/delete of
   // training_documents notes that the nightly reconcile pipeline folds into the
   // targeted client's Dossier and pet Kin411. The write is server-bound so the

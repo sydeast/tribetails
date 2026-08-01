@@ -60,7 +60,21 @@ export interface NotificationEntry {
    * does to pull the household reference out of it.
    */
   data?: unknown;
-  archivedAt?: Timestamp;
+  /**
+   * Set by `archiveNotification`, CLEARED TO NULL (not deleted) by
+   * `unarchiveNotification`. So three shapes reach a client and only the first
+   * means archived:
+   *
+   *   a real Timestamp   filed away
+   *   null               archived once, then restored
+   *   absent             never archived
+   *
+   * Which is why nothing reads this field directly: `isNotificationArchived` in
+   * lib/notificationsFeed.ts is the single predicate, and it folds the last two
+   * together. A `=== undefined` test would hide every restored row forever with
+   * no error to notice.
+   */
+  archivedAt?: Timestamp | null;
 }
 
 /** True once the recipient (or an admin) has marked this notification read. */

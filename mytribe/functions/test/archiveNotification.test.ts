@@ -15,6 +15,8 @@ vi.mock('firebase-admin/firestore', async () => {
 import {
   archiveNotificationHandler,
   bulkArchiveNotificationsHandler,
+  unarchiveNotificationHandler,
+  bulkUnarchiveNotificationsHandler,
 } from '../src/portal/archiveNotification';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 
@@ -170,5 +172,188 @@ describe('bulkArchiveNotifications validation + auth', () => {
   it('rejects unauthenticated caller', async () => {
     mocks.dbFn.mockReturnValue(seed().db);
     await expect(bulkArchiveNotificationsHandler(req({ ids: ['n1'] }, null))).rejects.toMatchObject({ code: 'unauthenticated' });
+  });
+});
+// ─────────────────────── restore (unarchive) ───────────────────────
+//
+// Every case below is the mirror of an archive case above, plus the two that
+// only exist on this side: the write is `archivedAt: null` rather than a
+// timestamp (an absent field is unreachable by any future Firestore predicate,
+// see the handler's note), and `archivedByUid` is deliberately NOT cleared.
+describe('unarchiveNotification (single) happy path', () => {
+  it('clears archivedAt to null on the callers own notification', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await unarchiveNotificationHandler(req({ id: 'n1' }));
+    expect(res).toEqual({ unarchived: 1 });
+    const w = ctx.writes.find((w) => w.path === 'notifications/n1');
+    expect(w?.merge).toBe(true);
+    expect(w?.data.archivedAt).toBeNull();
+  });
+  it('does not clear archivedByUid: who filed the row away stays true after a restore', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await unarchiveNotificationHandler(req({ id: 'n1' }));
+    const w = ctx.writes.find((w) => w.path === 'notifications/n1');
+    expect(w?.data).not.toHaveProperty('archivedByUid');
+  });
+  it('admin may restore any recipients notification', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await unarchiveNotificationHandler(req({ id: 'n3' }, 'admin1', true));
+    expect(res.unarchived).toBe(1);
+  });
+  it('writes a NOTIFICATIONS_UNARCHIVE audit entry with an explicit SUCCESS status', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await unarchiveNotificationHandler(req({ id: 'n1' }));
+    expect(writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'NOTIFICATIONS_UNARCHIVE',
+        status: 'SUCCESS',
+        actorUid: 'kin1',
+        targetCollection: 'notifications',
+      }),
+    );
+  });
+  it('does not reuse the archive event, so the trail can still be filtered by intent', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await unarchiveNotificationHandler(req({ id: 'n1' }));
+    expect(writeAuditEntry).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'NOTIFICATIONS_ARCHIVE' }),
+    );
+  });
+});
+describe('unarchiveNotification (single) recipient-negative + missing', () => {
+  it('skips another recipients notification (unarchived 0, no write)', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await unarchiveNotificationHandler(req({ id: 'n3' }));
+    expect(res.unarchived).toBe(0);
+    expect(ctx.writes.find((w) => w.path === 'notifications/n3')).toBeUndefined();
+  });
+  it('skips a missing notification (unarchived 0)', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await unarchiveNotificationHandler(req({ id: 'ghost' }));
+    expect(res.unarchived).toBe(0);
+  });
+  it('skips a doc with no recipientUid (unarchived 0)', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await unarchiveNotificationHandler(req({ id: 'n4' }));
+    expect(res.unarchived).toBe(0);
+  });
+  it('still audits a refused restore, so a zero is evidence rather than silence', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await unarchiveNotificationHandler(req({ id: 'n3' }));
+    expect(writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'NOTIFICATIONS_UNARCHIVE',
+        payload: expect.objectContaining({ unarchived: 0 }),
+      }),
+    );
+  });
+});
+describe('unarchiveNotification (single) validation + auth', () => {
+  it('rejects blank id (invalid-argument)', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await expect(unarchiveNotificationHandler(req({ id: '' }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+    });
+  });
+  it('rejects missing id (invalid-argument)', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await expect(unarchiveNotificationHandler(req({}))).rejects.toMatchObject({
+      code: 'invalid-argument',
+    });
+  });
+  it('rejects an over-length id (invalid-argument)', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await expect(
+      unarchiveNotificationHandler(req({ id: 'x'.repeat(201) })),
+    ).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+  it('rejects unauthenticated caller', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await expect(unarchiveNotificationHandler(req({ id: 'n1' }, null))).rejects.toMatchObject({
+      code: 'unauthenticated',
+    });
+  });
+});
+describe('bulkUnarchiveNotifications happy path', () => {
+  it('restores the callers own notifications and returns the count', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await bulkUnarchiveNotificationsHandler(req({ ids: ['n1', 'n2'] }));
+    expect(res).toEqual({ unarchived: 2 });
+    expect(ctx.writes.find((w) => w.path === 'notifications/n1')?.data.archivedAt).toBeNull();
+    expect(ctx.writes.find((w) => w.path === 'notifications/n2')?.data.archivedAt).toBeNull();
+  });
+  it('de-duplicates repeated ids so the count is notifications, not requests', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await bulkUnarchiveNotificationsHandler(req({ ids: ['n1', 'n1', 'n1'] }));
+    expect(res.unarchived).toBe(1);
+  });
+  it('skips notifications belonging to another recipient (not counted, no write)', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await bulkUnarchiveNotificationsHandler(req({ ids: ['n1', 'n3'] }));
+    expect(res.unarchived).toBe(1);
+    expect(ctx.writes.find((w) => w.path === 'notifications/n3')).toBeUndefined();
+  });
+  it('admin may restore any recipients notification', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await bulkUnarchiveNotificationsHandler(req({ ids: ['n1', 'n3'] }, 'admin1', true));
+    expect(res.unarchived).toBe(2);
+  });
+  it('skips missing ids and docs with no recipientUid, and reports the real number', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await bulkUnarchiveNotificationsHandler(req({ ids: ['n1', 'n4', 'ghost'] }));
+    expect(res.unarchived).toBe(1);
+  });
+  it('audits the requested-versus-restored split', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await bulkUnarchiveNotificationsHandler(req({ ids: ['n1', 'n3'] }));
+    expect(writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'NOTIFICATIONS_UNARCHIVE',
+        status: 'SUCCESS',
+        payload: expect.objectContaining({ requested: 2, unarchived: 1 }),
+      }),
+    );
+  });
+});
+describe('bulkUnarchiveNotifications validation + auth', () => {
+  it('rejects empty ids (invalid-argument)', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await expect(bulkUnarchiveNotificationsHandler(req({ ids: [] }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+    });
+  });
+  it('rejects over-200 ids (invalid-argument)', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    const ids = Array.from({ length: 201 }, (_, i) => `x${i}`);
+    await expect(bulkUnarchiveNotificationsHandler(req({ ids }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+    });
+  });
+  it('rejects a non-array ids (invalid-argument)', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await expect(bulkUnarchiveNotificationsHandler(req({ ids: 'n1' }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+    });
+  });
+  it('rejects unauthenticated caller', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await expect(
+      bulkUnarchiveNotificationsHandler(req({ ids: ['n1'] }, null)),
+    ).rejects.toMatchObject({ code: 'unauthenticated' });
   });
 });

@@ -17,12 +17,61 @@ import { dayKey, isRead, type NotificationEntry } from '../api/notifications';
  */
 
 /**
- * Archived notifications never reappear in the feed (the wasm
+ * Is this row filed away?
+ *
+ * ONE predicate, and it must stay one, because there are now TWO ways a doc can
+ * be un-archived on the wire and only one of them is "the field is absent":
+ *
+ *   - a notification nobody ever archived has no `archivedAt` key at all
+ *     (dispatcher.ts does not write one), and
+ *   - a notification that was archived and then RESTORED carries
+ *     `archivedAt: null`, because `unarchiveNotification` merge-writes null
+ *     rather than deleting the field (see CALLABLE_CONTRACT.md: an absent field
+ *     is unreachable by any future Firestore predicate, an explicit null is not).
+ *
+ * The old test was `r.archivedAt === undefined`, which would have read a
+ * restored row as still archived and hidden it forever, with no error anywhere.
+ * An undo that silently does nothing is worse than no undo at all, so the
+ * null case is handled here, in the one place both the feed filter and the
+ * facet read.
+ */
+export function isNotificationArchived(entry: NotificationEntry): boolean {
+  return entry.archivedAt !== undefined && entry.archivedAt !== null;
+}
+
+/**
+ * Archived notifications never reappear in the DEFAULT feed (the wasm
  * `activeNotifications` rule). Input order is preserved, so the server's
  * newest-first ordering survives.
+ *
+ * Still the default, but no longer the only view: `notificationsForArchived`
+ * below is what lets the operator go and look at what they filed away, which is
+ * the other half of making Archive reversible.
  */
 export function activeNotifications(rows: readonly NotificationEntry[]): NotificationEntry[] {
-  return rows.filter((r) => r.archivedAt === undefined);
+  return rows.filter((r) => !isNotificationArchived(r));
+}
+
+/**
+ * The three-state archive facet, mirroring the Invoices screen's exactly:
+ * hide archived (the default), show them alongside the active feed, or show only
+ * them. Kept as a shared selector rather than an inline filter so the screen and
+ * its tests agree on what each mode means.
+ *
+ * Deliberately NOT a fourth filter chip. The chips answer "which category", and
+ * archived-ness is orthogonal to that: an archived booking notification is still
+ * a booking notification. Folding them together would make "Booking" and
+ * "Archived" mutually exclusive, which is false.
+ */
+export type NotificationArchivedMode = 'hide' | 'include' | 'only';
+
+export function notificationsForArchived(
+  rows: readonly NotificationEntry[],
+  mode: NotificationArchivedMode,
+): NotificationEntry[] {
+  if (mode === 'hide') return rows.filter((r) => !isNotificationArchived(r));
+  if (mode === 'only') return rows.filter((r) => isNotificationArchived(r));
+  return [...rows];
 }
 
 /**
@@ -40,6 +89,48 @@ export function unreadNotifications(rows: readonly NotificationEntry[]): Notific
  */
 export function unreadNotificationCount(rows: readonly NotificationEntry[]): number {
   return unreadNotifications(rows).length;
+}
+
+/**
+ * How many of these rows the dispatcher says it actually DELIVERED.
+ *
+ * A separate axis from read state, and the reason the Notifications stat strip
+ * carries both: `status` describes the dispatcher's own pipeline (a `pending`
+ * row is one the sender has not gotten out of the door yet), while `readAt`
+ * describes the operator. A dispatched notification can be unread, and an unread
+ * notification can be one that never went anywhere. Collapsing the two would
+ * hide a delivery outage behind a healthy-looking inbox.
+ *
+ * Counted over the ACTIVE feed, like every other figure on the strip, so
+ * archiving a row takes it out of all three counts together rather than out of
+ * some of them.
+ */
+export function dispatchedNotificationCount(rows: readonly NotificationEntry[]): number {
+  return activeNotifications(rows).filter(
+    (r) => (r.status ?? '').trim().toLowerCase() === 'dispatched',
+  ).length;
+}
+
+/**
+ * The rows the "mark read" bulk action should actually be sent.
+ *
+ * NOT simply "the selection". `bulkMarkNotificationsRead` returns how many it
+ * really marked and skips rows already read, so sending a selection of five that
+ * contains three read rows comes back as `marked: 2` and the screen reported
+ * "Marked 2 of 5, the rest were already read or not yours to mark." That is a
+ * partial-failure sentence for a batch in which nothing failed, on the most
+ * ordinary action the screen has (select a day, mark it read).
+ *
+ * Narrowing to the unread subset here makes the count on the button, the count
+ * sent to the server, and the count in any partial report all the same number,
+ * so the warning fires only when something genuinely went wrong. Android
+ * narrows the same way (`unreadSelected`).
+ */
+export function unreadAmong(
+  rows: readonly NotificationEntry[],
+  selectedIds: ReadonlySet<string>,
+): string[] {
+  return rows.filter((r) => selectedIds.has(r._id) && !isRead(r)).map((r) => r._id);
 }
 
 /** The bucket a row with a blank or absent `category` falls into. */
