@@ -11,8 +11,13 @@ import com.tribetails.auntieos.data.model.VetClinic
 fun vetClinicSuggestions(query: String, clinics: List<VetClinic>, limit: Int = 8): List<VetClinic> {
     val q = query.trim().lowercase()
     if (q.isEmpty()) return emptyList()
-    val starts = clinics.filter { it.name.lowercase().startsWith(q) }
-    val contains = clinics.filter { !it.name.lowercase().startsWith(q) && it.name.lowercase().contains(q) }
+    // Retired clinics drop out of what can be PICKED, which is what retiring one
+    // is for. A household already on an archived clinic is unaffected: it keeps
+    // its own stored name, phone and address, so its field still shows what is
+    // on file. The row simply stops being offered to anyone choosing from now on.
+    val live = clinics.filter { !it.archived }
+    val starts = live.filter { it.name.lowercase().startsWith(q) }
+    val contains = live.filter { !it.name.lowercase().startsWith(q) && it.name.lowercase().contains(q) }
     return (starts + contains).take(limit)
 }
 

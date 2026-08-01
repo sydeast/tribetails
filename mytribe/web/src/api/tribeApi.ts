@@ -149,12 +149,37 @@ export interface SubmitVetClinicRequest {
   phone?: string;
   address?: string;
   website?: string;
+  /**
+   * The ids of near-matches the user was SHOWN and chose not to use. Sending
+   * them is what authorizes a create over the top of a match.
+   *
+   * Deliberately NOT a `confirmCreate` boolean: a boolean could be set by a
+   * client that rendered nothing, whereas these ids can only have come from the
+   * previous response, so echoing them is evidence the choice was presented.
+   * See `functions/src/lib/vetClinicMatch.ts#acknowledgesAll`.
+   */
+  acknowledgedMatchIds?: string[];
+}
+
+/** A possible match the user must choose between. */
+export interface ClinicCandidateDto {
+  id: string;
+  name: string;
+  address: string;
+  phone: string;
+  isEmergency: boolean;
+  /** False for a submission still awaiting operator approval. */
+  verified: boolean;
+  reason: 'name' | 'phone' | 'similar';
 }
 
 export interface SubmitVetClinicResult {
+  /** `needs_choice` means NOTHING was written and `candidates` must be shown. */
+  status: 'created' | 'needs_choice';
   clinicId: string;
   created: boolean;
   pending: boolean;
+  candidates: ClinicCandidateDto[];
 }
 
 /** Lands a PENDING (`verified: false`) clinic entry for operator approval. Idempotent by normalized name. */

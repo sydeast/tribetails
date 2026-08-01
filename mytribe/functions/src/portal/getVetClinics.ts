@@ -25,9 +25,9 @@ function str(v: unknown): string {
 
 /**
  * Returns the shared `vet_clinics` catalog (the "vet bank"). Read-only for any
- * signed-in user (kinfolk + admin). Admin writes happen via the AuntieOS
- * clients writing directly to Firestore (rules: isAuntie). Kinfolk add-new goes
- * through `submitVetClinic`, which lands a `verified: false` pending entry.
+ * signed-in user (kinfolk + admin). Admin writes go through `updateVetClinic`
+ * and `archiveVetClinic`; kinfolk add-new goes through `submitVetClinic`, which
+ * lands a `verified: false` pending entry.
  *
  * This callable returns only APPROVED clinics: a doc is hidden iff
  * `verified === false`. Legacy/admin-authored docs predate the `verified`
@@ -47,7 +47,15 @@ export async function getVetClinicsHandler(
   const clinics: VetClinicDto[] = snap.docs
     .filter((d) => {
       const data = d.data() as Record<string, unknown>;
-      return str(data['name']).length > 0 && data['verified'] !== false;
+      // `archived === true` is a clinic the operator retired from the bank
+      // (archiveVetClinic). Absent means active: the field is newer than the
+      // catalog, so a row predating it must still read as available. A
+      // household ALREADY linked to an archived clinic keeps its denormalized
+      // name/phone/address untouched; the row is hidden from PICKING a new
+      // one, never from reading the one a household is already on.
+      return (
+        str(data['name']).length > 0 && data['verified'] !== false && data['archived'] !== true
+      );
     })
     .map((d) => {
       const data = d.data() as Record<string, unknown>;

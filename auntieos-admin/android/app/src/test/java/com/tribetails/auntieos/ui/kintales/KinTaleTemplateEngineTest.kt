@@ -330,7 +330,6 @@ class KinTaleTemplateEngineTest {
             entryNotes = "side door",
             emergencyContactName = "Sam",
             emergencyContactPhone = "555-0199",
-            vetClinicName = "Paws Clinic",
         )
         for (attr in kinfolkAttributeCatalog) {
             val cond = item(
@@ -360,14 +359,18 @@ class KinTaleTemplateEngineTest {
                 FieldCondition(source = "KINFOLK_ATTRIBUTE", op = "EQUALS", value = "4417", attributeKey = "gateCode"),
             ),
         )
+        // `vetClinicName` is no longer a condition attribute: KinTales do not
+        // display a vet (page-specs 06 item 2), and the household vet moved off
+        // the kinfolk doc entirely. Entry notes stand in as another free-text
+        // household attribute, so the NOT_EQUALS phrasing is still covered.
         assertEquals(
-            "Only show when the household's Vet on file is not Paws",
+            "Only show when the household's Entry notes is not side door",
             conditionSummary(
                 FieldCondition(
                     source = "KINFOLK_ATTRIBUTE",
                     op = "NOT_EQUALS",
-                    value = "Paws",
-                    attributeKey = "vetClinicName",
+                    value = "side door",
+                    attributeKey = "entryNotes",
                 ),
             ),
         )

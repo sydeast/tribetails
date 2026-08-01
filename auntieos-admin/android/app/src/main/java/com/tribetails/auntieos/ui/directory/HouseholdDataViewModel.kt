@@ -10,11 +10,48 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+/**
+ * The household's canonical vet, READ THROUGH from the kinfolk record
+ * (punchlist A2).
+ *
+ * This screen used to author its own `primaryVet*` / `emergencyVet*` free text,
+ * so the vet lived in two stores with nothing tying them together, and the copy
+ * shown HERE, on the screen a sitter reads the emergency number off, was the one
+ * that could silently go stale.
+ *
+ * `kinfolk` owns it now: the regular and the emergency clinic are each picked
+ * from the shared `vet_clinics` catalog and carry that clinic's id. That is the
+ * copy `updateVetClinic` can correct and fan out, which is the only reason a
+ * wrong number can be fixed at all. [primaryHours] / [emergencyHours] resolve
+ * from the CLINIC, not the household: every household using a practice shares
+ * its opening hours, so there is one copy of them rather than one per household.
+ */
+data class CanonicalVet(
+    val primaryName: String = "",
+    val primaryPhone: String = "",
+    val primaryAddress: String = "",
+    val primaryHours: String = "",
+    /** False when the household holds a vet with no catalog id: unreachable by a correction. */
+    val primaryLinked: Boolean = false,
+    val emergencyName: String = "",
+    val emergencyPhone: String = "",
+    val emergencyAddress: String = "",
+    val emergencyHours: String = "",
+) {
+    val hasPrimary: Boolean get() = primaryName.isNotBlank() || primaryPhone.isNotBlank() || primaryAddress.isNotBlank()
+    val hasEmergency: Boolean get() = emergencyName.isNotBlank() || emergencyPhone.isNotBlank() || emergencyAddress.isNotBlank()
+    val hasAny: Boolean get() = hasPrimary || hasEmergency
+}
+
 data class HouseholdDataUiState(
     val householdData: HouseholdData = HouseholdData(),
     // Phase 2: read-only free-text dossier householdNotes, shown as a fill-in
     // reference at the top of the editor. Blank when there is nothing to migrate.
     val dossierNotes: String = "",
+    /** Null until the catalog read lands. Never rendered as "no vet". */
+    val vet: HouseholdVet? = null,
+    /** Set when the vet read failed, so the card fails loud rather than blank. */
+    val vetError: String? = null,
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val isSuccess: Boolean = false,
@@ -48,58 +85,40 @@ class HouseholdDataViewModel(
             repository.getDossier(kinfolkId).onSuccess { dossier ->
                 _uiState.value = _uiState.value.copy(dossierNotes = dossier?.householdNotes.orEmpty())
             }
+            loadCanonicalVet(_uiState.value.householdData)
         }
     }
-
-    // Veterinary Information
-    fun updatePrimaryVetName(value: String) {
-        val current = _uiState.value.householdData
-        _uiState.value = _uiState.value.copy(
-            householdData = current.copy(primaryVetName = value)
-        )
+    /**
+     * Resolves the household's OWN vet: `household_data` holds the clinic id
+     * (operator ruling 2026-08-01) and the catalog supplies the name, phone,
+     * address and hours. This used to read the kinfolk doc, which is the copy
+     * that made the vet authored in two places at once.
+     *
+     * A catalog failure sets [vetError] rather than leaving the card blank: a
+     * blank vet card and an unreadable one must not look alike on the screen
+     * someone reads an emergency number off.
+     */
+    private suspend fun loadCanonicalVet(household: HouseholdData?) {
+        repository.getVetClinicsOnce()
+            .onSuccess { clinics ->
+                _uiState.value = _uiState.value.copy(
+                    vetError = null,
+                    vet = resolveHouseholdVet(household, clinics),
+                )
+            }
+            .onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    vet = null,
+                    vetError = "Couldn't load the shared clinic catalog: ${error.message}",
+                )
+            }
     }
 
-    fun updatePrimaryVetPhone(value: String) {
-        val current = _uiState.value.householdData
-        _uiState.value = _uiState.value.copy(
-            householdData = current.copy(primaryVetPhone = value)
-        )
-    }
-
-    fun updatePrimaryVetAddress(value: String) {
-        val current = _uiState.value.householdData
-        _uiState.value = _uiState.value.copy(
-            householdData = current.copy(primaryVetAddress = value)
-        )
-    }
-
-    fun updatePrimaryVetHours(value: String) {
-        val current = _uiState.value.householdData
-        _uiState.value = _uiState.value.copy(
-            householdData = current.copy(primaryVetHours = value)
-        )
-    }
-
-    fun updateEmergencyVetName(value: String) {
-        val current = _uiState.value.householdData
-        _uiState.value = _uiState.value.copy(
-            householdData = current.copy(emergencyVetName = value)
-        )
-    }
-
-    fun updateEmergencyVetPhone(value: String) {
-        val current = _uiState.value.householdData
-        _uiState.value = _uiState.value.copy(
-            householdData = current.copy(emergencyVetPhone = value)
-        )
-    }
-
-    fun updateEmergencyVetAddress(value: String) {
-        val current = _uiState.value.householdData
-        _uiState.value = _uiState.value.copy(
-            householdData = current.copy(emergencyVetAddress = value)
-        )
-    }
+    // The seven `primaryVet*` / `emergencyVet*` setters are GONE (punchlist A2).
+    // The vet is authored on the household profile, against the shared clinic
+    // catalog, and read through here. The stored fields remain on the model so
+    // a household that still carries the old free text can be shown it (and so
+    // the migration can find it), but nothing writes them any more.
 
     // Household Items & Locations
     fun updateFoodLocation(value: String) {

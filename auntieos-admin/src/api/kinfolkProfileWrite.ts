@@ -86,15 +86,12 @@ export interface KinfolkEditPatch {
   emergencyContactName: string;
   emergencyContactPhone: string;
   emergencyContactRelation: string;
-  vetClinicName: string;
-  vetClinicAddress: string;
-  vetClinicPhone: string;
-  /** The `vet_clinics` doc id, or '' for a household not linked to the catalog. */
-  vetClinicId: string;
-  emergencyVetClinicId: string;
-  emergencyVetClinicName: string;
-  emergencyVetClinicAddress: string;
-  emergencyVetClinicPhone: string;
+  // NO VET FIELDS. The household vet lives on `household_data`, catalog-linked
+  // by clinic id (operator ruling 2026-08-01, page-specs 04 item 3). This
+  // patch used to carry all eight `vetClinic*` / `emergencyVetClinic*` keys,
+  // which is what made the kinfolk doc a second writable copy of a fact the
+  // household record already owned. The kin profile READS the vet now; nothing
+  // here writes it. See `api/householdData.ts`.
 }
 
 /**
@@ -124,14 +121,6 @@ export const KINFOLK_EDIT_FIELDS = [
   'emergencyContactName',
   'emergencyContactPhone',
   'emergencyContactRelation',
-  'vetClinicName',
-  'vetClinicAddress',
-  'vetClinicPhone',
-  'vetClinicId',
-  'emergencyVetClinicId',
-  'emergencyVetClinicName',
-  'emergencyVetClinicAddress',
-  'emergencyVetClinicPhone',
 ] as const satisfies readonly (keyof KinfolkEditPatch)[];
 
 /** Trimmed on the way out, matching `createKinfolk`'s treatment of the same fields. */
@@ -145,10 +134,6 @@ const TRIMMED: ReadonlySet<keyof KinfolkEditPatch> = new Set<keyof KinfolkEditPa
   'serviceAddress',
   'emergencyContactName',
   'emergencyContactPhone',
-  'vetClinicName',
-  'vetClinicPhone',
-  'emergencyVetClinicName',
-  'emergencyVetClinicPhone',
 ]);
 
 /**

@@ -144,22 +144,19 @@ data class Kinfolk(
     var emergencyContactPhone: String = "",
     var emergencyContactRelation: String = "",
 
-    // Household-level Vet Clinic (lives on Kinfolk, not Kin).
+    // NO VET FIELDS. The household vet lives on `household_data`, catalog-linked
+    // by clinic id (operator ruling 2026-08-01: "vet info lives on household
+    // data, it can be seen on the kin profile"; page-specs 04 item 3).
     //
-    // `vetClinicId` joins to a `vet_clinics` doc; the three strings stay
-    // denormalized beside it so the clinic phone is on the household record
-    // without a second read, and a clinic renamed in the shared bank cannot
-    // blank the number on file. EVERY household written before 2026-07-25 has
-    // the strings and an empty id, which readers must treat as valid.
-    var vetClinicId: String = "",
-    var vetClinicName: String = "",
-    var vetClinicPhone: String = "",
-    var vetClinicAddress: String = "",
-    // The 24 hour clinic for this household, same id + denormalized shape.
-    var emergencyVetClinicId: String = "",
-    var emergencyVetClinicName: String = "",
-    var emergencyVetClinicPhone: String = "",
-    var emergencyVetClinicAddress: String = "",
+    // Removing them from this data class is what closes the WRITE path: every
+    // kinfolk writer here serialises the whole object (createKinfolk,
+    // createKinfolkComplete, updateKinfolk, and uploadKinfolkPhoto through
+    // updateKinfolk), so a field this class does not declare is never written.
+    //
+    // It does NOT clear what is already stored: `updateKinfolk` uses
+    // SetOptions.merge(), so an undeclared field survives on existing docs. The
+    // A2 migration deletes them explicitly with FieldValue.delete(); an omission
+    // here would leave a populated second copy that still looks authoritative.
 
     // Admin & Relationship
     var internalNotes: String = "",
@@ -1034,6 +1031,19 @@ data class VetClinic(
     // until the operator approves. Missing (legacy) reads as approved -> default true.
     var verified: Boolean = true,
     var submittedBy: String = "",      // uid of the kinfolk who submitted a pending entry
+    // Opening hours, e.g. "Mon to Fri 8a to 6p". Lives on the CLINIC, not on the
+    // household that picked it: every household using a practice shares its
+    // hours, so `household_data.primaryVetHours` stored one clinic's hours N
+    // times and corrected them zero times. See the A2 migration script.
+    var hours: String = "",
+    // Retired from the bank by `archiveVetClinic`. NOT a delete: a household
+    // points at a clinic by id with no referential integrity, so removing the
+    // row would strand those households outside updateVetClinic's fan-out and
+    // destroy the record of what they were told to dial. Missing (legacy) reads
+    // as active -> default false. An archived clinic is hidden from the pickers
+    // but never from a household already linked to it, which keeps its own copy
+    // of the name, phone and address.
+    var archived: Boolean = false,
     // Held raw (Class A, same as Kinfolk/Kin/KinCareSession): this app writes an
     // ISO String, but portal `submitVetClinic` writes serverTimestamp(), so a
     // typed String throws on decode for every kinfolk-submitted clinic and takes
@@ -1064,10 +1074,26 @@ data class VetClinicsSnapshot(
  * record. [pending] is true only for a kinfolk-submitted clinic awaiting
  * approval; a staff/operator submission is never pending.
  */
+/** One clinic offered as a possible match, for the operator to choose between. */
+data class VetClinicCandidate(
+    val id: String = "",
+    val name: String = "",
+    val address: String = "",
+    val phone: String = "",
+    val isEmergency: Boolean = false,
+    /** False for a submission still awaiting operator approval. */
+    val verified: Boolean = true,
+)
 data class SubmitVetClinicResult(
     val clinicId: String,
     val created: Boolean,
     val pending: Boolean,
+    /**
+     * True when the callable found near-matches and wrote NOTHING. [candidates]
+     * must be shown and the operator must choose (operator ruling 2026-08-01).
+     */
+    val needsChoice: Boolean = false,
+    val candidates: List<VetClinicCandidate> = emptyList(),
 )
 
 /**

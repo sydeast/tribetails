@@ -65,6 +65,12 @@ data class ProfileUiState(
     // Phase 2 household-notes migration: the structured HouseholdData backing the
     // gap list on the dossier migration box. null while still loading.
     val householdData: HouseholdData? = null,
+    /**
+     * The household vet, resolved from `householdData`'s clinic id through the
+     * catalog. The profile DISPLAYS it and Household Data authors it (operator
+     * ruling 2026-08-01); it used to be read off the kinfolk doc.
+     */
+    val householdVet: HouseholdVet = HouseholdVet(),
     val isLoading: Boolean = true,
     val error: String? = null,
     // Custom KINFOLK form_schemas so saved dynamic-field VALUES render on the profile too.
@@ -122,24 +128,9 @@ data class EditKinfolkUiState(
     val emergencyContactPhone: String = "",
     val emergencyContactRelation: String = "",
 
-    // Household-level Vet Clinic.
-    //
-    // `vetClinicId` joins the household to a `vet_clinics` row; the three
-    // strings stay DENORMALIZED beside it so an Auntie at a door has the clinic
-    // phone off the household record without a second read, and a clinic
-    // renamed in the shared bank cannot blank the number on file. Every
-    // household that predates the picker has the strings and an EMPTY id, which
-    // is a valid state the form renders rather than treating as broken.
-    val vetClinicId: String = "",
-    val vetClinicName: String = "",
-    val vetClinicPhone: String = "",
-    val vetClinicAddress: String = "",
-
-    // The 24 hour clinic, same id + denormalized shape.
-    val emergencyVetClinicId: String = "",
-    val emergencyVetClinicName: String = "",
-    val emergencyVetClinicPhone: String = "",
-    val emergencyVetClinicAddress: String = "",
+    // NO VET FIELDS. The household vet is authored on Household Data, against
+    // the shared `vet_clinics` catalog (operator ruling 2026-08-01). Keeping
+    // them here is what made the kinfolk doc a second writable copy.
 
     // Admin & Relationship
     val internalNotes: String = "",
@@ -514,6 +505,10 @@ class DirectoryViewModel(
                     upcomingVisits = upcomingVisits,
                     kinfolkInvoices = kinfolkInvoices,
                     householdData = householdData,
+                    householdVet = resolveHouseholdVet(
+                        householdData,
+                        repository.getVetClinicsOnce().getOrNull().orEmpty(),
+                    ),
                     isLoading = false
                 )
                 // Custom KINFOLK form_schemas so saved dynamic-field values render on the
@@ -657,123 +652,15 @@ class DirectoryViewModel(
     // create attempt produced it. Any OTHER change to the selection -- a fresh
     // pick, or an explicit clear -- makes it stale, so all four entry points
     // clear it themselves rather than relying on every caller to remember to.
-    fun selectVetClinic(clinic: com.tribetails.auntieos.data.model.VetClinic) {
-        val sel = vetClinicSelectionOf(clinic)
-        _editKinfolkState.value = _editKinfolkState.value.copy(
-            vetClinicId      = sel.clinicId,
-            vetClinicName    = sel.name,
-            vetClinicPhone   = sel.phone,
-            vetClinicAddress = sel.address,
-        )
-        _vetClinicDedupeNote.value = null
-    }
 
     /** Empties ALL FOUR fields. A cleared vet must not leave a name behind. */
-    fun clearVetClinic() {
-        _editKinfolkState.value = _editKinfolkState.value.copy(
-            vetClinicId = "", vetClinicName = "", vetClinicPhone = "", vetClinicAddress = "",
-        )
-        _vetClinicDedupeNote.value = null
-    }
 
-    fun selectEmergencyVetClinic(clinic: com.tribetails.auntieos.data.model.VetClinic) {
-        val sel = vetClinicSelectionOf(clinic)
-        _editKinfolkState.value = _editKinfolkState.value.copy(
-            emergencyVetClinicId      = sel.clinicId,
-            emergencyVetClinicName    = sel.name,
-            emergencyVetClinicPhone   = sel.phone,
-            emergencyVetClinicAddress = sel.address,
-        )
-        _emergencyVetClinicDedupeNote.value = null
-    }
 
-    fun clearEmergencyVetClinic() {
-        _editKinfolkState.value = _editKinfolkState.value.copy(
-            emergencyVetClinicId = "", emergencyVetClinicName = "",
-            emergencyVetClinicPhone = "", emergencyVetClinicAddress = "",
-        )
-        _emergencyVetClinicDedupeNote.value = null
-    }
 
-    // A dedupe hit is not an error and must not be silent: the operator asked to
-    // CREATE a clinic and got an EXISTING one selected instead, and saying which
-    // clinic is the difference between that reading as "it worked" and as
-    // "nothing happened" (mirrors web VetClinicPicker's dedupedName). Kept as a
-    // pair, one per picker instance, so a dedupe on the day vet does not render
-    // under the emergency vet's card or vice versa.
-    private val _vetClinicDedupeNote = MutableStateFlow<String?>(null)
-    val vetClinicDedupeNote: StateFlow<String?> = _vetClinicDedupeNote.asStateFlow()
-    private val _emergencyVetClinicDedupeNote = MutableStateFlow<String?>(null)
-    val emergencyVetClinicDedupeNote: StateFlow<String?> = _emergencyVetClinicDedupeNote.asStateFlow()
-    fun clearVetClinicDedupeNote() { _vetClinicDedupeNote.value = null }
-    fun clearEmergencyVetClinicDedupeNote() { _emergencyVetClinicDedupeNote.value = null }
-
-    /**
-     * The pinned "create this clinic" action under the search dropdown.
-     *
-     * Goes through `submitVetClinic` rather than the old direct
-     * `createVetClinic` write, because that callable dedupes on a NORMALIZED
-     * name and hands back the EXISTING id on a match. So a double tap, or a
-     * clinic the bank already holds under a different capitalisation, SELECTS
-     * that record instead of writing a second copy of it. Staff callers land
-     * `verified: true`, so the clinic is live for households at once.
-     *
-     * `isEmergency` is stamped at creation for the emergency instance, so the
-     * new clinic is already flagged and appears in that picker next time.
-     */
-    fun createVetClinicFromSearch(
-        name: String,
-        phone: String = "",
-        address: String = "",
-        website: String = "",
-        isEmergency: Boolean = false,
-        forEmergencySlot: Boolean = false,
-    ) {
-        val trimmed = name.trim()
-        if (trimmed.isBlank()) return
-        viewModelScope.launch {
-            repository.submitVetClinicDetailed(
-                com.tribetails.auntieos.data.model.VetClinic(
-                    name = trimmed,
-                    phone = phone.trim(),
-                    address = address.trim(),
-                    website = website.trim(),
-                    isEmergency = isEmergency,
-                )
-            ).onSuccess { result ->
-                // On a DEDUPE hit (result.created == false) the callable returns
-                // the id of a clinic already in the bank. Prefer that record's
-                // stored details over what was just typed: the bank's copy is the
-                // curated one, and replacing a good phone number with a blank
-                // from a hurried retype is the failure this guards. Falls back to
-                // the typed values for a genuinely new clinic, which is not in
-                // the catalog snapshot yet.
-                val existing = vetClinicsFlow.value.firstOrNull { it.id == result.clinicId }
-                val selected = existing ?: com.tribetails.auntieos.data.model.VetClinic(
-                    id = result.clinicId,
-                    name = trimmed,
-                    phone = phone.trim(),
-                    address = address.trim(),
-                    website = website.trim(),
-                    isEmergency = isEmergency,
-                )
-                val dedupeNote = if (result.created) null else
-                    "${selected.name} was already in the catalog, so this household is linked to that record instead of a duplicate."
-                // select*VetClinic clears its dedupe note as part of committing a
-                // selection (see the note above those two functions), so it MUST
-                // run before the note below is set, not after, or the note this
-                // create just produced would be wiped by its own selection.
-                if (forEmergencySlot) {
-                    selectEmergencyVetClinic(selected)
-                    _emergencyVetClinicDedupeNote.value = dedupeNote
-                } else {
-                    selectVetClinic(selected)
-                    _vetClinicDedupeNote.value = dedupeNote
-                }
-            }
-        }
-    }
-
+    // `createVetClinicFromSearch` lived here to serve Kinfolk Edit's vet picker.
+    // That picker is gone (the vet is authored on Household Data now), so the
+    // create flow moved with it rather than being left as a second write path
+    // into the shared catalog from a screen that no longer shows a vet.
     // observeVetClinicsOrFail (not the plain observeVetClinics) so a load
     // FAILURE stays distinguishable from a genuinely empty catalog: scan() folds
     // each VetClinicsSnapshot into a running state that keeps the last good
@@ -931,14 +818,6 @@ class DirectoryViewModel(
             emergencyContactPhone = kinfolk.emergencyContactPhone,
             emergencyContactRelation = kinfolk.emergencyContactRelation,
 
-            vetClinicId      = kinfolk.vetClinicId,
-            vetClinicName    = kinfolk.vetClinicName,
-            vetClinicPhone   = kinfolk.vetClinicPhone,
-            vetClinicAddress = kinfolk.vetClinicAddress,
-            emergencyVetClinicId      = kinfolk.emergencyVetClinicId,
-            emergencyVetClinicName    = kinfolk.emergencyVetClinicName,
-            emergencyVetClinicPhone   = kinfolk.emergencyVetClinicPhone,
-            emergencyVetClinicAddress = kinfolk.emergencyVetClinicAddress,
 
             internalNotes = kinfolk.internalNotes,
             referralSource = kinfolk.referralSource,
@@ -1088,14 +967,6 @@ class DirectoryViewModel(
         emergencyContactPhone = state.emergencyContactPhone,
         emergencyContactRelation = state.emergencyContactRelation,
 
-        vetClinicId      = state.vetClinicId,
-        vetClinicName    = state.vetClinicName,
-        vetClinicPhone   = state.vetClinicPhone,
-        vetClinicAddress = state.vetClinicAddress,
-        emergencyVetClinicId      = state.emergencyVetClinicId,
-        emergencyVetClinicName    = state.emergencyVetClinicName,
-        emergencyVetClinicPhone   = state.emergencyVetClinicPhone,
-        emergencyVetClinicAddress = state.emergencyVetClinicAddress,
 
         internalNotes = state.internalNotes,
         referralSource = state.referralSource,
@@ -1212,9 +1083,18 @@ class DirectoryViewModel(
 
             val kin = _profileState.value.kinList.find { it.id == kinId }
             if (kin != null) {
-                // Inherit the household vet from the owning Kinfolk (read-only on Kin).
+                // The owner is still needed for the household NAME.
                 val owner = _directoryState.value.allKinfolk.find { it.id == kin.kinfolkId }
                     ?: _profileState.value.kinfolk?.takeIf { it.id == kin.kinfolkId }
+                // The vet is inherited from `household_data`, resolved through the
+                // clinic catalog, and shown read-only on the kin. It used to be
+                // read off the owning Kinfolk doc, which is the copy that made
+                // the vet authored in two places at once. A failed read leaves
+                // the vet blank rather than showing a stale one.
+                val householdVet = resolveHouseholdVet(
+                    repository.getHouseholdData(kin.kinfolkId).getOrNull(),
+                    repository.getVetClinicsOnce().getOrNull().orEmpty(),
+                )
                 _editKinState.value = EditKinUiState(
                     kinId = kin.id,
                     kinfolkId = kin.kinfolkId,
@@ -1240,9 +1120,13 @@ class DirectoryViewModel(
                     profilePictureUrl = kin.profilePictureUrl,
                     householdName = listOf(owner?.firstName, owner?.lastName)
                         .mapNotNull { it?.takeIf(String::isNotBlank) }.joinToString(" ").ifBlank { "household" },
-                    householdVetName = owner?.vetClinicName.orEmpty(),
-                    householdVetPhone = owner?.vetClinicPhone.orEmpty(),
-                    householdVetAddress = owner?.vetClinicAddress.orEmpty(),
+                    // The household vet, resolved from `household_data` through
+                    // the clinic catalog. It used to read `owner.vetClinicName`
+                    // off the kinfolk doc, the copy that made the vet authored
+                    // in two places at once.
+                    householdVetName = householdVet.primary.name,
+                    householdVetPhone = householdVet.primary.phone,
+                    householdVetAddress = householdVet.primary.address,
                     isLoading = false
                 )
                 // Fetch the KIN-placed form_schemas for the precare checklist. A load

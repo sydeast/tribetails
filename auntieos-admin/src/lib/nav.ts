@@ -37,7 +37,8 @@ export type Destination =
   | 'accountSettings'
   | 'myNotifications'
   | 'notificationGate'
-  | 'householdMembers';
+  | 'householdMembers'
+  | 'vetClinics';
 
 export type NavGroup = 'den' | 'careOps' | 'more';
 
@@ -114,6 +115,17 @@ export const NAV: readonly NavEntry[] = [
     title: 'Members and invites',
     group: 'den',
     slug: 'household-members',
+    contextual: true,
+  },
+  // The shared vet bank (punchlist B4). Contextual rather than pinned: it is a
+  // catalog the operator tidies occasionally, reached from Settings and from a
+  // household's vet picker, not a daily destination that earns a rail slot. The
+  // spec files it under Settings; this keeps it addressable by URL either way.
+  {
+    dest: 'vetClinics',
+    title: 'Vet clinics',
+    group: 'more',
+    slug: 'vet-clinics',
     contextual: true,
   },
 ];

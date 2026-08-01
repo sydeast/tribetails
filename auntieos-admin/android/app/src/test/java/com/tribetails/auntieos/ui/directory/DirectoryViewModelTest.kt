@@ -54,6 +54,8 @@ class DirectoryViewModelTest {
         coEvery { kinCareRepository.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { invoiceRepository.getInvoicesForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repository.getHouseholdData(any()) } returns Result.success(null)
+        // The profile resolves the household vet through the clinic catalog.
+        coEvery { repository.getVetClinicsOnce() } returns Result.success(emptyList())
         coEvery { repository.listFormSchemas() } returns Result.success(emptyList())
         coEvery { repository.clearDossierHouseholdNotes(any()) } returns Result.success(Unit)
         // Phase 3: refresh-intelligence (synthesize) on the directory VM.

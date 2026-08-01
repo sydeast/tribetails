@@ -44,9 +44,6 @@ export interface KinfolkProfile {
   emergencyContactPhone: string;
   emergencyContactRelation: string;
   // Vet clinic (household-level)
-  vetClinicName: string;
-  vetClinicAddress: string;
-  vetClinicPhone: string;
   /**
    * The `vet_clinics` doc this household's vet is joined to, or '' for a legacy
    * record whose vet is a plain typed string. The three fields above stay
@@ -56,12 +53,7 @@ export interface KinfolkProfile {
    * Every household predating 2026-07-25 has the strings and no id, which is a
    * valid state the UI renders rather than treating as broken.
    */
-  vetClinicId: string;
   // Emergency vet (household-level, same id + denormalized shape)
-  emergencyVetClinicId: string;
-  emergencyVetClinicName: string;
-  emergencyVetClinicAddress: string;
-  emergencyVetClinicPhone: string;
 }
 
 const EMPTY: Omit<KinfolkProfile, '_id'> = {
@@ -69,9 +61,6 @@ const EMPTY: Omit<KinfolkProfile, '_id'> = {
   secondaryPhone: '', secondaryEmail: '', preferredContactMethod: '', bestTimeToContact: '',
   serviceAddress: '', gateCode: '', parkingInstructions: '', entryNotes: '', wifiName: '', wifiPassword: '',
   emergencyContactName: '', emergencyContactPhone: '', emergencyContactRelation: '',
-  vetClinicName: '', vetClinicAddress: '', vetClinicPhone: '', vetClinicId: '',
-  emergencyVetClinicId: '', emergencyVetClinicName: '', emergencyVetClinicAddress: '',
-  emergencyVetClinicPhone: '',
 };
 
 /** Defensive field-by-field merge over the empty shape (never `undefined`, never fabricates). */
@@ -104,14 +93,6 @@ export function mergeKinfolkProfile(id: string, raw: Record<string, unknown> | u
     emergencyContactName: s(r.emergencyContactName, EMPTY.emergencyContactName),
     emergencyContactPhone: s(r.emergencyContactPhone, EMPTY.emergencyContactPhone),
     emergencyContactRelation: s(r.emergencyContactRelation, EMPTY.emergencyContactRelation),
-    vetClinicName: s(r.vetClinicName, EMPTY.vetClinicName),
-    vetClinicAddress: s(r.vetClinicAddress, EMPTY.vetClinicAddress),
-    vetClinicPhone: s(r.vetClinicPhone, EMPTY.vetClinicPhone),
-    vetClinicId: s(r.vetClinicId, EMPTY.vetClinicId),
-    emergencyVetClinicId: s(r.emergencyVetClinicId, EMPTY.emergencyVetClinicId),
-    emergencyVetClinicName: s(r.emergencyVetClinicName, EMPTY.emergencyVetClinicName),
-    emergencyVetClinicAddress: s(r.emergencyVetClinicAddress, EMPTY.emergencyVetClinicAddress),
-    emergencyVetClinicPhone: s(r.emergencyVetClinicPhone, EMPTY.emergencyVetClinicPhone),
   };
 }
 

@@ -150,29 +150,10 @@ export const kinfolkEditSchema = z.object({
     .refine((v) => isValidPhone(v), { message: 'An emergency contact phone is required.' }),
   emergencyContactRelation: z.string(),
 
-  /**
-   * The vet fields are no longer typed by hand: `VetClinicPicker` writes them
-   * from a `vet_clinics` row (operator ruling, issue #13, no free-text
-   * passthrough). The rules below therefore stay PERMISSIVE on purpose.
-   *
-   * They are not validating operator input any more, they are validating what a
-   * legacy household already carries. Every record on file today holds these as
-   * plain strings with no `vetClinicId`, and some of those phone numbers are
-   * "call the after-hours line" or a number with an extension. Tightening the
-   * rule would put a blocking error on a field the operator did not type, on a
-   * screen they opened to fix something else. The picker is what guarantees new
-   * values are well-formed; the schema's job here is to let old ones through.
-   */
-  vetClinicName: z.string(),
-  vetClinicAddress: z.string(),
-  vetClinicPhone: z.string(),
-  /** '' means not linked to the shared catalog, which is every legacy household. */
-  vetClinicId: z.string(),
-
-  emergencyVetClinicId: z.string(),
-  emergencyVetClinicName: z.string(),
-  emergencyVetClinicAddress: z.string(),
-  emergencyVetClinicPhone: z.string(),
+  // NO VET FIELDS. The household vet moved to `household_data`, catalog-linked
+  // by clinic id (operator ruling 2026-08-01, page-specs 04 item 3). This
+  // schema used to carry all eight, because this screen used to author them,
+  // which is exactly what made the kinfolk doc a second writable copy.
 });
 
 export type KinfolkEditInput = z.infer<typeof kinfolkEditSchema>;

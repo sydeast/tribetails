@@ -95,7 +95,26 @@ const phone = z
  * sitting; the rules here govern SHAPE, never presence.
  */
 export const householdDataSchema = z.object({
-  // Veterinary
+  /**
+   * THE CANONICAL HOUSEHOLD VET (operator ruling 2026-08-01: "vet info lives on
+   * household data, it can be seen on the kin profile", matching page-specs
+   * 04-kinfolk-profile.md item 3).
+   *
+   * A `vet_clinics` document id, NOT a copied string. Name, phone, address and
+   * hours are resolved through it at read time, so there is exactly one copy of
+   * a clinic's details in the product and correcting the clinic in the manager
+   * corrects it everywhere at once. That is what makes the number somebody
+   * reads in an emergency a number somebody can fix.
+   *
+   * The seven free-text `primaryVet*` / `emergencyVet*` fields below are the
+   * LEGACY fallback, kept readable for a household that predates the catalog
+   * link and never written again. Blank id means unlinked, which both clients
+   * label rather than hide.
+   */
+  primaryVetClinicId: line,
+  /** The 24-hour clinic. A DISTINCT practice from the primary, never folded in. */
+  emergencyVetClinicId: line,
+  // Veterinary (legacy free text: read when unlinked, never authored)
   primaryVetName: line,
   primaryVetPhone: phone,
   primaryVetAddress: text,
@@ -165,7 +184,7 @@ export function validateHouseholdData(input: HouseholdFields): HouseholdFieldErr
 
 // ── The catalog ─────────────────────────────────────────────────────────────
 
-export type HouseholdInputKind = 'line' | 'multiline' | 'phone';
+export type HouseholdInputKind = 'line' | 'multiline' | 'phone' | 'clinicId';
 
 export interface HouseholdFieldSpec {
   readonly key: HouseholdFieldKey;
@@ -183,6 +202,31 @@ export interface HouseholdSectionSpec {
   readonly title: string;
   readonly blurb: string;
   readonly fields: readonly HouseholdFieldSpec[];
+  /**
+   * Set when the section is edited by a PURPOSE-BUILT control rather than the
+   * generic text dialog. Only the veterinary section carries it.
+   *
+   * The vet is chosen from the `vet_clinics` catalog by search (operator ruling
+   * 2026-08-01: "Vets are not a open string textbox, it is a dropdown and
+   * search feature"), so its two stored values are clinic IDS. Handing those to
+   * a text dialog would let an operator type a raw document id, which is both
+   * unusable and a way to point a household at an arbitrary clinic.
+   *
+   * `kinfolk` owns the household vet (`vetClinic*` regular and
+   * `emergencyVetClinic*` emergency, both picked from the `vet_clinics` catalog
+   * and both carrying the clinic's id). The seven fields listed on the section
+   * are the OLD free-text copy. They stay in the schema and stay readable, so no
+   * household silently loses what is on file, but they are no longer editable
+   * here and nothing writes them.
+   *
+   * WHY KINFOLK WON, on the screen someone reads the emergency number off:
+   * only the catalog-linked copy can be CORRECTED. `updateVetClinic` fixes a
+   * wrong clinic phone number once and fans it out to every linked household.
+   * Free text on this record inherits nothing, so leaving it authoritative
+   * would have meant the number read under pressure was the one copy in the
+   * product that no correction could ever reach.
+   */
+  readonly editor?: 'vetPicker';
 }
 
 /**
@@ -213,8 +257,13 @@ export const HOUSEHOLD_SECTIONS: readonly HouseholdSectionSpec[] = [
   {
     id: 'veterinary',
     title: 'Veterinary',
-    blurb: 'Who to call, and who to call at 2am.',
+    blurb: 'Who to call, and who to call at 2am. Chosen from the shared vet bank.',
+    editor: 'vetPicker',
     fields: [
+      // The canonical values. Everything shown for a linked household resolves
+      // from these through `vet_clinics`, so there is one copy to correct.
+      { key: 'primaryVetClinicId', label: 'Primary vet', kind: 'clinicId' },
+      { key: 'emergencyVetClinicId', label: 'Emergency vet', kind: 'clinicId' },
       { key: 'primaryVetName', label: 'Primary vet', kind: 'line' },
       { key: 'primaryVetPhone', label: 'Primary vet phone', kind: 'phone' },
       { key: 'primaryVetHours', label: 'Primary vet hours', kind: 'line' },
@@ -289,6 +338,30 @@ export const HOUSEHOLD_SECTIONS: readonly HouseholdSectionSpec[] = [
 export const HOUSEHOLD_FIELD_KEYS: readonly HouseholdFieldKey[] = HOUSEHOLD_SECTIONS.flatMap(
   (section) => section.fields.map((field) => field.key),
 );
+
+/** The sections the generic text dialog may edit (everything but the vet picker). */
+export const EDITABLE_HOUSEHOLD_SECTIONS: readonly HouseholdSectionSpec[] =
+  HOUSEHOLD_SECTIONS.filter((s) => s.editor === undefined);
+
+/**
+ * The seven free-text vet fields, retired as an authoring surface by A2.
+ *
+ * Still read, still shown when populated, never written. The migration script
+ * (`mytribe/scripts/backfillHouseholdVetToKinfolk.ts`) reads exactly this list,
+ * so it and the screen cannot drift into disagreeing about what "the old copy"
+ * means.
+ */
+export const LEGACY_VET_FIELD_KEYS: readonly HouseholdFieldKey[] =
+  HOUSEHOLD_SECTIONS.find((s) => s.id === 'veterinary')
+    ?.fields.filter((f) => f.kind !== 'clinicId')
+    .map((f) => f.key) ?? [];
+
+/** The legacy vet fields still carrying a value, so leftovers fail loud, not silent. */
+export function legacyVetLeftovers(values: HouseholdFields): HouseholdFieldSpec[] {
+  const section = HOUSEHOLD_SECTIONS.find((s) => s.id === 'veterinary');
+  if (section === undefined) return [];
+  return section.fields.filter((f) => f.kind !== 'clinicId' && values[f.key].trim() !== '');
+}
 
 /** The all-blank record. Every field defaults to "", matching the Kotlin model. */
 export function blankHouseholdFields(): HouseholdFields {

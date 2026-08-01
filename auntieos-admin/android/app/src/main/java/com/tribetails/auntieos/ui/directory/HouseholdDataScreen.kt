@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -54,7 +55,7 @@ fun HouseholdDataScreen(
                 if (state.dossierNotes.isNotBlank()) {
                     item { DossierReferenceCard(state.dossierNotes) }
                 }
-                item { VeterinaryInfoCard(viewModel) }
+                item { VeterinaryInfoCard(viewModel, onOpenProfile = onBack) }
                 item { HouseholdItemsCard(viewModel) }
                 item { RoutinesCard(viewModel) }
                 item { EmergencySafetyCard(viewModel) }
@@ -117,85 +118,136 @@ private fun DossierReferenceCard(notes: String) {
     }
 }
 
+/**
+ * The veterinary card, READ THROUGH from the household profile (punchlist A2).
+ *
+ * These were seven free-text inputs. That made the vet a second, independent
+ * store with no tie to the shared clinic catalog, so this card and the
+ * household profile could disagree and neither said so, on the screen a sitter
+ * reads the emergency number off under pressure.
+ *
+ * The kinfolk record wins because only the catalog-linked copy can be
+ * CORRECTED: `updateVetClinic` fixes a wrong clinic phone number once and fans
+ * it out to every linked household. Free text here inherited nothing, so
+ * leaving it authoritative would have meant the number read under pressure was
+ * the one copy in the product no correction could ever reach.
+ *
+ * Hours come from the CLINIC. Every household using a practice shares its
+ * opening hours, so `primaryVetHours` (one copy per household, corrected never)
+ * is retired in favour of one copy on the catalog row.
+ */
 @Composable
-private fun VeterinaryInfoCard(viewModel: HouseholdDataViewModel) {
+private fun VeterinaryInfoCard(viewModel: HouseholdDataViewModel, onOpenProfile: () -> Unit) {
     val state by viewModel.uiState.collectAsState()
-    val data = state.householdData
-
+    val vet = state.vet
+    val leftovers = legacyVetLeftovers(state.householdData)
     AuntieCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(
-                "VETERINARY INFORMATION",
-                style = AuntieTheme.typography.labelSmall,
-                color = AuntieTheme.colors.kinfolkOrange
-            )
-
-            Text("Primary Veterinarian", style = AuntieTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-
-            AuntieField(
-                value = data.primaryVetName,
-                onValueChange = viewModel::updatePrimaryVetName,
-                label = fieldLabel("Vet Name", data.primaryVetName),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AuntieField(
-                    value = data.primaryVetPhone,
-                    onValueChange = viewModel::updatePrimaryVetPhone,
-                    label = fieldLabel("Phone", data.primaryVetPhone),
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "VETERINARY INFORMATION",
+                    style = AuntieTheme.typography.labelSmall,
+                    color = AuntieTheme.colors.kinfolkOrange,
                     modifier = Modifier.weight(1f),
                 )
-                AuntieField(
-                    value = data.primaryVetHours,
-                    onValueChange = viewModel::updatePrimaryVetHours,
-                    label = fieldLabel("Hours", data.primaryVetHours),
-                    modifier = Modifier.weight(1f),
-                )
+                GhostButton(label = "Edit on the profile", onClick = onOpenProfile)
             }
-
-            AuntieField(
-                value = data.primaryVetAddress,
-                onValueChange = viewModel::updatePrimaryVetAddress,
-                label = fieldLabel("Address", data.primaryVetAddress),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = false,
-                minLines = 2,
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            Text("Emergency Veterinarian", style = AuntieTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-
-            AuntieField(
-                value = data.emergencyVetName,
-                onValueChange = viewModel::updateEmergencyVetName,
-                label = fieldLabel("Emergency Vet Name", data.emergencyVetName),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            AuntieField(
-                value = data.emergencyVetPhone,
-                onValueChange = viewModel::updateEmergencyVetPhone,
-                label = fieldLabel("Emergency Phone", data.emergencyVetPhone),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            AuntieField(
-                value = data.emergencyVetAddress,
-                onValueChange = viewModel::updateEmergencyVetAddress,
-                label = fieldLabel("Emergency Address", data.emergencyVetAddress),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = false,
-                minLines = 2,
-            )
+            when {
+                // Fail loud: an unreadable vet must not look like a household
+                // that simply has not chosen one.
+                state.vetError != null -> AuntieBanner(
+                    tone = AuntieBannerTone.Error,
+                    title = "Couldn't load the household's vet",
+                ) {
+                    Text(state.vetError!!, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+                }
+                vet == null -> Text(
+                    "Reading the household's vet...",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim,
+                )
+                else -> {
+                    if (!(vet.primary.hasAny || vet.emergency.hasAny)) {
+                        Text(
+                            "No vet on file for this household. Pick one on the household profile and it appears here.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.textDim,
+                        )
+                    }
+                    Text("Primary Veterinarian", style = AuntieTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    VetFactRow("Vet Name", vet.primary.name)
+                    VetFactRow("Phone", vet.primary.phone)
+                    VetFactRow("Hours", vet.primary.hours)
+                    VetFactRow("Address", vet.primary.address)
+                    // Not an error, but a fact worth stating: with no clinic id
+                    // there is nothing for a catalog correction to match on, so
+                    // fixing this clinic in the vet bank will not reach here.
+                    if (vet.primary.hasAny && !vet.primary.linked) {
+                        AuntieBanner(
+                            tone = AuntieBannerTone.Warning,
+                            title = "This vet is not linked to the catalog",
+                        ) {
+                            Text(
+                                "The name and number above are on file, but no clinic is selected, so correcting this clinic in the vet bank will not update this household. Re-pick it on the profile to link them.",
+                                style = AuntieTheme.typography.bodySmall,
+                                color = AuntieTheme.colors.textDim,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    // The EMERGENCY vet stays a distinct clinic, never folded
+                    // into the primary: "who to call" and "who to call at 2am"
+                    // are different practices and the whole card exists to keep
+                    // them apart.
+                    Text("Emergency Veterinarian", style = AuntieTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    VetFactRow("Emergency Vet Name", vet.emergency.name)
+                    VetFactRow("Emergency Phone", vet.emergency.phone)
+                    VetFactRow("Emergency Hours", vet.emergency.hours)
+                    VetFactRow("Emergency Address", vet.emergency.address)
+                }
+            }
+            // Fail loud, never silent: the record still carries the retired free
+            // text, so it is shown rather than dropped, and named as superseded
+            // rather than presented as a second opinion.
+            if (leftovers.isNotEmpty()) {
+                AuntieBanner(
+                    tone = AuntieBannerTone.Warning,
+                    title = "Older vet notes are still on this record",
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            "These were typed here before the vet moved to the household profile. They are not used anywhere and are not kept up to date. Whatever is left below is a duplicate or a conflict to resolve by hand.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.textDim,
+                        )
+                        leftovers.forEach { (label, value) -> VetFactRow(label, value) }
+                    }
+                }
+            }
         }
     }
 }
-
+/** One read-only label/value line. Blank renders "Not set" rather than hiding. */
+@Composable
+private fun VetFactRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            label,
+            style = AuntieTheme.typography.labelSmall,
+            color = AuntieTheme.colors.textDim,
+            modifier = Modifier.weight(0.4f),
+        )
+        Text(
+            value.ifBlank { "Not set" },
+            style = AuntieTheme.typography.bodySmall,
+            color = if (value.isBlank()) AuntieTheme.colors.textFaint else AuntieTheme.colors.textPrimary,
+            modifier = Modifier.weight(0.6f),
+        )
+    }
+}
 @Composable
 private fun HouseholdItemsCard(viewModel: HouseholdDataViewModel) {
     val state by viewModel.uiState.collectAsState()

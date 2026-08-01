@@ -1,4 +1,5 @@
 import { addDoc, collection, doc, getDoc, getDocs, limit, query, updateDoc, where } from 'firebase/firestore';
+import { type CollectionSpec } from '../lib/firestore';
 import { db } from '../lib/firebase';
 import { str } from '../lib/coerce';
 import {
@@ -155,3 +156,18 @@ export async function saveHouseholdSection(
   await updateDoc(doc(db, 'household_data', record._id), changes);
   return next;
 }
+
+/**
+ * Bounded live query over every household record, for the vet clinics manager's
+ * per-clinic usage badge. Same 500 cap and shape as `VET_CLINICS_QUERY`.
+ *
+ * The badge reads `household_data` because that is where the household vet
+ * lives (operator ruling 2026-08-01). It used to scan `kinfolk`, which after
+ * the move would have counted a field nothing writes and reported "No
+ * households" on every card.
+ */
+export const HOUSEHOLD_DATA_QUERY: CollectionSpec = {
+  path: 'household_data',
+  order: ['kinfolkId', 'asc'],
+  max: 500,
+};

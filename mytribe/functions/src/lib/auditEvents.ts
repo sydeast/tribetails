@@ -250,6 +250,25 @@ export const AUDIT_EVENTS = {
   // portalLogo) and the action, never the URL: the asset is operator-supplied
   // branding, and the doc itself is the record of what it currently is.
   BRANDING_ASSET_UPDATED: 'BRANDING_ASSET_UPDATED',
+
+  // Shared `vet_clinics` catalog writes (punchlist B4). Until these landed, the
+  // only mutation on this collection was `submitVetClinic` (create, unaudited)
+  // plus two DIRECT client writes from the Kotlin trees, so a clinic's phone
+  // number could be changed, or the row hard-deleted, with nothing recorded.
+  //
+  // This collection is audited where the create path is not, because an update
+  // FANS OUT: correcting a clinic rewrites the denormalized name/phone/address
+  // on every `kinfolk` doc linked to it. One call can therefore change the
+  // number a sitter dials in an emergency across many households, so the
+  // payload carries that household count and the trail says how far it reached.
+  VET_CLINIC_UPDATED: 'VET_CLINIC_UPDATED',
+  // Archive and unarchive share one event, separated by `payload.archived`,
+  // matching the set-and-clear-on-one-doc convention in CALLABLE_CONTRACT.md.
+  VET_CLINIC_ARCHIVED: 'VET_CLINIC_ARCHIVED',
+  // Refusals: a duplicate rename, a missing clinic, a redundant archive flip.
+  // A success-only trail cannot answer "who tried to rename a clinic onto
+  // another one", which is the shape an accidental catalog merge takes.
+  VET_CLINIC_WRITE_REFUSED: 'VET_CLINIC_WRITE_REFUSED',
 } as const;
 
 export type AuditEvent = (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];

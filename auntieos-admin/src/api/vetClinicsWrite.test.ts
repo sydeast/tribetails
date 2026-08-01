@@ -25,6 +25,10 @@ describe('submitVetClinic', () => {
       address: '1 Mill St',
       website: 'https://riverside.example',
       isEmergency: true,
+      // Empty on a first attempt, so the SAFE path is the default: a caller
+      // that sends nothing can only ever be handed candidates, never create
+      // silently over an existing clinic.
+      acknowledgedMatchIds: [],
     });
   });
 
@@ -37,6 +41,7 @@ describe('submitVetClinic', () => {
       address: '',
       website: '',
       isEmergency: false,
+      acknowledgedMatchIds: [],
     });
   });
 
@@ -71,5 +76,19 @@ describe('submitVetClinic', () => {
   it('lets a callable failure propagate so the caller can fail loud', async () => {
     callMock.mockRejectedValue(new Error('permission-denied'));
     await expect(submitVetClinic({ name: 'New Vet' })).rejects.toThrow('permission-denied');
+  });
+
+  /**
+   * Operator ruling 2026-08-01: creating over a near match requires echoing the
+   * ids the caller was shown. Not a boolean, which a client that rendered
+   * nothing could set.
+   */
+  it('forwards the acknowledged ids when the caller confirms', async () => {
+    callMock.mockResolvedValue({ status: 'created', clinicId: 'c2', created: true, pending: false, candidates: [] });
+    await submitVetClinic({ name: 'Corner Vet' }, ['riverside']);
+    expect(callMock).toHaveBeenCalledWith(
+      'submitVetClinic',
+      expect.objectContaining({ acknowledgedMatchIds: ['riverside'] }),
+    );
   });
 });

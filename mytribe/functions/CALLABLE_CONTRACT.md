@@ -881,17 +881,103 @@ closure so the operator can act on them manually.
   admin reads `vet_clinics` directly instead, so it still sees pending entries.
 
 ### submitVetClinic
-- req `{ name: string, phone?: string, address?: string, website?: string, isEmergency?: boolean }`
-- res `{ clinicId: string, created: boolean, pending: boolean }`
-- Deduped by normalized name (lowercased, whitespace collapsed). A match returns
-  the EXISTING id with `created: false`, so a caller selects that clinic rather
-  than writing a duplicate.
+- req `{ name: string, phone?: string, address?: string, website?: string, isEmergency?: boolean, acknowledgedMatchIds?: string[] }`
+- res `{ status: 'created' | 'needs_choice', clinicId: string, created: boolean, pending: boolean, candidates: Array<{ id, name, address, phone, isEmergency, verified, reason: 'name'|'phone'|'similar' }> }`
+- **A NEAR MATCH IS A CHOICE, NOT A SUBSTITUTION** (operator ruling 2026-08-01).
+  This used to normalize the name, find the first match, and return THAT
+  clinic's id with `created: false`: the caller asked to create and silently got
+  someone else's record. Two practices genuinely can share a name in different
+  cities, so it could point a household at a different phone number on the
+  record read in an emergency.
+- On a match the callable returns `status: 'needs_choice'`, `clinicId: ''`, the
+  `candidates`, and **writes nothing**. The client renders them. Selecting an
+  existing clinic is entirely client-side (it already holds the id and calls
+  nothing). Creating anyway means re-calling with those ids in
+  `acknowledgedMatchIds`.
+- **`acknowledgedMatchIds` is deliberately NOT a `confirmCreate: true` boolean.**
+  A boolean can be set by any client that never rendered anything, which would
+  defeat the ruling. The only way to learn these ids is to have been handed them
+  by the previous call, so echoing them back is server-checkable evidence the
+  user saw the match. The check is recomputed against the CURRENT candidate set,
+  so a match that appeared in between re-triggers the question rather than
+  letting a caller create over a clinic it was never shown. Do not simplify this
+  to a boolean.
+- Match rule (`lib/vetClinicMatch.ts`): identical normalized name, OR the same
+  dialable phone digits, OR one normalized name containing the other. Wider than
+  the old normalized-name-only rule on purpose: now that a match only offers a
+  choice, a false positive costs one tap while a false negative costs a
+  permanent duplicate in a catalog shared with the portal. Archived clinics are
+  excluded; pending ones are included and flagged `verified: false`.
 - `isEmergency` added 2026-07-25 for the AuntieOS picker's emergency-vet field.
   Optional, defaults false, so every payload the kinfolk portal has ever sent
   stays valid. Frozen as the superset in `test/callableContract.test.ts`.
 - Staff callers (`isStaff`, RULING O-6) land `verified: true` / `pending: false`:
   an operator typing a clinic into a household record IS the curation step.
   Kinfolk submissions still land `verified: false` for operator approval.
+
+### updateVetClinic (admin-gated)
+- req `{ clinicId: string, name: string, phone?: string, address?: string, website?: string, hours?: string /* opening hours, on the CLINIC not the household */, notes?: string, isEmergency?: boolean, verified?: boolean /* omit to leave alone */ }`
+- res `{ ok: true, clinicId: string, householdCount: number }`
+- Added 2026-08-01 (punchlist B4). Before it there was no server-side update at
+  all: both Kotlin trees wrote `vet_clinics` directly under `firestore.rules`
+  `write: if isAuntie()`, and the React admin could not edit a clinic at all. A
+  clinic entered with a wrong phone number could not be corrected from the live
+  admin, and that number is what somebody reads in an emergency.
+- **WHOLE-RECORD SAVE, not a patch.** An omitted optional field is CLEARED. The
+  clients edit a form seeded from the current row, and a patch shape could never
+  clear a wrong address.
+- **THERE IS NO FAN-OUT, and that is the point.** `household_data` holds the
+  canonical household vet (operator ruling 2026-08-01) as a CLINIC ID, and
+  resolves name/phone/address/hours through this row at read time. There is
+  exactly one copy of a clinic's details in the product, so a correction is not
+  propagated to households: it simply IS what every linked household reads from
+  the next render on. Nothing is written to any household doc.
+  - `householdCount` reports REACH so the operator can see how far a change
+    lands. It never drives a write.
+  - A household linked through BOTH slots counts once.
+  - A blank `clinicId` matches nothing. Load-bearing: an unlinked household
+    carries an empty id, so a missing guard would make one clinic edit appear to
+    touch every unlinked household in the tribe.
+- Errors (`details.code`): `vet_clinic_not_found` (`not-found`),
+  `vet_clinic_duplicate_name` (`failed-precondition`) when a rename would collide
+  with another row under the SAME normalized-name rule `submitVetClinic` dedupes
+  by. Refused rather than merged: merging two clinics is a decision about which
+  households move, and this callable has no mandate to make it.
+- Audited `VET_CLINIC_UPDATED` (`SUCCESS`; `warn` when households were rewritten,
+  else `info`). Refusals audit `VET_CLINIC_WRITE_REFUSED` at `warn` /
+  `status: 'FAILURE'`. A success-only trail cannot answer "who tried to rename a
+  clinic onto another one".
+- Mirrors: `auntieos-admin/src/api/vetClinicsWrite.ts`, Android
+  `AuntieRepository.updateVetClinic`. Frozen in `test/callableContract.test.ts`.
+
+### archiveVetClinic (admin-gated)
+- req `{ clinicId: string, archived: boolean /* false unarchives */ }`
+- res `{ ok: true, clinicId: string, archived: boolean, householdCount: number }`
+- Added 2026-08-01 (punchlist B4). One callable for set and clear.
+- **ARCHIVE, NOT DELETE, and there is deliberately no hard-delete callable.**
+  `household_data` points at a clinic by id with no referential integrity and
+  nothing sweeping for orphans, so a hard delete would (1) leave those
+  households resolving to nothing, so their vet could never be corrected or even
+  displayed again, and (2) destroy the record of what households were told to
+  dial.
+  The two Kotlin trees hard-delete today (`AuntieRepository.kt:2215`,
+  `FirestoreInterop.wasmJs.kt:1064`); the Android one is repointed here.
+- Archiving does NOT touch the households. Their denormalized name/phone/address
+  are left exactly as they were: the doorstep read must not go blank because the
+  operator tidied the catalog. An archived clinic disappears from `getVetClinics`
+  and from both pickers; a household already on it keeps reading its number.
+- Rejecting a pending kinfolk submission is this call with `archived: true`. The
+  row stays, still carrying `submittedBy`, and is invisible everywhere a rejected
+  submission should be.
+- Errors (`details.code`): `vet_clinic_not_found` (`not-found`),
+  `vet_clinic_already_archived` / `vet_clinic_not_archived`
+  (`failed-precondition`) on a redundant flip. Refused rather than treated as a
+  no-op success: two operators tidying the same catalog should be told the row
+  already moved.
+- Audited `VET_CLINIC_ARCHIVED` (`SUCCESS`; `warn` when the archived clinic is
+  still referenced by a household, else `info`), refusals as above.
+- Mirrors: `auntieos-admin/src/api/vetClinicsWrite.ts`, Android
+  `AuntieRepository.archiveVetClinic`. Frozen in `test/callableContract.test.ts`.
 
 ## Calendar sync (admin-gated)
 

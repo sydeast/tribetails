@@ -1,40 +1,33 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getBusinessContact } from '../api/portal';
 import { SecretField } from '../components/SecretField';
 import {
   addSecondaryContact,
-  clinicAlreadyOnList,
   getFormSchema,
   getMyTribeProfile,
   getVetClinics,
   HOME_RESERVED_KEYS,
   isDisplayableField,
   listMembers,
-  mapboxRetrieve,
-  mapboxSearch,
   memberStatusLabel,
   mergeReservedFields,
-  newMapboxSessionToken,
   PROFILE_RESERVED_KEYS,
-  resolveMapboxAddress,
   saveHomeAccess,
   saveTribeProfile,
   submitVetClinic,
+  type ClinicCandidateDto,
   updateSecondaryPermissions,
   type CustomFieldDto,
   type FormFieldDto,
   type FormSchemaDto,
-  type MapboxSuggestionDto,
   type MemberDto,
-  type VetClinicDto,
 } from '../api/tribeApi';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 
-const ADDRESS_DEBOUNCE_MS = 250;
 
 /**
  * Reads one of the three reserved home-access fields when a homeAccess schema
@@ -108,15 +101,22 @@ export function TribeProfile() {
 
   // ---- Vet Clinic ----
   const [vetQuery, setVetQuery] = useState('');
-  const [vetName, setVetName] = useState('');
-  const [vetPhone, setVetPhone] = useState('');
-  const [vetAddress, setVetAddress] = useState('');
+  /**
+   * THE SELECTED CLINIC ID. Operator ruling 2026-08-01: "Vets are not a open
+   * string textbox, it is a dropdown and search feature".
+   *
+   * This screen used to hold three free-text boxes and save them as
+   * `vetClinicName` / `vetClinicPhone` / `vetClinicAddress` custom fields, which
+   * made the portal a THIRD place a household's vet could be authored, with
+   * nothing tying it to the shared catalog and no way to correct it afterwards.
+   * Name, phone and address now come from the catalog row, so there is one copy
+   * and the clinic manager can fix it for every household at once.
+   */
+  const [vetClinicId, setVetClinicId] = useState('');
+  /** Candidates the server offered when a create looked like a duplicate. */
+  const [clinicCandidates, setClinicCandidates] = useState<ClinicCandidateDto[]>([]);
   const [afterHoursVetName, setAfterHoursVetName] = useState('');
   const [afterHoursVetPhone, setAfterHoursVetPhone] = useState('');
-  const [addressSuggestions, setAddressSuggestions] = useState<MapboxSuggestionDto[]>([]);
-  const [addressError, setAddressError] = useState<string | null>(null);
-  const sessionTokenRef = useRef(newMapboxSessionToken());
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [submittingClinic, setSubmittingClinic] = useState(false);
   const [submitClinicMsg, setSubmitClinicMsg] = useState<string | null>(null);
 
@@ -140,9 +140,7 @@ export function TribeProfile() {
     const byKey = (fields: CustomFieldDto[]) => Object.fromEntries(fields.map((f) => [f.key, f.value]));
     const pByKey = byKey(p.customFields);
     const aByKey = byKey(homeAccess.customFields);
-    setVetName(pByKey['vetClinicName'] ?? '');
-    setVetPhone(pByKey['vetClinicPhone'] ?? '');
-    setVetAddress(pByKey['vetClinicAddress'] ?? '');
+    setVetClinicId(pByKey['vetClinicId'] ?? '');
     setEmergencyName(pByKey['emergencyContactName'] ?? '');
     setEmergencyPhone(pByKey['emergencyContactPhone'] ?? '');
     setEmergencyRelation(pByKey['emergencyContactRelation'] ?? '');
@@ -199,54 +197,53 @@ export function TribeProfile() {
 
   const vetMatches = vetQuery.trim().length > 0 ? clinics.filter((c) => c.name.toLowerCase().includes(vetQuery.trim().toLowerCase())).slice(0, 8) : [];
 
-  function pickClinic(c: VetClinicDto) {
-    setVetName(c.name);
-    setVetPhone(c.phone);
-    setVetAddress(c.address);
+  /** The chosen catalog row, or undefined when nothing is selected yet. */
+  const selectedClinic = clinics.find((c) => c.id === vetClinicId);
+  function pickClinic(c: { id: string }) {
+    setVetClinicId(c.id);
     setVetQuery('');
+    setClinicCandidates([]);
+    setSubmitClinicMsg(null);
   }
 
-  function onAddressChange(v: string) {
-    setVetAddress(v);
-    setAddressError(null);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (v.trim().length < 3) {
-      setAddressSuggestions([]);
-      return;
-    }
-    debounceRef.current = setTimeout(() => {
-      mapboxSearch(v, sessionTokenRef.current)
-        .then((r) => setAddressSuggestions(r.suggestions))
-        .catch((err: unknown) => {
-          setAddressSuggestions([]);
-          setAddressError(err instanceof Error ? err.message : 'Address lookup failed');
-        });
-    }, ADDRESS_DEBOUNCE_MS);
-  }
-
-  function pickAddressSuggestion(s: MapboxSuggestionDto) {
-    mapboxRetrieve(s.mapbox_id, sessionTokenRef.current)
-      .then((r) => {
-        setVetAddress(resolveMapboxAddress(r.feature) || s.full_address || s.name);
-        setAddressSuggestions([]);
-        sessionTokenRef.current = newMapboxSessionToken();
-      })
-      .catch((err: unknown) => setAddressError(err instanceof Error ? err.message : 'Retrieve failed'));
-  }
-
-  function submitClinicToSharedList() {
-    if (submittingClinic) return;
+  /**
+   * Add the typed name as a new clinic.
+   *
+   * [acknowledgedMatchIds] is empty on the first attempt, so a near match comes
+   * back as a CHOICE and nothing is written. The user then either picks a
+   * candidate (pure client-side, no call at all) or confirms through
+   * `createClinicAnyway`, which echoes the ids it was just shown. That echo is
+   * what the server checks; a boolean would let a client claim a confirmation
+   * it never actually obtained.
+   */
+  function submitClinicToSharedList(acknowledgedMatchIds: string[] = []) {
+    const name = vetQuery.trim();
+    if (submittingClinic || name === '') return;
     setSubmittingClinic(true);
     setSubmitClinicMsg(null);
-    submitVetClinic({ name: vetName.trim(), phone: vetPhone.trim(), address: vetAddress.trim() })
+    submitVetClinic({ name, acknowledgedMatchIds })
       .then((r) => {
+        if (r.status === 'needs_choice') {
+          // NOT an error, and NOT a silent selection: the decision is the user's.
+          setClinicCandidates(r.candidates);
+          return;
+        }
+        setClinicCandidates([]);
+        setVetClinicId(r.clinicId);
+        setVetQuery('');
         setSubmitClinicMsg(
-          !r.created && !r.pending ? 'That clinic is already on the shared list.' : 'Sent to Auntie for approval. It joins the shared list once approved.',
+          r.pending
+            ? 'Sent to Auntie for approval. It is on your record now and joins the shared list once approved.'
+            : 'Added to the shared list and set as your clinic.',
         );
         void queryClient.invalidateQueries({ queryKey: ['vetClinics'] });
       })
       .catch((err: unknown) => setSubmitClinicMsg(`Couldn't submit: ${err instanceof Error ? err.message : 'unknown error'}`))
       .finally(() => setSubmittingClinic(false));
+  }
+  /** "No, mine really is different." Echoes the ids the server just offered. */
+  function createClinicAnyway() {
+    submitClinicToSharedList(clinicCandidates.map((c) => c.id));
   }
 
   async function handleSave() {
@@ -254,9 +251,10 @@ export function TribeProfile() {
     setStatus(null);
     try {
       const vetFields: CustomFieldDto[] = [];
-      if (vetName.trim()) vetFields.push({ key: 'vetClinicName', label: 'Vet Clinic', value: vetName.trim() });
-      if (vetPhone.trim()) vetFields.push({ key: 'vetClinicPhone', label: 'Vet Clinic Phone', value: vetPhone.trim() });
-      if (vetAddress.trim()) vetFields.push({ key: 'vetClinicAddress', label: 'Vet Clinic Address', value: vetAddress.trim() });
+      // ONE id, not three strings. Name, phone and address are read from the
+      // catalog, so the portal no longer keeps a copy that can go stale and that
+      // nobody is able to correct.
+      if (vetClinicId.trim()) vetFields.push({ key: 'vetClinicId', label: 'Vet Clinic', value: vetClinicId.trim() });
       if (emergencyName.trim()) vetFields.push({ key: 'emergencyContactName', label: 'Emergency Contact', value: emergencyName.trim() });
       if (emergencyPhone.trim()) vetFields.push({ key: 'emergencyContactPhone', label: 'Emergency Contact Phone', value: emergencyPhone.trim() });
       if (emergencyRelation.trim())
@@ -461,69 +459,98 @@ export function TribeProfile() {
                     <h3 className="title">Vet Clinic</h3>
                     <p className="sub">The first call your Auntie makes if something is off.</p>
                   </div>
-                  {vetPhone && (
+                  {selectedClinic?.phone && (
                     <div className="actions">
-                      <a className="btn ghost" href={`tel:${vetPhone}`} style={{ padding: '9px 14px', fontSize: 13 }}>
+                      <a className="btn ghost" href={`tel:${selectedClinic.phone}`} style={{ padding: '9px 14px', fontSize: 13 }}>
                         {'\u{1F4DE}'} Call
                       </a>
-                      <a className="btn ghost" href={`sms:${vetPhone}`} style={{ padding: '9px 14px', fontSize: 13 }}>
+                      <a className="btn ghost" href={`sms:${selectedClinic.phone}`} style={{ padding: '9px 14px', fontSize: 13 }}>
                         {'\u{1F4AC}'} Text
                       </a>
                     </div>
                   )}
                 </div>
 
-                {clinics.length > 0 && (
-                  <div className="field full" style={{ marginBottom: 10 }}>
-                    <label htmlFor="vetsearch">Search vet clinics</label>
-                    <input id="vetsearch" className="inp" type="text" value={vetQuery} onChange={(e) => setVetQuery(e.target.value)} placeholder="Start typing a clinic name…" />
-                    {vetMatches.length > 0 && (
-                      <div className="suggestlist">
-                        {vetMatches.map((c) => (
-                          <div className="suggestrow" key={c.id} onClick={() => pickClinic(c)}>
-                            <b>{c.isEmergency ? `${c.name} · 24hr` : c.name}</b>
-                            {c.address && <small>{c.address}</small>}
-                          </div>
-                        ))}
+                {/* SEARCH AND SELECT, never a free-text box. Operator ruling
+                    2026-08-01: "Vets are not a open string textbox, it is a
+                    dropdown and search feature". The create affordance is the
+                    LAST row, so choosing an existing clinic is always offered
+                    first and creating is the fallback. */}
+                <div className="field full" style={{ marginBottom: 10 }}>
+                  <label htmlFor="vetsearch">Search vet clinics</label>
+                  <input
+                    id="vetsearch"
+                    className="inp"
+                    type="text"
+                    value={vetQuery}
+                    onChange={(e) => setVetQuery(e.target.value)}
+                    placeholder="Start typing a clinic name…"
+                  />
+                  {vetQuery.trim().length > 0 && (
+                    <div className="suggestlist">
+                      {vetMatches.map((c) => (
+                        <div className="suggestrow" key={c.id} onClick={() => pickClinic(c)}>
+                          <b>{c.isEmergency ? `${c.name} · 24hr` : c.name}</b>
+                          {c.address && <small>{c.address}</small>}
+                        </div>
+                      ))}
+                      <div
+                        className="suggestrow"
+                        onClick={() => submitClinicToSharedList()}
+                        style={{ opacity: submittingClinic ? 0.6 : 1 }}
+                      >
+                        <b>{submittingClinic ? 'Checking…' : `+ Add "${vetQuery.trim()}" as a new clinic`}</b>
+                        <small>Sent to Auntie for approval before other households see it.</small>
                       </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="grid2">
-                  <div className="field">
-                    <label htmlFor="clinic">Clinic Name</label>
-                    <input id="clinic" className="inp" type="text" value={vetName} onChange={(e) => setVetName(e.target.value)} />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="cphone">Clinic Phone</label>
-                    <input id="cphone" className="inp mono" type="tel" value={vetPhone} onChange={(e) => setVetPhone(e.target.value)} />
-                  </div>
-                  <div className="field full">
-                    <label htmlFor="caddr">Clinic Address</label>
-                    <input id="caddr" className="inp" type="text" value={vetAddress} onChange={(e) => onAddressChange(e.target.value)} />
-                    {addressError && <span className="hint" style={{ color: 'var(--coral)' }}>Lookup error: {addressError}</span>}
-                    {addressSuggestions.length > 0 && (
-                      <div className="suggestlist">
-                        {addressSuggestions.slice(0, 5).map((s) => (
-                          <div className="suggestrow" key={s.mapbox_id} onClick={() => pickAddressSuggestion(s)}>
-                            <b>{s.full_address || s.name}</b>
-                            {s.place_formatted && <small>{s.place_formatted}</small>}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
-
-                {!clinicAlreadyOnList(vetName, clinics) && (
-                  <div style={{ marginTop: 12 }}>
-                    <button className="addfield" type="button" onClick={submitClinicToSharedList} disabled={submittingClinic}>
-                      {submittingClinic ? 'Submitting…' : `+ Add "${vetName.trim()}" to the shared vet list`}
-                    </button>
-                    {submitClinicMsg && <p className="sub" style={{ marginTop: 8 }}>{submitClinicMsg}</p>}
+                {/* THE CHOICE. The server found something that looks like the
+                    same practice and wrote NOTHING. The user decides: use the
+                    existing record, or say theirs really is different. */}
+                {clinicCandidates.length > 0 && (
+                  <div className="field full" style={{ marginBottom: 10 }}>
+                    <p className="sub">
+                      A clinic like that is already on the shared list. Use it, or add yours as a
+                      separate clinic.
+                    </p>
+                    <div className="suggestlist">
+                      {clinicCandidates.map((c) => (
+                        <div className="suggestrow" key={c.id} onClick={() => pickClinic(c)}>
+                          <b>{c.isEmergency ? `${c.name} · 24hr` : c.name}</b>
+                          <small>
+                            {[c.address, c.phone].filter(Boolean).join(' · ')}
+                            {!c.verified && ' · waiting for approval'}
+                          </small>
+                        </div>
+                      ))}
+                      <div className="suggestrow" onClick={createClinicAnyway}>
+                        <b>{`No, add "${vetQuery.trim()}" as a different clinic`}</b>
+                        <small>Use this when yours really is a separate practice.</small>
+                      </div>
+                    </div>
                   </div>
                 )}
+                {selectedClinic && (
+                  <div className="field full">
+                    <label>Clinic on file</label>
+                    <p className="sub">
+                      <b>{selectedClinic.name}</b>
+                      {[selectedClinic.phone, selectedClinic.address].filter(Boolean).length > 0 &&
+                        ` · ${[selectedClinic.phone, selectedClinic.address].filter(Boolean).join(' · ')}`}
+                    </p>
+                    <p className="hint">
+                      Details come from the shared list, so if they are wrong Auntie can fix them
+                      once for every household. Search above to change your clinic.
+                    </p>
+                  </div>
+                )}
+                {vetClinicId !== '' && !selectedClinic && (
+                  <p className="hint" style={{ color: 'var(--coral)' }}>
+                    The clinic on file is no longer on the shared list. Search above to pick it again.
+                  </p>
+                )}
+                {submitClinicMsg && <p className="sub" style={{ marginTop: 8 }}>{submitClinicMsg}</p>}
 
                 <hr className="divider" />
 

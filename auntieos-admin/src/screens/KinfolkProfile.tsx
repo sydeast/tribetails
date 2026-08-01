@@ -7,6 +7,7 @@ import { str } from '../lib/coerce';
 import { formatJoinDate } from '../lib/joinDate';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { HouseholdVetPanels } from '../components/HouseholdVetPanels';
 import { Avatar } from '../components/Avatar';
 import { GhostButton } from '../components/Buttons';
 import { ProfileTagsSection } from '../components/ProfileTagsSection';
@@ -238,29 +239,15 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkP
                 </DenPanel>
               )}
 
-              {/* Keyed on the NAMES, not the ids: a legacy household has the
-                  names with no `vetClinicId`, and gating on the id would hide
-                  the vet on every record that predates the picker. */}
-              {any(p.vetClinicName, p.vetClinicAddress, p.vetClinicPhone) && (
-                <DenPanel title="Vet clinic">
-                  <dl className="kprofile__facts">
-                    <Fact label="Clinic" value={p.vetClinicName} />
-                    <Fact label="Address" value={p.vetClinicAddress} />
-                    <Fact label="Phone" value={p.vetClinicPhone} mono />
-                  </dl>
-                </DenPanel>
-              )}
-
-              {any(p.emergencyVetClinicName, p.emergencyVetClinicAddress, p.emergencyVetClinicPhone) && (
-                <DenPanel title="Emergency vet" subtitle="The 24 hour clinic for this household.">
-                  <dl className="kprofile__facts">
-                    <Fact label="Clinic" value={p.emergencyVetClinicName} />
-                    <Fact label="Address" value={p.emergencyVetClinicAddress} />
-                    <Fact label="Phone" value={p.emergencyVetClinicPhone} mono />
-                  </dl>
-                </DenPanel>
-              )}
-
+              {/* THE VET IS READ, NOT OWNED. Operator ruling 2026-08-01:
+                  "vet info lives on household data, it can be seen on the kin
+                  profile". These panels used to read `p.vetClinicName` and
+                  friends off the kinfolk doc, which is the copy that made the
+                  vet authored in two places at once. They now resolve through
+                  `household_data`'s clinic id, so what is shown here is the
+                  same single record the Household Data screen edits and the vet
+                  clinics manager corrects. */}
+              <HouseholdVetPanels kinfolkId={kinfolkId} />
               <DenPanel title={`Kin${kin.length > 0 ? ` · ${kin.length}` : ''}`} subtitle="Kin in this household.">
                 {kin.length === 0 ? (
                   <EmptyHint>No kin on file for this household.</EmptyHint>

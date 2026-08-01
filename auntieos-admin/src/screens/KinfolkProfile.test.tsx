@@ -69,7 +69,7 @@ describe('mergeKinfolkProfile (pure)', () => {
     expect(p._id).toBe('k9');
     expect(p.firstName).toBe('A');
     expect(p.gateCode).toBe('');
-    expect(p.vetClinicPhone).toBe('');
+    expect(p.emergencyContactPhone).toBe('');
     expect(p.status).toBe('active');
   });
   it('ignores non-string field values (never coerces to "undefined")', () => {

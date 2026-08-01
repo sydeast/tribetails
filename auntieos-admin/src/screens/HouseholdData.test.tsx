@@ -26,6 +26,16 @@ vi.mock('../api/householdData', async (orig) => ({
   getDossierHouseholdNotes,
   saveHouseholdSection,
 }));
+/**
+ * The veterinary section is READ THROUGH from the household profile (punchlist
+ * A2), so this screen now opens two more reads: the kinfolk record that owns the
+ * vet, and the clinic catalog that owns its opening hours.
+ */
+const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
+vi.mock('../lib/firestore', async (orig) => ({
+  ...(await orig<typeof import('../lib/firestore')>()),
+  useCollection,
+}));
 
 import { HouseholdData } from './HouseholdData';
 
@@ -36,6 +46,7 @@ function record(over: Partial<HouseholdRecord> = {}): HouseholdRecord {
     primaryVetName: 'Barton Creek Animal Hospital',
     primaryVetPhone: '(512) 555 0134',
     foodLocation: 'Pantry, second shelf',
+    groomerName: 'Paws and Claws Grooming',
     securitySystemInfo: 'Panel by the garage, code 4417',
     createdAt: '2026-05-01T10:00:00.000Z',
     updatedAt: '2026-06-01T10:00:00.000Z',
@@ -51,7 +62,17 @@ beforeEach(() => {
   saveHouseholdSection.mockReset();
   getHouseholdData.mockResolvedValue(record());
   getDossierHouseholdNotes.mockResolvedValue('');
+  useCollection.mockReset();
+  useCollection.mockReturnValue({ status: 'ready', data: [CLINIC] });
 });
+/** The catalog row the household's regular vet is linked to. Owns the hours. */
+const CLINIC = {
+  _id: 'clinic_riverside',
+  name: 'Riverside Animal Hospital',
+  phone: '(512) 555 0100',
+  address: '418 Mill St',
+  hours: 'Mon to Fri 8a to 6p',
+};
 
 function mount(over: Partial<{ kinfolkName: string }> = {}) {
   return render(
@@ -62,7 +83,7 @@ function mount(over: Partial<{ kinfolkName: string }> = {}) {
 describe('HouseholdData: reading the record', () => {
   it('renders every section with the values that were read', async () => {
     mount();
-    expect(await screen.findByText('Barton Creek Animal Hospital')).toBeInTheDocument();
+    expect(await screen.findByText('Paws and Claws Grooming')).toBeInTheDocument();
     expect(screen.getByText('Pantry, second shelf')).toBeInTheDocument();
 
     for (const title of [
@@ -83,15 +104,15 @@ describe('HouseholdData: reading the record', () => {
 
   it('shows a blank field as "Not set" rather than hiding it, because the gaps are the point', async () => {
     mount();
-    await screen.findByText('Barton Creek Animal Hospital');
+    await screen.findByText('Paws and Claws Grooming');
     expect(screen.getByText('Evacuation plan')).toBeInTheDocument();
     expect(screen.getAllByText('Not set').length).toBeGreaterThan(0);
   });
 
   it('counts what is on file per section, and never claims more', async () => {
     mount();
-    // Veterinary: 2 of 7 filled by the fixture.
-    expect(await screen.findByText(/2 of 7 on file/)).toBeInTheDocument();
+    // Items and locations: 1 of 7 filled by the fixture.
+    expect(await screen.findByText(/1 of 7 on file/)).toBeInTheDocument();
   });
 
   it('shows the dossier reference only when there is prose to migrate', async () => {
@@ -104,7 +125,7 @@ describe('HouseholdData: reading the record', () => {
     getHouseholdData.mockReturnValue(new Promise(() => {}));
     mount();
     expect(screen.getByText(/Reading the household record/)).toBeInTheDocument();
-    expect(screen.queryByText('Barton Creek Animal Hospital')).not.toBeInTheDocument();
+    expect(screen.queryByText('Paws and Claws Grooming')).not.toBeInTheDocument();
   });
 });
 
@@ -114,7 +135,7 @@ describe('HouseholdData: empty and error are not the same thing', () => {
     mount();
     expect(await screen.findByText(/Nothing on file yet/)).toBeInTheDocument();
     // Still editable: the first save starts the record from any section.
-    expect(screen.getByRole('button', { name: 'Edit veterinary' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit items and locations' })).toBeInTheDocument();
   });
 
   it('fails loud on a read rejection, and NEVER renders the empty state over it', async () => {
@@ -139,7 +160,7 @@ describe('HouseholdData: empty and error are not the same thing', () => {
 describe('HouseholdData: secrets stay hidden until asked for', () => {
   it('does not put the alarm code in the DOM before it is revealed', async () => {
     mount();
-    await screen.findByText('Barton Creek Animal Hospital');
+    await screen.findByText('Paws and Claws Grooming');
 
     expect(screen.queryByText(/code 4417/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Show security system' })).toBeInTheDocument();
@@ -147,7 +168,7 @@ describe('HouseholdData: secrets stay hidden until asked for', () => {
 
   it('reveals it on request, and can hide it again', async () => {
     mount();
-    await screen.findByText('Barton Creek Animal Hospital');
+    await screen.findByText('Paws and Claws Grooming');
 
     await user.click(screen.getByRole('button', { name: 'Show security system' }));
     expect(screen.getByText(/code 4417/)).toBeInTheDocument();
@@ -159,7 +180,7 @@ describe('HouseholdData: secrets stay hidden until asked for', () => {
   it('masks the documents location too, since every backup on the roster can read this record', async () => {
     getHouseholdData.mockResolvedValue(record({ importantDocumentsLocation: 'Fire safe under the stairs' }));
     mount();
-    await screen.findByText('Barton Creek Animal Hospital');
+    await screen.findByText('Paws and Claws Grooming');
 
     expect(screen.queryByText(/Fire safe under the stairs/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Show important documents' })).toBeInTheDocument();
@@ -167,27 +188,27 @@ describe('HouseholdData: secrets stay hidden until asked for', () => {
 });
 
 describe('HouseholdData: editing a section', () => {
-  async function openVeterinary() {
+  async function openProviders() {
     mount();
-    await screen.findByText('Barton Creek Animal Hospital');
-    await user.click(screen.getByRole('button', { name: 'Edit veterinary' }));
+    await screen.findByText('Paws and Claws Grooming');
+    await user.click(screen.getByRole('button', { name: 'Edit service providers' }));
     return screen.getByRole('dialog');
   }
 
   it('opens a modal that names the section and the household', async () => {
-    const dialog = await openVeterinary();
-    expect(within(dialog).getByText('Veterinary · Nora Whitfield')).toBeInTheDocument();
+    const dialog = await openProviders();
+    expect(within(dialog).getByText('Service providers · Nora Whitfield')).toBeInTheDocument();
   });
 
   it('seeds the form from the record rather than opening blank', async () => {
-    const dialog = await openVeterinary();
-    expect(within(dialog).getByLabelText('Primary vet')).toHaveValue('Barton Creek Animal Hospital');
+    const dialog = await openProviders();
+    expect(within(dialog).getByLabelText('Groomer')).toHaveValue('Paws and Claws Grooming');
   });
 
   it('rejects a phone that cannot be dialed, inline beside the field, and does not save', async () => {
-    const dialog = await openVeterinary();
+    const dialog = await openProviders();
 
-    const phone = within(dialog).getByLabelText('Primary vet phone');
+    const phone = within(dialog).getByLabelText('Groomer phone');
     await user.clear(phone);
     await user.type(phone, 'ask at the desk');
     await user.click(within(dialog).getByRole('button', { name: /Save section/ }));
@@ -198,11 +219,11 @@ describe('HouseholdData: editing a section', () => {
   });
 
   it('rejects an em dash in Auntie voice, inline', async () => {
-    const dialog = await openVeterinary();
+    const dialog = await openProviders();
 
-    const name = within(dialog).getByLabelText('Primary vet');
+    const name = within(dialog).getByLabelText('Groomer');
     await user.clear(name);
-    await user.type(name, 'Barton Creek—the new one');
+    await user.type(name, 'Paws and Claws—the new one');
     await user.click(within(dialog).getByRole('button', { name: /Save section/ }));
 
     expect(await within(dialog).findByText(/does not use dashes/i)).toBeInTheDocument();
@@ -210,40 +231,42 @@ describe('HouseholdData: editing a section', () => {
   });
 
   it('saves only the edited section, updates the view, and raises a toast', async () => {
-    const dialog = await openVeterinary();
+    const dialog = await openProviders();
     saveHouseholdSection.mockImplementation(
       async (current: HouseholdRecord, patch: Partial<HouseholdRecord>) => ({ ...current, ...patch }),
     );
 
-    const name = within(dialog).getByLabelText('Primary vet');
+    const name = within(dialog).getByLabelText('Groomer');
     await user.clear(name);
-    await user.type(name, 'Lakeway Vet Clinic');
+    await user.type(name, 'Shaggy Chic');
     await user.click(within(dialog).getByRole('button', { name: /Save section/ }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
-    // Only this section's seven keys travelled, never all thirty.
+    // Only this section's six keys travelled, never all thirty.
     const patch = saveHouseholdSection.mock.calls[0]?.[1] as Record<string, string>;
-    expect(patch['primaryVetName']).toBe('Lakeway Vet Clinic');
+    expect(patch['groomerName']).toBe('Shaggy Chic');
     expect(patch).not.toHaveProperty('foodLocation');
+    // And never the retired vet keys, which nothing writes any more.
+    expect(patch).not.toHaveProperty('primaryVetName');
 
-    expect(await screen.findByText('Lakeway Vet Clinic')).toBeInTheDocument();
-    expect(await screen.findByText(/Saved veterinary for Nora Whitfield/)).toBeInTheDocument();
+    expect(await screen.findByText('Shaggy Chic')).toBeInTheDocument();
+    expect(await screen.findByText(/Saved service providers for Nora Whitfield/)).toBeInTheDocument();
   });
 
   it('surfaces a rejected save in a persistent banner and keeps the operator-s edits', async () => {
-    const dialog = await openVeterinary();
+    const dialog = await openProviders();
     saveHouseholdSection.mockRejectedValue(new Error('permission-denied'));
 
-    const name = within(dialog).getByLabelText('Primary vet');
+    const name = within(dialog).getByLabelText('Groomer');
     await user.clear(name);
-    await user.type(name, 'Lakeway Vet Clinic');
+    await user.type(name, 'Shaggy Chic');
     await user.click(within(dialog).getByRole('button', { name: /Save section/ }));
 
     expect(await within(dialog).findByText(/permission-denied/)).toBeInTheDocument();
     // Still open, still holding what was typed. A failed save is not a lost edit.
-    expect(within(dialog).getByLabelText('Primary vet')).toHaveValue('Lakeway Vet Clinic');
-    expect(screen.queryByText(/Saved veterinary/)).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Groomer')).toHaveValue('Shaggy Chic');
+    expect(screen.queryByText(/Saved service providers/)).not.toBeInTheDocument();
   });
 
   it('starts the record from the empty state, so a first save is not a special case', async () => {
@@ -271,7 +294,7 @@ describe('HouseholdData: editing a section', () => {
 
   it('hides a typed secret behind a reveal in the editor too', async () => {
     mount();
-    await screen.findByText('Barton Creek Animal Hospital');
+    await screen.findByText('Paws and Claws Grooming');
     await user.click(screen.getByRole('button', { name: 'Edit routines and preferences' }));
     const dialog = screen.getByRole('dialog');
 
@@ -280,5 +303,104 @@ describe('HouseholdData: editing a section', () => {
 
     await user.click(within(dialog).getByRole('button', { name: 'Show security system' }));
     expect(within(dialog).getByLabelText('Security system')).toHaveAttribute('type', 'text');
+  });
+});
+/**
+ * Punchlist A2. This screen used to author its own `primaryVet*` /
+ * `emergencyVet*` free text, so the vet existed twice with nothing tying the
+ * copies together, and the copy shown HERE, on the screen someone reads the
+ * emergency number off under pressure, was the one that could silently go stale.
+ * It now reads the catalog-linked record on the kinfolk doc.
+ */
+/**
+ * Operator ruling 2026-08-01: `household_data` OWNS the vet, catalog-linked.
+ * What is stored is a `vet_clinics` id, so name/phone/address/hours resolve
+ * through the clinic and there is exactly one copy to correct.
+ */
+describe('HouseholdData: the vet is owned here, and catalog-linked', () => {
+  it('resolves the vet through the clinic the record points at', async () => {
+    getHouseholdData.mockResolvedValue(record({ primaryVetClinicId: 'clinic_riverside' }));
+    mount();
+    expect(await screen.findByText('Riverside Animal Hospital')).toBeInTheDocument();
+    expect(screen.getByText('(512) 555 0100')).toBeInTheDocument();
+  });
+  it('reads HOURS from the clinic, not from the household', async () => {
+    getHouseholdData.mockResolvedValue(
+      record({ primaryVetClinicId: 'clinic_riverside', primaryVetHours: 'STALE' }),
+    );
+    mount();
+    expect(await screen.findByText('Mon to Fri 8a to 6p')).toBeInTheDocument();
+  });
+  it('shows a correction to the clinic with no household write at all', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [{ ...CLINIC, phone: '(512) 555 0199' }],
+    });
+    getHouseholdData.mockResolvedValue(record({ primaryVetClinicId: 'clinic_riverside' }));
+    mount();
+    expect(await screen.findByText('(512) 555 0199')).toBeInTheDocument();
+  });
+  it('keeps the emergency vet a DISTINCT clinic from the primary', async () => {
+    getHouseholdData.mockResolvedValue(
+      record({ primaryVetClinicId: 'clinic_riverside', emergencyVetClinicId: 'clinic_er' }),
+    );
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [CLINIC, { _id: 'clinic_er', name: 'Austin Pet ER', phone: '(512) 555 0300' }],
+    });
+    mount();
+    expect(await screen.findByText('Riverside Animal Hospital')).toBeInTheDocument();
+    expect(screen.getByText('Austin Pet ER')).toBeInTheDocument();
+  });
+  it('is edited HERE, since this record owns the vet', async () => {
+    mount();
+    await screen.findByText('Pantry, second shelf');
+    expect(screen.getByRole('button', { name: 'Edit veterinary' })).toBeInTheDocument();
+  });
+  it('says so when the record is not linked to the catalog', async () => {
+    // Without a clinic id there is nothing for a correction to match on, and
+    // that is worth stating rather than leaving as an invisible difference.
+    getHouseholdData.mockResolvedValue(
+      record({ primaryVetClinicId: '', primaryVetName: 'Some Clinic', primaryVetPhone: '555' }),
+    );
+    mount();
+    expect(await screen.findByText(/not linked to the catalog/i)).toBeInTheDocument();
+  });
+  it('does not cry unlinked when the vet IS linked', async () => {
+    getHouseholdData.mockResolvedValue(record({ primaryVetClinicId: 'clinic_riverside' }));
+    mount();
+    await screen.findByText('Riverside Animal Hospital');
+    expect(screen.queryByText(/not linked to the catalog/i)).not.toBeInTheDocument();
+  });
+  it('fails loud on a dangling clinic id rather than showing stale text', async () => {
+    getHouseholdData.mockResolvedValue(
+      record({ primaryVetClinicId: 'gone', primaryVetName: 'Stale Clinic' }),
+    );
+    mount();
+    expect(await screen.findByText(/no longer exists/i)).toBeInTheDocument();
+  });
+  it('flags superseded free text once the record is LINKED', async () => {
+    // Linked, so the clinic supplies the vet and the old strings are genuinely
+    // unused. They are shown rather than dropped: deleting them silently would
+    // destroy the evidence of a conflict.
+    getHouseholdData.mockResolvedValue(
+      record({ primaryVetClinicId: 'clinic_riverside', primaryVetName: 'Barton Creek Animal Hospital' }),
+    );
+    mount();
+    expect(await screen.findByText(/Older vet notes are still on this record/)).toBeInTheDocument();
+    expect(screen.getByText('Barton Creek Animal Hospital')).toBeInTheDocument();
+  });
+  it('does NOT call the free text superseded while it is still the vet on show', async () => {
+    // Unlinked: that text IS the vet rendered above, so calling it "not used
+    // anywhere" would be duplicative and untrue.
+    getHouseholdData.mockResolvedValue(record({ primaryVetName: 'Barton Creek Animal Hospital' }));
+    mount();
+    await screen.findByText('Barton Creek Animal Hospital');
+    expect(screen.queryByText(/Older vet notes/)).not.toBeInTheDocument();
+  });
+  it('fails loud when the clinic catalog cannot be read', async () => {
+    useCollection.mockReturnValue({ status: 'error', message: 'permission-denied' });
+    mount();
+    expect(await screen.findByText(/catalog didn.t load/i)).toBeInTheDocument();
   });
 });

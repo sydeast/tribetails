@@ -214,8 +214,6 @@ function readKinfolkAttribute(kinfolk: KinfolkProfile, key: string): string {
       return kinfolk.emergencyContactName;
     case 'emergencyContactPhone':
       return kinfolk.emergencyContactPhone;
-    case 'vetClinicName':
-      return kinfolk.vetClinicName;
     default:
       return '';
   }
@@ -288,7 +286,6 @@ export const kinfolkAttributeCatalog: readonly ConditionAttribute[] = [
   { key: 'entryNotes', label: 'Entry notes' },
   { key: 'emergencyContactName', label: 'Emergency contact' },
   { key: 'emergencyContactPhone', label: 'Emergency contact phone' },
-  { key: 'vetClinicName', label: 'Vet on file' },
 ];
 
 /** One selectable condition source, for the editor's source picker. */

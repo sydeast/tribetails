@@ -120,7 +120,7 @@ fun KinfolkProfileScreen(
                     item { ContactOverrideBanner(override, kinfolk.preferredContactMethod) }
                 }
                 item { QuickContactBar(kinfolk) }
-                item { ContactInfoCard(kinfolk) }
+                item { ContactInfoCard(kinfolk, state.householdVet) }
                 if (hasDynamicFieldValues(state.kinfolkSchemas, kinfolk.formValues)) {
                     item { AdditionalInfoCard(state.kinfolkSchemas, kinfolk.formValues) }
                 } else if (state.schemaError != null && kinfolk.formValues.isNotEmpty()) {
@@ -442,7 +442,7 @@ private fun QuickActionBtn(
 }
 
 @Composable
-private fun ContactInfoCard(kinfolk: Kinfolk) {
+private fun ContactInfoCard(kinfolk: Kinfolk, householdVet: HouseholdVet) {
     AuntieCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("CONTACT & IDENTITY", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.kinfolkOrange)
@@ -462,11 +462,17 @@ private fun ContactInfoCard(kinfolk: Kinfolk) {
             ).joinToString(" ")
             if (emergency.isNotBlank()) ProfileField("Emergency Contact", emergency)
 
-            // Household vet: single source for all kin in this household (1D). Each Kin
-            // shows this read-only; it is authored here, not per-pet.
-            val vet = listOf(kinfolk.vetClinicName, kinfolk.vetClinicPhone, kinfolk.vetClinicAddress)
+            // The household vet is DISPLAYED here and authored on Household Data
+            // (operator ruling 2026-08-01). It used to read kinfolk.vetClinic*,
+            // the copy that made the vet authored in two places at once.
+            val vet = listOf(householdVet.primary.name, householdVet.primary.phone, householdVet.primary.address)
                 .filter { it.isNotBlank() }.joinToString(" · ")
             ProfileField("Veterinarian (household)", vet.ifBlank { "No household vet on file yet" })
+            val erVet = listOf(householdVet.emergency.name, householdVet.emergency.phone, householdVet.emergency.address)
+                .filter { it.isNotBlank() }.joinToString(" · ")
+            // The emergency clinic is a DISTINCT practice, never folded into the
+            // line above: "who to call" and "who to call at 2am" differ.
+            if (erVet.isNotBlank()) ProfileField("Emergency vet (household)", erVet)
 
             if (kinfolk.outstandingBalance != "0.00" && kinfolk.outstandingBalance.isNotBlank()) {
                 ProfileField("Outstanding Balance", "$${kinfolk.outstandingBalance}")

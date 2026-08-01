@@ -1,6 +1,8 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.data.model.SubmitVetClinicResult
 import com.tribetails.auntieos.data.model.VetClinic
+import com.tribetails.auntieos.data.model.VetClinicCandidate
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -38,8 +40,9 @@ class VetClinicsViewModelTest {
         Dispatchers.setMain(dispatcher)
         repo = mockk()
         every { repo.observeVetClinics() } returns flowOf(emptyList())
-        // #6: the VM loads kinfolk vet names on init for the household-count badge.
-        coEvery { repo.getKinfolk() } returns Result.success(emptyList())
+        // The badge counts household_data now, not kinfolk: that is where the
+        // household vet lives, so counting kinfolk would count nothing.
+        coEvery { repo.getAllHouseholdData() } returns Result.success(emptyList())
     }
 
     @After
@@ -52,22 +55,76 @@ class VetClinicsViewModelTest {
         assertEquals(listOf(clinic), vm.clinics.value)
     }
 
+    /**
+     * Retire ARCHIVES. It used to hard-delete, which stranded every household
+     * whose `vetClinicId` pointed at the row: they dropped out of
+     * `updateVetClinic`'s fan-out permanently, so their vet could never be
+     * corrected in bulk again, and nothing recorded what they had been told to
+     * dial. See `AuntieRepository.archiveVetClinic`.
+     */
     @Test
-    fun `remove happy path hard-deletes by id and clears error`() = runTest {
-        coEvery { repo.deleteVetClinic("c1") } returns Result.success(Unit)
+    fun `retire archives by id rather than deleting, and clears error`() = runTest {
+        coEvery { repo.archiveVetClinic("c1", true) } returns Result.success(0)
         val vm = VetClinicsViewModel(repo)
-        vm.remove("c1", "Creekside").join()
-        coVerify { repo.deleteVetClinic("c1") }
+        vm.retire("c1", "Creekside").join()
+        coVerify { repo.archiveVetClinic("c1", true) }
         assertNull(vm.error.value)
     }
 
     @Test
-    fun `delete failure surfaces a fail-loud error message`() = runTest {
-        coEvery { repo.deleteVetClinic("c1") } returns Result.failure(Exception("permission-denied"))
+    fun `retire says the households keep what is on file`() = runTest {
+        // Archiving must never blank a number at a doorstep, and the operator
+        // should be told so rather than left guessing.
+        coEvery { repo.archiveVetClinic("c1", true) } returns Result.success(2)
         val vm = VetClinicsViewModel(repo)
-        vm.remove("c1", "Creekside").join()
+        vm.retire("c1", "Creekside").join()
+        val notice = vm.notice.value
+        assertTrue("got: $notice", notice != null && notice.contains("2 households keep"))
+    }
+
+    @Test
+    fun `retire failure surfaces a fail-loud error message`() = runTest {
+        coEvery { repo.archiveVetClinic("c1", true) } returns Result.failure(Exception("permission-denied"))
+        val vm = VetClinicsViewModel(repo)
+        vm.retire("c1", "Creekside").join()
         val err = vm.error.value
         assertTrue("got: $err", err != null && err.contains("Creekside") && err.contains("permission-denied"))
+    }
+
+    @Test
+    fun `restore unarchives`() = runTest {
+        coEvery { repo.archiveVetClinic("c1", false) } returns Result.success(0)
+        val vm = VetClinicsViewModel(repo)
+        vm.restore("c1", "Creekside").join()
+        coVerify { repo.archiveVetClinic("c1", false) }
+    }
+
+    /** Rejecting a pending submission retires it; the row and submittedBy survive. */
+    @Test
+    fun `reject retires rather than deleting the submission`() = runTest {
+        coEvery { repo.archiveVetClinic("p1", true) } returns Result.success(0)
+        val vm = VetClinicsViewModel(repo)
+        vm.reject("p1", "New Place").join()
+        coVerify { repo.archiveVetClinic("p1", true) }
+    }
+
+    /** A correction reports how far it travelled, not merely that it landed. */
+    @Test
+    fun `save reports the households the correction reached`() = runTest {
+        coEvery { repo.updateVetClinic(any()) } returns Result.success(3)
+        val vm = VetClinicsViewModel(repo)
+        vm.save(clinic).join()
+        val notice = vm.notice.value
+        assertTrue("got: $notice", notice != null && notice.contains("3 households now read"))
+    }
+
+    @Test
+    fun `save on an unlinked clinic does not claim any household was updated`() = runTest {
+        coEvery { repo.updateVetClinic(any()) } returns Result.success(0)
+        val vm = VetClinicsViewModel(repo)
+        vm.save(clinic).join()
+        val notice = vm.notice.value
+        assertTrue("got: $notice", notice != null && !notice.contains("household"))
     }
 
     /**
@@ -77,24 +134,61 @@ class VetClinicsViewModelTest {
      */
     @Test
     fun `add and save reach the repo`() = runTest {
-        coEvery { repo.submitVetClinic(any()) } returns Result.success("new-id")
-        coEvery { repo.updateVetClinic(any()) } returns Result.success(Unit)
+        coEvery { repo.submitVetClinicDetailed(any(), any()) } returns
+            Result.success(SubmitVetClinicResult(clinicId = "new-id", created = true, pending = false))
+        coEvery { repo.updateVetClinic(any()) } returns Result.success(0)
         val vm = VetClinicsViewModel(repo)
         vm.add(clinic).join()
         vm.save(clinic).join()
-        coVerify { repo.submitVetClinic(clinic) }
+        coVerify { repo.submitVetClinicDetailed(clinic, emptyList()) }
         coVerify { repo.updateVetClinic(clinic) }
         assertNull(vm.error.value)
     }
 
     @Test
     fun `add failure then later success clears the error`() = runTest {
-        coEvery { repo.submitVetClinic(any()) } returns Result.failure(Exception("boom"))
+        coEvery { repo.submitVetClinicDetailed(any(), any()) } returns Result.failure(Exception("boom"))
         val vm = VetClinicsViewModel(repo)
         vm.add(clinic).join()
         assertTrue(vm.error.value != null)
-        coEvery { repo.submitVetClinic(any()) } returns Result.success("ok")
+        coEvery { repo.submitVetClinicDetailed(any(), any()) } returns
+            Result.success(SubmitVetClinicResult(clinicId = "ok", created = true, pending = false))
         vm.add(clinic).join()
         assertNull(vm.error.value)
+    }
+
+    /**
+     * Operator ruling 2026-08-01: a near match OFFERS a choice. Nothing is
+     * written and nothing is selected until the operator decides.
+     */
+    @Test
+    fun `a near match surfaces the candidates instead of adding`() = runTest {
+        coEvery { repo.submitVetClinicDetailed(any(), any()) } returns Result.success(
+            SubmitVetClinicResult(
+                clinicId = "", created = false, pending = false, needsChoice = true,
+                candidates = listOf(VetClinicCandidate(id = "riverside", name = "Riverside")),
+            )
+        )
+        val vm = VetClinicsViewModel(repo)
+        vm.add(clinic).join()
+        assertEquals(listOf("riverside"), vm.pendingChoice.value.map { it.id })
+        assertNull(vm.notice.value)
+    }
+    /** Creating anyway echoes the ids the server just offered. */
+    @Test
+    fun `addAnyway echoes the acknowledged ids`() = runTest {
+        coEvery { repo.submitVetClinicDetailed(any(), emptyList()) } returns Result.success(
+            SubmitVetClinicResult(
+                clinicId = "", created = false, pending = false, needsChoice = true,
+                candidates = listOf(VetClinicCandidate(id = "riverside", name = "Riverside")),
+            )
+        )
+        coEvery { repo.submitVetClinicDetailed(any(), listOf("riverside")) } returns
+            Result.success(SubmitVetClinicResult(clinicId = "new", created = true, pending = false))
+        val vm = VetClinicsViewModel(repo)
+        vm.add(clinic).join()
+        vm.addAnyway().join()
+        coVerify { repo.submitVetClinicDetailed(clinic, listOf("riverside")) }
+        assertTrue(vm.pendingChoice.value.isEmpty())
     }
 }

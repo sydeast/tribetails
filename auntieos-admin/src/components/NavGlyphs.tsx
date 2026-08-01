@@ -176,6 +176,16 @@ const GLYPH_PATHS: Record<Destination, ReactNode> = {
       <path d="M21 12h-6" />
     </>
   ),
+  // A stethoscope: earpieces, tubing, and the bell. Reads as veterinary care
+  // without reusing the shield the notification gate already spends.
+  vetClinics: (
+    <>
+      <path d="M6 3v5a4 4 0 0 0 8 0V3" />
+      <path d="M4.5 3H6M14 3h1.5" />
+      <path d="M10 12v2a4 4 0 0 0 8 0v-1" />
+      <circle cx="18" cy="11" r="2" />
+    </>
+  ),
 };
 
 /**

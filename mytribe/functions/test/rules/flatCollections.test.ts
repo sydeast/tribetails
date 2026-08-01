@@ -388,4 +388,64 @@ describe('rules: flat top-level collections', () => {
       asUser(env, 'u-recipient').firestore().doc('notifications/n1').update({ read: true }),
     );
   });
+
+  /**
+   * Punchlist B4: `vet_clinics` writes are CLOSED to every client.
+   *
+   * The rule was `write: if isAuntie()`, and under it both Kotlin trees edited
+   * and hard-deleted clinics with a direct `.set()` / `.delete()`: no
+   * validation, no check against the normalized-name dedupe `submitVetClinic`
+   * enforces on create, and no audit entry, on a catalog shared with the
+   * kinfolk portal. All three writes now have an admin-SDK callable
+   * (submitVetClinic / updateVetClinic / archiveVetClinic), which bypasses
+   * rules, so closing this is what makes those the ONLY paths rather than the
+   * polite ones.
+   */
+  it('vet_clinics: an operator can READ the catalog', async () => {
+    const env = await getEnv();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc('vet_clinics/vc1').set({ name: 'Riverside' });
+    });
+    await assertSucceeds(asAuntie(env).firestore().doc('vet_clinics/vc1').get());
+  });
+  it('vet_clinics: a kinfolk can READ the catalog, since the picker needs it', async () => {
+    const env = await getEnv();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc('vet_clinics/vc1').set({ name: 'Riverside' });
+    });
+    await assertSucceeds(asUser(env, 'kin-1').firestore().doc('vet_clinics/vc1').get());
+  });
+  it('vet_clinics: even an OPERATOR cannot write directly any more', async () => {
+    const env = await getEnv();
+    await assertFails(asAuntie(env).firestore().doc('vet_clinics/vc2').set({ name: 'Sneaky' }));
+  });
+  it('vet_clinics: an operator cannot patch a clinic phone directly', async () => {
+    const env = await getEnv();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc('vet_clinics/vc1').set({ name: 'Riverside', phone: '555' });
+    });
+    await assertFails(
+      asAuntie(env).firestore().doc('vet_clinics/vc1').update({ phone: '999' }),
+    );
+  });
+  /** The hard delete both Kotlin trees used to do. Refused at the rules layer. */
+  it('vet_clinics: an operator cannot DELETE a clinic', async () => {
+    const env = await getEnv();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc('vet_clinics/vc1').set({ name: 'Riverside' });
+    });
+    await assertFails(asAuntie(env).firestore().doc('vet_clinics/vc1').delete());
+  });
+  it('vet_clinics: a kinfolk cannot write, as before', async () => {
+    const env = await getEnv();
+    await assertFails(
+      asUser(env, 'kin-1').firestore().doc('vet_clinics/vc3').set({ name: 'Nope' }),
+    );
+  });
+  it('vet_clinics: a test admin cannot write either', async () => {
+    const env = await getEnv();
+    await assertFails(
+      asTestAdmin(env).firestore().doc('vet_clinics/vc4').set({ name: 'Nope' }),
+    );
+  });
 });
