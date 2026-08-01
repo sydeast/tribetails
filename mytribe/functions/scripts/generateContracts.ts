@@ -25,9 +25,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
-import { generateArtifacts, type GeneratedArtifact } from './contracts/artifacts';
+import { BOOKING_ARTIFACT_PATHS, generateArtifacts, type GeneratedArtifact } from './contracts/artifacts';
 import { GENERATE_COMMAND } from './contracts/header';
-import { INVOICE_CONTRACT_REGISTRY } from './contracts/registry';
+import { BOOKING_CONTRACT_REGISTRY, INVOICE_CONTRACT_REGISTRY } from './contracts/registry';
 
 /** `<repo>/mytribe/functions/scripts` -> `<repo>`. */
 const REPO_ROOT = resolve(__dirname, '..', '..', '..');
@@ -90,7 +90,10 @@ function main(): number {
   const checkOnly = process.argv.includes('--check');
   let artifacts: GeneratedArtifact[];
   try {
-    artifacts = generateArtifacts(INVOICE_CONTRACT_REGISTRY);
+    artifacts = [
+      ...generateArtifacts(INVOICE_CONTRACT_REGISTRY),
+      ...generateArtifacts(BOOKING_CONTRACT_REGISTRY, BOOKING_ARTIFACT_PATHS),
+    ];
   } catch (err) {
     // The reader and the Kotlin emitter both refuse by throwing a named error
     // whose message IS the report. Anything else is a real generator bug and

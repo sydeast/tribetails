@@ -1,9 +1,11 @@
 # ADR-0003: Booking callables stay out of the generated Contracts module, for now
 
 Date: 2026-08-01
-Status: Accepted. Amends ADR-0001 by scoping its Contracts module to the
-invoice surface until the precondition below is met; does not reopen ADR-0001
-decisions 1-3.
+Status: Superseded by its own follow-up, same day. The precondition Decision 1
+named was met (PR #197, PR #195) and the migration it deferred has landed; see
+Update below. The Context, Decision and Consequences sections stand as the
+historical record of why the migration waited; they describe a state that no
+longer holds and are kept unedited rather than rewritten to look prescient.
 
 ## Context
 
@@ -119,3 +121,147 @@ This is deferred, not abandoned:
 - A future reader asking "why isn't booking generated like invoices" finds
   this document instead of re-deriving the answer from `registry.ts`'s
   comments.
+
+## Update, 2026-08-01: the follow-up landed
+
+The precondition in Decision 1 was two PRs: #197 (audited status transitions,
+touching `rescheduleBooking.ts`, `manageBookingSeries.ts`) and #195
+(`batchUpdateBookings` id resolution). Both are on `main`. This update records
+what happened once they were, in the same ADR voice rather than a fresh
+document, because the question a future reader asks here is "did the deferred
+work happen," not "why was it deferred" a second time.
+
+**Every one of the 9 booking callables now exports a `Result` and validates
+outbound through it**, the same `validateResponse('name', Result, value)` call
+`createInvoice.ts:213` used as the pattern this ADR cited. None changed what
+it returns; each `Result` was written by reading the handler's existing
+return statements, not by redesigning them:
+
+- `getMyBookings` -- `{ liveVisit, upcoming, recent, envelopes }`, with the
+  per-visit and per-envelope shapes as nested objects. No `Args`: it still
+  reads one optional string off `req.data` with no zod authority, the
+  `getMyInvoices` situation this ADR already named as precedent.
+- `requestBooking` -- `{ batchId, bookingIds, bookingId }`, `bookingId`
+  narrowed from optional to required: both write paths have always set it.
+- `requestBookingCancellation` -- `{ ok, visitId, alreadyPending }`.
+- `addBookingNote` / `addInternalBookingNote` -- `{ noteId }` each.
+- `createMultiDateBookingRequest` -- `{ batchId, visitIds, visitCount }`.
+- `rescheduleBooking` -- `{ ok, sessionId }`.
+- `manageBookingSeries` -- `{ ok, action, batchId, affectedVisits,
+  sessionsCreated, failedVisits }`.
+- `batchUpdateBookings` -- `{ ok, action, updated, failed: [{ id, error }] }`.
+
+**`requestBooking`'s dual-shape problem: collapsed, not unioned.** Decision 1
+named the choice and left it open. The registry's `readModel.ts` refuses a
+root that is not a single `z.object` -- a `z.union` hits its `default` case
+and throws naming the construct -- so a union was never actually available
+without teaching the generator a new construct for a fork this ADR could not
+show was real. Checked against the only live caller
+(`mytribe/web/src/api/bookingApi.ts`, the kinfolk portal): every request it
+builds is `MultiArgs` shaped. Nothing sends the legacy single-visit shape
+today. `requestBooking.ts` keeps `LegacyArgs`/`MultiArgs` exactly as they
+were, unexported, doing the real parsing unchanged, and adds a third,
+exported `Args`: a superset covering both shapes, used only by the registry.
+Two fields (`visits[].endTimeMs`/`priceCents`/`location`, and the legacy flat
+`endTimeMs`) needed narrowing to satisfy `readModel.ts`'s other rule --
+`.nullable()` and `.optional()` together are refused, because Kotlin's one
+`T?` cannot distinguish an omitted key from an explicit `null`, which matters
+on a PATCH but not on this CREATE, where the two already mean the same thing
+to the handler. The exported `Args` sends the key with an explicit `null`
+where the internal schemas would have allowed omitting it; every payload the
+exported schema can build still parses under the real internal one.
+`createMultiDateBookingRequest.ts` hit the identical nullable-and-optional
+construct in its own visit schema (it mirrors `requestBooking`'s `VisitArgs`
+field for field, by design) and took the same fix, `HandlerArgs` kept
+unexported and unchanged, `Args` exported and narrowed.
+
+**The family is generated.** `scripts/contracts/registry.ts` gained
+`BOOKING_CONTRACT_REGISTRY`, sitting beside `INVOICE_CONTRACT_REGISTRY`
+rather than merged into it, so the 19 invoice callables PR #112 originally
+scoped stay exactly that set. `artifacts.ts` generalized from one hardcoded
+path triad to an `ArtifactPaths` parameter, so each registry renders into its
+own files: `bookingContracts.generated.ts` (kinfolk portal, React admin) and
+`BookingContracts.generated.kt` (Android), alongside the existing
+`invoiceContracts.generated.*`. `contracts:check` is green across all six
+generated artifacts.
+
+**All three clients moved.** The hand mirrors the original PR's enumeration
+found are deleted or repointed at the generated types:
+
+- Kinfolk portal (`mytribe/web/src`): `api/types.ts`'s `GetMyBookingsRequest`/
+  `BookingDto`/`EnvelopeDto`/`GetMyBookingsResult` hand transcription is gone;
+  the response half comes from `contracts/bookingContracts.generated.ts`, the
+  request half stays hand-written next to `getMyBookings()` in `api/portal.ts`
+  (no zod `Args` to generate from, same as `getMyInvoices`). `api/bookingApi.ts`
+  no longer declares `RequestBookingRequest`/`Result`,
+  `RequestBookingCancellationRequest`/`Result`, or `AddBookingNoteRequest`/
+  `Result`; all three now come from the generated module.
+- React admin (`auntieos-admin/src`): `api/bookingsWrite.ts` no longer
+  declares `NewBookingVisit`/`NewBookingBilling`/`NewBookingCommunication`/
+  `CreateMultiDateBookingArgs`/`Result`, `BatchUpdateBookingsResult`,
+  `RescheduleBookingResult`, or `AddNoteResult`; all now come from
+  `contracts/bookingContracts.generated.ts`. The wizard's second, independent
+  mirror (`lib/bookingWizard.ts`'s `WizardVisit`) is now a type alias for the
+  generated `CreateMultiDateBookingRequestArgsVisit` rather than its own
+  interface. `lib/bookingDetailFormat.ts`'s `RescheduleTimes` is a `Pick` off
+  the generated `RescheduleBookingArgs`. `manageBookingSeries` stays
+  unreached from this client, as `bookingsWrite.ts` already documented; that
+  is unchanged.
+- Android (`auntieos-admin/android`): `BookingNotesRepository.kt`
+  (`addBookingNote`, `addInternalBookingNote`), `BookingRepository.kt`
+  (`createMultiDateBookingRequest`), `KinCareRepository.kt`
+  (`rescheduleBooking`) and `AuntieRepository.kt` (`manageBookingSeries`,
+  `batchUpdateBookings`) all build their request through the generated
+  `*Args.toPayload()` and decode through the generated `decode*Result`
+  functions instead of a hand `mapOf` and a hand cast. `getMyBookings`,
+  `requestBooking` and `requestBookingCancellation` are still not called from
+  Android (it reads the underlying `kinCares` Firestore docs directly for its
+  own booking views, a separate problem this follow-up did not touch).
+
+**The three drift bugs this ADR reported and deliberately did not fix are
+fixed now:**
+
+1. `createMultiDateBookingRequest` (`BookingRepository.kt`) used to build its
+   own payload map by hand, and that map had no slot at all for `priceCents`,
+   `location`, `billing`, `communication` or `overrideBusyConflict` -- not "the
+   UI doesn't collect them," but "there was nowhere on the wire for them to
+   go even if it did." The repository now takes `billing`, `communication`
+   and `overrideBusyConflict` as real parameters (default `null`/`false`) and
+   sends `priceCents`/`location` as an honest `null` per visit, since no
+   Android screen collects either today. `EnhancedSchedulingViewModel`'s
+   `createBookingRequest` threads `overrideBusyConflict` through, default
+   `false`; nothing calls it `true` yet, but a future "force past a busy
+   conflict" affordance on this dialog now has a real parameter to reach
+   instead of another repository rewrite.
+2. `rescheduleBooking` (`KinCareRepository.kt`) used to discard the response
+   entirely (`Result<Unit>` built from nothing but "the call did not throw").
+   It now decodes the response and fails the call when `ok` is not `true` or
+   the echoed `sessionId` does not match what was requested.
+3. `manageBookingSeries` (`AuntieRepository.kt`) decoded `ok`, `action` and
+   `batchId` off the raw response and never looked at any of the three again.
+   It now fails the call when `ok` is not `true`, or when the echoed
+   `action`/`batchId` do not match what was requested.
+
+None of the three changes what a healthy server response contains; all three
+change what the client does with an unhealthy one, from "reported as success"
+to "reported as failure." No new transition, no new gate, no new UI screen.
+
+**Android decoders have real unit tests**, not just compilation:
+`BookingContractsGeneratedTest.kt` exercises the fail-soft decode contract
+(null payload, empty payload, wrong-typed payload, real payload) for the
+family's more complex shapes, and three repository-level test files
+(`KinCareRepositoryRescheduleTest.kt`, `AuntieRepositoryManageBookingSeriesTest.kt`,
+`BookingRepositoryCreateMultiDateTest.kt`) exercise the three drift fixes and
+the wire payload each repository now sends, mocking `FirebaseFunctions` the
+way `KinCareRepositoryTransitionTest.kt` and
+`AuntieRepositoryBatchUpdateBookingsTest.kt` already did.
+
+**`CALLABLE_CONTRACT.md` is in step.** The booking family's response half
+stops being doc-only; the doc says so at the top and at each callable, and a
+new section documents the six callables (`getMyBookings`, `requestBooking`,
+`requestBookingCancellation`, `createMultiDateBookingRequest`,
+`rescheduleBooking`, `manageBookingSeries`) that had no entry there at all
+before this follow-up.
+
+Punchlist E2's "Size M" migration, reopened by Decision 1 as a prerequisite,
+is closed by this update.

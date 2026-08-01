@@ -8,6 +8,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { validateResponse } from '../lib/callableResponse';
 
 /**
  * Stage 2 tail: apply ONE booking transition to many individual visits at once.
@@ -52,17 +53,19 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * that throws, etc.) are collected into `failed` rather than aborting the
  * whole batch.
  */
-const Args = z.object({
+export const Args = z.object({
   ids: z.array(z.string().min(1).max(200)).min(1).max(100),
   action: z.enum(['APPROVE', 'REJECT', 'CANCEL']),
 });
 
-export interface BatchUpdateBookingsResult {
-  ok: true;
-  action: 'APPROVE' | 'REJECT' | 'CANCEL';
-  updated: number;
-  failed: Array<{ id: string; error: string }>;
-}
+export const Result = z
+  .object({
+    ok: z.literal(true),
+    action: z.enum(['APPROVE', 'REJECT', 'CANCEL']),
+    updated: z.number().int().nonnegative(),
+    failed: z.array(z.object({ id: z.string().min(1), error: z.string() }).strict()),
+  })
+  .strict();
 
 /** kinCares envelope + kin_care_sessions mirror status. APPROVE confirms, REJECT/CANCEL terminate. */
 function kinCareTargetStatus(action: 'APPROVE' | 'REJECT' | 'CANCEL'): string {
@@ -81,7 +84,7 @@ function enhancedBookingTargetStatus(action: 'APPROVE' | 'REJECT' | 'CANCEL'): s
 
 export async function batchUpdateBookingsHandler(
   req: CallableRequest<unknown>,
-): Promise<BatchUpdateBookingsResult> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -234,7 +237,7 @@ export async function batchUpdateBookingsHandler(
     extra: { action: args.action, requested: requestedIds.length, updated, failed: failed.length },
   });
 
-  return { ok: true, action: args.action, updated, failed };
+  return validateResponse('batchUpdateBookings', Result, { ok: true, action: args.action, updated, failed });
 }
 
 export const batchUpdateBookings = onCall(

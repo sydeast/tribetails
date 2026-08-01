@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Timestamp } from 'firebase/firestore';
 import { type BookingEntry } from '../api/bookings';
-import { type BatchUpdateBookingsResult } from '../api/bookingsWrite';
+import { type BatchUpdateBookingsResult } from '../contracts/bookingContracts.generated';
 import {
   planBulkAction,
   mergeBulkResults,

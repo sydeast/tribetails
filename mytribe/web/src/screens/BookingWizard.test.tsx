@@ -8,15 +8,14 @@ import type {
   GetBusinessClosuresRequest,
   GetBusinessClosuresResult,
   GetServiceCatalogResult,
-  RequestBookingRequest,
-  RequestBookingResult,
 } from '../api/bookingApi';
+import type { RequestBookingArgs, RequestBookingResult } from '../contracts/bookingContracts.generated';
 import type { GetMyKinResult, KinDto } from '../api/types';
 import { dateKey, MAX_RECURRING_VISITS, monthPickerDays } from '../lib/bookingWizardLogic';
 
 const getMyKin = vi.fn<() => Promise<GetMyKinResult>>();
 const getServiceCatalog = vi.fn<() => Promise<GetServiceCatalogResult>>();
-const requestBooking = vi.fn<(req: RequestBookingRequest) => Promise<RequestBookingResult>>();
+const requestBooking = vi.fn<(req: RequestBookingArgs) => Promise<RequestBookingResult>>();
 const getBusinessClosures = vi.fn<(req: GetBusinessClosuresRequest) => Promise<GetBusinessClosuresResult>>();
 
 vi.mock('../api/portal', () => ({
@@ -27,7 +26,7 @@ vi.mock('../api/bookingApi', async () => {
   return {
     ...actual,
     getServiceCatalog: () => getServiceCatalog(),
-    requestBooking: (req: RequestBookingRequest) => requestBooking(req),
+    requestBooking: (req: RequestBookingArgs) => requestBooking(req),
     getBusinessClosures: (req: GetBusinessClosuresRequest) => getBusinessClosures(req),
   };
 });
@@ -169,8 +168,8 @@ describe('BookingWizard: individual pattern', () => {
 
     const expectedDays = monthPickerDays(new Date());
     const expected = [expectedDays[0]!, expectedDays[2]!].map((d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 10, 15).getTime());
-    expect(req.visits.map((v) => v.startTimeMs).sort()).toEqual(expected.sort());
-    expect(req.visits.every((v) => v.serviceId === 's1')).toBe(true);
+    expect(req.visits!.map((v) => v.startTimeMs).sort()).toEqual(expected.sort());
+    expect(req.visits!.every((v) => v.serviceId === 's1')).toBe(true);
   });
 });
 

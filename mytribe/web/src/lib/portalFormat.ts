@@ -3,7 +3,15 @@
  * Kept separate from the screens themselves so the mapping logic (not
  * just the markup) has direct vitest coverage.
  */
-import type { BookingDto, BookingStatus, GetMyBookingsResult, PortalHomeSection } from '../api/types';
+import type { PortalHomeSection } from '../api/types';
+import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
+
+/**
+ * An alias for readability, not a declaration: writing the six-state status
+ * enum out here would be one more copy to keep in step with the server,
+ * which is the drift ADR-0001 ends. Mirrors invoiceFormat.ts's InvoiceStatus.
+ */
+type BookingStatus = GetMyBookingsResultLiveVisit['status'];
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -88,9 +96,11 @@ export function bookingChip(status: BookingStatus): ChipInfo {
  * of a getMyBookings result — the drill-in lookup BookingDetail.tsx uses.
  * Mirrors Schedule.tsx's own findBookingBySessionId, keyed on `id` instead.
  */
-export function findBookingById(result: GetMyBookingsResult | undefined, id: string): BookingDto | null {
+export function findBookingById(result: GetMyBookingsResult | undefined, id: string): GetMyBookingsResultLiveVisit | null {
   if (!result) return null;
-  const all = [result.liveVisit, ...result.upcoming, ...result.recent].filter((b): b is BookingDto => b !== null);
+  const all = [result.liveVisit, ...result.upcoming, ...result.recent].filter(
+    (b): b is GetMyBookingsResultLiveVisit => b !== null,
+  );
   return all.find((b) => b.id === id) ?? null;
 }
 

@@ -5,9 +5,13 @@ import { z } from 'zod';
 
 import { emitKotlin, KotlinEmitError } from '../scripts/contracts/emitKotlin';
 import { emitTypeScript } from '../scripts/contracts/emitTypeScript';
-import { generateArtifacts } from '../scripts/contracts/artifacts';
+import { BOOKING_ARTIFACT_PATHS, generateArtifacts } from '../scripts/contracts/artifacts';
 import { ContractGenerationError, readModel } from '../scripts/contracts/readModel';
-import { INVOICE_CONTRACT_REGISTRY, type ContractRegistry } from '../scripts/contracts/registry';
+import {
+  BOOKING_CONTRACT_REGISTRY,
+  INVOICE_CONTRACT_REGISTRY,
+  type ContractRegistry,
+} from '../scripts/contracts/registry';
 
 /**
  * The Contracts module codegen (ADR-0001 decisions 2 and 3).
@@ -284,6 +288,41 @@ describe('the committed Contracts module', () => {
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);
     expect(withoutArgs).toEqual(['getMyInvoices']);
+  });
+
+  it('ships one TypeScript text to both web clients and one Kotlin file to Android', () => {
+    expect(artifacts).toHaveLength(3);
+    const [portal, admin, android] = artifacts;
+    expect(portal!.contents).toBe(admin!.contents);
+    expect(android!.path.endsWith('.kt')).toBe(true);
+    for (const artifact of artifacts) {
+      expect(artifact.contents.startsWith('// GENERATED FILE. DO NOT EDIT.')).toBe(true);
+      expect(artifact.contents).toContain(
+        'npm --prefix mytribe/functions run contracts:generate',
+      );
+    }
+  });
+
+  it('matches what is on disk, so `npm test` catches an unregenerated schema change', () => {
+    for (const artifact of artifacts) {
+      const onDisk = readFileSync(join(REPO_ROOT, artifact.path), 'utf8');
+      expect(onDisk, `${artifact.path} is stale; run npm run contracts:generate`).toBe(
+        artifact.contents,
+      );
+    }
+  });
+});
+
+describe('the committed booking Contracts module (ADR-0003 follow-up)', () => {
+  const artifacts = generateArtifacts(BOOKING_CONTRACT_REGISTRY, BOOKING_ARTIFACT_PATHS);
+
+  it('covers all 9 booking callables, both directions where a schema exists', () => {
+    const model = readModel(BOOKING_CONTRACT_REGISTRY);
+    expect(model.callables).toHaveLength(9);
+    // getMyBookings is the only one with no zod request schema; see the
+    // registry header.
+    const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);
+    expect(withoutArgs).toEqual(['getMyBookings']);
   });
 
   it('ships one TypeScript text to both web clients and one Kotlin file to Android', () => {

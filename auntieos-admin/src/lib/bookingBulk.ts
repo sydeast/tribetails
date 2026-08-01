@@ -1,5 +1,6 @@
 import { type BookingEntry } from '../api/bookings';
-import { type BatchBookingAction, type BatchUpdateBookingsResult } from '../api/bookingsWrite';
+import { type BatchBookingAction } from '../api/bookingsWrite';
+import { type BatchUpdateBookingsResult } from '../contracts/bookingContracts.generated';
 import { bookingState, type BookingState } from './bookingFormat';
 import { str } from './coerce';
 

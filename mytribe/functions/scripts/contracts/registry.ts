@@ -20,7 +20,12 @@
  */
 import type { z } from 'zod';
 
+import { Args as AddInternalBookingNoteArgs, Result as AddInternalBookingNoteResult } from '../../src/admin/addInternalBookingNote';
 import { Args as ArchiveInvoiceArgs, Result as ArchiveInvoiceResult } from '../../src/admin/archiveInvoice';
+import { Args as BatchUpdateBookingsArgs, Result as BatchUpdateBookingsResult } from '../../src/admin/batchUpdateBookings';
+import { Args as CreateMultiDateBookingRequestArgs, Result as CreateMultiDateBookingRequestResult } from '../../src/admin/createMultiDateBookingRequest';
+import { Args as ManageBookingSeriesArgs, Result as ManageBookingSeriesResult } from '../../src/admin/manageBookingSeries';
+import { Args as RescheduleBookingArgs, Result as RescheduleBookingResult } from '../../src/admin/rescheduleBooking';
 import { Args as CreateInvoiceArgs, Result as CreateInvoiceResult } from '../../src/admin/createInvoice';
 import { Args as CreateQuoteArgs, Result as CreateQuoteResult } from '../../src/admin/createQuote';
 import { Args as GenerateInvoicePdfArgs, Result as GenerateInvoicePdfResult } from '../../src/admin/generateInvoicePdf';
@@ -44,6 +49,13 @@ import {
 } from '../../src/portal/getMyInvoices';
 import { Args as PayInvoiceArgs, Result as PayInvoiceResult } from '../../src/portal/payInvoice';
 import { Args as RedeemCreditArgs, Result as RedeemCreditResult } from '../../src/portal/redeemCredit';
+import { Args as AddBookingNoteArgs, Result as AddBookingNoteResult } from '../../src/portal/addBookingNote';
+import { Result as GetMyBookingsResult } from '../../src/portal/getMyBookings';
+import { Args as RequestBookingArgs, Result as RequestBookingResult } from '../../src/portal/requestBooking';
+import {
+  Args as RequestBookingCancellationArgs,
+  Result as RequestBookingCancellationResult,
+} from '../../src/portal/requestBookingCancellation';
 
 /** One callable's request and response authority. */
 export interface CallableContract {
@@ -102,5 +114,49 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'sendInvoiceReminder', args: SendInvoiceReminderArgs, result: SendInvoiceReminderResult },
     { name: 'unarchiveInvoice', args: UnarchiveInvoiceArgs, result: UnarchiveInvoiceResult },
     { name: 'updateInvoice', args: UpdateInvoiceArgs, result: UpdateInvoiceResult },
+  ],
+};
+
+/**
+ * The booking family (ADR-0003's follow-up, precondition met 2026-08-01: PR
+ * #197 gave the status-transition handlers audited return values and PR #195
+ * fixed `batchUpdateBookings`'s id resolution, so the handler bodies ADR-0003
+ * named as "mid-edit" are settled). Every one of these 9 callables now
+ * exports a `Result` and validates outbound through it, exactly as the 19
+ * invoice callables do.
+ *
+ * `getMyBookings` has no zod request schema (`args: null`), same situation
+ * and same precedent as `getMyInvoices` above: it reads one optional string
+ * off `req.data` with no zod authority to generate a request type from.
+ *
+ * `requestBooking`'s `Args` is a COLLAPSE, not the union ADR-0003 also named
+ * as an option: see the long comment beside `export const Args` in
+ * `src/portal/requestBooking.ts` for the decision and why it is safe. The
+ * same "readModel refuses `.nullable().optional()` together" constraint
+ * shows up in `createMultiDateBookingRequest`'s visit fields too; its
+ * `Args` narrows the same way, for the same reason, documented at its own
+ * `export const Args`.
+ */
+export const BOOKING_CONTRACT_REGISTRY: ContractRegistry = {
+  shared: [],
+  callables: [
+    { name: 'addBookingNote', args: AddBookingNoteArgs, result: AddBookingNoteResult },
+    { name: 'addInternalBookingNote', args: AddInternalBookingNoteArgs, result: AddInternalBookingNoteResult },
+    { name: 'batchUpdateBookings', args: BatchUpdateBookingsArgs, result: BatchUpdateBookingsResult },
+    {
+      name: 'createMultiDateBookingRequest',
+      args: CreateMultiDateBookingRequestArgs,
+      result: CreateMultiDateBookingRequestResult,
+    },
+    // No zod request schema; see the module header.
+    { name: 'getMyBookings', args: null, result: GetMyBookingsResult },
+    { name: 'manageBookingSeries', args: ManageBookingSeriesArgs, result: ManageBookingSeriesResult },
+    { name: 'requestBooking', args: RequestBookingArgs, result: RequestBookingResult },
+    {
+      name: 'requestBookingCancellation',
+      args: RequestBookingCancellationArgs,
+      result: RequestBookingCancellationResult,
+    },
+    { name: 'rescheduleBooking', args: RescheduleBookingArgs, result: RescheduleBookingResult },
   ],
 };

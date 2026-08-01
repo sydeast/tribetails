@@ -14,9 +14,18 @@ the same change.
 (ADR-0001 step W3-1).** Every callable that reads or writes an invoice, a
 payment or a quote exports a `Result` zod schema beside its `Args`, parses its
 outbound value through it (`src/lib/callableResponse.ts`), and has that shape
-frozen by the same recursive walker the deep request shapes use. For those 20
-(19 at W3-1, plus `getInvoiceLedger` added in A1), this doc is documentation and
-the schema is the authority. Every OTHER callable's response is still doc-only
+frozen by the same recursive walker the deep request shapes use. That set is
+20 on the invoice side (19 at W3-1, plus `getInvoiceLedger` added in A1). **The
+BOOKING family joined it on 2026-08-01 (ADR-0003's follow-up, once the
+precondition ADR-0003 named was met):** `getMyBookings`, `requestBooking`,
+`requestBookingCancellation`, `addBookingNote`, `addInternalBookingNote`,
+`createMultiDateBookingRequest`, `rescheduleBooking`, `manageBookingSeries`,
+`batchUpdateBookings` each export a `Result` (and, all but `getMyBookings`,
+an `Args`), validate outbound the same way, and are generated into the
+Contracts module through `scripts/contracts/registry.ts`'s
+`BOOKING_CONTRACT_REGISTRY`, exactly as the 20 invoice callables are through
+`INVOICE_CONTRACT_REGISTRY`. For those 29, this doc is documentation and the
+schema is the authority. Every OTHER callable's response is still doc-only
 and this file remains its review anchor; closing that gap is a later PR.
 
 A response that fails its own schema is LOGGED AT ERROR AND RETURNED UNCHANGED,
@@ -54,8 +63,24 @@ Frozen request shapes:
   both refusal detail codes), because both clients send and branch on them and
   `shapeKeys` cannot see inside an enum.
 
+The booking family (`getMyBookings`, `requestBooking`,
+`requestBookingCancellation`, `addBookingNote`, `addInternalBookingNote`,
+`createMultiDateBookingRequest`, `rescheduleBooking`, `manageBookingSeries`,
+`batchUpdateBookings`) is NOT in the `shapeKeys`/`shapeSignature` list above;
+it does not need to be. `contracts:check` regenerates the whole Contracts
+module from these 9 `Args`/`Result` pairs and fails on any byte of diff, which
+catches every rename or added/removed field `shapeKeys` would and also catches
+the RESPONSE side, which `shapeKeys` never could. `requestBooking`'s `Args` is
+a deliberate superset of the two shapes its handler actually parses
+(`MultiArgs`/`LegacyArgs`, still separate and unexported); see the comment
+beside `export const Args` in `src/portal/requestBooking.ts` for why that is
+safe and what it costs.
+
 Coverage reality, so nobody over-trusts this: the admin invokes ~50 MyTribe
-callables; the above 13 are frozen. The measured surface, not the stale "~26":
+callables; the above 13 are frozen by `shapeKeys`/`shapeSignature`, and the 28
+invoice + booking callables are frozen more strongly by `contracts:check`
+(overlapping zero: no callable is on both lists). The measured surface, not
+the stale "~26":
 
 - Nested / effects shapes (added 2026-07-21), frozen by RECURSIVE signature:
   `saveFormSchema` (3-level `schema.sections[].fields[]`), `saveTemplate`
@@ -984,9 +1009,106 @@ BEFORE clearing our copy.
   `mapboxRetrieve`, and only then rotates it. A fresh token per keystroke bills
   each keystroke as its own session.
 
+## Booking requests & lifecycle (kinfolk + admin)
+
+**Machine-checked as of 2026-08-01** (ADR-0003 follow-up). All six callables
+below export `Args` (except `getMyBookings`, which has none, same situation
+as `getMyInvoices`) and `Result`, outbound-validated, generated into the
+Contracts module (`bookingContracts.generated.ts` /
+`BookingContracts.generated.kt`). This section did not exist before this
+follow-up; these six were never documented here, only reachable by reading
+the handler.
+
+### getMyBookings
+- req `{ kinfolkId?: string }` (no zod schema; read raw off `req.data`, same
+  precedent as `getMyInvoicesRequest`)
+- res `{ liveVisit: BookingDto | null, upcoming: BookingDto[], recent: BookingDto[], envelopes: EnvelopeDto[] }`
+- READ-ONLY. `BookingDto` is one `kinCares` (per-visit) doc; `EnvelopeDto` is
+  one parent `bookings/{batchId}` envelope plus its `kinCares` children.
+  `liveVisit` is the one visit currently `active`/`enRoute`, if any.
+  `upcoming` also folds in AuntieOS-scheduled `kin_care_sessions` docs that
+  have no booking envelope at all (a session created directly in the admin
+  app), so a kinfolk sees those too; a session already linked to a booking via
+  `sessionId` is not double-shown.
+- kinfolk portal only; not called by the React admin or android (android
+  reads the underlying Firestore docs directly for its own booking views).
+
+### requestBooking
+- req: see `src/portal/requestBooking.ts`'s `export const Args` for the full
+  shape and why it is one schema covering two accepted payloads. The kinfolk
+  portal only ever sends the multi-visit shape today (`kinfolkId?`, `kinIds?`,
+  `notes?`, `pattern?`, `weeklyDays?`, `visits: [{ startTimeMs, endTimeMs,
+  serviceId, serviceName, priceCents, location }]`, `billing?`,
+  `communication?`); the legacy single-visit shape (`serviceType`,
+  `startTimeMs`, ...) has no live caller but the server still accepts it.
+- res `{ batchId: string, bookingIds: string[], bookingId: string }`. Both
+  write paths return this identical shape; `bookingId` is always `batchId`
+  (kept as a legacy alias, no caller has ever seen it absent).
+- Writes ONE parent `families/{kinfolkId}/bookings/{batchId}` envelope plus
+  one `kinCares/{visitId}` per visit, in a transaction. `priceCents` and
+  `serviceName` in the response's underlying doc are resolved SERVER-SIDE
+  from the `base_services` catalog when `serviceId` is known; a client price
+  is never trusted (NOTE-56). May auto-confirm (see
+  `business_settings.autoConfirmRepeatKinfolk`) for a repeat kinfolk;
+  auto-confirm failure never fails the request, it just leaves the booking in
+  the manual queue.
+- kinfolk portal only.
+
+### requestBookingCancellation
+- req `{ kinfolkId?: string, batchId: string, visitId: string, reason?: string }`
+- res `{ ok: true, visitId: string, alreadyPending: boolean }`
+- Vendor-parity (2026-07-02): NOT a status change. Stamps
+  `cancelRequestedAt`/`cancelRequestReason`/`cancelRequestedByUid` on the
+  visit; only the business cancels for real, via `batchUpdateBookings` or
+  `manageBookingSeries`. A second request on an already-pending visit is a
+  no-op (`alreadyPending: true`), not an error.
+- Only `requested`/`confirmed` visits are cancelable; anything else is
+  `failed-precondition`.
+- kinfolk portal only.
+
+### createMultiDateBookingRequest
+- req: see `src/admin/createMultiDateBookingRequest.ts`'s `export const Args`.
+  Mirrors `requestBooking`'s multi-visit shape field for field (`kinfolkId`
+  required here, unlike the portal's), plus `overrideBusyConflict?: boolean`.
+- res `{ batchId: string, visitIds: string[], visitCount: number }`
+- The ADMIN equivalent of `requestBooking`'s multi-visit path: same
+  `writeEnvelope`/`resolveService`, authenticated as staff, targeting an
+  arbitrary `kinfolkId`. `overrideBusyConflict: true` writes past a real
+  `GOOGLE_BUSY_IMPORT` conflict and audits
+  `BOOKING_BUSY_CONFLICT_OVERRIDDEN`; kinfolk have no equivalent override.
+- React admin and android both call this.
+
+### rescheduleBooking
+- req `{ sessionId: string, startTime: string, endTime: string }`
+- res `{ ok: true, sessionId: string }`
+- Server-bound reschedule of a `kin_care_sessions` doc (Schedule
+  drag-to-reschedule and Bookings bulk/per-card Reschedule share this).
+  404s if the session doesn't exist. Audit records the actual before/after
+  window.
+- React admin and android both call this.
+
+### manageBookingSeries
+- req `{ action: 'APPROVE' | 'CANCEL', kinfolkId: string, batchId: string }`
+- res `{ ok: true, action, batchId: string, affectedVisits: number, sessionsCreated: number, failedVisits: number }`
+- Series-level approve/cancel on ONE parent booking envelope: flips every
+  child `kinCares` visit's status and rolls the envelope status + counts in a
+  single pass. APPROVE delegates to `approveBookingSeriesCore` (also used by
+  `requestBooking`'s auto-confirm path); CANCEL flips every child to
+  `cancelled` and mirrors onto any paired `kin_care_sessions` doc.
+  `failedVisits > 0` reports `status: 'FAILURE'` on the audit entry even
+  though the response still carries the partial counts; the envelope itself
+  is only marked fully `cancelled` when every visit succeeded.
+- android only, as of this follow-up (the React admin explicitly does not
+  call this callable; it acts on the same nested envelope model through
+  other means).
+
 ## Bulk booking transitions (admin-gated)
 
 ### batchUpdateBookings
+**Machine-checked as of 2026-08-01** (ADR-0003 follow-up): `Args`/`Result`
+exported from `admin/batchUpdateBookings.ts`, outbound-validated, generated
+into the Contracts module. This doc stays the semantics reference; the schema
+is the shape authority.
 - req `{ ids: string[] /* each 1..200, max 100 */, action: 'APPROVE'|'REJECT'|'CANCEL' }`
 - res `{ ok: true, action, updated: number, failed: Array<{ id: string, error: string }> }`
 - **TWO CALLERS, TWO ID SPACES, resolved in the SAME request.** "A booking" is a
@@ -1029,8 +1151,12 @@ BEFORE clearing our copy.
 - Audit `BOOKING_BATCH_ACTION`, `targetCollection` reported as `kinCares`,
   `enhanced_bookings` or `mixed` depending on which id space(s) the batch
   actually resolved.
-- Mirrors: `auntieos-admin/src/api/bookingsWrite.ts` + `src/lib/bookingBulk.ts`
-  (React), `android .../data/repository/AuntieRepository.kt` (`batchUpdateBookings`).
+- Generated types: `BatchUpdateBookingsArgs`/`BatchUpdateBookingsResult` in
+  each client's `bookingContracts.generated.ts` / `BookingContracts.generated.kt`.
+  The React admin (`auntieos-admin/src/api/bookingsWrite.ts` +
+  `src/lib/bookingBulk.ts`) and android
+  (`data/repository/AuntieRepository.kt`) are repointed at these; no more
+  hand-mirrored request/response types for this callable.
 
 ## Booking status transitions (admin-gated, A3)
 
@@ -1112,8 +1238,12 @@ SUBCOLLECTIONS, not one collection with a flag, because `firestore.rules` draws
 the kinfolk boundary at the path (`notes` is member-readable, `internalNotes` is
 `isAuntie()` only) and denies every client write to both. That path-level
 boundary is why these are callables at all.
-Both are mirrored by the React admin (`src/api/bookingsWrite.ts`) and android
-(`BookingNotesRepository`).
+**Machine-checked as of 2026-08-01** (ADR-0003 follow-up): both export
+`Args`/`Result`, outbound-validated, generated into the Contracts module. The
+React admin (`src/api/bookingsWrite.ts`) and android
+(`BookingNotesRepository`) are repointed at the generated
+`AddBookingNoteArgs`/`Result` and `AddInternalBookingNoteArgs`/`Result` types
+instead of hand mirrors.
 
 ### addBookingNote
 - req `{ kinfolkId: string, batchId?: string, visitId?: string, bookingId?: string, body: string }`

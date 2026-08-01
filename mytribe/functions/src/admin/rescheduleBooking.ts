@@ -9,6 +9,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
+import { validateResponse } from '../lib/callableResponse';
 
 /**
  * 1E §A.9: server-bound reschedule of a kin_care_sessions doc. Shared by Schedule
@@ -25,20 +26,22 @@ import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
  * new with this task and closing it for reschedule from the start avoids
  * introducing a matching gap on day one.
  */
-const Args = z.object({
+export const Args = z.object({
   sessionId: z.string().min(1).max(120),
   startTime: z.string().min(1).max(40),
   endTime: z.string().min(1).max(40),
 });
 
-export interface RescheduleBookingResult {
-  ok: true;
-  sessionId: string;
-}
+export const Result = z
+  .object({
+    ok: z.literal(true),
+    sessionId: z.string().min(1),
+  })
+  .strict();
 
 export async function rescheduleBookingHandler(
   req: CallableRequest<unknown>,
-): Promise<RescheduleBookingResult> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -93,7 +96,7 @@ export async function rescheduleBookingHandler(
     extra: { sessionId: args.sessionId, toStart: args.startTime },
   });
 
-  return { ok: true, sessionId: args.sessionId };
+  return validateResponse('rescheduleBooking', Result, { ok: true, sessionId: args.sessionId });
 }
 
 export const rescheduleBooking = onCall(

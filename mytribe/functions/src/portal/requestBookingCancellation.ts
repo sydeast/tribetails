@@ -9,6 +9,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { validateResponse } from '../lib/callableResponse';
 
 /**
  * Vendor-parity (2026-07-02): a kinfolk asks the business to cancel a visit.
@@ -20,18 +21,27 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
  * flag's first appearance and fires `kincare.cancel.requested` to the office.
  * A second request on the same visit is a no-op (already pending).
  */
-const Args = z.object({
+export const Args = z.object({
   kinfolkId: z.string().min(1).max(200).optional(),
   batchId: z.string().min(1).max(200),
   visitId: z.string().min(1).max(200),
   reason: z.string().trim().max(500).optional(),
 });
 
+export const Result = z
+  .object({
+    ok: z.literal(true),
+    visitId: z.string().min(1),
+    /** True when a request was already pending (this call was a no-op). */
+    alreadyPending: z.boolean(),
+  })
+  .strict();
+
 const CANCELABLE = new Set(['requested', 'confirmed']);
 
 export async function requestBookingCancellationHandler(
   req: CallableRequest<unknown>,
-): Promise<{ ok: true; visitId: string; alreadyPending: boolean }> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -67,7 +77,11 @@ export async function requestBookingCancellationHandler(
     );
   }
   if (data.cancelRequestedAt) {
-    return { ok: true, visitId: args.visitId, alreadyPending: true };
+    return validateResponse('requestBookingCancellation', Result, {
+      ok: true,
+      visitId: args.visitId,
+      alreadyPending: true,
+    });
   }
 
   await visitRef.set(
@@ -106,7 +120,11 @@ export async function requestBookingCancellationHandler(
     uid,
     extra: { kinfolkId, batchId: args.batchId, visitId: args.visitId },
   });
-  return { ok: true, visitId: args.visitId, alreadyPending: false };
+  return validateResponse('requestBookingCancellation', Result, {
+    ok: true,
+    visitId: args.visitId,
+    alreadyPending: false,
+  });
 }
 
 export const requestBookingCancellation = onCall(

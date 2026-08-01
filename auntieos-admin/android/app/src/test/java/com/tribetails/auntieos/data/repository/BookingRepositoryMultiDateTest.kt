@@ -17,6 +17,12 @@ import org.junit.Test
  * AO-25: BookingRepository.createMultiDateBookingRequest wraps the
  * createMultiDateBookingRequest callable. Verifies the visits/pattern payload,
  * the result decode, and fail-loud propagation. FirebaseFunctions is mocked.
+ *
+ * ADR-0003 follow-up: the payload is now built through the generated
+ * `CreateMultiDateBookingRequestArgs`, which always sends `serviceId` /
+ * `endTimeMs` / `priceCents` / `location` (`null` rather than omitted) --
+ * see `BookingRepositoryCreateMultiDateTest` for the drift fix that motivated
+ * this (the old hand map had no slot at all for `priceCents`/`location`).
  */
 class BookingRepositoryMultiDateTest {
 
@@ -58,14 +64,20 @@ class BookingRepositoryMultiDateTest {
         // Payload shape.
         assertEquals("kf1", payload.captured["kinfolkId"])
         assertEquals("weekly", payload.captured["pattern"])
-        assertEquals(listOf(1, 3), payload.captured["weeklyDays"])
+        // The generated Args' weeklyDays is List<Long> (zod's z.number().int()),
+        // so the repository now converts the Int day-of-week list to Long.
+        assertEquals(listOf(1L, 3L), payload.captured["weeklyDays"])
         @Suppress("UNCHECKED_CAST")
-        val visits = payload.captured["visits"] as List<Map<String, Any>>
+        val visits = payload.captured["visits"] as List<Map<String, Any?>>
         assertEquals(2, visits.size)
         assertEquals(2_000L, visits[0]["startTimeMs"])
         assertEquals("svc1", visits[0]["serviceId"])
-        // The second visit omitted serviceId, so the payload map has no such key.
-        assertTrue(!visits[1].containsKey("serviceId"))
+        // ADR-0003 follow-up: the generated Args always sends the key, `null`
+        // when the visit has no catalog serviceId, never omitted -- an omitted
+        // key is exactly the shape of the drift this follow-up fixed for
+        // `priceCents`/`location` on this same visit object.
+        assertTrue(visits[1].containsKey("serviceId"))
+        assertEquals(null, visits[1]["serviceId"])
     }
 
     @Test

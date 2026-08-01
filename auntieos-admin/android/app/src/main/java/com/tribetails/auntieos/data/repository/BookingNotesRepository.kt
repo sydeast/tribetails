@@ -3,6 +3,10 @@ package com.tribetails.auntieos.data.repository
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.functions.FirebaseFunctions
+import com.tribetails.auntieos.data.contracts.AddBookingNoteArgs
+import com.tribetails.auntieos.data.contracts.AddInternalBookingNoteArgs
+import com.tribetails.auntieos.data.contracts.decodeAddBookingNoteResult
+import com.tribetails.auntieos.data.contracts.decodeAddInternalBookingNoteResult
 import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -39,15 +43,10 @@ class BookingNotesRepository(
     ): Result<String> = runCatching {
         require(body.isNotBlank()) { "Note body cannot be blank." }
         AuntieLog.i("BookingNotesRepository: addBookingNote kinfolk=$kinfolkId booking=$bookingId")
-        val payload = mapOf(
-            "kinfolkId" to kinfolkId,
-            "bookingId" to bookingId,
-            "body" to body,
-        )
+        val args = AddBookingNoteArgs(kinfolkId = kinfolkId, bookingId = bookingId, body = body)
+        val raw = functions.getHttpsCallable("addBookingNote").call(args.toPayload()).await().data
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("addBookingNote").call(payload).await().data as? Map<String, Any?>
-            ?: error("addBookingNote: non-map payload")
-        raw["noteId"] as? String ?: error("addBookingNote: missing noteId")
+        decodeAddBookingNoteResult(raw as? Map<String, Any?>).noteId
     }.onFailure { AuntieLog.e("BookingNotesRepository.addKinfolkFacingNote failed", it) }
 
     /** Append an admin-internal note. Admin-only via callable claim guard. */
@@ -58,15 +57,10 @@ class BookingNotesRepository(
     ): Result<String> = runCatching {
         require(body.isNotBlank()) { "Internal note body cannot be blank." }
         AuntieLog.i("BookingNotesRepository: addInternalBookingNote kinfolk=$kinfolkId booking=$bookingId")
-        val payload = mapOf(
-            "kinfolkId" to kinfolkId,
-            "bookingId" to bookingId,
-            "body" to body,
-        )
+        val args = AddInternalBookingNoteArgs(kinfolkId = kinfolkId, bookingId = bookingId, body = body)
+        val raw = functions.getHttpsCallable("addInternalBookingNote").call(args.toPayload()).await().data
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("addInternalBookingNote").call(payload).await().data as? Map<String, Any?>
-            ?: error("addInternalBookingNote: non-map payload")
-        raw["noteId"] as? String ?: error("addInternalBookingNote: missing noteId")
+        decodeAddInternalBookingNoteResult(raw as? Map<String, Any?>).noteId
     }.onFailure { AuntieLog.e("BookingNotesRepository.addInternalNote failed", it) }
 
     /** Live snapshot of kinfolk-facing notes for a booking, oldest first. */

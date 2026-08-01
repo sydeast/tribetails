@@ -10,8 +10,15 @@ import { isStaff } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { sanitizeRichText } from '../lib/richText';
 import { assertNoteWindowOpen } from '../lib/bookingNoteCutoff';
+import { validateResponse } from '../lib/callableResponse';
 
-const Args = z
+export const Result = z
+  .object({
+    noteId: z.string().min(1),
+  })
+  .strict();
+
+export const Args = z
   .object({
     kinfolkId: z.string().optional(),
     batchId: z.string().min(1).optional(),
@@ -35,7 +42,7 @@ const Args = z
 
 export async function addBookingNoteHandler(
   req: CallableRequest<unknown>,
-): Promise<{ noteId: string }> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -100,7 +107,7 @@ export async function addBookingNoteHandler(
       authorRole: staff ? 'admin' : 'kinfolk',
     },
   });
-  return { noteId: ref.id };
+  return validateResponse('addBookingNote', Result, { noteId: ref.id });
 }
 
 export const addBookingNote = onCall(

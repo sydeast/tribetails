@@ -18,7 +18,7 @@ import {
   visitVariant,
   weekdayTime,
 } from './portalFormat';
-import type { BookingDto, GetMyBookingsResult } from '../api/types';
+import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
 
 describe('calTile', () => {
   it('formats month + zero-padded day', () => {
@@ -178,7 +178,7 @@ describe('resolveHomeLayout', () => {
   });
 });
 
-function booking(overrides: Partial<BookingDto> = {}): BookingDto {
+function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBookingsResultLiveVisit {
   return {
     id: 'v1',
     batchId: 'b1',

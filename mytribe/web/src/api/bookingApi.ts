@@ -1,13 +1,27 @@
 /**
- * Wire types + typed wrappers for the booking-wizard callables. Self-contained
- * (mirrors api/invoicesApi.ts's `call` pattern) so it doesn't touch
- * api/types.ts or api/portal.ts while other work happens in parallel.
+ * Typed wrappers for the booking-wizard callables the kinfolk portal calls.
  *
- * Every DTO below is transcribed from its backend handler; each block cites
- * its source file. Field names/types/defaults MUST stay in sync with those
- * files.
+ * THE SHAPES FOR requestBooking, requestBookingCancellation, and
+ * addBookingNote ARE NOT DEFINED HERE. They come from
+ * `../contracts/bookingContracts.generated`, projected from the server zod
+ * schemas under ADR-0001, same convention as api/invoicesApi.ts. What is left
+ * below for those three is the part a generator cannot write: the argument
+ * order a screen calls, and the prose about what each operation means.
+ *
+ * getServiceCatalog has no zod request/response schema on the server (same
+ * situation as getMyInvoices/getMyBookings), so its ServiceDto and
+ * GetServiceCatalogResult stay hand-written here, transcribed from
+ * `functions/src/portal/getServiceCatalog.ts`.
  */
 import { call } from '../lib/fns';
+import type {
+  AddBookingNoteArgs,
+  AddBookingNoteResult,
+  RequestBookingArgs,
+  RequestBookingCancellationArgs,
+  RequestBookingCancellationResult,
+  RequestBookingResult,
+} from '../contracts/bookingContracts.generated';
 
 // ── getServiceCatalog (functions/src/portal/getServiceCatalog.ts) ───────────
 
@@ -68,41 +82,13 @@ export function getBusinessClosures(req: GetBusinessClosuresRequest): Promise<Ge
 }
 
 // ── requestBooking (functions/src/portal/requestBooking.ts, multi-visit shape) ──
-
-export type BookingPattern = 'individual' | 'weekly';
-
-export interface BookingVisitInput {
-  /** Epoch ms; the server rejects a start time in the past. */
-  startTimeMs: number;
-  endTimeMs?: number | null;
-  serviceId: string;
-  /**
-   * Display-fallback label only: the server resolves the canonical name from
-   * `serviceId` server-side and ignores this when the id resolves.
-   */
-  serviceName: string;
-  /** Display-fallback only: the server resolves the canonical price server-side and ignores this when `serviceId` resolves. */
-  priceCents?: number | null;
-}
-
-export interface RequestBookingRequest {
-  kinfolkId?: string;
-  kinIds?: string[];
-  notes?: string;
-  pattern?: BookingPattern;
-  /** 0=Sun..6=Sat; only meaningful when pattern === 'weekly'. */
-  weeklyDays?: number[];
-  visits: BookingVisitInput[];
-}
-
-export interface RequestBookingResult {
-  /** The envelope id (parent `bookings/{batchId}` doc). */
-  batchId: string;
-  /** Legacy multi-id alias; in the envelope model this is `[batchId]`. */
-  bookingIds: string[];
-  /** Legacy single-id alias. */
-  bookingId?: string;
-}
+//
+// `RequestBookingArgs` is a SUPERSET schema covering both the multi-visit
+// shape the portal sends and a legacy single-visit shape the server still
+// accepts from older clients. The portal only ever builds the multi-visit
+// fields (kinfolkId, kinIds, notes, pattern, weeklyDays, visits[], billing,
+// communication) below; the legacy fields exist on the type for completeness
+// and are never set here.
 
 /**
  * Submits a multi-visit booking request. `visits` must be non-empty: the
@@ -110,31 +96,17 @@ export interface RequestBookingResult {
  * an empty array, so this throws client-side first with a clearer message
  * rather than round-tripping to find out.
  */
-export function requestBooking(req: RequestBookingRequest): Promise<RequestBookingResult> {
-  if (req.visits.length === 0) {
+export function requestBooking(req: RequestBookingArgs): Promise<RequestBookingResult> {
+  if (!req.visits || req.visits.length === 0) {
     throw new Error('No visits to book. Check the days and weeks.');
   }
-  return call<RequestBookingRequest, RequestBookingResult>('requestBooking', req);
+  return call<RequestBookingArgs, RequestBookingResult>('requestBooking', req);
 }
 
 // ── requestBookingCancellation (functions/src/portal/requestBookingCancellation.ts) ──
 // Vendor-parity: NOT an instant cancel. It stamps a cancelRequestedAt flag the
 // business acts on; the visit's own status is untouched until they do. See the
 // handler's doc comment for the full rationale.
-
-export interface RequestBookingCancellationRequest {
-  kinfolkId?: string;
-  batchId: string;
-  visitId: string;
-  reason?: string;
-}
-
-export interface RequestBookingCancellationResult {
-  ok: true;
-  visitId: string;
-  /** True when a request was already pending (this call was a no-op). */
-  alreadyPending: boolean;
-}
 
 /** Asks the business to cancel one visit. Only requested/confirmed visits qualify (server-enforced). */
 export function requestBookingCancellation(
@@ -143,13 +115,13 @@ export function requestBookingCancellation(
   visitId: string,
   reason?: string,
 ): Promise<RequestBookingCancellationResult> {
-  const payload: RequestBookingCancellationRequest = {
+  const payload: RequestBookingCancellationArgs = {
     kinfolkId,
     batchId,
     visitId,
     ...(reason && reason.trim() ? { reason: reason.trim() } : {}),
   };
-  return call<RequestBookingCancellationRequest, RequestBookingCancellationResult>(
+  return call<RequestBookingCancellationArgs, RequestBookingCancellationResult>(
     'requestBookingCancellation',
     payload,
   );
@@ -159,17 +131,6 @@ export function requestBookingCancellation(
 // `kinfolkId` is typed optional server-side but the handler throws
 // invalid-argument without it (it's the authorization anchor, resolved
 // BEFORE the visit lookup) — always send it, never omit.
-
-export interface AddBookingNoteRequest {
-  kinfolkId: string;
-  batchId: string;
-  visitId: string;
-  body: string;
-}
-
-export interface AddBookingNoteResult {
-  noteId: string;
-}
 
 /**
  * Leaves a note on one visit. Rejected within the 3-hour pre-visit cutoff
@@ -182,6 +143,6 @@ export function addBookingNote(
   visitId: string,
   body: string,
 ): Promise<AddBookingNoteResult> {
-  const payload: AddBookingNoteRequest = { kinfolkId, batchId, visitId, body };
-  return call<AddBookingNoteRequest, AddBookingNoteResult>('addBookingNote', payload);
+  const payload: AddBookingNoteArgs = { kinfolkId, batchId, visitId, body };
+  return call<AddBookingNoteArgs, AddBookingNoteResult>('addBookingNote', payload);
 }

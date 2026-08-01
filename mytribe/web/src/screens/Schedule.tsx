@@ -9,13 +9,18 @@ import { RouteMap } from '../components/RouteMap';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { bookingChip, calTile, fullDateKick, isoTime, speciesEmoji, visitSubtitle, visitVariant } from '../lib/portalFormat';
-import type { BookingDto, GetMyBookingsResult } from '../api/types';
+import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
 
 type Tab = 'upcoming' | 'past';
 
-function findBookingBySessionId(result: GetMyBookingsResult | undefined, sessionId: string): BookingDto | null {
+function findBookingBySessionId(
+  result: GetMyBookingsResult | undefined,
+  sessionId: string,
+): GetMyBookingsResultLiveVisit | null {
   if (!result) return null;
-  const all = [result.liveVisit, ...result.upcoming, ...result.recent].filter((b): b is BookingDto => b !== null);
+  const all = [result.liveVisit, ...result.upcoming, ...result.recent].filter(
+    (b): b is GetMyBookingsResultLiveVisit => b !== null,
+  );
   return all.find((b) => b.sessionId === sessionId) ?? null;
 }
 

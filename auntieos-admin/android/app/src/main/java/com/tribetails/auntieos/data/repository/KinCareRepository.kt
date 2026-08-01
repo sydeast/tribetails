@@ -3,6 +3,8 @@ package com.tribetails.auntieos.data.repository
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
+import com.tribetails.auntieos.data.contracts.RescheduleBookingArgs
+import com.tribetails.auntieos.data.contracts.decodeRescheduleBookingResult
 import com.tribetails.auntieos.data.model.GpsSummary
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareReport
@@ -351,12 +353,27 @@ class KinCareRepository(
         Unit
     }.onFailure { AuntieLog.e("transitionBookingStatus ${action.name} failed for $sessionId", it) }
 
-    /** 1E §A.9: reschedule an existing session (Schedule drag / Bookings reschedule). */
+    /**
+     * 1E §A.9: reschedule an existing session (Schedule drag / Bookings reschedule).
+     *
+     * DRIFT FIX (ADR-0003 follow-up): this used to discard the response outright
+     * (`Result<Unit>`), so a response that decoded to `ok: false` -- the server
+     * refusing the write for a reason that did not throw an `HttpsError`, or a
+     * response shape the client could not read -- looked identical to a real
+     * success. The callable's own handler only ever returns `ok: true` today, so
+     * this fail-loud path is guarding against a FUTURE server response the
+     * client cannot yet know is wrong, not a bug this handler currently has.
+     */
     suspend fun rescheduleBooking(sessionId: String, startTime: String, endTime: String): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
-        functions.getHttpsCallable("rescheduleBooking")
-            .call(mapOf("sessionId" to sessionId, "startTime" to startTime, "endTime" to endTime))
-            .await()
+        val args = RescheduleBookingArgs(sessionId = sessionId, startTime = startTime, endTime = endTime)
+        val raw = functions.getHttpsCallable("rescheduleBooking").call(args.toPayload()).await().data
+        @Suppress("UNCHECKED_CAST")
+        val result = decodeRescheduleBookingResult(raw as? Map<String, Any?>)
+        check(result.ok) { "rescheduleBooking did not confirm the reschedule (ok=false) for session $sessionId" }
+        check(result.sessionId == sessionId) {
+            "rescheduleBooking confirmed a different session (${result.sessionId}) than requested ($sessionId)"
+        }
         Unit
     }.onFailure { AuntieLog.e("rescheduleBooking failed", it) }
 
