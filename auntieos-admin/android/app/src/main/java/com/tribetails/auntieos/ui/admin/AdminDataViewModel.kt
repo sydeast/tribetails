@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.BookingTransitionAction
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -350,6 +351,35 @@ class AdminDataViewModel(
     fun patchKinCareSession(id: String, patch: Map<String, Any>, onResult: (Throwable?) -> Unit = {}) {
         viewModelScope.launch {
             kinCareRepository.patchKinCareSession(id, patch).onSuccess {
+                loadKinCareSessions()
+                onResult(null)
+            }.onFailure { t ->
+                _error.value = t.message ?: "Failed to update Kin Care"
+                onResult(t)
+            }
+        }
+    }
+
+    /**
+     * A3: applies one OPERATOR status transition through the
+     * `transitionBookingStatus` callable, then reloads so the row shows what the
+     * server actually did.
+     *
+     * Kept separate from [patchKinCareSession] rather than folded into it,
+     * because these are two different kinds of write and blurring them is how
+     * the audit hole existed at all: a patch is a field edit the client owns, a
+     * transition is a state change the server owns, audits, and can refuse. The
+     * server's refusal message reaches the operator verbatim.
+     */
+    fun transitionBookingStatus(
+        id: String,
+        action: BookingTransitionAction,
+        completedAt: String = "",
+        reason: String = "",
+        onResult: (Throwable?) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            kinCareRepository.transitionBookingStatus(id, action, completedAt, reason).onSuccess {
                 loadKinCareSessions()
                 onResult(null)
             }.onFailure { t ->

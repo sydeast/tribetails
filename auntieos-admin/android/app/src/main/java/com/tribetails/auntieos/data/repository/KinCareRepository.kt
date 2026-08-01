@@ -20,6 +20,21 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 
 /**
+ * A3: the four operator transitions the `transitionBookingStatus` callable
+ * accepts. Mirrors the server's `BOOKING_ACTIONS`
+ * (`MyTribe/functions/src/lib/bookingTransitions.ts`), whose action set is
+ * frozen against drift by `functions/test/callableContract.test.ts`.
+ *
+ * REJECT and CANCEL both leave the session at `CANCELLED` and are still two
+ * different actions, because they start from different places: REJECT declines
+ * a request that was NEVER approved (DRAFT / PENDING), CANCEL calls off a visit
+ * that WAS (SCHEDULED, or already in flight). The collection has no distinct
+ * "rejected" value, so the audit entry, which records the action the operator
+ * chose alongside the status it came from, is where that distinction survives.
+ */
+enum class BookingTransitionAction { APPROVE, REJECT, CANCEL, COMPLETE }
+
+/**
  * The KIN CARE domain repo (W4-3): a visit from the moment it is scheduled to
  * the KinTale the household receives afterwards. Second of the per-domain repos
  * carved out of the `AuntieRepository` god-file, after Invoice (W4-1).
@@ -240,11 +255,36 @@ class KinCareRepository(
             "departedAt" to getCurrentTimestamp()
         )).onFailure { AuntieLog.e("Failed to mark departed for $sessionId", it) }
 
+    /**
+     * A3: COMPLETE goes through [transitionBookingStatus], not [patchSession].
+     *
+     * The three transitions above stay direct patches because they are IN-VISIT
+     * telemetry from a phone that is regularly offline between houses, and
+     * Firestore's offline write queue is what makes them land at all. This one
+     * does not: COMPLETED is terminal, it is what decides that a visit HAPPENED
+     * and is therefore billable, and `firestore.rules` no longer lets any client
+     * write it. Same ruling as the invoice writes W2-1 moved onto callables.
+     *
+     * The caller's `completedAt` is still sent so the stored instant keeps
+     * matching what every reader of this collection already parses.
+     */
     suspend fun markSessionComplete(sessionId: String): Result<Unit> =
-        patchSession(sessionId, mapOf(
-            "status" to VisitStatus.COMPLETED.name,
-            "completedAt" to getCurrentTimestamp()
-        )).onFailure { AuntieLog.e("Failed to mark complete for $sessionId", it) }
+        transitionBookingStatus(sessionId, BookingTransitionAction.COMPLETE, completedAt = getCurrentTimestamp())
+            .onFailure { AuntieLog.e("Failed to mark complete for $sessionId", it) }
+
+    /**
+     * A3: call off an already-approved visit. Terminal, so it goes through the
+     * callable for exactly the reasons [markSessionComplete] does.
+     *
+     * `reason` is appended to the session's own notes SERVER-SIDE as
+     * `[Booking cancelled] <reason>`. It used to be composed on the client
+     * (`EnhancedSchedulingViewModel#bridgeCancellationToSession`), which built
+     * the line from the ENVELOPE booking's notes and wrote the result over the
+     * session's, discarding whatever the session itself had recorded.
+     */
+    suspend fun cancelSession(sessionId: String, reason: String = ""): Result<Unit> =
+        transitionBookingStatus(sessionId, BookingTransitionAction.CANCEL, reason = reason)
+            .onFailure { AuntieLog.e("Failed to cancel session $sessionId", it) }
 
     // ---- Care-ops session callables (1E §A.9) ----
 
@@ -271,6 +311,41 @@ class KinCareRepository(
             ?: error("createKinCareSession: non-map payload")
         raw["sessionId"] as? String ?: error("createKinCareSession: missing sessionId")
     }.onFailure { AuntieLog.e("createKinCareSession failed", it) }
+
+    /**
+     * A3: one operator status transition on one `kin_care_sessions` row, through
+     * the `transitionBookingStatus` callable.
+     *
+     * THE SERVER OWNS THE STATE MACHINE and this method does not re-implement
+     * it. `MyTribe/functions/src/lib/bookingTransitions.ts` decides which
+     * transitions are legal from which status, refuses the rest with
+     * `failed-precondition`, and writes an `activity_log` entry on every path
+     * including the refusals. The screens' own enabled/disabled button states
+     * are a courtesy so the operator is not shown a control that will fail; the
+     * server is the enforcement.
+     *
+     * Fails loud: the callable's message is what the caller surfaces, unchanged.
+     */
+    suspend fun transitionBookingStatus(
+        sessionId: String,
+        action: BookingTransitionAction,
+        completedAt: String = "",
+        reason: String = "",
+    ): Result<Unit> = runCatching {
+        authGate.ensureAuthenticated()
+        require(sessionId.isNotBlank()) { "sessionId required" }
+        val payload = buildMap<String, Any> {
+            put("sessionId", sessionId)
+            put("action", action.name)
+            // Both are OPTIONAL on the server and length-capped with a min of 1,
+            // so a blank must be omitted rather than sent as "": sending the
+            // empty string is an invalid-argument, not an "unset".
+            if (completedAt.isNotBlank()) put("completedAt", completedAt)
+            if (reason.isNotBlank()) put("reason", reason.trim())
+        }
+        functions.getHttpsCallable("transitionBookingStatus").call(payload).await()
+        Unit
+    }.onFailure { AuntieLog.e("transitionBookingStatus ${action.name} failed for $sessionId", it) }
 
     /** 1E §A.9: reschedule an existing session (Schedule drag / Bookings reschedule). */
     suspend fun rescheduleBooking(sessionId: String, startTime: String, endTime: String): Result<Unit> = runCatching {

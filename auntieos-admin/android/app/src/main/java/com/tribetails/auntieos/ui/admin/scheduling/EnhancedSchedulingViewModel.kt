@@ -1403,17 +1403,31 @@ class EnhancedSchedulingViewModel(
                     .map { it.id }
             }
 
+    /**
+     * A3: cancelling the booking cancels its linked sessions THROUGH THE
+     * `transitionBookingStatus` CALLABLE, not through a direct status patch.
+     *
+     * This used to write `{status: CANCELLED, notes: ...}` straight to
+     * `kin_care_sessions` via [KinCareRepository.patchKinCareSession]. That was
+     * one of the four unaudited status writes A3 closed, and `firestore.rules`
+     * now refuses it from any client. Two consequences worth naming:
+     *
+     *  - The server runs the state machine, so a session that is already
+     *    COMPLETED is REFUSED here rather than silently overwritten. That is
+     *    the intended behaviour: a visit that was performed does not become
+     *    un-performed because the booking envelope was later called off.
+     *    [findLinkedSessionIds] already skips CANCELLED ones.
+     *  - The reason line is composed server-side, onto the SESSION's own notes.
+     *    The old client version built it from the ENVELOPE booking's notes and
+     *    wrote the result over the session's, discarding whatever the session
+     *    had recorded.
+     */
     private suspend fun bridgeCancellationToSession(booking: EnhancedBooking, reason: String): Result<Unit> {
         val sessionIds = findLinkedSessionIds(booking.id).getOrElse { return Result.failure(it) }
         if (sessionIds.isEmpty()) return Result.success(Unit)
 
-        val patch = mapOf(
-            "status" to VisitStatus.CANCELLED.name,
-            "notes" to if (reason.isBlank()) booking.notes else "${booking.notes}\n[Booking cancelled] $reason".trim(),
-        )
-
         sessionIds.forEach { sessionId ->
-            kinCareRepository.patchKinCareSession(sessionId, patch)
+            kinCareRepository.cancelSession(sessionId, reason)
                 .onFailure { e ->
                     Log.e("EnhancedSchedulingVM", "Failed to cancel linked KinCareSession $sessionId", e)
                     return Result.failure(e)

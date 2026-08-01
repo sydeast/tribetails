@@ -127,14 +127,21 @@ describe('rules: test-admin sandbox', () => {
     );
   });
 
-  it('updates its own session / payment / media; invoice is DENIED (callable-only, ADR-0002)', async () => {
+  it('updates its own session / payment / media; invoice + terminal session status are DENIED (callable-only)', async () => {
     const env = await getEnv();
     const fs = asTestAdmin(env).firestore();
     // ADR-0002: invoice writes are callable-only for the sandbox too, so the
     // Invoice State Classifier stamp can never be skipped. The sandbox writes
     // invoices through the same callables production uses.
     await assertFails(fs.doc(`invoices/${TEST_TRIBE}-i1`).set({ kinfolkId: TEST_TRIBE, total: 99 }, { merge: true }));
-    await assertSucceeds(fs.doc(`kin_care_sessions/${TEST_TRIBE}-s1`).set({ kinfolkId: TEST_TRIBE, status: 'COMPLETED' }, { merge: true }));
+    // A3 extends that ruling to the session's TERMINAL statuses. The sandbox
+    // still drives the in-visit lifecycle directly, exactly as the field app
+    // does, but reaches COMPLETED / CANCELLED through the
+    // `transitionBookingStatus` callable, so it exercises the audited path
+    // production uses instead of a shortcut past it. Full guard:
+    // `test/rules/kinCareSessionStatus.test.ts`.
+    await assertSucceeds(fs.doc(`kin_care_sessions/${TEST_TRIBE}-s1`).set({ kinfolkId: TEST_TRIBE, status: 'ARRIVED' }, { merge: true }));
+    await assertFails(fs.doc(`kin_care_sessions/${TEST_TRIBE}-s1`).set({ kinfolkId: TEST_TRIBE, status: 'COMPLETED' }, { merge: true }));
     await assertSucceeds(fs.doc(`payments/${TEST_TRIBE}-p1`).set({ kinfolkId: TEST_TRIBE, amount: 99 }, { merge: true }));
     await assertSucceeds(fs.doc(`media_files/${TEST_TRIBE}-m1`).set({ kinfolkId: TEST_TRIBE, isProfilePhoto: true }, { merge: true }));
     await assertSucceeds(fs.doc(`kin_care_reports/${TEST_TRIBE}-r1`).set({ kinfolkId: TEST_TRIBE, status: 'SENT' }, { merge: true }));

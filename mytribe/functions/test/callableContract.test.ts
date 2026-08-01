@@ -81,6 +81,23 @@ import { CALENDAR_ID_INVALID_CODE, calendarIdProblem } from '../src/lib/calendar
 // on any difference including a trailing slash.
 import { SetTargetsArgs } from '../src/admin/googleCalendar/googleCalendarSelection';
 import { Args as PushVisitsArgs } from '../src/admin/googleCalendar/pushVisitsToGoogleCalendar';
+// A3 booking status transitions (2026-08-01). Replaces a direct client
+// `updateDoc` on `kin_care_sessions` that both the React admin and Android
+// made, so two hand-built mirrors track this shape from the day it lands. The
+// state machine's own tables are frozen alongside it: the ACTION SET and the
+// TARGET STATUSES are as much a cross-app contract as the field names, since
+// both clients branch on them.
+import {
+  Args as TransitionBookingStatusArgs,
+  Result as TransitionBookingStatusResult,
+} from '../src/admin/transitionBookingStatus';
+import {
+  BOOKING_ACTIONS,
+  BOOKING_STATUS_UNKNOWN_CODE,
+  BOOKING_TRANSITION_ILLEGAL_CODE,
+  allowedFromFor,
+  targetStatusFor,
+} from '../src/lib/bookingTransitions';
 import {
   calendarPushStamp,
   connectStamp,
@@ -240,6 +257,20 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
     keys: ['enabledCalendarIds', 'writeCalendarId'],
   },
   pushVisitsToGoogleCalendar: { schema: PushVisitsArgs, keys: ['lookAheadDays'] },
+
+  // A3: the four operator status transitions on a flat `kin_care_sessions` row.
+  // Frozen FROM BIRTH, for the same reason linkInvoiceSessions/recordPayment
+  // were: this callable replaces a direct client write on THREE surfaces at
+  // once (the React admin's `api/bookingsWrite.ts`, Android's
+  // `KinCareRepository`, and Android's Auntie Time screen), so two hand-built
+  // mirrors are aimed at this shape the day it lands.
+  //
+  // `action` is the field that matters and it is an ENUM, which `shapeKeys`
+  // cannot see, so the action set gets its own freeze below.
+  transitionBookingStatus: {
+    schema: TransitionBookingStatusArgs,
+    keys: ['action', 'completedAt', 'reason', 'sessionId'],
+  },
 };
 
 describe('AO-8 callable contract drift guard', () => {
@@ -869,6 +900,48 @@ describe('ADR-0001 W3-1 response contract drift guard (invoice money surface)', 
     });
   }
 });
+/**
+ * A3: the booking transition contract, in the two dimensions `shapeKeys`
+ * cannot see.
+ *
+ * The VALUES are the contract here, not just the field names. The React admin
+ * and Android both send one of four action strings and both branch on the
+ * refusal `details.code`, so a rename on either side is a silently broken
+ * client, exactly the failure this file exists to catch. The from-sets are
+ * frozen too because they are what keeps REJECT and CANCEL two different
+ * actions: they land on the same stored status, and if their source sets ever
+ * collapsed into each other the distinction would be gone with nothing failing.
+ */
+describe('callable contract drift guard (A3 booking status transitions)', () => {
+  it('the action set is exactly the four the clients send', () => {
+    expect([...BOOKING_ACTIONS]).toEqual(['APPROVE', 'REJECT', 'CANCEL', 'COMPLETE']);
+  });
+
+  it('each action lands on the status the clients render', () => {
+    expect(targetStatusFor('APPROVE')).toBe('SCHEDULED');
+    expect(targetStatusFor('REJECT')).toBe('CANCELLED');
+    expect(targetStatusFor('CANCEL')).toBe('CANCELLED');
+    expect(targetStatusFor('COMPLETE')).toBe('COMPLETED');
+  });
+
+  it('reject and cancel stay distinct actions over one stored status', () => {
+    expect(targetStatusFor('REJECT')).toBe(targetStatusFor('CANCEL'));
+    expect(allowedFromFor('REJECT')).toEqual(['DRAFT', 'PENDING']);
+    expect(allowedFromFor('CANCEL')).toEqual(['SCHEDULED', 'ON_MY_WAY', 'ARRIVED', 'DEPARTED']);
+  });
+
+  it('the refusal detail codes are unchanged (both clients match on them)', () => {
+    expect(BOOKING_TRANSITION_ILLEGAL_CODE).toBe('booking_transition_illegal');
+    expect(BOOKING_STATUS_UNKNOWN_CODE).toBe('booking_status_unknown');
+  });
+
+  it('response signature is unchanged', () => {
+    expect(shapeSignature(TransitionBookingStatusResult)).toEqual(
+      ['action', 'changed', 'from', 'ok', 'sessionId', 'status'].sort(),
+    );
+  });
+});
+
 /**
  * `getMyInvoices` gets its own block because its response is three copies of
  * ONE DTO, and listing 87 dotted paths would bury the fact that matters: the

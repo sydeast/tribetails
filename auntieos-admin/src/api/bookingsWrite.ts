@@ -1,36 +1,35 @@
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { call } from '../lib/fns';
 
 /**
  * The write half of the `kin_care_sessions` surface Bookings.tsx / api/bookings.ts
- * only reads. Two DIFFERENT transports, both confirmed against the live wasm
- * bridge and the MyTribe backend, never invented:
+ * only reads. Every write below is now a CALLABLE. The one direct client patch
+ * this module used to make is gone (see 1), and `firestore.rules` no longer
+ * permits it, so nothing here can drift back into an unaudited write by
+ * accident. The three groups differ by what they act on, not by transport:
  *
- *   1. DIRECT CLIENT WRITE (this file's setBookingStatus + wrappers). Confirmed
- *      by firestore.rules:203-209, `match /kin_care_sessions/{sessionId}`:
- *      `allow create/update/delete: if isAuntie() || ...`, unmediated, the same
- *      grant api/bookings.ts's doc comment already cites for the read side. The
- *      wasm reference writes this collection the SAME way, never through a
- *      callable, for exactly the four status transitions ported below:
- *        - FirestoreInterop.wasmJs.kt:968 `platformApproveBooking`  -> bare
- *          `{"status":"SCHEDULED"}` via `jsUpdateDoc`.
- *        - FirestoreInterop.wasmJs.kt:977 `platformRejectBooking`   -> bare
- *          `{"status":"CANCELLED"}` via `jsUpdateDoc`.
- *        - KinCareSessionsScreen.kt:724 "Cancel KinCare" (an already-SCHEDULED
- *          visit, not a pending request) -> the SAME bare
- *          `{"status":"CANCELLED"}` patch, routed through `patchKinCare` /
- *          `jsUpdateDoc` rather than a distinct callable. There is no separate
- *          backend verb for "reject" vs "cancel": both are one Firestore write.
- *        - KinCareSessionsScreen.kt:716 "Mark Completed" ->
- *          `{"status":"COMPLETED","completedAt":<nowIso>}`, same transport.
- *      Every patch here is intentionally BARE, matching the reference exactly:
- *      no `updatedAt` stamp is added, because the wasm's own direct writes to
- *      this collection never add one either. That is a faithful port, not an
- *      oversight; flagged here so a later pass does not "fix" it into a
- *      mismatch with the reference it is supposed to mirror.
+ *   1. CALLABLE, STATUS TRANSITIONS (transitionBookingStatus, and the four
+ *      named wrappers below). AS OF A3 THIS IS A CALLABLE AND NOT A DIRECT
+ *      WRITE, and the change is the point of that PR.
  *
- *   2. CALLABLE (rescheduleBooking below). Confirmed against
+ *      It used to be `updateDoc(doc(db, 'kin_care_sessions', id), { status })`
+ *      straight from the browser, authorized by nothing but
+ *      `firestore.rules`'s `isAuntie()` grant on this collection, and ported
+ *      that way because the wasm reference wrote it that way
+ *      (`FirestoreInterop.wasmJs.kt:968/977`, `KinCareSessionsScreen.kt:716/724`).
+ *      A faithful port of an unaudited write is still an unaudited write: any
+ *      status could be set from any status, and `activity_log` recorded none
+ *      of it, on the one surface that decides whether a visit happened and
+ *      therefore whether it is billable.
+ *
+ *      `MyTribe/functions/src/admin/transitionBookingStatus.ts` now owns it:
+ *      admin-claim gated, zod-validated, a real state machine over the allowed
+ *      transitions (`functions/src/lib/bookingTransitions.ts`), and
+ *      `writeAuditEntry` on every path INCLUDING the refusals. The server also
+ *      stamps `updatedAt`/`updatedBy`, which the bare client patches never did.
+ *
+ *   2. CALLABLE, RESCHEDULE (rescheduleBooking below). Confirmed against
  *      MyTribe/functions/src/admin/rescheduleBooking.ts: a server-bound onCall
  *      that reads `kin_care_sessions/{sessionId}` first (404 if absent), writes
  *      `{startTime, endTime, updatedAt, updatedBy}`, and audits the before/after
@@ -63,58 +62,111 @@ import { call } from '../lib/fns';
  * booking-request notification and IS an envelope visit id.
  */
 
-/** The three states a direct client patch ever sets on this collection. */
-export type BookingWriteStatus = 'SCHEDULED' | 'CANCELLED' | 'COMPLETED';
+/**
+ * The four transitions `transitionBookingStatus` accepts. Mirrors the server's
+ * `BOOKING_ACTIONS` (`functions/src/lib/bookingTransitions.ts`), frozen against
+ * drift by `functions/test/callableContract.test.ts`.
+ */
+export type BookingTransitionAction = 'APPROVE' | 'REJECT' | 'CANCEL' | 'COMPLETE';
+
+export interface TransitionBookingStatusResult {
+  ok: true;
+  sessionId: string;
+  action: BookingTransitionAction;
+  /** The status the row held before the call. Equal to `status` on a no-op. */
+  from: string;
+  /** The status the row holds now. */
+  status: string;
+  /** False when the row was already in the target status and nothing was written. */
+  changed: boolean;
+}
+
+interface TransitionBookingStatusArgs {
+  sessionId: string;
+  action: BookingTransitionAction;
+  completedAt?: string;
+  reason?: string;
+}
 
 /**
- * The shared low-level primitive every direct-write action below is built from:
- * one merge-patch on `kin_care_sessions/{bookingId}`. `extra` carries the one
- * additional field "Mark Completed" sets alongside status (`completedAt`); every
- * other caller omits it, matching the reference's bare `{"status": ...}` patches.
+ * The shared primitive every named action below is built from: one call to the
+ * `transitionBookingStatus` admin callable.
  *
- * Throws (never swallows) on any Firestore failure, permission-denied included:
- * per the fail-loud policy, the caller surfaces `err.message` rather than this
- * module deciding what the operator gets to see.
+ * THE STATE MACHINE IS SERVER-SIDE AND THIS FUNCTION DOES NOT SECOND-GUESS IT.
+ * `BookingActions.tsx` only OFFERS the actions that apply to the state it is
+ * rendering (its `actionsFor` map), which is a courtesy so the operator is not
+ * shown a button that will fail; it is not the enforcement. A stale row, a
+ * second operator, or a direct invocation all reach the server, which refuses
+ * with `failed-precondition` and a `details.code` of `booking_transition_illegal`
+ * (or `booking_status_unknown` for a row whose status it cannot read) and audits
+ * the attempt either way.
+ *
+ * Throws (never swallows) on any callable failure, permission-denied and the
+ * refusals included: per the fail-loud policy, the caller surfaces
+ * `err.message` rather than this module deciding what the operator gets to see.
  */
-export async function setBookingStatus(
-  bookingId: string,
-  status: BookingWriteStatus,
-  extra?: Record<string, string>,
-): Promise<void> {
-  await updateDoc(doc(db, 'kin_care_sessions', bookingId), { status, ...(extra ?? {}) });
+export async function transitionBookingStatus(
+  args: TransitionBookingStatusArgs,
+): Promise<TransitionBookingStatusResult> {
+  return call<TransitionBookingStatusArgs, TransitionBookingStatusResult>(
+    'transitionBookingStatus',
+    args,
+  );
 }
 
-/** Approves a DRAFT/PENDING request. Ports `platformApproveBooking` verbatim. */
+/** Approves a DRAFT/PENDING request: the server moves it to SCHEDULED. */
 export async function approveBooking(bookingId: string): Promise<void> {
-  await setBookingStatus(bookingId, 'SCHEDULED');
-}
-
-/** Rejects a DRAFT/PENDING request. Ports `platformRejectBooking` verbatim. */
-export async function rejectBooking(bookingId: string): Promise<void> {
-  await setBookingStatus(bookingId, 'CANCELLED');
+  await transitionBookingStatus({ sessionId: bookingId, action: 'APPROVE' });
 }
 
 /**
- * Cancels an already-SCHEDULED visit. Ports KinCareSessionsScreen.kt's "Cancel
- * KinCare" patch. Same primitive as `rejectBooking` (the backend has no distinct
- * status for "rejected a request" vs "cancelled a scheduled visit", the same
- * asymmetry `batchUpdateBookings.ts`'s own comment documents for its sibling
- * model); kept as a separate export so callers name the action they mean and
- * BookingActions.tsx can give each its own confirm copy.
+ * Rejects a DRAFT/PENDING request: one that was NEVER approved, so no visit was
+ * ever promised to the household and nothing is billable.
+ *
+ * Lands on the same stored `CANCELLED` as `cancelBooking` because this
+ * collection has no distinct "rejected" value (the same asymmetry
+ * `batchUpdateBookings.ts`'s own comment documents for its sibling model). The
+ * two stay separate exports, and separate server ACTIONS, because the audit
+ * entry records which one the operator chose and which status it came from, so
+ * "declined a request" and "called off a promised visit" remain two different
+ * events after the fact.
  */
-export async function cancelBooking(bookingId: string): Promise<void> {
-  await setBookingStatus(bookingId, 'CANCELLED');
+export async function rejectBooking(bookingId: string): Promise<void> {
+  await transitionBookingStatus({ sessionId: bookingId, action: 'REJECT' });
 }
 
 /**
- * Marks a SCHEDULED visit COMPLETED. Ports KinCareSessionsScreen.kt's "Mark
- * Completed" patch, `completedAt` included exactly as the reference sends it
- * (the caller's own "now", not a server timestamp, matching the reference so a
- * clock skew between this and a future server-stamped field never gets
- * confused for a real value on this collection).
+ * Cancels an already-approved visit: SCHEDULED, or one already in flight
+ * (ON_MY_WAY / ARRIVED / DEPARTED). The household was told this was happening,
+ * and a partly-performed visit may still be billable. See `rejectBooking` for
+ * why both land on `CANCELLED` and are still different actions.
+ *
+ * `reason` is optional free text; the server appends it to the session's own
+ * notes as `[Booking cancelled] <reason>` and records only that one was given,
+ * never the text, in the audit payload.
+ */
+export async function cancelBooking(bookingId: string, reason?: string): Promise<void> {
+  await transitionBookingStatus({
+    sessionId: bookingId,
+    action: 'CANCEL',
+    ...(reason !== undefined && reason.trim() !== '' ? { reason: reason.trim() } : {}),
+  });
+}
+
+/**
+ * Marks a visit COMPLETED. `completedAtIso` is still the CALLER's "now", not a
+ * server timestamp, because every reader of this collection already parses that
+ * (`lib/bookingDetailFormat.ts`, Android's `DashboardInsights.kt`) and a
+ * server-stamped value would be a second, differently-skewed kind of instant on
+ * one field. The server stamps its own ISO string when the caller omits it, so
+ * a completed visit is never missing the field.
  */
 export async function markBookingCompleted(bookingId: string, completedAtIso: string): Promise<void> {
-  await setBookingStatus(bookingId, 'COMPLETED', { completedAt: completedAtIso });
+  await transitionBookingStatus({
+    sessionId: bookingId,
+    action: 'COMPLETE',
+    completedAt: completedAtIso,
+  });
 }
 
 /** One visit in a multi-date/recurring booking request. `startTimeMs` is epoch

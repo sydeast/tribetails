@@ -150,6 +150,10 @@ export { createTrainingDocument } from './admin/createTrainingDocument';
 export { updateTrainingDocument } from './admin/updateTrainingDocument';
 export { deleteTrainingDocument } from './admin/deleteTrainingDocument';
 export { rescheduleBooking } from './admin/rescheduleBooking';
+// A3: the four operator status transitions on a flat kin_care_sessions row.
+// Sits beside rescheduleBooking because it owns the other half of the writes to
+// that document; both replaced a direct client patch.
+export { transitionBookingStatus } from './admin/transitionBookingStatus';
 export { syncGoogleCalendarBusyEvents } from './admin/syncGoogleCalendarBusyEvents';
 // Task 7.2, editable calendars over OAuth. `googleOAuthCallback` is the HTTP
 // redirect target and is exported with the callables it belongs to rather than

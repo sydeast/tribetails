@@ -6,6 +6,7 @@ import com.tribetails.auntieos.data.admin.NotificationEntry
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.TrainingDocument
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.BookingTransitionAction
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.coEvery
@@ -324,6 +325,50 @@ class AdminDataViewModelTest {
         assertEquals(err, callbackArg)
     }
 
+    // ─── transitionBookingStatus (A3) ─────────────────────────────────────────
+    //
+    // Kept as its own block rather than folded into the patch tests above,
+    // because the two are different kinds of write and that distinction is the
+    // whole point of A3: a patch is a field edit the client owns, a transition
+    // is a state change the server owns, audits, and can REFUSE.
+    @Test
+    fun `transitionBookingStatus forwards the action and reloads on success`() = runTest(testDispatcher) {
+        coEvery { mockKinCareRepo.transitionBookingStatus(any(), any(), any(), any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.getKinCareSessions() } returns Result.success(listOf(TestFixtures.session1))
+        val vm = buildViewModel()
+        var callbackArg: Throwable? = Throwable("sentinel")
+        vm.transitionBookingStatus("ses1", BookingTransitionAction.COMPLETE, completedAt = "2026-08-01T10:00:00Z") {
+            callbackArg = it
+        }
+        advanceUntilIdle()
+        assertNull(callbackArg)
+        assertEquals(1, vm.kinCareSessions.value.size)
+        coVerify {
+            mockKinCareRepo.transitionBookingStatus(
+                "ses1", BookingTransitionAction.COMPLETE, "2026-08-01T10:00:00Z", "",
+            )
+        }
+    }
+    @Test
+    fun `transitionBookingStatus surfaces a server refusal verbatim and does not reload`() = runTest(testDispatcher) {
+        val err = RuntimeException("Cannot COMPLETE a booking in status CANCELLED.")
+        coEvery { mockKinCareRepo.transitionBookingStatus(any(), any(), any(), any()) } returns Result.failure(err)
+        val vm = buildViewModel()
+        var callbackArg: Throwable? = null
+        vm.transitionBookingStatus("ses1", BookingTransitionAction.COMPLETE) { callbackArg = it }
+        advanceUntilIdle()
+        assertEquals("Cannot COMPLETE a booking in status CANCELLED.", vm.error.value)
+        assertEquals(err, callbackArg)
+        coVerify(exactly = 0) { mockKinCareRepo.getKinCareSessions() }
+    }
+    @Test
+    fun `transitionBookingStatus never routes through the direct patch path`() = runTest(testDispatcher) {
+        coEvery { mockKinCareRepo.transitionBookingStatus(any(), any(), any(), any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.getKinCareSessions() } returns Result.success(emptyList())
+        buildViewModel().transitionBookingStatus("ses1", BookingTransitionAction.CANCEL)
+        advanceUntilIdle()
+        coVerify(exactly = 0) { mockKinCareRepo.patchKinCareSession(any(), any()) }
+    }
     // ─── createInvoice ────────────────────────────────────────────────────────
 
     @Test

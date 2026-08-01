@@ -46,9 +46,16 @@ Frozen request shapes:
   `recordPayment`. Frozen from birth: android's W2-2 mirror is built FROM these
   shapes rather than reverse-engineered later. Both are flat (`sessionIds` is an
   array of plain strings, like `createQuote`'s).
+- Booking status transitions (added 2026-08-01, A3): `transitionBookingStatus`.
+  Frozen from birth for the same reason the W2-1 pair was: it replaces a direct
+  client write on two clients at once, so two hand-built mirrors are aimed at
+  the shape the day it lands. The VALUES are frozen alongside the keys (the
+  action set, each action's target status, each action's allowed-from set, and
+  both refusal detail codes), because both clients send and branch on them and
+  `shapeKeys` cannot see inside an enum.
 
 Coverage reality, so nobody over-trusts this: the admin invokes ~50 MyTribe
-callables; the above 12 are frozen. The measured surface, not the stale "~26":
+callables; the above 13 are frozen. The measured surface, not the stale "~26":
 
 - Nested / effects shapes (added 2026-07-21), frozen by RECURSIVE signature:
   `saveFormSchema` (3-level `schema.sections[].fields[]`), `saveTemplate`
@@ -767,6 +774,77 @@ BEFORE clearing our copy.
   actually resolved.
 - Mirrors: `auntieos-admin/src/api/bookingsWrite.ts` + `src/lib/bookingBulk.ts`
   (React), `android .../data/repository/AuntieRepository.kt` (`batchUpdateBookings`).
+## Booking status transitions (admin-gated, A3)
+
+`transitionBookingStatus` owns the four OPERATOR transitions on a flat
+`kin_care_sessions` row, and is the only path to a terminal status: since A3,
+`firestore.rules` refuses `status: COMPLETED | CANCELLED | CANCELED | REJECTED`
+and any `completedAt` write from every client, on both create and update.
+
+Before A3 these four were a bare client `updateDoc`
+(`auntieos-admin/src/api/bookingsWrite.ts:84`, plus three equivalents on
+Android) authorized by `isAuntie()` alone. Any status could be set from any
+status and `activity_log` recorded none of it, on the surface that decides
+whether a visit happened and therefore whether it is billable.
+
+Mirrored by the React admin (`src/api/bookingsWrite.ts`) and android
+(`KinCareRepository.transitionBookingStatus` + `BookingTransitionAction`). The
+request shape, the action set, the target statuses and the refusal detail codes
+are all frozen by `test/callableContract.test.ts`.
+
+### transitionBookingStatus
+- req `{ sessionId: string /* 1..120 */, action: 'APPROVE'|'REJECT'|'CANCEL'|'COMPLETE', completedAt?: string /* 1..40, COMPLETE only */, reason?: string /* 1..500, CANCEL and REJECT only */ }`
+- res `{ ok: true, sessionId: string, action: string, from: string, status: string, changed: boolean }`
+- `changed: false` means the row was already in the target status: success, no write
+- `completedAt` is the CALLER's "now", matching what every reader of this
+  collection already parses. Omitted, the server stamps its own ISO string
+- `reason` is appended to the session's own `notes` as
+  `[Booking cancelled] <reason>`. The audit payload records only
+  `reasonSupplied: true`, never the text
+
+**The state machine** (`src/lib/bookingTransitions.ts`):
+
+| action | allowed from | lands on |
+| --- | --- | --- |
+| APPROVE | DRAFT, PENDING | SCHEDULED |
+| REJECT | DRAFT, PENDING | CANCELLED |
+| CANCEL | SCHEDULED, ON_MY_WAY, ARRIVED, DEPARTED | CANCELLED |
+| COMPLETE | SCHEDULED, ON_MY_WAY, ARRIVED, DEPARTED | COMPLETED |
+
+COMPLETED and CANCELLED are terminal: nothing transitions out of either. On
+read, `CANCELED` and `REJECTED` fold onto `CANCELLED`; every write emits the
+canonical spelling.
+
+**REJECT vs CANCEL.** Both land on `CANCELLED`, because this collection has no
+distinct "rejected" value and inventing one would break every existing reader
+(the same asymmetry `batchUpdateBookings` documents on the sibling envelope
+model). They are still two actions, distinguished by their source set: REJECT
+declines a request that was NEVER approved, so nothing was promised to the
+household and nothing is billable; CANCEL calls off a visit that WAS approved,
+possibly one already in flight, which the household was told about and which may
+be partly billable. The audit entry records the action chosen alongside the
+status it came from, so the distinction survives the write.
+
+**Rejections**, all `failed-precondition` except the first; clients branch on
+`details.code`:
+- unknown session: `not-found`
+- illegal transition:
+  `details { code: 'booking_transition_illegal', from, allowedFrom }`, message
+  `"Cannot <ACTION> a booking in status <FROM>. Allowed from: ..."`
+- unreadable stored status (blank, absent, or unrecognized):
+  `details { code: 'booking_status_unknown' }`
+
+**Every path is audited, refusals included.** Success and no-op emit
+`BOOKING_STATUS_TRANSITION` at `severity: 'info'`; refusals emit
+`BOOKING_TRANSITION_REFUSED` at `'warn'` with `status: 'FAILURE'`. A
+success-only trail cannot answer "who tried to complete a cancelled visit",
+which is the question the trail exists for.
+
+**What did NOT move.** The in-visit lifecycle (`ON_MY_WAY` / `ARRIVED` /
+`DEPARTED`, and Undo Arrival back to `SCHEDULED`) is still a direct client patch
+from the field app, and `firestore.rules` still permits it. That app is
+regularly offline mid-visit, and Firestore's offline write queue is what makes
+those writes land at all.
 
 ## Booking notes (admin + kinfolk)
 

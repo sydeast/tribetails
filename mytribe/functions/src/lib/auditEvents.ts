@@ -137,6 +137,19 @@ export const AUDIT_EVENTS = {
   // APPROVE -> ACCEPTED, REJECT/CANCEL -> REJECTED (android's native
   // enhanced_bookings ids). Applied per-id and audited as one batch action.
   BOOKING_BATCH_ACTION: 'BOOKING_BATCH_ACTION',
+  // A3: ONE operator transition on ONE flat `kin_care_sessions` row
+  // (transitionBookingStatus callable): APPROVE / REJECT / CANCEL / COMPLETE.
+  // These four used to be a bare client `updateDoc` on the session document
+  // with no audit at all; the callable is now their only path. The payload
+  // records the action the operator CHOSE alongside the from/to statuses, which
+  // is the only place the reject-vs-cancel distinction survives: the collection
+  // stores both outcomes as `CANCELLED`.
+  BOOKING_STATUS_TRANSITION: 'BOOKING_STATUS_TRANSITION',
+  // The same callable REFUSING: a missing session, a status the state machine
+  // cannot read, or a transition illegal from the row's current status. Logged
+  // because "who tried to complete a cancelled visit" is exactly the question
+  // an audit trail exists to answer, and a success-only trail cannot.
+  BOOKING_TRANSITION_REFUSED: 'BOOKING_TRANSITION_REFUSED',
   // B6: admin manually blocks a window so kinfolk can't book it (createBlockedTimeSlot).
   CREATE_BLOCKED_TIME_SLOT: 'CREATE_BLOCKED_TIME_SLOT',
   // Booking-write busy-conflict guard (`lib/bookingBusyConflict.ts`): an admin
