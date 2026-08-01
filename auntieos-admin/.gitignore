@@ -32,6 +32,7 @@ android/app/src/main/assets/service-account-key.json
 # same key as .env). Ignored rather than scrubbed: n8n is being retired (AO-4,
 # zero traffic in 3 months) and these are archival.
 _workflow_snapshots/
+archive/n8n-workflow-snapshots-2026-05/
 
 # ---------------------------------------------------------------------------
 # Client PII: REAL client records. Kept on disk, NEVER committed (history is
