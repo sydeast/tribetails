@@ -105,6 +105,10 @@ export { unarchiveInvoice } from './admin/unarchiveInvoice';
 export { repairInvoicePayments } from './admin/repairInvoicePayments';
 // Task 5.1 (#18): the read half of turning completed visits into an invoice.
 export { listUninvoicedSessions } from './admin/listUninvoicedSessions';
+// A1: the read half of an invoice's money. `invoices/{id}/payments` is the
+// settlement authority and `firestore.rules` grants no client any access to it,
+// so this callable is the only way a detail screen can show what was paid.
+export { getInvoiceLedger } from './admin/getInvoiceLedger';
 // Settings > Integrations. The one source both clients render for Stripe,
 // Twilio, SMTP2GO, Cloudinary, Mapbox, Google Calendar and Sentry. It binds
 // every secret it reports on (that binding is why its answer is trustworthy;

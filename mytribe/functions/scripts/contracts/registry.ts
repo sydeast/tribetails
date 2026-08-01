@@ -25,6 +25,7 @@ import { Args as CreateInvoiceArgs, Result as CreateInvoiceResult } from '../../
 import { Args as CreateQuoteArgs, Result as CreateQuoteResult } from '../../src/admin/createQuote';
 import { Args as GenerateInvoicePdfArgs, Result as GenerateInvoicePdfResult } from '../../src/admin/generateInvoicePdf';
 import { Args as GenerateReceiptArgs, Result as GenerateReceiptResult } from '../../src/admin/generateReceipt';
+import { Args as GetInvoiceLedgerArgs, Result as GetInvoiceLedgerResult } from '../../src/admin/getInvoiceLedger';
 import { Args as LinkInvoiceSessionsArgs, Result as LinkInvoiceSessionsResult } from '../../src/admin/linkInvoiceSessions';
 import { Args as ListUninvoicedSessionsArgs, Result as ListUninvoicedSessionsResult } from '../../src/admin/listUninvoicedSessions';
 import { Args as MarkInvoicePaidArgs, Result as MarkInvoicePaidResult } from '../../src/admin/markInvoicePaid';
@@ -85,6 +86,7 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'createQuote', args: CreateQuoteArgs, result: CreateQuoteResult },
     { name: 'generateInvoicePdf', args: GenerateInvoicePdfArgs, result: GenerateInvoicePdfResult },
     { name: 'generateReceipt', args: GenerateReceiptArgs, result: GenerateReceiptResult },
+    { name: 'getInvoiceLedger', args: GetInvoiceLedgerArgs, result: GetInvoiceLedgerResult },
     { name: 'getMyInvoicePdf', args: GetMyInvoicePdfArgs, result: GetMyInvoicePdfResult },
     // No zod request schema; see the module header.
     { name: 'getMyInvoices', args: null, result: GetMyInvoicesResult },

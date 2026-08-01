@@ -4,11 +4,14 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Timestamp } from 'firebase/firestore';
 import { type InvoiceEntry } from '../api/invoices';
+import type { GetInvoiceLedgerResult } from '../contracts/invoiceContracts.generated';
 
 const {
   sendInvoiceReminder,
   markInvoicePaid,
   generateReceipt,
+  getInvoiceLedger,
+  recordPayment,
   reviewAndSendDraftInvoice,
   updateInvoice,
   archiveInvoice,
@@ -17,6 +20,8 @@ const {
   sendInvoiceReminder: vi.fn(),
   markInvoicePaid: vi.fn(),
   generateReceipt: vi.fn(),
+  getInvoiceLedger: vi.fn(),
+  recordPayment: vi.fn(),
   reviewAndSendDraftInvoice: vi.fn(),
   updateInvoice: vi.fn(),
   archiveInvoice: vi.fn(),
@@ -27,6 +32,8 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   sendInvoiceReminder,
   markInvoicePaid,
   generateReceipt,
+  getInvoiceLedger,
+  recordPayment,
   reviewAndSendDraftInvoice,
   updateInvoice,
   archiveInvoice,
@@ -48,6 +55,43 @@ function settledResult() {
     paidCents: 4000,
     amountDueCents: 0,
     overpaidCents: 0,
+  };
+}
+
+/**
+ * A `getInvoiceLedger` answer. The default is an invoice with nothing recorded
+ * against it and no visit linked, which is what most of the cases below want:
+ * they are asserting the ACTION matrix, and the ledger only has to resolve so
+ * the panel leaves its loading state.
+ */
+function ledgerResult(over: Partial<GetInvoiceLedgerResult> = {}): GetInvoiceLedgerResult {
+  return {
+    invoiceId: 'inv1',
+    payments: [],
+    paidCents: 0,
+    totalCents: 4000,
+    amountDueCents: 4000,
+    ledgerPayments: [],
+    sessions: [],
+    missingSessionIds: [],
+    orphanSessionIds: [],
+    truncated: false,
+    ...over,
+  };
+}
+
+function ledgerSession(
+  over: Partial<GetInvoiceLedgerResult['sessions'][number]> = {},
+): GetInvoiceLedgerResult['sessions'][number] {
+  return {
+    sessionId: 's1',
+    serviceType: 'Dog walking',
+    status: 'COMPLETED',
+    startTime: '2026-07-10T14:00:00Z',
+    completedAt: '2026-07-10T14:30:00Z',
+    durationMinutes: 30,
+    linkedBack: true,
+    ...over,
   };
 }
 
@@ -87,6 +131,8 @@ beforeEach(() => {
   });
   archiveInvoice.mockReset().mockResolvedValue(undefined);
   unarchiveInvoice.mockReset().mockResolvedValue(undefined);
+  getInvoiceLedger.mockReset().mockResolvedValue(ledgerResult());
+  recordPayment.mockReset().mockResolvedValue({ ok: true, paymentId: 'led1', kinfolkId: 'kf1' });
 });
 
 /**
@@ -630,5 +676,306 @@ describe('InvoiceDetail archive and restore', () => {
     await userEvent.click(screen.getByRole('button', { name: /^restore$/i }));
     await userEvent.click(screen.getByRole('button', { name: /restore invoice/i }));
     await waitFor(() => expect(unarchiveInvoice).toHaveBeenCalledWith('inv1'));
+  });
+});
+/**
+ * A1: the two panels this overlay went without. Before this change
+ * `InvoiceDetail.tsx` contained no reference to `sessionIds` and none to the
+ * payments subcollection, so an operator opening an invoice could see what it
+ * was worth and nothing about which visits it billed or what had come in
+ * against it.
+ */
+describe('the payments panel', () => {
+  it('renders the subcollection rows, the collected total, and what is still owed', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        payments: [
+          {
+            paymentId: 'p1',
+            amountCents: 2000,
+            method: 'check',
+            reference: '#881',
+            paidAt: '2026-07-20T10:00:00Z',
+            recordedBy: 'admin1',
+          },
+        ],
+        paidCents: 2000,
+        amountDueCents: 2000,
+      }),
+    );
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(await screen.findByText('check')).toBeInTheDocument();
+    expect(screen.getByText('2026-07-20')).toBeInTheDocument();
+    expect(screen.getByText('#881')).toBeInTheDocument();
+    expect(screen.getByText('Collected').closest('tr')).toHaveTextContent('$20.00');
+    expect(screen.getByText('Still owed').closest('tr')).toHaveTextContent('$20.00');
+  });
+  it('says nothing has been recorded rather than rendering an empty table', async () => {
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(
+      await screen.findByText(/No payment has been recorded against this invoice/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Collected')).toBeNull();
+  });
+  it('points at Record payment only when the invoice is actually offering it', async () => {
+    // A cancelled invoice has no Record payment button, so telling an operator
+    // to use one is telling them to look for a control that is not there.
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(await screen.findByText(/Use Record payment below to log one/i)).toBeInTheDocument();
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'cancelled', editScope: 'none' })}
+        onClose={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getAllByText(/No payment has been recorded against this invoice/i)).toHaveLength(2),
+    );
+    expect(screen.getAllByText(/Use Record payment below to log one/i)).toHaveLength(1);
+  });
+  it('reports a blank method as unrecorded, never as an empty cell', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        payments: [
+          { paymentId: 'p1', amountCents: 500, method: null, reference: null, paidAt: null, recordedBy: null },
+        ],
+        paidCents: 500,
+      }),
+    );
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(await screen.findByText('no method recorded')).toBeInTheDocument();
+    expect(screen.getByText('no date recorded')).toBeInTheDocument();
+  });
+  it('keeps the root ledger in its OWN table, stated as not counted', async () => {
+    // Two collections, two jobs. Folding them together would either double a
+    // payment recorded through both paths or claim a balance had moved when it
+    // had not.
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        payments: [
+          { paymentId: 'p1', amountCents: 4000, method: 'cash', reference: null, paidAt: '2026-07-20T10:00:00Z', recordedBy: 'a1' },
+        ],
+        paidCents: 4000,
+        amountDueCents: 0,
+        ledgerPayments: [
+          {
+            paymentId: 'r1',
+            amountCents: 4000,
+            tipCents: 500,
+            method: 'card',
+            reference: 'ch_1',
+            date: '2026-07-20',
+            notes: '',
+            recordedBy: 'a1',
+          },
+        ],
+      }),
+    );
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(await screen.findByText(/NOT counted in the figures above/i)).toBeInTheDocument();
+    // The tip rides on the ledger row's own amount and nowhere near the balance.
+    expect(screen.getByText(/includes \$5\.00 tip/i)).toBeInTheDocument();
+    expect(screen.getByText('Collected').closest('tr')).toHaveTextContent('$40.00');
+  });
+  it('names the Stripe case: a ledger that covers a balance nothing settled', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        amountDueCents: 4000,
+        ledgerPayments: [
+          {
+            paymentId: 'r1',
+            amountCents: 4000,
+            tipCents: 0,
+            method: 'card',
+            reference: 'ch_1',
+            date: '2026-07-20',
+            notes: '',
+            recordedBy: null,
+          },
+        ],
+      }),
+    );
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(
+      await screen.findByText(/The ledger shows money this balance does not/i),
+    ).toBeInTheDocument();
+  });
+  it('fails loud on a refused read, verbatim, and offers a retry', async () => {
+    getInvoiceLedger.mockRejectedValueOnce(new Error('Invoice not found.'));
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(await screen.findByText(/getInvoiceLedger failed: Invoice not found\./i)).toBeInTheDocument();
+    // Not "there are no payments". The distinction is the whole point.
+    expect(screen.queryByText(/No payment has been recorded/i)).toBeNull();
+    getInvoiceLedger.mockResolvedValue(ledgerResult());
+    await userEvent.click(screen.getByRole('button', { name: /try again/i }));
+    expect(await screen.findByText(/No payment has been recorded/i)).toBeInTheDocument();
+  });
+});
+describe('the linked visits panel', () => {
+  it('renders the visits the invoice bills', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({ sessions: [ledgerSession()] }),
+    );
+    render(<InvoiceDetail invoice={entry({ sessionIds: ['s1'] })} onClose={vi.fn()} />);
+    expect(await screen.findByText('Dog walking')).toBeInTheDocument();
+    expect(screen.getByText('2026-07-10')).toBeInTheDocument();
+    expect(screen.getByText('30 min')).toBeInTheDocument();
+    expect(screen.getByText('completed')).toBeInTheDocument();
+  });
+  it('shows a visit with no recorded length as unrecorded, never as 0 min', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({ sessions: [ledgerSession({ durationMinutes: null })] }),
+    );
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(await screen.findByText('not recorded')).toBeInTheDocument();
+    expect(screen.queryByText('0 min')).toBeNull();
+  });
+  it('says no visit is linked, and that the total is unattributed', async () => {
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(await screen.findByText(/No visit is linked to this invoice/i)).toBeInTheDocument();
+  });
+  it('names a claimed visit with no record behind it', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ missingSessionIds: ['ghost'] }));
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(
+      await screen.findByText(/This invoice claims a visit that does not exist/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/ghost/)).toBeInTheDocument();
+  });
+  it('warns when a linked visit does not point back, because it can be billed twice', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({ sessions: [ledgerSession({ linkedBack: false })] }),
+    );
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(await screen.findByText(/does not point back/i)).toBeInTheDocument();
+    expect(screen.getByText(/billed a second time/i)).toBeInTheDocument();
+  });
+  it('warns when a visit points at this invoice and the invoice does not claim it', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ orphanSessionIds: ['s-orphan'] }));
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(
+      await screen.findByText(/points at this invoice, which does not claim it/i),
+    ).toBeInTheDocument();
+  });
+});
+/**
+ * A1, second half: this app called ONLY `markInvoicePaid`, so a payment taken
+ * through the web admin never reached the root `payments` ledger the Payments
+ * screens read, while Android's identical action wrote both.
+ */
+describe('recording a payment writes both the settlement and the ledger row', () => {
+  async function recordTwenty(invoice = entry({ amountDue: 40, total: 40 })) {
+    render(<InvoiceDetail invoice={invoice} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '20');
+    await userEvent.type(screen.getByLabelText(/payment method/i), 'check');
+    await userEvent.type(screen.getByLabelText(/payment reference/i), '#881');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+  }
+  it('calls markInvoicePaid FIRST, then recordPayment with this payment amount', async () => {
+    markInvoicePaid.mockResolvedValue({
+      paymentId: 'pay1',
+      state: 'partial' as const,
+      totalCents: 4000,
+      paidCents: 2000,
+      amountDueCents: 2000,
+      overpaidCents: 0,
+    });
+    await recordTwenty();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(markInvoicePaid).toHaveBeenCalledWith('inv1', {
+      amount: 20,
+      method: 'check',
+      reference: '#881',
+    });
+    // $20, NOT the $20.00 cumulative figure that happens to match here by
+    // coincidence. See the second-payment case below for the one that bites.
+    expect(recordPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 20,
+        invoiceId: 'inv1',
+        invoiceNumber: '1042',
+        kinfolkId: 'kf1',
+        paymentMethod: 'check',
+        referenceNumber: '#881',
+      }),
+    );
+  });
+  it('records THIS payment, not everything ever collected on the invoice', async () => {
+    // The trap. markInvoicePaid's `paidCents` is cumulative, so a second $20
+    // against a part-paid invoice answers 4000, and writing that to the ledger
+    // would book a $40 row for a $20 payment.
+    markInvoicePaid.mockResolvedValue({
+      paymentId: 'pay2',
+      state: 'settled' as const,
+      totalCents: 4000,
+      paidCents: 4000,
+      amountDueCents: 0,
+      overpaidCents: 0,
+    });
+    await recordTwenty();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment).toHaveBeenCalledWith(expect.objectContaining({ amount: 20 }));
+  });
+  it('derives an omitted amount from the ledger it already read, not from a guess', async () => {
+    // Leaving the field blank means "settle the rest". markInvoicePaid's answer
+    // is cumulative, so the payment's own size is the difference against the
+    // cumulative figure the panel had already loaded. Both come from the same
+    // subcollection, so they cannot disagree.
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({ paidCents: 1500, amountDueCents: 2500 }),
+    );
+    markInvoicePaid.mockResolvedValue({
+      paymentId: 'pay2',
+      state: 'settled' as const,
+      totalCents: 4000,
+      paidCents: 4000,
+      amountDueCents: 0,
+      overpaidCents: 0,
+    });
+    render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+    await screen.findByText(/Collected|No payment has been recorded/i);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment).toHaveBeenCalledWith(expect.objectContaining({ amount: 25 }));
+  });
+  it('writes NO ledger row when the amount cannot be stated exactly, and says so', async () => {
+    // Blank amount AND an unreadable ledger. A guessed figure on a payment
+    // record is worse than a missing one.
+    getInvoiceLedger.mockRejectedValue(new Error('unavailable'));
+    markInvoicePaid.mockResolvedValue(settledResult());
+    render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+    await screen.findByText(/getInvoiceLedger failed/i);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/No row was added to the payment ledger/i)).toBeInTheDocument();
+    expect(recordPayment).not.toHaveBeenCalled();
+  });
+  it('does NOT fail the action when only the ledger row fails, and says what is missing', async () => {
+    // The money has already moved. Throwing here would offer a retry that
+    // collects a second time.
+    markInvoicePaid.mockResolvedValue(settledResult());
+    recordPayment.mockRejectedValueOnce(new Error('unavailable'));
+    await recordTwenty();
+    expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
+    expect(screen.getByText(/payment ledger row did not save/i)).toBeInTheDocument();
+    expect(screen.getByText(/The invoice itself is correct/i)).toBeInTheDocument();
+  });
+  it('does NOT call recordPayment when markInvoicePaid refused: no payment happened', async () => {
+    markInvoicePaid.mockRejectedValueOnce(new Error('Invoice is already settled.'));
+    await recordTwenty();
+    expect(await screen.findByText(/markInvoicePaid failed: Invoice is already settled\./i)).toBeInTheDocument();
+    expect(recordPayment).not.toHaveBeenCalled();
+  });
+  it('reloads the ledger after a payment, so the panel is not describing the invoice as it was', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    await recordTwenty();
+    // Once on mount, once after the write.
+    await waitFor(() => expect(getInvoiceLedger).toHaveBeenCalledTimes(2));
   });
 });

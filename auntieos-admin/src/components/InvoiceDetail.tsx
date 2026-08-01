@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { invoiceLineItems, invoiceStamp, isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
 import {
   formatUsd,
@@ -15,12 +15,18 @@ import {
   markInvoicePaid,
   sendInvoiceReminder,
   generateReceipt,
+  getInvoiceLedger,
+  recordPayment,
   reviewAndSendDraftInvoice,
   updateInvoice,
   archiveInvoice,
   unarchiveInvoice,
 } from '../api/invoicesWrite';
-import type { UpdateInvoiceArgsPatch } from '../contracts/invoiceContracts.generated';
+import type {
+  GetInvoiceLedgerResult,
+  UpdateInvoiceArgsPatch,
+} from '../contracts/invoiceContracts.generated';
+import { InvoiceLedgerPanels } from './InvoiceLedger';
 import {
   InvoiceLineItemsTable,
   InvoiceLineItemsEditor,
@@ -164,6 +170,23 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
   // invoice in any state can be archived.
   const [archivePrompt, setArchivePrompt] = useState<ArchivePrompt | null>(null);
 
+  // THE LEDGER: what was paid against this invoice, and which visits it bills.
+  //
+  // FETCHED, not streamed, unlike the invoice doc itself. The invoice arrives by
+  // value from the Invoices screen's live `INVOICES_QUERY` listener, but neither
+  // of these two can be listened to from a client at all:
+  // `invoices/{id}/payments` has no rule in `firestore.rules` and is therefore
+  // denied to every client, and the visits are a fan-out read over ids this doc
+  // names. `getInvoiceLedger` is the only path to both, so this is a one-shot
+  // load with an explicit reload after any action that could change either.
+  const [ledger, setLedger] = useState<GetInvoiceLedgerResult | null>(null);
+  const [ledgerLoading, setLedgerLoading] = useState(true);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
+  // Bumped to re-run the load. A counter rather than a boolean so two reloads in
+  // a row (record a payment, then record another) both actually fire.
+  const [ledgerNonce, setLedgerNonce] = useState(0);
+  const reloadLedger = useCallback(() => setLedgerNonce((n) => n + 1), []);
+
   const todayIso = localDateIso(new Date());
   // The STORED stamp (ADR-0002): the server classified this doc in the same
   // write that last touched its money, so this panel reads the verdict and
@@ -220,6 +243,35 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
   // for an unstamped doc — the safe affordance — so no extra null-check here.
   const canEdit = editScope !== 'none';
   const moneyEditable = editScope === 'all';
+
+  const invoiceId = invoice._id;
+  useEffect(() => {
+    // `stale` guards the resolve, not the request: the panel can be closed, or
+    // reloaded again, while a call is in flight, and a late answer must not
+    // overwrite a newer one or set state on an unmounted component.
+    let stale = false;
+    setLedgerLoading(true);
+    setLedgerError(null);
+    getInvoiceLedger(invoiceId)
+      .then((res) => {
+        if (stale) return;
+        setLedger(res);
+        setLedgerLoading(false);
+      })
+      .catch((caught: unknown) => {
+        if (stale) return;
+        // Verbatim, same rule as every other refusal on this panel. The server's
+        // messages name the invoice and the reason, and rewording one here would
+        // lose the part that says what to do next.
+        setLedgerError(
+          `getInvoiceLedger failed: ${caught instanceof Error ? caught.message : 'Load failed'}`,
+        );
+        setLedgerLoading(false);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [invoiceId, ledgerNonce]);
 
   function startAction(key: PendingAction) {
     setActionError(null);
@@ -303,6 +355,9 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
       setBusy(false);
       setEditing(null);
       setNotice('Invoice updated.');
+      // A line-item edit recomputes the balance server-side, so the "Still owed"
+      // figure in the payments panel is now describing the invoice as it was.
+      reloadLedger();
     } catch (caught) {
       setBusy(false);
       // Surfaced verbatim. The server's refusals carry a `details.code` and a
@@ -380,21 +435,81 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
           amount = parsed;
         }
 
+        // STEP 1 OF 2, AND THE ORDER MATTERS. `markInvoicePaid` is the money
+        // authority: it writes the `invoices/{id}/payments` subcollection and
+        // re-derives the balance from the sum of every recorded payment. Its
+        // failure is fatal to the whole action, because nothing was written and
+        // no payment happened. Same sequence Android has run since W2-2.
         const res = await markInvoicePaid(invoice._id, {
           ...(amount !== undefined && { amount }),
           ...(method !== '' && { method }),
           ...(reference !== '' && { reference }),
         });
 
+        // WHAT THIS ONE PAYMENT WAS WORTH, which is NOT `res.paidCents`: that
+        // figure is everything ever collected on the invoice, so sending it to
+        // step 2 would book a $40 ledger row for a $20 second payment.
+        //
+        // Two exact sources, and no third. The operator's own typed amount, or
+        // the difference between the server's new cumulative total and the
+        // cumulative total the loaded ledger already showed. Both of those come
+        // from the same subcollection, so they cannot disagree. When neither is
+        // available (the amount was left blank AND the ledger read failed) no
+        // row is written at all: a guessed figure on a payment record is worse
+        // than a missing one.
+        const typedCents = amount !== undefined ? Math.round(amount * 100) : null;
+        const derivedCents = ledger !== null ? res.paidCents - ledger.paidCents : null;
+        const thisPaymentCents = typedCents ?? derivedCents;
+
+        // STEP 2 OF 2, BEST-EFFORT. The ROOT `payments` collection is the
+        // display ledger the Payments screens and every report read. Until now
+        // this app never wrote it, so a payment taken through the web admin was
+        // invisible to those screens while Android's identical action showed up
+        // in both. It is deliberately NOT folded into step 1: the settlement
+        // arithmetic never reads this collection, which is exactly what stops
+        // the two rows double-counting against each other.
+        //
+        // A failure here is REPORTED and does not fail the action. The money has
+        // already moved and the invoice is already settled, so throwing now
+        // would offer a retry that collects a second time. The operator is told
+        // what is missing and where, rather than told nothing or told a lie.
+        let ledgerNote = '';
+        if (thisPaymentCents === null || thisPaymentCents <= 0) {
+          ledgerNote =
+            " No row was added to the payment ledger, because this payment's own amount could not be stated exactly: it was left blank and the invoice's recorded payments could not be read. The invoice itself is correct; add the ledger row from the Payments screen.";
+        } else {
+          try {
+            await recordPayment({
+              kinfolkId: invoice.kinfolkId,
+              kinfolkName: invoice.kinfolkName,
+              client: invoice.client,
+              date: localDateIso(new Date()),
+              paymentMethod: method,
+              referenceNumber: reference,
+              amount: thisPaymentCents / 100,
+              invoiceId: invoice._id,
+              invoiceNumber: invoice.invoiceNumber,
+            });
+          } catch (caught) {
+            ledgerNote = ` The payment ledger row did not save (${
+              caught instanceof Error ? caught.message : 'recordPayment failed'
+            }), so this payment will not appear on the Payments screen. The invoice itself is correct.`;
+          }
+        }
+
         // WHAT THE SERVER SAYS HAPPENED, not what the button was called. The
         // whole defect this change fixes was a UI that reported "paid" for a
         // payment that paid off half the invoice.
         outcome =
-          res.state === 'partial'
+          (res.state === 'partial'
             ? `Partial payment recorded. ${formatUsd(res.amountDueCents / 100)} is still owed, and the invoice stays open.`
             : res.state === 'overpaid'
               ? `Payment recorded and the invoice is settled. It was overpaid by ${formatUsd(res.overpaidCents / 100)}, which has not been turned into a credit; issue one if that is what the household is owed.`
-              : 'Payment recorded. The invoice is paid in full.';
+              : 'Payment recorded. The invoice is paid in full.') + ledgerNote;
+
+        // Both halves of the panel below now describe a stale invoice: the
+        // payment just written is in neither list.
+        reloadLedger();
       } else await generateReceipt(invoice._id);
 
       setBusy(false);
@@ -507,6 +622,25 @@ export function InvoiceDetail({ invoice, onClose }: InvoiceDetailProps) {
               invoiceDiscountCents={invoice.invoiceDiscountCents ?? 0}
             />
           )
+        )}
+
+        {/* THE TWO PANELS THIS OVERLAY WENT WITHOUT: what has been paid against
+            this invoice, and which visits it bills. Both come from
+            `getInvoiceLedger`, and both follow the itemization for the same
+            reason Android orders them that way: what was billed, then what came
+            in, then the work behind it. Hidden mid-edit, like the itemization
+            directly above, so the edit form is the only thing on screen. */}
+        {editing === null && (
+          <InvoiceLedgerPanels
+            ledger={ledger}
+            loading={ledgerLoading}
+            error={ledgerError}
+            onRetry={reloadLedger}
+            // The SAME stored-state answer the action buttons below are built
+            // from, so the empty payments state can never point an operator at
+            // a control this invoice is not offering.
+            canRecordPayment={allowed.includes('markPaid')}
+          />
         )}
 
         {editing !== null ? (

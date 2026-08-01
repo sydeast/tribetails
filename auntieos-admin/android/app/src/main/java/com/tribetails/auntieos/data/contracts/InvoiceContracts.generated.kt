@@ -374,6 +374,135 @@ internal fun decodeGenerateReceiptResult(raw: Map<String, Any?>?): GenerateRecei
         ok = raw?.get("ok") as? Boolean ?: false,
     )
 
+// ---------- getInvoiceLedger ----------
+
+/** Request payload for the `getInvoiceLedger` callable. */
+data class GetInvoiceLedgerArgs(
+    val invoiceId: String,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("invoiceId", invoiceId)
+    }
+}
+
+/** Nested in the `getInvoiceLedger` contract. */
+data class GetInvoiceLedgerResultPayment(
+    val paymentId: String,
+    val amountCents: Long,
+    val method: String?,
+    val reference: String?,
+    val paidAt: String?,
+    val recordedBy: String?,
+)
+
+/**
+ * Fail-soft decode of `GetInvoiceLedgerResultPayment` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetInvoiceLedgerResultPayment(raw: Map<String, Any?>?): GetInvoiceLedgerResultPayment =
+    GetInvoiceLedgerResultPayment(
+        paymentId = (raw?.get("paymentId") as? String).orEmpty(),
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+        method = raw?.get("method") as? String,
+        reference = raw?.get("reference") as? String,
+        paidAt = raw?.get("paidAt") as? String,
+        recordedBy = raw?.get("recordedBy") as? String,
+    )
+
+/** Nested in the `getInvoiceLedger` contract. */
+data class GetInvoiceLedgerResultLedgerPayment(
+    val paymentId: String,
+    val amountCents: Long,
+    val tipCents: Long,
+    val method: String,
+    val reference: String,
+    val date: String,
+    val notes: String,
+    val recordedBy: String?,
+)
+
+/**
+ * Fail-soft decode of `GetInvoiceLedgerResultLedgerPayment` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetInvoiceLedgerResultLedgerPayment(raw: Map<String, Any?>?): GetInvoiceLedgerResultLedgerPayment =
+    GetInvoiceLedgerResultLedgerPayment(
+        paymentId = (raw?.get("paymentId") as? String).orEmpty(),
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+        tipCents = (raw?.get("tipCents") as? Number)?.toLong() ?: 0L,
+        method = (raw?.get("method") as? String).orEmpty(),
+        reference = (raw?.get("reference") as? String).orEmpty(),
+        date = (raw?.get("date") as? String).orEmpty(),
+        notes = (raw?.get("notes") as? String).orEmpty(),
+        recordedBy = raw?.get("recordedBy") as? String,
+    )
+
+/** Nested in the `getInvoiceLedger` contract. */
+data class GetInvoiceLedgerResultSession(
+    val sessionId: String,
+    val serviceType: String,
+    val status: String,
+    val startTime: String,
+    val completedAt: String?,
+    val durationMinutes: Double?,
+    val linkedBack: Boolean,
+)
+
+/**
+ * Fail-soft decode of `GetInvoiceLedgerResultSession` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetInvoiceLedgerResultSession(raw: Map<String, Any?>?): GetInvoiceLedgerResultSession =
+    GetInvoiceLedgerResultSession(
+        sessionId = (raw?.get("sessionId") as? String).orEmpty(),
+        serviceType = (raw?.get("serviceType") as? String).orEmpty(),
+        status = (raw?.get("status") as? String).orEmpty(),
+        startTime = (raw?.get("startTime") as? String).orEmpty(),
+        completedAt = raw?.get("completedAt") as? String,
+        durationMinutes = (raw?.get("durationMinutes") as? Number)?.toDouble(),
+        linkedBack = raw?.get("linkedBack") as? Boolean ?: false,
+    )
+
+/** Response from the `getInvoiceLedger` callable. */
+data class GetInvoiceLedgerResult(
+    val invoiceId: String,
+    val payments: List<GetInvoiceLedgerResultPayment>,
+    val paidCents: Long,
+    val totalCents: Long,
+    val amountDueCents: Long,
+    val ledgerPayments: List<GetInvoiceLedgerResultLedgerPayment>,
+    val sessions: List<GetInvoiceLedgerResultSession>,
+    val missingSessionIds: List<String>,
+    val orphanSessionIds: List<String>,
+    val truncated: Boolean,
+)
+
+/**
+ * Fail-soft decode of `GetInvoiceLedgerResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetInvoiceLedgerResult(raw: Map<String, Any?>?): GetInvoiceLedgerResult =
+    GetInvoiceLedgerResult(
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        payments = (raw?.get("payments") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetInvoiceLedgerResultPayment(nested) } },
+        paidCents = (raw?.get("paidCents") as? Number)?.toLong() ?: 0L,
+        totalCents = (raw?.get("totalCents") as? Number)?.toLong() ?: 0L,
+        amountDueCents = (raw?.get("amountDueCents") as? Number)?.toLong() ?: 0L,
+        ledgerPayments = (raw?.get("ledgerPayments") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetInvoiceLedgerResultLedgerPayment(nested) } },
+        sessions = (raw?.get("sessions") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetInvoiceLedgerResultSession(nested) } },
+        missingSessionIds = (raw?.get("missingSessionIds") as? List<*>).orEmpty().mapNotNull { it as? String },
+        orphanSessionIds = (raw?.get("orphanSessionIds") as? List<*>).orEmpty().mapNotNull { it as? String },
+        truncated = raw?.get("truncated") as? Boolean ?: false,
+    )
+
 // ---------- getMyInvoicePdf ----------
 
 /** Request payload for the `getMyInvoicePdf` callable. */

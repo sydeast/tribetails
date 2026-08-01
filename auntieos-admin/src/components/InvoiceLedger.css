@@ -1,0 +1,126 @@
+/**
+ * The invoice detail's payments and linked-visits panels. Imported directly by
+ * InvoiceLedger.tsx, so it loads wherever the component does.
+ *
+ * Shares the table treatment of InvoiceLineItems.css rather than inventing a
+ * second one: three tables sit inside the same overlay, and a column of dollar
+ * figures that lines up in one and not the others is a column an operator reads
+ * twice. Every value comes from styles/tokens.css.
+ */
+
+.invoice-ledger {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.invoice-ledger__heading {
+  margin: 0;
+  font-family: var(--type-title-sm-family);
+  font-size: var(--type-title-sm-size);
+  font-weight: var(--type-title-sm-weight);
+  color: var(--color-text-primary);
+}
+
+.invoice-ledger__subtitle {
+  margin: 0;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+/* An empty panel says so in a sentence. It must never render as a table with a
+   heading and no rows, which reads as "nothing was billed" or "nothing was
+   paid" rather than "nobody has recorded any of this". */
+.invoice-ledger__empty {
+  margin: 0;
+  color: var(--color-text-dim);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+
+.invoice-ledger__loading {
+  margin: 0;
+  color: var(--color-text-dim);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+
+.invoice-ledger__note-block {
+  margin: 0;
+  color: var(--color-text-dim);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+
+.invoice-ledger__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+}
+
+/* The caption is load-bearing copy, not decoration: it is what tells the
+   operator which of the two payment tables moves the balance. */
+.invoice-ledger__caption {
+  text-align: left;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  padding-bottom: var(--space-2);
+}
+
+.invoice-ledger__table th {
+  text-align: left;
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  font-weight: var(--type-label-sm-weight);
+  color: var(--color-text-dim);
+  padding: var(--space-1) var(--space-2);
+}
+
+.invoice-ledger__table td {
+  padding: var(--space-2);
+  border-top: var(--border-hairline) solid var(--color-border-soft);
+  vertical-align: top;
+}
+
+.invoice-ledger__num {
+  text-align: right;
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  white-space: nowrap;
+}
+
+/* A field the record never carried, shown as missing rather than as blank. */
+.invoice-ledger__missing {
+  color: var(--color-text-faint);
+  font-style: italic;
+}
+
+.invoice-ledger__note {
+  display: block;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+  margin-top: 0.15rem;
+}
+
+.invoice-ledger__table tfoot th {
+  text-align: right;
+  padding: var(--space-2);
+  border-top: var(--border-hairline) solid var(--color-border-soft);
+}
+
+.invoice-ledger__table tfoot td {
+  border-top: var(--border-hairline) solid var(--color-border-soft);
+}
+
+.invoice-ledger__total-row th,
+.invoice-ledger__total-row td {
+  border-top: var(--border-emphasis) solid var(--color-border);
+  font-weight: var(--type-title-sm-weight);
+  color: var(--color-text-primary);
+}
