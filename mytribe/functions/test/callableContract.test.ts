@@ -881,6 +881,42 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'unpriceable[].sessionId',
     ],
   },
+  // A1: the read half of the invoice money surface. Two payment lists with two
+  // different jobs and one visit list, so the walker's per-array paths are what
+  // stops the authority and the display ledger being quietly merged.
+  getInvoiceLedger: {
+    load: () => import('../src/admin/getInvoiceLedger'),
+    signature: [
+      'amountDueCents',
+      'invoiceId',
+      'ledgerPayments[].amountCents',
+      'ledgerPayments[].date',
+      'ledgerPayments[].method',
+      'ledgerPayments[].notes',
+      'ledgerPayments[].paymentId',
+      'ledgerPayments[].recordedBy',
+      'ledgerPayments[].reference',
+      'ledgerPayments[].tipCents',
+      'missingSessionIds[]',
+      'orphanSessionIds[]',
+      'paidCents',
+      'payments[].amountCents',
+      'payments[].method',
+      'payments[].paidAt',
+      'payments[].paymentId',
+      'payments[].recordedBy',
+      'payments[].reference',
+      'sessions[].completedAt',
+      'sessions[].durationMinutes',
+      'sessions[].linkedBack',
+      'sessions[].serviceType',
+      'sessions[].sessionId',
+      'sessions[].startTime',
+      'sessions[].status',
+      'totalCents',
+      'truncated',
+    ],
+  },
   // The household-facing three. `payInvoice` is the only response on this
   // surface with no `ok`, no `invoiceId` and a live third-party URL in it.
   payInvoice: {

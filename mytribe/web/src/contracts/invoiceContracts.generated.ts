@@ -197,6 +197,70 @@ export interface GenerateReceiptResult {
   ok: true;
 }
 
+// ---------- getInvoiceLedger ----------
+
+/**
+ * Request payload for the `getInvoiceLedger` callable.
+ */
+export interface GetInvoiceLedgerArgs {
+  invoiceId: string;
+}
+
+/**
+ * Nested in the `getInvoiceLedger` contract.
+ */
+export interface GetInvoiceLedgerResultPayment {
+  paymentId: string;
+  amountCents: number;
+  method: string | null;
+  reference: string | null;
+  paidAt: string | null;
+  recordedBy: string | null;
+}
+
+/**
+ * Nested in the `getInvoiceLedger` contract.
+ */
+export interface GetInvoiceLedgerResultLedgerPayment {
+  paymentId: string;
+  amountCents: number;
+  tipCents: number;
+  method: string;
+  reference: string;
+  date: string;
+  notes: string;
+  recordedBy: string | null;
+}
+
+/**
+ * Nested in the `getInvoiceLedger` contract.
+ */
+export interface GetInvoiceLedgerResultSession {
+  sessionId: string;
+  serviceType: string;
+  status: string;
+  startTime: string;
+  completedAt: string | null;
+  durationMinutes: number | null;
+  linkedBack: boolean;
+}
+
+/**
+ * Response from the `getInvoiceLedger` callable.
+ */
+export interface GetInvoiceLedgerResult {
+  invoiceId: string;
+  payments: GetInvoiceLedgerResultPayment[];
+  paidCents: number;
+  totalCents: number;
+  amountDueCents: number;
+  ledgerPayments: GetInvoiceLedgerResultLedgerPayment[];
+  sessions: GetInvoiceLedgerResultSession[];
+  missingSessionIds: string[];
+  orphanSessionIds: string[];
+  truncated: boolean;
+}
+
 // ---------- getMyInvoicePdf ----------
 
 /**

@@ -14,10 +14,10 @@ the same change.
 (ADR-0001 step W3-1).** Every callable that reads or writes an invoice, a
 payment or a quote exports a `Result` zod schema beside its `Args`, parses its
 outbound value through it (`src/lib/callableResponse.ts`), and has that shape
-frozen by the same recursive walker the deep request shapes use. For those 19,
-this doc is documentation and the schema is the authority. Every OTHER callable's
-response is still doc-only and this file remains its review anchor; closing that
-gap is a later PR.
+frozen by the same recursive walker the deep request shapes use. For those 20
+(19 at W3-1, plus `getInvoiceLedger` added in A1), this doc is documentation and
+the schema is the authority. Every OTHER callable's response is still doc-only
+and this file remains its review anchor; closing that gap is a later PR.
 
 A response that fails its own schema is LOGGED AT ERROR AND RETURNED UNCHANGED,
 never refused. The response is built after the write commits, these writes are
@@ -436,6 +436,20 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   steps (money first, display row second, best-effort); this callable is the
   second step only. A payment row here can exist with NO invoice at all (the
   admin Payments tab's standalone flow).
+- **THE REACT ADMIN CALLS IT TOO, as of A1.** Its invoice detail panel called
+  only `markInvoicePaid`, so a payment taken through the web admin settled the
+  invoice and never reached the ledger the Payments screens read, while
+  Android's identical action wrote both. It now runs the same two steps in the
+  same order: `markInvoicePaid` first and fatal on failure (nothing was written,
+  no payment happened), this callable second and best-effort (the money has
+  already moved, so throwing would offer a retry that collects twice; the
+  failure is reported to the operator instead).
+- **`amount` HERE IS THIS PAYMENT, NOT THE INVOICE'S RUNNING TOTAL.**
+  `markInvoicePaid`'s `paidCents` is cumulative, so echoing it into this
+  request books a $40 ledger row for a $20 second payment. The admin sends the
+  operator's typed amount, or the difference against the cumulative figure
+  `getInvoiceLedger` already returned, and writes NO row at all when neither is
+  available rather than guessing a figure onto a payment record.
 - Field set mirrors android's `Payment` model verbatim; the server adds
   `recordedBy` + `createdAt` (serverTimestamp). No `id` field inside the doc
   (android's `@DocumentId` never serialized one).
@@ -516,6 +530,69 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   carries none, verified 2026-07-30 across all 100 sessions.
 - Capped at 500 rows. `scanned` and `truncated` report the page honestly, so an
   empty result is distinguishable from a truncated one.
+
+### getInvoiceLedger
+- req `{ invoiceId: string /* 1..200 */ }` (`.strict()`)
+- res `{ invoiceId: string, payments: Array<{ paymentId: string, amountCents: number, method: string|null, reference: string|null, paidAt: string|null /* ISO */, recordedBy: string|null }>, paidCents: number, totalCents: number, amountDueCents: number, ledgerPayments: Array<{ paymentId: string, amountCents: number, tipCents: number, method: string, reference: string, date: string /* FREE TEXT */, notes: string, recordedBy: string|null }>, sessions: Array<{ sessionId: string, serviceType: string, status: string, startTime: string /* ISO */, completedAt: string|null, durationMinutes: number|null, linkedBack: boolean }>, missingSessionIds: string[], orphanSessionIds: string[], truncated: boolean }`
+- Read only. Writes nothing, stamps no classifier state, repairs nothing. No `ok`
+  field, same as `listUninvoicedSessions`: a pure read answers with data or
+  throws, and has no partial success to report.
+- **THIS EXISTS BECAUSE NO CLIENT CAN READ THE SUBCOLLECTION.**
+  `firestore.rules` carries no rule for `invoices/{invoiceId}/payments`, the
+  parent `/invoices/{invoiceId}` match does not extend to a subcollection, and
+  the file has no catch-all, so a direct read is denied to EVERY client
+  including a signed-in Auntie. That subcollection is where `markInvoicePaid`
+  records what was collected, so before A1 there was no path by which any
+  invoice screen could show what had been paid. The React admin's detail panel
+  showed neither the payments nor the linked visits.
+- **THREE LISTS, AND THEY ARE NOT INTERCHANGEABLE.** Money on this surface lives
+  in two collections with two jobs:
+  - `payments` is the `invoices/{id}/payments` SUBCOLLECTION, THE AUTHORITY.
+    `paidCents` is their sum, computed with `invoiceMath.ts#paidCentsFromPayments`
+    (stored `amountCents` first, the legacy float `amount` rounded once when a
+    pre-2026-07-25 row carries only dollars), and `amountDueCents` is
+    `settleInvoice` over it, clamped at 0.
+  - `ledgerPayments` is ROOT `payments` rows whose `invoiceId` names this
+    invoice: the DISPLAY ledger written by `recordPayment`, `stripeWebhook.ts`
+    and the historical `match_payments_to_invoices.py`. Counted in NOTHING here.
+    Summing the two would double-count a payment recorded through the standard
+    two-step flow, which writes one row in each.
+  - Both ship because a Stripe card payment lands ONLY in the root ledger. A
+    panel rendering the subcollection alone would report a settled invoice as
+    having no payment at all; a panel rendering the ledger alone (what Android
+    does today) presents a display record as the money.
+- **THE SESSION LINK IS REPORTED IN BOTH DIRECTIONS, AND NEVER REPAIRED.**
+  `sessions` resolves the invoice's own `sessionIds`; `linkedBack` is false when
+  that session's `invoiceId` does not point here; `missingSessionIds` is an id
+  the invoice claims with no session doc behind it; `orphanSessionIds` is a
+  session naming this invoice that the invoice does not claim back.
+  `linkInvoiceSessions` writes both directions in one transaction now, but
+  Android's pre-ADR-0002 loop wrote them separately and logged-and-continued on
+  a per-session failure, so a half-written link is a shape live data carries. A
+  session with a broken backlink is still billable as uninvoiced work, so it can
+  be billed twice. Which side is right decides which invoice a visit is charged
+  on, so it is surfaced for the operator rather than silently resolved.
+- `durationMinutes` is `.nullable()`, never defaulted to 0, for the same reason
+  `listUninvoicedSessions.unitCents` is: a visit with no recorded length is not a
+  zero-length visit, and on a billing panel that is the difference between "not
+  recorded" and "billed for nothing".
+- `method` / `reference` / `paidAt` / `recordedBy` on a subcollection row are
+  `.nullable()` rather than optional, because `markInvoicePaid` writes an
+  explicit `null` when the operator left the field blank.
+- Capped at 200 sessions (the same cap `linkInvoiceSessions` puts on the set it
+  writes, so a legally-linked visit is never hidden) and 100 ledger rows.
+  `truncated` says when the session list is a page rather than the whole set.
+- GATE: `resolveInvoiceWriteActor`, the ADR-0002 invoice-surface gate, despite
+  the name naming the write funnel it was built for. Staff pass unscoped; a TEST
+  ADMIN passes scoped and gets `permission-denied` on an invoice whose
+  `kinfolkId` is not their `testTribeId`. `wrapAdminCallable` would lock the
+  sandbox out of its own invoice detail.
+- Errors: `not-found` for an unknown invoice; `invalid-argument` on a malformed
+  request (the schema is `.strict()`, so an extra key is refused rather than
+  dropped).
+- Mirrors: `auntieos-admin/src/api/invoicesWrite.ts#getInvoiceLedger` and
+  `src/components/InvoiceLedger.tsx`. Types come from the generated contracts
+  module (ADR-0001), not from a hand transcription.
 
 ## Household members and invites (admin-gated; B1)
 

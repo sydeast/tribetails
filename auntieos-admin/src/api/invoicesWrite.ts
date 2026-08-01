@@ -8,10 +8,14 @@ import type {
   CreateQuoteResult,
   GenerateReceiptArgs,
   GenerateReceiptResult,
+  GetInvoiceLedgerArgs,
+  GetInvoiceLedgerResult,
   ListUninvoicedSessionsArgs,
   ListUninvoicedSessionsResult,
   MarkInvoicePaidArgs,
   MarkInvoicePaidResult,
+  RecordPaymentArgs,
+  RecordPaymentResult,
   RepairInvoicePaymentsArgs,
   RepairInvoicePaymentsResult,
   ReviewAndSendDraftInvoiceArgs,
@@ -141,6 +145,67 @@ export async function markInvoicePaid(
   input: Omit<MarkInvoicePaidArgs, 'invoiceId'> = {},
 ): Promise<MarkInvoicePaidResult> {
   return call<MarkInvoicePaidArgs, MarkInvoicePaidResult>('markInvoicePaid', { invoiceId, ...input });
+}
+
+/**
+ * recordPayment (admin): appends a row to the ROOT `payments` collection, the
+ * DISPLAY ledger the Payments screens read.
+ *
+ * IT IS NOT `markInvoicePaid` AND IT DOES NOT CALL IT. That one is the money
+ * authority: it writes `invoices/{id}/payments` and re-derives the invoice's
+ * settlement from the sum of every recorded payment. This one writes a row that
+ * the settlement arithmetic never reads, which is precisely why the two cannot
+ * double-count each other.
+ *
+ * THE ORDER IS LOAD-BEARING when both are wanted. Call `markInvoicePaid` FIRST
+ * and treat its failure as fatal (nothing is written and no payment happened),
+ * then call this one BEST-EFFORT: a display row that fails to write loses a
+ * line on a list, while a settlement that fails loses the balance. That is the
+ * sequence `InvoiceDetailViewModel.recordPayment` has run on Android since
+ * W2-2, and this app now runs the same one.
+ *
+ * BLANK IS NOT OMITTED HERE, unlike `markInvoicePaid`. Every string on this
+ * request has a `.default('')`, so an empty method or reference is a valid
+ * stored value rather than a refusal. `amount` is DOLLARS as a float, the
+ * legacy shape of this collection.
+ */
+export async function recordPayment(
+  input: RecordPaymentArgs,
+): Promise<RecordPaymentResult> {
+  return call<RecordPaymentArgs, RecordPaymentResult>('recordPayment', input);
+}
+
+/**
+ * getInvoiceLedger (admin): the read half of an invoice's money and of the work
+ * behind it. Writes nothing.
+ *
+ * THIS EXISTS BECAUSE NO CLIENT CAN READ THE SUBCOLLECTION. `firestore.rules`
+ * carries no rule for `invoices/{id}/payments`, the parent `/invoices/{id}`
+ * match does not extend to it, and the file has no catch-all, so a direct read
+ * is denied to every client including a signed-in Auntie. That subcollection is
+ * where `markInvoicePaid` records what was collected, so without this callable
+ * an operator has no way to see what has been paid against a bill.
+ *
+ * THREE LISTS COME BACK AND THEY ARE NOT INTERCHANGEABLE:
+ *   `payments`        the subcollection. THE AUTHORITY. `paidCents` is their
+ *                     sum, and the invoice's balance derives from it.
+ *   `ledgerPayments`  ROOT `payments` rows naming this invoice: `recordPayment`
+ *                     display rows and Stripe card payments. Counted in
+ *                     NOTHING. A Stripe payment lands only here, which is why
+ *                     showing the subcollection alone would report a settled
+ *                     invoice as having no payments.
+ *   `sessions`        the visits the invoice claims.
+ *
+ * `missingSessionIds` and `orphanSessionIds` report the two halves of a broken
+ * link (the invoice naming a session that does not exist, and a session naming
+ * this invoice that the invoice does not claim back). They are reported and
+ * never repaired: which side is right is the operator's call.
+ *
+ * Throws `not-found` for an unknown id and `permission-denied` for an invoice
+ * outside a sandbox admin's tribe.
+ */
+export async function getInvoiceLedger(invoiceId: string): Promise<GetInvoiceLedgerResult> {
+  return call<GetInvoiceLedgerArgs, GetInvoiceLedgerResult>('getInvoiceLedger', { invoiceId });
 }
 
 /**
