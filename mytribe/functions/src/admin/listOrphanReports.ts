@@ -12,19 +12,35 @@ import { validateResponse } from '../lib/callableResponse';
  * write side, ASSIGN / DUPLICATE / ARCHIVE).
  *
  * WHY THIS EXISTS AS ITS OWN CALLABLE, NOT A CLIENT-SIDE FILTER OVER THE MAIN
- * LIST. The admin's KinTales list (`api/kinTales.ts#KINTALES_QUERY`) is
- * ordered `createdAt desc` and hard-capped at 200, by design, so it never
- * opens an unbounded listener (AO-29). The orphans this screen exists to
- * surface are the reverse of "recent": they are the 7 pre-cutover
- * `visit_logs` rows the May 17 migration imported with no `kinfolkId`, and
- * their `createdAt` is the MIGRATION date, not a visit date. As the live
- * collection grows past 200 newer reports, that ordered-and-capped query
- * would silently push every orphan off the page and the "Needs triage"
- * section would quietly go empty, exactly the AO-12/AO-29 failure class this
- * codebase treats as a bug rather than a display nuance. A dedicated,
- * unordered, single-filter read is what makes "an orphan is reachable
- * regardless of how many reports exist" a property of the query rather than
- * a coincidence of today's row count.
+ * LIST. The admin's KinTales list (`api/kinTales.ts#KINTALES_QUERY`) is ordered
+ * `createdAt desc` and hard-capped at 200, by design, so it never opens an
+ * unbounded listener (AO-29). Whether an orphan lands inside that page is a
+ * property of nothing anyone controls, because `createdAt` currently holds two
+ * incompatible formats:
+ *
+ *   legacy rows: "September 3, 2025 2:02pm"   (free text, from `visit_logs.submitted`)
+ *   everything else: "2025-12-02T19:00:00.000Z" (ISO)
+ *
+ * Firestore orders strings by UTF-8 byte, so every legacy row sorts ABOVE every
+ * ISO row in a DESC query (`S` is 0x53, `2` is 0x32), and legacy rows sort among
+ * themselves alphabetically BY MONTH NAME: September, November, May, March,
+ * June, July, January, February, December, August, April. Verified against prod
+ * on 2026-08-01: the first page of `createdAt desc` is legacy rows in that
+ * nonsense order.
+ *
+ * So today an orphan happens to sit near the top, for a reason that is a bug.
+ * Once the operator's redating lands (legacy `createdAt` becomes the ingest
+ * timestamp already stored in `_migratedAt`, and `createdAt` means "created in
+ * AuntieOS"), the ordering becomes real, and orphans, whose ingest date is fixed
+ * at the May 2026 migration, drift down the page and off it as new reports
+ * accumulate. The triage section would then quietly go empty, which is the
+ * AO-12/AO-29 failure class this codebase treats as a bug rather than a display
+ * nuance.
+ *
+ * A dedicated, unordered, single-filter read is correct under both regimes: it
+ * makes "an orphan is reachable regardless of how many reports exist, and
+ * regardless of what `createdAt` currently means" a property of the query rather
+ * than a coincidence of today's row count and today's string formats.
  *
  * INDEX-FREE ON PURPOSE. The query below is exactly one predicate
  * (`sentVia in [...]`), no `orderBy`. A single equality/`in` filter is served

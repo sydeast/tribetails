@@ -840,13 +840,20 @@ callable is the enforcement.
   operator cannot see until something surfaces it.
 - **Not a filter over the KinTales list, on purpose.** That list is ordered
   `createdAt desc` and hard-capped at 200 so it never opens an unbounded
-  listener. An orphan's `createdAt` is the MIGRATION date, not a visit date, so
-  once the collection holds 200 newer reports every orphan falls off that page
-  and the triage section goes quietly empty. This is one bounded, unordered,
-  single-predicate read instead, served by Firestore's automatic per-field
-  index; a second predicate, or an `orderBy` on another field, would force a
-  composite index. The rest of the orphan test runs in memory, the same way
-  `listUninvoicedSessions` filters `status` and `invoiceId`.
+  listener, and whether an orphan lands inside that page is currently governed by
+  a defect: `createdAt` holds two incompatible formats, free text on legacy rows
+  (`"September 3, 2025 2:02pm"`) and ISO everywhere else. Firestore orders
+  strings by UTF-8 byte, so every legacy row sorts above every ISO row in DESC,
+  and legacy rows sort among themselves alphabetically by month name. Verified
+  against prod 2026-08-01. After the operator's redating (legacy `createdAt`
+  becomes the `_migratedAt` ingest stamp; `createdAt` then means created in
+  AuntieOS) the ordering becomes real and orphans, pinned at the May 2026 ingest
+  date, drift off the page as new reports accumulate. This callable is one
+  bounded, unordered, single-predicate read, correct under both regimes and
+  served by Firestore's automatic per-field index; a second predicate, or an
+  `orderBy` on another field, would force a composite index. The rest of the
+  orphan test runs in memory, the same way `listUninvoicedSessions` filters
+  `status` and `invoiceId`.
 - `scanned` is the row count read before the in-memory filter, so an empty
   `reports` is distinguishable from a query that matched nothing at all.
 - The blank test treats an ABSENT field and an empty string identically, matching
