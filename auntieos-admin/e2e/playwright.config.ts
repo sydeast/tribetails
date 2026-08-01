@@ -23,6 +23,22 @@ import { defineConfig, devices } from '@playwright/test';
 const PORT = 5174; // matches vite.config.ts's dev port
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
+/**
+ * The react VISUAL surface is opt-in, and the gate is not a convenience.
+ *
+ * Capture rewrites 20 git-tracked PNGs under `visual/react/`. The runbook's
+ * standing complaint about the desktop surface is that `DesktopScreenshotTest`
+ * is an ordinary member of `jvmTest` and so re-captures everything as a side
+ * effect of an unrelated gradle run. Registering the project only when
+ * `VISUAL_CAPTURE=1` means `npm run e2e` can never do that here, and the spec
+ * file simply matches no project the rest of the time.
+ *
+ * It also swaps the seed. `seed.visual.ts` layers extra fixed-date rows on top
+ * of `seed.ts` so the screenshots have content; the ordinary suite keeps the
+ * exact database it has always had, counts included.
+ */
+const CAPTURING_VISUALS = process.env.VISUAL_CAPTURE === '1';
+
 export default defineConfig({
   testDir: '.',
   // Relative to this file, so artifacts land in e2e/.artifacts (gitignored
@@ -37,7 +53,7 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
   reporter: process.env.CI === undefined ? [['list']] : [['list'], ['html', { open: 'never' }]],
-  globalSetup: './seed.ts',
+  globalSetup: CAPTURING_VISUALS ? './seed.visual.ts' : './seed.ts',
 
   use: {
     baseURL: BASE_URL,
@@ -62,6 +78,19 @@ export default defineConfig({
       dependencies: ['setup'],
       use: { ...devices['Desktop Chrome'], storageState: './e2e/.auth/operator.json' },
     },
+    // Capture-only, and only when asked for. Viewport, scale, timezone, locale
+    // and reduced motion are set by the spec's own `test.use`, next to the
+    // reasons for each.
+    ...(CAPTURING_VISUALS
+      ? [
+          {
+            name: 'visual',
+            testMatch: /visual\.capture\.spec\.ts/,
+            dependencies: ['setup'],
+            use: { ...devices['Desktop Chrome'], storageState: './e2e/.auth/operator.json' },
+          },
+        ]
+      : []),
   ],
 
   webServer: {
