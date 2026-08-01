@@ -3,8 +3,15 @@ import { useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { acceptInvite, claimInviteSignup, getInvitePreview } from '../api/portal';
 import { parseInviteId, stepForPreview, validateNewPassword, withTimeout, type ClaimStep } from '../api/claimFlow';
-import { signIn, signInWithToken, useAuth, useSignOut } from '../lib/auth';
-import { isEmailAlreadyInUse, mapAuthError } from '../lib/authErrors';
+import {
+  refreshEmailVerification,
+  resendVerificationEmail,
+  signIn,
+  signInWithToken,
+  useAuth,
+  useSignOut,
+} from '../lib/auth';
+import { isEmailAlreadyInUse, isEmailUnverified, mapAuthError } from '../lib/authErrors';
 
 /**
  * Invite-claim funnel, reached from the welcome email
@@ -27,6 +34,11 @@ export function ClaimInvite() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [signInMode, setSignInMode] = useState(false);
   const [done, setDone] = useState(false);
+  // Set when acceptInvite refuses an unverified address. It is deliberately a
+  // state of its OWN and not another `actionError` string: this is not a failure
+  // to retry, it is a step the invitee has to take, and the two need different
+  // cards. The invite stays live the whole time.
+  const [needsVerification, setNeedsVerification] = useState(false);
   const acceptedForUid = useRef<string | null>(null);
   const { signOut, signingOut } = useSignOut();
 
@@ -70,8 +82,15 @@ export function ClaimInvite() {
     setInFlight(true);
     accept()
       .catch((err: unknown) => {
-        setActionError(err instanceof Error ? err.message : 'Could not accept invite');
         acceptedForUid.current = null;
+        // "Verify your email first" is not an error to retry into. Route it to
+        // its own card, which tells them what to do and can prove when it is
+        // done, instead of a generic "didn't finish. Try again." that would loop.
+        if (isEmailUnverified(err)) {
+          setNeedsVerification(true);
+          return;
+        }
+        setActionError(err instanceof Error ? err.message : 'Could not accept invite');
       })
       .finally(() => setInFlight(false));
   }
@@ -80,7 +99,17 @@ export function ClaimInvite() {
   // session): accept exactly once per uid.
   const uid = authState.status === 'signedIn' ? authState.user.uid : null;
   useEffect(() => {
-    if (step?.kind === 'autoAccept' && uid && acceptedForUid.current !== uid && !inFlight && !actionError) {
+    if (
+      step?.kind === 'autoAccept' &&
+      uid &&
+      acceptedForUid.current !== uid &&
+      !inFlight &&
+      !actionError &&
+      // Without this the effect would re-fire the moment the refusal cleared
+      // inFlight, hammering the callable (and its verification mailer) in a loop
+      // behind the verify card.
+      !needsVerification
+    ) {
       runAccept(uid);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -143,6 +172,23 @@ export function ClaimInvite() {
         />
       ) : step?.kind === 'inviteInvalid' ? (
         <InvalidCard message={step.message} />
+      ) : needsVerification && uid ? (
+        <VerifyEmailCard
+          // The step is only ever `autoAccept` here, and reaching it already
+          // proved the signed-in email equals the invited one, so either source
+          // names the same mailbox.
+          invitedEmail={
+            step?.kind === 'autoAccept'
+              ? step.invitedEmail
+              : authState.status === 'signedIn'
+                ? (authState.user.email ?? '')
+                : ''
+          }
+          onVerified={() => {
+            setNeedsVerification(false);
+            runAccept(uid);
+          }}
+        />
       ) : step?.kind === 'autoAccept' && actionError && uid ? (
         <ErrorCard
           title="Almost there"
@@ -224,6 +270,81 @@ function WelcomeCard({ onEnter }: { onEnter: () => void }) {
             Enter MyTribe
           </button>
         </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Shown when `acceptInvite` refuses because the invited address is not verified
+ * ("secondary needs email verification as well").
+ *
+ * Only invitees who ALREADY had a Firebase account can land here;
+ * `claimInviteSignup` mints new accounts already verified. That population is
+ * exactly the one PR #203's claim path exists to serve, so this card has to end
+ * with them inside, not with an apology. The server has already mailed them a
+ * link by the time this renders.
+ *
+ * "I've verified" does not just retry: it forces a token refresh first. The ID
+ * token in this tab was minted before they clicked the link and still says
+ * unverified, so a plain retry would be refused again and read as a broken
+ * verification link. If the refreshed token still says unverified we say so
+ * plainly rather than bouncing them off the callable a second time.
+ */
+function VerifyEmailCard(props: { invitedEmail: string; onVerified: () => void }) {
+  const [checking, setChecking] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  function check() {
+    setNote(null);
+    setChecking(true);
+    refreshEmailVerification()
+      .then((verified) => {
+        if (verified) {
+          props.onVerified();
+          return;
+        }
+        setNote("We still don't see this address as confirmed. Open the link in the email, then check again.");
+      })
+      .catch(() => setNote('Could not check just now. Try again in a moment.'))
+      .finally(() => setChecking(false));
+  }
+
+  function resend() {
+    setNote(null);
+    setResending(true);
+    resendVerificationEmail()
+      .then(() => setNote(`Sent again to ${props.invitedEmail}. It can take a minute.`))
+      .catch(() => setNote('Could not send another email just now. Try again in a moment.'))
+      .finally(() => setResending(false));
+  }
+
+  return (
+    <section className="glass card d1">
+      <h3 className="title">Confirm your email to join</h3>
+      <p className="sub" style={{ marginTop: 10 }}>
+        You already have an account with {props.invitedEmail || 'this address'}, and it has not been
+        confirmed yet. We just emailed a confirmation link. Open it, then come back here.
+      </p>
+      <p className="sub" style={{ marginTop: 10 }}>
+        Your invite stays open in the meantime, so there is nothing to re-request.
+      </p>
+      {note !== null && (
+        <div className="validate" role="alert" style={{ marginTop: 12 }}>
+          <span className="x">{'⚠'}</span>
+          <span>{note}</span>
+        </div>
+      )}
+      <div style={{ marginTop: 18 }}>
+        <button className="btn grad block" onClick={check} disabled={checking || resending}>
+          {checking ? 'Checking…' : "I've confirmed it"}
+        </button>
+      </div>
+      <div className="forgotrow">
+        <a onClick={resending ? undefined : resend}>
+          {resending ? 'Sending…' : 'Send the email again'}
+        </a>
       </div>
     </section>
   );

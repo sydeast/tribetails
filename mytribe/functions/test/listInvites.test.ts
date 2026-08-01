@@ -44,7 +44,9 @@ function invite(id: string, over: Record<string, unknown> = {}) {
         kintales_only: true,
         home_access: false,
       },
-      requiresAuntieAck: false,
+      // A stored `requiresAuntieAck` (older docs still carry one) must not
+      // reappear in the DTO: the field was removed, not renamed.
+      requiresAuntieAck: true,
       status: 'EMAIL_SENT',
       createdAt: ts('2026-05-20T00:00:00.000Z'),
       sentToInviteeAt: ts('2026-05-20T00:01:00.000Z'),
@@ -333,5 +335,20 @@ describe('listInvites NEGATIVE + UNAUTHORIZED', () => {
         callableRequest({ familyId: 'fam1' }, { uid: 'admin1', token: { admin: true } }),
       ),
     ).rejects.toThrow('backend unavailable');
+  });
+
+  it('drops a legacy requiresAuntieAck rather than surfacing it', async () => {
+    // RULING: a household PRIMARY may grant a SECONDARY any permission except
+    // admin, billing included. Nothing ever performed or checked the "Auntie
+    // acknowledgement" this flag claimed to require, so it is gone from the
+    // schema and from both clients. Documents written before that still carry
+    // the field; the projection must not resurrect it.
+    const row = mapInviteDoc(
+      'rq_legacy',
+      { tribeId: 'fam1', status: 'PENDING', requiresAuntieAck: true },
+      Date.now(),
+    );
+    expect(row).not.toHaveProperty('requiresAuntieAck');
+    expect(row.inviteId).toBe('rq_legacy');
   });
 });

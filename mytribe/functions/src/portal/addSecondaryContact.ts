@@ -116,7 +116,6 @@ export async function addSecondaryContactHandler(req: CallableRequest<unknown>):
       home_access: args.permissions.home_access ?? false,
     },
     proposedRole: 'SECONDARY',
-    requiresAuntieAck: !!args.permissions.billing_full,
     status: 'PENDING',
     source: 'mytribe-portal',
     createdAt: FieldValue.serverTimestamp(),

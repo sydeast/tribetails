@@ -88,3 +88,19 @@ export function isEmailAlreadyInUse(err: unknown): boolean {
     all.includes('already exists')
   );
 }
+
+/**
+ * Claim flow: `acceptInvite` refuses an invitee whose email is not verified
+ * ("secondary needs email verification as well") and mails them a verification
+ * link on the way out. Only the already-had-an-account population reaches this:
+ * `claimInviteSignup` mints new accounts already verified, so a first-time
+ * invitee never sees it.
+ *
+ * Matched on the message and not the code alone, because `failed-precondition`
+ * is also how that callable reports a dead invite, and the two want different
+ * screens: "verify and come back" against "this link is finished".
+ */
+export function isEmailUnverified(err: unknown): boolean {
+  const all = `${codeOf(err)} ${messageOf(err)}`;
+  return all.includes('failed-precondition') && all.includes('verif');
+}

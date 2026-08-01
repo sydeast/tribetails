@@ -70,7 +70,6 @@ function invite(over: Partial<HouseholdInvite> = {}): HouseholdInvite {
       kintales_only: true,
       home_access: false,
     },
-    requiresAuntieAck: false,
     status: 'EMAIL_SENT',
     effectiveStatus: 'EMAIL_SENT',
     redeemable: true,

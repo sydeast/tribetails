@@ -1,7 +1,10 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
+import { enforceRateLimit } from '../lib/rateLimit';
+import { sendFromTemplate } from '../lib/sendFromTemplate';
 import { wrapCallable } from '../lib/wrapCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
@@ -12,6 +15,54 @@ import type { InviteRequestDoc } from '../lib/schema';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
 const Args = z.object({ inviteId: z.string().min(1) });
+
+/**
+ * Mint a Firebase verification link for the invited address and mail it, so the
+ * "verify first" refusal above hands the invitee the thing they need instead of
+ * telling them to go find it.
+ *
+ * Deliberately NEVER throws. Its caller is already refusing the accept; a mail
+ * failure must not turn an actionable `failed-precondition` into an opaque
+ * `internal`, and the invite stays live either way. A caller who gets the
+ * message but no mail can still verify through any normal Firebase route.
+ *
+ * Rate-limited per uid AND per address: this is the one place an unauthenticated
+ * -adjacent caller can make us send mail on demand, and a retry loop on the
+ * claim screen must not become a mail bomb aimed at the invited mailbox. Hitting
+ * the limit suppresses the send silently. The refusal is unchanged, and the
+ * earlier mail is already in that inbox.
+ */
+async function sendInviteVerificationEmail(
+  uid: string,
+  invitedEmail: string,
+  inviteId: string,
+): Promise<void> {
+  try {
+    await enforceRateLimit('inviteVerifyEmail', uid, 5, 3600);
+    await enforceRateLimit('inviteVerifyEmail', invitedEmail.toLowerCase(), 5, 3600);
+    const verifyUrl = await getAuth().generateEmailVerificationLink(invitedEmail);
+    await sendFromTemplate('invite.verify-email', invitedEmail, {
+      invitedEmail,
+      verifyUrl,
+      claimUrl: `${process.env.CLAIM_LINK_BASE_URL}?invite=${inviteId}`,
+    });
+    logEvent({
+      severity: 'info',
+      function: 'acceptInvite',
+      event: 'invite.verification.sent',
+      uid,
+      extra: { inviteId },
+    });
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'acceptInvite',
+      event: 'invite.verification.send.failed',
+      uid,
+      extra: { inviteId, err: (err as Error)?.message },
+    });
+  }
+}
 
 export async function acceptInviteHandler(req: CallableRequest<unknown>): Promise<{ familyId: string }> {
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in required.');
@@ -36,6 +87,33 @@ export async function acceptInviteHandler(req: CallableRequest<unknown>): Promis
   }
   if (!tokenEmail || tokenEmail.toLowerCase() !== invite.invitedEmail.toLowerCase()) {
     throw new HttpsError('permission-denied', 'invite email mismatch');
+  }
+  // RULING: "secondary needs email verification as well."
+  //
+  // firestore.rules hardened exactly this branch months ago (WARNING-17, the
+  // inviteRequests read rule) on the grounds that an unverified email is
+  // attacker-controllable: anyone can sign up with any address and never prove
+  // it. This callable then trusted the same unproven address to hand out
+  // household membership, which is the larger grant of the two. The rule and the
+  // callable now agree.
+  //
+  // This does NOT break the existing-account claim path, which is the flow B1
+  // exists to unblock. Two populations reach here:
+  //   * Brand-new invitees. `claimInviteSignup` mints the account with
+  //     `emailVerified: true` (it delivered the link to that mailbox itself), so
+  //     their very first token already passes and nothing changes for them.
+  //   * Invitees who ALREADY have a Firebase account. That account may be an
+  //     unverified email+password signup, and that is the case this branch is
+  //     for. Rather than a bare permission-denied that leaves them stuck, we mint
+  //     a verification link and mail it to the invited address, then tell them
+  //     what to do. The invite is untouched and still live for its full TTL, so
+  //     the same claim link works the moment they come back verified.
+  if (req.auth.token.email_verified !== true) {
+    await sendInviteVerificationEmail(req.auth.uid, invite.invitedEmail, inviteId);
+    throw new HttpsError(
+      'failed-precondition',
+      `Verify ${invite.invitedEmail} before joining. We just emailed a verification link to that address. Open it, then come back to this invite link.`,
+    );
   }
   const memberRef = db().doc(`families/${invite.tribeId}/members/${req.auth.uid}`);
   const clientRef = db().doc(`clients/${req.auth.uid}`);
@@ -156,6 +234,15 @@ export async function acceptInviteHandler(req: CallableRequest<unknown>): Promis
 }
 
 export const acceptInvite = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] , minInstances: 1 },
+  // SMTP2GO_API_KEY + EMAIL_FROM are bound because the unverified-email branch
+  // mails the invitee a verification link. Both are already created and already
+  // bound to the other invite functions (mintInviteFromPrimary, mintInvite), so
+  // this adds no new secret to create, only a new consumer of two existing ones.
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    secrets: ['SENTRY_DSN', 'SMTP2GO_API_KEY', 'EMAIL_FROM'],
+    minInstances: 1,
+  },
   wrapCallable('acceptInvite', acceptInviteHandler),
 );

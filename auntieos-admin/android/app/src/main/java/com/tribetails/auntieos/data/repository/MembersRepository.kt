@@ -93,7 +93,11 @@ class MembersRepository(
         val effectiveStatus: InviteStatus,
         /** True only when `acceptInvite` would still accept this invite today. */
         val redeemable: Boolean,
-        val requiresAuntieAck: Boolean,
+        // `requiresAuntieAck` used to live here. The server set it true only when
+        // an invite carried billing_full, and nothing ever acknowledged it or
+        // gated on it. Per the operator ruling a household PRIMARY may grant a
+        // SECONDARY any permission except admin, billing included, so there is no
+        // acknowledgement to render. `listInvites` no longer returns the field.
         /** ISO-8601 or null. Null means the server had nothing, not "today". */
         val createdAt: String?,
         val sentToInviteeAt: String?,
@@ -289,7 +293,6 @@ internal fun decodeInvites(raw: Map<*, *>?): List<MembersRepository.Invite> {
             effectiveStatus = m["effectiveStatus"]?.let { decodeInviteStatus(it) } ?: status,
             // Absent reads NOT redeemable: see the class kdoc.
             redeemable = m["redeemable"] as? Boolean ?: false,
-            requiresAuntieAck = m["requiresAuntieAck"] as? Boolean ?: false,
             createdAt = (m["createdAt"] as? String)?.ifBlank { null },
             sentToInviteeAt = (m["sentToInviteeAt"] as? String)?.ifBlank { null },
             expiresAt = (m["expiresAt"] as? String)?.ifBlank { null },

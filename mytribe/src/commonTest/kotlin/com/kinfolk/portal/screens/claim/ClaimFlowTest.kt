@@ -57,4 +57,24 @@ class ClaimFlowTest {
         assertEquals("Passwords don't match.", validateNewPassword("longenough", "different"))
         assertNull(validateNewPassword("longenough", "longenough"))
     }
+
+    /**
+     * RULING: "secondary needs email verification as well." `acceptInvite`
+     * refuses an unverified invitee with an actionable failed-precondition. The
+     * claim screen must not confuse that with the dead-invite failed-precondition:
+     * one is "confirm and come back", the other is "this link is finished".
+     */
+    @Test
+    fun isEmailUnverified_detectsTheVerificationRefusalOnly() {
+        assertTrue(
+            isEmailUnverified(
+                "functions/failed-precondition Verify jane@example.com before joining. " +
+                    "We just emailed a verification link to that address.",
+            ),
+        )
+        assertFalse(isEmailUnverified("functions/failed-precondition invite no longer valid"))
+        assertFalse(isEmailUnverified("functions/failed-precondition invite expired"))
+        assertFalse(isEmailUnverified("functions/permission-denied invite email mismatch"))
+        assertFalse(isEmailUnverified(null))
+    }
 }

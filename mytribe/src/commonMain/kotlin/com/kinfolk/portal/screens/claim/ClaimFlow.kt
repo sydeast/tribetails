@@ -71,6 +71,20 @@ fun isEmailAlreadyInUse(message: String?): Boolean {
     return "email_exists" in m || "email-already-in-use" in m || "email already in use" in m
 }
 
+/**
+ * RULING: "secondary needs email verification as well."
+ *
+ * `acceptInvite` refuses an invitee whose address is not verified, and mails them
+ * a verification link on the way out. That refusal is a step to take, not a
+ * failure to retry, so the claim screen has to tell it apart from the OTHER
+ * failed-precondition that callable throws for a dead invite.
+ *
+ * Mirrors `isEmailUnverified` in mytribe/web/src/lib/authErrors.ts.
+ */
+fun isEmailUnverified(message: String?): Boolean {
+    val m = message?.lowercase() ?: return false
+    return "failed-precondition" in m && "verif" in m
+}
 /** Returns a user-facing problem, or null when the password is acceptable. */
 fun validateNewPassword(password: String, confirm: String): String? = when {
     password.length < 8 -> "Password needs at least 8 characters."

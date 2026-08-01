@@ -254,8 +254,24 @@ fun ClaimInviteScreen(
                     }
 
                     actionError != null -> {
-                        Text("Invite couldn't be accepted", style = type.heritageDisplay, textAlign = TextAlign.Center)
+                        // "Verify your email first" is a step, not a failure, so it
+                        // does not get the failure heading. The server's own message
+                        // is already actionable and names the address, so it is shown
+                        // verbatim under either heading.
+                        val needsVerification = isEmailUnverified(actionError)
+                        Text(
+                            if (needsVerification) "Confirm your email to join" else "Invite couldn't be accepted",
+                            style = type.heritageDisplay,
+                            textAlign = TextAlign.Center,
+                        )
                         Text(actionError ?: "", style = type.sansBody, textAlign = TextAlign.Center)
+                        if (needsVerification) {
+                            Text(
+                                "Your invite stays open in the meantime, so there is nothing to re-request.",
+                                style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
+                                textAlign = TextAlign.Center,
+                            )
+                        }
                         Spacer(Modifier.height(KinfolkSpacing.m))
                         Button(
                             onClick = {
@@ -263,6 +279,13 @@ fun ClaimInviteScreen(
                                 scope.launch {
                                     inFlight = true
                                     try {
+                                        // Mint a fresh ID token BEFORE retrying. Clicking a
+                                        // verification link flips the Firebase user record, but
+                                        // the token this session already holds still says
+                                        // email_verified false for up to an hour. Without this
+                                        // an invitee who really did verify is refused again and
+                                        // reads it as a broken link.
+                                        repo.refreshIdToken()
                                         accept()
                                     } catch (t: Throwable) {
                                         actionError = t.message ?: "Try again later"
@@ -273,7 +296,15 @@ fun ClaimInviteScreen(
                             },
                             colors = orangeButton(),
                             enabled = !inFlight,
-                        ) { Text(if (inFlight) "Trying…" else "Try Again") }
+                        ) {
+                            Text(
+                                when {
+                                    inFlight -> "Trying…"
+                                    needsVerification -> "I've confirmed it"
+                                    else -> "Try Again"
+                                },
+                            )
+                        }
                         OutlinedButton(onClick = onCancel) { Text("Skip for now") }
                     }
 

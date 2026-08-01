@@ -41,7 +41,6 @@ export async function mintInviteHandler(req: CallableRequest<unknown>): Promise<
     secondaryLabel: sanitizeLabel(args.secondaryLabel),
     proposedPermissions,
     proposedRole: args.proposedRole,
-    requiresAuntieAck: false,
     status: 'PENDING',
     createdAt: FieldValue.serverTimestamp(),
     expiresAt,

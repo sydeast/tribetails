@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isEmailAlreadyInUse, mapAuthError } from './authErrors';
+import { isEmailAlreadyInUse, isEmailUnverified, mapAuthError } from './authErrors';
 
 function fbError(code: string, message = ''): { code: string; message: string } {
   return { code, message };
@@ -55,5 +55,35 @@ describe('isEmailAlreadyInUse', () => {
   it('rejects unrelated errors', () => {
     expect(isEmailAlreadyInUse(fbError('auth/wrong-password'))).toBe(false);
     expect(isEmailAlreadyInUse(undefined)).toBe(false);
+  });
+});
+
+/**
+ * RULING: "secondary needs email verification as well."
+ *
+ * `acceptInvite` refuses an unverified invitee with `failed-precondition` and an
+ * actionable message. The claim screen has to tell that apart from the OTHER
+ * `failed-precondition` that callable throws, for a dead invite, because one is
+ * "do this and come back" and the other is "this link is finished".
+ */
+describe('isEmailUnverified', () => {
+  it('detects the acceptInvite verification refusal', () => {
+    expect(
+      isEmailUnverified({
+        code: 'functions/failed-precondition',
+        message:
+          'Verify jane@example.com before joining. We just emailed a verification link to that address. Open it, then come back to this invite link.',
+      }),
+    ).toBe(true);
+  });
+  it('does NOT swallow the dead-invite failed-precondition', () => {
+    expect(isEmailUnverified({ code: 'functions/failed-precondition', message: 'invite no longer valid' })).toBe(false);
+    expect(isEmailUnverified({ code: 'functions/failed-precondition', message: 'invite expired' })).toBe(false);
+  });
+  it('rejects unrelated errors and junk', () => {
+    expect(isEmailUnverified({ code: 'functions/permission-denied', message: 'invite email mismatch' })).toBe(false);
+    expect(isEmailUnverified(undefined)).toBe(false);
+    expect(isEmailUnverified(null)).toBe(false);
+    expect(isEmailUnverified('verify your email')).toBe(false);
   });
 });

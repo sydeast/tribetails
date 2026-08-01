@@ -75,7 +75,6 @@ class HouseholdMembersViewModelTest {
         status = status,
         effectiveStatus = effective,
         redeemable = redeemable,
-        requiresAuntieAck = false,
         createdAt = "2026-05-26T00:00:00.000Z",
         sentToInviteeAt = "2026-05-26T00:00:00.000Z",
         expiresAt = "2026-06-09T00:00:00.000Z",
@@ -360,8 +359,12 @@ class HouseholdMembersViewModelTest {
         // Exactly one row has no key: kintales_only, which renders locked on.
         assertEquals(1, PERMISSION_ROWS.count { it.key == null })
         assertTrue(PERMISSION_ROWS.single { it.key == null }.label.contains("KinTales"))
+        // RULING: "besides admin, primary kinfolk can set permissions for the
+        // secondary ... including billing if they want." This used to assert
+        // billing_full carried `adminOnly = true`; the flag and its pill are gone.
         assertTrue(
-            PERMISSION_ROWS.single { it.key == MembersRepository.PermissionKey.BILLING_FULL }.adminOnly,
+            PERMISSION_ROWS.single { it.key == MembersRepository.PermissionKey.BILLING_FULL }
+                .description.contains("audited"),
         )
     }
 

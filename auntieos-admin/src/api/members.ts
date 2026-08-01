@@ -39,11 +39,12 @@ export interface PermissionMeta {
   readonly key: PermissionKey;
   readonly label: string;
   readonly description: string;
-  /**
-   * Only `setMemberPermissions` (admin-gated) can move this one; the
-   * household's own PRIMARY cannot, and it is audited at severity `warn`.
-   */
-  readonly adminOnly?: true;
+  // `adminOnly` used to live here, on `billing_full`, claiming the household's
+  // own PRIMARY could not move that flag. Per the operator ruling a PRIMARY may
+  // grant a SECONDARY any permission except admin, billing included, so the
+  // badge asserted a restriction the server does not enforce and the product
+  // does not want. Removed rather than relabelled: nothing else used the flag,
+  // and the description below carries the weight honestly.
   /**
    * The server refuses to change it. `mintInvite` forces `kintales_only: true`
    * on every invite and `setMemberPermissions` does not accept the key at all,
@@ -57,8 +58,8 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
   {
     key: 'billing_full',
     label: 'Full billing',
-    description: 'Full access to invoices and payment methods.',
-    adminOnly: true,
+    description:
+      'Full access to invoices and payment methods. The household PRIMARY can grant this too; every change is audited.',
   },
   {
     key: 'messaging_direct',
@@ -114,7 +115,6 @@ export interface HouseholdInvite {
   secondaryLabel: string | null;
   proposedRole: MemberRole;
   proposedPermissions: MemberPermissions;
-  requiresAuntieAck: boolean;
   /** Raw document status. Prefer `effectiveStatus` for anything the eye sees. */
   status: InviteStatus;
   /** `status`, except a lapsed PENDING/EMAIL_SENT reads EXPIRED. */
@@ -216,7 +216,6 @@ export async function listHouseholdInvites(familyId: string): Promise<HouseholdI
       secondaryLabel: str(row['secondaryLabel']),
       proposedRole: asRole(row['proposedRole']),
       proposedPermissions: asPermissions(row['proposedPermissions']),
-      requiresAuntieAck: bool(row['requiresAuntieAck']),
       status: asInviteStatus(row['status']),
       effectiveStatus: asInviteStatus(row['effectiveStatus'] ?? row['status']),
       // Absent `redeemable` must NOT default true: offering Revoke on an invite

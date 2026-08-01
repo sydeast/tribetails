@@ -31,7 +31,6 @@ export async function executePrimaryRecoveryHandler(req: CallableRequest<unknown
     invitedEmail: args.newEmail.toLowerCase(),
     proposedRole: 'PRIMARY',
     proposedPermissions: FULL_PERMISSIONS,
-    requiresAuntieAck: false,
     status: 'EMAIL_SENT',
     createdAt: FieldValue.serverTimestamp(),
     sentToInviteeAt: FieldValue.serverTimestamp(),
