@@ -27,6 +27,32 @@ assume your default is wrong: re-check, then build it — backend + web + deskto
 
 ---
 
+## DESIGN AUTHORITY: TWO SOURCES, AND RENDERED PNGS ARE NEITHER
+
+When you need to know what a screen should look like, read these, in this order:
+
+1. `page-specs/*.md` — 31 numbered specs, each with an archived/live banner.
+   Start at `00-INDEX.md` (spec to screen) and `00-DEPENDENCIES.md`. These are
+   gitignored, so they exist in the main checkout only and are invisible inside a
+   git worktree; use the absolute path rather than concluding they are missing.
+2. `ui-ideas/*.html` — the operator's mockups. Two rules that are not optional:
+   anything under `ui-ideas/WrongUIDesigns-UpdateKill/` is a REJECTED design and
+   must never be built from, and a filename carrying a directive
+   (`...-cardsShouldOpenDisplayingFullerDetails.html`) means that directive is
+   part of the spec.
+
+`visual/mockups/` is Playwright output rendered from source 2 at some past
+moment. It is never itself a design source. On 2026-08-01 the operator deleted it
+along with `visual/baselines/`, because both held the pre-ruling concept round and
+captures of the superseded Compose app, and agents kept building from them. The
+harness stays; `web/visual/manifest.json` now lists only screens whose mockup is
+live, with the withdrawn ones under `pendingRemock`.
+
+A screen with no live mockup does not get one invented. It waits for the operator
+re-mock, tracked in `docs/punchlists/PUNCHLIST_2026-07-31-remaining.md` (F1 to F5).
+
+---
+
 Error Handling Philosophy: Fail Loud, Never Fake
 
 Never silently swallow errors. Surface them.

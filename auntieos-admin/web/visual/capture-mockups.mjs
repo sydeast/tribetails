@@ -18,13 +18,28 @@ const mockupDir = resolve(here, manifest.mockupDir);
 const outDir = resolve(here, "../../visual/mockups");
 mkdirSync(outDir, { recursive: true });
 
+// Pre-flight: no screen may point at a design the operator rejected. Those live
+// under ui-ideas/WrongUIDesigns-UpdateKill/, and rendering one puts a dead design
+// back in visual/mockups/ where the next agent reads it as current.
+const REJECTED_DIR = "WrongUIDesigns-UpdateKill";
+const rejected = manifest.screens.filter((s) => s.mockup.split(/[\\/]/).includes(REJECTED_DIR));
+if (rejected.length) {
+  console.error(`FATAL: manifest points at rejected designs under ${REJECTED_DIR}/:`);
+  for (const s of rejected) console.error(`  - ${s.screen}: ${s.mockup}`);
+  console.error("Move the screen to pendingRemock until a replacement mockup arrives.");
+  process.exit(1);
+}
+
 // Pre-flight: every referenced mockup file must exist (fail loud, no silent skip).
+// A screen whose mockup was withdrawn belongs in manifest.pendingRemock, so this
+// firing means the manifest and ui-ideas have drifted apart.
 const missing = manifest.screens
   .map((s) => ({ s, p: join(mockupDir, s.mockup) }))
   .filter(({ p }) => !existsSync(p));
 if (missing.length) {
   console.error("FATAL: mockup HTML files missing:");
   for (const { s, p } of missing) console.error(`  - ${s.screen}: ${p}`);
+  console.error("If the design was withdrawn, move the screen to manifest.pendingRemock.");
   process.exit(1);
 }
 
