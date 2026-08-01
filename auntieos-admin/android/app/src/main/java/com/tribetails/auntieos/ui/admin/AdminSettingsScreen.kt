@@ -62,10 +62,12 @@ import com.composables.icons.lucide.Camera
 import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Database
+import com.composables.icons.lucide.Image
 import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.LayoutGrid
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Mail
+import com.composables.icons.lucide.Map
 import com.composables.icons.lucide.MapPin
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Trash2
@@ -161,13 +163,16 @@ import kotlinx.coroutines.launch
  *    real UI (SchedulingOptionsScreen's GoogleCalendarSyncCard). Selecting that
  *    section calls onNavigateToSchedule to open the real screen there, instead of
  *    an inline panel.
- *  - Per-integration Manage/Connect has no backend and no flag: the Integrations
- *    panel shows Stripe Connect honestly as "Needs your keys" (a named external
- *    secret) and add-ons as "Coming soon", never a dead Manage button.
  *  - Unlike web, Android DOES have a real avatar upload pipeline (uploadAvatar),
  *    so the profile picture control stays LIVE here, not gated.
- *  - Integration pills reflect the VM's live health probe (Firestore + FCM are
- *    probed; n8n + Twilio stay CONFIGURED) rather than a faked "Connected" glow.
+ *  - Integration verdicts come from `getIntegrationsHealth`, the same answer the
+ *    React admin renders, so the two surfaces cannot disagree about whether a
+ *    key is set. Only Firestore reachability and the FCM registration token are
+ *    still decided on the device, because both are facts about this handset that
+ *    no server can see. The two rows that used to be hard-coded pills ("n8n
+ *    Webhooks", retired more than a year before, and "Twilio Studio", never
+ *    checked) are gone: a server-side question answered from a literal is not a
+ *    status, it is a decoration.
  */
 /**
  * The Business Settings sections, one per detail panel. A phone can't take the
@@ -307,6 +312,12 @@ fun AdminSettingsScreen(
     onBack: () -> Unit,
     onNavigateToAccount: () -> Unit = {},
     onNavigateToNotificationPrefs: () -> Unit = {},
+    /**
+     * Where the Google Calendar OAuth connect flow lives (Scheduling options).
+     * Two callers inside this screen: the Calendar Sync entry and the
+     * Integrations panel's Google Calendar row, both handing off rather than
+     * growing a second copy of the flow.
+     */
     onNavigateToSchedule: () -> Unit = {},
     viewModel: AdminSettingsViewModel = viewModel<AdminSettingsViewModel>()
 ) {
@@ -337,7 +348,7 @@ fun AdminSettingsScreen(
         viewModel.loadBusinessSettings()
         viewModel.loadBusinessHours()
         viewModel.loadUserProfile()
-        viewModel.probeIntegrations()
+        viewModel.loadIntegrations()
     }
 
     LaunchedEffect(uiState.profileSaveSuccess) {
@@ -497,7 +508,14 @@ fun AdminSettingsScreen(
                             onSettingsChange = { viewModel.updateBusinessSettings(it) },
                         )
 
-                        SettingsSection.Integrations -> IntegrationsPanel(uiState.integrationsHealth)
+                        SettingsSection.Integrations -> IntegrationsPanel(
+                            health = uiState.integrationsHealth,
+                            loading = uiState.integrationsLoading,
+                            error = uiState.integrationsError,
+                            deviceProbes = uiState.deviceProbes,
+                            onRetry = { viewModel.loadIntegrations() },
+                            onOpenGoogleCalendar = onNavigateToSchedule,
+                        )
 
                         // Tags: the two vocabularies (household + pet) the Den offers
                         // on a profile, shared banks the directory picks from.
@@ -1471,39 +1489,146 @@ private fun BookingBehaviorPanel(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Integrations (live health probe from the VM)
+// Integrations
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Every outside service, as the SERVER sees it, plus the two things only this
+ * handset can answer.
+ *
+ * WHAT CHANGED AND WHY. This panel used to render four rows the ViewModel held
+ * as literals, two of them with a fixed pill: "n8n Webhooks: CONFIGURED" stayed
+ * on screen for more than a year after n8n was retired, and "Twilio Studio:
+ * CONFIGURED" asserted a state nothing had ever checked. A phone cannot read a
+ * Cloud Functions secret, so every server-side claim it made was a guess wearing
+ * a status pill. The verdicts now come from `getIntegrationsHealth`, the same
+ * answer the React admin renders, so the two surfaces cannot tell an operator
+ * different things about the same key.
+ *
+ * WHAT STAYED, AND WHY IT IS NOT AN EXCEPTION. Firestore and push notifications
+ * are still probed here, because both questions are about THIS DEVICE: can it
+ * reach Firestore, does it hold an FCM registration token. A server answer would
+ * be about a different machine. They are labelled so nobody reads them as a
+ * claim about the business.
+ *
+ * A FAILED READ SHOWS AS A FAILED READ. No server row is drawn when the call did
+ * not come back, because a row of reassuring pills over an unanswered question
+ * is how an operator stops looking for the reason invoices are not sending.
+ */
 @Composable
-private fun IntegrationsPanel(rows: List<IntegrationHealth>) {
+private fun IntegrationsPanel(
+    health: IntegrationsHealth?,
+    loading: Boolean,
+    error: String?,
+    deviceProbes: List<IntegrationHealth>,
+    onRetry: () -> Unit,
+    onOpenGoogleCalendar: () -> Unit,
+) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     DenPanel(
         title = "Integrations",
-        subtitle = "Services that power the Den. Firestore and FCM are probed live; n8n and Twilio are managed server-side.",
+        subtitle = "The outside services this business runs on, checked on the server. The last two rows are about this phone.",
         trailing = {
             AuntieIconTile(icon = Lucide.LayoutGrid, tone = AuntieStatusTone.Orange, size = 40.dp)
         },
     ) {
         Column {
-            // #8: app infrastructure (what the Den needs to run).
-            Text("SYSTEM SERVICES", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+            Text("OUTSIDE SERVICES", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
             Spacer(Modifier.height(dims.space2))
-            rows.forEachIndexed { idx, row ->
-                IntegrationRow(row, showDivider = idx < rows.lastIndex)
+
+            when {
+                error != null -> {
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Error,
+                        title = "Could not check the integrations",
+                        body = {
+                            Column {
+                                // The server's own words: they name the missing
+                                // secret and the command that sets it.
+                                Text(error, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                Spacer(Modifier.height(dims.space2))
+                                Text(
+                                    "Nothing about Stripe, Twilio, email, photos, maps, calendar or error reporting " +
+                                        "is shown below, because none of it was answered.",
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = c.textDim,
+                                )
+                            }
+                        },
+                        trailing = { GhostButton(label = "Try again", onClick = onRetry) },
+                    )
+                }
+
+                health == null -> {
+                    Text(
+                        if (loading) "Checking integrations..." else "The integrations check has not run yet.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                }
+
+                else -> {
+                    if (!health.declaredKnown) {
+                        AuntieBanner(
+                            tone = AuntieBannerTone.Warning,
+                            title = "Part of this check could not run",
+                            body = {
+                                Text(
+                                    "The server could not read which secrets the deployed functions declare, so that " +
+                                        "line is left off every row below. Everything else here still stands. " +
+                                        health.declaredError,
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = c.textDim,
+                                )
+                            },
+                        )
+                        Spacer(Modifier.height(dims.space2))
+                    }
+                    health.integrations.forEachIndexed { idx, row ->
+                        ServerIntegrationRow(
+                            row = row,
+                            declaredKnown = health.declaredKnown,
+                            showDivider = idx < health.integrations.lastIndex,
+                            onOpenGoogleCalendar = onOpenGoogleCalendar,
+                        )
+                    }
+                    Spacer(Modifier.height(dims.space2))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            integrationsCheckedLabel(health.checkedAt),
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textFaint,
+                            modifier = Modifier.weight(1f),
+                        )
+                        GhostButton(label = if (loading) "Checking..." else "Check again", onClick = onRetry, enabled = !loading)
+                    }
+                }
             }
 
             Spacer(Modifier.height(dims.space3))
 
-            // #8: Payments (Stripe Connect) is the ONE named external-secret defer.
-            // Connecting needs the operator's Stripe Connect client ID + secret. Shown
-            // honestly as "Needs your keys", never faked, never a dead Manage button.
-            Text("PAYMENTS", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+            // The two facts a server genuinely cannot see, kept for that reason
+            // and labelled so they are never read as claims about the business.
+            Text("THIS PHONE", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+            Spacer(Modifier.height(dims.space2))
+            deviceProbes.forEachIndexed { idx, row ->
+                IntegrationRow(row, showDivider = idx < deviceProbes.lastIndex)
+            }
+
+            Spacer(Modifier.height(dims.space3))
+
+            // Stripe CONNECT, which is not the same thing as the Stripe row
+            // above: that one is card payments on an invoice, this is paying a
+            // connected account out. Connecting needs a client ID and secret no
+            // code in this repo holds, so it is named rather than staged behind
+            // a button that could not work.
+            Text("PAYOUTS", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
             Spacer(Modifier.height(dims.space2))
             IntegrationNeedsKeysRow(
                 name = "Stripe Connect",
-                detail = "Online payments, invoices, and payouts",
-                hint = "Connecting needs your Stripe Connect client ID + secret (operator-provided). Add them and Manage turns on here.",
+                detail = "Paying out to a connected account, separate from card payments on an invoice",
+                hint = "Connecting needs your Stripe Connect client ID and secret from dashboard.stripe.com/settings/connect. Card payments on invoices work without it.",
             )
 
             Spacer(Modifier.height(dims.space3))
@@ -1578,6 +1703,102 @@ private fun AddOnComingSoon(name: String, detail: String) {
     }
 }
 
+/**
+ * One outside service, exactly as the server described it.
+ *
+ * NOTHING IS DECIDED HERE. The status, the one-line summary and the remediation
+ * all arrive settled; this composable chooses an icon and a tone and prints the
+ * rest. The remediation in particular is shown VERBATIM in mono, because it is a
+ * command to paste, and a friendlier paraphrase would delete the only text on
+ * the screen that says what to do next.
+ */
+@Composable
+private fun ServerIntegrationRow(
+    row: ServerIntegration,
+    declaredKnown: Boolean,
+    showDivider: Boolean,
+    onOpenGoogleCalendar: () -> Unit,
+) {
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    val tone = when (row.status) {
+        IntegrationStatus.WORKING -> AuntieStatusTone.Success
+        IntegrationStatus.CONFIGURED -> AuntieStatusTone.Orange
+        IntegrationStatus.MISSING -> AuntieStatusTone.Error
+        // Never Muted: a check that could not be made must not sit quietly
+        // beside checks that passed.
+        IntegrationStatus.UNKNOWN -> AuntieStatusTone.Warning
+    }
+    val icon = when (row.key) {
+        "stripe" -> Lucide.Wallet
+        "twilio" -> Lucide.MessageSquare
+        "smtp2go" -> Lucide.Mail
+        "cloudinary" -> Lucide.Image
+        "mapbox" -> Lucide.Map
+        "googleCalendar" -> Lucide.CalendarClock
+        "sentry" -> Lucide.ShieldCheck
+        else -> Lucide.LayoutGrid
+    }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        AuntieSettingRow(
+            title = row.name,
+            description = row.purpose,
+            leadingIcon = icon,
+            iconTone = AuntieStatusTone.Neutral,
+            showDivider = false,
+            trailing = {
+                AuntieStatusPill(
+                    label = integrationStatusLabel(row.status),
+                    tone = tone,
+                    showDot = true,
+                    mono = true,
+                )
+            },
+        )
+        Text(row.summary, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+        row.secrets.forEach { secret ->
+            Text(
+                integrationSecretLine(secret, declaredKnown),
+                style = AuntieTheme.typography.labelSmall,
+                color = if (secret.resolves) c.textDim else c.error,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        if (row.remediation.isNotBlank()) {
+            Spacer(Modifier.height(dims.space2))
+            Text("WHAT TO DO", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+            Text(
+                row.remediation,
+                style = AuntieTheme.typography.labelSmall,
+                color = c.textPrimary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(c.surfaceGlass)
+                    .padding(dims.space2),
+            )
+        }
+        if (row.externalStep.isNotBlank()) {
+            Spacer(Modifier.height(dims.space2))
+            Text(row.externalStep, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        }
+        // The connect flow already exists, on the Scheduling options screen.
+        // This row reports and hands off; a second copy of the OAuth flow here
+        // would be two places for one connection to drift.
+        if (row.ownedBySection == "googleCalendar") {
+            Spacer(Modifier.height(dims.space2))
+            GhostButton(label = "Open Google Calendar setup", onClick = onOpenGoogleCalendar)
+        }
+        if (showDivider) {
+            Spacer(Modifier.height(dims.space3))
+        }
+    }
+}
+
+/**
+ * One thing THIS PHONE checked about itself. Kept client-side because no server
+ * can answer either question: they are about the handset, not the business.
+ */
 @Composable
 private fun IntegrationRow(row: IntegrationHealth, showDivider: Boolean) {
     val tone = when (row.state) {
@@ -1589,16 +1810,12 @@ private fun IntegrationRow(row: IntegrationHealth, showDivider: Boolean) {
     }
     val icon = when (row.name) {
         "Firestore" -> Lucide.Database
-        "n8n Webhooks" -> Lucide.Webhook
-        "FCM" -> Lucide.Smartphone
-        "Twilio Studio" -> Lucide.MessageSquare
+        "Push notifications" -> Lucide.Smartphone
         else -> Lucide.LayoutGrid
     }
     val iconTone = when (row.name) {
         "Firestore" -> AuntieStatusTone.Teal
-        "n8n Webhooks" -> AuntieStatusTone.Orange
-        "FCM" -> AuntieStatusTone.Purple
-        "Twilio Studio" -> AuntieStatusTone.Success
+        "Push notifications" -> AuntieStatusTone.Purple
         else -> AuntieStatusTone.Neutral
     }
     AuntieSettingRow(

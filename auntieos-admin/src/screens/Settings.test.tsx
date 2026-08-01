@@ -65,6 +65,20 @@ vi.mock('./TagsEditor', () => ({
   ),
 }));
 
+// The two callable-backed, self-loading sections. Their own behaviour lives in
+// IntegrationsSection.test.tsx / GoogleCalendarSection.test.tsx; the callables
+// are stubbed here so this file asserts only Settings.tsx's own wiring, and so
+// opening a section never reaches for Firebase.
+const getIntegrationsHealth = vi.fn();
+vi.mock('../api/integrations', async (orig) => ({
+  ...(await orig<typeof import('../api/integrations')>()),
+  getIntegrationsHealth: () => getIntegrationsHealth(),
+}));
+// NOTE: ../api/googleCalendar is mocked ONCE, above (the hoisted
+// googleCalendarApi). A second vi.mock of the same module here would clobber
+// that one and take the merged Calendar panel's connect flow down with it,
+// which is exactly what happened during the #158-era rebase of this file.
+
 import { Settings } from './Settings';
 
 /**
@@ -150,6 +164,7 @@ async function openSection(tabName: string | RegExp): Promise<HTMLElement> {
 }
 
 beforeEach(() => {
+  getIntegrationsHealth.mockReset();
   getBusinessSettings.mockReset();
   saveBusinessSettings.mockReset();
   for (const fn of Object.values(googleCalendarApi)) fn.mockReset();
@@ -192,11 +207,10 @@ describe('Settings — section nav shell', () => {
     expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
 
     const tabs = within(tablist).getAllByRole('tab');
-    // 12: back down from 13 on 2026-07-31, when "Calendar sync" and "Google
-    // Calendar (editable)" became one "Calendar" tab with two sub-headed panels.
-    // They are still two features that fail separately; they were never two
-    // things to go looking for.
-    expect(tabs).toHaveLength(12);
+    // 13: 12 after the 2026-07-31 calendar-tab merge (two calendar features,
+    // one tab), plus Integrations, which reports on every outside service
+    // rather than editing anything, so it sits last.
+    expect(tabs).toHaveLength(13);
     expect(screen.queryByRole('tab', { name: /google calendar/i })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Business profile' })).toHaveAttribute('aria-selected', 'true');
   });
@@ -485,5 +499,48 @@ describe('Settings — MyTribe portal editor', () => {
     await userEvent.click(within(panel).getByRole('button', { name: /cancel/i }));
     expect(within(panel).getByLabelText('Theme id')).toHaveValue('default');
     expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
+  });
+});
+describe('Settings: Integrations is a report, and its Google row hands off', () => {
+  const HEALTH = {
+    checkedAt: '2026-07-31T12:00:00.000Z',
+    declaredKnown: true,
+    declaredError: '',
+    integrations: [
+      {
+        key: 'googleCalendar',
+        name: 'Google Calendar',
+        purpose: 'Writes visits onto the calendar.',
+        status: 'configured' as const,
+        summary: 'No Google account has been connected yet.',
+        secrets: [],
+        liveness: { outcome: 'fail' as const, detail: 'Not connected.' },
+        remediation: '',
+        externalStep: '',
+        // The whole point of the field: this row reports, and the section named
+        // here is the one that actually connects. 'googleCalendar' is the
+        // RETIRED id on purpose: an older deployed server may still send it,
+        // and the alias in Settings.tsx must land it on the merged Calendar tab.
+        ownedBySection: 'googleCalendar',
+      },
+    ],
+  };
+  it('does not ask the server until the section is opened', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    getIntegrationsHealth.mockResolvedValue(HEALTH);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    expect(getIntegrationsHealth).not.toHaveBeenCalled();
+    await openSection('Integrations');
+    expect(getIntegrationsHealth).toHaveBeenCalledTimes(1);
+  });
+  it('the Google row really moves the operator to the section that owns the connect flow', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    getIntegrationsHealth.mockResolvedValue(HEALTH);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    await openSection('Integrations');
+    await userEvent.click(await screen.findByRole('button', { name: 'Open Google Calendar settings' }));
+    expect(screen.getByRole('tab', { name: 'Calendar' })).toHaveAttribute('aria-selected', 'true');
   });
 });

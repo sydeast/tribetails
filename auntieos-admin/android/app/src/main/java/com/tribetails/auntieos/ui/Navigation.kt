@@ -665,6 +665,12 @@ private fun AuthenticatedNavHost(
                         onBack = { navController.popBackStack() },
                         onNavigateToAccount = { navController.navigate(Screen.AccountSettings.route) },
                         onNavigateToNotificationPrefs = { navController.navigate(Screen.AdminNotificationPrefs.route) },
+                        // One destination, two callers inside the screen: the
+                        // Calendar Sync entry (#153's repoint) and the
+                        // Integrations panel's Google Calendar row both hand off
+                        // to where the OAuth connect card already lives. A second
+                        // copy of that flow would be two places for one
+                        // connection to drift.
                         onNavigateToSchedule = { navController.navigate(Screen.AdminSchedule.route) },
                     )
                 }

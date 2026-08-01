@@ -761,6 +761,72 @@ a rejection (`auntieos-admin/src/lib/bookingDetailFormat.ts`,
 `ui/admin/scheduling/BookingNoteCutoff.kt`). Those are conveniences. The
 callable is the enforcement.
 
+## Integrations (admin-gated)
+
+### getIntegrationsHealth
+- req `{}` (no arguments, and the contract test freezes that: a field here would
+  mean a client could ask for a narrowed report, which is a decision, not a tweak)
+- res `{ checkedAt: string /* ISO */, declaredKnown: boolean, declaredError: string,
+  integrations: Array<{ key: string, name: string, purpose: string,
+  status: 'working'|'configured'|'missing'|'unknown', summary: string,
+  secrets: Array<{ name: string, required: boolean, purpose: string, declared: boolean,
+  resolves: boolean, length: number }>,
+  liveness: { outcome: 'none'|'pass'|'fail'|'error', detail: string },
+  remediation: string, externalStep: string, ownedBySection: string }> }`
+- Read only. The seven services this system depends on: Stripe, Twilio, SMTP2GO,
+  Cloudinary, Mapbox, Google Calendar, Sentry. Catalog and copy live in
+  `src/lib/integrationCatalog.ts`; both clients render this answer and neither
+  decides health for itself.
+- **NO SECRET VALUE, AND NO PREFIX OF ONE, IS EVER RETURNED.** Per secret: booleans
+  and a character count. Four characters of a Stripe key name the account mode and
+  four of a Twilio SID name the account, so there is no safe prefix and none is
+  sent. `length` is a count, not a sample, and it earns its place because a
+  half-pasted key resolves exactly like a good one and fails every call.
+  `test/getIntegrationsHealth.test.ts` serialises the whole response and searches
+  it for every fake value AND every 4-character prefix.
+- **The three questions are separate because they fail separately.** `declared`:
+  some deployed function binds this name, walked from the built `__endpoint`s
+  (`src/lib/declaredSecrets.ts`, the same walk `scripts/declared-secrets.js` uses,
+  and the same structure the Firebase CLI validates). `resolves`: the name reached
+  THIS function's environment. `liveness`: something was actually exercised.
+- **This callable BINDS every secret it reports on**, and that binding is the
+  mechanism rather than housekeeping: `process.env` in a Cloud Function carries
+  only what that function declared, so an unbound name would be reported absent
+  whether or not it exists. A frozen test asserts the binding matches the catalog.
+  `AUNTIE_OPERATOR_UIDS` is bound too, because `wrapAdminCallable` goes through
+  `isStaff`, which reads it.
+- **Nothing paid is called just to say hello.** Liveness is claimed for exactly
+  three, each free and local: Sentry (did `initSentry` really initialise, no event
+  sent), Cloudinary (can a signed upload be signed, pure sha1, no network, and it
+  is the actual failure mode rather than a proxy for it), Google Calendar (the
+  stored connection, read through the SAME `readConnection` the Calendar section
+  uses). Stripe, Twilio, SMTP2GO and Mapbox get `outcome: 'none'` and a sentence
+  saying why, because an unexplained blank where a result should be reads as a
+  failure.
+- **`fail` and `error` are different, and `unknown` is the reason the enum has
+  four members.** `fail` is a real known "not yet" (no Google account connected).
+  `error` is the check itself breaking, and it renders `unknown`, never green and
+  never `missing`: the credentials are fine, our ability to look is what broke,
+  and sending an operator to reset a correct secret wastes the one action they
+  had in them.
+- `remediation` carries the exact `firebase functions:secrets:set NAME --project
+  auntieos-ttpc` command plus the redeploy, and both clients print it VERBATIM. A
+  client that paraphrased it would delete the only text that says what to do next.
+  Empty when nothing is owed, so a remediation line always means something.
+- `ownedBySection` is `googleCalendar` for the Google row and empty elsewhere.
+  The OAuth connect flow already exists behind Settings > Google Calendar; this
+  row reports and links, and does not rebuild it.
+- `externalStep` names what this repo cannot do for the operator: Stripe Connect
+  onboarding (needs a Connect client ID and secret no code here holds), the Twilio
+  status-callback registration, the SMTP2GO event webhook. Named rather than
+  half-built behind a button that cannot work.
+- Mirrors: `auntieos-admin/src/api/integrations.ts` (React) and
+  `android .../data/repository/IntegrationsRepository.kt`. Android keeps two
+  DEVICE-ONLY probes beside this answer (its own Firestore round-trip and its own
+  FCM registration token) because those are facts about the handset that no server
+  can see; everything a server can know comes from here so the two clients cannot
+  disagree.
+
 ## Operator preferences
 
 ### saveDashboardLayout

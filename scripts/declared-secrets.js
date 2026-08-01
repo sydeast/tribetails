@@ -52,10 +52,18 @@ process.env.FIREBASE_CONFIG =
   process.env.FIREBASE_CONFIG || JSON.stringify({ projectId: process.env.GCLOUD_PROJECT });
 
 const lib = path.resolve(__dirname, '../mytribe/functions/lib/index.js');
+// THE WALK ITSELF LIVES IN THE FUNCTIONS SOURCE, not here. `getIntegrationsHealth`
+// answers the same question for the operator at runtime, and two copies of this
+// loop would be two answers to one question — with the operator-facing copy the
+// one nobody would notice had drifted. See src/lib/declaredSecrets.ts.
+const walk = path.resolve(__dirname, '../mytribe/functions/lib/lib/declaredSecrets.js');
 
 let mod;
+let collectDeclaredSecrets;
+let collectDeclaredSecretPairs;
 try {
   mod = require(lib);
+  ({ collectDeclaredSecrets, collectDeclaredSecretPairs } = require(walk));
 } catch (err) {
   console.error(`could not load ${lib}: ${err.message}`);
   console.error('Run `npm run build:functions` first.');
@@ -66,36 +74,14 @@ const args = process.argv.slice(2);
 const byFunction = args.includes('--by-function');
 const filter = args.find((a) => !a.startsWith('--')) || '';
 
-const names = new Set();
-const pairs = [];
-for (const [exportName, value] of Object.entries(mod)) {
-  // Each __endpoint is a getter that can throw (v1 providers build a resource
-  // name from the environment). One throwing export must not blind the check to
-  // the other two hundred, so failures are skipped rather than fatal — this
-  // runs to reduce the chance of a failed deploy, and refusing to report
-  // anything because one export is awkward would defeat that.
-  let ep;
-  try {
-    ep = value && value.__endpoint;
-  } catch {
-    continue;
-  }
-  if (!ep || !Array.isArray(ep.secretEnvironmentVariables)) continue;
-  for (const s of ep.secretEnvironmentVariables) {
-    if (!s || !s.key) continue;
-    names.add(s.key);
-    pairs.push([exportName, s.key]);
-  }
-}
-
 if (byFunction) {
-  const rows = pairs
-    .filter(([fn, key]) => filter === '' || key.includes(filter) || fn.includes(filter))
-    .sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
+  const rows = collectDeclaredSecretPairs(mod).filter(
+    ([fn, key]) => filter === '' || key.includes(filter) || fn.includes(filter),
+  );
   // Silence is a real answer here and a misleading one, so say it on stderr
   // rather than exiting 0 with an empty stdout that reads as "all clear".
   if (rows.length === 0) console.error(`no declared secrets match ${filter || '(anything)'}`);
   for (const [fn, key] of rows) console.log(`${fn}\t${key}`);
 } else {
-  for (const n of [...names].sort()) console.log(n);
+  for (const n of collectDeclaredSecrets(mod)) console.log(n);
 }

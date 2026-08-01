@@ -350,7 +350,7 @@ class AndroidScreenshotTest {
 
     @Test
     fun settings() {
-        // AdminSettingsViewModel.loadUserProfile()/probeIntegrations() call
+        // AdminSettingsViewModel.loadUserProfile()/loadIntegrations() call
         // FirebaseAuth.getInstance() + FirebaseMessaging.getInstance() directly (not via repo).
         // Under Robolectric with no FirebaseApp these throw, so init a default app first.
         if (com.google.firebase.FirebaseApp.getApps(RuntimeEnvironment.getApplication()).isEmpty()) {
@@ -367,7 +367,7 @@ class AndroidScreenshotTest {
         coEvery { repo.getBusinessSettings() } returns Result.success(AndroidDemoFixtures.businessSettings)
         coEvery { repo.getBusinessHours() } returns Result.success(AndroidDemoFixtures.businessHours)
         val vm = AdminSettingsViewModel(repository = repo)
-        // Screen's LaunchedEffect drives loadBusinessSettings/Hours/UserProfile/probeIntegrations.
+        // Screen's LaunchedEffect drives loadBusinessSettings/Hours/UserProfile/loadIntegrations.
         compose.setContent {
             AuntieOSTheme(themeMode = ThemeMode.DARK) {
                 AdminSettingsScreen(onBack = {}, viewModel = vm)
