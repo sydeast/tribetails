@@ -301,16 +301,16 @@ export async function twilioInboundCallHandler(req: Request, res: Response): Pro
 }
 
 export const twilioInboundSms = onRequest(
-  { region: 'us-central1', secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'] },
+  { region: 'us-central1', memory: '512MiB', secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'] },
   wrapHttp('twilioInboundSms', twilioInboundSmsHandler),
 );
 
 export const twilioInboundVoicemail = onRequest(
-  { region: 'us-central1', secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'] },
+  { region: 'us-central1', memory: '512MiB', secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'] },
   wrapHttp('twilioInboundVoicemail', twilioInboundVoicemailHandler),
 );
 
 export const twilioInboundCall = onRequest(
-  { region: 'us-central1', secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'] },
+  { region: 'us-central1', memory: '512MiB', secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'] },
   wrapHttp('twilioInboundCall', twilioInboundCallHandler),
 );
