@@ -1,0 +1,420 @@
+package com.tribetails.auntieos.ui.admin.scheduling
+
+import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsBilling
+import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsCommunication
+import com.tribetails.auntieos.data.model.BusinessSettings
+import com.tribetails.auntieos.data.model.Kin
+import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.BOOKING_BUSY_CONFLICT_CODE
+import com.tribetails.auntieos.data.repository.BookingRepository
+import com.tribetails.auntieos.data.repository.BookingRequestRefusedException
+import com.tribetails.auntieos.data.repository.COMPANY_HOLIDAY_CONFLICT_CODE
+import com.tribetails.auntieos.data.repository.GoogleCalendarConnectionState
+import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.data.repository.MultiDateBookingResult
+import com.tribetails.auntieos.data.repository.NewBookingVisit
+import com.tribetails.auntieos.data.repository.ServiceRepository
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import java.time.LocalDate
+
+/**
+ * D1: what the five-step wizard asks of the ViewModel. The happy path, the kin
+ * read behind step 1, and the sad/negative/error cases, including the two server
+ * refusals that behave differently on purpose: a busy clash may be overridden,
+ * a closed date may not.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+class EnhancedSchedulingViewModelBookingWizardTest {
+
+    private val testDispatcher = UnconfinedTestDispatcher()
+
+    private lateinit var bookingRepo: BookingRepository
+    private lateinit var serviceRepo: ServiceRepository
+    private lateinit var auntieRepo: AuntieRepository
+    private lateinit var kinCareRepo: KinCareRepository
+
+    @Before
+    fun setUp() {
+        Dispatchers.setMain(testDispatcher)
+        bookingRepo = mockk()
+        serviceRepo = mockk()
+        auntieRepo = mockk()
+        kinCareRepo = mockk()
+
+        coEvery { serviceRepo.getBaseServices() } returns Result.success(emptyList())
+        coEvery { serviceRepo.getSupplementalServices() } returns Result.success(emptyList())
+        coEvery { serviceRepo.getBusinessHours() } returns Result.success(emptyList())
+        coEvery { auntieRepo.getKinfolk() } returns Result.success(emptyList())
+        coEvery { auntieRepo.isTestAdminActive() } returns false
+        coEvery { auntieRepo.getBusinessSettings() } returns Result.success(BusinessSettings())
+        coEvery { auntieRepo.getCalendarSyncRun() } returns Result.success(null)
+        coEvery { auntieRepo.saveBusinessSettings(any(), any()) } returns Result.success(Unit)
+        coEvery { auntieRepo.logActivity(any()) } returns Result.success(Unit)
+        coEvery { bookingRepo.getBookings(any(), any(), any(), any()) } returns Result.success(emptyList())
+        coEvery { bookingRepo.getTimeSlots(any(), any(), any()) } returns Result.success(emptyList())
+        every { bookingRepo.bookingTimeSlotsStream() } returns flowOf(Result.success(emptyList()))
+        every { bookingRepo.incomingKinCareRequestsStream() } returns flowOf(Result.success(emptyList()))
+        coEvery { bookingRepo.getGoogleCalendarConnection() } returns
+            Result.success(GoogleCalendarConnectionState(GoogleCalendarConnection(), "", ""))
+    }
+
+    @After
+    fun tearDown() = Dispatchers.resetMain()
+
+    private fun buildViewModel() = EnhancedSchedulingViewModel(
+        bookingRepository = bookingRepo,
+        serviceRepository = serviceRepo,
+        auntieRepository = auntieRepo,
+        kinCareRepository = kinCareRepo,
+    )
+
+    private val monday = LocalDate.of(2027, 8, 2)
+
+    /** A complete wizard state: household, kin, service, two dates, both switches, notes. */
+    private fun readySubmission(): BookingWizardSubmission = bookingSubmission(
+        BookingWizardState(kinfolkId = "kf1")
+            .toggleKin("kin-a")
+            .withServiceName("Dog Walking")
+            .toggleDate(monday)
+            .toggleDate(monday.plusDays(1))
+            .copy(emailConfirmation = true, timeVisibility = true, notes = "Gate code 1234"),
+    )
+
+    private fun submit(vm: EnhancedSchedulingViewModel, s: BookingWizardSubmission) =
+        vm.createBookingRequest(
+            kinfolkId = s.kinfolkId,
+            visits = s.visits,
+            notes = s.notes,
+            pattern = s.pattern,
+            weeklyDays = s.weeklyDays,
+            overrideBusyConflict = s.overrideBusyConflict,
+            kinIds = s.kinIds,
+            billing = s.billing,
+            communication = s.communication,
+        )
+
+    // -----------------------------------------------------------------------
+    // Happy path
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `the whole happy path reaches the repository with every wizard field`() = runTest(testDispatcher) {
+        coEvery {
+            bookingRepo.createMultiDateBookingRequest(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            )
+        } returns Result.success(MultiDateBookingResult("batch1", listOf("v1", "v2"), 2))
+
+        val vm = buildViewModel()
+        vm.showNewRequestDialog()
+        submit(vm, readySubmission())
+        advanceUntilIdle()
+
+        coVerify {
+            bookingRepo.createMultiDateBookingRequest(
+                kinfolkId = "kf1",
+                visits = match<List<NewBookingVisit>> { it.size == 2 && it.all { v -> v.serviceName == "Dog Walking" } },
+                notes = "Gate code 1234",
+                pattern = "individual",
+                weeklyDays = null,
+                kinIds = listOf("kin-a"),
+                billing = CreateMultiDateBookingRequestArgsBilling("new-invoice"),
+                communication = CreateMultiDateBookingRequestArgsCommunication(
+                    emailConfirmation = true,
+                    timeVisibility = true,
+                ),
+                overrideBusyConflict = false,
+            )
+        }
+
+        val state = vm.state.value
+        assertFalse(state.newRequestInFlight)
+        assertFalse("success closes the wizard", state.showNewRequestDialog)
+        assertNull(state.newRequestError)
+        assertFalse(state.newRequestBusyOverridable)
+        assertNotNull(state.seriesActionMessage)
+        assertTrue(state.seriesActionMessage!!.contains("2 visit(s)"))
+    }
+
+    @Test
+    fun `an empty kin selection is sent as an omitted field, not an empty array`() = runTest(testDispatcher) {
+        coEvery {
+            bookingRepo.createMultiDateBookingRequest(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            )
+        } returns Result.success(MultiDateBookingResult("batch1", listOf("v1"), 1))
+
+        val vm = buildViewModel()
+        submit(
+            vm,
+            bookingSubmission(
+                BookingWizardState(kinfolkId = "kf1").withServiceName("Dog Walking").toggleDate(monday),
+            ),
+        )
+        advanceUntilIdle()
+
+        coVerify { bookingRepo.createMultiDateBookingRequest(any(), any(), any(), any(), any(), null, any(), any(), any()) }
+    }
+
+    @Test
+    fun `a second submit while one is in flight is ignored, so no booking is filed twice`() =
+        runTest(testDispatcher) {
+            // Held open, so the first request is genuinely still in flight when the
+            // second arrives: a double tap on Create must not file two batches.
+            val inFlight = CompletableDeferred<Result<MultiDateBookingResult>>()
+            coEvery {
+                bookingRepo.createMultiDateBookingRequest(
+                    any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                )
+            } coAnswers { inFlight.await() }
+            val vm = buildViewModel()
+            vm.showNewRequestDialog()
+            submit(vm, readySubmission())
+            assertTrue(vm.state.value.newRequestInFlight)
+            submit(vm, readySubmission())
+            coVerify(exactly = 1) {
+                bookingRepo.createMultiDateBookingRequest(
+                    any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                )
+            }
+            // Closing is refused while in flight too: the request is already sent.
+            vm.hideNewRequestDialog()
+            assertTrue(vm.state.value.showNewRequestDialog)
+            inFlight.complete(Result.success(MultiDateBookingResult("batch1", listOf("v1"), 1)))
+            advanceUntilIdle()
+            assertFalse(vm.state.value.newRequestInFlight)
+            assertFalse(vm.state.value.showNewRequestDialog)
+        }
+
+    // -----------------------------------------------------------------------
+    // Server refusals
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `a busy-conflict refusal is surfaced and offered as overridable`() = runTest(testDispatcher) {
+        coEvery {
+            bookingRepo.createMultiDateBookingRequest(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            )
+        } returns Result.failure(
+            BookingRequestRefusedException(
+                BOOKING_BUSY_CONFLICT_CODE,
+                "This time is not available: visit 1 conflicts with a Google Calendar busy block " +
+                    "(8:00 AM to 12:00 PM).",
+            ),
+        )
+
+        val vm = buildViewModel()
+        vm.showNewRequestDialog()
+        submit(vm, readySubmission())
+        advanceUntilIdle()
+
+        val state = vm.state.value
+        assertFalse(state.newRequestInFlight)
+        assertTrue("a refusal must not close the wizard", state.showNewRequestDialog)
+        assertTrue(state.newRequestError!!.contains("Google Calendar busy block"))
+        assertTrue("busy is the one refusal an operator may override", state.newRequestBusyOverridable)
+    }
+
+    @Test
+    fun `Create anyway resubmits with the override and does not re-offer itself on a second failure`() =
+        runTest(testDispatcher) {
+            coEvery {
+                bookingRepo.createMultiDateBookingRequest(
+                    any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                )
+            } returns Result.failure(
+                BookingRequestRefusedException(BOOKING_BUSY_CONFLICT_CODE, "busy"),
+            )
+
+            val vm = buildViewModel()
+            submit(vm, readySubmission().copy(overrideBusyConflict = true))
+            advanceUntilIdle()
+
+            coVerify {
+                bookingRepo.createMultiDateBookingRequest(
+                    any(), any(), any(), any(), any(), any(), any(), any(), overrideBusyConflict = true,
+                )
+            }
+            assertFalse(
+                "re-offering Create anyway after an override already failed offers a losing move twice",
+                vm.state.value.newRequestBusyOverridable,
+            )
+        }
+
+    @Test
+    fun `Create anyway succeeds and closes the wizard`() = runTest(testDispatcher) {
+        coEvery {
+            bookingRepo.createMultiDateBookingRequest(
+                any(), any(), any(), any(), any(), any(), any(), any(), overrideBusyConflict = true,
+            )
+        } returns Result.success(MultiDateBookingResult("batch1", listOf("v1", "v2"), 2))
+
+        val vm = buildViewModel()
+        vm.showNewRequestDialog()
+        submit(vm, readySubmission().copy(overrideBusyConflict = true))
+        advanceUntilIdle()
+
+        assertFalse(vm.state.value.showNewRequestDialog)
+        assertNull(vm.state.value.newRequestError)
+    }
+
+    @Test
+    fun `a company-holiday refusal is surfaced but is NEVER overridable`() = runTest(testDispatcher) {
+        coEvery {
+            bookingRepo.createMultiDateBookingRequest(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            )
+        } returns Result.failure(
+            BookingRequestRefusedException(
+                COMPANY_HOLIDAY_CONFLICT_CODE,
+                "This date is not available: visit 1 (2027-08-02) falls on Founders Day. The business is closed.",
+            ),
+        )
+
+        val vm = buildViewModel()
+        submit(vm, readySubmission())
+        advanceUntilIdle()
+
+        val state = vm.state.value
+        assertTrue(state.newRequestError!!.contains("The business is closed."))
+        assertFalse(
+            "guardCompanyHolidayConflict has no override parameter, so no retry may be offered",
+            state.newRequestBusyOverridable,
+        )
+    }
+
+    @Test
+    fun `a refusal with no machine-readable code is not overridable`() = runTest(testDispatcher) {
+        coEvery {
+            bookingRepo.createMultiDateBookingRequest(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            )
+        } returns Result.failure(BookingRequestRefusedException(null, "Kinfolk not found: kf1"))
+
+        val vm = buildViewModel()
+        submit(vm, readySubmission())
+        advanceUntilIdle()
+
+        assertEquals("Kinfolk not found: kf1", vm.state.value.newRequestError)
+        assertFalse(vm.state.value.newRequestBusyOverridable)
+    }
+
+    @Test
+    fun `a transport failure with no message still fails loud`() = runTest(testDispatcher) {
+        coEvery {
+            bookingRepo.createMultiDateBookingRequest(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            )
+        } returns Result.failure(RuntimeException())
+
+        val vm = buildViewModel()
+        submit(vm, readySubmission())
+        advanceUntilIdle()
+
+        assertEquals("Failed to create the booking request.", vm.state.value.newRequestError)
+        assertFalse(vm.state.value.newRequestBusyOverridable)
+    }
+
+    @Test
+    fun `opening the wizard clears a refusal left over from last time`() = runTest(testDispatcher) {
+        coEvery {
+            bookingRepo.createMultiDateBookingRequest(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            )
+        } returns Result.failure(BookingRequestRefusedException(BOOKING_BUSY_CONFLICT_CODE, "busy"))
+
+        val vm = buildViewModel()
+        submit(vm, readySubmission())
+        advanceUntilIdle()
+        assertTrue(vm.state.value.newRequestBusyOverridable)
+
+        vm.showNewRequestDialog()
+        assertNull(vm.state.value.newRequestError)
+        assertFalse(vm.state.value.newRequestBusyOverridable)
+    }
+
+    // -----------------------------------------------------------------------
+    // Step 1's kin read
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `picking a household loads only its active kin`() = runTest(testDispatcher) {
+        coEvery { auntieRepo.getKin("kf1") } returns Result.success(
+            listOf(
+                Kin(id = "kin-a", kinfolkId = "kf1", name = "Aggie", status = "active"),
+                Kin(id = "kin-b", kinfolkId = "kf1", name = "Rex", status = "archived"),
+            ),
+        )
+
+        val vm = buildViewModel()
+        vm.loadKinForNewRequest("kf1")
+        advanceUntilIdle()
+
+        assertEquals(listOf("kin-a"), vm.state.value.newRequestKin.map { it.id })
+        assertFalse(vm.state.value.newRequestKinLoading)
+        assertNull(vm.state.value.newRequestKinError)
+    }
+
+    @Test
+    fun `an unreadable kin roster fails loud rather than reading as an empty household`() =
+        runTest(testDispatcher) {
+            coEvery { auntieRepo.getKin("kf1") } returns Result.failure(RuntimeException("permission denied"))
+
+            val vm = buildViewModel()
+            vm.loadKinForNewRequest("kf1")
+            advanceUntilIdle()
+
+            assertEquals(emptyList<Kin>(), vm.state.value.newRequestKin)
+            assertEquals("permission denied", vm.state.value.newRequestKinError)
+            assertFalse(vm.state.value.newRequestKinLoading)
+        }
+
+    @Test
+    fun `clearing the household empties the kin list without a read`() = runTest(testDispatcher) {
+        val vm = buildViewModel()
+        vm.loadKinForNewRequest("")
+        advanceUntilIdle()
+
+        assertEquals(emptyList<Kin>(), vm.state.value.newRequestKin)
+        coVerify(exactly = 0) { auntieRepo.getKin(any()) }
+    }
+
+    @Test
+    fun `closing the wizard drops the kin roster and any refusal`() = runTest(testDispatcher) {
+        coEvery { auntieRepo.getKin("kf1") } returns Result.success(
+            listOf(Kin(id = "kin-a", kinfolkId = "kf1", name = "Aggie", status = "active")),
+        )
+
+        val vm = buildViewModel()
+        vm.showNewRequestDialog()
+        vm.loadKinForNewRequest("kf1")
+        advanceUntilIdle()
+        assertEquals(1, vm.state.value.newRequestKin.size)
+
+        vm.hideNewRequestDialog()
+        assertFalse(vm.state.value.showNewRequestDialog)
+        assertEquals(emptyList<Kin>(), vm.state.value.newRequestKin)
+        assertNull(vm.state.value.newRequestKinError)
+    }
+}
