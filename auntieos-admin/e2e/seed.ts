@@ -146,9 +146,33 @@ export function seedNow(): number {
 export default async function seed(): Promise<void> {
   await wipe();
 
-  await createUser(ADMIN.email, ADMIN.password, { admin: true });
+  const adminUid = await createUser(ADMIN.email, ADMIN.password, { admin: true });
   // No `admin`, no `testTribeId`. `accessFromClaims` must return `denied`.
   await createUser(KINFOLK.email, KINFOLK.password, { role: 'kinfolk', kinfolkId: 'e2e-kf-1' });
+  // THE OPERATOR'S HOME BOARD, seeded rather than assumed.
+  //
+  // `no-production-egress.spec.ts` needs a callable-backed card on Home: its
+  // whole subject is what an unstubbed callable does on screen, and the shipped
+  // default board (stats + Today's Pack + KinTales) is fed entirely by Firestore
+  // streams, so it would fire no callable at all. This layout is the seven cards
+  // this admin drew before the D2 port, which is the board those specs were
+  // written against, now stored as an ordinary customized layout instead of
+  // arriving as a display fallback the screen no longer has.
+  //
+  // Token strings, not objects: `users/{uid}.dashboardWidgets` is an ordered
+  // list of "key:size" (see `src/lib/dashboardLayout.ts`), read identically by
+  // this admin and by android.
+  await put('users', adminUid, {
+    dashboardWidgets: [
+      'safebox:compact',
+      'unreadMessages:compact',
+      'careFlags:compact',
+      'expirations:compact',
+      'routeOptimizer:compact',
+      'expenseLog:compact',
+      'supplies:compact',
+    ],
+  });
 
   await put('kinfolk', 'e2e-kf-1', {
     firstName: 'Wanda',
