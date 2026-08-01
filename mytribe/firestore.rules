@@ -275,11 +275,51 @@ service cloud.firestore {
     }
 
     match /kin_care_sessions/{sessionId} {
+ // A3: the four OPERATOR status transitions on this collection
+ // (Approve / Reject / Cancel / Mark Completed) moved server-side to the
+ // `transitionBookingStatus` callable, which runs a real state machine
+ // (functions/src/lib/bookingTransitions.ts) and writes an activity_log entry
+ // on every path, refusals included. Before that they were a bare client
+ // `updateDoc` authorized by `isAuntie()` alone
+ // (auntieos-admin/src/api/bookingsWrite.ts:84), so any status could be set
+ // from any status and nothing recorded who did it.
+ //
+ // The two functions below are what make the callable the ONLY path to a
+ // terminal status: no client may put a session into COMPLETED or CANCELLED,
+ // nor stamp `completedAt`, whatever claim it holds. Same shape as the
+ // ADR-0002 ruling on invoices, which became callable-only for the test
+ // sandbox as well as for production.
+ //
+ // NOT A BLANKET BAN ON `status`, deliberately. The field app drives the
+ // in-visit lifecycle (SCHEDULED -> ON_MY_WAY -> ARRIVED -> DEPARTED, and
+ // Undo Arrival back again) by direct patch from a phone that is regularly
+ // offline mid-visit, and Firestore's offline write queue is what makes that
+ // work at all. Those values stay client-writable. The two that decide
+ // whether a visit HAPPENED, and therefore whether it is billable, do not.
+ //
+ // The alias spellings are listed too, so the guard cannot be walked around
+ // by writing the older `CANCELED` or the MyTribe-side `REJECTED` that every
+ // reader in this codebase already folds into CANCELLED.
+      function terminalBookingStatus(s) {
+        return s == 'COMPLETED' || s == 'CANCELLED' || s == 'CANCELED' || s == 'REJECTED';
+      }
+      function bookingTerminalFieldsUntouched() {
+        return (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+                || !terminalBookingStatus(request.resource.data.status))
+               && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['completedAt']);
+      }
+
       allow read: if isAuntie()
                   || (isKinfolk() && resource.data.kinfolkId == request.auth.token.kinfolkId)
                   || testOwnsExisting();
-      allow create: if isAuntie() || testOwnsIncoming();
-      allow update: if isAuntie() || testOwnsExisting();
+ // The create guard closes the delete-and-recreate walkaround: without it a
+ // client reaches the same terminal state on the same doc id in two writes
+ // instead of one.
+      allow create: if (isAuntie() || testOwnsIncoming())
+                    && !(('status' in request.resource.data)
+                         && terminalBookingStatus(request.resource.data.status));
+      allow update: if (isAuntie() || testOwnsExisting())
+                    && bookingTerminalFieldsUntouched();
       allow delete: if isAuntie() || testOwnsExisting();
 
  // GPS breadcrumbs subcollection - kinfolk reads only when the parent

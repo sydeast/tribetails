@@ -196,6 +196,40 @@ describe('BookingActions: Reject / Cancel', () => {
   });
 });
 
+/**
+ * A3: `actionsFor` decides what this panel OFFERS; the server decides what is
+ * ALLOWED. The two agree today, and that is exactly why the disagreement needs
+ * a test: a stale row, a second operator acting first, or a status this app
+ * cannot read all reach a callable that refuses with `failed-precondition`.
+ * The operator must see the server's own sentence, not a swallowed failure or
+ * a rewritten one.
+ */
+describe('BookingActions: a server refusal the offer-map did not predict', () => {
+  it('surfaces an illegal-transition refusal verbatim and does not close', async () => {
+    cancelBooking.mockRejectedValue(
+      new Error('Cannot CANCEL a booking in status COMPLETED. Allowed from: SCHEDULED, ON_MY_WAY, ARRIVED, DEPARTED.'),
+    );
+    const onClose = vi.fn();
+    render(<BookingActions entry={entry({ _id: 'ses-2', status: 'SCHEDULED' })} onClose={onClose} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await userEvent.click(screen.getByRole('button', { name: /cancel visit/i }));
+    expect(
+      await screen.findByText(/cannot cancel a booking in status completed/i),
+    ).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an unreadable-status refusal verbatim', async () => {
+    markBookingCompleted.mockRejectedValue(
+      new Error("Booking status 'HIJACKED' is not a status this app recognizes, so no transition can be applied to it."),
+    );
+    render(<BookingActions entry={entry({ _id: 'ses-3', status: 'SCHEDULED' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
+    await userEvent.click(screen.getByRole('button', { name: /^mark completed$/i }));
+    expect(await screen.findByText(/not a status this app recognizes/i)).toBeInTheDocument();
+  });
+});
+
 describe('BookingActions: Mark Completed', () => {
   it('confirms, then calls markBookingCompleted with the booking id and an ISO timestamp', async () => {
     markBookingCompleted.mockResolvedValue(undefined);

@@ -36,6 +36,7 @@ import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.admin.AuditLog
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
+import com.tribetails.auntieos.data.repository.BookingTransitionAction
 import com.tribetails.auntieos.location.LocationTrackingService
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.components.AuntiePullRefresh
@@ -151,6 +152,23 @@ fun KinCareSessionsScreen(
         }
     }
 
+    /**
+     * A3: the OPERATOR status transitions (here, "Complete") go through the
+     * `transitionBookingStatus` callable rather than [patchFn]. Same toast
+     * treatment, deliberately different verb: the server owns the state machine
+     * and can REFUSE, and its sentence is what the operator reads.
+     */
+    val transitionFn: (String, BookingTransitionAction, String, String) -> Unit =
+        { id, action, completedAt, msg ->
+            viewModel.transitionBookingStatus(id, action, completedAt = completedAt) { err ->
+                scope.launch {
+                    toastMessage = err?.let { "Couldn't update: ${it.message}" } ?: msg
+                    toastKind = if (err != null) ToastKind.Error else ToastKind.Success
+                    toastVisible = true
+                }
+            }
+        }
+
     AuntieScreenScaffold(title = "Auntie Time", onBack = onBack) {
         Box(modifier = Modifier.fillMaxSize()) {
             AuntiePullRefresh(
@@ -238,6 +256,7 @@ fun KinCareSessionsScreen(
                                             onWriteKinTale = onWriteKinTale,
                                             onLiveTrack = onLiveTrack,
                                             onPatch = patchFn,
+                                            onTransition = transitionFn,
                                         )
                                     }
                                 }
@@ -306,6 +325,8 @@ private fun PhaseGroup(
     onWriteKinTale: (String) -> Unit,
     onLiveTrack: (sessionId: String, kinfolkId: String, kinfolkName: String) -> Unit,
     onPatch: (String, Map<String, Any>, String) -> Unit,
+    /** A3: operator status transitions, server-owned and audited. See `transitionFn`. */
+    onTransition: (String, BookingTransitionAction, String, String) -> Unit,
 ) {
     // Each phase is a Den glass panel; the count rides in the trailing slot as a
     // toned status pill.
@@ -336,6 +357,9 @@ private fun PhaseGroup(
                     onWriteKinTale = { onWriteKinTale(session.id) },
                     onLiveTrack = { onLiveTrack(session.id, session.kinfolkId, session.kinfolkName) },
                     onPatch = { patch, msg -> onPatch(session.id, patch, msg) },
+                    onTransition = { action, completedAt, msg ->
+                        onTransition(session.id, action, completedAt, msg)
+                    },
                 )
             }
         }
@@ -358,6 +382,8 @@ private fun KinCareCard(
     onWriteKinTale: () -> Unit,
     onLiveTrack: () -> Unit,
     onPatch: (patch: Map<String, Any>, msg: String) -> Unit,
+    /** A3: `(action, completedAt, successMessage)`, bound to this session. */
+    onTransition: (BookingTransitionAction, String, String) -> Unit,
 ) {
     val c = AuntieTheme.colors
     val tone = statusTone(session.status)
@@ -521,6 +547,7 @@ private fun KinCareCard(
             ActionRow(
                 session = session,
                 onPatch = onPatch,
+                onTransition = onTransition,
                 onLiveTrack = onLiveTrack,
                 onWriteKinTale = onWriteKinTale,
                 context = context,
@@ -538,6 +565,8 @@ private fun KinCareCard(
 private fun ActionRow(
     session: KinCareSession,
     onPatch: (patch: Map<String, Any>, msg: String) -> Unit,
+    /** A3: `(action, completedAt, successMessage)`, bound to this session. */
+    onTransition: (BookingTransitionAction, String, String) -> Unit,
     onLiveTrack: () -> Unit,
     onWriteKinTale: () -> Unit,
     context: Context,
@@ -598,7 +627,8 @@ private fun ActionRow(
                 PrimaryButton(
                     label = "Complete",
                     onClick = {
-                        onPatch(mapOf("status" to "COMPLETED", "completedAt" to nowIso()), "Session completed.")
+                        // A3: server-owned + audited, not a direct status patch.
+                        onTransition(BookingTransitionAction.COMPLETE, nowIso(), "Session completed.")
                     },
                     modifier = Modifier.fillMaxWidth(),
                     leading = { Icon(Lucide.CircleCheckBig, contentDescription = null, modifier = Modifier.size(16.dp)) },

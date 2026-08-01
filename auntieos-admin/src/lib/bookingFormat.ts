@@ -6,24 +6,35 @@ import { str } from './coerce';
  * mapping logic has direct vitest coverage (the invoiceFormat.ts / directory.ts
  * convention).
  *
- * `status` on a `kin_care_sessions` doc is free-text and, unlike `invoices`, is
- * written DIRECTLY by the admin client via the Firestore SDK, not only by a
- * Cloud Function: firestore.rules:203-209 grants `isAuntie()` unmediated
- * create/update/delete on this collection. The five recognized values below
- * are read straight off the wasm reference:
+ * `status` on a `kin_care_sessions` doc is free-text, and this file only READS
+ * it. WHO MAY WRITE IT CHANGED IN A3, so the old note here ("written directly
+ * by the admin client, firestore.rules grants isAuntie() unmediated
+ * create/update/delete") no longer describes the collection:
+ *
+ *   - The two TERMINAL values, COMPLETED and CANCELLED, are now written only by
+ *     the `transitionBookingStatus` callable. `firestore.rules` refuses them
+ *     from every client, so no browser or phone can set either one.
+ *   - The in-visit lifecycle (ON_MY_WAY / ARRIVED / DEPARTED, and Undo Arrival
+ *     back to SCHEDULED) is still a direct client patch from the field app.
+ *
+ * The five values this classifier recognizes are unchanged, and this file is
+ * unaffected by the move: a status is a status however it got written. They are
+ * read straight off the wasm reference:
  *   - DRAFT / PENDING   the two outcomes BookingCreateScreen's "Save draft" /
  *                       "Submit request" buttons write (BookingScreen.kt:996,
  *                       1014).
  *   - SCHEDULED         createKinCareSession.ts's and
  *                       approveBookingSeriesCore.ts's default status for a
  *                       newly-created or newly-approved session.
- *   - COMPLETED         set by the admin's KinCareSessionsScreen "Mark
- *                       Completed" action (KinCareSessionsScreen.kt:716).
- *   - CANCELLED         set by the same screen's Cancel action
- *                       (KinCareSessionsScreen.kt:724). BookingScreen.kt's own
+ *   - COMPLETED         the COMPLETE transition (was KinCareSessionsScreen.kt's
+ *                       "Mark Completed" patch, KinCareSessionsScreen.kt:716).
+ *   - CANCELLED         the CANCEL and REJECT transitions, which land on one
+ *                       stored value (was the same screen's Cancel action,
+ *                       KinCareSessionsScreen.kt:724). BookingScreen.kt's own
  *                       `CANCELLED_STATUSES` set also tolerates the "CANCELED"
  *                       spelling and a MyTribe-side "REJECTED"; folded into
- *                       one bucket here, same as there.
+ *                       one bucket here, same as there, and the server's state
+ *                       machine folds the same three on read.
  *
  * Every branch is a POSITIVE read of the (trimmed, uppercased) status text.
  * Nothing here falls through to a state by elimination: an unrecognized or

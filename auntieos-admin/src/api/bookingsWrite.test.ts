@@ -1,17 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { doc, updateDoc } = vi.hoisted(() => ({
+const { doc, getDoc, updateDoc } = vi.hoisted(() => ({
   doc: vi.fn((..._args: unknown[]) => ({ __ref: true }) as unknown),
+  getDoc: vi.fn(),
   updateDoc: vi.fn(),
 }));
-vi.mock('firebase/firestore', () => ({ doc, updateDoc }));
+vi.mock('firebase/firestore', () => ({ doc, getDoc, updateDoc }));
 vi.mock('../lib/firebase', () => ({ db: { __db: true } }));
 
 const { call } = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('../lib/fns', () => ({ call }));
 
 import {
-  setBookingStatus,
+  transitionBookingStatus,
   approveBooking,
   rejectBooking,
   cancelBooking,
@@ -25,70 +26,109 @@ import {
 
 beforeEach(() => {
   doc.mockClear();
+  getDoc.mockReset();
   updateDoc.mockReset();
   call.mockReset();
 });
 
-describe('setBookingStatus (the shared direct-write primitive)', () => {
-  it('resolves the ref against kin_care_sessions/{bookingId}', async () => {
-    updateDoc.mockResolvedValue(undefined);
-    await setBookingStatus('ses1', 'SCHEDULED');
-    expect(doc).toHaveBeenCalledWith({ __db: true }, 'kin_care_sessions', 'ses1');
+/**
+ * A3: these four USED to be `updateDoc(doc(db, 'kin_care_sessions', id), {...})`
+ * straight from the browser, and this suite used to assert exactly that patch.
+ * The single most important assertion in the file is now the negative one: no
+ * status write reaches Firestore from this client at all. If `updateDoc` is
+ * ever called again from this module the audit hole is back, and these tests
+ * are what says so.
+ */
+function expectNoDirectWrite() {
+  expect(updateDoc).not.toHaveBeenCalled();
+}
+
+describe('transitionBookingStatus (the shared callable primitive)', () => {
+  it('calls the transitionBookingStatus callable and never writes Firestore directly', async () => {
+    call.mockResolvedValue({
+      ok: true, sessionId: 'ses1', action: 'CANCEL', from: 'SCHEDULED', status: 'CANCELLED', changed: true,
+    });
+    const result = await transitionBookingStatus({ sessionId: 'ses1', action: 'CANCEL' });
+    expect(call).toHaveBeenCalledWith('transitionBookingStatus', {
+      sessionId: 'ses1',
+      action: 'CANCEL',
+    });
+    expectNoDirectWrite();
+    expect(result.changed).toBe(true);
   });
 
-  it('writes a bare {status} patch when no extra fields are given', async () => {
-    updateDoc.mockResolvedValue(undefined);
-    await setBookingStatus('ses1', 'SCHEDULED');
-    expect(updateDoc).toHaveBeenCalledWith({ __ref: true }, { status: 'SCHEDULED' });
-  });
-
-  it('merges extra fields alongside status (e.g. completedAt)', async () => {
-    updateDoc.mockResolvedValue(undefined);
-    await setBookingStatus('ses1', 'COMPLETED', { completedAt: '2026-07-16T10:00:00.000Z' });
-    expect(updateDoc).toHaveBeenCalledWith(
-      { __ref: true },
-      { status: 'COMPLETED', completedAt: '2026-07-16T10:00:00.000Z' },
-    );
-  });
-
-  it('propagates a write failure fail-loud, never swallowed', async () => {
-    updateDoc.mockRejectedValue(new Error('permission-denied'));
-    await expect(setBookingStatus('ses1', 'SCHEDULED')).rejects.toThrow('permission-denied');
+  it('propagates a refusal fail-loud, never swallowed', async () => {
+    call.mockRejectedValue(new Error('Cannot COMPLETE a booking in status CANCELLED.'));
+    await expect(
+      transitionBookingStatus({ sessionId: 'ses1', action: 'COMPLETE' }),
+    ).rejects.toThrow('Cannot COMPLETE a booking in status CANCELLED.');
   });
 });
 
-describe('approveBooking (ports platformApproveBooking verbatim)', () => {
-  it('writes the bare {"status":"SCHEDULED"} patch, no extra fields', async () => {
-    updateDoc.mockResolvedValue(undefined);
+describe('approveBooking', () => {
+  it('sends action APPROVE for the booking id, through the callable', async () => {
+    call.mockResolvedValue({ ok: true, sessionId: 'ses1', action: 'APPROVE', from: 'PENDING', status: 'SCHEDULED', changed: true });
     await approveBooking('ses1');
-    expect(updateDoc).toHaveBeenCalledWith({ __ref: true }, { status: 'SCHEDULED' });
+    expect(call).toHaveBeenCalledWith('transitionBookingStatus', {
+      sessionId: 'ses1',
+      action: 'APPROVE',
+    });
+    expectNoDirectWrite();
   });
 });
 
-describe('rejectBooking (ports platformRejectBooking verbatim)', () => {
-  it('writes the bare {"status":"CANCELLED"} patch', async () => {
-    updateDoc.mockResolvedValue(undefined);
+describe('rejectBooking (a request that was never approved)', () => {
+  it('sends action REJECT, NOT a rewritten CANCEL', async () => {
+    call.mockResolvedValue({ ok: true, sessionId: 'ses1', action: 'REJECT', from: 'PENDING', status: 'CANCELLED', changed: true });
     await rejectBooking('ses1');
-    expect(updateDoc).toHaveBeenCalledWith({ __ref: true }, { status: 'CANCELLED' });
+    expect(call).toHaveBeenCalledWith('transitionBookingStatus', {
+      sessionId: 'ses1',
+      action: 'REJECT',
+    });
+    expectNoDirectWrite();
   });
 });
 
-describe('cancelBooking (ports KinCareSessionsScreen.kt "Cancel KinCare")', () => {
-  it('writes the same bare {"status":"CANCELLED"} patch as rejectBooking', async () => {
-    updateDoc.mockResolvedValue(undefined);
-    await cancelBooking('ses1');
-    expect(updateDoc).toHaveBeenCalledWith({ __ref: true }, { status: 'CANCELLED' });
+describe('cancelBooking (a visit that WAS approved)', () => {
+  it('sends action CANCEL, a different action from REJECT even though both end at CANCELLED', async () => {
+    call.mockResolvedValue({ ok: true, sessionId: 'ses2', action: 'CANCEL', from: 'SCHEDULED', status: 'CANCELLED', changed: true });
+    await cancelBooking('ses2');
+    expect(call).toHaveBeenCalledWith('transitionBookingStatus', {
+      sessionId: 'ses2',
+      action: 'CANCEL',
+    });
+  });
+
+  it('passes a trimmed reason through when the operator supplied one', async () => {
+    call.mockResolvedValue({ ok: true, sessionId: 'ses2', action: 'CANCEL', from: 'SCHEDULED', status: 'CANCELLED', changed: true });
+    await cancelBooking('ses2', '  household away  ');
+    expect(call).toHaveBeenCalledWith('transitionBookingStatus', {
+      sessionId: 'ses2',
+      action: 'CANCEL',
+      reason: 'household away',
+    });
+  });
+
+  it('omits the key entirely for a blank reason rather than sending an empty string', async () => {
+    call.mockResolvedValue({ ok: true, sessionId: 'ses2', action: 'CANCEL', from: 'SCHEDULED', status: 'CANCELLED', changed: true });
+    await cancelBooking('ses2', '   ');
+    expect(call).toHaveBeenCalledWith('transitionBookingStatus', {
+      sessionId: 'ses2',
+      action: 'CANCEL',
+    });
   });
 });
 
-describe('markBookingCompleted (ports KinCareSessionsScreen.kt "Mark Completed")', () => {
-  it('writes status COMPLETED plus the caller-supplied completedAt, verbatim', async () => {
-    updateDoc.mockResolvedValue(undefined);
-    await markBookingCompleted('ses1', '2026-07-16T10:00:00.000Z');
-    expect(updateDoc).toHaveBeenCalledWith(
-      { __ref: true },
-      { status: 'COMPLETED', completedAt: '2026-07-16T10:00:00.000Z' },
-    );
+describe('markBookingCompleted', () => {
+  it('sends action COMPLETE with the caller-supplied completedAt, verbatim', async () => {
+    call.mockResolvedValue({ ok: true, sessionId: 'ses3', action: 'COMPLETE', from: 'SCHEDULED', status: 'COMPLETED', changed: true });
+    await markBookingCompleted('ses3', '2026-07-16T10:00:00.000Z');
+    expect(call).toHaveBeenCalledWith('transitionBookingStatus', {
+      sessionId: 'ses3',
+      action: 'COMPLETE',
+      completedAt: '2026-07-16T10:00:00.000Z',
+    });
+    expectNoDirectWrite();
   });
 });
 
