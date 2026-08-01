@@ -1,6 +1,9 @@
+> **Archived 2026-08-01.** Moved out of the active tree during Twilio docs consolidation.
+> Central, current Twilio doc: [`docs/twilio/README.md`](../../../docs/twilio/README.md).
+
 # DEPRECATED — do not deploy, do not edit
 
-**Canonical tree: [`../twilio-service/`](../twilio-service/)** (it has the
+**Canonical tree: [`../../twilio-service/`](../../twilio-service/)** (it has the
 `.twilioserverlessrc` + `package.json` deploy config and the `assets/` folder).
 
 ## Why this exists
