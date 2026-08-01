@@ -131,6 +131,32 @@ shared-package vs. guarded-mirror options.
 - req `{ expirationId?: string, label: string, dateIso: string, kind: 'gateCode'|'vetRecord'|'card'|'license'|'other', kinfolkId?: string }`
 - res `{ id: string }`
 
+### getLocalWeather (W16 Weather Watchdog / W17 Heat Stroke Index)
+- req `{}`
+- res `{ ok: true, city: string, state: string, tempF: number|null, humidityPct: number|null, shortForecast: string, isDaytime: boolean, alerts: Array<{ event: string, severity: string, headline: string }>, observedAtMs: number, source: 'NWS', cached: boolean }`
+
+Deployed since the A8 widget round and mirrored by android from the start; the
+React admin joined as the third mirror on 2026-08-01 (`src/api/weather.ts`),
+which is why it is written down here now.
+
+`tempF` and `humidityPct` are genuinely NULLABLE, not "absent means zero". NWS's
+hourly endpoint is a separate fetch the handler treats as a bonus, so a reading
+can be missing, and a client that defaulted either to 0 would render a freezing
+day and flip every risk verdict on the card. Both mirrors keep the null.
+
+THE SERVER RETURNS CONDITIONS, NEVER A VERDICT. The paw-burn level and the
+canine heat index are computed client-side from identical thresholds
+(`auntieos-admin/src/lib/weatherRisk.ts` and android `ui/home/WeatherRisk.kt`),
+so the phone and the browser cannot disagree about whether it is safe to walk.
+
+Two failures the clients must surface rather than swallow: `failed-precondition`
+`weather_location_not_set` (Settings holds no service area; both mirrors turn
+this one into a sentence naming Settings rather than showing the raw code) and
+`geocode_failed`. Everything else is reported verbatim. NO EXTERNAL SECRET IS
+OUTSTANDING: api.weather.gov is keyless, and the `MAPBOX_ACCESS_TOKEN` used to
+geocode the service area once and cache it is the same one `optimizeRoute`
+already runs on.
+
 ## Tribal Intel document mining (admin-gated)
 
 `training_documents` is `allow write: if false` in `firestore.rules`, so these

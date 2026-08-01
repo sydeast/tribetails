@@ -96,15 +96,6 @@
   color: var(--color-text-dim);
 }
 
-/* Not an error, so not the error banner: the board is exactly what the operator
-   saved, and this only says where the cards this surface draws are waiting. */
-.home-dash__note {
-  margin: 0 0 1rem;
-  font-family: var(--type-body-sm-family);
-  font-size: var(--type-body-sm-size);
-  line-height: var(--type-body-sm-line);
-  color: var(--color-text-dim);
-}
 
 .home-dash__hidden {
   margin-top: 1rem;
@@ -148,14 +139,4 @@
 .home-hidden__pill-plus {
   font-family: var(--font-mono);
   color: var(--color-primary);
-}
-
-/* A card android draws and this admin has not ported yet. Saying so on the pill
-   is the difference between an operator adding a placeholder on purpose and
-   adding one by surprise. */
-.home-hidden__pill-note {
-  font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  letter-spacing: var(--type-label-sm-tracking);
-  color: var(--color-text-faint);
 }

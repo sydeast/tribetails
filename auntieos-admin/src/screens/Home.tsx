@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { DenPanel, DenScreenHeading, EmptyHint } from '../components/DenScreenKit';
+import { DenPanel, DenScreenHeading } from '../components/DenScreenKit';
 import { GhostButton } from '../components/Buttons';
 import { WidgetEditBar } from '../components/WidgetEditBar';
 import { useAuth } from '../lib/auth';
@@ -24,21 +24,42 @@ import { ExpirationCountdownWidget } from './widgets/ExpirationCountdownWidget';
 import { RouteOptimizerWidget } from './widgets/RouteOptimizerWidget';
 import { ExpenseQuickLogWidget } from './widgets/ExpenseQuickLogWidget';
 import { SuppliesTrackerWidget } from './widgets/SuppliesTrackerWidget';
+import { StatsWidget } from './widgets/StatsWidget';
+import { TodaysPackWidget } from './widgets/TodaysPackWidget';
+import { KinTalesPendingWidget } from './widgets/KinTalesPendingWidget';
+import { CashFlowWidget } from './widgets/CashFlowWidget';
+import { GatekeeperWidget } from './widgets/GatekeeperWidget';
+import { HeatIndexWidget, WeatherWatchdogWidget } from './widgets/WeatherWidgets';
+import { WeeklyCapacityWidget } from './widgets/WeeklyCapacityWidget';
+import { OverdueVisitsWidget } from './widgets/OverdueVisitsWidget';
+import { PetBreakdownWidget } from './widgets/PetBreakdownWidget';
+import { FrequentFlyersWidget } from './widgets/FrequentFlyersWidget';
+import { HolidayRunwayWidget } from './widgets/HolidayRunwayWidget';
 import './Home.css';
 
 /**
  * Home dashboard. The nav rail + topbar live in AppShell (the layout route), so
  * this is the page body rendered into the shell's <Outlet/>.
  *
- * This is the React rebuild of the Compose Home dashboard's insight widgets
- * (composeApp `screens/home/HomeInsightWidgets.kt`). Widgets land one at a time,
- * each a self-loading DenPanel in the board below; the pure logic behind each
- * lives in `lib/dashboardInsights.ts` (the React port of `DashboardInsights.kt`)
- * so it is unit-tested apart from the DOM.
+ * This is the React rebuild of the android Home dashboard (`ui/home/`). Every
+ * card is a self-loading DenPanel in the board below; the pure logic behind
+ * each lives in `lib/dashboardInsights.ts` (the port of `DashboardInsights.kt`,
+ * `HouseholdVisitGaps.kt` and the revenue half of `Stage2Step2Helpers.kt`) so
+ * every rule is unit-tested apart from the DOM.
  *
- * Live so far: Unread Client Messages (AO-38), Key & Code Safebox (AO-36), Care
- * Flags (AO-37), Expiration Countdown (AO-39), Route Optimizer (AO-35), Expense
- * Quick-Log (AO-40) and Supplies Tracker (AO-41).
+ * ALL NINETEEN CARDS ARE LIVE HERE as of D2. The seven this admin had first
+ * (Unread Messages AO-38, Safebox AO-36, Care Flags AO-37, Expirations AO-39,
+ * Route Optimizer AO-35, Expense Quick-Log AO-40, Supplies AO-41) are joined by
+ * the twelve that were phone-only: the stat row, Today's Pack, KinTales
+ * pending, Cash Flow, Gatekeeper, Weather Watchdog, Heat Stroke Index, Weekly
+ * capacity, Overdue visits, Kin by type, Frequent flyers and Holiday runway.
+ *
+ * WHAT A FULL BOARD COSTS. Eleven cards read one shared visit stream, three the
+ * pet roster, two invoices and two drafts, all through `widgets/homeData.ts`,
+ * which hands every caller the same `CollectionSpec` so the Firestore SDK
+ * collapses them into ONE Watch target per collection. The two weather cards
+ * share one `getLocalWeather` POST through `lib/useSharedOneShot.ts`. Adding
+ * twelve cards therefore adds one callable, not twelve.
  *
  * 17.3 CUSTOMIZE MODE. The board's ORDER AND SIZES COME FROM THE MODEL, not
  * from the JSX below: `lib/dashboardLayout.ts` holds the operator's list and
@@ -77,24 +98,37 @@ export const DASH_LABELS: Readonly<Record<DashKey, string>> = {
 
 interface WidgetProps {
   onOpenInbox: () => void;
+  onOpenSessions: () => void;
+  onOpenCommunicate: () => void;
 }
 
 /**
  * ONE widget key to one component, and the only list of what this surface can
- * draw. Android draws all nineteen; the React admin has ported seven so far,
- * and the rest are still to come in other tasks.
+ * draw. As of D2 that is ALL NINETEEN: android and the React admin draw the
+ * same board.
  *
- * The board body and the hidden-strip note both read THIS map, so a widget that
- * gains a component cannot still be called phone-only by the pill beside it.
- * They used to be a switch and a separate hand-kept Set, which is two lists to
- * remember and one of them silently wrong the day they disagree.
- *
- * A stored layout naming an unported card is NOT dropped, because the list is
- * shared with android and quietly deleting the operator's phone board on their
- * first web reorder is the worst outcome available. It renders as a named
- * placeholder instead, so the seat it occupies is visible and movable.
+ * The type is a TOTAL `Record<DashKey, …>`, not a `Partial`, and that is the
+ * mechanism rather than a formality. It used to be partial because twelve keys
+ * had no component, and the board carried a runtime placeholder for the gap. A
+ * total record moves that check to the compiler: a key added to `DASH_KEYS`
+ * cannot be shipped without a component here, so the two lists cannot drift and
+ * the placeholder has nothing left to catch.
  */
-const WEB_WIDGETS: Readonly<Partial<Record<DashKey, (props: WidgetProps) => ReactElement>>> = {
+const WEB_WIDGETS: Readonly<Record<DashKey, (props: WidgetProps) => ReactElement>> = {
+  stats: () => <StatsWidget />,
+  todaysPack: ({ onOpenSessions }) => <TodaysPackWidget onOpenSessions={onOpenSessions} />,
+  kintales: ({ onOpenCommunicate }) => (
+    <KinTalesPendingWidget onReviewTales={onOpenCommunicate} />
+  ),
+  cashFlow: () => <CashFlowWidget />,
+  gatekeeper: () => <GatekeeperWidget />,
+  weatherWatchdog: () => <WeatherWatchdogWidget />,
+  heatIndex: () => <HeatIndexWidget />,
+  weeklyCapacity: () => <WeeklyCapacityWidget />,
+  overdueTracker: () => <OverdueVisitsWidget />,
+  petBreakdown: () => <PetBreakdownWidget />,
+  frequentFlyers: () => <FrequentFlyersWidget />,
+  holidayRunway: () => <HolidayRunwayWidget />,
   unreadMessages: ({ onOpenInbox }) => <UnreadMessagesWidget onOpenInbox={onOpenInbox} />,
   safebox: () => <SafeboxWidget />,
   careFlags: () => <CareFlagsWidget />,
@@ -104,52 +138,32 @@ const WEB_WIDGETS: Readonly<Partial<Record<DashKey, (props: WidgetProps) => Reac
   supplies: () => <SuppliesTrackerWidget />,
 };
 
-/** Derived, never hand-kept: the keys this surface can actually draw. */
-export const PORTED_KEYS: ReadonlySet<DashKey> = new Set(Object.keys(WEB_WIDGETS) as DashKey[]);
-
 /**
- * What an operator who has never customized ANYTHING sees here.
- *
- * `DEFAULT_DASHBOARD` (stats + Today's Pack + KinTales) is the shipped default
- * on the shared model, and honouring it literally on this surface would hand a
- * brand-new operator three placeholders and no working card, which is a
- * regression from the Home that shipped. So the un-customized case, and only
- * that case, resolves to the seven cards this admin already had, in the order
- * it already had them. The moment either surface saves a layout, that saved
- * layout is honoured verbatim, unported cards included. Divergence from android
- * is confined to the never-touched state.
- *
- * It is NOT a first-paint placeholder. Drawing it before the stored layout has
- * been read is how seven working widgets came to render and then be replaced by
- * placeholders, which is what this file was fixed for. It is drawn only once the
- * read has answered, or once the read has FAILED and the banner has said so.
- */
-export const WEB_DEFAULT_DASHBOARD: readonly DashWidget[] = [
-  { key: 'safebox', size: 'compact' },
-  { key: 'unreadMessages', size: 'compact' },
-  { key: 'careFlags', size: 'compact' },
-  { key: 'expirations', size: 'compact' },
-  { key: 'routeOptimizer', size: 'compact' },
-  { key: 'expenseLog', size: 'compact' },
-  { key: 'supplies', size: 'compact' },
-];
-
-/**
- * `list` is what `getDashboardLayout` resolved; `isStored` is whether that
- * came off the document or is the shipped default substituted because nothing
+ * `list` is what `getDashboardLayout` resolved; `isStored` is whether that came
+ * off the document or is the shipped default substituted because nothing
  * readable was there (see `api/dashboardLayout.ts`'s `DashboardLayoutResult`).
  *
- * Substituting on VALUE (list happens to equal `DEFAULT_DASHBOARD`) instead of
- * on `isStored` was the bug: an operator whose real, saved layout is exactly
- * those three widgets (plausible on android, where that IS the whole
- * customized board) looked indistinguishable from an operator with nothing
- * stored. The web board then substituted its own seven-card default for
- * display, and the operator's first edit here saved THAT, seven widgets
- * replacing three, over a layout they deliberately arranged elsewhere. Only
- * `isStored` says which case this is; the widget values never can.
+ * THE SUBSTITUTION IS GONE, and keeping this function is how that stays true.
+ *
+ * The web board used to carry its own seven-card default for the un-customized
+ * case, because honouring the shared `DEFAULT_DASHBOARD` literally would have
+ * handed a new operator three placeholders and no working card. That reason
+ * expired with D2: stats, Today's Pack and KinTales are all real cards here
+ * now, so the shipped default IS a working board and this surface can honour it
+ * exactly as the phone does.
+ *
+ * Substituting on VALUE (the list happens to equal `DEFAULT_DASHBOARD`) rather
+ * than on `isStored` was the C2 bug: an operator whose real saved layout is
+ * exactly those three widgets, which is what an un-customized phone board looks
+ * like, was indistinguishable from an operator with nothing stored. The web
+ * board then painted its own richer default and the first edit here SAVED that
+ * over the three they had arranged elsewhere. With no substitute left there is
+ * nothing to save over a stored layout, which is a stronger guarantee than the
+ * one this function used to make; it stays as the single, named place a future
+ * default would have to go, so that guarantee is checked rather than assumed.
  */
 function webResolved(list: readonly DashWidget[], isStored: boolean): DashWidget[] {
-  const source = isStored ? list : WEB_DEFAULT_DASHBOARD;
+  const source = isStored ? list : DEFAULT_DASHBOARD;
   return source.map((w) => ({ ...w }));
 }
 
@@ -242,14 +256,6 @@ export function Home() {
   const shown = layout ?? webResolved(DEFAULT_DASHBOARD, false);
   const canCustomize = layout !== null;
   const hidden = hiddenKeys(shown);
-  // The operator arranged Home on the phone, so their board is seats this
-  // surface cannot draw while the cards it CAN draw sit hidden one click away.
-  // Without a word about that, the screen reads as "the web admin has no
-  // widgets", which is how this arrived as a bug report.
-  const strandedWebCards =
-    !stillLoading &&
-    shown.some((w) => !PORTED_KEYS.has(w.key)) &&
-    hidden.some((k) => PORTED_KEYS.has(k));
 
   const move = (index: number, direction: 'up' | 'down'): void => {
     const widget = shown[index];
@@ -329,13 +335,6 @@ export function Home() {
         </div>
       )}
 
-      {strandedWebCards && (
-        <p className="home-dash__note">
-          Some cards on this board are only in the phone app. The ones that work here are under
-          Customize, in Hidden cards.
-        </p>
-      )}
-
       <div className="home-dash d2" aria-busy={stillLoading}>
         {stillLoading ? (
           <p className="home-dash__loading">Loading your dashboard&hellip;</p>
@@ -363,7 +362,12 @@ export function Home() {
                   onRemove={() => remove(w.key)}
                 />
               )}
-              <WidgetBody widgetKey={w.key} onOpenInbox={() => void navigate({ to: '/inbox' })} />
+              <WidgetBody
+                widgetKey={w.key}
+                onOpenInbox={() => void navigate({ to: '/inbox' })}
+                onOpenSessions={() => void navigate({ to: '/sessions' })}
+                onOpenCommunicate={() => void navigate({ to: '/communicate' })}
+              />
             </div>
           ))
         )}
@@ -385,9 +389,6 @@ export function Home() {
                       +
                     </span>
                     {DASH_LABELS[k]}
-                    {!PORTED_KEYS.has(k) && (
-                      <span className="home-hidden__pill-note">phone app only</span>
-                    )}
                   </button>
                 </li>
               ))}
@@ -404,19 +405,16 @@ interface WidgetBodyProps extends WidgetProps {
 }
 
 /**
- * The card in one seat. An unported key gets a named placeholder rather than
- * nothing, so the operator can see the card is holding its seat and can move or
- * remove it here.
+ * The card in one seat.
+ *
+ * There is no placeholder branch and no `undefined` case to handle, because
+ * `WEB_WIDGETS` is a total record over `DashKey`: every key the model can hold
+ * has a component, checked at compile time. The nav callbacks are passed to
+ * every card rather than only to the three that use one, so adding a widget
+ * that needs to navigate is a one-line change here and not a signature change
+ * through the board.
  */
-function WidgetBody({ widgetKey, onOpenInbox }: WidgetBodyProps) {
+function WidgetBody({ widgetKey, ...nav }: WidgetBodyProps) {
   const Draw = WEB_WIDGETS[widgetKey];
-  if (Draw !== undefined) return <Draw onOpenInbox={onOpenInbox} />;
-  return (
-    <DenPanel title={DASH_LABELS[widgetKey]} subtitle="Not on the web dashboard yet.">
-      <EmptyHint>
-        This card is built in the phone app. It keeps its place in your layout here, so rearranging
-        Home will not lose it.
-      </EmptyHint>
-    </DenPanel>
-  );
+  return <Draw {...nav} />;
 }

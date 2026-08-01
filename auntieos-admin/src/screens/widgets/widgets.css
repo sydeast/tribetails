@@ -527,3 +527,428 @@
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }
+/* ── D2 parity widgets ──────────────────────────────────────────────────────
+   The twelve cards android already drew. Everything below reuses the tokens
+   the seven shipped widgets above use; nothing here restyles them, and no rule
+   below reaches outside a widget's own subtree. Phone-width behaviour is kept
+   in this file too, so the shell's own responsive work stays untouched. */
+/* W1 stat row. The layout model forces `stats` full width, so the four tiles
+   share that one cell: four across on a wide board, two on a medium one, one
+   on a phone. The first tile is the feature card and takes the extra width,
+   matching the mock's 1.5fr / 1fr / 1fr / 1fr. */
+.stat-row {
+  display: grid;
+  grid-template-columns: 1.5fr repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  min-width: 0;
+}
+@media (max-width: 70rem) {
+  .stat-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stat-row__feature {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 30rem) {
+  .stat-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* W2 Today's Pack row: household, service pill, time, state. The name is the
+   only elastic cell, so it is the only one that truncates and the times line
+   up in a column of their own down the run. */
+.pack-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+.pack-row:last-child {
+  border-bottom: none;
+}
+.pack-row__who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+.pack-row__time {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size);
+  color: var(--color-text-primary);
+}
+.pack-row__state {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-dim);
+}
+/* A visit already in flight is the one the operator is looking for. */
+.pack-row[data-state='arrived'] .pack-row__state,
+.pack-row[data-state='onmyway'] .pack-row__state {
+  color: var(--color-primary);
+}
+.pack-row[data-state='cancelled'] .pack-row__who {
+  text-decoration: line-through;
+  color: var(--color-text-dim);
+}
+@media (max-width: 40rem) {
+  .pack-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'who time'
+      'pill state';
+  }
+  .pack-row__who {
+    grid-area: who;
+  }
+  .pack-row__time {
+    grid-area: time;
+  }
+  .pack-row__state {
+    grid-area: state;
+    text-align: end;
+  }
+}
+/* W3 KinTales row: a tone mark, then title / blurb / meta stacked. */
+.tale-row {
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr);
+  gap: 0.7rem;
+  padding: 0.55rem 0;
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+.tale-row:last-child {
+  border-bottom: none;
+}
+.tale-row__mark {
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+}
+.tale-row[data-mark='1'] .tale-row__mark {
+  background: var(--color-secondary);
+}
+.tale-row[data-mark='2'] .tale-row__mark {
+  background: var(--color-accent);
+}
+.tale-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.tale-row__title {
+  font-family: var(--type-title-sm-family);
+  font-size: var(--type-title-sm-size);
+  color: var(--color-text-primary);
+  text-transform: capitalize;
+}
+.tale-row__blurb,
+.tale-row__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tale-row__blurb {
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+.tale-row__meta {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-faint);
+  text-transform: uppercase;
+}
+/* W15 Cash Flow: two labelled amounts, tinted by what they mean. */
+.cash-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+}
+.cash-flow__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.cash-flow__label {
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-dim);
+}
+.cash-flow__value {
+  margin: 0;
+  font-family: var(--type-title-md-family);
+  font-size: var(--type-title-md-size);
+  color: var(--color-success);
+}
+.cash-flow__row[data-tone='orange'] .cash-flow__value {
+  color: var(--color-primary);
+}
+.cash-flow__note {
+  margin: 0;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+/* W14 Gatekeeper: household against days since its last completed visit. */
+.gap-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+.gap-row:last-child {
+  border-bottom: none;
+}
+.gap-row__who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+.gap-row__days {
+  font-family: var(--font-mono);
+  font-size: var(--type-title-sm-size);
+  color: var(--color-success);
+}
+.gap-row[data-urgency='due'] .gap-row__days {
+  color: var(--color-primary);
+}
+.gap-row[data-urgency='overdue'] .gap-row__days {
+  color: var(--color-error);
+}
+/* W16 / W17 weather. One head row, then labelled key/value and risk rows. */
+.weather__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'place temp'
+    'forecast temp';
+  align-items: center;
+  gap: 0 0.75rem;
+}
+.weather__place {
+  grid-area: place;
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+.weather__forecast {
+  grid-area: forecast;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+.weather__temp {
+  grid-area: temp;
+  font-family: var(--type-title-lg-family);
+  font-size: var(--type-title-lg-size);
+  color: var(--color-text-primary);
+}
+.weather__kv {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.weather__kv-label {
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-dim);
+}
+.weather__kv-value {
+  font-family: var(--type-title-sm-family);
+  font-size: var(--type-title-sm-size);
+  color: var(--color-text-primary);
+}
+/* The risk pill. Tinted AND labelled, never colour alone: "Danger" has to
+   survive a greyscale screen and a screen reader. */
+.weather__risk {
+  padding: 0.2rem 0.7rem;
+  border-radius: var(--radius-pill);
+  font-family: var(--type-label-md-family);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 16%, transparent);
+}
+.weather__risk[data-risk='caution'],
+.weather__risk[data-risk='high'] {
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+}
+.weather__risk[data-risk='danger'] {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 16%, transparent);
+}
+.weather__quiet {
+  margin: 0;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+.weather__alerts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.weather__alert {
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  color: var(--color-error);
+}
+/* W8 weekly capacity. `<progress>` is styled rather than replaced, so the
+   value and max it announces are the value and max it draws. */
+.capacity__bar,
+.species-row__bar,
+.flyer-row__bar {
+  appearance: none;
+  inline-size: 100%;
+  block-size: 0.5rem;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-2);
+  overflow: hidden;
+}
+.capacity__bar::-webkit-progress-bar,
+.species-row__bar::-webkit-progress-bar,
+.flyer-row__bar::-webkit-progress-bar {
+  background: var(--color-surface-2);
+}
+.capacity__bar::-webkit-progress-value,
+.species-row__bar::-webkit-progress-value,
+.flyer-row__bar::-webkit-progress-value {
+  background: var(--color-primary);
+}
+.capacity__bar::-moz-progress-bar,
+.species-row__bar::-moz-progress-bar,
+.flyer-row__bar::-moz-progress-bar {
+  background: var(--color-primary);
+}
+.capacity__note {
+  margin: 0;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+/* W9 overdue rows. */
+.overdue-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0;
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+.overdue-row:last-child {
+  border-bottom: none;
+}
+.overdue-row__who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+.overdue-row__when {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-error);
+}
+/* W10 species rows and W11 frequent-flyer rows: label, bar, count. */
+.species-row,
+.flyer-row {
+  display: grid;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+}
+.species-row {
+  grid-template-columns: minmax(5rem, 8rem) minmax(0, 1fr) auto;
+}
+.flyer-row {
+  grid-template-columns: auto minmax(5rem, 9rem) minmax(0, 1fr) auto;
+}
+.species-row__name,
+.flyer-row__who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+.species-row__count,
+.flyer-row__count {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size);
+  color: var(--color-text-primary);
+}
+.flyer-row__rank {
+  inline-size: 1.25rem;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+}
+/* W12 holiday rows: name, when, and what is booked around it. */
+.holiday-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'name booked'
+    'when booked';
+  align-items: center;
+  gap: 0 0.75rem;
+  padding: 0.45rem 0;
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+.holiday-row:last-child {
+  border-bottom: none;
+}
+.holiday-row__name {
+  grid-area: name;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+.holiday-row__when {
+  grid-area: when;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-dim);
+}
+.holiday-row__booked {
+  grid-area: booked;
+  font-family: var(--type-label-md-family);
+  font-size: var(--type-label-md-size);
+  color: var(--color-text-primary);
+}
