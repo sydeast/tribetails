@@ -70,6 +70,12 @@ jobs:
               - 'auntieos-admin/android/**'
             mytribe:
               - 'mytribe/functions/**'
+              # The backfill and seed scripts sit outside functions/ but are
+              # covered BY the functions job: both vitest configs include
+              # ../scripts/test/**, and typecheck runs -p ../scripts/tsconfig.json
+              # since PR #184. Without this line that coverage never fires, which
+              # is how those scripts stayed broken under firebase-admin ^14.
+              - 'mytribe/scripts/**'
               # ADR-0001: the generated Contracts module is committed INSIDE the
               # consuming projects, so the regen gate has to run when one of
               # those copies changes too. Without these lines a hand edit to a
