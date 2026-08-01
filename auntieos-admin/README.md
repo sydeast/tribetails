@@ -22,7 +22,7 @@ could not see the other.
 | `visual/` | Golden screenshots for web, desktop and android, plus the comparison harness. |
 | `docs/` | Specs, runbooks, reviews, punch lists, and the backlog. |
 | `scripts/` | Build and ops helpers. `loud-build.sh` is the one to use for anything slow. |
-| `twilio-service/`, `twilio-functions/` | Telephony. |
+| `twilio-service/` | Telephony (canonical — see [`docs/twilio/README.md`](../docs/twilio/README.md) at repo root for setup/env vars/known issues). `twilio-functions/` was the pre-migration copy; archived under `archive/twilio-functions-deprecated/`. |
 | `sotu-hosting/` | SOTU hosting and Firebase ops scripts. Not the product web app. |
 
 MyTribe, the Kinfolk portal, is a sibling prefix in this monorepo under
