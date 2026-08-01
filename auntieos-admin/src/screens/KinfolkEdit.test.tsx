@@ -174,119 +174,50 @@ describe('KinfolkEdit: service address autofill (#12)', () => {
     );
   });
 });
-describe('KinfolkEdit: vet clinic picker (#13)', () => {
-  it('offers a searchable catalog rather than plain clinic text boxes', async () => {
+/**
+ * THE VET PANEL IS GONE FROM THIS SCREEN, and its absence is the assertion.
+ *
+ * Operator ruling 2026-08-01: "vet info lives on household data, it can be seen
+ * on the kin profile" (page-specs 04-kinfolk-profile.md item 3). This screen
+ * used to write eight `vetClinic*` / `emergencyVetClinic*` keys onto the kinfolk
+ * doc, which is what made that doc a second writable copy of a fact
+ * `household_data` already owned, with nothing tying them together.
+ *
+ * The two describes replaced here ("vet clinic picker (#13)" and "LEGACY
+ * string-only vet fields") tested that authoring. They are not weakened
+ * coverage, they are coverage of a write path that must no longer exist, and
+ * the tests below assert exactly that.
+ */
+describe('KinfolkEdit: the vet is not authored here any more', () => {
+  it('offers no vet picker', async () => {
     mount();
     await screen.findByLabelText('First name');
-    expect(screen.getByLabelText('Vet clinic')).toHaveAttribute('placeholder', 'Type to search 2 clinics');
-    expect(screen.queryByLabelText('Clinic name')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/vet clinic/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/emergency vet/i)).not.toBeInTheDocument();
   });
-  it('filters the EMERGENCY picker to emergency-flagged clinics only', async () => {
+  it('renders no vet panel', async () => {
     mount();
     await screen.findByLabelText('First name');
-    // One of the two catalog rows is flagged, so the emergency box says one.
-    expect(screen.getByLabelText('Emergency vet')).toHaveAttribute(
-      'placeholder',
-      'Type to search 1 clinics',
-    );
-    await userEvent.type(screen.getByLabelText('Emergency vet'), 'a');
-    const names = screen.getAllByTestId('vetpick-option').map((el) => el.textContent).join('|');
-    expect(names).toContain('Austin Pet ER');
-    expect(names).not.toContain('Riverside');
+    expect(screen.queryByText('Vet clinic')).not.toBeInTheDocument();
   });
-  it('saves the clinic id ALONGSIDE the denormalized name, phone and address', async () => {
+  it('sends NO vet key in the save patch, so kinfolk cannot hold a second copy', async () => {
     mount();
-    await screen.findByLabelText('First name');
-    await userEvent.type(screen.getByLabelText('Vet clinic'), 'riverside');
-    await userEvent.click(screen.getByRole('button', { name: /Riverside Animal Hospital/ }));
-    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
-    await waitFor(() =>
-      expect(updateKinfolkProfile).toHaveBeenCalledWith(
-        'kf1',
-        expect.objectContaining({
-          vetClinicId: 'riverside',
-          vetClinicName: 'Riverside Animal Hospital',
-          vetClinicPhone: '(512) 555-0100',
-          vetClinicAddress: '1 Mill St',
-        }),
-      ),
-    );
-  });
-  it('saves an emergency vet into its own four fields', async () => {
-    mount();
-    await screen.findByLabelText('First name');
-    await userEvent.type(screen.getByLabelText('Emergency vet'), 'austin');
-    await userEvent.click(screen.getByRole('button', { name: /Austin Pet ER/ }));
-    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
-    await waitFor(() =>
-      expect(updateKinfolkProfile).toHaveBeenCalledWith(
-        'kf1',
-        expect.objectContaining({
-          emergencyVetClinicId: 'er1',
-          emergencyVetClinicName: 'Austin Pet ER',
-          emergencyVetClinicPhone: '(512) 555-0300',
-          emergencyVetClinicAddress: '4 Night Ln',
-        }),
-      ),
-    );
-  });
-});
-describe('KinfolkEdit: LEGACY string-only vet fields', () => {
-  /**
-   * Every household on file predates `vetClinicId`. The picker has to open,
-   * render the name that is there, and save it back untouched, without ever
-   * treating "no id" as "no vet".
-   */
-  it('renders a legacy household whose vet is a bare string, with no crash', async () => {
-    mount({
-      vetClinicName: 'Old Corner Vet',
-      vetClinicPhone: 'after hours: 512-555-0000',
-      vetClinicAddress: 'behind the feed store',
-    });
-    await screen.findByLabelText('First name');
-    const selected = screen.getAllByTestId('vetpick-selected')[0]!;
-    expect(selected).toHaveTextContent('Old Corner Vet');
-    expect(selected).toHaveTextContent('after hours: 512-555-0000');
-    expect(screen.getByText(/not linked to the shared catalog/i)).toBeInTheDocument();
-  });
-  it('saves a legacy household unchanged, with an empty id rather than a fabricated one', async () => {
-    mount({ vetClinicName: 'Old Corner Vet', vetClinicPhone: '512-555-0000' });
     await screen.findByLabelText('First name');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
-    await waitFor(() =>
-      expect(updateKinfolkProfile).toHaveBeenCalledWith(
-        'kf1',
-        expect.objectContaining({
-          vetClinicId: '',
-          vetClinicName: 'Old Corner Vet',
-          vetClinicPhone: '512-555-0000',
-        }),
-      ),
-    );
+    await waitFor(() => expect(updateKinfolkProfile).toHaveBeenCalled());
+    const patch = updateKinfolkProfile.mock.calls[0]?.[1] as Record<string, unknown>;
+    for (const key of Object.keys(patch)) {
+      expect(key.toLowerCase()).not.toContain('vetclinic');
+    }
   });
-  it('renders a household with NO vet at all, and no linkage warning', async () => {
+  it('leaves a legacy household s stored vet strings untouched by a save', async () => {
+    // `updateDoc` is a field-level merge, so a key the patch omits is left
+    // alone rather than cleared. The A2 migration is what removes them.
     mount();
     await screen.findByLabelText('First name');
-    expect(screen.queryAllByTestId('vetpick-selected')).toHaveLength(0);
-    expect(screen.queryByText(/not linked to the shared catalog/i)).not.toBeInTheDocument();
-  });
-  /**
-   * A catalog outage is not missing household data. The clinic on file must
-   * still be visible and still save; only SEARCHING is unavailable.
-   */
-  it('still shows and saves the vet on file when the clinic catalog fails to load', async () => {
-    useCollection.mockReturnValue({ status: 'error', message: 'permission-denied', retry: vi.fn() });
-    mount({ vetClinicName: 'Old Corner Vet', vetClinicPhone: '512-555-0000' });
-    await screen.findByLabelText('First name');
-    expect(screen.getByText(/shared clinic catalog didn't load/i)).toBeInTheDocument();
-    expect(screen.getAllByTestId('vetpick-selected')[0]).toHaveTextContent('Old Corner Vet');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
-    await waitFor(() =>
-      expect(updateKinfolkProfile).toHaveBeenCalledWith(
-        'kf1',
-        expect.objectContaining({ vetClinicName: 'Old Corner Vet', vetClinicId: '' }),
-      ),
-    );
+    await waitFor(() => expect(updateKinfolkProfile).toHaveBeenCalled());
+    expect(updateKinfolkProfile.mock.calls[0]?.[1]).not.toHaveProperty('vetClinicName');
   });
 });
 describe('KinfolkEdit: join date', () => {

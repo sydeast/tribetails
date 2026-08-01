@@ -4,7 +4,6 @@ import { render as rtlRender, screen, waitFor, within } from '@testing-library/r
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '../components/Toast';
 import { blankHouseholdRecord, type HouseholdRecord } from '../api/householdData';
-import { mergeKinfolkProfile, type KinfolkProfile } from '../api/kinfolkProfile';
 
 /**
  * The screen raises a toast on a landed save, and `useToast` throws outside its
@@ -32,14 +31,7 @@ vi.mock('../api/householdData', async (orig) => ({
  * A2), so this screen now opens two more reads: the kinfolk record that owns the
  * vet, and the clinic catalog that owns its opening hours.
  */
-const { getKinfolkProfile, useCollection } = vi.hoisted(() => ({
-  getKinfolkProfile: vi.fn(),
-  useCollection: vi.fn(),
-}));
-vi.mock('../api/kinfolkProfile', async (orig) => ({
-  ...(await orig<typeof import('../api/kinfolkProfile')>()),
-  getKinfolkProfile,
-}));
+const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', async (orig) => ({
   ...(await orig<typeof import('../lib/firestore')>()),
   useCollection,
@@ -70,8 +62,6 @@ beforeEach(() => {
   saveHouseholdSection.mockReset();
   getHouseholdData.mockResolvedValue(record());
   getDossierHouseholdNotes.mockResolvedValue('');
-  getKinfolkProfile.mockReset();
-  getKinfolkProfile.mockResolvedValue(profile());
   useCollection.mockReset();
   useCollection.mockReturnValue({ status: 'ready', data: [CLINIC] });
 });
@@ -83,21 +73,6 @@ const CLINIC = {
   address: '418 Mill St',
   hours: 'Mon to Fri 8a to 6p',
 };
-/** The canonical vet: catalog-linked, on the kinfolk record, not on this one. */
-function profile(over: Partial<KinfolkProfile> = {}): KinfolkProfile {
-  return {
-    ...mergeKinfolkProfile('kf1', null),
-    vetClinicId: 'clinic_riverside',
-    vetClinicName: 'Riverside Animal Hospital',
-    vetClinicPhone: '(512) 555 0100',
-    vetClinicAddress: '418 Mill St',
-    emergencyVetClinicId: 'clinic_er',
-    emergencyVetClinicName: 'Austin Pet ER',
-    emergencyVetClinicPhone: '(512) 555 0300',
-    emergencyVetClinicAddress: '4 Night Ln',
-    ...over,
-  };
-}
 
 function mount(over: Partial<{ kinfolkName: string }> = {}) {
   return render(
@@ -337,71 +312,95 @@ describe('HouseholdData: editing a section', () => {
  * emergency number off under pressure, was the one that could silently go stale.
  * It now reads the catalog-linked record on the kinfolk doc.
  */
-describe('HouseholdData: the vet is read through, not authored here', () => {
-  it('shows the regular and emergency vet from the household profile', async () => {
+/**
+ * Operator ruling 2026-08-01: `household_data` OWNS the vet, catalog-linked.
+ * What is stored is a `vet_clinics` id, so name/phone/address/hours resolve
+ * through the clinic and there is exactly one copy to correct.
+ */
+describe('HouseholdData: the vet is owned here, and catalog-linked', () => {
+  it('resolves the vet through the clinic the record points at', async () => {
+    getHouseholdData.mockResolvedValue(record({ primaryVetClinicId: 'clinic_riverside' }));
     mount();
     expect(await screen.findByText('Riverside Animal Hospital')).toBeInTheDocument();
     expect(screen.getByText('(512) 555 0100')).toBeInTheDocument();
-    expect(screen.getByText('Austin Pet ER')).toBeInTheDocument();
-    expect(screen.getByText('(512) 555 0300')).toBeInTheDocument();
   });
-  it('keeps the emergency vet as a DISTINCT clinic, never folded into the primary', async () => {
-    mount();
-    await screen.findByText('Riverside Animal Hospital');
-    expect(screen.getByText('Emergency vet')).toBeInTheDocument();
-    expect(screen.getByText('Emergency vet phone')).toBeInTheDocument();
-    expect(screen.getByText('Emergency vet address')).toBeInTheDocument();
-  });
-  it('reads the hours off the CLINIC, since every household shares a practice s hours', async () => {
+  it('reads HOURS from the clinic, not from the household', async () => {
+    getHouseholdData.mockResolvedValue(
+      record({ primaryVetClinicId: 'clinic_riverside', primaryVetHours: 'STALE' }),
+    );
     mount();
     expect(await screen.findByText('Mon to Fri 8a to 6p')).toBeInTheDocument();
   });
-  it('offers no editor for the vet here, so it cannot be authored twice', async () => {
+  it('shows a correction to the clinic with no household write at all', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [{ ...CLINIC, phone: '(512) 555 0199' }],
+    });
+    getHouseholdData.mockResolvedValue(record({ primaryVetClinicId: 'clinic_riverside' }));
     mount();
-    await screen.findByText('Riverside Animal Hospital');
-    expect(screen.queryByRole('button', { name: 'Edit veterinary' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Edit on the profile' })).toBeInTheDocument();
+    expect(await screen.findByText('(512) 555 0199')).toBeInTheDocument();
   });
-  it('says so when a household s vet is not linked to the catalog', async () => {
-    // No id means updateVetClinic s fan-out cannot reach this household, which
-    // is worth saying out loud rather than leaving as an invisible difference.
-    getKinfolkProfile.mockResolvedValue(
-      profile({ vetClinicId: '', vetClinicName: 'Some Clinic', vetClinicPhone: '555' }),
+  it('keeps the emergency vet a DISTINCT clinic from the primary', async () => {
+    getHouseholdData.mockResolvedValue(
+      record({ primaryVetClinicId: 'clinic_riverside', emergencyVetClinicId: 'clinic_er' }),
+    );
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [CLINIC, { _id: 'clinic_er', name: 'Austin Pet ER', phone: '(512) 555 0300' }],
+    });
+    mount();
+    expect(await screen.findByText('Riverside Animal Hospital')).toBeInTheDocument();
+    expect(screen.getByText('Austin Pet ER')).toBeInTheDocument();
+  });
+  it('is edited HERE, since this record owns the vet', async () => {
+    mount();
+    await screen.findByText('Pantry, second shelf');
+    expect(screen.getByRole('button', { name: 'Edit veterinary' })).toBeInTheDocument();
+  });
+  it('says so when the record is not linked to the catalog', async () => {
+    // Without a clinic id there is nothing for a correction to match on, and
+    // that is worth stating rather than leaving as an invisible difference.
+    getHouseholdData.mockResolvedValue(
+      record({ primaryVetClinicId: '', primaryVetName: 'Some Clinic', primaryVetPhone: '555' }),
     );
     mount();
     expect(await screen.findByText(/not linked to the catalog/i)).toBeInTheDocument();
   });
   it('does not cry unlinked when the vet IS linked', async () => {
+    getHouseholdData.mockResolvedValue(record({ primaryVetClinicId: 'clinic_riverside' }));
     mount();
     await screen.findByText('Riverside Animal Hospital');
     expect(screen.queryByText(/not linked to the catalog/i)).not.toBeInTheDocument();
   });
-  it('still SHOWS retired free text rather than dropping it silently', async () => {
-    // The fixture carries the old primaryVetName. It is superseded, not deleted,
-    // so it must remain visible and be named as superseded.
+  it('fails loud on a dangling clinic id rather than showing stale text', async () => {
+    getHouseholdData.mockResolvedValue(
+      record({ primaryVetClinicId: 'gone', primaryVetName: 'Stale Clinic' }),
+    );
+    mount();
+    expect(await screen.findByText(/no longer exists/i)).toBeInTheDocument();
+  });
+  it('flags superseded free text once the record is LINKED', async () => {
+    // Linked, so the clinic supplies the vet and the old strings are genuinely
+    // unused. They are shown rather than dropped: deleting them silently would
+    // destroy the evidence of a conflict.
+    getHouseholdData.mockResolvedValue(
+      record({ primaryVetClinicId: 'clinic_riverside', primaryVetName: 'Barton Creek Animal Hospital' }),
+    );
     mount();
     expect(await screen.findByText(/Older vet notes are still on this record/)).toBeInTheDocument();
     expect(screen.getByText('Barton Creek Animal Hospital')).toBeInTheDocument();
   });
-  it('says nothing about leftovers when there are none', async () => {
-    getHouseholdData.mockResolvedValue(
-      record({ primaryVetName: '', primaryVetPhone: '', primaryVetHours: '' }),
-    );
+  it('does NOT call the free text superseded while it is still the vet on show', async () => {
+    // Unlinked: that text IS the vet rendered above, so calling it "not used
+    // anywhere" would be duplicative and untrue.
+    getHouseholdData.mockResolvedValue(record({ primaryVetName: 'Barton Creek Animal Hospital' }));
     mount();
-    await screen.findByText('Riverside Animal Hospital');
+    await screen.findByText('Barton Creek Animal Hospital');
     expect(screen.queryByText(/Older vet notes/)).not.toBeInTheDocument();
   });
-  it('fails loud when the vet read fails, rather than showing a blank vet', async () => {
-    getKinfolkProfile.mockRejectedValue(new Error('permission-denied'));
+  it('fails loud when the clinic catalog cannot be read', async () => {
+    useCollection.mockReturnValue({ status: 'error', message: 'permission-denied' });
     mount();
-    const alerts = await screen.findAllByRole('alert');
-    expect(
-      alerts.some((a) => /Couldn.t load the household.s vet/.test(a.textContent ?? '')),
-    ).toBe(true);
-  });
-  it('shows Not set for a household with no vet at all', async () => {
-    getKinfolkProfile.mockResolvedValue(mergeKinfolkProfile('kf1', null));
-    mount();
-    expect(await screen.findByText(/No vet on file for this household/)).toBeInTheDocument();
+    expect(await screen.findByText(/catalog didn.t load/i)).toBeInTheDocument();
   });
 });

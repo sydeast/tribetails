@@ -65,8 +65,11 @@ function seed(opts: {
     if (spec.path === 'vet_clinics') {
       return { status: 'ready', data: opts.clinics ?? [RIVERSIDE] };
     }
-    if (opts.householdsPending === true) return { status: 'loading' };
-    return { status: 'ready', data: opts.households ?? [] };
+    if (spec.path === 'household_data') {
+      if (opts.householdsPending === true) return { status: 'loading' };
+      return { status: 'ready', data: opts.households ?? [] };
+    }
+    return { status: 'ready', data: [] };
   });
 }
 
@@ -141,14 +144,14 @@ describe('VetClinics: reading the bank', () => {
 
 describe('VetClinics: the household count', () => {
   it('counts a household linked by id', async () => {
-    seed({ households: [{ _id: 'k1', vetClinicId: 'c1' }] });
+    seed({ households: [{ _id: 'h1', primaryVetClinicId: 'c1' }] });
     render(<VetClinics />);
     expect(await screen.findByText(/1 linked/)).toBeInTheDocument();
   });
 
   it('names a name-only household separately, since a save cannot reach it', async () => {
     seed({
-      households: [{ _id: 'k1', vetClinicId: '', vetClinicName: 'Riverside Animal Hospital' }],
+      households: [{ _id: 'h1', primaryVetClinicId: '', primaryVetName: 'Riverside Animal Hospital' }],
     });
     render(<VetClinics />);
     expect(await screen.findByText(/1 by name only/)).toBeInTheDocument();
@@ -173,7 +176,7 @@ describe('VetClinics: the household count', () => {
 
 describe('VetClinics: correcting a clinic', () => {
   async function openEdit() {
-    seed({ households: [{ _id: 'k1', vetClinicId: 'c1' }] });
+    seed({ households: [{ _id: 'h1', primaryVetClinicId: 'c1' }] });
     render(<VetClinics />);
     await screen.findByText('Riverside Animal Hospital');
     await user.click(screen.getByRole('button', { name: 'Edit' }));

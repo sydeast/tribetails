@@ -6,7 +6,7 @@ import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { useToast } from '../components/Toast';
 import { useCollection } from '../lib/firestore';
 import { VET_CLINICS_QUERY, type VetClinic } from '../api/vetClinics';
-import { KINFOLK_QUERY } from '../api/directory';
+import { HOUSEHOLD_DATA_QUERY } from '../api/householdData';
 import {
   updateVetClinic,
   archiveVetClinic,
@@ -25,7 +25,7 @@ import {
   clinicMonogram,
   type ClinicDraft,
   type ClinicUsage,
-  type VetLinkedKinfolk,
+  type VetLinkedHousehold,
 } from '../lib/vetClinicManager';
 import './VetClinics.css';
 
@@ -53,7 +53,7 @@ import './VetClinics.css';
  */
 export function VetClinics() {
   const clinics = useCollection<VetClinic>(VET_CLINICS_QUERY);
-  const households = useCollection<VetLinkedKinfolk>(KINFOLK_QUERY);
+  const households = useCollection<VetLinkedHousehold>(HOUSEHOLD_DATA_QUERY);
   const [query, setQuery] = useState('');
   const [adding, setAdding] = useState(false);
 
@@ -102,7 +102,7 @@ export function VetClinics() {
 
 interface BankProps {
   rows: readonly VetClinic[];
-  households: readonly VetLinkedKinfolk[];
+  households: readonly VetLinkedHousehold[];
   /**
    * False while the kinfolk listener is still loading or has failed. The count
    * is suppressed rather than shown as zero: "0 households" and "we could not

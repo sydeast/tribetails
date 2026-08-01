@@ -121,7 +121,7 @@ describe('saveHouseholdSection', () => {
     expect(payload['primaryVetName']).toBe('Barton Creek');
     // All 30 fields plus the three envelope fields, so android's toObject finds
     // a complete document rather than a partial one.
-    expect(Object.keys(payload)).toHaveLength(33);
+    expect(Object.keys(payload)).toHaveLength(35);
     // `_id` is ours, not the document's. It must never be written into the body.
     expect(payload).not.toHaveProperty('_id');
     expect(saved._id).toBe('hd-new');

@@ -39,14 +39,6 @@ function patch(over: Partial<KinfolkEditPatch> = {}): KinfolkEditPatch {
     emergencyContactName: 'Rae Halbrook',
     emergencyContactPhone: '512-555-9090',
     emergencyContactRelation: 'Sister',
-    vetClinicName: 'Barton Creek Vet',
-    vetClinicAddress: '9 Clinic Row',
-    vetClinicPhone: '512-555-7788',
-    vetClinicId: 'barton',
-    emergencyVetClinicId: 'er1',
-    emergencyVetClinicName: 'Austin Pet ER',
-    emergencyVetClinicAddress: '4 Night Ln',
-    emergencyVetClinicPhone: '512-555-0300',
     ...over,
   };
 }

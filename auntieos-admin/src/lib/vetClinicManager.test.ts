@@ -12,7 +12,7 @@ import {
   draftNameCollides,
   clinicMonogram,
   normClinicName,
-  type VetLinkedKinfolk,
+  type VetLinkedHousehold,
 } from './vetClinicManager';
 import { type VetClinic } from '../api/vetClinics';
 
@@ -23,12 +23,12 @@ function clinic(over: Partial<VetClinic> & { _id: string }): VetClinic {
 const RIVERSIDE = clinic({ _id: 'c1' });
 
 describe('clinicUsage', () => {
-  function kf(over: Partial<VetLinkedKinfolk> & { _id: string }): VetLinkedKinfolk {
+  function kf(over: Partial<VetLinkedHousehold> & { _id: string }): VetLinkedHousehold {
     return over;
   }
 
-  it('counts a household linked by the regular slot', () => {
-    expect(clinicUsage(RIVERSIDE, [kf({ _id: 'k1', vetClinicId: 'c1' })])).toEqual({
+  it('counts a household linked by the regular slot (on household_data)', () => {
+    expect(clinicUsage(RIVERSIDE, [kf({ _id: 'k1', primaryVetClinicId: 'c1' })])).toEqual({
       linked: 1,
       unlinked: 0,
     });
@@ -42,12 +42,12 @@ describe('clinicUsage', () => {
   });
 
   it('counts a household using both slots exactly once', () => {
-    const both = kf({ _id: 'k1', vetClinicId: 'c1', emergencyVetClinicId: 'c1' });
+    const both = kf({ _id: 'k1', primaryVetClinicId: 'c1', emergencyVetClinicId: 'c1' });
     expect(clinicUsage(RIVERSIDE, [both]).linked).toBe(1);
   });
 
   it('ignores a household on a different clinic', () => {
-    expect(clinicUsage(RIVERSIDE, [kf({ _id: 'k1', vetClinicId: 'other' })])).toEqual({
+    expect(clinicUsage(RIVERSIDE, [kf({ _id: 'k1', primaryVetClinicId: 'other' })])).toEqual({
       linked: 0,
       unlinked: 0,
     });
@@ -55,12 +55,12 @@ describe('clinicUsage', () => {
 
   it('counts a legacy name-only household as UNLINKED, not linked', () => {
     // The distinction the whole split exists for: a correction cannot reach it.
-    const legacy = kf({ _id: 'k1', vetClinicId: '', vetClinicName: 'Riverside Animal Hospital' });
+    const legacy = kf({ _id: 'k1', primaryVetClinicId: '', primaryVetName: 'Riverside Animal Hospital' });
     expect(clinicUsage(RIVERSIDE, [legacy])).toEqual({ linked: 0, unlinked: 1 });
   });
 
   it('matches a legacy household case and space insensitively', () => {
-    const legacy = kf({ _id: 'k1', vetClinicName: 'riverside   ANIMAL hospital' });
+    const legacy = kf({ _id: 'k1', primaryVetName: 'riverside   ANIMAL hospital' });
     expect(clinicUsage(RIVERSIDE, [legacy]).unlinked).toBe(1);
   });
 
@@ -69,15 +69,15 @@ describe('clinicUsage', () => {
     // not this clinic's household.
     const other = kf({
       _id: 'k1',
-      vetClinicId: 'c2',
-      vetClinicName: 'Riverside Animal Hospital',
+      primaryVetClinicId: 'c2',
+      primaryVetName: 'Riverside Animal Hospital',
     });
     expect(clinicUsage(RIVERSIDE, [other])).toEqual({ linked: 0, unlinked: 0 });
   });
 
   it('never name-matches a clinic with a blank name', () => {
     const blank = clinic({ _id: 'c9', name: '' });
-    expect(clinicUsage(blank, [kf({ _id: 'k1', vetClinicName: '' })]).unlinked).toBe(0);
+    expect(clinicUsage(blank, [kf({ _id: 'k1', primaryVetName: '' })]).unlinked).toBe(0);
   });
 
   it('counts nothing against an empty household list', () => {

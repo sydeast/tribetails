@@ -29,14 +29,6 @@ function form(over: Partial<KinfolkEditInput> = {}): KinfolkEditInput {
     emergencyContactName: 'Rae Halbrook',
     emergencyContactPhone: '512-555-9090',
     emergencyContactRelation: '',
-    vetClinicName: '',
-    vetClinicAddress: '',
-    vetClinicPhone: '',
-    vetClinicId: '',
-    emergencyVetClinicId: '',
-    emergencyVetClinicName: '',
-    emergencyVetClinicAddress: '',
-    emergencyVetClinicPhone: '',
     ...over,
   };
 }
@@ -129,10 +121,6 @@ describe('validateKinfolkEdit', () => {
     expect(
       validateKinfolkEdit(
         form({
-          vetClinicName: 'Old Corner Vet',
-          vetClinicPhone: 'after hours: 512-555-0000 x2',
-          vetClinicAddress: 'behind the feed store',
-          vetClinicId: '',
         }),
       ),
     ).toEqual({});
@@ -141,12 +129,6 @@ describe('validateKinfolkEdit', () => {
     expect(
       validateKinfolkEdit(
         form({
-          vetClinicId: 'riverside',
-          vetClinicName: 'Riverside Animal Hospital',
-          vetClinicPhone: '(512) 555-0100',
-          emergencyVetClinicId: 'er1',
-          emergencyVetClinicName: 'Austin Pet ER',
-          emergencyVetClinicPhone: '(512) 555-0300',
         }),
       ),
     ).toEqual({});

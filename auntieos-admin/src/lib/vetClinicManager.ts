@@ -9,15 +9,23 @@ import { type VetClinic, isApprovedClinic, isActiveClinic } from '../api/vetClin
  * testing without a render.
  */
 
-/** The `kinfolk` fields this screen reads. Everything optional: legacy rows. */
-export interface VetLinkedKinfolk {
+/**
+ * The `household_data` fields this screen reads. Everything optional: legacy
+ * rows predate the catalog link.
+ *
+ * The household vet lives HERE, not on `kinfolk` (operator ruling 2026-08-01).
+ * This badge used to scan the `kinfolk` collection; after the move that would
+ * have counted a field nothing writes any more and reported "No households" on
+ * every card, on the screen whose whole job is saying how far a correction
+ * travels.
+ */
+export interface VetLinkedHousehold {
   _id: string;
-  displayName?: string | undefined;
-  lastName?: string | undefined;
-  vetClinicId?: string | undefined;
-  vetClinicName?: string | undefined;
+  primaryVetClinicId?: string | undefined;
   emergencyVetClinicId?: string | undefined;
-  emergencyVetClinicName?: string | undefined;
+  /** Legacy free text, kept for the by-name-only count. Never written. */
+  primaryVetName?: string | undefined;
+  emergencyVetName?: string | undefined;
 }
 
 /** Same normalization the server dedupes and collides names by. */
@@ -30,9 +38,9 @@ export function normClinicName(s: string): string {
  *
  * TWO KINDS OF REFERENCE, counted separately on purpose.
  *
- *  `linked` households carry this clinic's document id. They are the ones
- *  `updateVetClinic`'s fan-out can reach, so a correction here lands on their
- *  record automatically.
+ *  `linked` households carry this clinic's document id, so they resolve the
+ *  name, phone, address and hours THROUGH this clinic. A correction lands on
+ *  their record the moment it is saved, because they never held a copy.
  *
  *  `unlinked` households merely have the same clinic NAME typed on file with an
  *  empty id. Every household written before 2026-07-25 is in this state. They
@@ -41,8 +49,7 @@ export function normClinicName(s: string): string {
  *  them will actually receive the corrected phone number would overstate what
  *  the save just did, on the one screen where that number matters most.
  *
- * Android counts by name only (`vetClinicHouseholdCount`, AdminSettingsScreen
- * .kt), which conflates the two. This is the id-first version.
+ * Both platforms report the two separately for that reason.
  */
 export interface ClinicUsage {
   linked: number;
@@ -51,7 +58,7 @@ export interface ClinicUsage {
 
 export function clinicUsage(
   clinic: VetClinic,
-  households: readonly VetLinkedKinfolk[],
+  households: readonly VetLinkedHousehold[],
 ): ClinicUsage {
   const id = clinic._id;
   const name = normClinicName(clinic.name ?? '');
@@ -60,7 +67,7 @@ export function clinicUsage(
 
   for (const h of households) {
     const idHit =
-      (h.vetClinicId ?? '') === id || (h.emergencyVetClinicId ?? '') === id;
+      (h.primaryVetClinicId ?? '') === id || (h.emergencyVetClinicId ?? '') === id;
     if (idHit) {
       linked += 1;
       continue;
@@ -70,10 +77,10 @@ export function clinicUsage(
     // not this clinic's household, and must not be counted as one.
     if (name === '') continue;
     const looseRegular =
-      (h.vetClinicId ?? '') === '' && normClinicName(h.vetClinicName ?? '') === name;
+      (h.primaryVetClinicId ?? '') === '' && normClinicName(h.primaryVetName ?? '') === name;
     const looseEmergency =
       (h.emergencyVetClinicId ?? '') === '' &&
-      normClinicName(h.emergencyVetClinicName ?? '') === name;
+      normClinicName(h.emergencyVetName ?? '') === name;
     if (looseRegular || looseEmergency) unlinked += 1;
   }
 

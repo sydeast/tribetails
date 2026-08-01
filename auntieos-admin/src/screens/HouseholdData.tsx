@@ -15,9 +15,9 @@ import {
   sectionFilledCount,
   type HouseholdSectionSpec,
 } from '../lib/householdDataSchema';
-import { getKinfolkProfile, type KinfolkProfile } from '../api/kinfolkProfile';
 import { useCollection } from '../lib/firestore';
 import { VET_CLINICS_QUERY, type VetClinic } from '../api/vetClinics';
+import { resolveHouseholdVet, hasVet, type HouseholdVet } from '../lib/householdVet';
 import {
   blankHouseholdRecord,
   getDossierHouseholdNotes,
@@ -83,7 +83,7 @@ export function HouseholdData({ kinfolkId, kinfolkName, onBack }: HouseholdDataP
           </p>
         </Banner>
       ) : (
-        <HouseholdRecordView kinfolkId={kinfolkId} household={household} onOpenProfile={onBack} />
+        <HouseholdRecordView kinfolkId={kinfolkId} household={household} />
       )}
     </div>
   );
@@ -96,24 +96,18 @@ export function HouseholdData({ kinfolkId, kinfolkName, onBack }: HouseholdDataP
 function HouseholdRecordView({
   kinfolkId,
   household,
-  onOpenProfile,
 }: {
   kinfolkId: string;
   household: string;
   /** Back to the household profile, where the vet is actually picked. */
-  onOpenProfile: () => void;
 }) {
   const { showToast } = useToast();
 
   const loaded = useOneShot(() => getHouseholdData(kinfolkId), 'getHouseholdData');
   const notes = useOneShot(() => getDossierHouseholdNotes(kinfolkId), 'getDossierHouseholdNotes');
 
-  /**
-   * The canonical vet (punchlist A2). This screen no longer authors one, it
-   * reads the household profile's, and the catalog listener supplies the
-   * clinic's opening hours, which live on the clinic rather than per household.
-   */
-  const vet = useOneShot(() => getKinfolkProfile(kinfolkId), 'getKinfolkProfile');
+  // The shared clinic catalog. The record stores a clinic id; everything shown
+  // for the vet resolves through this listener, so there is one copy to correct.
   const clinics = useCollection<VetClinic>(VET_CLINICS_QUERY);
 
   /**
@@ -198,9 +192,7 @@ function HouseholdRecordView({
             household={household}
             onEdit={setEditing}
             dialog={dialogFor}
-            vet={vet}
             clinics={clinics}
-            onOpenProfile={onOpenProfile}
           />
         }
       >
@@ -213,9 +205,7 @@ function HouseholdRecordView({
               <Sections
                 record={current}
                 onEdit={setEditing}
-                vet={vet}
                 clinics={clinics}
-                onOpenProfile={onOpenProfile}
               />
               {dialogFor(current)}
             </>
@@ -236,17 +226,13 @@ function EmptyRecord({
   household,
   onEdit,
   dialog,
-  vet,
   clinics,
-  onOpenProfile,
 }: {
   kinfolkId: string;
   household: string;
   onEdit: (section: HouseholdSectionSpec) => void;
   dialog: (record: HouseholdRecord) => ReactNode;
-  vet: Async<KinfolkProfile>;
   clinics: Async<VetClinic[]>;
-  onOpenProfile: () => void;
 }) {
   const blank = blankHouseholdRecord(kinfolkId);
   return (
@@ -260,9 +246,7 @@ function EmptyRecord({
       <Sections
         record={blank}
         onEdit={onEdit}
-        vet={vet}
         clinics={clinics}
-        onOpenProfile={onOpenProfile}
       />
       {dialog(blank)}
     </>
@@ -272,15 +256,11 @@ function EmptyRecord({
 function Sections({
   record,
   onEdit,
-  vet,
   clinics,
-  onOpenProfile,
 }: {
   record: HouseholdRecord;
   onEdit: (section: HouseholdSectionSpec) => void;
-  vet: Async<KinfolkProfile>;
   clinics: Async<VetClinic[]>;
-  onOpenProfile: () => void;
 }) {
   return (
     <>
@@ -293,9 +273,8 @@ function Sections({
               key={section.id}
               section={section}
               record={record}
-              vet={vet}
               clinics={clinics}
-              onOpenProfile={onOpenProfile}
+              onEdit={() => onEdit(section)}
             />
           );
         }
@@ -342,119 +321,60 @@ function Sections({
 }
 
 /**
- * The veterinary panel, read through from the household profile (punchlist A2).
+ * The veterinary section: the household's CANONICAL vet, and the only place it
+ * is authored.
  *
- * This screen used to author its own `primaryVet*` / `emergencyVet*` free text,
- * which meant the vet existed twice with nothing tying the copies together, and
- * the copy shown HERE, on the screen this file's own header describes as the one
- * someone reads the emergency vet's number off, was the copy that could go stale
- * without anything saying so.
+ * Operator ruling 2026-08-01, "vet info lives on household data, it can be seen
+ * on the kin profile" (page-specs 04-kinfolk-profile.md item 3). What is stored
+ * is a `vet_clinics` id, never typed text: the name, phone, address and hours
+ * all resolve through the clinic, so correcting a clinic in the vet clinics
+ * manager corrects it here and on every other household at once. That is what
+ * makes the number this screen exists to be read under pressure a number
+ * somebody can actually fix.
  *
- * It now shows the `kinfolk` record: the regular and emergency clinics the
- * household picked from the shared catalog, each carrying the clinic's id. That
- * is the copy `updateVetClinic` can correct and fan out, which is the only
- * reason a wrong number can be fixed at all.
- *
- * Hours come from the CLINIC, not from the household. Every household using a
- * practice shares its opening hours, so one copy lives on the catalog row and
- * this reads through to it. The old per-household `primaryVetHours` is one of
- * the legacy fields below.
+ * The vet is chosen by SEARCH, not typed (ruling 2: "Vets are not a open string
+ * textbox, it is a dropdown and search feature"), which is why this section has
+ * its own editor instead of the generic text dialog every other section uses.
  */
 function VeterinarySection({
   section,
   record,
-  vet,
   clinics,
-  onOpenProfile,
+  onEdit,
 }: {
   section: HouseholdSectionSpec;
   record: HouseholdRecord;
-  vet: Async<KinfolkProfile>;
   clinics: Async<VetClinic[]>;
-  onOpenProfile: () => void;
+  onEdit: () => void;
 }) {
-  const leftovers = legacyVetLeftovers(record);
-  const clinicRows = clinics.status === 'ready' ? clinics.data : [];
-  const hoursFor = (clinicId: string): string => {
-    if (clinicId.trim() === '') return '';
-    return (clinicRows.find((c) => c._id === clinicId)?.hours ?? '').trim();
-  };
-
+  const vet = clinics.status === 'ready' ? resolveHouseholdVet(record, clinics.data) : null;
+  // Leftovers are only worth flagging when the slot is LINKED. On an unlinked
+  // household the legacy text IS the vet being displayed above, so calling it
+  // "older notes, not used anywhere" would be both duplicative and false.
+  const supersededByLink = vet !== null && (vet.primary.linked || vet.emergency.linked);
+  const leftovers = supersededByLink ? legacyVetLeftovers(record) : [];
   return (
     <DenPanel
       title={section.title}
       subtitle={section.blurb}
-      trailing={<GhostButton label="Edit on the profile" onClick={onOpenProfile} />}
+      trailing={<GhostButton label="Edit veterinary" onClick={onEdit} />}
     >
-      <AsyncRegion
-        state={vet}
-        what="the household's vet"
-        // A profile always resolves to a record, blank or not, so there is no
-        // empty case distinct from "every vet field is unset". The rows below
-        // render those as "Not set", which is the honest shape here: on this
-        // record the gaps ARE the content.
-        isEmpty={() => false}
-        empty={null}
-      >
-        {(profile) => {
-          const hasRegular =
-            [profile.vetClinicName, profile.vetClinicPhone, profile.vetClinicAddress].some(
-              (s) => s.trim() !== '',
-            );
-          const hasEmergency = [
-            profile.emergencyVetClinicName,
-            profile.emergencyVetClinicPhone,
-            profile.emergencyVetClinicAddress,
-          ].some((s) => s.trim() !== '');
-
-          return (
-            <>
-              {!hasRegular && !hasEmergency && (
-                <EmptyHint>
-                  No vet on file for this household. Pick one on the household profile and it
-                  appears here.
-                </EmptyHint>
-              )}
-              <dl className="hdata__facts">
-                <VetRow label="Primary vet" value={profile.vetClinicName} />
-                <VetRow label="Primary vet phone" value={profile.vetClinicPhone} />
-                <VetRow label="Primary vet hours" value={hoursFor(profile.vetClinicId)} />
-                <VetRow label="Primary vet address" value={profile.vetClinicAddress} />
-                <VetRow label="Emergency vet" value={profile.emergencyVetClinicName} />
-                <VetRow label="Emergency vet phone" value={profile.emergencyVetClinicPhone} />
-                <VetRow
-                  label="Emergency vet hours"
-                  value={hoursFor(profile.emergencyVetClinicId)}
-                />
-                <VetRow label="Emergency vet address" value={profile.emergencyVetClinicAddress} />
-              </dl>
-
-              {/* An unlinked household is not an error, but it IS a fact worth
-                  stating: a correction made in the vet bank cannot reach it,
-                  because there is no clinic id to match on. */}
-              {hasRegular && profile.vetClinicId.trim() === '' && (
-                <Banner tone="warning" title="This vet is not linked to the catalog">
-                  <p>
-                    The name and number above are on file, but no clinic is selected, so
-                    correcting this clinic in the vet bank will not update this household.
-                    Re-pick it on the profile to link them.
-                  </p>
-                </Banner>
-              )}
-            </>
-          );
-        }}
-      </AsyncRegion>
-
-      {/* Fail loud, never silent: this record still carries the retired
-          free-text copy, so it is shown rather than dropped, and named as
-          superseded rather than presented as a second opinion. */}
+      {clinics.status === 'loading' && <p className="hdata__notes-lede">Reading the shared clinic catalog…</p>}
+      {clinics.status === 'error' && (
+        <Banner tone="warning" title="The shared clinic catalog didn't load">
+          <p>{clinics.message} The vet on file cannot be shown until it does. It is unchanged.</p>
+        </Banner>
+      )}
+      {vet !== null && <VetFacts vet={vet} />}
+      {/* Fail loud, never silent: the record still carries the retired free
+          text, so it is shown rather than dropped, and named as superseded
+          rather than presented as a second opinion. */}
       {leftovers.length > 0 && (
         <Banner tone="warning" title="Older vet notes are still on this record">
           <p>
-            These were typed here before the vet moved to the household profile. They are not
-            used anywhere and are not kept up to date. The migration moves anything the profile
-            is missing; whatever is left below is a duplicate or a conflict to resolve by hand.
+            These were typed before the vet was chosen from the shared bank. They are not used
+            anywhere and are not kept up to date. The migration moves anything the record is
+            missing; whatever is left below is a duplicate or a conflict to resolve by hand.
           </p>
           <dl className="hdata__facts">
             {leftovers.map((field) => (
@@ -469,7 +389,36 @@ function VeterinarySection({
     </DenPanel>
   );
 }
-
+function VetFacts({ vet }: { vet: HouseholdVet }) {
+  return (
+    <>
+      <dl className="hdata__facts">
+        <VetRow label="Primary vet" value={vet.primary.name} />
+        <VetRow label="Primary vet phone" value={vet.primary.phone} />
+        <VetRow label="Primary vet hours" value={vet.primary.hours} />
+        <VetRow label="Primary vet address" value={vet.primary.address} />
+        <VetRow label="Emergency vet" value={vet.emergency.name} />
+        <VetRow label="Emergency vet phone" value={vet.emergency.phone} />
+        <VetRow label="Emergency vet hours" value={vet.emergency.hours} />
+        <VetRow label="Emergency vet address" value={vet.emergency.address} />
+      </dl>
+      {vet.primary.dangling && (
+        <Banner tone="warning" title="This household's vet no longer exists">
+          <p>The record points at a clinic removed from the catalog. Pick the vet again.</p>
+        </Banner>
+      )}
+      {hasVet(vet.primary) && !vet.primary.linked && (
+        <Banner tone="warning" title="This vet is not linked to the catalog">
+          <p>
+            The name and number above are on file, but no clinic is selected, so correcting this
+            clinic in the vet clinics manager will not update this household. Pick it from the
+            bank to link them.
+          </p>
+        </Banner>
+      )}
+    </>
+  );
+}
 function VetRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="hdata__fact">
@@ -480,7 +429,6 @@ function VetRow({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-
 /** Section-shaped placeholders while the read is in flight. Claims no values, only shape. */
 function HouseholdSkeleton() {
   return (

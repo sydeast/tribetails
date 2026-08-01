@@ -49,13 +49,20 @@ const CARE_FIELDS = [
  * an add/edit vet info box to the pet profile. It may be shown READ-ONLY on the
  * Kin, but never as an entry box there."
  *
- * The canonical household vet is `kinfolk.vetClinicName` / `vetClinicPhone` /
- * `vetClinicAddress`, edited and displayed on the household
- * (`screens/KinfolkProfile.tsx`). Android already complies, see the matching
- * note at `DirectoryViewModel.kt:1067` ("vetInfo has no setter: vet is read-only
- * on the Kin (single-source on Kinfolk, 1D)"); React was the last surface still
- * offering a second, per-pet place to type a vet, which is how a household ends
- * up with two disagreeing vets and no rule about which one is true.
+ * The canonical household vet is `household_data.primaryVetClinicId` and
+ * `emergencyVetClinicId`: a `vet_clinics` id, chosen by search on the Household
+ * Data screen, with the name, phone, address and hours resolved through the
+ * clinic. It is DISPLAYED on the household profile and on the Kin, and authored
+ * in neither.
+ *
+ * This comment used to name `kinfolk.vetClinicName` / `vetClinicPhone` /
+ * `vetClinicAddress` as canonical. That was true of the code when it was
+ * written and is false now: operator ruling 2026-08-01, "vet info lives on
+ * household data, it can be seen on the kin profile", matching the canonical
+ * decision in page-specs 04-kinfolk-profile.md item 3. Those eight kinfolk
+ * fields are no longer written by any surface and are cleared by the A2
+ * migration, because a second populated copy that merely looks authoritative is
+ * the whole defect.
  *
  * The stored `kin.vetInfo` field is deliberately NOT deleted: `KinView.tsx:182`
  * renders it read-only and legacy docs still carry real data (HANDOFF_2026-05-28
