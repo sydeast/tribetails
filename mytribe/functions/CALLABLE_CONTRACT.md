@@ -720,6 +720,54 @@ BEFORE clearing our copy.
   `mapboxRetrieve`, and only then rotates it. A fresh token per keystroke bills
   each keystroke as its own session.
 
+## Bulk booking transitions (admin-gated)
+
+### batchUpdateBookings
+- req `{ ids: string[] /* each 1..200, max 100 */, action: 'APPROVE'|'REJECT'|'CANCEL' }`
+- res `{ ok: true, action, updated: number, failed: Array<{ id: string, error: string }> }`
+- **TWO CALLERS, TWO ID SPACES, resolved in the SAME request.** "A booking" is a
+  different document on each platform, and `ids` may be a mix of both:
+  - kinCares envelope visit ids, `families/{kinfolkId}/bookings/{batchId}/
+    kinCares/{visitId}` (read by the kinfolk portal's `getMyBookings` via
+    `collectionGroup('kinCares')`). Sent by the React admin's Bookings screen
+    (`bookingBulk.ts`'s `envelopeVisitId`, never its `kin_care_sessions` row
+    id) and by android's Notifications quick approve/deny (the notification's
+    `targetId`, stamped as `visitId` by `onBookingsWrite.ts`). APPROVE writes
+    `confirmed`, REJECT/CANCEL write `cancelled` (no distinct rejected state).
+    On a hit, ALSO mirrors onto the paired `kin_care_sessions/vis_{visitId}`
+    doc when one exists (`SCHEDULED`/`CANCELLED`), exactly as
+    `manageBookingSeries`'s own CANCEL path already does. The React admin
+    still writes `kin_care_sessions` directly from the client too; that write
+    is now redundant, not required, and is left alone as the reference path.
+  - `enhanced_bookings/{id}` top-level docs, android's OWN flat booking table
+    (`ServiceModels.kt`'s `EnhancedBooking`; android and web do not share this
+    collection, each platform carries its own row). Sent by android's
+    Bookings/Schedule screen bulk bar (`ScheduleViewScreen.kt`'s
+    `selectableIds`, built from `EnhancedBooking.id`). These docs carry no
+    envelope linkage field, so a hit here is the WHOLE record and only its own
+    `status` is written: APPROVE -> `ACCEPTED`, REJECT/CANCEL -> `REJECTED`.
+    `updatedAt` is written as an ISO-8601 STRING here, never
+    `FieldValue.serverTimestamp()` -- `EnhancedBooking.updatedAt` decodes as a
+    Kotlin `String`, and a Timestamp there is a decode crash, not a type
+    coercion.
+  - Resolution order: `enhanced_bookings` (a direct `getAll`) first, then
+    whatever remains against the `kinCares` collection group. An id found in
+    neither reports `{ id, error: 'not-found' }`.
+- Before 2026-08-01 the handler only ever tried the `kinCares` space. Every id
+  android's Bookings screen bulk bar has ever sent was `enhanced_bookings`
+  shaped, so every one came back `not-found` and the bulk action was a no-op
+  wearing a success banner (android's own quick-approve/deny on Notifications
+  already sent the right-shaped id and worked; the bulk screen's ids were the
+  broken path). See `test/batchUpdateBookings.test.ts`.
+- Idempotent per id: a doc already in the target status counts as `updated`
+  without a redundant write. Per-id failures (unknown id, a write that throws)
+  collect into `failed` rather than aborting the whole batch.
+- Audit `BOOKING_BATCH_ACTION`, `targetCollection` reported as `kinCares`,
+  `enhanced_bookings` or `mixed` depending on which id space(s) the batch
+  actually resolved.
+- Mirrors: `auntieos-admin/src/api/bookingsWrite.ts` + `src/lib/bookingBulk.ts`
+  (React), `android .../data/repository/AuntieRepository.kt` (`batchUpdateBookings`).
+
 ## Booking notes (admin + kinfolk)
 
 Two threads on one visit, at

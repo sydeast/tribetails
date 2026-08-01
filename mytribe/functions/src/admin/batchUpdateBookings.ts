@@ -12,22 +12,45 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 /**
  * Stage 2 tail: apply ONE booking transition to many individual visits at once.
  *
- * Individual bookings are the per-visit kinCare docs that live under
- * `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}` (written by
- * requestBooking, read by getMyBookings via collectionGroup('kinCares')). The
- * existing single/series transition (see manageBookingSeries) flips the visit's
- * `status` field: APPROVE -> 'confirmed', CANCEL -> 'cancelled'. This batch
- * callable applies the SAME transition to each id supplied. REJECT terminates a
- * still-pending request and maps to 'cancelled' (the codebase has no distinct
- * 'rejected' status value), but is logged/audited as a REJECT so the intent is
- * preserved in the trail.
+ * TWO CALLERS, TWO ID SPACES, because "a booking" is a different document on
+ * each platform:
  *
- * Ids are flat visit ids resolved via collectionGroup('kinCares'); the handler
- * does not require the caller to know each visit's parent family/batch.
+ *   kinCares envelope visits, `families/{kinfolkId}/bookings/{batchId}/kinCares
+ *   /{visitId}` (written by requestBooking, read by the household's own
+ *   getMyBookings via collectionGroup('kinCares')). This is what the React
+ *   admin's Bookings screen sends (`bookingBulk.ts`'s `envelopeVisitId`, never
+ *   its `kin_care_sessions` row id), and what android's Notifications quick
+ *   approve/deny sends (the notification's `targetId`, stamped as `visitId` by
+ *   `onBookingsWrite.ts`). On a hit, the same transition the existing
+ *   single/series path uses (see manageBookingSeries) is mirrored onto the
+ *   paired `kin_care_sessions/vis_{visitId}` doc when one exists, exactly as
+ *   manageBookingSeries's own CANCEL path already does -- so this callable
+ *   writes both sides of the split itself, rather than relying on a caller to
+ *   duplicate the write (the React admin still writes `kin_care_sessions`
+ *   directly today too; that write is now redundant, not required, and is
+ *   left alone since it is the reference path).
  *
- * Idempotent per id: if a visit is already in the target status it is reported
- * as updated without a redundant write. Per-id failures (missing id, etc.) are
- * collected into `failed` rather than aborting the whole batch.
+ *   `enhanced_bookings/{id}` top-level docs -- android's OWN flat booking
+ *   table (`ServiceModels.kt`'s `EnhancedBooking`; "Android bookings persist
+ *   as EnhancedBooking docs (web uses KinCareSession); each platform carries
+ *   its own"). This is what android's Bookings/Schedule screen bulk bar sends
+ *   (`ScheduleViewScreen.kt`'s `selectableIds`, built from `EnhancedBooking.id`).
+ *   These docs carry no envelope linkage field at all (approveBooking's
+ *   optional `incoming: IncomingKinCare?` parameter that would supply one is
+ *   never actually wired from any android call site today), so a hit here is
+ *   the WHOLE record: only its own `status` is written, one-sided.
+ *
+ * Before this fix the handler only ever tried the first space. Every id
+ * android's Bookings screen bulk bar has ever sent was `enhanced_bookings`
+ * shaped, so every one came back `not-found` and the action was a no-op
+ * wearing a success banner (android's own quick-approve/deny on Notifications
+ * already sent the right-shaped id and worked; the bulk screen's ids were the
+ * broken path).
+ *
+ * Idempotent per id: if a doc is already in the target status it is reported
+ * as updated without a redundant write. Per-id failures (missing id, a write
+ * that throws, etc.) are collected into `failed` rather than aborting the
+ * whole batch.
  */
 const Args = z.object({
   ids: z.array(z.string().min(1).max(200)).min(1).max(100),
@@ -41,9 +64,19 @@ export interface BatchUpdateBookingsResult {
   failed: Array<{ id: string; error: string }>;
 }
 
-function targetStatus(action: 'APPROVE' | 'REJECT' | 'CANCEL'): string {
-  // Mirrors manageBookingSeries: APPROVE confirms, REJECT/CANCEL terminate.
+/** kinCares envelope + kin_care_sessions mirror status. APPROVE confirms, REJECT/CANCEL terminate. */
+function kinCareTargetStatus(action: 'APPROVE' | 'REJECT' | 'CANCEL'): string {
   return action === 'APPROVE' ? 'confirmed' : 'cancelled';
+}
+
+/** kin_care_sessions uses its own (uppercase) status vocabulary; see bookingFormat.ts. */
+function sessionMirrorStatus(action: 'APPROVE' | 'REJECT' | 'CANCEL'): string {
+  return action === 'APPROVE' ? 'SCHEDULED' : 'CANCELLED';
+}
+
+/** android's EnhancedBooking status enum (ServiceModels.kt): DRAFT, ACCEPTED, REJECTED, COMPLETED. */
+function enhancedBookingTargetStatus(action: 'APPROVE' | 'REJECT' | 'CANCEL'): string {
+  return action === 'APPROVE' ? 'ACCEPTED' : 'REJECTED';
 }
 
 export async function batchUpdateBookingsHandler(
@@ -65,38 +98,94 @@ export async function batchUpdateBookingsHandler(
     throw err;
   }
 
-  const wanted = targetStatus(args.action);
+  const requestedIds = Array.from(new Set(args.ids));
 
-  // Resolve every requested id once via the collection group. Build an id ->
-  // doc-ref map so each id's parent family/batch is recovered without the
-  // caller supplying it.
-  const cgSnap = await db().collectionGroup('kinCares').get();
-  const byId = new Map<string, { ref: FirebaseFirestore.DocumentReference; status: string }>();
-  for (const d of cgSnap.docs) {
-    const data = d.data() as { status?: string };
-    byId.set(d.id, { ref: d.ref, status: data.status ?? 'requested' });
+  // Phase 1: try android's native enhanced_bookings table directly -- each id
+  // IS a doc, no envelope indirection to resolve. One getAll, not a scan, and
+  // cheap even at the 100-id cap.
+  const enhancedRefs = requestedIds.map((id) => db().collection('enhanced_bookings').doc(id));
+  const enhancedSnaps = await db().getAll(...enhancedRefs);
+  const enhancedById = new Map<string, { ref: FirebaseFirestore.DocumentReference; status: string }>();
+  enhancedSnaps.forEach((snap, i) => {
+    if (snap.exists) {
+      const data = snap.data() as { status?: string };
+      enhancedById.set(requestedIds[i], { ref: snap.ref, status: data.status ?? 'DRAFT' });
+    }
+  });
+
+  // Phase 2: whatever isn't an enhanced_bookings id resolves as a kinCares
+  // envelope visit id (web's Bookings screen, android's Notifications quick
+  // approve/deny). Skipped entirely once every id already resolved in phase
+  // 1, so an all-android batch never pays for the collection-group scan.
+  const remaining = requestedIds.filter((id) => !enhancedById.has(id));
+  const kinCareById = new Map<string, { ref: FirebaseFirestore.DocumentReference; status: string }>();
+  if (remaining.length > 0) {
+    const cgSnap = await db().collectionGroup('kinCares').get();
+    for (const d of cgSnap.docs) {
+      const data = d.data() as { status?: string };
+      kinCareById.set(d.id, { ref: d.ref, status: data.status ?? 'requested' });
+    }
   }
 
-  const requestedIds = Array.from(new Set(args.ids));
+  const kinCareWanted = kinCareTargetStatus(args.action);
+  const sessionMirrorWanted = sessionMirrorStatus(args.action);
+  const enhancedWanted = enhancedBookingTargetStatus(args.action);
+  // ISO-8601 STRING, deliberately not FieldValue.serverTimestamp(): android's
+  // EnhancedBooking.updatedAt decodes as a Kotlin String, and a Timestamp
+  // there is a decode crash, not a type coercion.
+  const nowIso = new Date().toISOString();
+
   let updated = 0;
+  let enhancedResolved = 0;
+  let kinCareResolved = 0;
   const failed: Array<{ id: string; error: string }> = [];
 
   for (const id of requestedIds) {
-    const hit = byId.get(id);
+    const enhancedHit = enhancedById.get(id);
+    if (enhancedHit) {
+      enhancedResolved += 1;
+      try {
+        if (enhancedHit.status === enhancedWanted) {
+          // Idempotent: already in target state, count as updated, skip write.
+          updated += 1;
+          continue;
+        }
+        await enhancedHit.ref.set(
+          { status: enhancedWanted, updatedAt: nowIso, lastModifiedBy: uid },
+          { merge: true },
+        );
+        updated += 1;
+      } catch (err) {
+        failed.push({ id, error: (err as Error)?.message ?? 'write-failed' });
+      }
+      continue;
+    }
+
+    const hit = kinCareById.get(id);
     if (!hit) {
       failed.push({ id, error: 'not-found' });
       continue;
     }
+    kinCareResolved += 1;
     try {
-      if (hit.status === wanted) {
-        // Idempotent: already in target state, count as updated, skip write.
-        updated += 1;
-        continue;
+      if (hit.status !== kinCareWanted) {
+        await hit.ref.set(
+          { status: kinCareWanted, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid },
+          { merge: true },
+        );
       }
-      await hit.ref.set(
-        { status: wanted, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid },
-        { merge: true },
-      );
+      // Mirror onto kin_care_sessions the same way manageBookingSeries's own
+      // CANCEL path already does: only when the paired session doc exists (a
+      // still-pending request that was never approved has none, and the
+      // deterministic id is `vis_{visitId}`, minted by approveBookingSeriesCore).
+      const sessionRef = db().collection('kin_care_sessions').doc(`vis_${id}`);
+      const sessionSnap = await sessionRef.get();
+      if (sessionSnap.exists) {
+        await sessionRef.set(
+          { status: sessionMirrorWanted, updatedAt: FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+      }
       updated += 1;
     } catch (err) {
       failed.push({ id, error: (err as Error)?.message ?? 'write-failed' });
@@ -112,13 +201,20 @@ export async function batchUpdateBookingsHandler(
     severity: 'info',
     actorRole: 'AUNTIE',
     actorUid: uid,
-    targetCollection: 'kinCares',
+    targetCollection:
+      enhancedResolved > 0 && kinCareResolved > 0
+        ? 'mixed'
+        : enhancedResolved > 0
+          ? 'enhanced_bookings'
+          : 'kinCares',
     description: `Batch ${args.action} on ${requestedIds.length} booking(s): ${updated} updated, ${failed.length} failed`,
     payload: {
       action: args.action,
       requested: requestedIds.length,
       updated,
       failedIds: failed.map((f) => f.id),
+      enhancedBookingIds: enhancedResolved,
+      kinCareVisitIds: kinCareResolved,
     },
   }).catch((err) => {
     logEvent({

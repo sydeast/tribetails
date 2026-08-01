@@ -133,7 +133,9 @@ export const AUDIT_EVENTS = {
   CANCEL_BOOKING_SERIES: 'CANCEL_BOOKING_SERIES',
   // Batch transition of N individual booking visits at once
   // (batchUpdateBookings callable): APPROVE -> confirmed, REJECT/CANCEL ->
-  // cancelled, applied per-id and audited as one batch action.
+  // cancelled (kinCares envelope ids, mirrored onto kin_care_sessions), or
+  // APPROVE -> ACCEPTED, REJECT/CANCEL -> REJECTED (android's native
+  // enhanced_bookings ids). Applied per-id and audited as one batch action.
   BOOKING_BATCH_ACTION: 'BOOKING_BATCH_ACTION',
   // B6: admin manually blocks a window so kinfolk can't book it (createBlockedTimeSlot).
   CREATE_BLOCKED_TIME_SLOT: 'CREATE_BLOCKED_TIME_SLOT',
