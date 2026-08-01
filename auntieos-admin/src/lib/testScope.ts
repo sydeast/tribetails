@@ -44,6 +44,26 @@ export const SCOPED_BY_KINFOLK: ReadonlySet<string> = new Set([
  */
 export const SCOPED_BY_DOC_ID: ReadonlySet<string> = new Set(['kinfolk']);
 
+/**
+ * Collections whose own-tribe key is a field, but NOT the `kinfolkId` every
+ * other collection uses.
+ *
+ * There is exactly one, and it is not a style choice: `generated_drafts` docs
+ * are written by `web/functions/generate.js`, which predates the camelCase
+ * convention, so the household FK on those documents is spelled `kinfolk_id`.
+ * `mytribe/firestore.rules:818` keys its sandbox branch off that exact spelling
+ * (`resource.data.kinfolk_id == testScope()`), and its own comment states the
+ * rule alone is not enough: an UNFILTERED list is still denied, so the client
+ * query has to carry the predicate. This map is the client half of that.
+ *
+ * Adding a path here needs the same check the set above documents: confirm the
+ * field is really on the document, or the query returns zero rows instead of
+ * denying, which is the silent-empty failure this module exists to prevent.
+ */
+export const SCOPED_BY_ALT_FIELD: ReadonlyMap<string, string> = new Map([
+  ['generated_drafts', 'kinfolk_id'],
+]);
+
 /** Sentinel field name meaning "the document id"; firestore.ts turns this into
  *  a `documentId()` FieldPath, which is the only way to filter on doc id. */
 export const DOC_ID_FIELD = '__name__';
@@ -148,7 +168,7 @@ export function applyTestScope(spec: CollectionSpec): CollectionSpec {
     ? SCOPE_FIELD
     : SCOPED_BY_DOC_ID.has(spec.path)
       ? DOC_ID_FIELD
-      : null;
+      : (SCOPED_BY_ALT_FIELD.get(spec.path) ?? null);
   if (!field) return spec;
 
   const existing = spec.filters ?? [];

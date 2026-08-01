@@ -267,11 +267,28 @@ Blocked behind the same backend gaps as web was: no billing-arrangement field, n
 communication-preferences field, no per-visit location field, and no support for
 multiple visits per day. Those are schema additions in `requestBooking.ts`.
 
-### D2. Twelve Home widgets exist on Android and not on web
+### D2. Twelve Home widgets exist on Android and not on web. DONE 2026-08-01
 
-Feature work, not a defect. Size L. Worth sequencing after F1, because the
-operator ruling on whether the widget dashboard was the intended pivot decides
-whether this is 12 ports or a redesign.
+Closed by the D2 port. The operator ruled that waiting on the F1 re-mock was the
+wrong call and that parity plus the shipped design system was enough to build
+from, so all twelve were ported as they stand on the phone: the stat row,
+Today's Pack, KinTales pending, Cash Flow, Gatekeeper, Weather Watchdog, Heat
+Stroke Index, Weekly capacity, Overdue visits, Kin by type, Frequent flyers and
+Holiday runway.
+
+The React admin now draws all nineteen keys. `WEB_WIDGETS` is a total record
+over `DashKey`, so a key added to the model cannot ship without a component, and
+the web-only seven-card default is gone: an un-customized operator now sees the
+same board on both surfaces.
+
+Home is NOT redesigned by this. Whether the widget dashboard is the Home the
+product wants is still F1's question, and the port does not answer it.
+
+Not ported, and named rather than left as a silent gap: the in-field lifecycle
+buttons on Today's Pack (On My Way / Arrived / Departed). Each drives android's
+foreground `LocationTrackingService` and a local `VisitNotifier` notification,
+neither of which a browser tab has. Acting on a visit on this surface goes
+through Auntie Time, as it always has.
 
 ---
 
@@ -302,8 +319,15 @@ Work that cannot start correctly until a ruling or an asset arrives.
 
 Both existing Home mocks are rejected, and the spec's cited replacement
 (`auntieos-redesign.html`) is not in the repo. What shipped is a 19-key widget
-dashboard unrelated to the spec's stat-row baseline. Highest-urgency re-mock: it
-also gates D2.
+dashboard unrelated to the spec's stat-row baseline. Still open, and still the
+highest-urgency re-mock.
+
+NO LONGER GATES D2. The operator ruled on 2026-08-01 that the parity was worth
+building without waiting, so the twelve widgets were ported onto the dashboard
+as it stands. That decision unblocked D2; it did not answer F1. A re-mock that
+changes the concept now changes nineteen cards on two surfaces rather than
+nineteen on one, which raises the cost of the answer without changing the
+question.
 
 ### F2. Invoice Detail re-mock
 

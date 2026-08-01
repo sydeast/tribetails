@@ -3,6 +3,7 @@ import {
   applyTestScope,
   isSuppressedInTestMode,
   setTestScope,
+  SCOPED_BY_ALT_FIELD,
   SCOPED_BY_KINFOLK,
   SUPPRESSED_IN_TEST_MODE,
 } from './testScope';
@@ -141,6 +142,35 @@ describe('isSuppressedInTestMode', () => {
     for (const path of ['sms_messages', 'emails', 'calls_log', 'voicemails']) {
       expect(isSuppressedInTestMode(path)).toBe(true);
     }
+  });
+  it('scopes generated_drafts by its own snake_case kinfolk_id, not by kinfolkId', () => {
+    // `generated_drafts` docs are written by web/functions/generate.js, which
+    // predates the camelCase convention, and mytribe/firestore.rules:818 keys
+    // its sandbox branch off that exact spelling. Scoping this collection by
+    // `kinfolkId` would return ZERO rows instead of denying, which is the
+    // silent-empty failure this module exists to prevent, and Home's KinTales
+    // card would read "all caught up" over drafts the operator has waiting.
+    setTestScope('test-kinfolk-001');
+    const spec: CollectionSpec = {
+      path: 'generated_drafts',
+      order: ['createdOn', 'desc'],
+      max: 50,
+    };
+    expect(applyTestScope(spec).filters).toEqual([['kinfolk_id', '==', 'test-kinfolk-001']]);
+  });
+  it('leaves generated_drafts unfiltered for a real admin', () => {
+    setTestScope(null);
+    const spec: CollectionSpec = {
+      path: 'generated_drafts',
+      order: ['createdOn', 'desc'],
+      max: 50,
+    };
+    expect(applyTestScope(spec).filters).toBeUndefined();
+  });
+  it('keeps the alt-field map to the one collection that genuinely needs it', () => {
+    // Every other collection carries `kinfolkId`. An entry added here without
+    // re-reading the documents would filter on a field that is not there.
+    expect([...SCOPED_BY_ALT_FIELD.entries()]).toEqual([['generated_drafts', 'kinfolk_id']]);
   });
   it('suppresses exactly the collections rules deny a test admin outright', () => {
     // Do not diverge without re-auditing firestore.rules: an entry added here
