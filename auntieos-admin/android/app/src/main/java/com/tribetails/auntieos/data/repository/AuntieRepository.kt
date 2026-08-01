@@ -1,6 +1,10 @@
 package com.tribetails.auntieos.data.repository
 
 import com.tribetails.auntieos.BuildConfig
+import com.tribetails.auntieos.data.contracts.BatchUpdateBookingsArgs
+import com.tribetails.auntieos.data.contracts.ManageBookingSeriesArgs
+import com.tribetails.auntieos.data.contracts.decodeBatchUpdateBookingsResult
+import com.tribetails.auntieos.data.contracts.decodeManageBookingSeriesResult
 import com.tribetails.auntieos.domain.withSandboxScope
 import com.tribetails.auntieos.domain.RecentSend
 import com.tribetails.auntieos.domain.decodeRecentSends
@@ -1451,11 +1455,10 @@ class AuntieRepository(
      */
     suspend fun batchUpdateBookings(ids: List<String>, action: String): Result<BatchBookingResult> = runCatching {
         authGate.ensureAuthenticated()
+        val args = BatchUpdateBookingsArgs(ids = ids, action = action)
+        val raw = functions.getHttpsCallable("batchUpdateBookings").call(args.toPayload()).await().data
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("batchUpdateBookings")
-            .call(mapOf("ids" to ids, "action" to action))
-            .await().data as? Map<String, Any?>
-        decodeBatchBookingResult(raw, action)
+        decodeBatchBookingResult(raw as? Map<String, Any?>, action)
     }.onFailure { AuntieLog.e("batchUpdateBookings ($action) failed for ${ids.size} id(s)", it) }
 
     /**
@@ -2482,22 +2485,43 @@ class AuntieRepository(
         Unit
     }.onFailure { AuntieLog.e("setMediaProfilePhoto failed for $mediaFileId", it) }
 
-    /** 1G: approve/cancel a whole booking series (parent envelope + all child
-     *  visits). Returns the full [ManageSeriesResult] so the caller can fail loud
-     *  on a partial failure (failedVisits > 0). A response missing the
-     *  affectedVisits field is an error, not a silent 0. */
+    /**
+     * 1G: approve/cancel a whole booking series (parent envelope + all child
+     * visits). Returns the full [ManageSeriesResult] so the caller can fail loud
+     * on a partial failure (failedVisits > 0).
+     *
+     * DRIFT FIX (ADR-0003 follow-up): `ok`, `action` and `batchId` used to be
+     * decoded off the raw map and then never looked at again; this used to
+     * also throw specifically when `affectedVisits` was absent. Both are
+     * replaced by the generated fail-soft decoder plus explicit checks below,
+     * the same posture every other generated decoder in this app takes (see
+     * ADR-0001): `ok` is checked (`false` fails the call, same as
+     * [KinCareRepository.rescheduleBooking]); `action`/`batchId` are verified
+     * to echo what was sent, since that echo is the only thing that tells this
+     * repository a response belongs to the request it just made. The server's
+     * OWN `Result` schema still requires `affectedVisits`
+     * (`admin/manageBookingSeries.ts`) and logs+alerts server-side
+     * (`callable.response.contractViolation`) on any response that ships
+     * without it, so a client-side throw on that one field bought nothing a
+     * write that already committed needed.
+     */
     suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String): Result<ManageSeriesResult> = runCatching {
         authGate.ensureAuthenticated()
+        val args = ManageBookingSeriesArgs(action = action, kinfolkId = kinfolkId, batchId = batchId)
+        val raw = functions.getHttpsCallable("manageBookingSeries").call(args.toPayload()).await().data
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("manageBookingSeries")
-            .call(mapOf("action" to action, "kinfolkId" to kinfolkId, "batchId" to batchId))
-            .await().data as? Map<String, Any?> ?: error("manageBookingSeries: non-map payload")
-        val affected = (raw["affectedVisits"] as? Number)?.toInt()
-            ?: error("manageBookingSeries: response missing affectedVisits")
+        val result = decodeManageBookingSeriesResult(raw as? Map<String, Any?>)
+        check(result.ok) { "manageBookingSeries did not confirm the $action (ok=false) for series $batchId" }
+        check(result.action == action) {
+            "manageBookingSeries confirmed action '${result.action}' but '$action' was requested"
+        }
+        check(result.batchId == batchId) {
+            "manageBookingSeries confirmed a different series (${result.batchId}) than requested ($batchId)"
+        }
         ManageSeriesResult(
-            affectedVisits = affected,
-            failedVisits = (raw["failedVisits"] as? Number)?.toInt() ?: 0,
-            sessionsCreated = (raw["sessionsCreated"] as? Number)?.toInt() ?: 0,
+            affectedVisits = result.affectedVisits.toInt(),
+            failedVisits = result.failedVisits.toInt(),
+            sessionsCreated = result.sessionsCreated.toInt(),
         )
     }.onFailure { AuntieLog.e("manageBookingSeries failed", it) }
 
@@ -2768,18 +2792,28 @@ internal fun decodeArchivedCount(raw: Map<String, Any?>?): Int =
     (raw?.get("archived") as? Number)?.toInt() ?: 0
 
 /**
- * Pure decode of the batchUpdateBookings callable payload into [BatchBookingResult].
- * Tolerant of a missing/short payload: updated defaults to 0 and failed to empty,
- * and the echoed action falls back to the requested [requestedAction]. Pure; unit-tested.
+ * Decode of the batchUpdateBookings callable payload into [BatchBookingResult],
+ * delegating to the generated `decodeBatchUpdateBookingsResult`
+ * (ADR-0003 follow-up) rather than re-parsing the raw map by hand. [BatchBookingResult]
+ * stays a distinct, app-facing type (its `failedCount` convenience getter has
+ * callers this generated type does not need to know about), but nothing here
+ * re-derives a cast or a fallback the generated decoder already gets right.
+ *
+ * Two things this wrapper still does that the generated decoder alone would
+ * not: the echoed `action` falls back to the requested [requestedAction] when
+ * the server's is blank (a resilience carve predating the generated decoder,
+ * kept because REJECT/CANCEL currently share one stored status server-side and
+ * a caller branching on `action` needs its own request echoed if the server
+ * ever regresses on this), and a failure entry with no `id` is dropped rather
+ * than kept as an empty string, because an id the operator never sees is an id
+ * they cannot act on.
  */
 internal fun decodeBatchBookingResult(raw: Map<String, Any?>?, requestedAction: String): BatchBookingResult {
-    val action = (raw?.get("action") as? String)?.ifBlank { requestedAction } ?: requestedAction
-    val updated = (raw?.get("updated") as? Number)?.toInt() ?: 0
-    val failed = (raw?.get("failed") as? List<*>).orEmpty().mapNotNull { item ->
-        val m = item as? Map<*, *> ?: return@mapNotNull null
-        val id = m["id"] as? String ?: return@mapNotNull null
-        BatchBookingFailure(id = id, error = m["error"] as? String ?: "")
-    }
-    return BatchBookingResult(action = action, updated = updated, failed = failed)
+    val generated = decodeBatchUpdateBookingsResult(raw)
+    val action = generated.action.ifBlank { requestedAction }
+    val failed = generated.failed
+        .filter { it.id.isNotBlank() }
+        .map { BatchBookingFailure(id = it.id, error = it.error) }
+    return BatchBookingResult(action = action, updated = generated.updated.toInt(), failed = failed)
 }
 

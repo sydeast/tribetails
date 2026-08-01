@@ -26,9 +26,11 @@ import {
   cancelBooking,
   batchUpdateBookings,
   type BatchBookingAction,
-  type BatchUpdateBookingsResult,
-  type CreateMultiDateBookingResult,
 } from '../api/bookingsWrite';
+import type {
+  BatchUpdateBookingsResult,
+  CreateMultiDateBookingRequestResult,
+} from '../contracts/bookingContracts.generated';
 import {
   planBulkAction,
   mergeBulkResults,
@@ -229,7 +231,7 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
     setSelectedIds(keep);
   }
 
-  function handleCreated(result: CreateMultiDateBookingResult) {
+  function handleCreated(result: CreateMultiDateBookingRequestResult) {
     setShowCreate(false);
     setCreateNotice(
       `Booking request created: ${result.visitCount} visit${result.visitCount === 1 ? '' : 's'} submitted for approval. ` +

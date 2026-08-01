@@ -5,13 +5,18 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BookingDetail } from './BookingDetail';
-import type { BookingDto, GetMyBookingsResult } from '../api/types';
+import type {
+  AddBookingNoteResult,
+  GetMyBookingsResult,
+  GetMyBookingsResultLiveVisit,
+  RequestBookingCancellationResult,
+} from '../contracts/bookingContracts.generated';
 
 const mocks = vi.hoisted(() => ({
   getMyBookings: vi.fn<() => Promise<GetMyBookingsResult>>(),
-  addBookingNote: vi.fn<(kinfolkId: string, batchId: string, visitId: string, body: string) => Promise<{ noteId: string }>>(),
+  addBookingNote: vi.fn<(kinfolkId: string, batchId: string, visitId: string, body: string) => Promise<AddBookingNoteResult>>(),
   requestBookingCancellation: vi.fn<
-    (kinfolkId: string, batchId: string, visitId: string, reason?: string) => Promise<{ ok: true; visitId: string; alreadyPending: boolean }>
+    (kinfolkId: string, batchId: string, visitId: string, reason?: string) => Promise<RequestBookingCancellationResult>
   >(),
 }));
 
@@ -32,7 +37,7 @@ vi.mock('@tanstack/react-router', () => ({
   Link: ({ children }: { children?: ReactNode }) => <a>{children}</a>,
 }));
 
-function booking(overrides: Partial<BookingDto> = {}): BookingDto {
+function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBookingsResultLiveVisit {
   return {
     id: 'v1',
     batchId: 'b1',

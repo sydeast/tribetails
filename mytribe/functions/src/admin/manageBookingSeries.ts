@@ -9,6 +9,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { approveBookingSeriesCore } from './approveBookingSeriesCore';
+import { validateResponse } from '../lib/callableResponse';
 
 /**
  * 1G (Decision 11): series-level approve/cancel on the parent booking envelope.
@@ -20,26 +21,28 @@ import { approveBookingSeriesCore } from './approveBookingSeriesCore';
  * status + counts in a single transaction, so an admin never has to act on each
  * visit individually. Audit-bound server-side (matches triageOrphanReport).
  */
-const Args = z.object({
+export const Args = z.object({
   action: z.enum(['APPROVE', 'CANCEL']),
   kinfolkId: z.string().min(1).max(120),
   batchId: z.string().min(1).max(120),
 });
 
-export interface ManageBookingSeriesResult {
-  ok: true;
-  action: 'APPROVE' | 'CANCEL';
-  batchId: string;
-  affectedVisits: number;
-  /** Sessions created on APPROVE (idempotent: a re-approve creates 0). */
-  sessionsCreated: number;
-  /** Visits whose write failed and were skipped (fail-loud; 0 = full success). */
-  failedVisits: number;
-}
+export const Result = z
+  .object({
+    ok: z.literal(true),
+    action: z.enum(['APPROVE', 'CANCEL']),
+    batchId: z.string().min(1),
+    affectedVisits: z.number().int().nonnegative(),
+    /** Sessions created on APPROVE (idempotent: a re-approve creates 0). */
+    sessionsCreated: z.number().int().nonnegative(),
+    /** Visits whose write failed and were skipped (fail-loud; 0 = full success). */
+    failedVisits: z.number().int().nonnegative(),
+  })
+  .strict();
 
 export async function manageBookingSeriesHandler(
   req: CallableRequest<unknown>,
-): Promise<ManageBookingSeriesResult> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -68,14 +71,14 @@ export async function manageBookingSeriesHandler(
     if (!r.found) {
       throw new HttpsError('not-found', `Booking series '${args.batchId}' not found.`);
     }
-    return {
+    return validateResponse('manageBookingSeries', Result, {
       ok: true,
       action: 'APPROVE',
       batchId: args.batchId,
       affectedVisits: r.affectedVisits,
       sessionsCreated: r.sessionsCreated,
       failedVisits: r.failedVisits,
-    };
+    });
   }
 
   // CANCEL path: flip every child to 'cancelled' and cancel its linked session.
@@ -143,7 +146,14 @@ export async function manageBookingSeriesHandler(
     extra: { batchId: args.batchId, affectedVisits: succeeded, failedVisits },
   });
 
-  return { ok: true, action: args.action, batchId: args.batchId, affectedVisits: succeeded, sessionsCreated: 0, failedVisits };
+  return validateResponse('manageBookingSeries', Result, {
+    ok: true,
+    action: args.action,
+    batchId: args.batchId,
+    affectedVisits: succeeded,
+    sessionsCreated: 0,
+    failedVisits,
+  });
 }
 
 export const manageBookingSeries = onCall(

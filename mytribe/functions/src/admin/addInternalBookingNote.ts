@@ -8,6 +8,7 @@ import { resolveKinCareRef } from '../lib/resolveKinCareRef';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { sanitizeRichText } from '../lib/richText';
 import { assertNoteWindowOpen } from '../lib/bookingNoteCutoff';
+import { validateResponse } from '../lib/callableResponse';
 
 /**
  * Append a STAFF-ONLY note to
@@ -24,7 +25,7 @@ import { assertNoteWindowOpen } from '../lib/bookingNoteCutoff';
  * alone and any other caller walked past it. Both threads now freeze together
  * and reject with the same typed error.
  */
-const Args = z
+export const Args = z
   .object({
     kinfolkId: z.string().min(1),
     batchId: z.string().min(1).optional(),
@@ -41,9 +42,15 @@ const Args = z
     message: 'Provide batchId+visitId (preferred) or a legacy bookingId.',
   });
 
+export const Result = z
+  .object({
+    noteId: z.string().min(1),
+  })
+  .strict();
+
 export async function addInternalBookingNoteHandler(
   req: CallableRequest<unknown>,
-): Promise<{ noteId: string }> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth!.uid;
   const args = Args.parse(req.data);
@@ -81,7 +88,7 @@ export async function addInternalBookingNoteHandler(
     uid,
     extra: { kinfolkId: args.kinfolkId, batchId: resolved.batchId, visitId: resolved.visitId, noteId: ref.id },
   });
-  return { noteId: ref.id };
+  return validateResponse('addInternalBookingNote', Result, { noteId: ref.id });
 }
 
 export const addInternalBookingNote = onCall(

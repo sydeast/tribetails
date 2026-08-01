@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  createMultiDateBookingRequest,
-  type CreateMultiDateBookingResult,
-} from '../api/bookingsWrite';
+import { createMultiDateBookingRequest } from '../api/bookingsWrite';
+import type { CreateMultiDateBookingRequestResult } from '../contracts/bookingContracts.generated';
 import {
   KINFOLK_QUERY,
   KIN_QUERY,
@@ -61,7 +59,7 @@ import './NewBookingDialog.css';
 interface NewBookingDialogProps {
   onClose: () => void;
   /** Called with the created envelope result once the request lands. */
-  onCreated: (result: CreateMultiDateBookingResult) => void;
+  onCreated: (result: CreateMultiDateBookingRequestResult) => void;
 }
 
 /**

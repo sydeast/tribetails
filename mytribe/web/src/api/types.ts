@@ -66,63 +66,15 @@ export interface GetMyHomeResult {
 }
 
 // ── getMyBookings (functions/src/portal/getMyBookings.ts) ───────────────────
-
-export interface GetMyBookingsRequest {
-  kinfolkId?: string;
-}
-
-export type BookingStatus = 'requested' | 'confirmed' | 'enRoute' | 'active' | 'completed' | 'cancelled';
-export type VisitProgress = 'confirmed' | 'enRoute' | 'active' | 'ended';
-
-export interface BookingDto {
-  id: string;
-  batchId: string | null;
-  kinfolkId: string;
-  status: BookingStatus;
-  serviceType: string | null;
-  title: string | null;
-  startTimeMs: number | null;
-  endTimeMs: number | null;
-  kinIds: string[];
-  kinNames: string[];
-  auntieDisplayName: string | null;
-  auntieAvatarUrl: string | null;
-  notes: string | null;
-  requestedByUid: string | null;
-  createdAtMs: number | null;
-  updatedAtMs: number | null;
-  visitProgress: VisitProgress | null;
-  /** Correlates to `kin_care_sessions/{sessionId}` for GPS route lookup (getMyVisits). */
-  sourceBookingId: string | null;
-  sessionId: string | null;
-  cancelRequested: boolean;
-}
-
-export type EnvelopeStatus = 'requested' | 'partiallyConfirmed' | 'confirmed' | 'inProgress' | 'completed' | 'cancelled';
-
-export interface EnvelopeDto {
-  batchId: string;
-  envelopeStatus: EnvelopeStatus;
-  pattern: 'individual' | 'weekly';
-  serviceName: string | null;
-  kinIds: string[];
-  kinNames: string[];
-  notes: string | null;
-  visitCount: number;
-  confirmedCount: number;
-  completedCount: number;
-  firstStartTimeMs: number | null;
-  lastStartTimeMs: number | null;
-  kinCares: BookingDto[];
-}
-
-export interface GetMyBookingsResult {
-  liveVisit: BookingDto | null;
-  upcoming: BookingDto[];
-  /** Most recent 10, completed/cancelled only. */
-  recent: BookingDto[];
-  envelopes: EnvelopeDto[];
-}
+//
+// The REQUEST is hand-written on purpose (see GetMyBookingsRequest in
+// api/portal.ts, next to the function that sends it): getMyBookings parses
+// its request against a plain TypeScript interface rather than a zod schema,
+// same situation as getMyInvoices, so there is no authority to generate a
+// request type from. The RESPONSE is generated: GetMyBookingsResult and its
+// nested visit/envelope shapes now come from
+// ../contracts/bookingContracts.generated, projected from the server zod
+// schema that validates the response outbound (ADR-0001).
 
 // ── getMyVisits (functions/src/portal/getMyVisits.ts) ───────────────────────
 

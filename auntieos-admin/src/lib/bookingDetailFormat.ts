@@ -1,3 +1,5 @@
+import type { RescheduleBookingArgs } from '../contracts/bookingContracts.generated';
+
 /**
  * Pure display + arithmetic helpers for the Schedule booking detail sheet
  * (`components/BookingDetailModal.tsx`), kept out of the component so the
@@ -124,10 +126,13 @@ export function durationLabel(minutes: number): string {
   return `${hours} hr ${rest} min`;
 }
 
-export interface RescheduleTimes {
-  startTime: string;
-  endTime: string;
-}
+/**
+ * The `{startTime, endTime}` pair `rescheduleBooking` writes, aliased off the
+ * generated `RescheduleBookingArgs` (contracts/bookingContracts.generated.ts)
+ * rather than re-declared, so this stays the same shape the server actually
+ * validates.
+ */
+export type RescheduleTimes = Pick<RescheduleBookingArgs, 'startTime' | 'endTime'>;
 
 /**
  * Build the `{startTime, endTime}` pair `rescheduleBooking` writes, from a

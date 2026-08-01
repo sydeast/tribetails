@@ -18,7 +18,8 @@
  * Kept dependency-free (no React) so it is trivially unit-testable and safe
  * to reuse from any future callsite (e.g. a recurring-visit editor).
  */
-import type { BookingVisitInput, ServiceDto } from '../api/bookingApi';
+import type { ServiceDto } from '../api/bookingApi';
+import type { RequestBookingArgsVisit } from '../contracts/bookingContracts.generated';
 import { formatUsd } from './invoiceFormat';
 
 /** Hard cap so a runaway weekly rule can never create a huge batch. Mirrors RecurringBooking.kt's MAX_RECURRING_VISITS. */
@@ -82,7 +83,7 @@ export interface BuildWeeklyVisitsParams {
  * datetime is strictly in the future (so the server's past-start rejection
  * never trips). Capped at MAX_RECURRING_VISITS. Mirrors `buildWeeklyVisits`.
  */
-export function buildWeeklyVisits(params: BuildWeeklyVisitsParams): BookingVisitInput[] {
+export function buildWeeklyVisits(params: BuildWeeklyVisitsParams): RequestBookingArgsVisit[] {
   const { nowMs, weeklyDays, weeks, time, serviceId, serviceName, priceCents } = params;
   if (weeklyDays.size === 0 || weeks < 1) return [];
 
@@ -91,7 +92,7 @@ export function buildWeeklyVisits(params: BuildWeeklyVisitsParams): BookingVisit
   const startMonth = now.getMonth();
   const startDate = now.getDate();
 
-  const out: BookingVisitInput[] = [];
+  const out: RequestBookingArgsVisit[] = [];
   const totalDays = weeks * 7;
   let offset = 0;
   while (offset < totalDays && out.length < MAX_RECURRING_VISITS) {
@@ -100,7 +101,7 @@ export function buildWeeklyVisits(params: BuildWeeklyVisitsParams): BookingVisit
       const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate(), time.hour, time.minute);
       const ms = dt.getTime();
       if (ms > nowMs) {
-        out.push({ startTimeMs: ms, endTimeMs: null, serviceId, serviceName, priceCents });
+        out.push({ startTimeMs: ms, endTimeMs: null, serviceId, serviceName, priceCents, location: null });
       }
     }
     offset++;
@@ -119,7 +120,7 @@ export function buildVisits(
   dates: readonly Date[],
   time: string,
   service: Pick<ServiceDto, 'id' | 'name' | 'priceCents' | 'priceMinCents'>,
-): BookingVisitInput[] {
+): RequestBookingArgsVisit[] {
   const t = parseHourMinute(time);
   if (t === null) throw new Error('invalid time');
   return dates.map((d) => {
@@ -130,6 +131,7 @@ export function buildVisits(
       serviceId: service.id,
       serviceName: service.name,
       priceCents: service.priceCents ?? service.priceMinCents,
+      location: null,
     };
   });
 }

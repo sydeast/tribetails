@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, useNavigate } from '@tanstack/react-router';
 import { getBusinessClosures, getServiceCatalog, requestBooking } from '../api/bookingApi';
-import type { BookingVisitInput, RequestBookingResult, ServiceDto } from '../api/bookingApi';
+import type { ServiceDto } from '../api/bookingApi';
+import type { RequestBookingArgsVisit, RequestBookingResult } from '../contracts/bookingContracts.generated';
 import { getMyKin } from '../api/portal';
 import type { KinDto } from '../api/types';
 import { useSignOut } from '../lib/auth';
@@ -189,7 +190,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   const resolvedKinIds = allKinMode ? activeKin.map((k) => k.id) : [...selectedKinIds];
 
   // Single source of truth for the weekly series; see the doc comment above.
-  const weeklyPreview: BookingVisitInput[] = useMemo(() => {
+  const weeklyPreview: RequestBookingArgsVisit[] = useMemo(() => {
     if (pattern !== 'weekly' || !selectedService) return [];
     const t = parseHourMinute(visitTime);
     if (t === null || weeklyDays.size === 0 || weekCount < 1) return [];

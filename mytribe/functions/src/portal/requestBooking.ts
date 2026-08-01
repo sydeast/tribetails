@@ -13,6 +13,7 @@ import { resolveDefaultAssignee, type Assignee } from '../lib/defaultAssignee';
 import { resolveKinNames } from '../lib/resolveKinNames';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
+import { validateResponse } from '../lib/callableResponse';
 
 /**
  * #9 (2026-06-08): Auto-confirm repeat kinfolk. When the operator turns on
@@ -148,6 +149,71 @@ const MultiArgs = z.object({
   communication: CommunicationArgs,
 });
 
+/**
+ * ADR-0003's requestBooking decision: COLLAPSE, not union.
+ *
+ * The registry (`scripts/contracts/registry.ts`) models one `args` schema per
+ * callable, and `readModel.ts` refuses anything whose root is not a single
+ * `z.object` (a `z.union` hits its `default` case and throws naming the
+ * construct). `MultiArgs` and `LegacyArgs` above are genuinely two different
+ * shapes, kept exactly as they are: this handler still dispatches on
+ * `Array.isArray(data.visits)` and parses through whichever one matches,
+ * UNCHANGED by anything below.
+ *
+ * `Args` here is a THIRD, separate schema: the superset of both, used ONLY by
+ * the registry for contract generation, never for parsing. Checked against
+ * what actually calls this callable (`mytribe/web/src/api/bookingApi.ts`,
+ * the kinfolk portal's only caller): every live request is `MultiArgs`
+ * shaped. Nothing sends the legacy single-visit shape today; `LegacyArgs`
+ * is dead-letter back-compat for whatever cached client or webhook still
+ * might. A union would document a live fork that does not exist; a superset
+ * documents the one shape clients actually build while still typing the
+ * legacy fields for the caller that needs them.
+ *
+ * SAFETY PROPERTY: every payload `Args` can produce also parses under
+ * `MultiArgs` or `LegacyArgs`. Two fields are deliberately narrower here than
+ * the branch schemas allow, because `readModel.ts` refuses a field that is
+ * both `.nullable()` and `.optional()` (Kotlin's one `T?` cannot tell "key
+ * omitted" from "key sent null", and on a PATCH those differ). Neither
+ * branch here is a patch -- this is a create, so "omitted" and "sent null"
+ * already mean the same thing to the handler -- so narrowing the GENERATED
+ * shape to one of the two costs nothing real:
+ *   - `visits[].endTimeMs` / `priceCents` / `location`: always-present,
+ *     nullable (the generated client always sends the key, `null` when
+ *     there is no value), never omitted.
+ *   - the legacy flat `endTimeMs`: optional, never asserted `null` (a
+ *     generated legacy caller either has an end time or leaves the key out).
+ */
+const ExportedVisitArgs = z
+  .object({
+    startTimeMs: z.number().int().positive(),
+    endTimeMs: z.number().int().positive().nullable(),
+    serviceId: z.string().min(1),
+    serviceName: z.string().min(1).max(120),
+    priceCents: z.number().int().nonnegative().nullable(),
+    location: z.string().trim().min(1).max(120).nullable(),
+  })
+  .strict();
+
+export const Args = z
+  .object({
+    kinfolkId: z.string().optional(),
+    kinIds: z.array(z.string()).optional(),
+    notes: z.string().max(1000).optional(),
+    pattern: z.enum(['individual', 'weekly']).optional(),
+    weeklyDays: z.array(z.number().int().min(0).max(6)).optional(),
+    /** Multi-visit (preferred) shape. Present <=> this is a multi-visit request. */
+    visits: z.array(ExportedVisitArgs).optional(),
+    billing: BillingArgs,
+    communication: CommunicationArgs,
+    /** Legacy single-visit shape. See the header above: no live caller sends this today. */
+    serviceType: z.string().min(1).optional(),
+    title: z.string().optional(),
+    startTimeMs: z.number().int().positive().optional(),
+    endTimeMs: z.number().int().positive().optional(),
+  })
+  .strict();
+
 /** The billing preference as persisted. `null` when the caller stated none. */
 export type BookingBilling = { mode: 'new-invoice' } | null;
 
@@ -163,17 +229,25 @@ export const COMMUNICATION_DEFAULT: BookingCommunication = {
   timeVisibility: false,
 };
 
-interface RequestBookingResult {
-  /** The envelope id (parent `bookings/{batchId}` doc). */
-  batchId: string;
-  /**
-   * Legacy multi-id alias. In the envelope model this is `[batchId]`, callers
-   * that grouped by the returned ids now get the single envelope id.
-   */
-  bookingIds: string[];
-  /** Legacy single-id alias retained for backward-compat callers. */
-  bookingId?: string;
-}
+/**
+ * Both write paths (multi and legacy) return the identical shape, and both
+ * always set `bookingId` -- the interface this replaced marked it optional,
+ * but nothing on this file has ever returned without it, so the schema below
+ * describes what actually ships rather than carrying a `?` no caller needs.
+ */
+export const Result = z
+  .object({
+    /** The envelope id (parent `bookings/{batchId}` doc). */
+    batchId: z.string().min(1),
+    /**
+     * Legacy multi-id alias. In the envelope model this is `[batchId]`, callers
+     * that grouped by the returned ids now get the single envelope id.
+     */
+    bookingIds: z.array(z.string().min(1)).min(1),
+    /** Legacy single-id alias, always `batchId` today. */
+    bookingId: z.string().min(1),
+  })
+  .strict();
 
 /** Normalized per-visit input the envelope writer consumes. */
 export interface NormalizedVisit {
@@ -354,7 +428,7 @@ export async function writeEnvelope(opts: {
  */
 export async function requestBookingHandler(
   req: CallableRequest<unknown>,
-): Promise<RequestBookingResult> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -442,7 +516,7 @@ export async function requestBookingHandler(
       });
     });
     await maybeAutoConfirm(kinfolkId, batchId, uid);
-    return { batchId, bookingIds: [batchId], bookingId: batchId };
+    return validateResponse('requestBooking', Result, { batchId, bookingIds: [batchId], bookingId: batchId });
   }
 
   // Legacy single-visit path, stored as a 1-visit envelope.
@@ -509,7 +583,7 @@ export async function requestBookingHandler(
     });
   });
   await maybeAutoConfirm(kinfolkId, batchId, uid);
-  return { batchId, bookingIds: [batchId], bookingId: batchId };
+  return validateResponse('requestBooking', Result, { batchId, bookingIds: [batchId], bookingId: batchId });
 }
 
 export const requestBooking = onCall(

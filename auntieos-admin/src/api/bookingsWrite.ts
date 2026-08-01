@@ -1,8 +1,27 @@
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { call } from '../lib/fns';
+import type {
+  AddBookingNoteArgs,
+  AddBookingNoteResult,
+  AddInternalBookingNoteArgs,
+  AddInternalBookingNoteResult,
+  BatchUpdateBookingsArgs,
+  BatchUpdateBookingsResult,
+  CreateMultiDateBookingRequestArgs,
+  CreateMultiDateBookingRequestResult,
+  RescheduleBookingArgs,
+  RescheduleBookingResult,
+} from '../contracts/bookingContracts.generated';
 
 /**
+ * `createMultiDateBookingRequest`, `batchUpdateBookings`, `rescheduleBooking`,
+ * `addBookingNote` and `addInternalBookingNote` are typed against
+ * `contracts/bookingContracts.generated.ts` (ADR-0001), not against a hand
+ * transcription of their Zod schemas. `transitionBookingStatus` and
+ * `assignAuntie` are not in that registry yet, so they keep their own local
+ * types below.
+ *
  * The write half of the `kin_care_sessions` surface Bookings.tsx / api/bookings.ts
  * only reads. Every write below is now a CALLABLE. The one direct client patch
  * this module used to make is gone (see 1), and `firestore.rules` no longer
@@ -169,60 +188,6 @@ export async function markBookingCompleted(bookingId: string, completedAtIso: st
   });
 }
 
-/** One visit in a multi-date/recurring booking request. `startTimeMs` is epoch
- *  ms; the caller derives it from a LOCAL date+time (AO-18), so no UTC skew. */
-export interface NewBookingVisit {
-  startTimeMs: number;
-  endTimeMs?: number | null;
-  /** Optional catalog id; when set the server resolves the canonical name+price. */
-  serviceId?: string | null;
-  serviceName: string;
-  /**
-   * WHERE this visit happens, as a free-text label ("Back gate", "the boarding
-   * kennel"), or null for "wherever this household's address says".
-   *
-   * A label rather than an id because this system has no property or location
-   * model: the only addresses that exist are free-text fields on the household
-   * doc. The server's schema takes the same label and REJECTS a blank one, so
-   * "no particular place" is spelled `null`, never `''`.
-   */
-  location?: string | null;
-}
-
-/** How the booking is meant to be billed. See the server's own BillingArgs for
- *  why the union has one member: the wizard's Invoice Options step offers one
- *  choice, and a second here would be a branch nothing can produce. */
-export interface NewBookingBilling {
-  mode: 'new-invoice';
-}
-
-/** What the household is told. Both default false, per the mock. */
-export interface NewBookingCommunication {
-  /** Send a confirmation email for this booking. */
-  emailConfirmation: boolean;
-  /** Show exact start times. Off means the household sees the window instead. */
-  timeVisibility: boolean;
-}
-
-export interface CreateMultiDateBookingArgs {
-  kinfolkId: string;
-  kinIds?: string[];
-  notes?: string;
-  pattern?: 'individual' | 'weekly';
-  weeklyDays?: number[];
-  visits: NewBookingVisit[];
-  /** Omitted entirely by the pre-wizard caller; the server stores null then. */
-  billing?: NewBookingBilling;
-  /** Omitted entirely by the pre-wizard caller; the server stores both false then. */
-  communication?: NewBookingCommunication;
-}
-
-export interface CreateMultiDateBookingResult {
-  batchId: string;
-  visitIds: string[];
-  visitCount: number;
-}
-
 /**
  * createMultiDateBookingRequest (admin callable, AO-25): create a booking
  * request of one or more visits (non-consecutive dates, or a weekly recurrence
@@ -239,25 +204,20 @@ export interface CreateMultiDateBookingResult {
  * the message fail-loud.
  */
 export async function createMultiDateBookingRequest(
-  args: CreateMultiDateBookingArgs,
-): Promise<CreateMultiDateBookingResult> {
-  return call<CreateMultiDateBookingArgs, CreateMultiDateBookingResult>(
+  args: CreateMultiDateBookingRequestArgs,
+): Promise<CreateMultiDateBookingRequestResult> {
+  return call<CreateMultiDateBookingRequestArgs, CreateMultiDateBookingRequestResult>(
     'createMultiDateBookingRequest',
     args,
   );
 }
 
-/** The three transitions `batchUpdateBookings` accepts. */
-export type BatchBookingAction = 'APPROVE' | 'REJECT' | 'CANCEL';
-
-export interface BatchUpdateBookingsResult {
-  ok: true;
-  action: BatchBookingAction;
-  /** How many visits actually reached the target status. */
-  updated: number;
-  /** Per-id failures; the handler collects these instead of aborting the batch. */
-  failed: Array<{ id: string; error: string }>;
-}
+/**
+ * The three transitions `batchUpdateBookings` accepts, aliased off the
+ * generated `BatchUpdateBookingsArgs` rather than re-declared (the
+ * `InvoiceState` convention in `api/invoices.ts`).
+ */
+export type BatchBookingAction = BatchUpdateBookingsArgs['action'];
 
 /**
  * batchUpdateBookings (admin callable): apply ONE transition to many envelope
@@ -276,15 +236,10 @@ export async function batchUpdateBookings(
   ids: string[],
   action: BatchBookingAction,
 ): Promise<BatchUpdateBookingsResult> {
-  return call<{ ids: string[]; action: BatchBookingAction }, BatchUpdateBookingsResult>(
-    'batchUpdateBookings',
-    { ids, action },
-  );
-}
-
-export interface RescheduleBookingResult {
-  ok: true;
-  sessionId: string;
+  return call<BatchUpdateBookingsArgs, BatchUpdateBookingsResult>('batchUpdateBookings', {
+    ids,
+    action,
+  });
 }
 
 /**
@@ -300,10 +255,11 @@ export async function rescheduleBooking(
   startTime: string,
   endTime: string,
 ): Promise<RescheduleBookingResult> {
-  return call<{ sessionId: string; startTime: string; endTime: string }, RescheduleBookingResult>(
-    'rescheduleBooking',
-    { sessionId, startTime, endTime },
-  );
+  return call<RescheduleBookingArgs, RescheduleBookingResult>('rescheduleBooking', {
+    sessionId,
+    startTime,
+    endTime,
+  });
 }
 
 // ── Envelope visit doc: assignment + notes ───────────────────────────────────
@@ -380,10 +336,6 @@ export async function assignAuntie(
   >('assignAuntie', { kinfolkId, batchId, visitId, auntieUid });
 }
 
-export interface AddNoteResult {
-  noteId: string;
-}
-
 /**
  * addBookingNote (portal callable, staff-or-member gated): append a
  * KINFOLK-FACING note to `.../kinCares/{visitId}/notes`.
@@ -408,11 +360,13 @@ export async function addBookingNote(
   batchId: string,
   visitId: string,
   body: string,
-): Promise<AddNoteResult> {
-  return call<
-    { kinfolkId: string; batchId: string; visitId: string; body: string },
-    AddNoteResult
-  >('addBookingNote', { kinfolkId, batchId, visitId, body: body.trim() });
+): Promise<AddBookingNoteResult> {
+  return call<AddBookingNoteArgs, AddBookingNoteResult>('addBookingNote', {
+    kinfolkId,
+    batchId,
+    visitId,
+    body: body.trim(),
+  });
 }
 
 /**
@@ -436,9 +390,11 @@ export async function addInternalBookingNote(
   batchId: string,
   visitId: string,
   body: string,
-): Promise<AddNoteResult> {
-  return call<
-    { kinfolkId: string; batchId: string; visitId: string; body: string },
-    AddNoteResult
-  >('addInternalBookingNote', { kinfolkId, batchId, visitId, body: body.trim() });
+): Promise<AddInternalBookingNoteResult> {
+  return call<AddInternalBookingNoteArgs, AddInternalBookingNoteResult>('addInternalBookingNote', {
+    kinfolkId,
+    batchId,
+    visitId,
+    body: body.trim(),
+  });
 }

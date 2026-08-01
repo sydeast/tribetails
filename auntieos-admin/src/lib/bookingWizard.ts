@@ -1,4 +1,5 @@
 import { expandWeekly, sortedDays, visitMsFromDays, type BookingMode, type ServiceOption } from './newBooking';
+import type { CreateMultiDateBookingRequestArgsVisit } from '../contracts/bookingContracts.generated';
 
 /**
  * The New Booking wizard's state, kept out of the dialog so every transition
@@ -310,13 +311,15 @@ export function removeDayVisit(state: WizardState, dayIso: string, slotId: strin
 
 // ── the payload ──────────────────────────────────────────────────────────────
 
-/** One visit as the callable takes it. `location` omitted rather than sent blank. */
-export interface WizardVisit {
-  startTimeMs: number;
-  serviceName: string;
-  serviceId?: string | null;
-  location?: string | null;
-}
+/**
+ * One visit as the callable's generated `CreateMultiDateBookingRequestArgsVisit`
+ * takes it. The wizard collects no end time and no price override (the server
+ * resolves price from the catalog server-side, NOTE-56), so those two travel
+ * as an explicit `null` rather than an omitted key -- the generated Args
+ * always carries the key, and a `null` here means exactly what an omitted key
+ * used to.
+ */
+export type WizardVisit = CreateMultiDateBookingRequestArgsVisit;
 
 /**
  * Every planned visit, ascending, as the callable's `visits[]`.
@@ -357,12 +360,17 @@ export function buildVisits(state: WizardState): WizardVisit[] {
       const location = slot.location.trim();
       return {
         startTimeMs: ms,
+        // No end time in the wizard's UI; null means what an omitted key used to.
+        endTimeMs: null,
         serviceName: slot.serviceName.trim(),
-        ...(slot.serviceId !== null && { serviceId: slot.serviceId }),
+        serviceId: slot.serviceId,
         // Blank is sent as null, never as '': the server rejects an empty label
         // rather than storing one, and null is how "no particular place" is
         // spelled on the wire.
         location: location === '' ? null : location,
+        // No price override in the wizard's UI; the server resolves the
+        // catalog price from serviceId (NOTE-56).
+        priceCents: null,
       };
     });
 }

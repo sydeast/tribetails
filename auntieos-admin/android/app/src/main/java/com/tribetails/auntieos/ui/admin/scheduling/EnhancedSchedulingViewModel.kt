@@ -1307,6 +1307,7 @@ class EnhancedSchedulingViewModel(
         notes: String?,
         pattern: String,
         weeklyDays: List<Int>?,
+        overrideBusyConflict: Boolean = false,
     ) {
         if (_state.value.newRequestInFlight) return
         _state.value = _state.value.copy(newRequestInFlight = true, newRequestError = null)
@@ -1317,6 +1318,7 @@ class EnhancedSchedulingViewModel(
                 notes = notes,
                 pattern = pattern,
                 weeklyDays = weeklyDays,
+                overrideBusyConflict = overrideBusyConflict,
             ).onSuccess { result ->
                 _state.value = _state.value.copy(
                     newRequestInFlight = false,

@@ -214,12 +214,15 @@ describe('buildVisits', () => {
     expect(visits[1]!.location).toBeNull();
   });
 
-  it('omits serviceId entirely rather than sending null for a typed-in service', () => {
-    // The server's admin schema takes `serviceId` as nullable-optional, but an
-    // absent key is what "this did not come from the catalog" means, and it is
-    // what every existing caller sends.
+  it('sends serviceId null (present, not omitted) for a typed-in service', () => {
+    // ADR-0003 follow-up: the generated CreateMultiDateBookingRequestArgsVisit
+    // always carries the key (readModel.ts refuses a field that is both
+    // .nullable() and .optional()), so `null` is how "this did not come from
+    // the catalog" travels now. The server's real parser (HandlerArgs, kept
+    // unexported and unchanged) accepts an omitted key and an explicit null
+    // identically, so this is a wire-shape change, not a behavior change.
     const state = toggleDay(ready(), '2026-08-03');
-    expect(buildVisits(state)[0]).not.toHaveProperty('serviceId');
+    expect(buildVisits(state)[0]).toHaveProperty('serviceId', null);
   });
 
   it('expands a weekly recurrence with the template applied to every date', () => {

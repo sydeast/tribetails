@@ -11,6 +11,7 @@ import { resolveDefaultAssignee } from '../lib/defaultAssignee';
 import { writeEnvelope, resolveService, type NormalizedVisit } from '../portal/requestBooking';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
+import { validateResponse } from '../lib/callableResponse';
 
 /**
  * AO-25: admin-side multi-date / recurring booking request.
@@ -62,7 +63,12 @@ const VisitArgs = z.object({
   location: z.string().trim().min(1).max(120).nullable().optional(),
 });
 
-const Args = z.object({
+/**
+ * The REAL request schema, used for actual `.parse()`. Unchanged by the
+ * ADR-0003 follow-up: see `export const Args` below for what changed and why
+ * it is safe.
+ */
+const HandlerArgs = z.object({
   kinfolkId: z.string().min(1),
   kinIds: z.array(z.string()).optional(),
   notes: z.string().max(1000).optional(),
@@ -86,13 +92,66 @@ const Args = z.object({
   overrideBusyConflict: z.boolean().optional(),
 });
 
+/**
+ * The EXPORTED, registry-facing request schema (ADR-0003 follow-up).
+ *
+ * `HandlerArgs` above mirrors `requestBooking`'s `VisitArgs` field for field
+ * (see the module header), including the same `.nullable().optional()`
+ * combination on `endTimeMs`, `serviceId`, `priceCents` and `location`.
+ * `readModel.ts` refuses that combination outright: Kotlin's one `T?` cannot
+ * distinguish "key omitted" from "key sent null", and on a PATCH those two
+ * differ. This callable is a CREATE, not a patch, so they already mean the
+ * same thing to the handler, and narrowing the GENERATED shape to one of the
+ * two costs nothing real. Below, every such field is always-present and
+ * nullable instead: the generated client always sends the key, `null` when
+ * there is no value.
+ *
+ * SAFETY PROPERTY: every payload this schema can produce also satisfies
+ * `HandlerArgs`, so a generated client can never build a request the real
+ * parser rejects.
+ */
+const ExportedVisitArgs = z
+  .object({
+    startTimeMs: z.number().int().positive(),
+    endTimeMs: z.number().int().positive().nullable(),
+    serviceId: z.string().min(1).nullable(),
+    serviceName: z.string().min(1).max(120),
+    priceCents: z.number().int().nonnegative().nullable(),
+    location: z.string().trim().min(1).max(120).nullable(),
+  })
+  .strict();
+
+export const Args = z
+  .object({
+    kinfolkId: z.string().min(1),
+    kinIds: z.array(z.string()).optional(),
+    notes: z.string().max(1000).optional(),
+    pattern: z.enum(['individual', 'weekly']).optional(),
+    weeklyDays: z.array(z.number().int().min(0).max(6)).optional(),
+    visits: z.array(ExportedVisitArgs).min(1).max(60),
+    billing: z.object({ mode: z.enum(['new-invoice']) }).optional(),
+    communication: z
+      .object({ emailConfirmation: z.boolean(), timeVisibility: z.boolean() })
+      .optional(),
+    overrideBusyConflict: z.boolean().optional(),
+  })
+  .strict();
+
+export const Result = z
+  .object({
+    batchId: z.string().min(1),
+    visitIds: z.array(z.string().min(1)),
+    visitCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export async function createMultiDateBookingRequestHandler(
   req: CallableRequest<unknown>,
-): Promise<{ batchId: string; visitIds: string[]; visitCount: number }> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  const args = Args.parse(req.data);
+  const args = HandlerArgs.parse(req.data);
 
   // Fail loud on a bad household id rather than writing an orphan envelope under
   // families/{kinfolkId} that the directory will never surface.
@@ -185,7 +244,11 @@ export async function createMultiDateBookingRequestHandler(
     });
   });
 
-  return { batchId, visitIds, visitCount: normalized.length };
+  return validateResponse('createMultiDateBookingRequest', Result, {
+    batchId,
+    visitIds,
+    visitCount: normalized.length,
+  });
 }
 
 export const createMultiDateBookingRequest = onCall(

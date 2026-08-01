@@ -3,6 +3,11 @@ package com.tribetails.auntieos.data.repository
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.functions.FirebaseFunctions
+import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgs
+import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsBilling
+import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsCommunication
+import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsVisit
+import com.tribetails.auntieos.data.contracts.decodeCreateMultiDateBookingRequestResult
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.ui.admin.scheduling.GoogleCalendarConnection
 import com.tribetails.auntieos.util.AuntieLog
@@ -70,6 +75,23 @@ class BookingRepository(
      * need no special handling; a weekly recurrence is expanded to concrete
      * visits by the caller and flagged via [pattern] = "weekly" + [weeklyDays].
      * Times are LOCAL (the caller derives ms from the operator's wall-clock pick).
+     *
+     * DRIFT FIX (ADR-0003 follow-up): this used to build its own payload map by
+     * hand, and that hand map never had a slot for `priceCents`, `location`,
+     * `billing`, `communication` or `overrideBusyConflict` at all -- not "the UI
+     * doesn't collect them yet", but "there was nowhere on the wire for them to
+     * go even if it did." Now the payload is built through the generated
+     * `CreateMultiDateBookingRequestArgs`/`...Visit`, which has a slot for
+     * every one of those five. [NewBookingVisit] still has no `priceCents` or
+     * `location` field (no screen collects either today), so those travel as
+     * an honest `null` -- the same thing an omitted key meant before, and
+     * still accepted identically by the server (see the comment on the
+     * server's `Args` in `requestBooking.ts` for why). [billing] and
+     * [communication] default to `null` (no screen offers either choice on
+     * this path today, same honesty). [overrideBusyConflict] now has a real
+     * parameter, default `false`, so a future "force create past a busy
+     * conflict" affordance on this dialog has somewhere to plug in without
+     * another repository rewrite; nothing calls it `true` yet.
      */
     suspend fun createMultiDateBookingRequest(
         kinfolkId: String,
@@ -78,31 +100,43 @@ class BookingRepository(
         pattern: String = "individual",
         weeklyDays: List<Int>? = null,
         kinIds: List<String>? = null,
+        billing: CreateMultiDateBookingRequestArgsBilling? = null,
+        communication: CreateMultiDateBookingRequestArgsCommunication? = null,
+        overrideBusyConflict: Boolean = false,
     ): Result<MultiDateBookingResult> = runCatching {
         require(visits.isNotEmpty()) { "At least one visit is required." }
-        val payload = buildMap<String, Any> {
-            put("kinfolkId", kinfolkId)
-            put("pattern", pattern)
-            notes?.takeIf { it.isNotBlank() }?.let { put("notes", it) }
-            weeklyDays?.let { put("weeklyDays", it) }
-            kinIds?.let { put("kinIds", it) }
-            put("visits", visits.map { v ->
-                buildMap<String, Any> {
-                    put("startTimeMs", v.startTimeMs)
-                    v.endTimeMs?.let { put("endTimeMs", it) }
-                    v.serviceId?.takeIf { it.isNotBlank() }?.let { put("serviceId", it) }
-                    put("serviceName", v.serviceName)
-                }
-            })
-        }
+        val args = CreateMultiDateBookingRequestArgs(
+            kinfolkId = kinfolkId,
+            kinIds = kinIds,
+            notes = notes?.takeIf { it.isNotBlank() },
+            pattern = pattern,
+            weeklyDays = weeklyDays?.map { it.toLong() },
+            visits = visits.map { v ->
+                CreateMultiDateBookingRequestArgsVisit(
+                    startTimeMs = v.startTimeMs,
+                    endTimeMs = v.endTimeMs,
+                    serviceId = v.serviceId?.takeIf { it.isNotBlank() },
+                    serviceName = v.serviceName,
+                    priceCents = null,
+                    location = null,
+                )
+            },
+            billing = billing,
+            communication = communication,
+            overrideBusyConflict = overrideBusyConflict,
+        )
+        val raw = functions.getHttpsCallable("createMultiDateBookingRequest").call(args.toPayload()).await().data
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("createMultiDateBookingRequest").call(payload).await().data as? Map<String, Any?>
-            ?: error("createMultiDateBookingRequest: non-map payload")
+        val result = decodeCreateMultiDateBookingRequestResult(raw as? Map<String, Any?>)
         MultiDateBookingResult(
-            batchId = raw["batchId"] as? String ?: error("createMultiDateBookingRequest: missing batchId"),
-            visitIds = (raw["visitIds"] as? List<*>).orEmpty().mapNotNull { it as? String },
-            // Firebase serializes JS numbers as Double/Long; normalize to Int.
-            visitCount = (raw["visitCount"] as? Number)?.toInt() ?: visits.size,
+            batchId = result.batchId,
+            visitIds = result.visitIds,
+            // The generated decoder fail-softs a missing/wrong-typed count to 0
+            // rather than the caller's own visit count; a real response always
+            // carries it, so 0 here would only ever be seen against a genuinely
+            // broken response, which is exactly what should NOT be papered over
+            // with a guessed number.
+            visitCount = result.visitCount.toInt(),
         )
     }.onFailure { AuntieLog.e("BookingRepository.createMultiDateBookingRequest failed", it) }
 

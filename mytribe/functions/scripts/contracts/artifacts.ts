@@ -12,6 +12,13 @@
  *
  * The Kotlin file lands in the Android app's MAIN source set, so
  * `compileDebugKotlin` type-checks the generated decoders on every build.
+ *
+ * ONE REGISTRY, ONE TRIAD OF FILES: the invoice surface and the booking
+ * surface (ADR-0003's follow-up) are two separate registries so that
+ * `INVOICE_CONTRACT_REGISTRY` stays exactly the 19 callables PR #112 gave
+ * response schemas, unchanged by anything that lands after it. Each registry
+ * gets its own `ArtifactPaths`, so the two never contend for the same
+ * generated file or the same Kotlin class names.
  */
 import { emitKotlin } from './emitKotlin';
 import { emitTypeScript } from './emitTypeScript';
@@ -27,26 +34,48 @@ export interface GeneratedArtifact {
   consumer: string;
 }
 
-/** The kinfolk portal's copy. */
-export const PORTAL_TYPES_PATH = 'mytribe/web/src/contracts/invoiceContracts.generated.ts';
+/** Where one registry's triad of generated files lands. */
+export interface ArtifactPaths {
+  /** The kinfolk portal's copy. */
+  portal: string;
+  /** The AuntieOS React admin's copy. */
+  admin: string;
+  /** The Android admin's copy, in the package `emitKotlin.KOTLIN_PACKAGE` names. */
+  androidKotlin: string;
+}
 
-/** The AuntieOS React admin's copy. */
-export const ADMIN_TYPES_PATH = 'auntieos-admin/src/contracts/invoiceContracts.generated.ts';
+export const INVOICE_ARTIFACT_PATHS: ArtifactPaths = {
+  portal: 'mytribe/web/src/contracts/invoiceContracts.generated.ts',
+  admin: 'auntieos-admin/src/contracts/invoiceContracts.generated.ts',
+  androidKotlin:
+    'auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/contracts/InvoiceContracts.generated.kt',
+};
 
-/** The Android admin's copy, in the package `emitKotlin.KOTLIN_PACKAGE` names. */
-export const ANDROID_KOTLIN_PATH =
-  'auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/contracts/InvoiceContracts.generated.kt';
+/** Back-compat aliases: several call sites and tests import these by name directly. */
+export const PORTAL_TYPES_PATH = INVOICE_ARTIFACT_PATHS.portal;
+export const ADMIN_TYPES_PATH = INVOICE_ARTIFACT_PATHS.admin;
+export const ANDROID_KOTLIN_PATH = INVOICE_ARTIFACT_PATHS.androidKotlin;
+
+export const BOOKING_ARTIFACT_PATHS: ArtifactPaths = {
+  portal: 'mytribe/web/src/contracts/bookingContracts.generated.ts',
+  admin: 'auntieos-admin/src/contracts/bookingContracts.generated.ts',
+  androidKotlin:
+    'auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/contracts/BookingContracts.generated.kt',
+};
 
 /**
  * Reads the registry and renders every artifact. Pure: no filesystem, so the
  * unit tests exercise exactly what the CLI writes.
  */
-export function generateArtifacts(registry: ContractRegistry): GeneratedArtifact[] {
+export function generateArtifacts(
+  registry: ContractRegistry,
+  paths: ArtifactPaths = INVOICE_ARTIFACT_PATHS,
+): GeneratedArtifact[] {
   const model = readModel(registry);
   const typescript = emitTypeScript(model);
   return [
-    { path: PORTAL_TYPES_PATH, contents: typescript, consumer: 'kinfolk portal' },
-    { path: ADMIN_TYPES_PATH, contents: typescript, consumer: 'AuntieOS admin (React)' },
-    { path: ANDROID_KOTLIN_PATH, contents: emitKotlin(model), consumer: 'AuntieOS admin (Android)' },
+    { path: paths.portal, contents: typescript, consumer: 'kinfolk portal' },
+    { path: paths.admin, contents: typescript, consumer: 'AuntieOS admin (React)' },
+    { path: paths.androidKotlin, contents: emitKotlin(model), consumer: 'AuntieOS admin (Android)' },
   ];
 }

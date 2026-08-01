@@ -14,8 +14,6 @@ import type {
   ConfirmSecureResetResult,
   GetInvitePreviewRequest,
   GetMyAccessResult,
-  GetMyBookingsRequest,
-  GetMyBookingsResult,
   GetMyHomeRequest,
   GetMyHomeResult,
   GetMyKinRequest,
@@ -29,6 +27,7 @@ import type {
   UpdateKinRequest,
   UpdateKinResult,
 } from './types';
+import type { GetMyBookingsResult } from '../contracts/bookingContracts.generated';
 
 /** Access list for the signed-in user; drives launch routing (NoTribes / Home / Pick). */
 export function getMyAccess(): Promise<GetMyAccessResult> {
@@ -79,6 +78,21 @@ export async function getTribeSummaries(kinfolkIds: string[]): Promise<TribeSumm
 export function getMyHome(kinfolkId?: string): Promise<GetMyHomeResult> {
   const payload: GetMyHomeRequest = kinfolkId !== undefined ? { kinfolkId } : {};
   return call<GetMyHomeRequest, GetMyHomeResult>('getMyHome', payload);
+}
+
+/**
+ * HAND-WRITTEN ON PURPOSE, same situation as invoicesApi.ts's
+ * GetMyInvoicesRequest: getMyBookings parses its request against a plain
+ * TypeScript interface rather than a zod schema, so there is no authority to
+ * generate a request type from and the codegen emits none. This mirrors
+ * `functions/src/portal/getMyBookings.ts`'s request shape.
+ *
+ * The RESPONSE half is generated: `GetMyBookingsResult` (and the visit/
+ * envelope shapes nested in it) now comes from the schema that validates the
+ * response outbound.
+ */
+export interface GetMyBookingsRequest {
+  kinfolkId?: string;
 }
 
 /** Live visit + upcoming/recent bookings (envelope-grouped). */

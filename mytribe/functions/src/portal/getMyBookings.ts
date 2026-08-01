@@ -1,70 +1,89 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { Timestamp } from 'firebase-admin/firestore';
+import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { validateResponse } from '../lib/callableResponse';
 
 interface GetMyBookingsRequest { kinfolkId?: string }
 
-interface BookingDto {
-  /** kinCare (per-visit) document id. */
-  id: string;
-  /** Envelope id this visit belongs to. */
-  batchId: string | null;
-  kinfolkId: string;
-  status: 'requested' | 'confirmed' | 'enRoute' | 'active' | 'completed' | 'cancelled';
-  serviceType: string | null;
-  title: string | null;
-  startTimeMs: number | null;
-  endTimeMs: number | null;
-  kinIds: string[];
-  kinNames: string[];
-  auntieDisplayName: string | null;
-  auntieAvatarUrl: string | null;
-  notes: string | null;
-  requestedByUid: string | null;
-  createdAtMs: number | null;
-  updatedAtMs: number | null;
-  /** Active visit progress hint, only on status=active. */
-  visitProgress: 'confirmed' | 'enRoute' | 'active' | 'ended' | null;
-  /** AuntieOS back-references (null until AuntieOS writes them). */
-  sourceBookingId: string | null;
-  sessionId: string | null;
-  /** Vendor-parity (2026-07-02): a cancellation ask is pending on this visit. */
-  cancelRequested: boolean;
-}
+/**
+ * No zod request schema: this callable takes one optional string, read raw
+ * off `req.data`, the same situation `getMyInvoices` is in (see the
+ * registry's header). `args: null` there is the precedent this follows.
+ */
 
-interface EnvelopeDto {
-  batchId: string;
-  envelopeStatus:
-    | 'requested'
-    | 'partiallyConfirmed'
-    | 'confirmed'
-    | 'inProgress'
-    | 'completed'
-    | 'cancelled';
-  pattern: 'individual' | 'weekly';
-  serviceName: string | null;
-  kinIds: string[];
-  kinNames: string[];
-  notes: string | null;
-  visitCount: number;
-  confirmedCount: number;
-  completedCount: number;
-  firstStartTimeMs: number | null;
-  lastStartTimeMs: number | null;
-  kinCares: BookingDto[];
-}
+const BookingDtoSchema = z
+  .object({
+    /** kinCare (per-visit) document id. */
+    id: z.string().min(1),
+    /** Envelope id this visit belongs to. */
+    batchId: z.string().min(1).nullable(),
+    kinfolkId: z.string().min(1),
+    status: z.enum(['requested', 'confirmed', 'enRoute', 'active', 'completed', 'cancelled']),
+    serviceType: z.string().nullable(),
+    title: z.string().nullable(),
+    startTimeMs: z.number().int().nullable(),
+    endTimeMs: z.number().int().nullable(),
+    kinIds: z.array(z.string()),
+    kinNames: z.array(z.string()),
+    auntieDisplayName: z.string().nullable(),
+    auntieAvatarUrl: z.string().nullable(),
+    notes: z.string().nullable(),
+    requestedByUid: z.string().nullable(),
+    createdAtMs: z.number().int().nullable(),
+    updatedAtMs: z.number().int().nullable(),
+    /** Active visit progress hint, only on status=active. */
+    visitProgress: z.enum(['confirmed', 'enRoute', 'active', 'ended']).nullable(),
+    /** AuntieOS back-references (null until AuntieOS writes them). */
+    sourceBookingId: z.string().nullable(),
+    sessionId: z.string().nullable(),
+    /** Vendor-parity (2026-07-02): a cancellation ask is pending on this visit. */
+    cancelRequested: z.boolean(),
+  })
+  .strict();
 
-interface GetMyBookingsResult {
-  liveVisit: BookingDto | null;
-  upcoming: BookingDto[];
-  recent: BookingDto[];
-  envelopes: EnvelopeDto[];
-}
+type BookingDto = z.infer<typeof BookingDtoSchema>;
+
+const EnvelopeDtoSchema = z
+  .object({
+    batchId: z.string().min(1),
+    envelopeStatus: z.enum([
+      'requested',
+      'partiallyConfirmed',
+      'confirmed',
+      'inProgress',
+      'completed',
+      'cancelled',
+    ]),
+    pattern: z.enum(['individual', 'weekly']),
+    serviceName: z.string().nullable(),
+    kinIds: z.array(z.string()),
+    kinNames: z.array(z.string()),
+    notes: z.string().nullable(),
+    visitCount: z.number().int().nonnegative(),
+    confirmedCount: z.number().int().nonnegative(),
+    completedCount: z.number().int().nonnegative(),
+    firstStartTimeMs: z.number().int().nullable(),
+    lastStartTimeMs: z.number().int().nullable(),
+    kinCares: z.array(BookingDtoSchema),
+  })
+  .strict();
+
+type EnvelopeDto = z.infer<typeof EnvelopeDtoSchema>;
+
+export const Result = z
+  .object({
+    liveVisit: BookingDtoSchema.nullable(),
+    upcoming: z.array(BookingDtoSchema),
+    recent: z.array(BookingDtoSchema),
+    envelopes: z.array(EnvelopeDtoSchema),
+  })
+  .strict();
 
 /**
  * Returns all visits split into live + upcoming + recent buckets, plus the
@@ -74,7 +93,7 @@ interface GetMyBookingsResult {
  */
 export async function getMyBookingsHandler(
   req: CallableRequest<GetMyBookingsRequest>,
-): Promise<GetMyBookingsResult> {
+): Promise<z.infer<typeof Result>> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -217,7 +236,7 @@ export async function getMyBookingsHandler(
   envelopes.sort((a, b) => (a.firstStartTimeMs ?? 0) - (b.firstStartTimeMs ?? 0));
 
   logEvent({ severity: 'info', function: 'getMyBookings', event: 'portal.bookings.resolved', uid, extra: { kinfolkId, total: all.length, sessions: sessionSnap.size, envelopes: envelopes.length } });
-  return { liveVisit, upcoming, recent, envelopes };
+  return validateResponse('getMyBookings', Result, { liveVisit, upcoming, recent, envelopes });
 }
 
 /**
