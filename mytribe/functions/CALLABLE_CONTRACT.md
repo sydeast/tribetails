@@ -774,6 +774,7 @@ BEFORE clearing our copy.
   actually resolved.
 - Mirrors: `auntieos-admin/src/api/bookingsWrite.ts` + `src/lib/bookingBulk.ts`
   (React), `android .../data/repository/AuntieRepository.kt` (`batchUpdateBookings`).
+
 ## Booking status transitions (admin-gated, A3)
 
 `transitionBookingStatus` owns the four OPERATOR transitions on a flat

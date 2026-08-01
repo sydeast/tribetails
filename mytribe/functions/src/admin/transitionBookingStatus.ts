@@ -204,6 +204,10 @@ export async function transitionBookingStatusHandler(
     await writeAuditEntry({
       event: AUDIT_EVENTS.BOOKING_STATUS_TRANSITION,
       severity: 'info',
+      // A no-op is a satisfied request, not a failure. `changed: false` in the
+      // payload is what separates it from a write. Required since A4 removed
+      // the severity-to-status guess.
+      status: 'SUCCESS',
       actorRole: 'AUNTIE',
       actorUid: uid,
       targetUid: args.sessionId,
@@ -255,6 +259,9 @@ export async function transitionBookingStatusHandler(
   await writeAuditEntry({
     event: AUDIT_EVENTS.BOOKING_STATUS_TRANSITION,
     severity: 'info',
+    // The write above landed. Required since A4 removed the severity-to-status
+    // guess that would have inferred this.
+    status: 'SUCCESS',
     actorRole: 'AUNTIE',
     actorUid: uid,
     targetUid: args.sessionId,
