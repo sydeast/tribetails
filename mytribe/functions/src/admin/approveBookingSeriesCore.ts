@@ -183,7 +183,10 @@ export async function approveBookingSeriesCore(opts: {
   );
 
   await writeAuditEntry({
-    status: 'SUCCESS',
+    // Same shape as batchUpdateBookings (A4 audit follow-up): a series with
+    // any failed visit did not fully do what it was asked, so it's audited
+    // as FAILURE, not SUCCESS, even though counts also live in the payload.
+    status: failedVisits === 0 ? 'SUCCESS' : 'FAILURE',
     event: AUDIT_EVENTS.APPROVE_BOOKING_SERIES,
     severity: failedVisits > 0 ? 'warn' : 'info',
     actorRole,

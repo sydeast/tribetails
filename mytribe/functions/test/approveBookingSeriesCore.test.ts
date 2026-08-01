@@ -66,9 +66,9 @@ describe('approveBookingSeriesCore', () => {
     expect(env?.data.envelopeStatus).toBe('confirmed');
     expect(env?.data.confirmedCount).toBe(2);
 
-    // Audited as an APPROVE.
+    // Audited as an APPROVE, status SUCCESS since every visit succeeded.
     expect(mocks.writeAuditEntryFn).toHaveBeenCalledWith(
-      expect.objectContaining({ event: 'APPROVE_BOOKING_SERIES', actorRole: 'SYSTEM' }),
+      expect.objectContaining({ event: 'APPROVE_BOOKING_SERIES', actorRole: 'SYSTEM', status: 'SUCCESS' }),
     );
   });
 
@@ -170,6 +170,52 @@ describe('approveBookingSeriesCore', () => {
     expect(r.sessionsCreated).toBe(1);
     expect(r.failedVisits).toBe(1);
     expect(r.envelopeStatus).toBe('requested');
+  });
+
+  // A4 audit follow-up: writeAuditEntry used to hardcode status: 'SUCCESS'
+  // for this shared APPROVE core regardless of failedVisits, so a series
+  // where every visit failed (0 confirmed) was still recorded as SUCCESS.
+  // Same defect shape as batchUpdateBookings, one level up (this core is
+  // also reused by requestBooking's auto-confirm path).
+  it('audits with status FAILURE, not SUCCESS, when every visit fails', async () => {
+    const ctx = buildDbMock({
+      docs: { 'families/3/bookings/b1': { kinfolkName: 'Doe Household' } },
+      queryDocs: {
+        'families/3/bookings/b1/kinCares': [
+          { id: 'v1', data: { startTime: null, endTime: '2026-07-01T11:00:00Z', kinIds: [], serviceType: 'walk' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { approveBookingSeriesCore } = await import('../src/admin/approveBookingSeriesCore');
+
+    const r = await approveBookingSeriesCore({ kinfolkId: '3', batchId: 'b1', actorUid: 'sys', actorRole: 'SYSTEM' });
+
+    expect(r.sessionsCreated).toBe(0);
+    expect(r.failedVisits).toBe(1);
+    expect(mocks.writeAuditEntryFn).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'APPROVE_BOOKING_SERIES', status: 'FAILURE' }),
+    );
+  });
+
+  it('audits with status FAILURE, not SUCCESS, on a partial failure', async () => {
+    const ctx = buildDbMock({
+      docs: { 'families/3/bookings/b1': { kinfolkName: 'Doe Household' } },
+      queryDocs: {
+        'families/3/bookings/b1/kinCares': [
+          { id: 'bad', data: { startTime: null, endTime: '2026-07-01T11:00:00Z', kinIds: [], serviceType: 'walk' } },
+          { id: 'good', data: { startTime: '2026-07-02T10:00:00Z', endTime: '2026-07-02T11:00:00Z', kinIds: [], serviceType: 'walk' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { approveBookingSeriesCore } = await import('../src/admin/approveBookingSeriesCore');
+
+    await approveBookingSeriesCore({ kinfolkId: '3', batchId: 'b1', actorUid: 'sys', actorRole: 'SYSTEM' });
+
+    expect(mocks.writeAuditEntryFn).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'APPROVE_BOOKING_SERIES', status: 'FAILURE' }),
+    );
   });
 
   // A busy import can land AFTER the request was submitted but BEFORE it is

@@ -104,7 +104,10 @@ export async function batchUpdateBookingsHandler(
   }
 
   await writeAuditEntry({
-    status: 'SUCCESS',
+    // Any per-id failure means this batch did not fully do what it was asked;
+    // the enum has no PARTIAL, so a batch that didn't fully succeed is
+    // audited as FAILURE, not SUCCESS. Counts stay in description/payload.
+    status: failed.length === 0 ? 'SUCCESS' : 'FAILURE',
     event: AUDIT_EVENTS.BOOKING_BATCH_ACTION,
     severity: 'info',
     actorRole: 'AUNTIE',
