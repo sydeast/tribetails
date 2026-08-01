@@ -20,12 +20,39 @@ Sizes are S (under a day), M (one to three days), L (a week or more).
 
 ## Blocked right now
 
-### PR #185, visual harness retirement, is CONFLICTING
+### main is RED on Android. Fix is PR #187.
 
-Opened after main absorbed the dependabot run, so it conflicts on `ci.yml` and
-`android/gradle/libs.versions.toml`. Both conflicts are mechanical: #185 deletes
-roborazzi entries and CI comments that #180 and #170 also touched. Needs a rebase
-onto `5fba1d6` before it can merge. Nothing else waits on it.
+`origin/main` at `5fba1d6` fails `:app:testDebugUnitTest`, and the CI run for the
+#181 merge reports it. PR #180 bumped 36 Android dependencies at once and broke
+three separate things. CI only ever reported the first, because the build stops
+there.
+
+1. `androidx.core` 1.19.0 and `androidx.lifecycle` 2.11.0 declare a minimum
+   compileSdk of 37 in their AAR metadata. `build.gradle.kts` pinned 36, and
+   `checkDebugAarMetadata` fails rather than warns.
+2. `AuntieAvatarStack.kt:132` matched `painter.state` against
+   `AsyncImagePainter.State` subtypes, but in coil3 that property is a
+   `StateFlow<State>`. No branch has ever matched, so a broken avatar url has
+   been rendering nothing instead of the initials monogram since the coil3
+   upgrade. Kotlin 2.4.10 promoted the warning to an error, which is the only
+   reason it surfaced.
+3. `GrpcVersionRegressionTest` asserted a class that grpc-api 1.83.0 does not
+   contain, while `build.gradle.kts:229` has forced 1.83.0 since the initial
+   commit. It passed anyway because `configurations.all` did not reach the
+   unit-test classpath before AGP 9.3.1, so the test measured a classpath the
+   shipped APK never had. It now asserts the real invariant, which is that
+   grpc-api and grpc-core agree.
+
+Merge #187 before anything else. 1899 tests, 0 failures with it applied.
+
+### PR #185, visual harness retirement, needs an operator push
+
+Rebased onto `5fba1d6` locally, conflicts resolved (`ci.yml` took main's
+`setup-gradle@v6`, `libs.versions.toml` dropped the roborazzi entry dependabot
+had bumped to 1.70.0). It cannot be force-pushed from this session: the branch
+edits `.github/workflows/ci.yml`, and the available credential is an OAuth token
+without `workflow` scope. Needs one push from a session with SSH or a
+workflow-scoped token.
 
 ---
 
@@ -306,9 +333,11 @@ and the CI and release-tagging work (#142, #143).
 
 ## Sequencing
 
-Money and safety first, then the built-but-unreachable backends, because those
-are the cheapest ratio of operator pain to engineering time.
+Green main first, then money and safety, then the built-but-unreachable
+backends, because those are the cheapest ratio of operator pain to engineering
+time.
 
+0. PR #187, main is red (already open)
 1. A4, one argument, restores audit truth (S)
 2. A1, once F2 lands (M)
 3. A2 plus B4 together, since fixing the authoring is worth less than fixing it
