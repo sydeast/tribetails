@@ -10,8 +10,11 @@ import {
   dayDescription,
   selectionWarnings,
   shortDayLabel,
+  holidayNameForDay,
+  closureImpactHits,
   type DayAvailability,
 } from './bookingAvailability';
+import { parseClosureEntry } from './closureRecurrence';
 
 // Every helper here reads a LOCAL calendar day; pin the zone so the weekday a
 // bare YYYY-MM-DD resolves to is stable, and pin it WEST of Greenwich so a
@@ -35,6 +38,7 @@ function day(over: Partial<DayAvailability> = {}): DayAvailability {
     blocked: [],
     sessionCount: 0,
     scheduleKnown: true,
+    holidayName: null,
     ...over,
   };
 }
@@ -165,6 +169,13 @@ describe('dayBadge', () => {
     expect(dayBadge(day({ hoursKnown: false, hours: { kind: 'closed' } }))).toBeNull();
     expect(dayBadge(day({ scheduleKnown: false, sessionCount: 4 }))).toBeNull();
   });
+  it('marks a company holiday Closed even over a blocked window or a visit count', () => {
+    const blocked = [{ label: '8:00 AM to 12:00 PM', startHHmm: '08:00', endHHmm: '12:00' }];
+    expect(dayBadge(day({ holidayName: 'Independence Day', blocked, sessionCount: 2 }))).toBe('Closed');
+  });
+  it('a past day stays unmarked even if it would also be a holiday', () => {
+    expect(dayBadge(day({ past: true, holidayName: 'Independence Day' }))).toBeNull();
+  });
 });
 
 describe('dayDescription', () => {
@@ -187,6 +198,11 @@ describe('dayDescription', () => {
     });
     expect(dayDescription(d)).toBe(
       'business closed, blocked 8:00 AM to 12:00 PM, 1 visit already scheduled',
+    );
+  });
+  it('names the holiday and does not also say "business closed" (one reason, not two)', () => {
+    expect(dayDescription(day({ holidayName: 'Independence Day', hours: { kind: 'closed' } }))).toBe(
+      'closed for Independence Day, not available',
     );
   });
 });
@@ -231,6 +247,72 @@ describe('selectionWarnings', () => {
       'Aug 3: the business is closed that day.',
       'Aug 5: 19:00 is outside business hours (9:00 AM to 5:00 PM).',
     ]);
+  });
+
+  it('names the holiday, not the generic "business is closed" line, for a holiday day', () => {
+    const warnings = selectionWarnings([day({ holidayName: 'Independence Day', hours: { kind: 'closed' } })], '10:00');
+    expect(warnings).toEqual(["Aug 3: closed for Independence Day. This date can't be booked."]);
+  });
+});
+
+describe('holidayNameForDay', () => {
+  it('names the closure covering a once-dated entry', () => {
+    const entries = [parseClosureEntry('2026-09-14|Owner away')];
+    expect(holidayNameForDay(entries, '2026-09-14')).toBe('Owner away');
+  });
+
+  it('honors yearly recurrence across a year boundary', () => {
+    const entries = [parseClosureEntry('yearly:07-04|Independence Day')];
+    expect(holidayNameForDay(entries, '2026-07-04')).toBe('Independence Day');
+    expect(holidayNameForDay(entries, '2027-07-04')).toBe('Independence Day');
+    expect(holidayNameForDay(entries, '2031-07-04')).toBe('Independence Day');
+  });
+
+  it('returns null for an ordinary day', () => {
+    const entries = [parseClosureEntry('2026-09-14|Owner away')];
+    expect(holidayNameForDay(entries, '2026-09-15')).toBeNull();
+  });
+
+  it('returns null with no entries at all', () => {
+    expect(holidayNameForDay([], '2026-09-14')).toBeNull();
+  });
+});
+
+describe('closureImpactHits', () => {
+  it('flags an existing session that lands on a closure date', () => {
+    const entries = [parseClosureEntry('2026-12-25|Christmas')];
+    const sessionsByDay = new Map<string, unknown[]>([['2026-12-25', [{}, {}]]]);
+    const hits = closureImpactHits(entries, sessionsByDay, '2026-12-01', '2026-12-31');
+    expect(hits).toEqual([{ date: '2026-12-25', holidayName: 'Christmas', sessionCount: 2 }]);
+  });
+
+  it("honors yearly recurrence: a session on next year's occurrence is flagged too", () => {
+    const entries = [parseClosureEntry('yearly:07-04|Independence Day')];
+    const sessionsByDay = new Map<string, unknown[]>([['2027-07-04', [{}]]]);
+    const hits = closureImpactHits(entries, sessionsByDay, '2026-01-01', '2027-12-31');
+    expect(hits).toEqual([{ date: '2027-07-04', holidayName: 'Independence Day', sessionCount: 1 }]);
+  });
+
+  it('does not flag a closure date with no existing sessions', () => {
+    const entries = [parseClosureEntry('2026-12-25|Christmas')];
+    const hits = closureImpactHits(entries, new Map(), '2026-12-01', '2026-12-31');
+    expect(hits).toEqual([]);
+  });
+
+  it('does not flag a session on an ordinary (non-closure) day', () => {
+    const entries = [parseClosureEntry('2026-12-25|Christmas')];
+    const sessionsByDay = new Map<string, unknown[]>([['2026-12-24', [{}]]]);
+    expect(closureImpactHits(entries, sessionsByDay, '2026-12-01', '2026-12-31')).toEqual([]);
+  });
+
+  it('sorts multiple hits by date', () => {
+    const entries = [parseClosureEntry('2026-12-25|Christmas'), parseClosureEntry('2026-11-26|Thanksgiving')];
+    const sessionsByDay = new Map<string, unknown[]>([
+      ['2026-12-25', [{}]],
+      ['2026-11-26', [{}]],
+    ]);
+    const hits = closureImpactHits(entries, sessionsByDay, '2026-01-01', '2026-12-31');
+    expect(hits.map((h) => h.date)).toEqual(['2026-11-26', '2026-12-25']);
   });
 });
 

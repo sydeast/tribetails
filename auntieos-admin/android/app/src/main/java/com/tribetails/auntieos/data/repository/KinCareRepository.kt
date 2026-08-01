@@ -140,10 +140,14 @@ class KinCareRepository(
      * [EnhancedSchedulingViewModel]'s booking-approval bridge) shows the
      * operator a conflict before calling this, so there is no existing
      * deliberate-override gesture to mirror. See `BookingBusyConflict.kt`.
+     *
+     * C1: [assertNoCompanyHolidayConflict] runs the same way, for the same
+     * reason -- see `CompanyHolidayConflict.kt`.
      */
     suspend fun createKinCareSession(session: KinCareSession): Result<String> = runCatching {
         authGate.ensureAuthenticated()
         assertNoBookingBusyConflict(firestore, session.startTime, session.endTime)
+        assertNoCompanyHolidayConflict(firestore, session.startTime, session.endTime)
         // Write stamp, not a query: scopedKinfolkId forces the sandbox scope in
         // test mode and passes the caller's kinfolkId through otherwise.
         val mode = authGate.requireTestMode()

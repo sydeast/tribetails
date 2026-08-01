@@ -36,6 +36,37 @@ export function getServiceCatalog(): Promise<GetServiceCatalogResult> {
   return call<Record<string, never>, GetServiceCatalogResult>('getServiceCatalog', {});
 }
 
+// ── getBusinessClosures (functions/src/portal/getBusinessClosures.ts) ───────
+//
+// C1: `business_settings` (where `companyHolidays` lives) is admin-only in
+// firestore.rules, so this callable is the portal's ONLY way to learn which
+// dates are closed. It resolves recurring closures into concrete dates
+// server-side through the same `closureRecurrence.ts` math the
+// `requestBooking` write-path guard uses, so what the month picker marks and
+// what a submit will actually be refused for can never decode into two
+// different calendars.
+
+export interface BusinessClosureDto {
+  /** `YYYY-MM-DD`. */
+  date: string;
+  name: string;
+}
+
+export interface GetBusinessClosuresRequest {
+  /** `YYYY-MM-DD`, inclusive. */
+  fromDate: string;
+  /** `YYYY-MM-DD`, inclusive. Server caps the range at 120 days. */
+  toDate: string;
+}
+
+export interface GetBusinessClosuresResult {
+  closures: BusinessClosureDto[];
+}
+
+export function getBusinessClosures(req: GetBusinessClosuresRequest): Promise<GetBusinessClosuresResult> {
+  return call<GetBusinessClosuresRequest, GetBusinessClosuresResult>('getBusinessClosures', req);
+}
+
 // ── requestBooking (functions/src/portal/requestBooking.ts, multi-visit shape) ──
 
 export type BookingPattern = 'individual' | 'weekly';

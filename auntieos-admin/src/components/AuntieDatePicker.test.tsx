@@ -27,6 +27,7 @@ function availability(over: Partial<DayAvailability> = {}) {
     blocked: [],
     sessionCount: 0,
     scheduleKnown: true,
+    holidayName: null,
     ...over,
   });
 }
@@ -141,6 +142,26 @@ describe('AuntieDatePicker', () => {
         name: /Fri, Aug 20, open 9:00 AM to 5:00 PM, blocked 8:00 AM to 12:00 PM/,
       });
       expect(cell.textContent).toContain('Blocked');
+    });
+
+    it('C1: refuses a company holiday, unlike a plain closed-hours day -- the operator is NOT offered it', async () => {
+      const onToggle = vi.fn();
+      render(
+        <Harness
+          onToggle={onToggle}
+          availabilityFor={(iso) => ({ ...availability()(iso), holidayName: 'Independence Day' })}
+        />,
+      );
+      const cell = screen.getByRole('gridcell', { name: /Fri, Aug 20, closed for Independence Day, not available/ });
+      expect(cell.textContent).toContain('Closed');
+      expect(cell).toHaveAttribute('aria-disabled', 'true');
+      // Focusable, not `disabled`, same as a past day: arrowing onto it must not
+      // strand a keyboard user, but activating it must not select it either.
+      expect(cell).not.toBeDisabled();
+
+      await userEvent.click(cell);
+      expect(onToggle).not.toHaveBeenCalled();
+      expect(cell).toHaveAttribute('aria-selected', 'false');
     });
 
     it('claims nothing when availability could not be read', () => {

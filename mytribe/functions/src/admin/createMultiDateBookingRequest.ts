@@ -10,6 +10,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveDefaultAssignee } from '../lib/defaultAssignee';
 import { writeEnvelope, resolveService, type NormalizedVisit } from '../portal/requestBooking';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
+import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 
 /**
  * AO-25: admin-side multi-date / recurring booking request.
@@ -117,6 +118,9 @@ export async function createMultiDateBookingRequestHandler(
     override: args.overrideBusyConflict,
     auditContext: { kinfolkId: args.kinfolkId },
   });
+  // A closed day always refuses the request, admin-created or not -- no
+  // override. See companyHolidayConflict.ts's header for why.
+  await guardCompanyHolidayConflict({ firestore: db(), visits: args.visits });
 
   const pattern = args.pattern ?? 'individual';
   // resolveService: the base_services catalog wins for name + price; a client

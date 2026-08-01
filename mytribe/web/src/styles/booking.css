@@ -77,6 +77,10 @@
   color: var(--navy); font-family: var(--sans); font-size: 13.5px; cursor: pointer; transition: .2s var(--ease); display: grid; place-items: center; }
 .mp-day:hover { background: rgba(255, 255, 255, .6); }
 .mp-day.is-on { background: var(--teal); border-color: transparent; color: #fff; font-weight: 600; }
+/* C1: a company holiday. Not pickable, unlike every other mark this wizard shows. */
+.mp-day.is-closed { cursor: not-allowed; opacity: .4; text-decoration: line-through;
+  background: repeating-linear-gradient(135deg, transparent, transparent 4px, var(--glass-dim) 4px, var(--glass-dim) 8px); }
+.mp-day.is-closed:hover { background: repeating-linear-gradient(135deg, transparent, transparent 4px, var(--glass-dim) 4px, var(--glass-dim) 8px); }
 
 /* summary panel */
 .sum-row { display: flex; align-items: flex-start; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--hairline); }

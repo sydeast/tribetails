@@ -5,6 +5,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { resolveKinNames } from '../lib/resolveKinNames';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
+import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 
 /**
  * Shared APPROVE core for a booking series (parent envelope
@@ -20,8 +21,13 @@ import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
  * audit entry. Each visit is isolated so one bad visit cannot abort the series.
  *
  * Each visit is also checked against Google Calendar busy imports
- * (`lib/bookingBusyConflict.ts`) immediately before its session is created,
- * same isolation: a conflict fails that one visit rather than the batch.
+ * (`lib/bookingBusyConflict.ts`) AND company holidays
+ * (`lib/companyHolidayConflict.ts`) immediately before its session is
+ * created, same isolation: a conflict fails that one visit rather than the
+ * batch. The holiday re-check matters here specifically: an operator can add
+ * a closure AFTER a request was submitted but BEFORE it is approved, and this
+ * is the moment a real `kin_care_sessions` doc -- the thing Auntie Time and
+ * billing actually read -- gets created.
  */
 
 /** kinCares stores start/end as Firestore Timestamps; kin_care_sessions stores
@@ -117,6 +123,12 @@ export async function approveBookingSeriesCore(opts: {
           visits: [{ startTimeMs: Date.parse(startIso), endTimeMs: endIso ? Date.parse(endIso) : null }],
           actorUid,
           actorRole,
+        });
+        // Same re-check, no override: a closure added after the request was
+        // submitted must still stop the session from being created.
+        await guardCompanyHolidayConflict({
+          firestore: db(),
+          visits: [{ startTimeMs: Date.parse(startIso), endTimeMs: endIso ? Date.parse(endIso) : null }],
         });
         const kinIds = Array.isArray(data.kinIds)
           ? (data.kinIds as unknown[]).filter((k): k is string => typeof k === 'string')

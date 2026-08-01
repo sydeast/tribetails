@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, useNavigate } from '@tanstack/react-router';
-import { getServiceCatalog, requestBooking } from '../api/bookingApi';
+import { getBusinessClosures, getServiceCatalog, requestBooking } from '../api/bookingApi';
 import type { BookingVisitInput, RequestBookingResult, ServiceDto } from '../api/bookingApi';
 import { getMyKin } from '../api/portal';
 import type { KinDto } from '../api/types';
@@ -13,6 +13,7 @@ import { LaunchError } from './LaunchError';
 import {
   buildVisits,
   buildWeeklyVisits,
+  dateKey,
   MAX_RECURRING_VISITS,
   parseHourMinute,
   priceLabel,
@@ -20,6 +21,16 @@ import {
   weeklyVisitsBlocker,
 } from '../lib/bookingWizardLogic';
 import '../styles/booking.css';
+
+/**
+ * C1: the lookahead window `getBusinessClosures` is asked to resolve, once
+ * per wizard session. 120 days is the server's own cap
+ * (`getBusinessClosures.ts`'s `MAX_RANGE_DAYS`) and comfortably covers both
+ * surfaces that read it here: the Individual-pattern month picker (28 days
+ * from the 1st of the current month) and the Weekly pattern's longest offered
+ * run (8 weeks = 56 days, `WEEK_COUNT_OPTIONS`).
+ */
+const CLOSURE_LOOKAHEAD_DAYS = 120;
 
 type Pattern = 'individual' | 'weekly';
 
@@ -152,6 +163,26 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   const kinQuery = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
   const servicesQuery = useQuery({ queryKey: ['serviceCatalog'], queryFn: () => getServiceCatalog() });
 
+  // C1: which dates are closed. A failed or still-loading read degrades to
+  // "nothing known closed" (the picker offers every date, same as before this
+  // task) rather than blocking the wizard on a secondary read -- the server
+  // is the actual authority and refuses a closed date regardless of what this
+  // client shows.
+  const closuresQuery = useQuery({
+    queryKey: ['businessClosures'],
+    queryFn: () => {
+      const today = new Date();
+      const from = dateKey(today);
+      const to = dateKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() + CLOSURE_LOOKAHEAD_DAYS));
+      return getBusinessClosures({ fromDate: from, toDate: to });
+    },
+  });
+  const closedDates: ReadonlyMap<string, string> = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of closuresQuery.data?.closures ?? []) m.set(c.date, c.name);
+    return m;
+  }, [closuresQuery.data]);
+
   const activeKin = useMemo(() => (kinQuery.data?.kin ?? []).filter((k) => k.status === 'active'), [kinQuery.data]);
   const services = servicesQuery.data?.services ?? [];
   const selectedService = services.find((s) => s.id === selectedServiceId) ?? null;
@@ -182,7 +213,30 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   const weeklyCapped = pattern === 'weekly' && weeklyPreview.length > 0 && weeklyPotential > weeklyPreview.length;
   const weeklyBlocker = weeklyVisitsBlocker(weeklyDays, weekCount, visitTime);
   const individualReady = selectedDates.size > 0 && parseHourMinute(visitTime) !== null;
-  const scheduleReady = pattern === 'individual' ? individualReady : weeklyBlocker === null;
+
+  /**
+   * C1: every date currently in the plan that `closedDates` says is closed.
+   * The Individual-pattern picker already refuses to let one get selected in
+   * the first place (`BookingMonthPicker`'s `disabled`), so this mainly
+   * catches the Weekly pattern, which has no per-date picker to disable at
+   * all -- a generated weekly date can land on a closure with no UI short of
+   * this check ever telling the household so before they hit Create Booking
+   * and the whole request comes back refused.
+   */
+  const closedDatesInPlan = useMemo(() => {
+    if (pattern === 'individual') {
+      return [...selectedDates.keys()].filter((k) => closedDates.has(k));
+    }
+    const seen = new Set<string>();
+    for (const v of weeklyPreview) {
+      const k = dateKey(new Date(v.startTimeMs));
+      if (closedDates.has(k)) seen.add(k);
+    }
+    return [...seen];
+  }, [pattern, selectedDates, weeklyPreview, closedDates]);
+
+  const scheduleReady =
+    (pattern === 'individual' ? individualReady : weeklyBlocker === null) && closedDatesInPlan.length === 0;
   const visitCount = pattern === 'weekly' ? weeklyPreview.length : selectedDates.size;
 
   const canAdvance = (() => {
@@ -317,6 +371,8 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   weeklyEmitted={weeklyPreview.length}
                   weeklyCapped={weeklyCapped}
                   weeklyBlocker={weeklyBlocker}
+                  closedDates={closedDates}
+                  closedDatesInPlan={closedDatesInPlan}
                 />
               )}
               {step === 4 && <Step4InvoiceOptions />}
@@ -554,8 +610,12 @@ function Step3ScheduleDates(props: {
   weeklyEmitted: number;
   weeklyCapped: boolean;
   weeklyBlocker: string | null;
+  /** C1: date key -> closure name, from `getBusinessClosures`. */
+  closedDates: ReadonlyMap<string, string>;
+  /** C1: dates currently in the plan that land on one of `closedDates`. */
+  closedDatesInPlan: readonly string[];
 }) {
-  const { pattern, weeklyDays, weekCount, visitTime, weeklyEmitted, weeklyCapped, weeklyBlocker } = props;
+  const { pattern, weeklyDays, weekCount, visitTime, weeklyEmitted, weeklyCapped, weeklyBlocker, closedDatesInPlan } = props;
   return (
     <>
       <h3 className="title">Schedule Dates</h3>
@@ -617,8 +677,12 @@ function Step3ScheduleDates(props: {
       ) : (
         <>
           <h4 style={{ marginTop: 16 }}>Choose Individual Dates</h4>
-          <p className="sub">Tap dates to add or remove from the booking.</p>
-          <BookingMonthPicker selectedDates={new Set(props.selectedDates.keys())} onToggle={props.onToggleDate} />
+          <p className="sub">Tap dates to add or remove from the booking. Closed dates can&rsquo;t be selected.</p>
+          <BookingMonthPicker
+            selectedDates={new Set(props.selectedDates.keys())}
+            onToggle={props.onToggleDate}
+            closedDates={props.closedDates}
+          />
         </>
       )}
 
@@ -653,6 +717,15 @@ function Step3ScheduleDates(props: {
       ) : (
         <p className="wiz-ok">
           {props.selectedDates.size} {props.selectedDates.size === 1 ? 'date' : 'dates'} selected
+        </p>
+      )}
+
+      {closedDatesInPlan.length > 0 && (
+        <p className="wiz-warn">
+          {closedDatesInPlan.length === 1
+            ? `${closedDatesInPlan[0]} is closed`
+            : `${closedDatesInPlan.length} of these dates are closed (${closedDatesInPlan.join(', ')})`}
+          . Remove {closedDatesInPlan.length === 1 ? 'it' : 'them'} to continue -- a closed date can&rsquo;t be booked.
         </p>
       )}
     </>

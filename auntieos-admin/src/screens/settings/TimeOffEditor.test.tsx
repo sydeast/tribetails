@@ -1,10 +1,21 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { CollectionSpec } from '../../lib/firestore';
+
+const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
+vi.mock('../../lib/firestore', () => ({ useCollection }));
+
 import { TimeOffEditor } from './TimeOffEditor';
 
 const EMPTY = { observedUsHolidays: [], companyHolidays: [], specialHours: [] };
+
+beforeEach(() => {
+  // Default: no existing sessions, so no editor test outside the dedicated
+  // closure-impact block below has to think about the new banner at all.
+  useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] });
+});
 
 describe('TimeOffEditor', () => {
   it('renders all eleven US holidays, unchecked when none are observed', () => {
@@ -295,5 +306,91 @@ describe('TimeOffEditor: one-click US holiday presets', () => {
       />,
     );
     expect(screen.getByRole('button', { name: 'Independence Day' })).toBeDisabled();
+  });
+});
+
+/**
+ * C1: what happens to a visit that ALREADY exists on a day later marked
+ * closed. Nothing automatically -- see the file header's C1 section -- but
+ * this banner is how the operator finds out, before or after Save, rather
+ * than the closure and the booking silently coexisting.
+ */
+describe('TimeOffEditor: closure-impact banner', () => {
+  const ORIG_TZ = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = 'America/Chicago';
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2027, 7, 15, 12, 0, 0)); // 2027-08-15
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+    process.env.TZ = ORIG_TZ;
+  });
+
+  function sessionsFixture(rows: Array<{ startTime: string }>) {
+    useCollection.mockReset().mockImplementation((spec: CollectionSpec) => {
+      if (spec.path === 'kin_care_sessions') return { status: 'ready', data: rows };
+      return { status: 'ready', data: [] };
+    });
+  }
+
+  it('warns when an existing session already falls on a saved closure date', () => {
+    sessionsFixture([{ startTime: '2027-12-25T15:00:00.000Z' }]);
+    render(
+      <TimeOffEditor data={{ ...EMPTY, companyHolidays: ['2027-12-25|Christmas'] }} onSave={vi.fn()} />,
+    );
+    expect(screen.getByText('Visits already scheduled on a closure date')).toBeInTheDocument();
+    expect(screen.getByText(/2027-12-25: 1 visit \(Christmas\)/)).toBeInTheDocument();
+  });
+
+  it('warns for an UNSAVED (staged) closure too, before Save is even pressed', async () => {
+    sessionsFixture([{ startTime: '2027-12-25T15:00:00.000Z' }]);
+    render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+    expect(screen.queryByText('Visits already scheduled on a closure date')).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByPlaceholderText('2026-12-25'), '2027-12-25');
+    await userEvent.type(screen.getByPlaceholderText('Christmas closure'), 'Christmas');
+    await userEvent.click(screen.getAllByRole('button', { name: /^add$/i })[0]!);
+
+    expect(screen.getByText('Visits already scheduled on a closure date')).toBeInTheDocument();
+  });
+
+  it('honors yearly recurrence: a session on the RECURRING date next year is still flagged', () => {
+    sessionsFixture([{ startTime: '2028-07-04T15:00:00.000Z' }]);
+    render(
+      <TimeOffEditor
+        data={{ ...EMPTY, companyHolidays: ['yearly:07-04|Independence Day'] }}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/2028-07-04: 1 visit \(Independence Day\)/)).toBeInTheDocument();
+  });
+
+  it('stays silent when no existing session falls on any closure date', () => {
+    sessionsFixture([{ startTime: '2027-12-24T15:00:00.000Z' }]); // day before the closure
+    render(
+      <TimeOffEditor data={{ ...EMPTY, companyHolidays: ['2027-12-25|Christmas'] }} onSave={vi.fn()} />,
+    );
+    expect(screen.queryByText('Visits already scheduled on a closure date')).not.toBeInTheDocument();
+  });
+
+  it('stays silent with no company holidays at all, even with sessions on file', () => {
+    sessionsFixture([{ startTime: '2027-12-25T15:00:00.000Z' }]);
+    render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+    expect(screen.queryByText('Visits already scheduled on a closure date')).not.toBeInTheDocument();
+  });
+
+  it('degrades to no banner (never an error) when the sessions read fails', () => {
+    useCollection.mockReset().mockImplementation((spec: CollectionSpec) =>
+      spec.path === 'kin_care_sessions'
+        ? { status: 'error', message: 'permission-denied', retry: vi.fn() }
+        : { status: 'ready', data: [] },
+    );
+    render(
+      <TimeOffEditor data={{ ...EMPTY, companyHolidays: ['2027-12-25|Christmas'] }} onSave={vi.fn()} />,
+    );
+    expect(screen.queryByText('Visits already scheduled on a closure date')).not.toBeInTheDocument();
+    // The rest of the panel still works; a failed advisory read is not a hard dependency.
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
   });
 });

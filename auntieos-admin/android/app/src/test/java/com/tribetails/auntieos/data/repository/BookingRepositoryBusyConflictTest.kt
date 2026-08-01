@@ -3,6 +3,7 @@ package com.tribetails.auntieos.data.repository
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.firestore.CollectionReference
 import com.google.firebase.firestore.DocumentReference
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.QuerySnapshot
@@ -53,6 +54,21 @@ class BookingRepositoryBusyConflictTest {
         return docRef
     }
 
+    /**
+     * C1: [assertNoCompanyHolidayConflict] runs unconditionally (no override),
+     * so every path that reaches the write also reads
+     * `business_settings/business_settings`. Stubbed to "no closures at all"
+     * here; the dedicated closure-conflict cases live in
+     * `BookingRepositoryCompanyHolidayTest.kt`.
+     */
+    private fun mockNoCompanyHolidays(firestore: FirebaseFirestore) {
+        val docRef = mockk<DocumentReference>()
+        val snapshot = mockk<DocumentSnapshot>()
+        every { firestore.document("business_settings/business_settings") } returns docRef
+        every { docRef.get() } returns Tasks.forResult(snapshot)
+        every { snapshot.get("companyHolidays") } returns null
+    }
+
     // Real zoned instants (a "Z" suffix), not the bare ISO_LOCAL_DATE_TIME a
     // picker actually writes, so this test is deterministic regardless of the
     // JVM's default timezone: `parseVisitInstant` tries `Instant.parse` first
@@ -83,6 +99,7 @@ class BookingRepositoryBusyConflictTest {
     fun `overrideBusyConflict true writes the booking through (the existing Force Create affordance)`() = runBlocking {
         val firestore = mockk<FirebaseFirestore>()
         mockBusySlotsQuery(firestore, listOf(busySlot("2026-08-07", "14:00", "15:00")))
+        mockNoCompanyHolidays(firestore)
         val docRef = mockBookingWrite(firestore)
         val repo = BookingRepository(firestore = firestore, functions = mockk<FirebaseFunctions>(relaxed = true))
 
@@ -101,6 +118,7 @@ class BookingRepositoryBusyConflictTest {
         val firestore = mockk<FirebaseFirestore>()
         // Busy slot on a completely different day.
         mockBusySlotsQuery(firestore, listOf(busySlot("2026-09-01", "14:00", "15:00")))
+        mockNoCompanyHolidays(firestore)
         val docRef = mockBookingWrite(firestore)
         val repo = BookingRepository(firestore = firestore, functions = mockk<FirebaseFunctions>(relaxed = true))
 

@@ -10,6 +10,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinNames } from '../lib/resolveKinNames';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
+import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 
 /**
  * 1E §A.9: server-bound creation of a kin_care_sessions doc (scheduleNewVisit).
@@ -60,6 +61,12 @@ export async function createKinCareSessionHandler(
     actorRole: 'AUNTIE',
     override: args.overrideBusyConflict,
     auditContext: { kinfolkId: args.kinfolkId },
+  });
+  // A closed day always refuses the write -- no override. See
+  // companyHolidayConflict.ts's header for why this guard has none.
+  await guardCompanyHolidayConflict({
+    firestore: db(),
+    visits: [{ startTimeMs: Date.parse(args.startTime), endTimeMs: Date.parse(args.endTime) }],
   });
 
   const kinNames = await resolveKinNames(args.kinfolkId, args.kinIds);

@@ -1,6 +1,7 @@
 import { str } from './coerce';
 import { DAYS_OF_WEEK } from './settingsFormat';
 import { weekdayAbbrev, busyWindowLabel, isValidHHmm, type BusySlotLike } from './scheduleFormat';
+import { closureOccurrencesInRange, type ClosureEntry } from './closureRecurrence';
 
 /**
  * What the booking date picker knows about a single calendar day, and how it
@@ -182,6 +183,66 @@ export function clashingBlocks(timeHHmm: string, windows: readonly BlockedWindow
 }
 
 /**
+ * C1: the closure name covering local day `iso`, or `null` when none of
+ * `entries` (decoded `companyHolidays` rows) lands on it. Checks every entry
+ * against the single date rather than pre-expanding a range, so a caller can
+ * call this once per rendered cell without keeping a separate lookup table in
+ * sync; the picker only ever renders 42 cells at a time, so the repeated work
+ * is trivial.
+ */
+export function holidayNameForDay(entries: readonly ClosureEntry[], iso: string): string | null {
+  for (const entry of entries) {
+    if (closureOccurrencesInRange(entry, iso, iso).length > 0) {
+      return entry.name.trim() || 'a company holiday';
+    }
+  }
+  return null;
+}
+
+/**
+ * C1: one existing calendar day that ALREADY has visits scheduled on it AND
+ * is (or is about to be) a closure. The Time Off editor's answer to "what
+ * happens to bookings that already exist on a day later marked closed" --
+ * NOTHING happens to them automatically (see the C1 PR body for why), so this
+ * is the surface-them half of that decision: the editor shows this list
+ * before Save so the operator can act on it deliberately, rather than the
+ * closure silently coexisting with visits nobody looked at again.
+ */
+export interface ClosureImpactHit {
+  /** `YYYY-MM-DD`. */
+  date: string;
+  holidayName: string;
+  /** How many existing sessions land on `date`. */
+  sessionCount: number;
+}
+
+/**
+ * Every closure occurrence inside `[fromIso, toIso]` that has at least one
+ * entry in `sessionsByDay` (the shape `scheduleFormat.ts#sessionsByLocalDay`
+ * already produces). Pure: takes the day-grouped sessions rather than the raw
+ * list, so a caller already holding that grouping for another purpose does
+ * not group twice.
+ */
+export function closureImpactHits(
+  entries: readonly ClosureEntry[],
+  sessionsByDay: ReadonlyMap<string, readonly unknown[]>,
+  fromIso: string,
+  toIso: string,
+): ClosureImpactHit[] {
+  const out: ClosureImpactHit[] = [];
+  for (const entry of entries) {
+    for (const date of closureOccurrencesInRange(entry, fromIso, toIso)) {
+      const sessionCount = sessionsByDay.get(date)?.length ?? 0;
+      if (sessionCount > 0) {
+        out.push({ date, holidayName: entry.name.trim() || 'a company holiday', sessionCount });
+      }
+    }
+  }
+  out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return out;
+}
+
+/**
  * Everything the picker knows about one day cell.
  *
  * `hoursKnown` is separate from `hours` so an unreadable settings doc and a
@@ -203,6 +264,24 @@ export interface DayAvailability {
   sessionCount: number;
   /** False when the busy-slot or session read failed; `blocked`/`sessionCount` are then meaningless. */
   scheduleKnown: boolean;
+  /**
+   * C1: the closure's name when this local day is a `companyHolidays` entry
+   * (`lib/closureRecurrence.ts`), `null` on an ordinary day.
+   *
+   * UNLIKE every other signal on this type, this one is NOT advisory. Every
+   * other field here backs a WARNING the operator can knowingly submit past
+   * ("the operator is the business" -- see `selectionWarnings` below); a
+   * company holiday is the operator's own deliberate, typed-in statement that
+   * the business is closed, so it is the one day this picker refuses to offer
+   * at all (`AuntieDatePicker` disables the cell, matching `past`). The server
+   * (`guardCompanyHolidayConflict`, `mytribe/functions`) is the actual
+   * authority and refuses it unconditionally regardless of what this client
+   * shows; this field only keeps the picker from looking like it disagrees.
+   * `null` (never computed) is treated as "not a holiday", so a caller that
+   * has not wired closures yet degrades to the pre-C1 behavior rather than
+   * refusing to render.
+   */
+  holidayName: string | null;
 }
 
 /**
@@ -211,6 +290,7 @@ export interface DayAvailability {
  */
 export function dayBadge(day: DayAvailability): string | null {
   if (day.past) return null;
+  if (day.holidayName !== null) return 'Closed';
   if (day.scheduleKnown && day.blocked.length > 0) return 'Blocked';
   if (day.hoursKnown && day.hours.kind === 'closed') return 'Closed';
   if (day.scheduleKnown && day.sessionCount > 0) return `${day.sessionCount}`;
@@ -224,8 +304,9 @@ export function dayBadge(day: DayAvailability): string | null {
 export function dayDescription(day: DayAvailability): string {
   if (day.past) return 'in the past, not available';
   const parts: string[] = [];
+  if (day.holidayName !== null) parts.push(`closed for ${day.holidayName}, not available`);
   if (!day.hoursKnown || !day.scheduleKnown) parts.push('availability unknown');
-  if (day.hoursKnown && day.hours.kind === 'closed') parts.push('business closed');
+  if (day.holidayName === null && day.hoursKnown && day.hours.kind === 'closed') parts.push('business closed');
   if (day.hoursKnown && day.hours.kind === 'open') parts.push(`open ${dayHoursLabel(day.hours)}`);
   if (day.scheduleKnown && day.blocked.length > 0) {
     parts.push(`blocked ${day.blocked.map((b) => b.label).join(', ')}`);
@@ -239,11 +320,15 @@ export function dayDescription(day: DayAvailability): string {
 /**
  * The warnings for a whole selection, at the chosen start time.
  *
- * These NEVER block a submit. The operator is the business: booking outside
- * posted hours or over a blocked window is a thing they are allowed to decide
- * to do, and refusing it would make a secondary read into a hard dependency of
- * creating a booking. What the picker owes them is that the decision is
- * conscious, so each warning names the day and the reason.
+ * Every warning here EXCEPT the holiday one is advisory and never blocks a
+ * submit: the operator is the business, and booking outside posted hours or
+ * over a blocked window is theirs to decide. A `holidayName` warning is
+ * different -- it can only appear here for a day the CALLER let into the
+ * selection despite `AuntieDatePicker` refusing to offer it (e.g. a weekly
+ * pattern generating a date that only later turned out to fall on a closure,
+ * or a day picked before the operator saved a new closure in another tab), so
+ * it says plainly that the date cannot be booked rather than phrasing it as a
+ * choice; the actual refusal still happens server-side either way.
  *
  * A day whose availability is UNKNOWN produces no per-day warning here: the
  * caller already shows one banner saying the read failed, and repeating it 42
@@ -253,7 +338,9 @@ export function selectionWarnings(days: readonly DayAvailability[], timeHHmm: st
   const out: string[] = [];
   for (const day of days) {
     const label = shortDayLabel(day.iso);
-    if (day.hoursKnown && day.hours.kind === 'closed') {
+    if (day.holidayName !== null) {
+      out.push(`${label}: closed for ${day.holidayName}. This date can't be booked.`);
+    } else if (day.hoursKnown && day.hours.kind === 'closed') {
       out.push(`${label}: the business is closed that day.`);
     } else if (day.hoursKnown && !isWithinBusinessHours(timeHHmm, day.hours)) {
       out.push(`${label}: ${timeHHmm} is outside business hours (${dayHoursLabel(day.hours)}).`);

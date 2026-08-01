@@ -25,9 +25,11 @@ import { serviceOptionsFromRates, type ServiceOption } from '../lib/newBooking';
 import {
   blockedWindows,
   businessHoursForDay,
+  holidayNameForDay,
   selectionWarnings,
   type DayAvailability,
 } from '../lib/bookingAvailability';
+import { parseClosureEntry, type ClosureEntry } from '../lib/closureRecurrence';
 import {
   WIZARD_STEPS,
   buildVisits,
@@ -133,6 +135,12 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
   const [businessHours, setBusinessHours] = useState<Record<string, string> | null>(null);
   const [businessTimeZone, setBusinessTimeZone] = useState('');
   const [hoursError, setHoursError] = useState<string | null>(null);
+  // C1: decoded `companyHolidays`, the same read as businessHours/timeZone
+  // above (same doc, same one-shot fetch) so a closure appears on the
+  // calendar without a second round trip. `[]` both while loading and on a
+  // failed read -- see `hoursError`/`servicesError` for why a shared failure
+  // signal already covers this without a fourth error state.
+  const [closureEntries, setClosureEntries] = useState<ClosureEntry[]>([]);
 
   useEffect(() => {
     let live = true;
@@ -142,6 +150,7 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
         setServiceOptions(serviceOptionsFromRates(s.serviceRates));
         setBusinessHours(s.businessHours);
         setBusinessTimeZone((s.timeZone ?? '').trim());
+        setClosureEntries((s.companyHolidays ?? []).map(parseClosureEntry));
       })
       .catch((err: unknown) => {
         if (!live) return;
@@ -199,8 +208,9 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
       blocked: scheduleKnown ? blockedWindows(blockedByDate.get(iso) ?? []) : [],
       sessionCount: scheduleKnown ? (sessionsByDay.get(iso)?.length ?? 0) : 0,
       scheduleKnown,
+      holidayName: holidayNameForDay(closureEntries, iso),
     }),
-    [todayIso, businessHours, hoursKnown, scheduleKnown, blockedByDate, sessionsByDay],
+    [todayIso, businessHours, hoursKnown, scheduleKnown, blockedByDate, sessionsByDay, closureEntries],
   );
 
   const selectedIsos = useMemo(() => plannedDayIsos(state), [state]);

@@ -38,6 +38,7 @@ export { getBreeds } from './portal/getBreeds';
 export { submitVetClinic } from './portal/submitVetClinic';
 export { getMyVisits } from './portal/getMyVisits';
 export { getBusinessContact } from './portal/getBusinessContact';
+export { getBusinessClosures } from './portal/getBusinessClosures';
 export { getFeatureFlags } from './portal/getFeatureFlags';
 export { getInvitePreview } from './portal/getInvitePreview';
 export { claimInviteSignup } from './membership/claimInviteSignup';
