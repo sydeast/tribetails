@@ -85,3 +85,72 @@ export function requestBooking(req: RequestBookingRequest): Promise<RequestBooki
   }
   return call<RequestBookingRequest, RequestBookingResult>('requestBooking', req);
 }
+
+// ── requestBookingCancellation (functions/src/portal/requestBookingCancellation.ts) ──
+// Vendor-parity: NOT an instant cancel. It stamps a cancelRequestedAt flag the
+// business acts on; the visit's own status is untouched until they do. See the
+// handler's doc comment for the full rationale.
+
+export interface RequestBookingCancellationRequest {
+  kinfolkId?: string;
+  batchId: string;
+  visitId: string;
+  reason?: string;
+}
+
+export interface RequestBookingCancellationResult {
+  ok: true;
+  visitId: string;
+  /** True when a request was already pending (this call was a no-op). */
+  alreadyPending: boolean;
+}
+
+/** Asks the business to cancel one visit. Only requested/confirmed visits qualify (server-enforced). */
+export function requestBookingCancellation(
+  kinfolkId: string,
+  batchId: string,
+  visitId: string,
+  reason?: string,
+): Promise<RequestBookingCancellationResult> {
+  const payload: RequestBookingCancellationRequest = {
+    kinfolkId,
+    batchId,
+    visitId,
+    ...(reason && reason.trim() ? { reason: reason.trim() } : {}),
+  };
+  return call<RequestBookingCancellationRequest, RequestBookingCancellationResult>(
+    'requestBookingCancellation',
+    payload,
+  );
+}
+
+// ── addBookingNote (functions/src/portal/addBookingNote.ts) ─────────────────
+// `kinfolkId` is typed optional server-side but the handler throws
+// invalid-argument without it (it's the authorization anchor, resolved
+// BEFORE the visit lookup) — always send it, never omit.
+
+export interface AddBookingNoteRequest {
+  kinfolkId: string;
+  batchId: string;
+  visitId: string;
+  body: string;
+}
+
+export interface AddBookingNoteResult {
+  noteId: string;
+}
+
+/**
+ * Leaves a note on one visit. Rejected within the 3-hour pre-visit cutoff
+ * (server-enforced, see functions/src/lib/bookingNoteCutoff.ts) — the
+ * rejection message is already kinfolk-facing, so it's shown as-is.
+ */
+export function addBookingNote(
+  kinfolkId: string,
+  batchId: string,
+  visitId: string,
+  body: string,
+): Promise<AddBookingNoteResult> {
+  const payload: AddBookingNoteRequest = { kinfolkId, batchId, visitId, body };
+  return call<AddBookingNoteRequest, AddBookingNoteResult>('addBookingNote', payload);
+}

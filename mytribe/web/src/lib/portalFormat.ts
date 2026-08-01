@@ -3,7 +3,7 @@
  * Kept separate from the screens themselves so the mapping logic (not
  * just the markup) has direct vitest coverage.
  */
-import type { BookingStatus, PortalHomeSection } from '../api/types';
+import type { BookingDto, BookingStatus, GetMyBookingsResult, PortalHomeSection } from '../api/types';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -80,6 +80,79 @@ export function bookingChip(status: BookingStatus): ChipInfo {
       return { label: 'CANCELLED', tone: 'done' };
     default:
       return { label: status.toUpperCase(), tone: 'warm' };
+  }
+}
+
+/**
+ * Finds one booking by its visit id across the live/upcoming/recent buckets
+ * of a getMyBookings result — the drill-in lookup BookingDetail.tsx uses.
+ * Mirrors Schedule.tsx's own findBookingBySessionId, keyed on `id` instead.
+ */
+export function findBookingById(result: GetMyBookingsResult | undefined, id: string): BookingDto | null {
+  if (!result) return null;
+  const all = [result.liveVisit, ...result.upcoming, ...result.recent].filter((b): b is BookingDto => b !== null);
+  return all.find((b) => b.id === id) ?? null;
+}
+
+export interface BookingStatusChip {
+  label: string;
+  tone: 'requested' | 'confirmed' | 'inprogress' | 'completed' | 'cancelled';
+}
+
+/**
+ * Large status chip for BookingDetail, per the mockup's `.chip.lg` variants
+ * (ui-ideas/mytribe-booking-detail-2026-05-31.html). A distinct, more
+ * granular tone set than bookingChip's 3-tone summary chip above — this one
+ * needs to tell EN ROUTE from CONFIRMED from IN PROGRESS at a glance.
+ */
+export function bookingStatusChip(status: BookingStatus): BookingStatusChip {
+  switch (status) {
+    case 'requested':
+      return { label: 'REQUESTED', tone: 'requested' };
+    case 'confirmed':
+      return { label: 'CONFIRMED', tone: 'confirmed' };
+    case 'enRoute':
+      return { label: 'EN ROUTE', tone: 'inprogress' };
+    case 'active':
+      return { label: 'IN PROGRESS', tone: 'inprogress' };
+    case 'completed':
+      return { label: 'COMPLETED', tone: 'completed' };
+    case 'cancelled':
+      return { label: 'CANCELLED', tone: 'cancelled' };
+  }
+}
+
+export type BookingTimelineStepId = 'requested' | 'confirmed' | 'inProgress' | 'completed';
+
+/** The 4 real backend states with a timeline position. Cancelled has none — see bookingTimelineIndex. */
+export const BOOKING_TIMELINE_STEPS: { id: BookingTimelineStepId; label: string }[] = [
+  { id: 'requested', label: 'Requested' },
+  { id: 'confirmed', label: 'Confirmed' },
+  { id: 'inProgress', label: 'In progress' },
+  { id: 'completed', label: 'Completed' },
+];
+
+/**
+ * Index into BOOKING_TIMELINE_STEPS for a booking's current status, or `null`
+ * for cancelled (a cancelled visit has no position on a forward progress
+ * bar — BookingDetail shows the CANCELLED chip instead of the timeline).
+ * `enRoute` and `active` both map to "In progress": BookingStatus distinguishes
+ * them for the live-visit gate elsewhere, but the timeline only has one step
+ * for "the Auntie is working the visit right now".
+ */
+export function bookingTimelineIndex(status: BookingStatus): number | null {
+  switch (status) {
+    case 'requested':
+      return 0;
+    case 'confirmed':
+      return 1;
+    case 'enRoute':
+    case 'active':
+      return 2;
+    case 'completed':
+      return 3;
+    case 'cancelled':
+      return null;
   }
 }
 

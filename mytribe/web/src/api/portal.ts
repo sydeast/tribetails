@@ -3,6 +3,8 @@ import { FUNCTIONS_HTTP_BASE } from '../lib/firebase';
 import type {
   AcceptInviteRequest,
   AcceptInviteResult,
+  AddKinRequest,
+  AddKinResult,
   ArchiveKinRequest,
   ArchiveKinResult,
   BusinessContactDto,
@@ -98,6 +100,15 @@ export function getMyVisits(kinfolkId?: string, limit?: number): Promise<GetMyVi
 export function getMyKin(kinfolkId?: string): Promise<GetMyKinResult> {
   const payload: GetMyKinRequest = kinfolkId !== undefined ? { kinfolkId } : {};
   return call<GetMyKinRequest, GetMyKinResult>('getMyKin', payload);
+}
+
+/**
+ * Adds a new kin to the roster. The `kin_edit` permission is enforced
+ * server-side, same as updateKin; a denial throws and must surface (fail loud).
+ */
+export function addKin(kin: AddKinRequest['kin'], kinfolkId?: string): Promise<AddKinResult> {
+  const payload: AddKinRequest = { kin, ...(kinfolkId !== undefined ? { kinfolkId } : {}) };
+  return call<AddKinRequest, AddKinResult>('addKin', payload);
 }
 
 /** Toggles a kin between active and memorialized (noLongerWithUs). */

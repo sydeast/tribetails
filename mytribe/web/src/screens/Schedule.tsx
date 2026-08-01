@@ -150,7 +150,7 @@ export function Schedule() {
                     const chip = bookingChip(b.status);
                     return (
                       <div key={b.id}>
-                        <div className={`visit ${visitVariant(i)}`}>
+                        <Link className={`visit ${visitVariant(i)}`} to="/schedule/$visitId" params={{ visitId: b.id }}>
                           <div className="cal">
                             <div className="m">{tile.month}</div>
                             <div className="d">{tile.day}</div>
@@ -162,7 +162,7 @@ export function Schedule() {
                           </div>
                           <div className="pet">{speciesEmoji(null)}</div>
                           <span className={`chip ${chip.tone}`}>{chip.label}</span>
-                        </div>
+                        </Link>
                         {i < upcoming.length - 1 && <div className="rowdiv" />}
                       </div>
                     );
@@ -189,7 +189,7 @@ export function Schedule() {
                     const isOpen = openReplayId === b.id;
                     return (
                       <div key={b.id}>
-                        <div className={`visit ${visitVariant(i)}`}>
+                        <Link className={`visit ${visitVariant(i)}`} to="/schedule/$visitId" params={{ visitId: b.id }}>
                           <div className="cal">
                             <div className="m">{tile.month}</div>
                             <div className="d">{tile.day}</div>
@@ -202,14 +202,22 @@ export function Schedule() {
                           {route.length > 0 && (
                             <button
                               className={`replay ${isOpen ? 'open' : ''}`}
-                              onClick={() => setOpenReplayId(isOpen ? null : b.id)}
+                              onClick={(e) => {
+                                // The replay toggle lives inside the now-clickable
+                                // `.visit` row (it navigates to the drill-in
+                                // route); stop the click there so opening the
+                                // replay panel doesn't also navigate away.
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setOpenReplayId(isOpen ? null : b.id);
+                              }}
                             >
                               <span className="dot" />
                               Visit Replays
                             </button>
                           )}
                           <span className={`chip ${chip.tone}`}>{chip.label}</span>
-                        </div>
+                        </Link>
                         {isOpen && route.length > 0 && (
                           <div className="visit-replay-panel">
                             <RouteMap route={route} distanceMeters={visit?.gpsSummary?.distanceMeters} durationSeconds={visit?.gpsSummary?.durationSeconds} />

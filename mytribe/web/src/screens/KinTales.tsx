@@ -7,6 +7,7 @@ import {
   commentAuthorLabel,
   commentAvatarVariant,
   commentBadge,
+  createShareLink,
   filterTales,
   getKinTaleReaction,
   getMyKinTaleComments,
@@ -51,9 +52,11 @@ const FILTER_TABS: { id: KinTalesFilter; label: string }[] = [
  * Reactions (the mockup's "You and 2 others loved this" heart line) are
  * live for every tale (not just featured), same eager-load convention as
  * comments — S4 backend delta, see kinTaleEngagement.ts's toggleKinTaleLove.
- * Share and "Reply to Auntie" still have no backing callable
- * (share/messaging land in S4/S5) and render as inert buttons, same
- * convention as Home's Message/Invoices quick-start buttons.
+ *
+ * Share (B3, punchlist item) is wired to createShareLink and lives only on
+ * the featured card, matching where the mockup put it. "Reply to Auntie"
+ * still has no backing callable (messaging land is S5's territory) and
+ * stays an inert button, same convention as Home's Invoices quick-start.
  */
 export function KinTales() {
   const kinfolkId = getActiveKinfolkId();
@@ -251,9 +254,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
         </div>
 
         <div className="actions">
-          <span className="btn grad navlink-inert" title="Coming soon">
-            {'\u{1F517}'} Share
-          </span>
+          <TaleShare taleId={tale.id} kinfolkId={kinfolkId} />
           <span className="btn ghost navlink-inert" title="Coming soon">
             {'\u{1F4AC}'} Reply to Auntie {tale.authorDisplayName}
           </span>
@@ -285,6 +286,81 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
       </div>
       <TaleComments taleId={tale.id} kinfolkId={kinfolkId} />
     </section>
+  );
+}
+
+/**
+ * The mockup's "Share" button (B3, punchlist item), made real: creates a
+ * public, time-limited link (createShareLink) for this KinTale and reveals
+ * it inline in place of the button, matching the reveal-panel convention
+ * used elsewhere in this file (the reply box under a comment) rather than a
+ * modal — this codebase has no modal component. `kinfolkId` is required by
+ * the server (familyId, the requirePrimary anchor); if it is somehow
+ * unresolved yet, the mutation fails loud with a clear message instead of
+ * silently no-op'ing.
+ */
+function TaleShare(props: { taleId: string; kinfolkId: string | undefined }) {
+  const { taleId, kinfolkId } = props;
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const share = useMutation({
+    mutationFn: () => {
+      if (!kinfolkId) throw new Error('Could not tell which tribe this is. Reload the page and try again.');
+      return createShareLink(taleId, kinfolkId);
+    },
+    onSuccess: () => setRevealed(true),
+  });
+
+  async function copyLink(url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+    } catch {
+      // Clipboard access can be denied (permissions, insecure context). The
+      // link is still visible and selectable in the input, so this is a
+      // degraded convenience, not a failure worth its own error banner.
+      setCopied(false);
+    }
+  }
+
+  if (revealed && share.data) {
+    return (
+      <div className="sharepanel">
+        <input
+          className="shareinput"
+          type="text"
+          readOnly
+          value={share.data.shareUrl}
+          onFocus={(e) => e.currentTarget.select()}
+          aria-label="Share link"
+        />
+        <button type="button" className="btn ghost" onClick={() => void copyLink(share.data!.shareUrl)}>
+          {copied ? 'Copied' : 'Copy Link'}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        className="btn grad"
+        disabled={share.isPending}
+        onClick={() => {
+          setCopied(false);
+          share.mutate();
+        }}
+      >
+        {'\u{1F517}'} {share.isPending ? 'Creating link…' : 'Share'}
+      </button>
+      {share.isError && (
+        <div style={{ color: 'var(--coral)', fontSize: 12.5, marginTop: 6 }}>
+          {share.error instanceof Error ? share.error.message : 'Could not create a share link. Try again.'}
+        </div>
+      )}
+    </div>
   );
 }
 

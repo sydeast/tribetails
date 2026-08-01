@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { call } from '../lib/fns';
 import {
   commentAuthorLabel,
   commentAvatarVariant,
   commentBadge,
+  createShareLink,
   filterTales,
   initialOf,
   loveLine,
@@ -13,6 +15,12 @@ import {
   type KinTaleCommentDto,
 } from './kinTalesApi';
 import type { KinTaleDto } from './types';
+
+// Replace the single callables choke point so the createShareLink tests
+// assert the exact payload the wrapper builds, without touching the
+// network. Mirrors api/portal.test.ts's convention. Every other describe
+// block in this file exercises pure helpers and never touches `call`.
+vi.mock('../lib/fns', () => ({ call: vi.fn() }));
 
 function tale(overrides: Partial<KinTaleDto>): KinTaleDto {
   return {
@@ -186,5 +194,29 @@ describe('loveLine', () => {
 
   it('invites the first love when nobody has reacted', () => {
     expect(loveLine({ loved: false, loveCount: 0 })).toBe('Be the first to love this');
+  });
+});
+
+describe('createShareLink wrapper', () => {
+  beforeEach(() => {
+    vi.mocked(call).mockReset();
+    vi.mocked(call).mockResolvedValue({ shareId: 'share-1', shareUrl: 'https://kinfolk.tribetails.com/share/share-1' } as never);
+  });
+
+  it('sends familyId + kinTaleId with photos included by default', async () => {
+    await createShareLink('t1', 'fam1');
+    expect(call).toHaveBeenCalledWith('createShareLink', { familyId: 'fam1', kinTaleId: 't1', includePhotos: true });
+  });
+
+  it('returns the callable result', async () => {
+    await expect(createShareLink('t1', 'fam1')).resolves.toEqual({
+      shareId: 'share-1',
+      shareUrl: 'https://kinfolk.tribetails.com/share/share-1',
+    });
+  });
+
+  it('does not swallow a rejection, e.g. a SECONDARY member denied by requirePrimary (fail loud)', async () => {
+    vi.mocked(call).mockRejectedValueOnce(new Error('permission-denied'));
+    await expect(createShareLink('t1', 'fam1')).rejects.toThrow('permission-denied');
   });
 });

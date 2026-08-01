@@ -116,6 +116,19 @@ const scheduleRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/Schedule'), 'Schedule'),
 });
 
+/**
+ * Booking drill-in (B3, punchlist item): the "tap a visit" destination the
+ * cancellation and note actions need. Declared before /schedule/book below so
+ * a reader sees "/schedule -> its children" in path order; TanStack Router
+ * itself doesn't care about declaration order for static vs dynamic segments.
+ */
+const bookingDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/schedule/$visitId',
+  beforeLoad: requireActiveTribe,
+  component: lazyRouteComponent(() => import('./screens/BookingDetail'), 'BookingDetail'),
+});
+
 const bookingWizardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/schedule/book',
@@ -143,6 +156,19 @@ const kinRoute = createRoute({
   path: '/kin',
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/Kin'), 'Kin'),
+});
+
+/**
+ * Declared before `/kin/$kinId` below: TanStack Router matches a static
+ * path segment ("new") before a dynamic one ("$kinId") regardless of
+ * declaration order, but this ordering keeps the file reading the way the
+ * routes resolve.
+ */
+const kinNewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/kin/new',
+  beforeLoad: requireActiveTribe,
+  component: lazyRouteComponent(() => import('./screens/KinAdd'), 'KinAdd'),
 });
 
 const kinDetailRoute = createRoute({
@@ -218,9 +244,11 @@ const routeTree = rootRoute.addChildren([
   noTribesRoute,
   homeRoute,
   scheduleRoute,
+  bookingDetailRoute,
   bookingWizardRoute,
   messagesRoute,
   kinRoute,
+  kinNewRoute,
   kinDetailRoute,
   kinEditRoute,
   kinTalesRoute,

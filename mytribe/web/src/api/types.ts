@@ -237,6 +237,19 @@ export interface UpdateKinResult {
   ok: true;
 }
 
+// ── addKin (functions/src/portal/kinWrites.ts, authed) ───────────────────────
+// Same `KinPayload` zod schema as updateKin, except `name` is required (not
+// merged over an existing doc).
+
+export interface AddKinRequest {
+  kinfolkId?: string;
+  kin: KinPayloadPartial & { name: string };
+}
+
+export interface AddKinResult {
+  kinId: string;
+}
+
 // ── getMyKinTales (functions/src/portal/getMyKinTales.ts) ───────────────────
 
 export interface GetMyKinTalesRequest {

@@ -104,3 +104,9 @@
 .talecard .gallery, .talecard .thread { padding-left: 20px; padding-right: 20px; }
 
 .loadmore { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 30px; }
+
+/* share-link reveal, shown in place of the Share button once a link exists */
+.sharepanel { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.shareinput { font-family: var(--mono); font-size: 12.5px; color: var(--navy); background: rgba(255, 255, 255, .7);
+  border: 1px solid var(--glass-border); border-radius: 12px; padding: 10px 12px; min-width: 220px; flex: 1 1 220px; }
+.shareinput:focus { outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px rgba(223, 132, 49, .14); }

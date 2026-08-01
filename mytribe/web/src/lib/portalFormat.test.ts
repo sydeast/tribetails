@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BOOKING_TIMELINE_STEPS,
   bookingChip,
+  bookingStatusChip,
+  bookingTimelineIndex,
   calTile,
   elapsedMinutes,
+  findBookingById,
   fullDateKick,
   greetingKick,
   isoTime,
@@ -14,6 +18,7 @@ import {
   visitVariant,
   weekdayTime,
 } from './portalFormat';
+import type { BookingDto, GetMyBookingsResult } from '../api/types';
 
 describe('calTile', () => {
   it('formats month + zero-padded day', () => {
@@ -170,5 +175,95 @@ describe('resolveHomeLayout', () => {
         { id: 'roster', enabled: true, limit: 0 },
       ]),
     ).toEqual([{ id: 'roster', limit: 0 }]);
+  });
+});
+
+function booking(overrides: Partial<BookingDto> = {}): BookingDto {
+  return {
+    id: 'v1',
+    batchId: 'b1',
+    kinfolkId: 'fam1',
+    status: 'confirmed',
+    serviceType: 'Drop-in Visit',
+    title: null,
+    startTimeMs: null,
+    endTimeMs: null,
+    kinIds: [],
+    kinNames: [],
+    auntieDisplayName: null,
+    auntieAvatarUrl: null,
+    notes: null,
+    requestedByUid: null,
+    createdAtMs: null,
+    updatedAtMs: null,
+    visitProgress: null,
+    sourceBookingId: null,
+    sessionId: null,
+    cancelRequested: false,
+    ...overrides,
+  };
+}
+
+function bookingsResult(overrides: Partial<GetMyBookingsResult> = {}): GetMyBookingsResult {
+  return { liveVisit: null, upcoming: [], recent: [], envelopes: [], ...overrides };
+}
+
+describe('findBookingById', () => {
+  it('finds a match in upcoming', () => {
+    const result = bookingsResult({ upcoming: [booking({ id: 'a' }), booking({ id: 'b' })] });
+    expect(findBookingById(result, 'b')?.id).toBe('b');
+  });
+
+  it('finds a match in recent', () => {
+    const result = bookingsResult({ recent: [booking({ id: 'past-1' })] });
+    expect(findBookingById(result, 'past-1')?.id).toBe('past-1');
+  });
+
+  it('finds the live visit', () => {
+    const result = bookingsResult({ liveVisit: booking({ id: 'live-1' }) });
+    expect(findBookingById(result, 'live-1')?.id).toBe('live-1');
+  });
+
+  it('returns null when nothing matches, or the result is not loaded yet', () => {
+    expect(findBookingById(bookingsResult({ upcoming: [booking({ id: 'a' })] }), 'missing')).toBeNull();
+    expect(findBookingById(undefined, 'a')).toBeNull();
+  });
+});
+
+describe('bookingStatusChip', () => {
+  it.each([
+    ['requested', 'REQUESTED', 'requested'],
+    ['confirmed', 'CONFIRMED', 'confirmed'],
+    ['enRoute', 'EN ROUTE', 'inprogress'],
+    ['active', 'IN PROGRESS', 'inprogress'],
+    ['completed', 'COMPLETED', 'completed'],
+    ['cancelled', 'CANCELLED', 'cancelled'],
+  ] as const)('%s -> %s / %s', (status, label, tone) => {
+    expect(bookingStatusChip(status)).toEqual({ label, tone });
+  });
+});
+
+describe('bookingTimelineIndex', () => {
+  it('maps requested/confirmed/completed to their own step', () => {
+    expect(bookingTimelineIndex('requested')).toBe(0);
+    expect(bookingTimelineIndex('confirmed')).toBe(1);
+    expect(bookingTimelineIndex('completed')).toBe(3);
+  });
+
+  it('collapses enRoute and active onto the same "in progress" step', () => {
+    expect(bookingTimelineIndex('enRoute')).toBe(2);
+    expect(bookingTimelineIndex('active')).toBe(2);
+  });
+
+  it('cancelled has no timeline position', () => {
+    expect(bookingTimelineIndex('cancelled')).toBeNull();
+  });
+
+  it('every non-null index is a valid BOOKING_TIMELINE_STEPS index', () => {
+    for (const status of ['requested', 'confirmed', 'enRoute', 'active', 'completed'] as const) {
+      const index = bookingTimelineIndex(status);
+      expect(index).not.toBeNull();
+      expect(BOOKING_TIMELINE_STEPS[index as number]).toBeDefined();
+    }
   });
 });
