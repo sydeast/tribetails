@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render as rtlRender, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type KinTaleEntry } from '../api/kinTales';
 import { type PagedCollection } from '../lib/usePagedCollection';
+import { ToastProvider } from '../components/Toast';
 
 /**
  * The list is PAGED now, so this file mocks `usePagedCollection` rather than
@@ -17,7 +18,33 @@ vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
+/**
+ * B2's "Needs triage" section (`NeedsTriageSection`, mounted inside `KinTales`)
+ * reads through its own one-shot callable client rather than this screen's
+ * paged stream. Mocked to a settled empty list here so every pre-existing test
+ * below sees the section render nothing, exactly its own "quiet when proven
+ * empty" behavior; `NeedsTriageSection.test.tsx` covers the section itself.
+ */
+const { listOrphanReports } = vi.hoisted(() => ({ listOrphanReports: vi.fn() }));
+vi.mock('../api/kinTaleTriage', () => ({
+  listOrphanReports,
+  assignKinfolkToOrphanReport: vi.fn(),
+  markOrphanReportAsDuplicate: vi.fn(),
+  archiveOrphanReportAsBadData: vi.fn(),
+}));
+
 import { KinTales } from './KinTales';
+
+/**
+ * `NeedsTriageSection` calls `useToast()`, which throws outside a
+ * `<ToastProvider>` (a swallowed confirmation is indistinguishable from a
+ * triage action that never happened). Rendering the real provider keeps these
+ * tests exercising the tree the app actually mounts, mirroring
+ * HouseholdData.test.tsx.
+ */
+function render(ui: React.ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 
 function entry(over: Partial<KinTaleEntry>): KinTaleEntry {
   return {
@@ -89,6 +116,8 @@ beforeEach(() => {
   usePagedCollection.mockReset().mockReturnValue(paged([]));
   // The household directory behind the facet. Empty unless a case needs it.
   useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] });
+  // NeedsTriageSection's own read. Empty unless a case needs it; see the note above.
+  listOrphanReports.mockReset().mockResolvedValue([]);
 });
 
 describe('KinTales screen', () => {

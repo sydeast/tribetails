@@ -827,6 +827,42 @@ callable is the enforcement.
   can see; everything a server can know comes from here so the two clients cannot
   disagree.
 
+## KinTale triage (admin-gated)
+
+### listOrphanReports
+- req `{}` (no arguments)
+- res `{ reports: Array<{ _id: string, bodyCopy: string, sentVia: string,
+  createdAt: string /* free-text ISO or blank */ }>, scanned: number }`
+- Read only, admin-gated. An orphan is a `kin_care_reports` row carrying a
+  migration provenance marker (`legacy_orphan` from Pass 1, `legacy_visit_logs`
+  from the Pass 2 rename) with a blank `kinfolkId` and no `triageStatus`. It is
+  completed care work with no session to bill it against, so it is money the
+  operator cannot see until something surfaces it.
+- **Not a filter over the KinTales list, on purpose.** That list is ordered
+  `createdAt desc` and hard-capped at 200 so it never opens an unbounded
+  listener, and whether an orphan lands inside that page is currently governed by
+  a defect: `createdAt` holds two incompatible formats, free text on legacy rows
+  (`"September 3, 2025 2:02pm"`) and ISO everywhere else. Firestore orders
+  strings by UTF-8 byte, so every legacy row sorts above every ISO row in DESC,
+  and legacy rows sort among themselves alphabetically by month name. Verified
+  against prod 2026-08-01. After the operator's redating (legacy `createdAt`
+  becomes the `_migratedAt` ingest stamp; `createdAt` then means created in
+  AuntieOS) the ordering becomes real and orphans, pinned at the May 2026 ingest
+  date, drift off the page as new reports accumulate. This callable is one
+  bounded, unordered, single-predicate read, correct under both regimes and
+  served by Firestore's automatic per-field index; a second predicate, or an
+  `orderBy` on another field, would force a composite index. The rest of the
+  orphan test runs in memory, the same way `listUninvoicedSessions` filters
+  `status` and `invoiceId`.
+- `scanned` is the row count read before the in-memory filter, so an empty
+  `reports` is distinguishable from a query that matched nothing at all.
+- The blank test treats an ABSENT field and an empty string identically, matching
+  Android's `KinCareReport.isUntriagedOrphan()` (`data/model/Models.kt`). A
+  divergence there would hand the two clients different orphan sets from one
+  collection.
+- Write side is `triageOrphanReport` (ASSIGN, DUPLICATE, ARCHIVE), which both
+  clients share.
+
 ## Operator preferences
 
 ### saveDashboardLayout

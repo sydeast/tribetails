@@ -202,6 +202,10 @@ export { deleteFormSchema } from './admin/deleteFormSchema';
 // Run-4 #7b: shared bank of common KinTale checklist items (list + save-to-bank).
 export { listChecklistBank, saveChecklistBankItem } from './admin/checklistBank';
 export { triageOrphanReport } from './admin/triageOrphanReport';
+// B2: the "Needs triage" read side. Web has no Firestore path to this list
+// that stays correct as the collection grows past KINTALES_QUERY's 200-row
+// cap; see listOrphanReports.ts for why a dedicated callable, not a filter.
+export { listOrphanReports } from './admin/listOrphanReports';
 export { verifyActivityLogChain } from './admin/verifyActivityLogChain';
 export { setFeatureFlags } from './admin/setFeatureFlags';
 export { logActivity } from './admin/logActivity';
