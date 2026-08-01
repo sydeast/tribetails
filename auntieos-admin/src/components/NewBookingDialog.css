@@ -2,6 +2,11 @@
   margin-bottom: var(--space-3);
 }
 
+/* Paragraphs inside a banner: the refusal, then why an override is on offer. */
+.new-booking__banner-line {
+  margin: 0 0 var(--space-2);
+}
+
 .new-booking__fields {
   display: flex;
   flex-direction: column;
