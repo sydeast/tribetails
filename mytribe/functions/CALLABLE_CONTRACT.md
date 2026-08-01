@@ -827,6 +827,35 @@ callable is the enforcement.
   can see; everything a server can know comes from here so the two clients cannot
   disagree.
 
+## KinTale triage (admin-gated)
+
+### listOrphanReports
+- req `{}` (no arguments)
+- res `{ reports: Array<{ _id: string, bodyCopy: string, sentVia: string,
+  createdAt: string /* free-text ISO or blank */ }>, scanned: number }`
+- Read only, admin-gated. An orphan is a `kin_care_reports` row carrying a
+  migration provenance marker (`legacy_orphan` from Pass 1, `legacy_visit_logs`
+  from the Pass 2 rename) with a blank `kinfolkId` and no `triageStatus`. It is
+  completed care work with no session to bill it against, so it is money the
+  operator cannot see until something surfaces it.
+- **Not a filter over the KinTales list, on purpose.** That list is ordered
+  `createdAt desc` and hard-capped at 200 so it never opens an unbounded
+  listener. An orphan's `createdAt` is the MIGRATION date, not a visit date, so
+  once the collection holds 200 newer reports every orphan falls off that page
+  and the triage section goes quietly empty. This is one bounded, unordered,
+  single-predicate read instead, served by Firestore's automatic per-field
+  index; a second predicate, or an `orderBy` on another field, would force a
+  composite index. The rest of the orphan test runs in memory, the same way
+  `listUninvoicedSessions` filters `status` and `invoiceId`.
+- `scanned` is the row count read before the in-memory filter, so an empty
+  `reports` is distinguishable from a query that matched nothing at all.
+- The blank test treats an ABSENT field and an empty string identically, matching
+  Android's `KinCareReport.isUntriagedOrphan()` (`data/model/Models.kt`). A
+  divergence there would hand the two clients different orphan sets from one
+  collection.
+- Write side is `triageOrphanReport` (ASSIGN, DUPLICATE, ARCHIVE), which both
+  clients share.
+
 ## Operator preferences
 
 ### saveDashboardLayout
