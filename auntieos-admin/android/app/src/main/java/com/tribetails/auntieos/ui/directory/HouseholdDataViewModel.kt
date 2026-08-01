@@ -48,8 +48,8 @@ data class HouseholdDataUiState(
     // Phase 2: read-only free-text dossier householdNotes, shown as a fill-in
     // reference at the top of the editor. Blank when there is nothing to migrate.
     val dossierNotes: String = "",
-    /** Null until the vet read lands. Never rendered as "this household has no vet". */
-    val vet: CanonicalVet? = null,
+    /** Null until the catalog read lands. Never rendered as "no vet". */
+    val vet: HouseholdVet? = null,
     /** Set when the vet read failed, so the card fails loud rather than blank. */
     val vetError: String? = null,
     val isLoading: Boolean = true,
@@ -85,47 +85,33 @@ class HouseholdDataViewModel(
             repository.getDossier(kinfolkId).onSuccess { dossier ->
                 _uiState.value = _uiState.value.copy(dossierNotes = dossier?.householdNotes.orEmpty())
             }
-            loadCanonicalVet(kinfolkId)
+            loadCanonicalVet(_uiState.value.householdData)
         }
     }
     /**
-     * Reads the household's vet from the kinfolk record, and its opening hours
-     * from the clinic catalog (punchlist A2). A failure sets [vetError] rather
-     * than leaving the card blank: a blank vet card and an unreadable one must
-     * not look alike on the screen someone reads an emergency number off.
+     * Resolves the household's OWN vet: `household_data` holds the clinic id
+     * (operator ruling 2026-08-01) and the catalog supplies the name, phone,
+     * address and hours. This used to read the kinfolk doc, which is the copy
+     * that made the vet authored in two places at once.
+     *
+     * A catalog failure sets [vetError] rather than leaving the card blank: a
+     * blank vet card and an unreadable one must not look alike on the screen
+     * someone reads an emergency number off.
      */
-    private suspend fun loadCanonicalVet(kinfolkId: String) {
-        repository.getKinfolkById(kinfolkId).onSuccess { kinfolk ->
-            if (kinfolk == null) {
-                _uiState.value = _uiState.value.copy(vet = CanonicalVet())
-                return@onSuccess
+    private suspend fun loadCanonicalVet(household: HouseholdData?) {
+        repository.getVetClinicsOnce()
+            .onSuccess { clinics ->
+                _uiState.value = _uiState.value.copy(
+                    vetError = null,
+                    vet = resolveHouseholdVet(household, clinics),
+                )
             }
-            // Hours hang off the clinic, so they need the catalog. A catalog read
-            // failure costs the HOURS only; the name, phone and address are on
-            // the household record and are shown regardless.
-            val clinics = repository.getVetClinicsOnce().getOrNull().orEmpty()
-            fun hoursFor(id: String): String =
-                if (id.isBlank()) "" else clinics.firstOrNull { it.id == id }?.hours.orEmpty()
-            _uiState.value = _uiState.value.copy(
-                vetError = null,
-                vet = CanonicalVet(
-                    primaryName = kinfolk.vetClinicName,
-                    primaryPhone = kinfolk.vetClinicPhone,
-                    primaryAddress = kinfolk.vetClinicAddress,
-                    primaryHours = hoursFor(kinfolk.vetClinicId),
-                    primaryLinked = kinfolk.vetClinicId.isNotBlank(),
-                    emergencyName = kinfolk.emergencyVetClinicName,
-                    emergencyPhone = kinfolk.emergencyVetClinicPhone,
-                    emergencyAddress = kinfolk.emergencyVetClinicAddress,
-                    emergencyHours = hoursFor(kinfolk.emergencyVetClinicId),
-                ),
-            )
-        }.onFailure { error ->
-            _uiState.value = _uiState.value.copy(
-                vet = null,
-                vetError = "Couldn't load the household's vet: ${error.message}",
-            )
-        }
+            .onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    vet = null,
+                    vetError = "Couldn't load the shared clinic catalog: ${error.message}",
+                )
+            }
     }
 
     // The seven `primaryVet*` / `emergencyVet*` setters are GONE (punchlist A2).

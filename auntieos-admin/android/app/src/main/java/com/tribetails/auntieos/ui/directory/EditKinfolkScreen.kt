@@ -55,7 +55,6 @@ fun EditKinfolkScreen(
     onDeleted: () -> Unit
 ) {
     val state by viewModel.editKinfolkState.collectAsState()
-    val vetClinicsLoadFailed by viewModel.vetClinicsLoadFailed.collectAsState()
     // K3 (A8): the dossier (with householdNotes) lives in profileState, loaded when the
     // operator opened this kinfolk's profile — which is the only way into this editor.
     // We guard on the id match so a stale profile never bleeds into the wrong editor.
@@ -417,167 +416,17 @@ fun EditKinfolkScreen(
                     }
                 }
 
-                // Vet Clinic (household-level, shared catalog).
+                // THE VET SECTION IS GONE, and its absence is the fix.
                 //
-                // The phone and address are NOT editable here any more. They are
-                // the catalog clinic's own details, shown read-only inside the
-                // committed chip; editing them on the household would fork the
-                // record away from the bank everything else reads. A clinic with
-                // wrong details is fixed on the clinic, in the Vet Clinics admin
-                // screen, once, for every household that uses it.
+                // Operator ruling 2026-08-01: "vet info lives on household data,
+                // it can be seen on the kin profile" (page-specs 04 item 3).
+                // These two pickers wrote eight vetClinic* / emergencyVetClinic*
+                // keys onto the kinfolk doc, which is what made that doc a second
+                // writable copy of a fact `household_data` already owned, with
+                // nothing tying them together and no rule about which was true.
                 //
-                // The catalog read is deliberately NOT what gates this section:
-                // a failed listener still renders the picker with whatever it last
-                // held (see AuntieRepository.observeVetClinicsOrFail), because the
-                // household's own vet fields did not come from that read. Hiding
-                // the section on a catalog outage would make the outage look like
-                // missing household data and block editing the vet on file. So the
-                // failure is stated, loudly, above a picker that still works.
-                if (vetClinicsLoadFailed) {
-                    item {
-                        AuntieBanner(tone = AuntieBannerTone.Warning, title = "The shared clinic catalog didn't load") {
-                            Text(
-                                "Searching is unavailable, and the clinic already on file is shown below and still saves.",
-                                style = AuntieTheme.typography.bodySmall,
-                            )
-                        }
-                    }
-                }
-                item {
-                    val vetClinics by viewModel.vetClinicsFlow.collectAsState()
-                    val dedupeNote by viewModel.vetClinicDedupeNote.collectAsState()
-                    AuntieCard(modifier = Modifier.fillMaxWidth()) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Text(
-                                "VET CLINIC",
-                                style = AuntieTheme.typography.labelSmall,
-                                color = AuntieTheme.colors.kinfolkOrange
-                            )
-                            VetClinicPickerField(
-                                label = "Vet clinic",
-                                selection = VetClinicSelection(
-                                    clinicId = state.vetClinicId,
-                                    name     = state.vetClinicName,
-                                    phone    = state.vetClinicPhone,
-                                    address  = state.vetClinicAddress,
-                                ),
-                                clinics = vetClinics,
-                                onSelectionChange = { sel ->
-                                    // selectVetClinic/clearVetClinic each clear any
-                                    // stale dedupe note themselves.
-                                    if (sel.hasSelection) {
-                                        viewModel.selectVetClinic(
-                                            VetClinic(
-                                                id = sel.clinicId,
-                                                name = sel.name,
-                                                phone = sel.phone,
-                                                address = sel.address,
-                                            )
-                                        )
-                                    } else {
-                                        viewModel.clearVetClinic()
-                                    }
-                                },
-                                onCreate = { clinic ->
-                                    viewModel.createVetClinicFromSearch(
-                                        name = clinic.name,
-                                        phone = clinic.phone,
-                                        address = clinic.address,
-                                        website = clinic.website,
-                                        isEmergency = clinic.isEmergency,
-                                    )
-                                },
-                                enabled = !state.isSaving,
-                            )
-                            // Not an error and not silent: the operator asked to
-                            // CREATE a clinic and got an EXISTING one selected
-                            // instead. Saying which is the difference between
-                            // that reading as "it worked" and as "nothing
-                            // happened" (mirrors web VetClinicPicker's
-                            // dedupedName note, verbatim).
-                            if (dedupeNote != null) {
-                                Text(
-                                    dedupeNote!!,
-                                    style = AuntieTheme.typography.bodySmall,
-                                    color = AuntieTheme.colors.textDim,
-                                )
-                            }
-                        }
-                    }
-                }
-                // Emergency vet (24 hour), a SECOND picker over the same bank
-                // filtered to the flagged clinics. A daytime practice in this
-                // slot is worse than a blank one: it reads as an answer at 2am
-                // and is not.
-                item {
-                    val vetClinics by viewModel.vetClinicsFlow.collectAsState()
-                    val erClinics = emergencyVetClinics(vetClinics)
-                    val dedupeNote by viewModel.emergencyVetClinicDedupeNote.collectAsState()
-                    AuntieCard(modifier = Modifier.fillMaxWidth()) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Text(
-                                "EMERGENCY VET",
-                                style = AuntieTheme.typography.labelSmall,
-                                color = AuntieTheme.colors.kinfolkOrange
-                            )
-                            VetClinicPickerField(
-                                label = "Emergency vet",
-                                selection = VetClinicSelection(
-                                    clinicId = state.emergencyVetClinicId,
-                                    name     = state.emergencyVetClinicName,
-                                    phone    = state.emergencyVetClinicPhone,
-                                    address  = state.emergencyVetClinicAddress,
-                                ),
-                                clinics = erClinics,
-                                onSelectionChange = { sel ->
-                                    // selectEmergencyVetClinic/clearEmergencyVetClinic
-                                    // each clear any stale dedupe note themselves.
-                                    if (sel.hasSelection) {
-                                        viewModel.selectEmergencyVetClinic(
-                                            VetClinic(
-                                                id = sel.clinicId,
-                                                name = sel.name,
-                                                phone = sel.phone,
-                                                address = sel.address,
-                                                isEmergency = true,
-                                            )
-                                        )
-                                    } else {
-                                        viewModel.clearEmergencyVetClinic()
-                                    }
-                                },
-                                onCreate = { clinic ->
-                                    // Created already flagged, so it shows up in
-                                    // this picker for the next household too.
-                                    viewModel.createVetClinicFromSearch(
-                                        name = clinic.name,
-                                        phone = clinic.phone,
-                                        address = clinic.address,
-                                        website = clinic.website,
-                                        isEmergency = true,
-                                        forEmergencySlot = true,
-                                    )
-                                },
-                                createAsEmergency = true,
-                                enabled = !state.isSaving,
-                            )
-                            if (dedupeNote != null) {
-                                Text(
-                                    dedupeNote!!,
-                                    style = AuntieTheme.typography.bodySmall,
-                                    color = AuntieTheme.colors.textDim,
-                                )
-                            }
-                        }
-                    }
-                }
-
+                // The vet is chosen once on Household Data, against the same
+                // shared catalog, and shown read-only here and on the kin.
                 // Admin & Relationship
                 item {
                     AuntieCard(modifier = Modifier.fillMaxWidth()) {

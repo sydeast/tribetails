@@ -1330,6 +1330,21 @@ class AuntieRepository(
 
     // --- Household Data ---
 
+    /**
+     * Every household record, for the vet clinics manager's per-clinic usage
+     * badge. Bounded at 500, the same cap the other admin catalogs use.
+     *
+     * KNOWN LIMIT, logged as follow-up rather than papered over: this is a
+     * full-collection scan and the cap silently under-reports once a tribe
+     * passes it, on the one screen whose job is saying how far a correction
+     * travels. A server-side count is the real answer; a bigger cap would be
+     * the same defect further away.
+     */
+    suspend fun getAllHouseholdData(): Result<List<HouseholdData>> = runCatching {
+        authGate.ensureAuthenticated()
+        firestore.collection("household_data").limit(500).get().await()
+            .toObjects(HouseholdData::class.java)
+    }.onFailure { AuntieLog.e("Failed to read household data", it) }
     suspend fun getHouseholdData(kinfolkId: String): Result<HouseholdData?> = runCatching {
         AuntieLog.d("Fetching household data for kinfolk: $kinfolkId")
         authGate.ensureAuthenticated()

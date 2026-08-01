@@ -144,7 +144,6 @@ object KinTaleTemplateEngine {
         "entryNotes"            -> kinfolk.entryNotes
         "emergencyContactName"  -> kinfolk.emergencyContactName
         "emergencyContactPhone" -> kinfolk.emergencyContactPhone
-        "vetClinicName"         -> kinfolk.vetClinicName
         else                    -> ""
     }
 }
@@ -190,7 +189,6 @@ val kinfolkAttributeCatalog: List<ConditionAttribute> = listOf(
     ConditionAttribute("entryNotes",            "Entry notes"),
     ConditionAttribute("emergencyContactName",  "Emergency contact"),
     ConditionAttribute("emergencyContactPhone", "Emergency contact phone"),
-    ConditionAttribute("vetClinicName",         "Vet on file"),
 )
 
 /** One selectable condition source, for the editor's source picker. */

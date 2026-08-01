@@ -170,7 +170,7 @@ private fun VeterinaryInfoCard(viewModel: HouseholdDataViewModel, onOpenProfile:
                     color = AuntieTheme.colors.textDim,
                 )
                 else -> {
-                    if (!vet.hasAny) {
+                    if (!(vet.primary.hasAny || vet.emergency.hasAny)) {
                         Text(
                             "No vet on file for this household. Pick one on the household profile and it appears here.",
                             style = AuntieTheme.typography.bodySmall,
@@ -178,14 +178,14 @@ private fun VeterinaryInfoCard(viewModel: HouseholdDataViewModel, onOpenProfile:
                         )
                     }
                     Text("Primary Veterinarian", style = AuntieTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    VetFactRow("Vet Name", vet.primaryName)
-                    VetFactRow("Phone", vet.primaryPhone)
-                    VetFactRow("Hours", vet.primaryHours)
-                    VetFactRow("Address", vet.primaryAddress)
+                    VetFactRow("Vet Name", vet.primary.name)
+                    VetFactRow("Phone", vet.primary.phone)
+                    VetFactRow("Hours", vet.primary.hours)
+                    VetFactRow("Address", vet.primary.address)
                     // Not an error, but a fact worth stating: with no clinic id
                     // there is nothing for a catalog correction to match on, so
                     // fixing this clinic in the vet bank will not reach here.
-                    if (vet.hasPrimary && !vet.primaryLinked) {
+                    if (vet.primary.hasAny && !vet.primary.linked) {
                         AuntieBanner(
                             tone = AuntieBannerTone.Warning,
                             title = "This vet is not linked to the catalog",
@@ -203,10 +203,10 @@ private fun VeterinaryInfoCard(viewModel: HouseholdDataViewModel, onOpenProfile:
                     // are different practices and the whole card exists to keep
                     // them apart.
                     Text("Emergency Veterinarian", style = AuntieTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    VetFactRow("Emergency Vet Name", vet.emergencyName)
-                    VetFactRow("Emergency Phone", vet.emergencyPhone)
-                    VetFactRow("Emergency Hours", vet.emergencyHours)
-                    VetFactRow("Emergency Address", vet.emergencyAddress)
+                    VetFactRow("Emergency Vet Name", vet.emergency.name)
+                    VetFactRow("Emergency Phone", vet.emergency.phone)
+                    VetFactRow("Emergency Hours", vet.emergency.hours)
+                    VetFactRow("Emergency Address", vet.emergency.address)
                 }
             }
             // Fail loud, never silent: the record still carries the retired free

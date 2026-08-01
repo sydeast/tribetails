@@ -51,13 +51,16 @@ class KinTaleConditionEditorHelpersTest {
         val catalog = attributeCatalogForSource("KINFOLK_ATTRIBUTE")
         assertEquals(
             listOf(
+                // `vetClinicName` is gone: KinTales do not display a vet
+                // (page-specs 06 item 2), and the household vet moved off the
+                // kinfolk doc onto household_data entirely.
                 "serviceAddress", "gateCode", "parkingInstructions", "entryNotes",
-                "emergencyContactName", "emergencyContactPhone", "vetClinicName",
+                "emergencyContactName", "emergencyContactPhone",
             ),
             catalog.map { it.key },
         )
         assertEquals("Emergency contact", catalog.first { it.key == "emergencyContactName" }.label)
-        assertEquals("Vet on file", catalog.first { it.key == "vetClinicName" }.label)
+        assertEquals("Entry notes", catalog.first { it.key == "entryNotes" }.label)
     }
 
     @Test
@@ -142,8 +145,11 @@ class KinTaleConditionEditorHelpersTest {
     fun attributeChoices_dropABlankKeyRatherThanOfferingIt() {
         assertEquals(
             listOf(
+                // `vetClinicName` is gone: KinTales do not display a vet
+                // (page-specs 06 item 2), and the household vet moved off the
+                // kinfolk doc onto household_data entirely.
                 "serviceAddress", "gateCode", "parkingInstructions", "entryNotes",
-                "emergencyContactName", "emergencyContactPhone", "vetClinicName",
+                "emergencyContactName", "emergencyContactPhone",
             ),
             attributeKeyChoices("KINFOLK_ATTRIBUTE", ""),
         )

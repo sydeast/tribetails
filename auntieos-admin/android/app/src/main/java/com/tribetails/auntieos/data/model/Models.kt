@@ -144,22 +144,19 @@ data class Kinfolk(
     var emergencyContactPhone: String = "",
     var emergencyContactRelation: String = "",
 
-    // Household-level Vet Clinic (lives on Kinfolk, not Kin).
+    // NO VET FIELDS. The household vet lives on `household_data`, catalog-linked
+    // by clinic id (operator ruling 2026-08-01: "vet info lives on household
+    // data, it can be seen on the kin profile"; page-specs 04 item 3).
     //
-    // `vetClinicId` joins to a `vet_clinics` doc; the three strings stay
-    // denormalized beside it so the clinic phone is on the household record
-    // without a second read, and a clinic renamed in the shared bank cannot
-    // blank the number on file. EVERY household written before 2026-07-25 has
-    // the strings and an empty id, which readers must treat as valid.
-    var vetClinicId: String = "",
-    var vetClinicName: String = "",
-    var vetClinicPhone: String = "",
-    var vetClinicAddress: String = "",
-    // The 24 hour clinic for this household, same id + denormalized shape.
-    var emergencyVetClinicId: String = "",
-    var emergencyVetClinicName: String = "",
-    var emergencyVetClinicPhone: String = "",
-    var emergencyVetClinicAddress: String = "",
+    // Removing them from this data class is what closes the WRITE path: every
+    // kinfolk writer here serialises the whole object (createKinfolk,
+    // createKinfolkComplete, updateKinfolk, and uploadKinfolkPhoto through
+    // updateKinfolk), so a field this class does not declare is never written.
+    //
+    // It does NOT clear what is already stored: `updateKinfolk` uses
+    // SetOptions.merge(), so an undeclared field survives on existing docs. The
+    // A2 migration deletes them explicitly with FieldValue.delete(); an omission
+    // here would leave a populated second copy that still looks authoritative.
 
     // Admin & Relationship
     var internalNotes: String = "",

@@ -52,6 +52,7 @@ class DirectoryViewModelPhotoTest {
         profilePictureUrl = "https://cdn.example.com/k1.jpg",
     )
 
+    // The kin detail resolves the household vet through the catalog now.
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
@@ -93,6 +94,10 @@ class DirectoryViewModelPhotoTest {
         advanceUntilIdle()
         val captured: CapturingSlot<Kin> = slot()
         coEvery { repository.updateKin(capture(captured)) } returns Result.success(Unit)
+        // loadKinForEdit resolves the household vet from household_data through
+        // the clinic catalog now; a relaxed mock cannot answer either usefully.
+        coEvery { repository.getHouseholdData(any()) } returns Result.success(null)
+        coEvery { repository.getVetClinicsOnce() } returns Result.success(emptyList())
 
         viewModel.loadProfile("kf1")
         advanceUntilIdle()

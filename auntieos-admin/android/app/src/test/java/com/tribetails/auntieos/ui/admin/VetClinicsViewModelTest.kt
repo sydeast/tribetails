@@ -38,8 +38,9 @@ class VetClinicsViewModelTest {
         Dispatchers.setMain(dispatcher)
         repo = mockk()
         every { repo.observeVetClinics() } returns flowOf(emptyList())
-        // #6: the VM loads kinfolk vet names on init for the household-count badge.
-        coEvery { repo.getKinfolk() } returns Result.success(emptyList())
+        // The badge counts household_data now, not kinfolk: that is where the
+        // household vet lives, so counting kinfolk would count nothing.
+        coEvery { repo.getAllHouseholdData() } returns Result.success(emptyList())
     }
 
     @After

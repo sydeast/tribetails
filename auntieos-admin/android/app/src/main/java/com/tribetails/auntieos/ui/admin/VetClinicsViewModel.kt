@@ -50,13 +50,17 @@ class VetClinicsViewModel(
 
     init {
         viewModelScope.launch {
-            repository.getKinfolk().onSuccess { list ->
+            // household_data, NOT kinfolk. The household vet moved there, so
+            // counting the kinfolk fields would count something nothing writes
+            // and report "No households" on every card, on the screen whose
+            // whole job is saying how far a correction travels.
+            repository.getAllHouseholdData().onSuccess { list ->
                 _households.value = list.map {
                     VetClinicHouseholdRef(
-                        vetClinicId = it.vetClinicId,
-                        vetClinicName = it.vetClinicName,
+                        vetClinicId = it.primaryVetClinicId,
+                        vetClinicName = it.primaryVetName,
                         emergencyVetClinicId = it.emergencyVetClinicId,
-                        emergencyVetClinicName = it.emergencyVetClinicName,
+                        emergencyVetClinicName = it.emergencyVetName,
                     )
                 }
             }
