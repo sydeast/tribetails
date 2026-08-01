@@ -23,6 +23,7 @@ export async function revokeShareLinkHandler(req: CallableRequest<unknown>): Pro
   }
   await ref.update({ revoked: true, revokedAt: FieldValue.serverTimestamp() });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.CONTENT_SHARE_LINK_REVOKED,
     severity: 'info',
     actorRole: caller.role === 'PRIMARY' ? 'PRIMARY' : 'SECONDARY',

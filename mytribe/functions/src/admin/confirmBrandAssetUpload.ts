@@ -94,6 +94,7 @@ export async function confirmBrandAssetUploadHandler(
     );
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BRANDING_ASSET_UPDATED,
     severity: 'info',
     actorRole: 'AUNTIE',

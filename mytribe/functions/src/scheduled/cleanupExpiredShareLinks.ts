@@ -18,6 +18,7 @@ export async function cleanupExpiredShareLinksCore(now: Date): Promise<{ revoked
   for (const d of snap.docs) {
     await d.ref.update({ revoked: true });
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: AUDIT_EVENTS.CONTENT_SHARE_LINK_EXPIRED,
       severity: 'info', actorRole: 'SYSTEM',
       familyId: (d.data() as { tribeId: string }).tribeId,

@@ -200,6 +200,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
 
   if (isPaidEvent) {
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: AUDIT_EVENTS.BILLING_INVOICE_PAID,
       severity: 'info', actorRole: 'SYSTEM', familyId,
       payload: { invoiceId, stripeEventId: event.id },
@@ -221,6 +222,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     }
   } else {
     await writeAuditEntry({
+      status: 'FAILURE',
       event: AUDIT_EVENTS.BILLING_INVOICE_FAILED,
       severity: 'critical', actorRole: 'SYSTEM', familyId,
       payload: { invoiceId, stripeEventId: event.id },

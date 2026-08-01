@@ -155,6 +155,7 @@ export async function reviewAndSendDraftInvoiceHandler(
   await ref.set({ ...update, ...invoiceStateStampOf({ ...data, ...update }, paidCents) }, { merge: true });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_DRAFT_INVOICE_SENT,
     severity: 'info',
     actorRole: 'AUNTIE',

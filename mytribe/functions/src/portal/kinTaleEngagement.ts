@@ -75,6 +75,7 @@ export async function addKinTaleCommentHandler(
     },
   });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.CONTENT_KINTALE_COMMENT_POSTED,
     severity: 'info',
     actorRole: isStaffCaller ? 'AUNTIE' : 'PRIMARY',

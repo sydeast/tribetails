@@ -224,6 +224,7 @@ export async function saveFormSchemaHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.SAVE_FORM_SCHEMA,
     severity: 'info',
     actorRole: 'AUNTIE',

@@ -29,6 +29,7 @@ export async function setKinfolkOverridesHandler(req: CallableRequest<unknown>):
     updatedAt: FieldValue.serverTimestamp(),
   });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.THEME_KINFOLK_OVERRIDES_UPDATED,
     severity: 'info',
     actorRole: 'PRIMARY',

@@ -16,6 +16,7 @@ export async function revokeInviteHandler(req: CallableRequest<unknown>): Promis
   if (!snap.exists) throw new HttpsError('not-found', 'invite not found');
   await ref.update({ status: 'REVOKED', revokedAt: FieldValue.serverTimestamp() });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.MEMBERSHIP_INVITE_REVOKED,
     severity: 'info',
     actorRole: 'AUNTIE',

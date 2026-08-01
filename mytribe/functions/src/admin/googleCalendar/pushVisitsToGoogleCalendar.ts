@@ -325,6 +325,7 @@ async function runPush(
   await stampPush(stamp, uid);
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.INTEGRATION_CALENDAR_PUSH,
     severity: 'info',
     actorRole: 'AUNTIE',

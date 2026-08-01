@@ -100,6 +100,7 @@ export async function logExpenseHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.EXPENSE_LOGGED,
     severity: 'info',
     actorRole: 'AUNTIE',

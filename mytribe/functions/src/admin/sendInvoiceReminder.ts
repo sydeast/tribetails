@@ -120,6 +120,7 @@ export async function sendInvoiceReminderHandler(
   await ref.set({ [NOTIFIED_FIELD_REMINDER]: now }, { merge: true });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_REMINDER_SENT,
     severity: 'info',
     actorRole: 'AUNTIE',

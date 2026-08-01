@@ -62,6 +62,7 @@ export async function ingestKinTaleHandler(req: CallableRequest<unknown>): Promi
   }
   const ref = await db().collection(`families/${args.familyId}/kinTales`).add(docData);
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.CONTENT_KINTALE_INGESTED,
     severity: 'info',
     actorRole: 'AUNTIE',

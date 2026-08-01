@@ -160,6 +160,7 @@ export async function createMultiDateBookingRequestHandler(
     extra: { kinfolkId: args.kinfolkId, batchId, count: normalized.length, pattern },
   });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BOOKING_SUBMITTED,
     severity: 'info',
     // The operator/admin acts as AUNTIE in the audit vocabulary (ActorRole has

@@ -63,6 +63,7 @@ export async function markNotificationReadHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.NOTIFICATION_VIEWED,
     severity: 'info',
     actorRole: isAdmin ? 'AUNTIE' : 'PRIMARY',
@@ -136,6 +137,7 @@ export async function markNotificationUnreadHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.NOTIFICATION_VIEWED,
     severity: 'info',
     actorRole: isAdmin ? 'AUNTIE' : 'PRIMARY',

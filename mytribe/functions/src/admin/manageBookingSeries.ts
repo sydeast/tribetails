@@ -124,6 +124,7 @@ export async function manageBookingSeriesHandler(
   );
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.CANCEL_BOOKING_SERIES,
     severity: failedVisits > 0 ? 'warn' : 'info',
     actorRole: 'AUNTIE',

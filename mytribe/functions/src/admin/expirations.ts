@@ -103,6 +103,7 @@ export async function upsertExpirationHandler(
   );
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.EXPIRATION_UPSERTED,
     severity: 'info',
     actorRole: 'AUNTIE',

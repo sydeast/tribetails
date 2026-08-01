@@ -29,6 +29,7 @@ export async function swapPrimaryContactHandler(req: CallableRequest<unknown>): 
     updatedAt: FieldValue.serverTimestamp(),
   });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.AUTH_CONTACT_SWAPPED,
     severity: 'info',
     actorRole: 'PRIMARY',

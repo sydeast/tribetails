@@ -56,6 +56,7 @@ export async function rescheduleBookingHandler(
   );
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.RESCHEDULE_BOOKING,
     severity: 'info',
     actorRole: 'AUNTIE',

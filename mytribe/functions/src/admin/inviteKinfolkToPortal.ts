@@ -112,6 +112,7 @@ export async function inviteKinfolkToPortalHandler(
   await inviteRef.update({ status: 'EMAIL_SENT', sentToInviteeAt: FieldValue.serverTimestamp() });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.MEMBERSHIP_INVITE_SENT,
     severity: 'info',
     actorRole: 'AUNTIE',

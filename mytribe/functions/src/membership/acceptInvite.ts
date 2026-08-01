@@ -105,6 +105,7 @@ export async function acceptInviteHandler(req: CallableRequest<unknown>): Promis
     });
   }
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.MEMBERSHIP_INVITE_ACCEPTED,
     severity: 'info',
     actorRole: invite.proposedRole === 'PRIMARY' ? 'PRIMARY' : 'SECONDARY',

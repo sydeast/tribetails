@@ -67,6 +67,7 @@ describe('writeAuditEntry', () => {
   it('writes to activity_log with canonical Android-mirrored fields + forensic fields', async () => {
     const { writeAuditEntry } = await import('../src/lib/writeAuditEntry');
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: 'MEMBERSHIP_INVITE_SENT' as AuditEvent,
       severity: 'info',
       actorRole: 'PRIMARY',
@@ -97,16 +98,40 @@ describe('writeAuditEntry', () => {
     expect(arg.createdAt).toBeDefined();
   });
 
-  it('maps severity=critical to status=FAILURE when status not explicit', async () => {
+  // A4 audit (2026-08): writeAuditEntry used to guess status from severity
+  // (`severity === 'critical' ? 'FAILURE' : 'SUCCESS'`) when a caller left
+  // status unset. That guess was wrong in both directions — a warn-severity
+  // function failure defaulted to SUCCESS (wrapCallable.ts), and
+  // critical-severity successes (recovery/rollback flows, flagged critical
+  // purely for elevated review) defaulted to FAILURE. `status` is now a
+  // required argument with no default, so severity and status can vary
+  // independently and every caller must say which one happened.
+  it('records status independently of severity: warn+FAILURE', async () => {
     const { writeAuditEntry } = await import('../src/lib/writeAuditEntry');
     await writeAuditEntry({
+      status: 'FAILURE',
       event: 'ERROR_FUNCTION_FAILURE' as AuditEvent,
-      severity: 'critical',
+      severity: 'warn',
       actorRole: 'SYSTEM',
     });
     const logWrite = writes.find((w) => w.ref.collection === 'activity_log');
     expect(logWrite!.data.status).toBe('FAILURE');
+    expect(logWrite!.data.severity).toBe('warn');
     expect(logWrite!.data.actionType).toBe('ERROR_FUNCTION_FAILURE');
+  });
+
+  it('records status independently of severity: critical+SUCCESS', async () => {
+    const { writeAuditEntry } = await import('../src/lib/writeAuditEntry');
+    await writeAuditEntry({
+      status: 'SUCCESS',
+      event: 'AUTH_RECOVERY_TRIGGERED' as AuditEvent,
+      severity: 'critical',
+      actorRole: 'AUNTIE',
+    });
+    const logWrite = writes.find((w) => w.ref.collection === 'activity_log');
+    expect(logWrite!.data.status).toBe('SUCCESS');
+    expect(logWrite!.data.severity).toBe('critical');
+    expect(logWrite!.data.actionType).toBe('AUTH_RECOVERY_TRIGGERED');
   });
 
   it('honors explicit description / status / targetCollection over defaults', async () => {
@@ -134,6 +159,7 @@ describe('writeAuditEntry', () => {
   it('first entry has seq=1 and prevHash=GENESIS_PREV_HASH', async () => {
     const { writeAuditEntry, GENESIS_PREV_HASH } = await import('../src/lib/writeAuditEntry');
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: 'AUTH_LOGIN_SUCCESS' as AuditEvent,
       severity: 'info',
       actorRole: 'PRIMARY',
@@ -150,6 +176,7 @@ describe('writeAuditEntry', () => {
   it('updates chain head with seq + lastHash + lastEntryId', async () => {
     const { writeAuditEntry } = await import('../src/lib/writeAuditEntry');
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: 'AUTH_LOGIN_SUCCESS' as AuditEvent,
       severity: 'info',
       actorRole: 'PRIMARY',
@@ -166,6 +193,7 @@ describe('writeAuditEntry', () => {
   it('second entry has seq=2 and prevHash equal to first entry hash', async () => {
     const { writeAuditEntry } = await import('../src/lib/writeAuditEntry');
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: 'AUTH_LOGIN_SUCCESS' as AuditEvent,
       severity: 'info',
       actorRole: 'PRIMARY',
@@ -176,6 +204,7 @@ describe('writeAuditEntry', () => {
     writes.length = 0;
 
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: 'BOOKING_SUBMITTED' as AuditEvent,
       severity: 'info',
       actorRole: 'PRIMARY',
@@ -190,6 +219,7 @@ describe('writeAuditEntry', () => {
   it('entryHash matches computeEntryHash applied to the same canonical input', async () => {
     const { writeAuditEntry, computeEntryHash } = await import('../src/lib/writeAuditEntry');
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: 'AUTH_LOGIN_SUCCESS' as AuditEvent,
       severity: 'info',
       actorRole: 'PRIMARY',
@@ -215,6 +245,7 @@ describe('writeAuditEntry', () => {
     };
     const { writeAuditEntry, GENESIS_PREV_HASH } = await import('../src/lib/writeAuditEntry');
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: 'AUTH_LOGIN_SUCCESS' as AuditEvent,
       severity: 'info',
       actorRole: 'PRIMARY',

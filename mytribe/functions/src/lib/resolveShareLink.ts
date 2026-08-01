@@ -64,6 +64,7 @@ export async function resolveShareLink(
   if (data.expiresAt.toMillis() < Date.now()) {
     await snap.ref.update({ revoked: true });
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: AUDIT_EVENTS.CONTENT_SHARE_LINK_EXPIRED,
       severity: 'info',
       actorRole: 'SYSTEM',

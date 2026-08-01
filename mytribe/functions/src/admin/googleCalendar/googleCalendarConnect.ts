@@ -258,6 +258,7 @@ export async function googleOAuthCallbackHandler(req: Request, res: Response): P
       );
 
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: AUDIT_EVENTS.INTEGRATION_CALENDAR_CONNECTED,
       severity: 'info',
       actorRole: 'AUNTIE',

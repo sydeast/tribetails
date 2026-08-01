@@ -309,6 +309,7 @@ export async function broadcastMessageHandler(
     });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BROADCAST_SENT,
     severity: 'info',
     actorRole: 'AUNTIE',

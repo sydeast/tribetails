@@ -59,6 +59,7 @@ export async function saveTribeProfileHandler(req: CallableRequest<unknown>): Pr
   await firestore.collection('families').doc(kinfolkId).set(update, { merge: true });
   logEvent({ severity: 'info', function: 'saveTribeProfile', event: 'portal.tribe.saved', uid, extra: { kinfolkId, fields: Object.keys(update) } });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.PROFILE_UPDATED,
     severity: 'info',
     // Matches the AUNTIE/PRIMARY split requestBooking already draws: a

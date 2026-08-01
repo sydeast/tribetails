@@ -95,6 +95,7 @@ export async function createTrainingDocumentHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.CREATE_TRAINING_DOCUMENT,
     severity: 'info',
     actorRole: 'AUNTIE',

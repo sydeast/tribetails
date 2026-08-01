@@ -310,6 +310,7 @@ export async function guardBookingBusyConflict(opts: GuardBookingBusyConflictOpt
   }
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BOOKING_BUSY_CONFLICT_OVERRIDDEN,
     severity: 'warn',
     actorRole: opts.actorRole,

@@ -51,6 +51,7 @@ export async function resolveKinfolkAccess(
       }
       if (!allowedIds.includes(requested)) {
         await writeAuditEntry({
+          status: 'SUCCESS',
           event: AUDIT_EVENTS.OPERATOR_CROSSTENANT_ACCESS,
           severity: 'info',
           actorRole: 'AUNTIE',

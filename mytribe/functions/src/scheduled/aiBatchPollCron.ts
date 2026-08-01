@@ -139,6 +139,7 @@ async function pollOneBatch(
   await doc.ref.update({ status: 'done', completedAtMs: Date.now(), counts: { ...counts } });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.AI_TALE_TITLES_APPLIED,
     severity: 'info',
     actorRole: 'AUNTIE',

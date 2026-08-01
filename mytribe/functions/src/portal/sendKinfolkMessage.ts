@@ -164,6 +164,7 @@ export async function sendKinfolkMessageHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.CONVERSATION_MESSAGE_SENT,
     severity: 'info',
     // Reflect the real sender: a secondary with messaging_direct is SECONDARY,

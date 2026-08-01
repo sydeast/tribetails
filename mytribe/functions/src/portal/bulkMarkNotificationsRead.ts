@@ -71,6 +71,7 @@ export async function bulkMarkNotificationsReadHandler(
   }
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.NOTIFICATIONS_BULK_READ,
     severity: 'info',
     actorRole: isAdmin ? 'AUNTIE' : 'PRIMARY',

@@ -79,6 +79,7 @@ export async function unarchiveInvoiceHandler(
   );
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_INVOICE_UNARCHIVED,
     severity: 'info',
     actorRole: 'AUNTIE',

@@ -21,6 +21,7 @@ export async function removeMemberHandler(req: CallableRequest<unknown>): Promis
   });
   await auth().revokeRefreshTokens(args.targetUid);
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.MEMBERSHIP_MEMBER_REMOVED,
     severity: 'warn',
     actorRole: 'AUNTIE',

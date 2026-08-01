@@ -65,6 +65,7 @@ export async function createShareLinkHandler(req: CallableRequest<unknown>): Pro
     updatedAt: FieldValue.serverTimestamp(),
   });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.CONTENT_SHARE_LINK_CREATED,
     severity: 'info',
     actorRole: 'PRIMARY',

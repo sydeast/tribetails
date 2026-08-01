@@ -147,6 +147,7 @@ export async function replyToConversationHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.CONVERSATION_REPLIED,
     severity: 'info',
     actorRole: 'AUNTIE',

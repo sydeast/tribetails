@@ -118,6 +118,7 @@ export async function setMediaProfilePhotoHandler(
   await batch.commit();
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.PROFILE_UPDATED,
     severity: 'info',
     actorRole: 'AUNTIE',

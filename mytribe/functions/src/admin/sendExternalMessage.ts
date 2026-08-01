@@ -297,6 +297,7 @@ export async function sendExternalMessageHandler(req: CallableRequest<unknown>):
     });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.EXTERNAL_MESSAGE_SENT,
     severity: 'info',
     actorRole: 'AUNTIE',
@@ -413,6 +414,7 @@ export async function suppressExternalRecipientHandler(
     );
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.EXTERNAL_SUPPRESSION_ADDED,
     severity: 'info',
     actorRole: 'AUNTIE',

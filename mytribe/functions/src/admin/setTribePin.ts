@@ -23,6 +23,7 @@ export async function setTribePinHandler(req: CallableRequest<unknown>): Promise
     });
   });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.SECRETS_TRIBEPIN_SET,
     severity: 'warn',
     actorRole: 'AUNTIE',

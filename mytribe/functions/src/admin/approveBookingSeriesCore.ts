@@ -183,6 +183,7 @@ export async function approveBookingSeriesCore(opts: {
   );
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.APPROVE_BOOKING_SERIES,
     severity: failedVisits > 0 ? 'warn' : 'info',
     actorRole,

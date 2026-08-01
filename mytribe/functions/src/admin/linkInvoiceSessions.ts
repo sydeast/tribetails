@@ -249,6 +249,7 @@ export async function linkInvoiceSessionsHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_INVOICE_SESSIONS_LINKED,
     severity: 'info',
     actorRole: 'AUNTIE',

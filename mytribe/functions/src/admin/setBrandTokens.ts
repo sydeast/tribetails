@@ -16,6 +16,7 @@ export async function setBrandTokensHandler(req: CallableRequest<unknown>): Prom
     { merge: true },
   );
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.THEME_BRAND_TOKENS_UPDATED,
     severity: 'info', actorRole: 'AUNTIE', actorUid: req.auth!.uid, familyId: args.familyId,
     payload: { keys: Object.keys(args.brandTokens) },

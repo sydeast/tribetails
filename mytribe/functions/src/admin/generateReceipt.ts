@@ -49,6 +49,7 @@ export async function generateReceiptHandler(
   );
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_RECEIPT_ISSUED,
     severity: 'info', actorRole: 'AUNTIE', actorUid: req.auth!.uid, familyId,
     payload: { invoiceId: args.invoiceId },

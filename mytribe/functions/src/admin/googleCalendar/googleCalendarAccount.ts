@@ -157,6 +157,7 @@ export async function disconnectGoogleCalendarHandler(
     );
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.INTEGRATION_CALENDAR_DISCONNECTED,
     severity: revoked ? 'info' : 'warn',
     actorRole: 'AUNTIE',
