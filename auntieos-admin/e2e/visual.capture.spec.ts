@@ -95,19 +95,27 @@ test.beforeEach(async ({ page }) => {
   /**
    * Nothing leaves the machine.
    *
-   * `src/lib/firebase.ts` puts auth and Firestore on the local emulators, but it
-   * never calls `connectFunctionsEmulator`, so every callable in `lib/fns.ts`
-   * dials PRODUCTION `us-central1`. With an emulator-minted token those calls
-   * cannot succeed, and how they fail depends on the network: a fast refusal on
-   * one run, a 20-second `CallableTimeoutError` on the next, and two different
-   * screenshots of the same screen. (Worth the operator's attention on its own:
-   * the ordinary e2e suite has the same wiring, so a `npm run e2e` today reaches
-   * live cloud functions.)
+   * THE CALLABLE HALF OF THIS IS NOW REDUNDANT, and the comment that used to
+   * stand here was wrong as of 2026-08-01. It said `src/lib/firebase.ts` never
+   * calls `connectFunctionsEmulator`, so every callable dialled production
+   * `us-central1` and failed on a schedule set by the network, giving two
+   * different screenshots of one screen. That was true and it was the reason
+   * this abort was introduced. `firebase.ts` now pins the Functions SDK at
+   * `127.0.0.1:5399` for every e2e run, served by nothing, so a callable cannot
+   * resolve to a deployed URL at all and always fails the same way in the same
+   * few milliseconds. `e2e/no-production-egress.spec.ts` is what enforces that,
+   * for the whole harness rather than for this surface.
    *
-   * Aborting every non-local request converts that into one fast, identical
-   * failure, and makes it structurally impossible for a golden to depend on an
-   * external service being up. Fonts are bundled by Vite and served from the
-   * dev server, so nothing legitimate is blocked.
+   * The abort stays anyway, narrowed to the job it still does: a golden must not
+   * be decided by anything outside this machine, and that is a claim about ALL
+   * requests, not only callables. A future module reaching an absolute URL by
+   * hand, or a webfont escaping Vite's bundling, would each be a slow flake in
+   * the screenshots and a silent one here. Blocking them costs a single route
+   * handler. Nothing legitimate is blocked today: fonts are bundled and served
+   * from the dev server, and the emulators are loopback.
+   *
+   * Do not read this as the production guard. That is `firebase.ts`, and it
+   * applies whether or not a spec remembers to install a route.
    */
   await page.route('**/*', (route) => {
     const host = new URL(route.request().url()).hostname;
