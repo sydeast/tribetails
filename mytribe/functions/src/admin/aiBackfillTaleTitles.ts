@@ -146,6 +146,7 @@ export async function aiBackfillTaleTitlesHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.AI_TALE_TITLES_BATCH_CREATED,
     severity: 'info',
     actorRole: 'AUNTIE',

@@ -390,6 +390,7 @@ export const beforeSignIn = beforeUserSignedIn(
       ((event.data.customClaims as { admin?: boolean }).admin === true ||
         (event.data.customClaims as { role?: string }).role === 'admin');
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: AUDIT_EVENTS.AUTH_LOGIN_SUCCESS,
       severity: 'info',
       actorRole: isAdminClaim ? 'AUNTIE' : 'PRIMARY',

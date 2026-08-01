@@ -422,6 +422,7 @@ export async function requestBookingHandler(
       extra: { kinfolkId, batchId, count: normalized.length, pattern },
     });
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: AUDIT_EVENTS.BOOKING_SUBMITTED,
       severity: 'info',
       actorRole: 'PRIMARY',
@@ -483,6 +484,7 @@ export async function requestBookingHandler(
 
   logEvent({ severity: 'info', function: 'requestBooking', event: 'portal.booking.requested', uid, extra: { kinfolkId, batchId } });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BOOKING_SUBMITTED,
     severity: 'info',
     actorRole: 'PRIMARY',

@@ -38,6 +38,7 @@ export async function approveTribePinChangeHandler(req: CallableRequest<unknown>
     });
   });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.SECRETS_TRIBEPIN_VALIDATED,
     severity: 'warn',
     actorRole: 'AUNTIE',
@@ -46,6 +47,7 @@ export async function approveTribePinChangeHandler(req: CallableRequest<unknown>
     payload: { requestId: args.requestId },
   });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.SECRETS_TRIBEPIN_SET,
     severity: 'warn',
     actorRole: 'AUNTIE',

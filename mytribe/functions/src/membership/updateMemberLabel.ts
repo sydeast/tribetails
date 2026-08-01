@@ -26,6 +26,7 @@ export async function updateMemberLabelHandler(req: CallableRequest<unknown>): P
     updatedAt: FieldValue.serverTimestamp(),
   });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.MEMBERSHIP_SECONDARY_LABEL_CHANGED,
     severity: 'info',
     actorRole: 'PRIMARY',

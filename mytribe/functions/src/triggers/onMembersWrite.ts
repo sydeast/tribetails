@@ -17,6 +17,7 @@ export const onMembersWrite = onDocumentWritten(
           ? (k === 'billing_full' ? AUDIT_EVENTS.PERM_BILLING_GRANTED : AUDIT_EVENTS.PERM_GRANTED)
           : (k === 'billing_full' ? AUDIT_EVENTS.PERM_BILLING_REVOKED : AUDIT_EVENTS.PERM_REVOKED);
         await writeAuditEntry({
+          status: 'SUCCESS',
           event: auditEvent,
           severity: k === 'billing_full' ? 'warn' : 'info',
           actorRole: 'SYSTEM',

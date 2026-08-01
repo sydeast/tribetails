@@ -40,6 +40,7 @@ export async function setFeatureFlagsHandler(
   await db().collection('business_settings').doc('feature_flags').set({ flags }, { merge: true });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.ADMIN_FEATURE_FLAGS_UPDATED,
     severity: 'info',
     actorRole: 'AUNTIE',

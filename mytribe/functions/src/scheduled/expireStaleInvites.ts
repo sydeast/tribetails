@@ -21,6 +21,7 @@ export async function expireStaleInvitesCore(now: Date): Promise<{ expired: numb
     const data = d.data() as { tribeId: string; invitedEmail?: string };
     await d.ref.update({ status: 'EXPIRED' });
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: AUDIT_EVENTS.MEMBERSHIP_INVITE_EXPIRED,
       severity: 'info', actorRole: 'SYSTEM',
       familyId: data.tribeId,

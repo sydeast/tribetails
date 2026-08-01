@@ -112,6 +112,7 @@ export async function createQuoteHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_QUOTE_CREATED,
     severity: 'info', actorRole: 'AUNTIE', actorUid: req.auth!.uid, familyId: args.familyId,
     payload: { invoiceId: ref.id, invoiceNumber: args.invoiceNumber, sendToKinfolk: args.sendToKinfolk },

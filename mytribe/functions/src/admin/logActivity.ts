@@ -70,7 +70,9 @@ export async function logActivityHandler(
     targetUid: args.targetId || undefined,
     targetCollection: args.targetCollection || undefined,
     description,
-    status: args.status,
+    // Client omits status on the common case (a completed action); default to
+    // SUCCESS rather than letting writeAuditEntry guess from severity.
+    status: args.status ?? 'SUCCESS',
   });
 
   return { ok: true, entryId };

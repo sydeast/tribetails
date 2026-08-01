@@ -32,6 +32,7 @@ export async function setMemberPermissionsHandler(req: CallableRequest<unknown>)
       ? (val ? AUDIT_EVENTS.PERM_BILLING_GRANTED : AUDIT_EVENTS.PERM_BILLING_REVOKED)
       : (val ? AUDIT_EVENTS.PERM_GRANTED : AUDIT_EVENTS.PERM_REVOKED);
     await writeAuditEntry({
+      status: 'SUCCESS',
       event,
       severity: perm === 'billing_full' ? 'warn' : 'info',
       actorRole: 'AUNTIE',

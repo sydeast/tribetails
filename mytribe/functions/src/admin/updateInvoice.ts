@@ -274,6 +274,7 @@ export async function updateInvoiceHandler(
   await ref.set(update, { merge: true });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_INVOICE_UPDATED,
     severity: 'info',
     actorRole: 'AUNTIE',

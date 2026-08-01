@@ -42,6 +42,11 @@ export async function executePrimaryRecoveryHandler(req: CallableRequest<unknown
     claimUrl: `${process.env.CLAIM_LINK_BASE_URL}?invite=${inviteRef.id}`,
   });
   await writeAuditEntry({
+    // This IS the success path (the invite was minted and sent above); 'critical'
+    // marks it for elevated review, not a failed action. Status is explicit
+    // because the old severity-based default read 'critical' as FAILURE and
+    // mislabeled every successful recovery (see A4 audit).
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.AUTH_RECOVERY_TRIGGERED,
     severity: 'critical',
     actorRole: 'AUNTIE', actorUid: req.auth!.uid,

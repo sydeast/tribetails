@@ -110,6 +110,7 @@ export async function dispatchVisitNotificationHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.NOTIFICATION_DISPATCHED,
     severity: 'info',
     actorRole: 'AUNTIE',

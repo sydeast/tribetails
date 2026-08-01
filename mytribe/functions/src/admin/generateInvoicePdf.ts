@@ -68,6 +68,7 @@ export async function generateInvoicePdfHandler(
   }
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_INVOICE_PDF_GENERATED,
     severity: 'info',
     actorRole: 'AUNTIE',

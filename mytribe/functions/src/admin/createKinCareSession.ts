@@ -79,6 +79,7 @@ export async function createKinCareSessionHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.CREATE_KINCARE_SESSION,
     severity: 'info',
     actorRole: 'AUNTIE',

@@ -146,6 +146,7 @@ export async function onKinTaleUpdateHandler(event: any): Promise<void> {
   }
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.CONTENT_KINTALE_NOTE_ADDED,
     severity: 'info',
     actorRole: 'AUNTIE',

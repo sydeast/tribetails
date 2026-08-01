@@ -28,6 +28,30 @@ function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unkn
   } as unknown as CallableRequest<unknown>;
 }
 
+/**
+ * Wraps a buildDbMock() db so a doc write to `targetPath` throws, simulating
+ * a per-visit failure inside the CANCEL loop's try/catch. Refs are created
+ * fresh on every `.collection(x).doc(y)` call inside the handler, so this
+ * intercepts at the db/collection factory level rather than mutating a
+ * pre-built ref (there isn't one to grab ahead of time).
+ */
+function withThrowingSet(db: any, targetPaths: string[]) {
+  function wrapRef(ref: any): any {
+    if (targetPaths.includes(ref.path)) {
+      return { ...ref, set: vi.fn(async () => { throw new Error('simulated write failure'); }) };
+    }
+    return { ...ref, collection: (sub: string) => wrapCollection(ref.collection(sub)) };
+  }
+  function wrapCollection(col: any): any {
+    return { ...col, doc: (id?: string) => wrapRef(col.doc(id)) };
+  }
+  return {
+    ...db,
+    collection: (path: string) => wrapCollection(db.collection(path)),
+    doc: (path: string) => wrapRef(db.doc(path)),
+  };
+}
+
 function seed() {
   return buildDbMock({
     docs: { 'families/kf1/bookings/b1': { envelopeStatus: 'requested', visitCount: 2, confirmedCount: 0, cancelledCount: 0 } },
@@ -68,6 +92,9 @@ describe('manageBookingSeries', () => {
     expect(parent?.data.envelopeStatus).toBe('cancelled');
     expect(parent?.data.cancelledCount).toBe(2);
     expect(ctx.writes.find((w) => w.path === 'families/kf1/bookings/b1/kinCares/v1')?.data.status).toBe('cancelled');
+    const call = (writeAuditEntry as any).mock.calls.map((c: any[]) => c[0])
+      .find((c: any) => c.event === 'CANCEL_BOOKING_SERIES');
+    expect(call.status).toBe('SUCCESS');
   });
 
   it('writes an APPROVE_BOOKING_SERIES audit entry', async () => {
@@ -77,6 +104,35 @@ describe('manageBookingSeries', () => {
     const call = (writeAuditEntry as any).mock.calls.map((c: any[]) => c[0])
       .find((c: any) => c.event === 'APPROVE_BOOKING_SERIES');
     expect(call).toBeDefined();
+  });
+
+  // A4 audit follow-up: writeAuditEntry used to hardcode status: 'SUCCESS'
+  // for CANCEL_BOOKING_SERIES regardless of failedVisits, so a cancel series
+  // where every visit's write failed (0 cancelled) was still recorded as a
+  // clean SUCCESS row. Same defect shape as batchUpdateBookings.
+  it('audits CANCEL with status FAILURE, not SUCCESS, when every visit fails', async () => {
+    const ctx = seed();
+    const failingDb = withThrowingSet(ctx.db, [
+      'families/kf1/bookings/b1/kinCares/v1',
+      'families/kf1/bookings/b1/kinCares/v2',
+    ]);
+    mocks.dbFn.mockReturnValue(failingDb);
+    const res = await manageBookingSeriesHandler(req({ action: 'CANCEL', kinfolkId: 'kf1', batchId: 'b1' }));
+    expect(res.failedVisits).toBe(2);
+    const call = (writeAuditEntry as any).mock.calls.map((c: any[]) => c[0])
+      .find((c: any) => c.event === 'CANCEL_BOOKING_SERIES');
+    expect(call.status).toBe('FAILURE');
+  });
+
+  it('audits CANCEL with status FAILURE, not SUCCESS, on a partial failure', async () => {
+    const ctx = seed();
+    const failingDb = withThrowingSet(ctx.db, ['families/kf1/bookings/b1/kinCares/v1']);
+    mocks.dbFn.mockReturnValue(failingDb);
+    const res = await manageBookingSeriesHandler(req({ action: 'CANCEL', kinfolkId: 'kf1', batchId: 'b1' }));
+    expect(res.failedVisits).toBe(1);
+    const call = (writeAuditEntry as any).mock.calls.map((c: any[]) => c[0])
+      .find((c: any) => c.event === 'CANCEL_BOOKING_SERIES');
+    expect(call.status).toBe('FAILURE');
   });
 
   it('APPROVE: creates a deterministic linked session per visit + writes sessionId back', async () => {

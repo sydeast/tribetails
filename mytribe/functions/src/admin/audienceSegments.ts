@@ -78,6 +78,7 @@ export async function saveAudienceSegmentHandler(
   );
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.AUDIENCE_SEGMENT_SAVED,
     severity: 'info',
     actorRole: 'AUNTIE',
@@ -172,6 +173,7 @@ export async function deleteAudienceSegmentHandler(
   await ref.delete();
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.AUDIENCE_SEGMENT_DELETED,
     severity: 'info',
     actorRole: 'AUNTIE',

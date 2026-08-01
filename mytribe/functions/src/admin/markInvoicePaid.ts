@@ -356,6 +356,7 @@ export async function markInvoicePaidHandler(
   await batch.commit();
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_INVOICE_PAID,
     severity: 'info',
     actorRole: 'AUNTIE',

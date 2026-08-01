@@ -78,6 +78,7 @@ export async function createBlockedTimeSlotHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.CREATE_BLOCKED_TIME_SLOT,
     severity: 'info',
     actorRole: 'AUNTIE',

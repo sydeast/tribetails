@@ -81,7 +81,7 @@ describe('batchUpdateBookings happy path', () => {
     expect(res.failed).toEqual([{ id: 'ghost', error: 'not-found' }]);
   });
 
-  it('writes a BOOKING_BATCH_ACTION audit entry', async () => {
+  it('writes a BOOKING_BATCH_ACTION audit entry with status SUCCESS when every id updates', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     await batchUpdateBookingsHandler(req({ ids: ['v1', 'v2'], action: 'APPROVE' }));
@@ -90,6 +90,35 @@ describe('batchUpdateBookings happy path', () => {
     expect(call).toBeDefined();
     expect(call.payload.action).toBe('APPROVE');
     expect(call.payload.updated).toBe(2);
+    expect(call.status).toBe('SUCCESS');
+  });
+
+  // A4 audit follow-up: writeAuditEntry used to hardcode status: 'SUCCESS'
+  // for this callable regardless of the `failed` array accumulated by the
+  // per-id loop above, so a batch where every id failed (0 updated, N
+  // failed) was still recorded as a clean SUCCESS row. An audit query
+  // filtering on status could not see it; only the description string (which
+  // isn't queryable) carried the truth.
+  it('audits a batch with unknown ids as FAILURE, not SUCCESS', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await batchUpdateBookingsHandler(req({ ids: ['ghost1', 'ghost2'], action: 'APPROVE' }));
+    expect(res.updated).toBe(0);
+    expect(res.failed).toHaveLength(2);
+    const call = (writeAuditEntry as any).mock.calls.map((c: any[]) => c[0])
+      .find((c: any) => c.event === 'BOOKING_BATCH_ACTION');
+    expect(call.status).toBe('FAILURE');
+  });
+
+  it('audits a batch with a partial failure as FAILURE, not SUCCESS', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await batchUpdateBookingsHandler(req({ ids: ['v1', 'ghost'], action: 'APPROVE' }));
+    expect(res.updated).toBe(1);
+    expect(res.failed).toHaveLength(1);
+    const call = (writeAuditEntry as any).mock.calls.map((c: any[]) => c[0])
+      .find((c: any) => c.event === 'BOOKING_BATCH_ACTION');
+    expect(call.status).toBe('FAILURE');
   });
 });
 

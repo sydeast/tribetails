@@ -9,6 +9,7 @@ export async function signOutAllDevicesHandler(req: CallableRequest<unknown>): P
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in required.');
   await auth().revokeRefreshTokens(req.auth.uid);
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.AUTH_LOGOUT_ALL,
     severity: 'info',
     actorRole: 'PRIMARY',

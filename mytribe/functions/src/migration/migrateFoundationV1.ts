@@ -50,6 +50,7 @@ async function migrateOne(fid: string, dryRun: boolean, force: boolean): Promise
     });
   });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.MEMBERSHIP_TRIBE_MIGRATED_V1,
     severity: 'info',
     actorRole: 'AUNTIE',
@@ -71,6 +72,7 @@ export async function migrateFoundationV1Handler(req: CallableRequest<unknown>):
       try { await migrateOne(d.id, args.dryRun, args.force); ids.push(d.id); }
       catch (err) {
         await writeAuditEntry({
+          status: 'FAILURE',
           event: AUDIT_EVENTS.ERROR_FUNCTION_FAILURE,
           severity: 'critical', actorRole: 'AUNTIE', familyId: d.id,
           payload: { function: 'migrateFoundationV1', message: (err as Error).message },

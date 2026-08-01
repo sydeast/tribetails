@@ -79,6 +79,7 @@ export async function mintInviteFromPrimaryHandler(req: CallableRequest<unknown>
   }
   await ref.update({ status: 'EMAIL_SENT', sentToInviteeAt: FieldValue.serverTimestamp(), auntieNotifiedAt: FieldValue.serverTimestamp() });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.MEMBERSHIP_INVITE_SENT,
     severity: 'info',
     actorRole: 'PRIMARY',

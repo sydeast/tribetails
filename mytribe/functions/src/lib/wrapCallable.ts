@@ -76,6 +76,7 @@ export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handle
       });
       try {
         await writeAuditEntry({
+          status: 'FAILURE',
           event: AUDIT_EVENTS.ERROR_FUNCTION_FAILURE,
           severity: 'warn',
           actorRole: req.auth?.uid ? 'PRIMARY' : 'SYSTEM',

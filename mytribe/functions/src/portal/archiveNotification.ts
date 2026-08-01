@@ -66,6 +66,7 @@ export async function archiveNotificationHandler(
   }
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.NOTIFICATIONS_ARCHIVE,
     severity: 'info',
     actorRole: isAdmin ? 'AUNTIE' : 'PRIMARY',
@@ -141,6 +142,7 @@ export async function bulkArchiveNotificationsHandler(
   }
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.NOTIFICATIONS_ARCHIVE,
     severity: 'info',
     actorRole: isAdmin ? 'AUNTIE' : 'PRIMARY',

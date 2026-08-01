@@ -53,6 +53,7 @@ export async function provisionTribeHandler(req: CallableRequest<unknown>): Prom
   });
   await inviteRef.update({ status: 'EMAIL_SENT', sentToInviteeAt: FieldValue.serverTimestamp() });
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.MEMBERSHIP_TRIBE_PROVISIONED,
     severity: 'info',
     actorRole: 'AUNTIE',

@@ -93,6 +93,7 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
       // FCM = enqueued for device) but this is the earliest confirmation we
       // have without channel-specific webhooks.
       await writeAuditEntry({
+        status: 'SUCCESS',
         event: AUDIT_EVENTS.NOTIFICATION_RECEIVED,
         severity: 'info',
         actorRole: 'SYSTEM',

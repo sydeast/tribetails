@@ -118,6 +118,7 @@ export async function requestPasswordResetHandler(
       });
     }
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: AUDIT_EVENTS.AUTH_PASSWORD_RESET_REQUESTED,
       severity: 'info',
       actorRole: 'PRIMARY',

@@ -35,6 +35,11 @@ export async function migrateFoundationV1RollbackHandler(req: CallableRequest<un
     });
   });
   await writeAuditEntry({
+    // This IS the success path (the rollback transaction above committed);
+    // 'critical' marks it for elevated review, not a failed action. Status is
+    // explicit because the old severity-based default read 'critical' as
+    // FAILURE and mislabeled every successful rollback (see A4 audit).
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.MEMBERSHIP_TRIBE_MIGRATED_V1,
     severity: 'critical',
     actorRole: 'AUNTIE', actorUid: req.auth!.uid,

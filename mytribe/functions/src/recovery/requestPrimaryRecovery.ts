@@ -53,6 +53,7 @@ export async function requestPrimaryRecoveryHandler(req: CallableRequest<unknown
     });
   }
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.AUTH_RECOVERY_REQUESTED,
     severity: 'warn',
     actorRole: 'SYSTEM',

@@ -396,6 +396,7 @@ async function runSync(
   }
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.INTEGRATION_CALENDAR_SYNC,
     severity: 'info',
     actorRole: 'AUNTIE',

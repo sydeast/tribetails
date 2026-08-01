@@ -56,6 +56,7 @@ export async function updateSecondaryPermissionsHandler(req: CallableRequest<unk
     // "own" household to compare against, so every staff write here is
     // audit-logged as cross-tenant access.
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: AUDIT_EVENTS.OPERATOR_CROSSTENANT_ACCESS,
       severity: 'info',
       actorRole: 'AUNTIE',
@@ -73,6 +74,7 @@ export async function updateSecondaryPermissionsHandler(req: CallableRequest<unk
   const actorRole: ActorRole = isOperator ? 'AUNTIE' : 'PRIMARY';
   for (const [perm, val] of Object.entries(args.permissions)) {
     await writeAuditEntry({
+      status: 'SUCCESS',
       event: val ? AUDIT_EVENTS.PERM_GRANTED : AUDIT_EVENTS.PERM_REVOKED,
       severity: 'info',
       actorRole,

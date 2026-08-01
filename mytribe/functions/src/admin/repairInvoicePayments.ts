@@ -230,6 +230,7 @@ export async function repairInvoicePaymentsHandler(
   // Audited in BOTH modes. A read-only sweep across every household's billing is
   // itself worth a record of who ran it and what it saw.
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_INVOICE_UPDATED,
     severity: findings.length > 0 ? 'warn' : 'info',
     actorRole: 'AUNTIE',

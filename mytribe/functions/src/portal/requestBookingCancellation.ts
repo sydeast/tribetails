@@ -81,6 +81,7 @@ export async function requestBookingCancellationHandler(
   );
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BOOKING_BATCH_ACTION,
     severity: 'info',
     actorRole: 'PRIMARY',

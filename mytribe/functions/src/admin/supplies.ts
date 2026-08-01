@@ -96,6 +96,7 @@ export async function adjustSupplyHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.SUPPLY_ADJUSTED,
     severity: 'info',
     actorRole: 'AUNTIE',
@@ -151,6 +152,7 @@ export async function upsertSupplyHandler(
   );
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.SUPPLY_UPSERTED,
     severity: 'info',
     actorRole: 'AUNTIE',

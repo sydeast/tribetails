@@ -53,7 +53,20 @@ export interface WriteAuditArgs {
   targetCollection?: string;
   familyId?: string;
   description?: string;
-  status?: 'SUCCESS' | 'FAILURE' | 'PENDING';
+  /**
+   * Required, deliberately not defaulted. `severity` and `status` answer
+   * different questions: severity says how loudly this entry deserves
+   * review (info/warn/critical); status says what actually happened
+   * (SUCCESS/FAILURE/PENDING). A sensitive action can succeed and still be
+   * `critical` (e.g. AUTH_RECOVERY_TRIGGERED); a routine action can fail and
+   * still be `warn` (e.g. ERROR_FUNCTION_FAILURE). Guessing one from the
+   * other produced two real bugs found in the 2026-08 A4 audit: a warn-level
+   * function failure silently recorded as SUCCESS (wrapCallable.ts), and a
+   * critical-level successful recovery/rollback silently recorded as
+   * FAILURE (executePrimaryRecovery.ts, migrateFoundationV1Rollback.ts).
+   * Every call site must say which one happened.
+   */
+  status: 'SUCCESS' | 'FAILURE' | 'PENDING';
   payload?: Record<string, unknown>;
   requestId?: string;
   clientRequestId?: string;
@@ -109,7 +122,7 @@ export function computeEntryHash(
 }
 
 export async function writeAuditEntry(args: WriteAuditArgs): Promise<string> {
-  const status = args.status ?? (args.severity === 'critical' ? 'FAILURE' : 'SUCCESS');
+  const status = args.status;
   // Default human-readable description when caller didn't supply one.
   // Keeps the admin list readable without forcing every emit site to spell
   // it out: e.g. "AUTH_LOGIN_SUCCESS for uid abc" is fine fallback.

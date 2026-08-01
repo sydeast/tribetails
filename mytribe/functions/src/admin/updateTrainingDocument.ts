@@ -87,6 +87,7 @@ export async function updateTrainingDocumentHandler(
   );
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.UPDATE_TRAINING_DOCUMENT,
     severity: 'info',
     actorRole: 'AUNTIE',

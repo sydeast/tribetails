@@ -35,6 +35,7 @@ export async function deleteFormSchemaHandler(
   await ref.delete();
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.DELETE_FORM_SCHEMA,
     severity: 'warn',
     actorRole: 'AUNTIE',

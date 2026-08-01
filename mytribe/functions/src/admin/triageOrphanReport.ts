@@ -96,6 +96,7 @@ export async function triageOrphanReportHandler(
         updatedAt: nowIso,
       });
       await writeAuditEntry({
+        status: 'SUCCESS',
         event: AUDIT_EVENTS.TRIAGE_ORPHAN_REPORT_ASSIGN,
         severity: 'info',
         actorRole: 'AUNTIE',
@@ -140,6 +141,7 @@ export async function triageOrphanReportHandler(
         updatedAt: nowIso,
       });
       await writeAuditEntry({
+        status: 'SUCCESS',
         event: AUDIT_EVENTS.TRIAGE_ORPHAN_REPORT_DUPLICATE,
         severity: 'info',
         actorRole: 'AUNTIE',
@@ -170,6 +172,7 @@ export async function triageOrphanReportHandler(
         updatedAt: nowIso,
       });
       await writeAuditEntry({
+        status: 'SUCCESS',
         event: AUDIT_EVENTS.TRIAGE_ORPHAN_REPORT_ARCHIVE,
         severity: 'info',
         actorRole: 'AUNTIE',

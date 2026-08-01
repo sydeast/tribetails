@@ -51,6 +51,7 @@ export async function deleteTrainingDocumentHandler(
   await docRef.delete();
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.DELETE_TRAINING_DOCUMENT,
     severity: 'info',
     actorRole: 'AUNTIE',

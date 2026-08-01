@@ -146,6 +146,7 @@ export async function recordPaymentHandler(
   });
 
   await writeAuditEntry({
+    status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_PAYMENT_RECORDED,
     severity: 'info',
     actorRole: 'AUNTIE',
