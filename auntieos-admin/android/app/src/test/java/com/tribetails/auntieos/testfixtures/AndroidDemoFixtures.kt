@@ -1,4 +1,4 @@
-package com.tribetails.auntieos.visual
+package com.tribetails.auntieos.testfixtures
 
 import com.tribetails.auntieos.data.admin.ActivityLogEntry
 import com.tribetails.auntieos.data.admin.NotificationEntry
@@ -44,9 +44,15 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
- * Deterministic demo data for android screenshot tests. Mirrors the seeded
- * `_demo:true` names (and the desktop harness's DemoFixtures) so android captures
- * line up with the same ui-ideas mockups. Fixed strings only.
+ * Deterministic demo data for android tests. Mirrors the seeded `_demo:true`
+ * names. Fixed strings only, so an assertion can name an exact value.
+ *
+ * Written for the screenshot harness, which was retired on 2026-07-31 along
+ * with everything else under `visual/`. It moved here out of the `visual`
+ * package because three KinTale report suites still build their world from it
+ * (KinTaleReportScreenInteractionTest, KinTaleReportDeliveryTest,
+ * KinTaleReportScreenCommentTest); it is ordinary test data now, not harness
+ * scaffolding, and nothing here renders a PNG.
  */
 object AndroidDemoFixtures {
 

@@ -8,7 +8,6 @@
 # Exception to the exception: this template is kept filled in with the real
 # personal number for local use, so it stays on disk and out of git.
 twilio-service/.env.example
-web/visual/.env
 .mcp.json
 
 # Service-account private keys. TWO real live keys exist for

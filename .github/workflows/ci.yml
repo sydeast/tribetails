@@ -12,8 +12,7 @@ concurrency:
   group: ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
-# Least privilege for the whole file: no job here writes to the repo, and the
-# kotlin job's jvmTest even rewrites tracked golden PNGs in its checkout, so a
+# Least privilege for the whole file: no job here writes to the repo, so a
 # read-only token is what makes "this job must never push" enforced rather
 # than asked nicely. The changes job re-declares its own block because the
 # paths filter also needs pull-requests: read.
@@ -287,9 +286,6 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
-      # NOTE: jvmTest rewrites tracked golden PNGs under visual/desktop/. That is
-      # harmless on a runner (the checkout is thrown away) but it is the reason
-      # this job must never commit or push anything.
       - run: ./gradlew :composeApp:jvmTest --no-daemon
 
   android:

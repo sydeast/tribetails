@@ -39,12 +39,16 @@ const firebaseConfig = {
     const auth = getAuth(app);
     const functions = getFunctions(app, 'us-central1');
 
-    // Local emulator wiring for the visual-test harness ONLY. Gated on a localhost
-    // host AND an explicit ?emulator flag (or window.__USE_EMULATOR), so production
-    // (auntie.tribetails.com) is never affected. Ports match web/firebase.dev.json.
-    // Functions are routed to the emulator too so callable-backed screens
-    // (template-bank/template-assignment/form-schemas) render deterministic seeded
-    // data instead of live prod data - the harness must be hermetic.
+    // Local emulator wiring. Gated on a localhost host AND an explicit ?emulator
+    // flag (or window.__USE_EMULATOR), so production (auntie.tribetails.com) is
+    // never affected. Functions route to the emulator too, so callable-backed
+    // screens (template-bank/template-assignment/form-schemas) render seeded data
+    // instead of live prod data.
+    //
+    // Written for the visual-test harness, which was retired 2026-07-31 along with
+    // the `web/firebase.dev.json` these ports used to match. Left in place because
+    // the gate is inert off localhost and this is the only local-emulator path the
+    // wasm build has; it is a manual debugging affordance now, not a test hook.
     const __useEmulator =
       (location.hostname === 'localhost' || location.hostname === '127.0.0.1') &&
       (location.search.includes('emulator') || window.__USE_EMULATOR === true);

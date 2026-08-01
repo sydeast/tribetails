@@ -20,7 +20,7 @@
       "files": [
         "/Users/sydeast/Documents/TribeTails_Docs/Communication/AuntieOS/web/composeApp/src/wasmJsMain/kotlin/com/tribetails/auntieos/web/data/FirestoreInterop.wasmJs.kt"
       ],
-      "changes": "NO new code needed: platformInvokeCallable actual (FirestoreInterop.wasmJs.kt:1055) already routes any callable name through the Firebase JS callable bridge. The new callable name 'syncGoogleCalendarBusyEvents' flows through unchanged. Verify the firebase.json/firebase.dev.json CSP connect-src allows the us-central1 cloudfunctions endpoint (already allowed for existing callables like rescheduleBooking \u2014 no change expected)."
+      "changes": "NO new code needed: platformInvokeCallable actual (FirestoreInterop.wasmJs.kt:1055) already routes any callable name through the Firebase JS callable bridge. The new callable name 'syncGoogleCalendarBusyEvents' flows through unchanged. Verify the firebase.json CSP connect-src allows (firebase.dev.json was deleted 2026-07-31 with the visual harness) the us-central1 cloudfunctions endpoint (already allowed for existing callables like rescheduleBooking \u2014 no change expected)."
     },
     {
       "platform": "desktop-jvm",

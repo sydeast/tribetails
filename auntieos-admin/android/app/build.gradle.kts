@@ -33,9 +33,6 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.google.services)
     alias(libs.plugins.sentry)
-    // Roborazzi gradle plugin omitted: 1.46.1 needs AGP's removed TestedExtension.
-    // The roborazzi *library* (captureRoboImage) works standalone; record mode is
-    // driven by the roborazzi.test.record system property set on the test task below.
 }
 
 val localProps = Properties().apply {
@@ -137,27 +134,10 @@ android {
         unitTests {
             isReturnDefaultValues = true
             isIncludeAndroidResources = true
-            all {
-                // Roborazzi record mode (plugin omitted under AGP 9) for the visual harness.
-                //
-                // OFF by default. Recording rewrites the tracked PNGs under visual/android/,
-                // so a plain `./gradlew test` used to drag 20 screenshot changes into any
-                // `git add -A`. Opt in only when you mean to re-capture:
-                //   ./gradlew :app:testDebugUnitTest -Proborazzi.record=true
-                // Then verify/approve from web/visual (npm run visual:verify | visual:approve).
-                // Roborazzi compares this property against the literal "true", and
-                // captureRoboImage early-returns when no task type is enabled, so
-                // "false" makes the screenshot tests run without touching any file.
-                // A bare `-Proborazzi.record` arrives as "" from Gradle; treat that
-                // as opt-in rather than silently doing nothing.
-                val recordProp = project.findProperty("roborazzi.record")?.toString()
-                val record = when (recordProp) {
-                    null -> false
-                    "" -> true
-                    else -> recordProp.toBoolean()
-                }
-                it.systemProperty("roborazzi.test.record", record.toString())
-            }
+            // The `all { }` block that lived here set roborazzi.test.record for the
+            // screenshot harness. Harness retired 2026-07-31 with the rest of
+            // `visual/`; no unit test writes an image now, so `./gradlew test` no
+            // longer has a mode that rewrites tracked files as a side effect.
         }
     }
 
@@ -323,8 +303,6 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
-    testImplementation(libs.roborazzi)
-    testImplementation(libs.roborazzi.compose)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

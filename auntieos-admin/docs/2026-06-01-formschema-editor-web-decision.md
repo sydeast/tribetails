@@ -1,6 +1,13 @@
-# Decision needed — capturing `formschema-editor` on WEB
+# Decision: capturing `formschema-editor` on WEB
 
-Date: 2026-06-01. **Status: RESOLVED 2026-06-01 — chose Option C (full functions-emulator), full-local variant. Web is now 20/20, full suite 60/60.** Owner: you.
+> **History only.** Every path this record names (`web/firebase.dev.json`,
+> `web/visual/functions-emu/`, `web/visual/seed-emulator.mjs`, the goldens it
+> counts) was deleted on 2026-07-31 when the visual harness was retired. The
+> decision below is preserved because it explains why the emulator wiring looked
+> the way it did, not because any of it is still in the tree.
+> See `docs/runbooks/visual-regression.md`.
+
+Date: 2026-06-01. **Status: RESOLVED 2026-06-01, chose Option C (full functions-emulator), full-local variant. Web was then 20/20, full suite 60/60. Superseded 2026-07-31 by the harness retirement.** Owner: you.
 
 ## Resolution (2026-06-01)
 

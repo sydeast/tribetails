@@ -23,7 +23,7 @@ A missing callable means BUILD the callable. Never ship frontend-only. No "gate 
 - Admin-gated callables use `wrapAdminCallable`; every write path validates with zod before touching Firestore.
 - Web test suite (1,955 cases) and Android suite (179 test files) must stay green on every task. Checks per slice: `npx tsc --noEmit && npx vitest run && npx vite build` (web), `./gradlew :app:compileDebugKotlin :app:testDebugUnitTest` (Android).
 - Firestore rules: collections written by new callables stay `allow write: if false` client-side unless the archive pattern was a rules-backed direct write (tags, kintale_templates).
-- Design references, in priority order: `auntieos-admin/page-specs/*.md`, `auntieos-admin/ui-ideas/*.html` (2026-05-27 concepts), `auntieos-admin/visual/mockups/*`, then the archive Compose source.
+- Design references, in priority order: `auntieos-admin/page-specs/*.md`, then `auntieos-admin/ui-ideas/*.html` honoring the rulings under `ui-ideas/WrongUIDesigns-UpdateKill/`. There is no third source. This line used to name `auntieos-admin/visual/mockups/*` and the archive Compose source; both were retired 2026-07-31 for showing designs the operator had already replaced (`auntieos-admin/docs/runbooks/visual-regression.md`).
 - No em dashes in any user-facing copy. Follow existing DenScreenKit voice ("The Den · X" kickers, fail-loud error banners).
 - **External-secret stops (the only permitted deferrals):** Task 7.2 (Google OAuth editable calendars) needs `GOOGLE_OAUTH_CLIENT_ID` + `GOOGLE_OAUTH_CLIENT_SECRET` from the operator's Google Cloud console. Nothing else in this plan is blocked on anything.
 - **Operator config action (not a code blocker):** Task 6.3 requires pointing three Twilio webhooks at already-deployed function URLs. Code ships and is testable via emulator + signed test requests regardless.
@@ -406,11 +406,11 @@ Executing agent expands this into `2026-07-24-react-port-restoration-task21.md` 
 - Create: `auntieos-admin/src/components/WidgetEditBar.tsx`
 - Modify: `auntieos-admin/src/screens/Home.css` (replace auto-fit grid with explicit row packing: wide = `grid-column: 1 / -1`; fix Supply Tracker misalignment: constrain `.widget` internals to the grid track, `min-width: 0` on grid children so long supply names cannot blow the track)
 - Modify: `auntieos-admin/src/screens/widgets/SuppliesTracker.tsx` (truncation + count alignment per `ui-ideas/auntieos-home-2026-05-27.html`)
-- Tests: `Home.test.tsx` (edit toggle, move/resize/remove call model + persist, hidden strip adds), visual check against `visual/mockups/home`
+- Tests: `Home.test.tsx` (edit toggle, move/resize/remove call model + persist, hidden strip adds), design check against the Home page-spec and `ui-ideas/auntieos-home-2026-05-27.html`
 
 **Behavior:** saves mutex-serialized onto the live profile (never clobber theme fields saved concurrently); save failure raises fail-loud banner and reverts local order.
 
-- [ ] Failing tests; implement; run visual harness compare for `home`
+- [ ] Failing tests; implement; read the Home layout back against the page-spec by hand (the visual harness was retired 2026-07-31)
 - [ ] Android: already complete (`DashboardLayout.kt`); parity test only
 - [ ] Commit
 
@@ -651,9 +651,9 @@ The repo has zero web e2e today; the DONE definition requires e2e per slice. Bui
 - [ ] One spec per Phase 0-7 slice listed above; all green
 - [ ] Commit
 
-### Task 8.2: Visual regression + slop pass on restored surfaces
+### Task 8.2: Design adherence + slop pass on restored surfaces
 
-- [ ] Run the existing `visual/` harness for: home, invoices, invoice-detail, communicate, inbox, settings, training-documents, schedule; diff against `visual/mockups/`; fix drifts that are regressions (not intentional deltas)
+- [ ] Read each restored surface back against its page-spec and its `ui-ideas/` file: home, invoices, invoice-detail, communicate, inbox, settings, training-documents, schedule. Fix drifts that are regressions, not intentional deltas. (This step used to say "run the `visual/` harness and diff against `visual/mockups/`". That harness was retired 2026-07-31 because its mockups showed an overruled design round; see `auntieos-admin/docs/runbooks/visual-regression.md`.)
 - [ ] Copy pass over all new user-facing strings against the anti-ai-slop checklist (no em dashes, no hype adjectives, fail-loud copy names the actual consequence)
 - [ ] Full checks: web `tsc + vitest + build`, Android `compileDebugKotlin + testDebugUnitTest`, functions test suite; deploy functions/hosting/rules; build Android APK
 

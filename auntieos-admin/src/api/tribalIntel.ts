@@ -131,9 +131,10 @@ export interface TribalIntelEntry {
  *    `training_documents` total 2) carries the keys `title`, `content`,
  *    `communicationType`, `kinfolkRef`, `notes`, `uploadedAt` and NO `createdAt`
  *    at all. Under the old sort those rows could never appear.
- *  - `AuntieOS/web/visual/seed-emulator.mjs:142,146` (the Playwright/visual
- *    harness seed): stamps `uploadedAt` only, no `createdAt`, so the old sort
- *    rendered this screen empty in the harness too.
+ *  - The visual harness's emulator seed (deleted 2026-07-31 with the rest of
+ *    `visual/`) stamped `uploadedAt` only, no `createdAt`, so the old sort
+ *    rendered this screen empty in the harness too. Named here because it was
+ *    the third independent writer to agree on the shape, not as a live path.
  *  - `MyTribe/functions/src/admin/updateTrainingDocument.ts` and the nightly
  *    `AuntieOS/web/functions-python/reconcile_comms.py`: MERGE writes that touch
  *    `updatedAt`/`reconcileStatus` only. Neither adds nor removes either sort

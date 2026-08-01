@@ -18,7 +18,7 @@ import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.notifications.VisitNotifier
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import com.tribetails.auntieos.ui.theme.ThemeMode
-import com.tribetails.auntieos.visual.AndroidDemoFixtures
+import com.tribetails.auntieos.testfixtures.AndroidDemoFixtures
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every

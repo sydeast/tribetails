@@ -19,7 +19,6 @@ could not see the other.
 | `web/composeApp/` | Kotlin Multiplatform: shared logic plus the desktop (jvm) app. The wasm admin it also builds is superseded by `src/`. |
 | `web/functions/` | AuntieOS-owned Cloud Functions (Node). Firebase codebase `default`. |
 | `web/functions-python/` | The dossier and 411 reconcile pipeline. Firebase codebase `reconcile`. |
-| `visual/` | Golden screenshots for web, desktop and android, plus the comparison harness. |
 | `docs/` | Specs, runbooks, reviews, punch lists, and the backlog. |
 | `scripts/` | Build and ops helpers. `loud-build.sh` is the one to use for anything slow. |
 | `twilio-service/`, `twilio-functions/` | Telephony. |
@@ -46,16 +45,23 @@ cd web && ./gradlew :composeApp:jvmTest     # shared + desktop Kotlin
 cd android && ./gradlew :app:testDebugUnitTest
 ```
 
-Two traps worth knowing before running those.
+One trap worth knowing before running those: do not pipe gradle to `tail`. It
+masks the exit code, and a failing build then reports success.
+`scripts/loud-build.sh` preserves the code and prints a heartbeat.
 
-`:composeApp:jvmTest` rewrites tracked golden PNGs under `visual/desktop/`, so
-they follow you into a `git add -A`. The android suite no longer does this: its
-record mode reads a gradle property and defaults to off. Pass
-`-Proborazzi.record` when you actually mean to capture.
+The other trap is gone. `:composeApp:jvmTest` used to rewrite tracked golden
+PNGs under `visual/desktop/` as a side effect, so twenty unexplained image
+changes followed you into a `git add -A`. The screenshot harness was retired on
+2026-07-31 and no test in this tree writes an image now.
 
-Do not pipe gradle to `tail`. It masks the exit code, and a failing build then
-reports success. `scripts/loud-build.sh` preserves the code and prints a
-heartbeat.
+## Where the designs live
+
+Design authority, in order: `page-specs/*.md`, then `ui-ideas/` honoring the
+rulings under `ui-ideas/WrongUIDesigns-UpdateKill/` and any directive carried in
+a filename. Both are gitignored and exist only in a full checkout. There is no
+third source. If a doc or plan points you at `visual/mockups/`, treat that line
+as stale: those images were retired on 2026-07-31 for depicting designs the
+operator has since replaced, and `docs/runbooks/visual-regression.md` says why.
 
 ## The brand-voice corpus, and the copy nobody sees
 
@@ -154,14 +160,9 @@ while the other six formats keep working, so it fails loud rather than quietly.
 
 ## Visual regression
 
-```
-cd web/visual
-node baseline.mjs            # verify, exits non-zero on regression
-node baseline.mjs update     # approve current captures as the new goldens
-```
-
-`update` has no per-screen mode; it promotes a whole surface at once. Read
-`docs/runbooks/visual-regression.md` before approving anything.
+Retired on 2026-07-31. There is no capture, verify or approve step any more, and
+`visual/` is gone. `docs/runbooks/visual-regression.md` records what was removed
+and why, and says what a replacement would have to do differently.
 
 ## Conventions that are not obvious
 

@@ -1,8 +1,8 @@
 ## NON-NEGOTIABLE #1: FULLSTACK ON ALL THREE PLATFORMS, OR IT IS NOT DONE
 
 Backend IS in scope and IS reachable. Everything is in ONE repo now: the
-AuntieOS React admin, Kotlin tree, functions, android app and visual harness
-under `auntieos-admin/`, and the MyTribe portal and its Cloud Functions under
+AuntieOS React admin, Kotlin tree, functions and android app under
+`auntieos-admin/`, and the MyTribe portal and its Cloud Functions under
 `mytribe/`. The MyTribe Cloud Functions are at `mytribe/functions/`, a sibling
 prefix in this same repository.
 
@@ -58,4 +58,21 @@ that used to live under Documents/TribeTails_Docs/Communication/AuntieOS.
 - Desktop parity is PAUSED by owner ruling. Web plus mobile only.
 - `sotu-hosting/` is infrastructure for SOTU/ops hosting and Firebase helper scripts.
 - Do not treat `sotu-hosting/` as the primary AuntieOS product web app unless the task explicitly asks for SOTU, hosting, or functions work there.
+
+## DESIGN AUTHORITY: TWO SOURCES, IN THIS ORDER
+
+1. `page-specs/*.md`
+2. `ui-ideas/`, honoring the rulings under `ui-ideas/WrongUIDesigns-UpdateKill/`
+   and any directive carried in a filename.
+
+Both are gitignored, so they exist only in a full checkout, never in a bare
+worktree. If you cannot see them, say so and ask. Do not substitute.
+
+There is NO third source. `visual/` was RETIRED on 2026-07-31 by owner ruling:
+its goldens were screenshots of the superseded Compose app and its
+`visual/mockups/` predated the current design rulings, so every agent that read
+them built to a design the operator had already replaced. If a doc, plan, or
+remediation JSON still points at `visual/mockups/`, `visual/baselines/`, or the
+capture harness, that line is stale. `docs/runbooks/visual-regression.md`
+records what was removed and why.
 

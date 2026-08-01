@@ -1,7 +1,14 @@
-# Design — UI Visual Comparison Harness (app ↔ ui-ideas mockups)
+# Design: UI Visual Comparison Harness (app vs ui-ideas mockups)
+
+> **RETIRED 2026-07-31. History only.** Everything this document describes was
+> built, then removed by owner ruling: the goldens photographed the superseded
+> Compose app and `visual/mockups/` carried a design round that had since been
+> overruled. Nothing here exists in the tree. Do not implement from it, and do
+> not treat any `visual/` path below as a live location.
+> See `docs/runbooks/visual-regression.md` for what was deleted and why.
 
 **Date:** 2026-05-31
-**Status:** Approved design, pre-implementation
+**Status:** Implemented 2026-06, retired 2026-07-31
 **Surfaces:** Web (Compose Wasm/Skia), Desktop (Compose Desktop JVM/Skia), Android (native Compose)
 **Tools:** Playwright (web) + Roborazzi (desktop + android)
 

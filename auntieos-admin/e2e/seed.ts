@@ -7,9 +7,9 @@ import { ADMIN, KINFOLK, SEEDED_BOOKINGS } from './fixtures/accounts';
  * identitytoolkit and Firestore REST surfaces the SDKs speak, and
  * `Authorization: Bearer owner` bypasses security rules on both, so the admin
  * SDK would buy nothing but a 60 MB dependency and a service-account code path
- * that does not exist here. `web/visual/seed-emulator.mjs` already established
- * this pattern in this repo; this file follows it rather than inventing a
- * second one.
+ * that does not exist here. The visual harness's emulator seed established this
+ * pattern in this repo first; it was deleted on 2026-07-31 with the rest of
+ * `visual/`, so this file is now the only place the pattern lives.
  *
  * IT WIPES BEFORE IT WRITES. Emulator state survives a crashed run, and a
  * half-seeded database that then gets seeded again produces duplicate rows,

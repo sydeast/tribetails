@@ -84,8 +84,9 @@ rules under `e2e/` would drift.
 `e2e/seed.ts` runs once per invocation as `globalSetup`. It wipes both emulators
 before writing, because emulator state survives a crashed run and a
 double-seeded database reads as a broken assertion rather than as leftover
-state. It talks plain REST rather than pulling in `firebase-admin`, following
-`web/visual/seed-emulator.mjs`, which established that pattern here first.
+state. It talks plain REST rather than pulling in `firebase-admin`, a pattern
+inherited from the visual harness's emulator seed (retired 2026-07-31, see
+`docs/runbooks/visual-regression.md`); this file is now its only surviving user.
 
 Two accounts, checked into `e2e/fixtures/accounts.ts`: an admin carrying
 `admin: true`, and a kinfolk carrying the portal's claim shape and no admin
