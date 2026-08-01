@@ -1034,6 +1034,19 @@ data class VetClinic(
     // until the operator approves. Missing (legacy) reads as approved -> default true.
     var verified: Boolean = true,
     var submittedBy: String = "",      // uid of the kinfolk who submitted a pending entry
+    // Opening hours, e.g. "Mon to Fri 8a to 6p". Lives on the CLINIC, not on the
+    // household that picked it: every household using a practice shares its
+    // hours, so `household_data.primaryVetHours` stored one clinic's hours N
+    // times and corrected them zero times. See the A2 migration script.
+    var hours: String = "",
+    // Retired from the bank by `archiveVetClinic`. NOT a delete: a household
+    // points at a clinic by id with no referential integrity, so removing the
+    // row would strand those households outside updateVetClinic's fan-out and
+    // destroy the record of what they were told to dial. Missing (legacy) reads
+    // as active -> default false. An archived clinic is hidden from the pickers
+    // but never from a household already linked to it, which keeps its own copy
+    // of the name, phone and address.
+    var archived: Boolean = false,
     // Held raw (Class A, same as Kinfolk/Kin/KinCareSession): this app writes an
     // ISO String, but portal `submitVetClinic` writes serverTimestamp(), so a
     // typed String throws on decode for every kinfolk-submitted clinic and takes

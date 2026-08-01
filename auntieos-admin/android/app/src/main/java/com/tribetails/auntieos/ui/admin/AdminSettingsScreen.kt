@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
+import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.Bell
 import com.composables.icons.lucide.BellOff
 import com.composables.icons.lucide.Check
@@ -2604,6 +2605,7 @@ internal fun vetClinicFieldsChanged(original: VetClinic, draft: VetClinic): Bool
     original.phone.trim()   != draft.phone.trim() ||
     original.address.trim() != draft.address.trim() ||
     original.website.trim() != draft.website.trim() ||
+    original.hours.trim()   != draft.hours.trim() ||
     original.isEmergency    != draft.isEmergency ||
     original.notes.trim()   != draft.notes.trim()
 
@@ -2623,16 +2625,73 @@ internal fun vetClinicMatchesQuery(clinic: VetClinic, query: String): Boolean {
 internal fun filterVetClinics(all: List<VetClinic>, query: String): List<VetClinic> =
     all.filter { vetClinicMatchesQuery(it, query) }
 
-/** Pending = a kinfolk submission awaiting operator approval (explicit verified=false). Pure; tested. */
-internal fun pendingVetClinics(all: List<VetClinic>): List<VetClinic> = all.filter { !it.verified }
+/** Pending = a LIVE kinfolk submission awaiting approval. A rejected one is retired, so it is not work. Pure; tested. */
+internal fun pendingVetClinics(all: List<VetClinic>): List<VetClinic> = all.filter { !it.verified && !it.archived }
 /** Approved = everything visible to households (verified, incl. legacy defaults). Pure; tested. */
 internal fun approvedVetClinics(all: List<VetClinic>): List<VetClinic> = all.filter { it.verified }
+/** Live catalog rows: approved AND not retired. Pure; tested. */
+internal fun activeVetClinics(all: List<VetClinic>): List<VetClinic> = all.filter { it.verified && !it.archived }
+/** Retired rows, kept so the households pointing at them still resolve. Pure; tested. */
+internal fun archivedVetClinics(all: List<VetClinic>): List<VetClinic> = all.filter { it.archived }
 
-/** #6: how many households list this clinic (match kinfolk vetClinicName, trimmed, ci). Pure; tested. */
-internal fun vetClinicHouseholdCount(clinic: VetClinic, kinfolkVetNames: List<String>): Int {
-    val name = clinic.name.trim()
-    if (name.isEmpty()) return 0
-    return kinfolkVetNames.count { it.trim().equals(name, ignoreCase = true) }
+/** The vet slots one household holds, for the clinic usage count. */
+data class VetClinicHouseholdRef(
+    val vetClinicId: String = "",
+    val vetClinicName: String = "",
+    val emergencyVetClinicId: String = "",
+    val emergencyVetClinicName: String = "",
+)
+
+/** [linked] = reachable by a correction; [unlinked] = same name, no id, unreachable. */
+data class VetClinicUsage(val linked: Int = 0, val unlinked: Int = 0)
+
+/**
+ * How many households read this clinic's number, split by whether a correction
+ * can actually reach them. Pure; tested.
+ *
+ * [VetClinicUsage.linked] households carry the clinic's document id, so
+ * `updateVetClinic`'s fan-out rewrites their stored name, phone and address.
+ * [VetClinicUsage.unlinked] households merely have the same clinic NAME typed
+ * in with an empty id, which every household written before 2026-07-25 does.
+ * Nothing can find those from the catalog, so a correction never reaches them.
+ *
+ * The two are reported separately rather than summed. Telling the operator
+ * "5 households" when only 2 will receive the corrected phone number overstates
+ * the repair, on the one screen where that number matters most. This replaces
+ * `vetClinicHouseholdCount`, which matched on name alone and so counted both
+ * kinds as the same thing.
+ */
+/**
+ * Case and whitespace insensitive, matching `submitVetClinic`'s dedupe rule and
+ * the React `normClinicName`. Collapsing runs of whitespace is the part that
+ * matters: a household holding "Riverside  Animal Hospital" is on the same
+ * practice as the catalog's "Riverside Animal Hospital", and a plain `equals`
+ * would count it as neither linked nor name-matched, so the operator would be
+ * told nobody uses a clinic that somebody does.
+ */
+private fun normVetClinicName(s: String): String =
+    s.lowercase().replace(Regex("\\s+"), " ").trim()
+
+internal fun vetClinicUsage(clinic: VetClinic, households: List<VetClinicHouseholdRef>): VetClinicUsage {
+    val id = clinic.id
+    val name = normVetClinicName(clinic.name)
+    var linked = 0
+    var unlinked = 0
+    for (h in households) {
+        val idHit = id.isNotBlank() && (h.vetClinicId == id || h.emergencyVetClinicId == id)
+        if (idHit) {
+            linked++
+            continue
+        }
+        if (name.isEmpty()) continue
+        // Only a name match in a slot holding NO id. A household linked to a
+        // different clinic that happens to share a name is not this clinic's.
+        val looseRegular = h.vetClinicId.isBlank() && normVetClinicName(h.vetClinicName) == name
+        val looseEmergency = h.emergencyVetClinicId.isBlank() &&
+            normVetClinicName(h.emergencyVetClinicName) == name
+        if (looseRegular || looseEmergency) unlinked++
+    }
+    return VetClinicUsage(linked = linked, unlinked = unlinked)
 }
 
 /** #6: two-letter monogram for a clinic's logo avatar. Pure; tested. */
@@ -2652,7 +2711,11 @@ private fun VetClinicsPanel(
     val c = AuntieTheme.colors
     val clinics by vm.clinics.collectAsState()
     val error by vm.error.collectAsState()
-    val kinfolkVetNames by vm.kinfolkVetNames.collectAsState()
+    val notice by vm.notice.collectAsState()
+    // Null until the household read lands. Rendered as "checking", never as
+    // zero: the control beside the badge retires the clinic, so "nobody uses
+    // this" must not look like "we have not been able to check".
+    val households by vm.households.collectAsState()
     var query by remember { mutableStateOf("") }
 
     DenPanel(
@@ -2664,24 +2727,31 @@ private fun VetClinicsPanel(
             // #6: shared admin surface; each card's badge counts households using it.
             AuntieBanner(tone = AuntieBannerTone.Info, title = "Shared vet directory") {
                 Text(
-                    "Edits here apply to the bank every household picks from. The badge on each card shows how many households use that clinic.",
+                    "Households and the kinfolk portal both read these clinics. A correction here rewrites the copy stored on every household linked to the clinic, so the number on file at a doorstep changes with it.",
                     style = AuntieTheme.typography.bodySmall, color = c.textDim,
                 )
             }
-            // Fail loud: surface any add / save / delete / approve failure, never swallow it.
+            // Fail loud: surface any add / save / retire / approve failure, never swallow it.
             error?.let { msg ->
                 AuntieBanner(tone = AuntieBannerTone.Error, title = "Vet clinic action failed") {
                     Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                 }
             }
+            // A landed write says how far it reached, not just that it landed.
+            notice?.let { msg ->
+                AuntieBanner(tone = AuntieBannerTone.Success, title = "Done") {
+                    Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                }
+            }
 
             val pending = pendingVetClinics(clinics)
-            val approved = filterVetClinics(approvedVetClinics(clinics), query)
+            val approved = filterVetClinics(activeVetClinics(clinics), query)
+            val retired = filterVetClinics(archivedVetClinics(clinics), query)
 
             if (pending.isNotEmpty()) {
                 Text("Pending approval (${pending.size})", style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
                 Text(
-                    "A household submitted these. Approve to add them to the shared bank, or reject to discard.",
+                    "A household submitted these. Approve to publish one to the shared bank, or reject to retire it. Rejecting keeps who submitted it on file rather than discarding the evidence.",
                     style = AuntieTheme.typography.bodySmall, color = c.textDim,
                 )
                 pending.forEach { clinic ->
@@ -2710,12 +2780,29 @@ private fun VetClinicsPanel(
             approved.forEach { clinic ->
                 VetClinicRow(
                     clinic = clinic,
-                    householdCount = vetClinicHouseholdCount(clinic, kinfolkVetNames),
+                    usage = households?.let { vetClinicUsage(clinic, it) },
                     onSave = { updated -> vm.save(updated) },
-                    onDelete = { vm.remove(clinic.id, clinic.name) },
+                    onRetire = { vm.retire(clinic.id, clinic.name) },
                 )
             }
             AddVetClinicForm(onCreate = { draft -> vm.add(draft) })
+            if (retired.isNotEmpty()) {
+                Text("Retired (${retired.size})", style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                Text(
+                    "Hidden from every picker and from the kinfolk portal. Kept, not deleted: a household already on one still reads the name, phone and address it always did, and restoring one puts it back in the bank.",
+                    style = AuntieTheme.typography.bodySmall, color = c.textDim,
+                )
+                retired.forEach { clinic ->
+                    VetClinicRow(
+                        clinic = clinic,
+                        usage = households?.let { vetClinicUsage(clinic, it) },
+                        onSave = { updated -> vm.save(updated) },
+                        onRetire = { vm.retire(clinic.id, clinic.name) },
+                        retired = true,
+                        onRestore = { vm.restore(clinic.id, clinic.name) },
+                    )
+                }
+            }
         }
     }
 }
@@ -2772,10 +2859,18 @@ private fun PendingVetClinicCard(clinic: VetClinic, onApprove: () -> Unit, onRej
 }
 
 @Composable
-internal fun VetClinicRow(clinic: VetClinic, householdCount: Int, onSave: (VetClinic) -> Unit, onDelete: () -> Unit) {
+internal fun VetClinicRow(
+    clinic: VetClinic,
+    /** Null while the household read is in flight. Never rendered as zero. */
+    usage: VetClinicUsage?,
+    onSave: (VetClinic) -> Unit,
+    onRetire: () -> Unit,
+    retired: Boolean = false,
+    onRestore: () -> Unit = {},
+) {
     val c = AuntieTheme.colors
     var editing by remember(clinic) { mutableStateOf(false) }
-    var confirmingDelete by remember(clinic) { mutableStateOf(false) }
+    var confirmingRetire by remember(clinic) { mutableStateOf(false) }
 
     VetCardSurface {
         // #6: logo monogram + name + emergency pill (matches the vet-clinics mock).
@@ -2792,16 +2887,36 @@ internal fun VetClinicRow(clinic: VetClinic, householdCount: Int, onSave: (VetCl
             Text(clinic.name, style = AuntieTheme.typography.titleSmall, color = c.textPrimary, modifier = Modifier.weight(1f))
             if (clinic.isEmergency) AuntieStatusPill(label = "24hr / ER", tone = AuntieStatusTone.Orange)
         }
-        // #6: households-linked badge.
-        AuntieStatusPill(
-            label = if (householdCount == 1) "1 household" else "$householdCount households",
-            tone = if (householdCount > 0) AuntieStatusTone.Teal else AuntieStatusTone.Muted,
-            mono = true,
-        )
+        // The usage badge. `linked` households are the ones a correction
+        // actually reaches; `by name only` ones carry the clinic's name with no
+        // id, so nothing can find them from the catalog. Summing them would
+        // overstate what a save does, on the screen where that matters most.
+        when {
+            usage == null -> AuntieStatusPill(label = "Households: checking", tone = AuntieStatusTone.Muted, mono = true)
+            usage.linked == 0 && usage.unlinked == 0 ->
+                AuntieStatusPill(label = "No households", tone = AuntieStatusTone.Muted, mono = true)
+            else -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (usage.linked > 0) {
+                    AuntieStatusPill(label = "${usage.linked} linked", tone = AuntieStatusTone.Teal, mono = true)
+                }
+                if (usage.unlinked > 0) {
+                    AuntieStatusPill(label = "${usage.unlinked} by name only", tone = AuntieStatusTone.Warning, mono = true)
+                }
+            }
+        }
+        if (usage != null && usage.unlinked > 0) {
+            Text(
+                "Name-only households are not updated by a save: they carry no clinic id to match on.",
+                style = AuntieTheme.typography.bodySmall, color = c.textDim,
+            )
+        }
 
         if (!editing) {
             VetDetailLine("Phone", clinic.phone)
             VetDetailLine("Address", clinic.address)
+            // Hours live on the CLINIC: every household using this practice
+            // shares them, so there is one copy rather than one per household.
+            VetDetailLine("Hours", clinic.hours)
             VetDetailLine("Website", clinic.website)
             VetDetailLine("Notes", clinic.notes)
             val vetCtx = androidx.compose.ui.platform.LocalContext.current
@@ -2818,12 +2933,18 @@ internal fun VetClinicRow(clinic: VetClinic, householdCount: Int, onSave: (VetCl
                     })
                 }
                 AuntieIconButton(icon = Lucide.Pencil, contentDescription = "Edit clinic", onClick = { editing = true })
-                // Destructive + irreversible (hard delete), so it takes a two step confirm.
-                if (confirmingDelete) {
-                    GhostButton(label = "Confirm delete", onClick = { confirmingDelete = false; onDelete() })
-                    GhostButton(label = "Cancel", onClick = { confirmingDelete = false })
+                if (retired) {
+                    // Reversible, so no confirm step: restoring puts the row back
+                    // in the bank and changes nothing on any household.
+                    GhostButton(label = "Restore", onClick = onRestore)
+                } else if (confirmingRetire) {
+                    GhostButton(label = "Confirm retire", onClick = { confirmingRetire = false; onRetire() })
+                    GhostButton(label = "Cancel", onClick = { confirmingRetire = false })
                 } else {
-                    AuntieIconButton(icon = Lucide.Trash2, contentDescription = "Delete clinic", destructive = true, onClick = { confirmingDelete = true })
+                    // "Retire", not "Delete": this archives. The row and every
+                    // household pointing at it survive, so a label promising
+                    // removal would misdescribe what the button does.
+                    AuntieIconButton(icon = Lucide.Archive, contentDescription = "Retire clinic", destructive = true, onClick = { confirmingRetire = true })
                 }
             }
         } else {
@@ -2839,23 +2960,28 @@ private fun VetClinicEditFields(clinic: VetClinic, onSaved: (VetClinic) -> Unit,
     var phone       by remember(clinic) { mutableStateOf(clinic.phone) }
     var address     by remember(clinic) { mutableStateOf(clinic.address) }
     var website     by remember(clinic) { mutableStateOf(clinic.website) }
+    // Hours live on the CLINIC, not on the household that picked it: every
+    // household using this practice shares them, so there is one copy here
+    // rather than one per household record.
+    var hours       by remember(clinic) { mutableStateOf(clinic.hours) }
     var notes       by remember(clinic) { mutableStateOf(clinic.notes) }
     var isEmergency by remember(clinic) { mutableStateOf(clinic.isEmergency) }
 
-    val draft = clinic.copy(name = name, phone = phone, address = address, website = website, notes = notes, isEmergency = isEmergency)
+    val draft = clinic.copy(name = name, phone = phone, address = address, website = website, hours = hours, notes = notes, isEmergency = isEmergency)
     val canSave = vetClinicSaveEnabled(clinic, draft)
 
     AuntieField(value = name, onValueChange = { name = it }, label = "Clinic name", modifier = Modifier.fillMaxWidth())
     AuntieField(value = phone, onValueChange = { phone = it }, label = "Phone", modifier = Modifier.fillMaxWidth())
     AuntieField(value = address, onValueChange = { address = it }, label = "Address", modifier = Modifier.fillMaxWidth())
     AuntieField(value = website, onValueChange = { website = it }, label = "Website", modifier = Modifier.fillMaxWidth())
+    AuntieField(value = hours, onValueChange = { hours = it }, label = "Hours (shown on every household using this clinic)", modifier = Modifier.fillMaxWidth())
     AuntieField(value = notes, onValueChange = { notes = it }, label = "Notes", modifier = Modifier.fillMaxWidth())
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         AuntieToggle(checked = isEmergency, onCheckedChange = { isEmergency = it })
         Text("24hr / emergency clinic", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary)
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        PrimaryButton(label = "Save", enabled = canSave, onClick = { onSaved(draft.copy(name = name.trim(), phone = phone.trim(), address = address.trim(), website = website.trim(), notes = notes.trim())) })
+        PrimaryButton(label = "Save", enabled = canSave, onClick = { onSaved(draft.copy(name = name.trim(), phone = phone.trim(), address = address.trim(), website = website.trim(), hours = hours.trim(), notes = notes.trim())) })
         GhostButton(label = "Cancel", onClick = onCancel)
     }
 }

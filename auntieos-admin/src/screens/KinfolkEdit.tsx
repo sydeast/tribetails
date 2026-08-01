@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getKinfolkProfile, type KinfolkProfile } from '../api/kinfolkProfile';
-import { VET_CLINICS_QUERY, type VetClinic } from '../api/vetClinics';
+import { VET_CLINICS_QUERY, selectableClinics, type VetClinic } from '../api/vetClinics';
 import { useCollection } from '../lib/firestore';
 import {
   archiveKinfolk,
@@ -171,7 +171,15 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
   // `getVetClinics`: that callable withholds pending kinfolk submissions, and
   // the operator is the person who approves them. See api/vetClinics.ts.
   const clinics = useCollection<VetClinic>(VET_CLINICS_QUERY);
-  const clinicRows = clinics.status === 'ready' ? clinics.data : EMPTY_CLINICS;
+  // Retired clinics (`archived`, set by archiveVetClinic) drop out of what can
+  // be PICKED, which is the whole point of retiring one. A household already on
+  // an archived clinic is unaffected: it keeps its own stored name, phone and
+  // address, so the field below still shows what is on file. The row simply
+  // stops being offered to anyone choosing a vet from now on.
+  const clinicRows = useMemo(
+    () => (clinics.status === 'ready' ? selectableClinics(clinics.data) : EMPTY_CLINICS),
+    [clinics],
+  );
   const emergencyClinics = useMemo(
     () => clinicRows.filter((c) => c.isEmergency === true),
     [clinicRows],

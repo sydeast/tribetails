@@ -33,6 +33,7 @@ import { Communicate } from './screens/Communicate';
 import { AccountRouteView } from './screens/Account';
 import { MyNotificationsEdit } from './screens/MyNotificationsEdit';
 import { NotificationGate } from './screens/NotificationGate';
+import { VetClinics } from './screens/VetClinics';
 import { Media } from './screens/Media';
 import { type MediaTargetType } from './lib/mediaScopeFormat';
 import { FormSchemaEditor } from './screens/FormSchemaEditor';
@@ -422,6 +423,12 @@ const notificationGateRoute = createRoute({
   component: NotificationGate,
 });
 
+const vetClinicsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'vet-clinics',
+  component: VetClinics,
+});
+
 /** Adapts the `media/$type/$id` route params to Media's typed props. */
 function MediaRouteView() {
   const { type, id } = mediaRoute.useParams();
@@ -438,7 +445,7 @@ const mediaRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, mediaRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

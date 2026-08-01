@@ -81,7 +81,23 @@ data class HouseholdData(
     @DocumentId val id: String = "",
     var kinfolkId: String = "",
 
-    // Veterinary Information (shared by all pets)
+    // ── THE CANONICAL HOUSEHOLD VET ─────────────────────────────────────────
+    // Operator ruling 2026-08-01: "vet info lives on household data, it can be
+    // seen on the kin profile", matching page-specs 04-kinfolk-profile.md item 3.
+    //
+    // A `vet_clinics` document id, NOT a copied string. Name, phone, address and
+    // hours resolve through it at read time, so there is exactly ONE copy of a
+    // clinic's details in the product: correcting the clinic in the manager
+    // corrects it everywhere at once. That is what makes the number somebody
+    // reads in an emergency a number somebody can actually fix.
+    var primaryVetClinicId: String = "",
+    // The 24-hour clinic. A DISTINCT practice from the primary, never folded in.
+    var emergencyVetClinicId: String = "",
+
+    // Veterinary Information: LEGACY free text, kept readable for a household
+    // that predates the catalog link. Read only when the id above is blank, and
+    // never written again. `primaryVetHours` is superseded by
+    // `vet_clinics.hours`: hours belong to the practice, not to each household.
     var primaryVetName: String = "",
     var primaryVetPhone: String = "",
     var primaryVetAddress: String = "",

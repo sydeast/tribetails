@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  EDITABLE_HOUSEHOLD_SECTIONS,
   HOUSEHOLD_FIELD_KEYS,
   HOUSEHOLD_SECTIONS,
   blankHouseholdFields,
@@ -26,9 +27,29 @@ describe('the catalog and the schema stay in step', () => {
     expect([...HOUSEHOLD_FIELD_KEYS].sort()).toEqual(Object.keys(householdDataSchema.shape).sort());
   });
 
-  it('catalogues all 30 android HouseholdData fields, each exactly once', () => {
-    expect(HOUSEHOLD_FIELD_KEYS).toHaveLength(30);
-    expect(new Set(HOUSEHOLD_FIELD_KEYS).size).toBe(30);
+  /**
+   * The 30 stored fields, plus the two canonical vet CLINIC IDS added
+   * 2026-08-01 when `household_data` became the household vet's owner (operator
+   * ruling). The seven free-text vet fields stay in the count: they are the
+   * legacy fallback for a household that predates the catalog link, still read,
+   * never written.
+   */
+  it('catalogues all 32 HouseholdData fields, each exactly once', () => {
+    expect(HOUSEHOLD_FIELD_KEYS).toHaveLength(32);
+    expect(new Set(HOUSEHOLD_FIELD_KEYS).size).toBe(32);
+  });
+  it('carries the two catalog link fields, so the vet is not free text', () => {
+    expect(HOUSEHOLD_FIELD_KEYS).toContain('primaryVetClinicId');
+    expect(HOUSEHOLD_FIELD_KEYS).toContain('emergencyVetClinicId');
+  });
+  /**
+   * A clinic id is chosen by search, never typed. If the generic text dialog
+   * could render one, an operator could paste an arbitrary document id and
+   * point a household at a clinic nobody chose.
+   */
+  it('keeps the vet section out of the generic text editor', () => {
+    expect(veterinary.editor).toBe('vetPicker');
+    expect(EDITABLE_HOUSEHOLD_SECTIONS.some((s) => s.id === 'veterinary')).toBe(false);
   });
 
   it('gives every field a label and every section a title', () => {

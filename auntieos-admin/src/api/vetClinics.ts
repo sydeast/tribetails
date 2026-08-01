@@ -34,6 +34,21 @@ export interface VetClinic {
   verified?: boolean | undefined;
   submittedBy?: string | undefined;
   notes?: string | undefined;
+  /**
+   * Opening hours, e.g. "Mon to Fri 8a to 6p". Lives HERE and not on the
+   * household, because hours are a property of the practice: every household
+   * using Riverside shares Riverside's hours. `household_data.primaryVetHours`
+   * stored them per household, which meant one clinic's hours were recorded N
+   * times and corrected zero times. Absent on every row before 2026-08-01.
+   */
+  hours?: string | undefined;
+  /**
+   * Retired from the bank by `archiveVetClinic`. Absent means active: the field
+   * is newer than the catalog. An archived clinic is hidden from the pickers but
+   * NEVER from a household already linked to it, which keeps its own copy of the
+   * name, phone and address regardless.
+   */
+  archived?: boolean | undefined;
 }
 
 /**
@@ -52,6 +67,23 @@ export const VET_CLINICS_QUERY: CollectionSpec = {
 /** True unless the doc is an explicit pending kinfolk submission. */
 export function isApprovedClinic(c: VetClinic): boolean {
   return c.verified !== false;
+}
+
+/** True unless the operator has retired the clinic from the bank. */
+export function isActiveClinic(c: VetClinic): boolean {
+  return c.archived !== true;
+}
+
+/**
+ * The clinics a household may PICK: approved, and not retired.
+ *
+ * The currently-selected clinic is deliberately NOT filtered back in. A
+ * household already on an archived clinic keeps its denormalized name, phone and
+ * address, so the picker still displays what is on file; it simply cannot be
+ * re-selected from the list, which is the whole point of archiving.
+ */
+export function selectableClinics(all: readonly VetClinic[]): VetClinic[] {
+  return all.filter((c) => isApprovedClinic(c) && isActiveClinic(c));
 }
 
 /** The clinic name, or a stable placeholder, never a blank row. */

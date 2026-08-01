@@ -31,6 +31,12 @@ import { Args as RecordPaymentArgs } from '../src/admin/recordPayment';
 // admin vet-clinic picker (Task 1.8). Two independent clients now build this
 // payload, which is exactly the condition this guard exists for.
 import { Args as SubmitVetClinicArgs } from '../src/portal/submitVetClinic';
+// B4 (2026-08-01): the catalog's write half. Same two-client condition as the
+// create above, plus a third: `updateVetClinic` fans the corrected clinic out
+// onto every linked `kinfolk` doc, so a renamed field here silently stops a
+// correction reaching the households instead of failing visibly.
+import { Args as UpdateVetClinicArgs } from '../src/admin/updateVetClinic';
+import { Args as ArchiveVetClinicArgs } from '../src/admin/archiveVetClinic';
 // 17.3 Home dashboard layout (added 2026-07-25). Three surfaces parse the SAME
 // stored token list: the React admin (auntieos-admin/src/lib/dashboardLayout.ts),
 // android (ui/home/DashboardLayout.kt) and the superseded Compose web build.
@@ -233,7 +239,44 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // Shared vet catalog. `isEmergency` was added 2026-07-25 for the AuntieOS
   // picker; it is optional, so every legacy portal payload (the four fields
   // before it) still validates. The freeze is the SUPERSET.
-  submitVetClinic: { schema: SubmitVetClinicArgs, keys: ['address', 'isEmergency', 'name', 'phone', 'website'] },
+  //
+  // `acknowledgedMatchIds` added 2026-08-01 (operator ruling: a near match must
+  // OFFER a choice, never take it). Optional, so legacy payloads still validate;
+  // its ABSENCE is what makes the safe path the default, since a caller that
+  // does not send it can only ever be handed candidates, never a silent create
+  // over the top of an existing clinic.
+  submitVetClinic: {
+    schema: SubmitVetClinicArgs,
+    keys: ['acknowledgedMatchIds', 'address', 'isEmergency', 'name', 'phone', 'website'],
+  },
+
+  // B4: the write half of the same catalog. Frozen FROM BIRTH, for the reason
+  // linkInvoiceSessions/recordPayment/transitionBookingStatus were: these two
+  // replace DIRECT client writes to `vet_clinics` on the Kotlin trees, and the
+  // React admin's brand-new manager is a second hand-built mirror aimed at the
+  // shape the day it lands.
+  //
+  // `hours` is on this shape and NOT on `submitVetClinic`'s deliberately: hours
+  // are curated onto an existing clinic, not typed into the inline create form
+  // inside a household's picker.
+  updateVetClinic: {
+    schema: UpdateVetClinicArgs,
+    keys: [
+      'address',
+      'clinicId',
+      'hours',
+      'isEmergency',
+      'name',
+      'notes',
+      'phone',
+      'verified',
+      'website',
+    ],
+  },
+  // Two keys, and it must STAY two. There is no `hard` or `force` flag here on
+  // purpose: a hard delete would strand every household's `vetClinicId`, so the
+  // absence of that key is part of the contract, not an omission.
+  archiveVetClinic: { schema: ArchiveVetClinicArgs, keys: ['archived', 'clinicId'] },
 
   // 17.3 operator dashboard layout. One key, so the top-level freeze is thin on
   // its own; the token-VALUE freeze below is the part that actually matters.

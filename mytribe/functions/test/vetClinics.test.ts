@@ -108,17 +108,53 @@ describe('submitVetClinic', () => {
     });
   });
 
-  it('dedupes against an existing clinic (case/space-insensitive) without creating', async () => {
+  /**
+   * OPERATOR RULING 2026-08-01. A near match now OFFERS a choice and writes
+   * nothing. It used to return the matching clinic's id with `created: false`:
+   * the caller asked to create and silently got somebody else's record. Two
+   * practices genuinely can share a name in different cities, so that
+   * substituted a different phone number onto the record read in an emergency.
+   */
+  it('offers the match as a CHOICE instead of substituting it, and writes nothing', async () => {
     const ctx = withClinics([{ id: 'exists', data: { name: 'Riverside  Animal Hospital', verified: true } }]);
     const res = await submitVetClinicHandler(req({ name: 'riverside animal hospital' }));
-    expect(res).toMatchObject({ clinicId: 'exists', created: false, pending: false });
+    expect(res.status).toBe('needs_choice');
+    expect(res.clinicId).toBe('');
+    expect(res.created).toBe(false);
+    expect(res.candidates.map((c) => c.id)).toEqual(['exists']);
     expect(ctx.adds).toHaveLength(0);
   });
 
-  it('dedup reports pending=true when the existing match is itself pending', async () => {
+  it('flags a pending match as unverified so the chooser sees it is unapproved', async () => {
     withClinics([{ id: 'p', data: { name: 'Dup', verified: false } }]);
     const res = await submitVetClinicHandler(req({ name: 'dup' }));
-    expect(res).toMatchObject({ clinicId: 'p', created: false, pending: true });
+    expect(res.status).toBe('needs_choice');
+    expect(res.candidates[0]).toMatchObject({ id: 'p', verified: false });
+  });
+
+  it('creates once the caller echoes back the ids it was offered', async () => {
+    // The echo is the evidence the user was shown the match. See
+    // lib/vetClinicMatch.ts#acknowledgesAll for why this is not a boolean.
+    const ctx = withClinics([{ id: 'exists', data: { name: 'Riverside', verified: true } }]);
+    const res = await submitVetClinicHandler(
+      req({ name: 'Riverside', acknowledgedMatchIds: ['exists'] }),
+    );
+    expect(res.status).toBe('created');
+    expect(res.created).toBe(true);
+    expect(ctx.adds).toHaveLength(1);
+  });
+
+  it('asks again when a NEW match appeared since the choice was shown', async () => {
+    // Acknowledging the one it saw must not license creating over one it did not.
+    const ctx = withClinics([
+      { id: 'exists', data: { name: 'Riverside', verified: true } },
+      { id: 'fresh', data: { name: 'Riverside', verified: true } },
+    ]);
+    const res = await submitVetClinicHandler(
+      req({ name: 'Riverside', acknowledgedMatchIds: ['exists'] }),
+    );
+    expect(res.status).toBe('needs_choice');
+    expect(ctx.adds).toHaveLength(0);
   });
 
   // ── AO Task 1.8: the AuntieOS vet-clinic picker submits through this same

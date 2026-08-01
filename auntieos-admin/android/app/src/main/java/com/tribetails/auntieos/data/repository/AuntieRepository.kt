@@ -2031,6 +2031,17 @@ class AuntieRepository(
     fun observeVetClinics(): Flow<List<VetClinic>> = observeVetClinicsOrFail().map { it.clinics }
 
     /**
+     * One-shot catalog read, for callers that need a clinic's details once
+     * rather than a live listener. Household Data uses it to resolve the
+     * OPENING HOURS of the clinic a household is linked to: hours live on the
+     * clinic, so the household record alone cannot answer for them.
+     */
+    suspend fun getVetClinicsOnce(): Result<List<VetClinic>> = runCatching {
+        authGate.ensureAuthenticated()
+        vetClinicsQuery().get().await().toObjects(VetClinic::class.java)
+    }.onFailure { AuntieLog.e("Failed to read vet clinics", it) }
+
+    /**
      * Same underlying `vet_clinics` listener as [observeVetClinics], but keeps a
      * load FAILURE distinguishable from a genuinely empty catalog -- exactly the
      * distinction [observeVetClinics] collapses (both become `emptyList()`),
@@ -2204,23 +2215,77 @@ class AuntieRepository(
         )
     }.onFailure { AuntieLog.e("verifyActivityLogChain failed", it) }
 
-    /** Update an existing vet-clinic doc (parity with web updateVetClinic). */
-    suspend fun updateVetClinic(clinic: VetClinic): Result<Unit> = runCatching {
+    /**
+     * Correct a clinic in the shared catalog, through the `updateVetClinic`
+     * callable (punchlist B4).
+     *
+     * This WAS a direct `firestore.collection("vet_clinics").set(clinic)`. That
+     * write is now refused by `firestore.rules` (`allow write: if false`), and
+     * closing it was the point: the direct path had no validation, no check
+     * against the normalized-name dedupe that `submitVetClinic` enforces on
+     * create, and no audit entry, on a catalog shared with the kinfolk portal.
+     *
+     * It also could not do the thing that makes correcting a clinic worth
+     * anything. A household stores the clinic's name, phone and address
+     * denormalized beside `vetClinicId`, so fixing the catalog row alone left
+     * every household still holding the wrong number. The callable rewrites
+     * those copies in the same call and returns how many it reached, which is
+     * why this returns a count rather than Unit.
+     *
+     * WHOLE-RECORD SAVE: an omitted field is CLEARED server-side. The panel
+     * seeds its form from the current row and sends every field back, so
+     * clearing a wrong address works.
+     */
+    suspend fun updateVetClinic(clinic: VetClinic): Result<Int> = runCatching {
         authGate.ensureAuthenticated()
         require(clinic.id.isNotBlank()) { "VetClinic.id is required to update." }
-        val ts = getCurrentTimestamp()
-        val toWrite = clinic.copy(updatedAt = ts, createdAt = clinic.createdAtIso().ifBlank { ts })
-        firestore.collection("vet_clinics").document(clinic.id).set(toWrite).await()
-        Unit
+        val payload = mutableMapOf<String, Any?>(
+            "clinicId" to clinic.id.trim(),
+            "name" to clinic.name.trim(),
+            "phone" to clinic.phone.trim(),
+            "address" to clinic.address.trim(),
+            "website" to clinic.website.trim(),
+            "hours" to clinic.hours.trim(),
+            "notes" to clinic.notes.trim(),
+            "isEmergency" to clinic.isEmergency,
+        )
+        // `verified` is sent ONLY when approving. Omitted leaves the stored
+        // approval state alone, so an ordinary edit of a pending row cannot
+        // silently publish it to every household.
+        if (clinic.verified) payload["verified"] = true
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("updateVetClinic")
+            .call(payload)
+            .await().data as? Map<String, Any?>
+            ?: error("updateVetClinic: non-map payload")
+        (raw["householdsUpdated"] as? Number)?.toInt() ?: 0
     }.onFailure { AuntieLog.e("Failed to update vet clinic", it) }
 
-    /** Hard-delete a vet-clinic doc (parity with web deleteVetClinic). */
-    suspend fun deleteVetClinic(id: String): Result<Unit> = runCatching {
+    /**
+     * Retire a clinic from the shared catalog, or restore it, through the
+     * `archiveVetClinic` callable.
+     *
+     * REPLACES A HARD DELETE. This was `.document(id).delete()`. Households
+     * point at a clinic by id, Firestore has no referential integrity, and
+     * nothing in this repo sweeps for orphans, so deleting the row (1) dropped
+     * those households out of `updateVetClinic`'s fan-out permanently, so their
+     * vet could never be corrected in bulk again, and (2) destroyed the record
+     * of what households had been told to dial.
+     *
+     * Archiving touches no household. Their stored name, phone and address stay
+     * exactly as they were, so tidying the catalog never blanks a number at a
+     * doorstep. Returns how many households still reference the clinic.
+     */
+    suspend fun archiveVetClinic(id: String, archived: Boolean): Result<Int> = runCatching {
         authGate.ensureAuthenticated()
-        require(id.isNotBlank()) { "VetClinic id is required to delete." }
-        firestore.collection("vet_clinics").document(id).delete().await()
-        Unit
-    }.onFailure { AuntieLog.e("Failed to delete vet clinic", it) }
+        require(id.isNotBlank()) { "VetClinic id is required to archive." }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("archiveVetClinic")
+            .call(mapOf("clinicId" to id.trim(), "archived" to archived))
+            .await().data as? Map<String, Any?>
+            ?: error("archiveVetClinic: non-map payload")
+        (raw["householdCount"] as? Number)?.toInt() ?: 0
+    }.onFailure { AuntieLog.e("Failed to archive vet clinic", it) }
 
     suspend fun saveUserProfile(profile: UserProfile): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()

@@ -125,3 +125,28 @@ class VetClinicSuggestionsTest {
         assertEquals("", VetClinicSelection(clinicId = "c", name = "N").detail)
     }
 }
+/**
+ * Punchlist B4: a retired clinic stops being OFFERED, without a household
+ * already on it losing anything.
+ */
+class VetClinicSuggestionsArchivedTest {
+    private val live = VetClinic(id = "a", name = "Riverside Animal Hospital")
+    private val retired = VetClinic(id = "b", name = "Riverside Closed Branch", archived = true)
+    @Test fun archivedClinicsAreNotOffered() {
+        val hits = vetClinicSuggestions("riverside", listOf(live, retired))
+        assertEquals(listOf("a"), hits.map { it.id })
+    }
+    @Test fun anAllArchivedCatalogSuggestsNothing() {
+        assertTrue(vetClinicSuggestions("riverside", listOf(retired)).isEmpty())
+    }
+    /**
+     * The household's own record is untouched by archiving: it keeps the
+     * denormalized name, phone and address, so what is ON FILE still renders.
+     * Only picking a NEW one is affected, which is what retiring is for.
+     */
+    @Test fun aSelectionOnAnArchivedClinicStillRenders() {
+        val sel = VetClinicSelection(clinicId = "b", name = "Riverside Closed Branch", phone = "555")
+        assertTrue(sel.hasSelection)
+        assertEquals("555", sel.detail)
+    }
+}

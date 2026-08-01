@@ -167,6 +167,13 @@ export { rescheduleBooking } from './admin/rescheduleBooking';
 // Sits beside rescheduleBooking because it owns the other half of the writes to
 // that document; both replaced a direct client patch.
 export { transitionBookingStatus } from './admin/transitionBookingStatus';
+// Punchlist B4: the write half of the shared vet catalog. `submitVetClinic`
+// (portal, create) had no update or delete counterpart on the server, so both
+// Kotlin trees wrote `vet_clinics` directly and the React admin could not edit a
+// clinic at all. These two replace those direct writes; `updateVetClinic` also
+// fans the correction out to the households holding a denormalized copy.
+export { updateVetClinic } from './admin/updateVetClinic';
+export { archiveVetClinic } from './admin/archiveVetClinic';
 export { syncGoogleCalendarBusyEvents } from './admin/syncGoogleCalendarBusyEvents';
 // Task 7.2, editable calendars over OAuth. `googleOAuthCallback` is the HTTP
 // redirect target and is exported with the callables it belongs to rather than

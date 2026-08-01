@@ -1,0 +1,245 @@
+/* Vet clinics manager. Tokens only, per styles/tokens.css. */
+
+.vetbank {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.vetbank-blurb {
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line);
+  color: var(--color-text-dim);
+  margin: 0 0 var(--space-4);
+}
+
+.vetbank-search {
+  font-family: var(--font-hanken);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-4);
+  min-width: 18rem;
+  max-width: 100%;
+}
+
+.vetbank-search:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Auto-fitting, so the bank reads as cards on a wide screen and a single
+   readable column on a phone without a breakpoint ladder. */
+.vetbank-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
+  gap: var(--space-4);
+}
+
+.vetcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+  padding: var(--space-4);
+}
+
+/* Retired rows stay legible rather than being greyed into unreadability: a
+   household is still reading this clinic's number off its own record. */
+.vetcard--retired {
+  border-style: dashed;
+}
+
+.vetcard--new {
+  border-color: var(--color-primary);
+  margin-bottom: var(--space-4);
+}
+
+.vetcard-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.vetcard-logo {
+  display: grid;
+  place-items: center;
+  inline-size: 2.5rem;
+  block-size: 2.5rem;
+  border-radius: var(--radius-chip);
+  background: var(--gradient-teal-purple);
+  color: var(--tt-brand-cream);
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  flex: none;
+}
+
+.vetcard-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.vetcard-name b {
+  font-family: var(--type-title-sm-family);
+  font-size: var(--type-title-sm-size);
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.vetcard-id {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+  overflow-wrap: anywhere;
+}
+
+.vetcard-tag {
+  margin-inline-start: auto;
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-coral);
+  border: 1px solid var(--color-coral);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-2);
+  white-space: nowrap;
+  flex: none;
+}
+
+.vetcard-meta {
+  display: grid;
+  grid-template-columns: minmax(4.5rem, max-content) 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.vetcard-row {
+  display: contents;
+}
+
+.vetcard-row dt {
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-dim);
+}
+
+.vetcard-row dd {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.vetcard-blank {
+  color: var(--color-text-faint);
+  font-style: italic;
+}
+
+.vetcard-base {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  border-top: 1px solid var(--color-border-soft);
+  padding-top: var(--space-3);
+  margin-top: auto;
+}
+
+.vetcard-usage {
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-dim);
+}
+
+.vetcard-usage--unknown {
+  font-style: italic;
+  color: var(--color-text-faint);
+}
+
+.vetcard-usage-note {
+  color: var(--color-text-faint);
+}
+
+.vetcard-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.vetcard-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.vetcard-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.vetcard-field-label {
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-dim);
+}
+
+.vetcard-field input {
+  font-family: var(--font-hanken);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-tight);
+  padding: var(--space-2) var(--space-3);
+  width: 100%;
+}
+
+.vetcard-field input:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.vetcard-field-hint {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-faint);
+}
+
+.vetcard-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+}
+
+/* Warnings and errors are given real weight: this is the screen where a save
+   changes the number somebody dials. */
+.vetcard-warn {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-warning);
+  margin: 0;
+}
+
+.vetcard-error {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-error);
+  background: var(--color-error-container);
+  border-radius: var(--radius-tight);
+  padding: var(--space-2) var(--space-3);
+  margin: 0;
+}
+
+.vetcard-danger .auntie-btn__label {
+  color: var(--color-error);
+}

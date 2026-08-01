@@ -138,10 +138,28 @@ service cloud.firestore {
       allow write: if isAuntie();
     }
 
- // ── Shared catalogs - readable by any signed-in user, writable by admins ──
+ // ── Shared catalogs - readable by any signed-in user, written by callables ──
+ //
+ // Write is CLOSED to every client (punchlist B4, 2026-08-01). It was
+ // `isAuntie()`, and under it the two Kotlin trees edited and HARD-DELETED
+ // clinics with a direct `.set()` / `.delete()`: no validation, no dedupe check
+ // against the name rule `submitVetClinic` enforces on create, and no audit
+ // entry. This is a catalog shared with the kinfolk portal, and a household
+ // stores the clinic's phone number denormalized beside `vetClinicId`, so a
+ // direct edit could neither reach those households nor be traced afterwards.
+ //
+ // All three writes now have an admin-SDK callable, which bypasses these rules:
+ //   create   submitVetClinic   (portal + admin picker, deduped)
+ //   update   updateVetClinic   (validated, audited, fans out to households)
+ //   retire   archiveVetClinic  (archive, never delete: a hard delete strands
+ //                               every household's vetClinicId)
+ // Closing the rule is what makes those the ONLY paths, rather than the polite
+ // ones. Read stays open to any signed-in user: the pickers and the admin
+ // manager both need the live listener, and the admin needs to see the
+ // `verified: false` pending submissions the callable withholds.
     match /vet_clinics/{clinicId} {
       allow read: if signedIn();
-      allow write: if isAuntie();
+      allow write: if false;
     }
 
  // AuntieOS Android's own scheduling pipeline. Operator-only, and deliberately
