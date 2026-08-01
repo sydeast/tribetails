@@ -3,6 +3,7 @@ package com.tribetails.auntieos.data.repository
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.firestore.CollectionReference
 import com.google.firebase.firestore.DocumentReference
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.QuerySnapshot
@@ -60,6 +61,21 @@ class KinCareRepositoryBusyConflictTest {
         return docRef
     }
 
+    /**
+     * C1: [assertNoCompanyHolidayConflict] runs unconditionally after the
+     * busy-conflict check, so any path that reaches the write also reads
+     * `business_settings/business_settings`. Stubbed to "no closures at all"
+     * here; the dedicated closure-conflict cases live in
+     * `KinCareRepositoryCompanyHolidayTest.kt`.
+     */
+    private fun mockNoCompanyHolidays(firestore: FirebaseFirestore) {
+        val docRef = mockk<DocumentReference>()
+        val snapshot = mockk<DocumentSnapshot>()
+        every { firestore.document("business_settings/business_settings") } returns docRef
+        every { docRef.get() } returns Tasks.forResult(snapshot)
+        every { snapshot.get("companyHolidays") } returns null
+    }
+
     private fun passingAuthGate(): AuthGate {
         val gate = mockk<AuthGate>()
         every { gate.ensureAuthenticated() } returns Unit
@@ -96,6 +112,7 @@ class KinCareRepositoryBusyConflictTest {
     fun `a non-conflicting session passes unchanged`() = runBlocking {
         val firestore = mockk<FirebaseFirestore>()
         mockBusySlotsQuery(firestore, listOf(busySlot("2026-09-01", "14:00", "15:00")))
+        mockNoCompanyHolidays(firestore)
         mockSessionWrite(firestore)
         val repo = KinCareRepository(authGate = passingAuthGate(), firestoreProvider = { firestore })
 

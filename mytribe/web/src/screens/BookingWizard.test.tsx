@@ -4,13 +4,20 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BookingWizardBody } from './BookingWizard';
-import type { GetServiceCatalogResult, RequestBookingRequest, RequestBookingResult } from '../api/bookingApi';
+import type {
+  GetBusinessClosuresRequest,
+  GetBusinessClosuresResult,
+  GetServiceCatalogResult,
+  RequestBookingRequest,
+  RequestBookingResult,
+} from '../api/bookingApi';
 import type { GetMyKinResult, KinDto } from '../api/types';
-import { MAX_RECURRING_VISITS, monthPickerDays } from '../lib/bookingWizardLogic';
+import { dateKey, MAX_RECURRING_VISITS, monthPickerDays } from '../lib/bookingWizardLogic';
 
 const getMyKin = vi.fn<() => Promise<GetMyKinResult>>();
 const getServiceCatalog = vi.fn<() => Promise<GetServiceCatalogResult>>();
 const requestBooking = vi.fn<(req: RequestBookingRequest) => Promise<RequestBookingResult>>();
+const getBusinessClosures = vi.fn<(req: GetBusinessClosuresRequest) => Promise<GetBusinessClosuresResult>>();
 
 vi.mock('../api/portal', () => ({
   getMyKin: () => getMyKin(),
@@ -21,6 +28,7 @@ vi.mock('../api/bookingApi', async () => {
     ...actual,
     getServiceCatalog: () => getServiceCatalog(),
     requestBooking: (req: RequestBookingRequest) => requestBooking(req),
+    getBusinessClosures: (req: GetBusinessClosuresRequest) => getBusinessClosures(req),
   };
 });
 vi.mock('../lib/activeTribe', () => ({
@@ -101,9 +109,13 @@ beforeEach(() => {
   getMyKin.mockReset();
   getServiceCatalog.mockReset();
   requestBooking.mockReset();
+  getBusinessClosures.mockReset();
   getMyKin.mockResolvedValue({ kin: [kin({ id: 'k1', name: 'Buddy' }), kin({ id: 'k2', name: 'Willow', species: 'cat' })] });
   getServiceCatalog.mockResolvedValue({ services: [SERVICE_A, SERVICE_B] });
   requestBooking.mockResolvedValue({ batchId: 'batch-1', bookingIds: ['batch-1'], bookingId: 'batch-1' });
+  // Default: nothing closed, so every pre-existing test's dates stay pickable
+  // exactly as before C1. Tests that care about a closure set their own fixture.
+  getBusinessClosures.mockResolvedValue({ closures: [] });
 });
 
 describe('BookingWizard: service catalog', () => {
@@ -159,6 +171,73 @@ describe('BookingWizard: individual pattern', () => {
     const expected = [expectedDays[0]!, expectedDays[2]!].map((d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 10, 15).getTime());
     expect(req.visits.map((v) => v.startTimeMs).sort()).toEqual(expected.sort());
     expect(req.visits.every((v) => v.serviceId === 's1')).toBe(true);
+  });
+});
+
+/**
+ * C1: company holidays were stored (PR #150) but read by nothing anywhere in
+ * this codebase, including here -- the portal's month picker offered every
+ * date with no notion of "closed" at all. `getBusinessClosures` is the new
+ * seam (portal cannot read `business_settings` directly), and
+ * `requestBooking` itself refuses a closed date server-side regardless of
+ * what this UI does; these pin the CLIENT half, that a household is not
+ * OFFERED a doomed date in the first place.
+ */
+describe('BookingWizard: C1 company holidays', () => {
+  it('the first offered date is disabled and cannot be selected when it is a closure', async () => {
+    const closedDate = dateKey(monthPickerDays(new Date())[0]!);
+    getBusinessClosures.mockResolvedValue({ closures: [{ date: closedDate, name: 'Owner away' }] });
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+
+    const dayButtons = await screen.findAllByRole('button', { name: /^\d+$/ });
+    const closedButton = dayButtons[0]!;
+    await vi.waitFor(() => expect(closedButton).toBeDisabled());
+
+    await user.click(closedButton).catch(() => undefined); // userEvent refuses a disabled target; ignore
+    expect(closedButton).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+  });
+
+  it('an open date next to a closed one is still selectable', async () => {
+    const days = monthPickerDays(new Date());
+    getBusinessClosures.mockResolvedValue({ closures: [{ date: dateKey(days[0]!), name: 'Owner away' }] });
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+
+    const dayButtons = await screen.findAllByRole('button', { name: /^\d+$/ });
+    await vi.waitFor(() => expect(dayButtons[0]).toBeDisabled());
+    await user.click(dayButtons[1]!);
+    expect(dayButtons[1]).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+  });
+
+  it('a weekly-generated visit landing on a closure is refused, naming the date, before Next is allowed', async () => {
+    const days = monthPickerDays(new Date());
+    // The picker's own preview always includes at least one date in the
+    // offered window when 4+ weeks are configured; pick the SECOND offered
+    // day (index 1) as the closure so it is virtually guaranteed to be one of
+    // the weekdays chosen below regardless of what day "today" falls on in
+    // the test run -- both Mon and Wed are toggled, covering most starting
+    // weekdays within the first 8 days.
+    const closedDate = dateKey(days[1]!);
+    getBusinessClosures.mockResolvedValue({ closures: [{ date: closedDate, name: 'Staff retreat' }] });
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+
+    await user.click(screen.getByRole('radio', { name: 'Repeating Schedule' }));
+    // Every weekday, so the closure date is guaranteed to be hit regardless
+    // of which weekday the closure itself falls on.
+    for (const label of ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']) {
+      await user.click(screen.getByRole('button', { name: label }));
+    }
+    await user.click(screen.getByRole('button', { name: '4' })); // 4 weeks
+
+    await screen.findByText(new RegExp(closedDate));
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
   });
 });
 

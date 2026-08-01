@@ -131,6 +131,25 @@
   color: var(--color-warning);
 }
 
+/* C1: the one day this picker actually refuses. Same not-pickable treatment
+ * as `--past` (cursor:default, neutral hover), on top of the `--closed` hatch
+ * it also carries, so a company holiday reads as refused rather than as an
+ * ordinary closed-hours day the operator could still tap. */
+.datepicker__day--holiday {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.datepicker__day--holiday:hover {
+  background: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 5px,
+    var(--color-surface-2) 5px,
+    var(--color-surface-2) 10px
+  );
+}
+
 .datepicker__day--selected,
 .datepicker__day--selected:hover {
   background: var(--color-primary);

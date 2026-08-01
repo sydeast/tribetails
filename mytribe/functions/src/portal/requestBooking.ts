@@ -12,6 +12,7 @@ import { approveBookingSeriesCore } from '../admin/approveBookingSeriesCore';
 import { resolveDefaultAssignee, type Assignee } from '../lib/defaultAssignee';
 import { resolveKinNames } from '../lib/resolveKinNames';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
+import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 
 /**
  * #9 (2026-06-08): Auto-confirm repeat kinfolk. When the operator turns on
@@ -382,6 +383,9 @@ export async function requestBookingHandler(
     });
     // Kinfolk have no override: a busy-import conflict always refuses the request.
     await guardBookingBusyConflict({ firestore, visits: args.visits, actorUid: uid, actorRole: 'PRIMARY' });
+    // A closed day always refuses the request too -- no override, for anyone.
+    // See companyHolidayConflict.ts's header for why this guard has none.
+    await guardCompanyHolidayConflict({ firestore, visits: args.visits });
 
     const batchId = `req_${now}_${Math.random().toString(36).slice(2, 8)}`;
     const pattern = args.pattern ?? 'individual';
@@ -458,6 +462,11 @@ export async function requestBookingHandler(
     visits: [{ startTimeMs: args.startTimeMs, endTimeMs: args.endTimeMs }],
     actorUid: uid,
     actorRole: 'PRIMARY',
+  });
+  // A closed day always refuses the request too -- no override, for anyone.
+  await guardCompanyHolidayConflict({
+    firestore,
+    visits: [{ startTimeMs: args.startTimeMs, endTimeMs: args.endTimeMs }],
   });
 
   const batchId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;

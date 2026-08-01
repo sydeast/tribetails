@@ -8,12 +8,22 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 
 /**
  * 1E §A.9: server-bound reschedule of a kin_care_sessions doc. Shared by Schedule
  * drag-to-reschedule and Bookings bulk/per-card Reschedule. Reads the doc first
  * (404 if absent) so the audit records the actual before→after window. Gated by
  * wrapAdminCallable (admin custom claim).
+ *
+ * C1: a reschedule is a fresh slot request onto the NEW window just as much as
+ * a create is, so it is guarded the same way (`guardCompanyHolidayConflict`,
+ * no override) before the write lands. Not guarded against
+ * `guardBookingBusyConflict` here -- that was a pre-existing gap left open by
+ * PR #183 (drag-to-reschedule was not one of the write paths it closed) and is
+ * a separate decision from this task's scope; the company-holiday guard is
+ * new with this task and closing it for reschedule from the start avoids
+ * introducing a matching gap on day one.
  */
 const Args = z.object({
   sessionId: z.string().min(1).max(120),
@@ -49,6 +59,11 @@ export async function rescheduleBookingHandler(
   const snap = await ref.get();
   if (!snap.exists) throw new HttpsError('not-found', `Session '${args.sessionId}' not found.`);
   const prev = snap.data() as { startTime?: string; endTime?: string } | undefined;
+
+  await guardCompanyHolidayConflict({
+    firestore: db(),
+    visits: [{ startTimeMs: Date.parse(args.startTime), endTimeMs: Date.parse(args.endTime) }],
+  });
 
   await ref.set(
     { startTime: args.startTime, endTime: args.endTime, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid },

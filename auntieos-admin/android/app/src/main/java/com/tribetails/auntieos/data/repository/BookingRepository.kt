@@ -31,12 +31,17 @@ class BookingRepository(
      * runs here instead. Defaults false; the one caller that sets it true is
      * [EnhancedSchedulingViewModel.resolveConflict]'s "Force Create", the
      * existing deliberate override affordance this mirrors.
+     *
+     * C1: also checked against `companyHolidays` (`assertNoCompanyHolidayConflict`,
+     * `CompanyHolidayConflict.kt`), unconditionally -- no override parameter
+     * for that one; see its header for why.
      */
     suspend fun createBooking(booking: EnhancedBooking, overrideBusyConflict: Boolean = false): Result<String> = runCatching {
         AuntieLog.i("Creating enhanced booking for kinfolk: ${booking.kinfolkId}")
         if (!overrideBusyConflict) {
             assertNoBookingBusyConflict(firestore, booking.startDateTime, booking.endDateTime)
         }
+        assertNoCompanyHolidayConflict(firestore, booking.startDateTime, booking.endDateTime)
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         val bookingWithTimestamp = booking.copy(
             createdAt = now,

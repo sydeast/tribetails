@@ -239,6 +239,12 @@ export function AuntieDatePicker({
               const badge = dayBadge(day);
               const description = dayDescription(day);
               const outside = iso.slice(0, 7) !== cursorMonth;
+              // C1: a company holiday is refused the same way a past day is --
+              // FOCUSABLE (so arrowing across it never strands a keyboard user
+              // mid-grid) but never selectable. Unlike every other mark this
+              // picker shows, this one is not the operator's call to overrule;
+              // see `DayAvailability.holidayName`'s doc for why.
+              const unpickable = day.past || day.holidayName !== null;
               return (
                 <button
                   key={iso}
@@ -251,12 +257,11 @@ export function AuntieDatePicker({
                   className={cellClass({ isSelected, outside, day, badge })}
                   tabIndex={iso === focusIso ? 0 : -1}
                   aria-selected={isSelected}
-                  // `aria-disabled`, not `disabled`: a past day must stay
-                  // FOCUSABLE or arrowing left off the 1st of the month drops
-                  // focus to the document and the keyboard user is stranded
-                  // mid-grid. The activation guard below is what actually
-                  // refuses the pick.
-                  aria-disabled={day.past}
+                  // `aria-disabled`, not `disabled`: an unpickable day must stay
+                  // FOCUSABLE or arrowing across it drops focus to the document
+                  // and the keyboard user is stranded mid-grid. The activation
+                  // guard below is what actually refuses the pick.
+                  aria-disabled={unpickable}
                   aria-label={
                     description === ''
                       ? sessionDayLabel(iso, todayIso)
@@ -264,7 +269,7 @@ export function AuntieDatePicker({
                   }
                   onClick={() => {
                     setFocusIso(iso);
-                    if (day.past) return;
+                    if (unpickable) return;
                     onToggle(iso);
                   }}
                 >
@@ -294,6 +299,11 @@ function cellClass(opts: {
   if (opts.day.past) classes.push('datepicker__day--past');
   if (opts.badge === 'Blocked') classes.push('datepicker__day--blocked');
   if (opts.badge === 'Closed') classes.push('datepicker__day--closed');
+  // C1: a company holiday reuses the "Closed" hatch above, PLUS the
+  // not-pickable treatment (`--past` gives cursor:default and a neutral
+  // hover), so the one day this picker actually refuses reads as refused, not
+  // merely as an ordinary closed-hours day the operator could still tap.
+  if (opts.day.holidayName !== null) classes.push('datepicker__day--holiday');
   return classes.join(' ');
 }
 

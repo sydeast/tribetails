@@ -539,6 +539,25 @@ describe('NewBookingDialog availability (carried over intact)', () => {
     await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
   });
 
+  it('C1: refuses a company holiday outright -- unlike a plain closed-hours day, it cannot even be selected', async () => {
+    getBusinessSettings.mockResolvedValue({
+      serviceRates: {},
+      businessHours: HOURS,
+      timeZone: '',
+      companyHolidays: ['2027-08-23|Founders Day'],
+    });
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await toDates();
+    const cell = await screen.findByRole('gridcell', { name: /Mon, Aug 23, closed for Founders Day, not available/ });
+    expect(cell.textContent).toContain('Closed');
+
+    await userEvent.click(cell);
+    expect(cell).toHaveAttribute('aria-selected', 'false');
+    // Nothing was added to the plan, so Next on this step still blocks.
+    await next();
+    expect(screen.getByText('Pick at least one date.')).toBeInTheDocument();
+  });
+
   it('warns when a visit time falls outside the open window', async () => {
     getBusinessSettings.mockResolvedValue({ serviceRates: {}, businessHours: HOURS, timeZone: '' });
     render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);

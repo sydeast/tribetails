@@ -733,6 +733,47 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
 - Flips PENDING/EMAIL_SENT invites past `expiresAt` to `EXPIRED` (500 per run),
   audits `MEMBERSHIP_INVITE_EXPIRED`, and enqueues `invite.expired`.
 
+## Company holidays / closures (C1)
+
+`business_settings.companyHolidays` (`lib/closureRecurrence.ts`) is durable,
+recurrence-aware closure data an operator enters in Settings > Time off. Until
+C1 it was read by nothing: no write path checked it, so marking a US national
+holiday closed still left the day bookable. `lib/companyHolidayConflict.ts` is
+the guard that closes that; every callable below now calls it, unconditionally
+(no override parameter, unlike the sibling `guardBookingBusyConflict` — see
+that module's header for why a company holiday never gets a bypass):
+
+- `requestBooking` (both the multi-visit and legacy single-visit shapes)
+- `createMultiDateBookingRequest` (an `overrideBusyConflict: true` payload does
+  NOT bypass this; that field is busy-import-only)
+- `createKinCareSession`
+- `approveBookingSeriesCore` (re-checked per visit, isolated, at APPROVE time —
+  a closure added after the request was submitted still stops the session)
+- `rescheduleBooking` (the new window is a fresh slot request)
+
+**Rejection shape** (all of the above): `failed-precondition`, message names
+every conflicting visit's date and holiday, `details: { code:
+'company_holiday_conflict', conflicts: [{ visitIndex, dateIso, holidayName }] }`.
+
+**Existing bookings on a day later marked closed are NOT touched.** Adding a
+closure never cancels or reschedules a `kin_care_sessions` doc that already
+exists on that date — see the C1 PR body for the reasoning. The admin's Time
+Off editor surfaces upcoming sessions that already fall on a configured
+closure so the operator can act on them manually.
+
+### getBusinessClosures
+- req `{ fromDate: string (YYYY-MM-DD), toDate: string (YYYY-MM-DD) }`, range
+  capped at 120 days, `toDate >= fromDate`.
+- res `{ closures: Array<{ date: string, name: string }> }`, sorted by date.
+- The kinfolk portal's ONE way to learn which dates are closed:
+  `business_settings` is admin-only in `firestore.rules`
+  (`allow read: if isAuntie() || isTestAdmin();`), so `mytribe/web` cannot read
+  `companyHolidays` directly the way the admin apps do. This resolves
+  recurring entries into concrete dates server-side through the same
+  `closureRecurrence.ts` math `companyHolidayConflict.ts` uses, so what the
+  booking wizard marks and what `requestBooking` will actually refuse can
+  never decode into two different calendars.
+
 ## Shared catalogs
 
 ### getVetClinics

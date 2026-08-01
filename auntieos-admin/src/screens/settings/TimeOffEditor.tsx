@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { BusinessSettings } from '../../api/settings';
 import { US_HOLIDAYS, parseDatedEntry } from '../../lib/settingsFormat';
 import {
@@ -9,6 +9,10 @@ import {
   closureEntryFromPreset,
   type ClosureRecurrenceKind,
 } from '../../lib/closureRecurrence';
+import { closureImpactHits, type ClosureImpactHit } from '../../lib/bookingAvailability';
+import { AVAILABILITY_SESSIONS_QUERY, type AvailabilitySession } from '../../api/availability';
+import { useCollection } from '../../lib/firestore';
+import { addCalendarDays, localDateIso, sessionsByLocalDay } from '../../lib/scheduleFormat';
 import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
@@ -56,6 +60,24 @@ import './TimeOffEditor.css';
  * those already has its OWN section with its OWN save, so this Save sends only
  * the three Time Off fields -- safe under `saveBusinessSettings`'s
  * `merge: true`, which never touches a sibling section's fields).
+ *
+ * ── C1: WHAT HAPPENS TO A VISIT ALREADY SCHEDULED ON A DAY THIS MARKS CLOSED ──
+ *
+ * Nothing, automatically. Adding (or already having) a `companyHolidays`
+ * entry NEVER cancels, reschedules, or otherwise touches an existing
+ * `kin_care_sessions` doc that lands on that date -- see the C1 PR body for
+ * the full reasoning; in short, a closure is a NEW-BOOKING gate
+ * (`guardCompanyHolidayConflict`, `mytribe/functions`), not a retroactive
+ * cancellation policy, and silently cancelling a scheduled visit is exactly
+ * the kind of surprise this codebase's own rules say never to do quietly.
+ * What this panel DOES do is surface the collision: `closureImpactHits`
+ * cross-references the staged `companyHolidays` list (including an unsaved
+ * edit, so the operator sees the effect before committing to it) against
+ * `AVAILABILITY_SESSIONS_QUERY` -- the same `kin_care_sessions` read the
+ * booking picker already uses -- for the next two years, and the banner
+ * below the Company holidays list names every date that already has visits
+ * on it so the operator can act deliberately (cancel, reschedule, or leave
+ * it) rather than the closure and the booking silently coexisting.
  */
 
 const HOLIDAY_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -106,6 +128,12 @@ interface TimeOffEditorProps {
   onSave: (patch: Partial<BusinessSettings>) => Promise<void>;
 }
 
+/** "3 visits" / "1 visit", summed across every closure-impact hit. */
+function closureImpactTotalVisits(hits: readonly ClosureImpactHit[]): string {
+  const total = hits.reduce((sum, hit) => sum + hit.sessionCount, 0);
+  return `${total} visit${total === 1 ? '' : 's'}`;
+}
+
 function sameIdSet(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   const s = new Set(a);
@@ -138,6 +166,27 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+
+  // C1: existing visits that already fall on a (staged, possibly unsaved)
+  // closure date. See the header doc above for why this surfaces rather than
+  // acts. Read failures degrade to "nothing to show" rather than a banner of
+  // their own -- this is a secondary, advisory cross-check on top of the
+  // primary editor, not a hard dependency of saving a closure.
+  const sessions = useCollection<AvailabilitySession>(AVAILABILITY_SESSIONS_QUERY);
+  const sessionsByDay = useMemo(
+    () => (sessions.status === 'ready' ? sessionsByLocalDay(sessions.data) : new Map<string, AvailabilitySession[]>()),
+    [sessions],
+  );
+  const todayIso = useMemo(() => localDateIso(new Date()), []);
+  // Two years out: long enough to catch a yearly-recurring closure's next
+  // occurrence and any already-booked visit far in advance, short enough that
+  // `closureOccurrencesInRange`'s per-year expansion stays cheap for a client
+  // render.
+  const lookaheadToIso = useMemo(() => addCalendarDays(todayIso, 730), [todayIso]);
+  const closureImpact = useMemo(
+    () => closureImpactHits(companyHolidays.map(parseClosureEntry), sessionsByDay, todayIso, lookaheadToIso),
+    [companyHolidays, sessionsByDay, todayIso, lookaheadToIso],
+  );
 
   // Catalog order, not insertion order, so the saved list is stable across
   // reloads (a `Set` has no guaranteed iteration order tied to the catalog).
@@ -329,6 +378,23 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
             })}
           </ul>
         )}
+
+        {closureImpact.length > 0 ? (
+          <Banner tone="warning" title="Visits already scheduled on a closure date" className="settingsEdit__sectionBanner">
+            <p>
+              {closureImpactTotalVisits(closureImpact)} on {closureImpact.length === 1 ? 'a date' : `${closureImpact.length} dates`}{' '}
+              marked closed below. Closing a date never cancels or moves a visit on its own -- cancel or reschedule
+              these from Bookings or Schedule if you don&rsquo;t want them to happen.
+            </p>
+            <ul className="timeOff__impactList">
+              {closureImpact.map((hit) => (
+                <li key={hit.date}>
+                  {hit.date}: {hit.sessionCount} visit{hit.sessionCount === 1 ? '' : 's'} ({hit.holidayName})
+                </li>
+              ))}
+            </ul>
+          </Banner>
+        ) : null}
 
         <div className="timeOff__presetRow">
           <span className="settingsEdit__hint">Add a US holiday with one click. It already repeats every year.</span>
