@@ -323,3 +323,37 @@
   background: color-mix(in srgb, var(--color-warning) 18%, transparent);
   color: var(--color-warning);
 }
+/* ── Phone width ──────────────────────────────────────────────────────────
+   `1.8fr 1fr auto` in 324px of row.
+   Measured at 390x844 on 2026-08-01: the household-and-service column came out
+   123px wide against 69px for a five-character clock and 84px for the status
+   chip, so the two pieces of metadata together took more of the row than the
+   visit did. It did not overflow, which is why #209 could not see it, and
+   "Constance Fairweather-Okonkwo" still ellipsises to about eight characters
+   there.
+   The clock moves under the name and the chip spans both lines, so the visit
+   gets the full width of the row and the status stays where the eye already
+   looks for it. Same three parts, same order. */
+@media (max-width: 720px) {
+  .sessions__row-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'who  chip'
+      'when chip';
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+  }
+  .sessions__row-main .sessions__row-who {
+    grid-area: who;
+    /* The service pill drops under the name rather than squeezing it. */
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+  }
+  .sessions__row-main .sessions__row-when {
+    grid-area: when;
+  }
+  .sessions__row-main .sessions__chip {
+    grid-area: chip;
+    justify-self: end;
+  }
+}

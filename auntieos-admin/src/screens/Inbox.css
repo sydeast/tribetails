@@ -285,3 +285,52 @@
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
+/* ── Phone width ──────────────────────────────────────────────────────────
+   `auto 1.8fr auto`, for both the thread row and the channel row.
+   Measured at 390x844 on 2026-08-01 against four seeded channel rows: the
+   voicemail row gave 82px to `.inbox__row-who`, which carries the household
+   AND the message preview, and 148px to `.inbox__row-side`, which carries a
+   timestamp and a "waiting on a reply" pill. The row that names the message
+   had half the width of the row that annotates it. Nothing overflowed, so
+   The trailing block moves under the message and lays its time and pills out
+   horizontally, so the leading tag or unread dot still runs the full height of
+   the row and the household gets the rest of the width.
+   PLACED BY POSITION, NOT BY CLASS. A READ thread renders `<span
+   aria-hidden="true" />` with no class at all where an unread one renders
+   `.inbox__dot` (`Inbox.tsx`), so a class-keyed area would leave that span
+   auto-placed and shove the whole row out of shape on exactly the rows an
+   operator has already dealt with. Both variants have exactly three children.
+   THE THREAD LIST ITSELF IS UNVERIFIED AT THIS WIDTH. It loads through the
+   `listConversations` callable, which the e2e harness has no functions
+   emulator for, so the thread rows render their error state and only the
+   CHANNEL rows below them could be measured. The two share this grid, which is
+   why the fix is written once, but the claim is only earned for the channels.
+   The `ConversationThread` panel a row opens is callable-backed too and was
+   not measured at all. */
+@media (max-width: 720px) {
+  .inbox__row-main,
+  .inbox__row-main--channel {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      'lead who'
+      'lead side';
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+  }
+  .inbox__row-main > *:nth-child(1) {
+    grid-area: lead;
+  }
+  .inbox__row-main > *:nth-child(2) {
+    grid-area: who;
+  }
+  .inbox__row-main > *:nth-child(3) {
+    grid-area: side;
+  }
+  .inbox__row-main .inbox__row-side {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-2);
+  }
+}

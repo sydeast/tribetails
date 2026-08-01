@@ -1,4 +1,5 @@
 import { ADMIN, KINFOLK, SEEDED_BOOKINGS } from './fixtures/accounts';
+import { seedDenseRows } from './seed.rows';
 
 /**
  * Emulator seed, run once per `playwright test` invocation (globalSetup).
@@ -162,7 +163,18 @@ export default async function seed(): Promise<void> {
     createdAt: new Date('2026-01-05T09:00:00Z'),
   });
 
-  const { scheduled, completed, cancelled } = SEEDED_BOOKINGS;
+  const { today, scheduled, completed, cancelled } = SEEDED_BOOKINGS;
+  // Midday, so it lands on the same calendar day in every timezone a run might
+  // use. `isoDaysFromNow(0)` alone is "now", which near midnight is yesterday
+  // or tomorrow depending on the machine, and Schedule groups by LOCAL day.
+  await put('kin_care_sessions', today.id, {
+    kinfolkId: 'e2e-kf-1',
+    kinfolkName: today.kinfolkName,
+    serviceType: today.serviceType,
+    status: 'SCHEDULED',
+    startTime: new Date(seedNow()).toISOString().slice(0, 10) + 'T12:00:00.000Z',
+    createdAt: new Date('2026-07-21T10:00:00Z'),
+  });
   await put('kin_care_sessions', scheduled.id, {
     kinfolkId: 'e2e-kf-1',
     kinfolkName: scheduled.kinfolkName,
@@ -192,4 +204,12 @@ export default async function seed(): Promise<void> {
     startTime: isoDaysFromNow(-1),
     createdAt: new Date('2026-07-18T10:00:00Z'),
   });
+
+  // Invoices, activity, notifications, KinTales and the Inbox channel lists.
+  // They live in their own module because they are long, and they add NO
+  // `kin_care_sessions` row, because `bookings.spec.ts` asserts an exact count
+  // on that collection. See `seed.rows.ts` for why they are no longer
+  // capture-only: without them every list screen in this suite renders its
+  // empty state, and an empty list cannot be measured for overflow.
+  await seedDenseRows(put, seedNow());
 }
