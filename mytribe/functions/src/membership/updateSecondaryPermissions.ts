@@ -11,10 +11,21 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { logEvent } from '../lib/logger';
 import type { ActorRole } from '../lib/schema';
 
+// RULING (household secondary permissions): "Primary kinfolk is allowed to set
+// the permissions of the secondary, including billing if they want ... besides
+// admin, primary kinfolk can set permissions for the secondary."
+//
+// `billing_full` was absent from this schema, and because this is a
+// non-strict z.object a client that sent it got `{ ok: true }` with nothing
+// written and no audit entry: a silent no-op, the worst of the three possible
+// answers. It is accepted now. `kintales_only` stays out: it is a product
+// invariant that no path on any surface may turn off, matching
+// `setMemberPermissions`, every mint path, and firestore.rules.
 const Args = z.object({
   familyId: z.string().min(1),
   targetUid: z.string().min(1),
   permissions: z.object({
+    billing_full: z.boolean().optional(),
     messaging_direct: z.boolean().optional(),
     messaging_group: z.boolean().optional(),
     kin_edit: z.boolean().optional(),
@@ -73,10 +84,17 @@ export async function updateSecondaryPermissionsHandler(req: CallableRequest<unk
 
   const actorRole: ActorRole = isOperator ? 'AUNTIE' : 'PRIMARY';
   for (const [perm, val] of Object.entries(args.permissions)) {
+    // Mirrors setMemberPermissions: a billing grant reads the same in the audit
+    // log whichever callable made it, so "who gave this secondary billing" is one
+    // query and not two. A PRIMARY is now allowed to make that grant, which is
+    // the reason to keep it loud rather than the reason to stop logging it.
+    const isBilling = perm === 'billing_full';
     await writeAuditEntry({
       status: 'SUCCESS',
-      event: val ? AUDIT_EVENTS.PERM_GRANTED : AUDIT_EVENTS.PERM_REVOKED,
-      severity: 'info',
+      event: isBilling
+        ? (val ? AUDIT_EVENTS.PERM_BILLING_GRANTED : AUDIT_EVENTS.PERM_BILLING_REVOKED)
+        : (val ? AUDIT_EVENTS.PERM_GRANTED : AUDIT_EVENTS.PERM_REVOKED),
+      severity: isBilling ? 'warn' : 'info',
       actorRole,
       actorUid: uid,
       targetUid: args.targetUid,

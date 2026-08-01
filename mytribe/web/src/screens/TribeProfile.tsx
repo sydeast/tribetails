@@ -729,6 +729,11 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
   const [canEditPets, setCanEditPets] = useState(member.permissions.kin_edit);
   const [canAccessHome, setCanAccessHome] = useState(member.permissions.home_access);
   const [canDirectMessage, setCanDirectMessage] = useState(member.permissions.messaging_direct);
+  // RULING: "Primary kinfolk is allowed to set the permissions of the secondary,
+  // including billing if they want." Billing was display-only on this screen
+  // because the callable silently dropped the key; it accepts it now, so the
+  // household's primary gets the control the ruling says is theirs.
+  const [canHandleBilling, setCanHandleBilling] = useState(member.permissions.billing_full);
 
   const save = useMutation({
     mutationFn: () =>
@@ -736,6 +741,7 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
         familyId: kinfolkId ?? '',
         targetUid: member.uid,
         permissions: {
+          billing_full: canHandleBilling,
           messaging_direct: canDirectMessage,
           // Preserved as-is: not exposed as a toggle here.
           messaging_group: member.permissions.messaging_group,
@@ -776,6 +782,15 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
           <span className="tlabel">Direct messaging</span>
           <span className="toggle">
             <input type="checkbox" checked={canDirectMessage} onChange={(e) => setCanDirectMessage(e.target.checked)} />
+            <span className="track">
+              <span className="thumb" />
+            </span>
+          </span>
+        </label>
+        <label className="togglerow">
+          <span className="tlabel">Billing (invoices, payment methods)</span>
+          <span className="toggle">
+            <input type="checkbox" checked={canHandleBilling} onChange={(e) => setCanHandleBilling(e.target.checked)} />
             <span className="track">
               <span className="thumb" />
             </span>

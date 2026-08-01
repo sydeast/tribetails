@@ -880,10 +880,12 @@ private fun mergeAfterHoursFields(
  * callable. Loads on screen entry (LaunchedEffect, not VM-init). Fail-loud: load
  * and per-member save errors surface inline.
  *
- * Only the three operator-relevant toggles are shown: "Can edit pets" (kin_edit),
- * "Home access" (home_access), "Direct messaging" (messaging_direct). Billing and
- * KinTales are intentionally NOT editable here (billing is PRIMARY-only; kintales
- * is always-on), and `messaging_group` is preserved as-is on save.
+ * Four toggles are shown: "Can edit pets" (kin_edit), "Home access"
+ * (home_access), "Direct messaging" (messaging_direct) and "Billing"
+ * (billing_full). Billing is here per the operator ruling: "Primary kinfolk is
+ * allowed to set the permissions of the secondary, including billing if they
+ * want." KinTales stays uneditable because it is always on for everyone, and
+ * `messaging_group` is preserved as-is on save.
  */
 @Composable
 private fun HouseholdMembersCard(kinfolkId: String, portalApi: PortalApi) {
@@ -963,6 +965,7 @@ private fun MemberPermissionRow(
     var canEditPets by remember(member.uid) { mutableStateOf(member.permissions.kin_edit) }
     var canAccessHome by remember(member.uid) { mutableStateOf(member.permissions.home_access) }
     var canDirectMessage by remember(member.uid) { mutableStateOf(member.permissions.messaging_direct) }
+    var canHandleBilling by remember(member.uid) { mutableStateOf(member.permissions.billing_full) }
     var saving by remember(member.uid) { mutableStateOf(false) }
     var msg by remember(member.uid) { mutableStateOf<String?>(null) }
 
@@ -993,6 +996,11 @@ private fun MemberPermissionRow(
             value = canDirectMessage,
             onChange = { canDirectMessage = it },
         )
+        AccessToggleRow(
+            label = "Billing (invoices, payment methods)",
+            value = canHandleBilling,
+            onChange = { canHandleBilling = it },
+        )
         KinButton(
             label = if (saving) "Saving…" else "Save",
             onClick = {
@@ -1003,6 +1011,7 @@ private fun MemberPermissionRow(
                         portalApi.updateSecondaryPermissions(
                             familyId = kinfolkId,
                             targetUid = member.uid,
+                            billingFull = canHandleBilling,
                             messagingDirect = canDirectMessage,
                             // Preserve the secondary's existing group-messaging access:
                             // it is not exposed as a toggle here.

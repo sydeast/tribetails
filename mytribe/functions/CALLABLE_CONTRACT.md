@@ -638,7 +638,7 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
 - res `{ invites: Array<{ inviteId: string, tribeId: string, invitedEmail: string,
   secondaryLabel: string | null, proposedRole: 'PRIMARY' | 'SECONDARY',
   proposedPermissions: { billing_full, messaging_direct, messaging_group, kin_edit,
-  kintales_only, home_access: boolean }, requiresAuntieAck: boolean,
+  kintales_only, home_access: boolean },
   status: 'PENDING' | 'EMAIL_SENT' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED',
   effectiveStatus: same union, redeemable: boolean,
   createdAt: string | null /* ISO-8601 */, sentToInviteeAt: string | null,
@@ -673,6 +673,48 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
 - Read only apart from one best-effort `OPERATOR_CROSSTENANT_ACCESS` audit entry,
   mirroring `resolveKinfolkAccess`: staff reaching into a household they have no
   member doc for is cross-tenant by definition.
+- **`requiresAuntieAck` is gone from this response** (2026-08-01). It was set true
+  only when an invite carried `billing_full`, and NOTHING ever performed the
+  acknowledgement or read the flag as a gate: `acceptInvite` applied
+  `proposedPermissions` verbatim either way. Per the operator ruling a household
+  PRIMARY may grant a SECONDARY any permission except admin, billing included, so
+  no acknowledgement is owed. Removed rather than enforced, because a field that
+  means nothing invites a later reader to "fix" it by building the gate the
+  operator does not want. Documents written before the change still carry the
+  field; the projection drops it.
+
+### acceptInvite (pre-existing, verification added 2026-08-01)
+- req `{ inviteId: string }`
+- res `{ familyId: string }`
+- GATE: `wrapCallable`. The caller's token email must equal `invitedEmail`, AND
+  **the token must carry `email_verified === true`**.
+- Errors: `not-found` for an unknown invite; `failed-precondition` for a
+  revoked / expired / consumed invite AND for an unverified email;
+  `permission-denied` for an email mismatch. The revoked check runs BEFORE the
+  email check, so the two codes together cannot tell a stranger whether they
+  guessed the invited address.
+- **Email verification (RULING: "secondary needs email verification as well").**
+  `firestore.rules` already required a verified email to so much as READ an
+  `inviteRequests` doc (WARNING-17), while this callable handed out household
+  membership on the strength of the same unproven address. The two now agree.
+  - A brand-new invitee is unaffected: `claimInviteSignup` mints the account with
+    `emailVerified: true`, so their very first token already passes.
+  - An invitee who ALREADY holds an unverified Firebase account is refused, and on
+    the way out the callable mints a verification link
+    (`generateEmailVerificationLink`) and mails it to the INVITED address through
+    the `invite.verify-email` template. The message names the address and says
+    what to do; it is not a bare denial. Rate-limited 5/hour per uid and per
+    address, and a send failure is swallowed so the refusal stays
+    `failed-precondition` instead of becoming an opaque `internal`.
+  - A refused accept writes NOTHING: no member doc, no `clients` arrayUnion, no
+    invite flip. The invite stays redeemable for its full TTL.
+  - **Clients MUST force an ID-token refresh before retrying.** Clicking the
+    verification link flips the Firebase user record, but a token minted earlier
+    still carries `email_verified: false` for up to an hour, so a plain retry is
+    refused again and reads as a broken verification link.
+  - Needs `SMTP2GO_API_KEY` + `EMAIL_FROM` (already created, already bound to the
+    other invite functions) and the `invite.verify-email` template in
+    `mytribe/seeds/emailTemplates/`, seeded by `npm run seed:emails`.
 
 ### mintInvite (pre-existing, documented here 2026-08-01)
 - req `{ familyId: string, invitedEmail: string /* email */, secondaryLabel?: string /* <=24, default 'Folk' */, proposedRole?: 'PRIMARY' | 'SECONDARY' /* default SECONDARY */, proposedPermissions: { billing_full, messaging_direct, messaging_group, kin_edit, kintales_only, home_access: boolean } }`
@@ -717,7 +759,10 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
 - req `{ familyId: string, targetUid: string, permissions: { billing_full?, messaging_direct?, messaging_group?, kin_edit?, home_access?: boolean } }`
 - res `{ ok: true }`
 - GATE: `wrapAdminCallable`. This is the ADMIN path; the primary-of-the-household
-  path is `updateSecondaryPermissions`, which cannot touch `billing_full`.
+  path is `updateSecondaryPermissions`, which accepts the same five flags.
+  `wrapAdminCallable` gates the WHOLE callable, every flag alike; it has never
+  been a `billing_full`-specific control and is not one now. It says who may use
+  the operator console, not what a household PRIMARY may grant.
 - Errors: `not-found` when `families/{familyId}/members/{targetUid}` does not exist.
 - **`kintales_only` is not in the argument schema at all**, so no caller on any
   path can turn it off. Clients render it locked on.
@@ -728,6 +773,33 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
 - Cannot escalate the caller: it writes only household member permission flags
   under `families/*`, and admin authority is the `admin` custom claim, which this
   callable never reads or writes. There is no path from here to staff access.
+
+### updateSecondaryPermissions (pre-existing, `billing_full` added 2026-08-01)
+- req `{ familyId: string, targetUid: string, permissions: { billing_full?, messaging_direct?, messaging_group?, kin_edit?, home_access?: boolean } }`
+- res `{ ok: true }`
+- GATE: `wrapCallable`, then `isStaff` OR (`loadMember` + `requirePrimary`). The
+  target must be an ACTIVE member whose role is SECONDARY, so a PRIMARY has no
+  self-target here at all.
+- Errors: `permission-denied` for a non-primary non-staff caller, or a missing /
+  inactive member doc; `failed-precondition` when the target is not a SECONDARY.
+- **`billing_full` is accepted** (RULING: "Primary kinfolk is allowed to set the
+  permissions of the secondary, including billing if they want ... besides admin,
+  primary kinfolk can set permissions for the secondary"). It was previously
+  absent from the schema, and because the schema is a non-strict `z.object` a
+  caller who sent it got `{ ok: true }` with no write and no audit entry: neither
+  honoured nor refused. `home_access` was already accepted here; `firestore.rules`
+  was the half of that disagreement that was wrong, and has been relaxed to match.
+- **`kintales_only` is still not in the schema**, matching `setMemberPermissions`,
+  every mint path, and the rules. No caller on any path turns it off.
+- Field-level merges (`permissions.<k>`), so a partial object is the normal call.
+  Each flag is audited separately, and `billing_full` uses `PERM_BILLING_GRANTED`
+  / `PERM_BILLING_REVOKED` at severity `warn` exactly as `setMemberPermissions`
+  does, so "who gave this secondary billing" is one query across both callables
+  rather than two.
+- Cannot escalate anyone: it writes only `permissions.*` under
+  `families/{familyId}/members/{targetUid}`. `role` and `status` are not in the
+  schema, there is no `admin` member permission, and admin authority is the
+  `admin` custom claim, which this callable never reads or writes.
 
 ### removeMember (pre-existing, documented here 2026-08-01)
 - req `{ familyId: string, targetUid: string }`

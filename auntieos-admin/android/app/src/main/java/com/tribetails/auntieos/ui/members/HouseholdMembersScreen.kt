@@ -336,9 +336,6 @@ private fun MemberBlock(
                             style = AuntieTheme.typography.bodyMedium,
                             color = c.textPrimary,
                         )
-                        if (row.adminOnly) {
-                            AuntieStatusPill(label = "ADMIN ONLY", tone = AuntieStatusTone.Orange)
-                        }
                         if (row.key == null) {
                             AuntieStatusPill(label = "LOCKED ON", tone = AuntieStatusTone.Teal)
                         }
@@ -534,7 +531,10 @@ internal data class PermissionRow(
     val key: MembersRepository.PermissionKey?,
     val label: String,
     val description: String,
-    val adminOnly: Boolean = false,
+    // `adminOnly` used to live here, set on billing_full, and painted an
+    // "ADMIN ONLY" pill claiming the household's own PRIMARY could not move that
+    // flag. Per the operator ruling they can. Removed rather than relabelled:
+    // billing_full was the only row that carried it.
 )
 
 /** Order is the order rendered. Mirrors `PERMISSION_META` in the React mirror. */
@@ -542,8 +542,8 @@ internal val PERMISSION_ROWS: List<PermissionRow> = listOf(
     PermissionRow(
         MembersRepository.PermissionKey.BILLING_FULL,
         "Full billing",
-        "Full access to invoices and payment methods.",
-        adminOnly = true,
+        "Full access to invoices and payment methods. The household PRIMARY can " +
+            "grant this too; every change is audited.",
     ),
     PermissionRow(
         MembersRepository.PermissionKey.MESSAGING_DIRECT,

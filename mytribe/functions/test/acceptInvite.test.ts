@@ -39,6 +39,16 @@ vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: auditAdd }));
 vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: enqueue }));
 vi.mock('../src/lib/kinfolkClaim', () => ({ syncKinfolkClaim: syncClaim }));
 
+// The unverified-email branch mints a Firebase verification link and mails it.
+const genVerifyLink = vi.fn();
+const sendTpl = vi.fn();
+const rateLimit = vi.fn();
+vi.mock('firebase-admin/auth', () => ({
+  getAuth: () => ({ generateEmailVerificationLink: genVerifyLink }),
+}));
+vi.mock('../src/lib/sendFromTemplate', () => ({ sendFromTemplate: sendTpl }));
+vi.mock('../src/lib/rateLimit', () => ({ enforceRateLimit: rateLimit }));
+
 beforeEach(() => {
   inviteGet.mockReset();
   inviteUpdate.mockClear();
@@ -48,6 +58,12 @@ beforeEach(() => {
   enqueue.mockClear();
   syncClaim.mockClear();
   syncClaim.mockResolvedValue({ kinfolkId: 't1' });
+  genVerifyLink.mockReset();
+  genVerifyLink.mockResolvedValue('https://verify.example/abc');
+  sendTpl.mockReset();
+  sendTpl.mockResolvedValue('msg-1');
+  rateLimit.mockReset();
+  rateLimit.mockResolvedValue(undefined);
 });
 
 describe('acceptInviteHandler', () => {
@@ -332,5 +348,145 @@ describe('acceptInviteHandler', () => {
 
     expect(res.familyId).toBe('t1');
     expect(memberSet).toHaveBeenCalled();
+  });
+});
+
+/**
+ * RULING: "secondary needs email verification as well."
+ *
+ * firestore.rules already required a VERIFIED email to so much as READ an
+ * inviteRequest (WARNING-17). This callable handed out household membership on
+ * the strength of the same unproven address. These pin the two halves of the
+ * fix: the refusal is real, and it is survivable.
+ */
+describe('acceptInviteHandler: email verification', () => {
+  function liveInvite() {
+    return {
+      exists: true,
+      data: () => ({
+        status: 'EMAIL_SENT',
+        invitedEmail: 'a@b',
+        tribeId: 't1',
+        proposedRole: 'SECONDARY',
+        proposedPermissions: { billing_full: true },
+        createdAt: 0,
+        expiresAt: { toMillis: () => Date.now() + 100000 },
+      }),
+    };
+  }
+
+  it('refuses an unverified invitee and joins them to nothing', async () => {
+    inviteGet.mockResolvedValue(liveInvite());
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    await expect(
+      acceptInviteHandler({
+        auth: { uid: 'u1', token: { email: 'a@b', email_verified: false } },
+        data: { inviteId: 'i1' },
+      } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+
+    // No membership, no tenant link, no invite consumed. A refused accept must
+    // leave the invite redeemable for its full TTL once they come back verified.
+    expect(memberSet).not.toHaveBeenCalled();
+    expect(inviteUpdate).not.toHaveBeenCalled();
+    expect(syncClaim).not.toHaveBeenCalled();
+  });
+
+  it('treats a MISSING email_verified claim as unverified', async () => {
+    inviteGet.mockResolvedValue(liveInvite());
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    await expect(
+      acceptInviteHandler({
+        auth: { uid: 'u1', token: { email: 'a@b' } },
+        data: { inviteId: 'i1' },
+      } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(memberSet).not.toHaveBeenCalled();
+  });
+
+  it('says what to do and names the address, rather than a bare denial', async () => {
+    inviteGet.mockResolvedValue(liveInvite());
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    const err = await acceptInviteHandler({
+      auth: { uid: 'u1', token: { email: 'a@b', email_verified: false } },
+      data: { inviteId: 'i1' },
+    } as any).catch((e: { message: string }) => e);
+    expect((err as { message: string }).message).toContain('a@b');
+    expect((err as { message: string }).message).toMatch(/verif/i);
+  });
+
+  it('mails the invited address a verification link so they can get in', async () => {
+    inviteGet.mockResolvedValue(liveInvite());
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    await acceptInviteHandler({
+      auth: { uid: 'u1', token: { email: 'a@b', email_verified: false } },
+      data: { inviteId: 'i1' },
+    } as any).catch(() => undefined);
+
+    expect(genVerifyLink).toHaveBeenCalledWith('a@b');
+    expect(sendTpl).toHaveBeenCalledTimes(1);
+    const [key, to, data] = sendTpl.mock.calls[0] as [string, string, Record<string, unknown>];
+    expect(key).toBe('invite.verify-email');
+    // The mail goes to the INVITED address, never to whatever the caller claims.
+    expect(to).toBe('a@b');
+    expect(data['verifyUrl']).toBe('https://verify.example/abc');
+    expect(String(data['claimUrl'])).toContain('invite=i1');
+  });
+
+  it('still refuses actionably when the verification mail cannot be sent', async () => {
+    // A dead SMTP key must not turn "verify your email" into an opaque internal
+    // error. The invitee can still verify through any normal Firebase route.
+    inviteGet.mockResolvedValue(liveInvite());
+    sendTpl.mockRejectedValue(new Error('smtp down'));
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    const err = await acceptInviteHandler({
+      auth: { uid: 'u1', token: { email: 'a@b', email_verified: false } },
+      data: { inviteId: 'i1' },
+    } as any).catch((e: { code: string; message: string }) => e);
+    expect(err).toMatchObject({ code: 'failed-precondition' });
+    expect((err as { message: string }).message).toContain('a@b');
+    expect(memberSet).not.toHaveBeenCalled();
+  });
+
+  it('suppresses the mail when rate limited, without changing the refusal', async () => {
+    inviteGet.mockResolvedValue(liveInvite());
+    rateLimit.mockRejectedValue(new Error('rate limited'));
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    const err = await acceptInviteHandler({
+      auth: { uid: 'u1', token: { email: 'a@b', email_verified: false } },
+      data: { inviteId: 'i1' },
+    } as any).catch((e: { code: string }) => e);
+    expect(err).toMatchObject({ code: 'failed-precondition' });
+    expect(sendTpl).not.toHaveBeenCalled();
+  });
+
+  it('rate-limits per uid AND per invited address', async () => {
+    inviteGet.mockResolvedValue(liveInvite());
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    await acceptInviteHandler({
+      auth: { uid: 'u1', token: { email: 'a@b', email_verified: false } },
+      data: { inviteId: 'i1' },
+    } as any).catch(() => undefined);
+    const keys = rateLimit.mock.calls.map((c) => c[1]);
+    expect(keys).toContain('u1');
+    expect(keys).toContain('a@b');
+  });
+
+  it('lets a VERIFIED invitee straight through, billing_full and all', async () => {
+    // The claimInviteSignup path mints accounts with emailVerified: true, so a
+    // brand-new invitee is unaffected by any of the above. And per the ruling a
+    // PRIMARY may propose billing_full, so it is applied verbatim.
+    inviteGet.mockResolvedValue(liveInvite());
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    const res = await acceptInviteHandler({
+      auth: { uid: 'u1', token: { email: 'a@b', email_verified: true } },
+      data: { inviteId: 'i1' },
+    } as any);
+
+    expect(res.familyId).toBe('t1');
+    expect(sendTpl).not.toHaveBeenCalled();
+    const written = memberSet.mock.calls[0]?.[1] as { permissions: Record<string, boolean>; role: string };
+    expect(written.permissions.billing_full).toBe(true);
+    expect(written.role).toBe('SECONDARY');
   });
 });

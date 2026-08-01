@@ -373,14 +373,23 @@ class PortalApiTest {
         assertEquals("3", payload?.get("kinfolkId")?.jsonPrimitive?.content)
     }
 
+    /**
+     * RULING: "Primary kinfolk is allowed to set the permissions of the
+     * secondary, including billing if they want ... besides admin, primary
+     * kinfolk can set permissions for the secondary."
+     *
+     * This used to assert billing_full was NOT sent. It is sent now, and the
+     * server's schema accepts it; kintales_only is still withheld everywhere.
+     */
     @Test
-    fun `updateSecondaryPermissions sends the four writable flags and not billing or kintales`() = runTest {
+    fun `updateSecondaryPermissions sends the five writable flags, billing included`() = runTest {
         val fake = FakeFunctionsClient()
         fake.stub("updateSecondaryPermissions", buildJsonObject { put("ok", true) })
         val api = PortalApi(fake)
         api.updateSecondaryPermissions(
             familyId = "f1",
             targetUid = "u2",
+            billingFull = true,
             messagingDirect = true,
             messagingGroup = false,
             kinEdit = true,
@@ -393,14 +402,33 @@ class PortalApiTest {
         assertEquals("u2", payload["targetUid"]?.jsonPrimitive?.content)
         val perms = payload["permissions"]?.jsonObject
         assertNotNull(perms)
-        // All four writable flags reach the payload, including a toggle-OFF (false).
+        // Every writable flag reaches the payload, including a toggle-OFF (false).
+        assertEquals(true, perms["billing_full"]?.jsonPrimitive?.booleanOrNull)
         assertEquals(true, perms["messaging_direct"]?.jsonPrimitive?.booleanOrNull)
         assertEquals(false, perms["messaging_group"]?.jsonPrimitive?.booleanOrNull)
         assertEquals(true, perms["kin_edit"]?.jsonPrimitive?.booleanOrNull)
         assertEquals(true, perms["home_access"]?.jsonPrimitive?.booleanOrNull)
-        // The non-writable flags must NOT be sent.
-        assertNull(perms["billing_full"])
+        // kintales_only is a product invariant no surface may turn off.
         assertNull(perms["kintales_only"])
+    }
+    /** A toggle-OFF must reach the server, or revoking billing would silently no-op. */
+    @Test
+    fun `updateSecondaryPermissions sends billing_full false when revoked`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("updateSecondaryPermissions", buildJsonObject { put("ok", true) })
+        val api = PortalApi(fake)
+        api.updateSecondaryPermissions(
+            familyId = "f1",
+            targetUid = "u2",
+            billingFull = false,
+            messagingDirect = true,
+            messagingGroup = true,
+            kinEdit = false,
+            homeAccess = false,
+        )
+        val perms = fake.calls.single().second?.get("permissions")?.jsonObject
+        assertNotNull(perms)
+        assertEquals(false, perms["billing_full"]?.jsonPrimitive?.booleanOrNull)
     }
 
     @Test

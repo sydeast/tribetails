@@ -97,7 +97,6 @@ export async function inviteKinfolkToPortalHandler(
     invitedEmail: email.toLowerCase(),
     proposedRole: 'PRIMARY',
     proposedPermissions: FULL_PERMISSIONS,
-    requiresAuntieAck: false,
     status: 'PENDING',
     createdAt: FieldValue.serverTimestamp(),
     expiresAt,

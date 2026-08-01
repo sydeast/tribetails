@@ -26,10 +26,11 @@ data class TribeProfileResult(
  * `MemberPermissions` shape. Every flag defaults to false so a sparse or
  * missing permissions object always yields a complete, safe (no-access) record.
  *
- * Only four of these are writable by a PRIMARY via `updateSecondaryPermissions`
- * (messaging_direct, messaging_group, kin_edit, home_access). billing_full and
- * kintales_only are surfaced for display/correctness but are never editable from
- * the kinfolk app (billing is PRIMARY-only; kintales is always-on).
+ * Five of these are writable by a PRIMARY via `updateSecondaryPermissions`
+ * (billing_full, messaging_direct, messaging_group, kin_edit, home_access), per
+ * the operator ruling: "besides admin, primary kinfolk can set permissions for
+ * the secondary ... including billing if they want." kintales_only is surfaced
+ * for display but is never editable from anywhere; it is always on.
  */
 data class MemberPermissions(
     val billing_full: Boolean = false,

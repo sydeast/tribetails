@@ -69,7 +69,14 @@ export interface InviteRequestDoc {
   secondaryLabel?: string | null;
   proposedPermissions: MemberPermissions;
   proposedRole: MemberRole;
-  requiresAuntieAck: boolean;
+  // `requiresAuntieAck` used to live here. It was set true only when an invite
+  // carried `billing_full`, and NOTHING ever acknowledged it or read it as a
+  // gate: `acceptInvite` applied `proposedPermissions` verbatim either way. Per
+  // the operator ruling a household PRIMARY may grant a SECONDARY any permission
+  // except `admin`, billing included, so no acknowledgement is owed and the field
+  // described a review step that never existed. Removed rather than enforced: a
+  // flag that means nothing invites a future reader to "fix" it by building the
+  // gate the operator does not want.
   status: InviteStatus;
   auntieNotifiedAt?: FirebaseFirestore.Timestamp;
   sentToInviteeAt?: FirebaseFirestore.Timestamp;

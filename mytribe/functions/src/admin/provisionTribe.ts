@@ -39,7 +39,6 @@ export async function provisionTribeHandler(req: CallableRequest<unknown>): Prom
       invitedPhone: args.primaryPhone,
       proposedRole: 'PRIMARY',
       proposedPermissions: FULL_PERMISSIONS,
-      requiresAuntieAck: false,
       status: 'PENDING',
       createdAt: FieldValue.serverTimestamp(),
       expiresAt,

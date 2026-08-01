@@ -1,6 +1,7 @@
 import {
   initializeRecaptchaConfig,
   onAuthStateChanged,
+  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithCustomToken,
   signInWithEmailAndPassword,
@@ -77,6 +78,42 @@ export async function signInWithToken(token: string): Promise<User> {
 export async function sendReset(email: string): Promise<void> {
   await ensureRecaptcha();
   await sendPasswordResetEmail(auth, email);
+}
+
+/**
+ * Re-read verification state from Firebase and mint a fresh ID token.
+ *
+ * THIS IS THE STEP THAT MAKES "verify your email, then try again" actually
+ * work. Clicking a verification link flips `emailVerified` on the Firebase user
+ * record, but the ID token already held by this tab was minted before that and
+ * still carries `email_verified: false` for up to an hour, until it rotates on
+ * its own. `acceptInvite` reads the TOKEN, so an invitee who really did verify
+ * would keep being refused by a session that has not noticed, which reads as the
+ * verification link being broken.
+ *
+ * `reload()` refreshes the local user record; `getIdToken(true)` forces a new
+ * token off it. Returns whether the refreshed state is verified, so the caller
+ * can say "we still cannot see it" instead of retrying into the same refusal.
+ */
+export async function refreshEmailVerification(): Promise<boolean> {
+  const user = auth.currentUser;
+  if (!user) return false;
+  await user.reload();
+  await user.getIdToken(true);
+  return auth.currentUser?.emailVerified === true;
+}
+
+/**
+ * Re-send a verification email to the signed-in user.
+ *
+ * `acceptInvite` already sends one when it refuses, so this is the "it never
+ * arrived" path, not the primary one.
+ */
+export async function resendVerificationEmail(): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Sign in first.');
+  await ensureRecaptcha();
+  await sendEmailVerification(user);
 }
 
 export async function signOut(): Promise<void> {

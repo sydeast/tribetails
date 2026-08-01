@@ -44,7 +44,6 @@ export async function mintInviteFromPrimaryHandler(req: CallableRequest<unknown>
     secondaryLabel: sanitizeLabel(args.secondaryLabel),
     proposedPermissions,
     proposedRole: 'SECONDARY',
-    requiresAuntieAck: proposedPermissions.billing_full,
     status: 'PENDING',
     createdAt: FieldValue.serverTimestamp(),
     expiresAt,

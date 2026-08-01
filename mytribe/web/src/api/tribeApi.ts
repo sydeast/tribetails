@@ -273,6 +273,13 @@ export interface UpdateSecondaryPermissionsRequest {
   familyId: string;
   targetUid: string;
   permissions: {
+    // RULING: "Primary kinfolk is allowed to set the permissions of the
+    // secondary, including billing if they want ... besides admin, primary
+    // kinfolk can set permissions for the secondary." The callable's schema was
+    // missing billing_full, and being a non-strict object it answered a request
+    // to grant it with `{ ok: true }` and no write. It accepts it now.
+    // kintales_only stays absent: no path on any surface turns it off.
+    billing_full?: boolean;
     messaging_direct?: boolean;
     messaging_group?: boolean;
     kin_edit?: boolean;

@@ -111,7 +111,6 @@ describe('listHouseholdInvites', () => {
           secondaryLabel: 'Sister',
           proposedRole: 'SECONDARY',
           proposedPermissions: { messaging_direct: true },
-          requiresAuntieAck: false,
           status: 'EMAIL_SENT',
           effectiveStatus: 'EMAIL_SENT',
           redeemable: true,
@@ -188,8 +187,17 @@ describe('permission metadata', () => {
     expect(EDITABLE_PERMISSION_KEYS).not.toContain('kintales_only');
   });
 
-  it('marks billing_full admin-only', () => {
-    expect(PERMISSION_META.find((p) => p.key === 'billing_full')?.adminOnly).toBe(true);
+  /**
+   * RULING: "besides admin, primary kinfolk can set permissions for the
+   * secondary ... including billing if they want." This used to assert
+   * `adminOnly === true` on billing_full. The flag is gone, and the badge that
+   * read "admin only" in the roster with it.
+   */
+  it('no longer claims billing_full is admin-only', () => {
+    const billing = PERMISSION_META.find((p) => p.key === 'billing_full');
+    expect(billing).toBeDefined();
+    expect(billing).not.toHaveProperty('adminOnly');
+    expect(EDITABLE_PERMISSION_KEYS).toContain('billing_full');
   });
 
   it('covers every key setMemberPermissions accepts, and nothing else', () => {

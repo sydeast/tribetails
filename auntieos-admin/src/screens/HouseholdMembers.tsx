@@ -404,9 +404,6 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
                             <div className="hmembers__perm-text">
                               <span className="hmembers__perm-name">
                                 {perm.label}
-                                {perm.adminOnly === true && (
-                                  <span className="hmembers__perm-flag">admin only</span>
-                                )}
                                 {locked && <span className="hmembers__perm-flag">locked on</span>}
                               </span>
                               <span className="hmembers__perm-desc">{perm.description}</span>
@@ -587,9 +584,6 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
                                 <RolePill role={invite.proposedRole} />
                                 {invite.secondaryLabel !== null && (
                                   <StatusPill label={invite.secondaryLabel} tone="neutral" />
-                                )}
-                                {invite.requiresAuntieAck && (
-                                  <StatusPill label="Auntie ack required" tone="warning" />
                                 )}
                               </div>
                             </div>

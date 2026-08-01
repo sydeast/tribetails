@@ -63,7 +63,6 @@ export interface InviteDTO {
   secondaryLabel: string | null;
   proposedRole: MemberRole;
   proposedPermissions: MemberPermissions;
-  requiresAuntieAck: boolean;
   /** Exactly what the document says, unreconciled. */
   status: InviteStatus;
   /** `status`, except a lapsed PENDING/EMAIL_SENT reads EXPIRED. */
@@ -174,7 +173,6 @@ export function mapInviteDoc(
     secondaryLabel: typeof rawLabel === 'string' ? rawLabel : null,
     proposedRole: asRole(data['proposedRole']),
     proposedPermissions: asPermissions(data['proposedPermissions']),
-    requiresAuntieAck: data['requiresAuntieAck'] === true,
     status,
     effectiveStatus,
     redeemable: effectiveStatus === 'PENDING' || effectiveStatus === 'EMAIL_SENT',

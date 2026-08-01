@@ -393,15 +393,42 @@ service cloud.firestore {
       allow create, delete: if false;
       allow update: if isPrimary(fid) && diffOnly(['displayName','updatedAt']);
 
+ // RULING (household secondary permissions): "Primary kinfolk is allowed to set
+ // the permissions of the secondary, including billing if they want. having
+ // household access is another main reason to have a secondary (THE OTHER PET
+ // PARENT). besides admin, primary kinfolk can set permissions for the
+ // secondary."
+ //
+ // This branch used to pin billing_full, kintales_only AND home_access to their
+ // existing values, so a PRIMARY could move only messaging_direct,
+ // messaging_group and kin_edit by direct write. Two of those three pins
+ // contradicted the ruling outright, and home_access contradicted this project's
+ // own callable as well: `updateSecondaryPermissions` has always accepted it, so
+ // the same grant succeeded through a Function and failed through the SDK. The
+ // rules were the wrong half of that disagreement, not the callable.
+ //
+ // billing_full and home_access are now movable by the household PRIMARY, here
+ // and in `updateSecondaryPermissions`, which say the same thing.
+ //
+ // What still holds, and is the boundary that matters:
+ //   * `affectedKeys().hasOnly([...])` excludes `role` and `status`, so a PRIMARY
+ //     can neither promote a SECONDARY nor escalate themselves. There is no
+ //     `admin` key in `permissions` to grant; admin authority is the `admin`
+ //     custom claim, which lives outside Firestore and is written by exactly one
+ //     admin-gated callable that reads nothing under families/*.
+ //   * kintales_only stays pinned. That is a product invariant, not an authority
+ //     boundary: every mint path force-sets it true, `setMemberPermissions`
+ //     omits it from its schema entirely, and both admin clients render it as a
+ //     locked control. NOBODY turns it off, primary or operator.
+ //   * create/delete stay hard-false for every caller including isAuntie(), so
+ //     membership itself is still minted only by the Admin SDK.
       match /members/{uid} {
         allow read: if activeMember(fid) || isAuntie();
         allow create, delete: if false;
         allow update: if isPrimary(fid)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['secondaryLabel','permissions','updatedAt'])
           && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['permissions'])
-              || (request.resource.data.permissions.billing_full == resource.data.permissions.billing_full
-                  && request.resource.data.permissions.kintales_only == resource.data.permissions.kintales_only
-                  && request.resource.data.permissions.home_access == resource.data.permissions.home_access));
+              || request.resource.data.permissions.kintales_only == resource.data.permissions.kintales_only);
       }
 
       match /kin/{kinId} {

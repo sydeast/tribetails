@@ -1,0 +1,6 @@
+{
+  "key": "invite.verify-email",
+  "subject": "Confirm {{invitedEmail}} to join your Tribe",
+  "body": "Hello,\n\nYou already have an account with this address, and it has not been confirmed yet. Confirm it and your invite will go through.\n\nConfirm this address: {{verifyUrl}}\n\nThen open your invite again: {{claimUrl}}\n\nYour invite stays live in the meantime, so there is no rush and nothing to re-request.\n\nThank you,\nAuntie",
+  "html": null
+}

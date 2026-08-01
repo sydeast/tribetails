@@ -22,7 +22,7 @@ describe('rules: flat top-level collections', () => {
       await ctx.firestore().doc('inviteRequests/i1').set({
         tribeId: 'f1', primaryUid: 'u-prim', invitedEmail: 'a@b.com',
         proposedRole: 'SECONDARY', status: 'EMAIL_SENT',
-        proposedPermissions: {}, requiresAuntieAck: false,
+        proposedPermissions: {},
         createdAt: new Date(), expiresAt: new Date(Date.now() + 86400000),
       });
     });
@@ -39,7 +39,7 @@ describe('rules: flat top-level collections', () => {
       await ctx.firestore().doc('inviteRequests/i1').set({
         tribeId: 'f1', primaryUid: 'u-prim', invitedEmail: 'a@b.com',
         proposedRole: 'SECONDARY', status: 'EMAIL_SENT',
-        proposedPermissions: {}, requiresAuntieAck: false,
+        proposedPermissions: {},
         createdAt: new Date(), expiresAt: new Date(Date.now() + 86400000),
       });
     });
@@ -54,7 +54,7 @@ describe('rules: flat top-level collections', () => {
       await ctx.firestore().doc('inviteRequests/i1').set({
         tribeId: 'f1', primaryUid: 'u-prim', invitedEmail: 'a@b.com',
         proposedRole: 'SECONDARY', status: 'EMAIL_SENT',
-        proposedPermissions: {}, requiresAuntieAck: false,
+        proposedPermissions: {},
         createdAt: new Date(), expiresAt: new Date(Date.now() + 86400000),
       });
     });
@@ -68,7 +68,7 @@ describe('rules: flat top-level collections', () => {
       await ctx.firestore().doc('inviteRequests/i1').set({
         tribeId: 'f1', primaryUid: 'u-prim', invitedEmail: 'a@b.com',
         proposedRole: 'SECONDARY', status: 'EMAIL_SENT',
-        proposedPermissions: {}, requiresAuntieAck: false,
+        proposedPermissions: {},
         createdAt: new Date(), expiresAt: new Date(Date.now() + 86400000),
       });
     });

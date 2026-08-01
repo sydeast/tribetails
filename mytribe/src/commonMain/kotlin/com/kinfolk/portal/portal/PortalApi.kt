@@ -858,15 +858,23 @@ class PortalApi(private val fns: FunctionsClient) {
     }
 
     /**
-     * Persists a secondary's permissions. Sends ONLY the four writable flags
-     * (messaging_direct, messaging_group, kin_edit, home_access); billing_full
-     * and kintales_only are never written from the kinfolk app. [familyId] is the
-     * kinfolkId. All four flags are sent explicitly so a toggle-off reaches the
-     * server. Throws on auth/permission/validation (fail-loud).
+     * Persists a secondary's permissions. Sends the five writable flags
+     * (billing_full, messaging_direct, messaging_group, kin_edit, home_access).
+     *
+     * RULING: "Primary kinfolk is allowed to set the permissions of the
+     * secondary, including billing if they want ... besides admin, primary
+     * kinfolk can set permissions for the secondary." billing_full used to be
+     * withheld here, and the callable's schema dropped it anyway, so a grant
+     * returned ok and changed nothing. Both ends accept it now.
+     *
+     * kintales_only is still never sent: no path on any surface turns it off.
+     * [familyId] is the kinfolkId. Every flag is sent explicitly so a toggle-off
+     * reaches the server. Throws on auth/permission/validation (fail-loud).
      */
     suspend fun updateSecondaryPermissions(
         familyId: String,
         targetUid: String,
+        billingFull: Boolean,
         messagingDirect: Boolean,
         messagingGroup: Boolean,
         kinEdit: Boolean,
@@ -876,6 +884,7 @@ class PortalApi(private val fns: FunctionsClient) {
             put("familyId", familyId)
             put("targetUid", targetUid)
             put("permissions", buildJsonObject {
+                put("billing_full", billingFull)
                 put("messaging_direct", messagingDirect)
                 put("messaging_group", messagingGroup)
                 put("kin_edit", kinEdit)
