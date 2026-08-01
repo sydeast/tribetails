@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { type Kin } from '../api/directory';
+import { KIN_ROSTER_MAX, type Kin } from '../api/directory';
 import {
   type ServiceOption,
   WEEKDAY_LABELS,
@@ -15,6 +15,7 @@ import {
   clearDays,
   formatCents,
   plannedDayCount,
+  plannedServiceNames,
   removeDayVisit,
   removeTemplateSlot,
   updateDayVisit,
@@ -27,6 +28,7 @@ import {
 } from '../lib/bookingWizard';
 import { shortDayLabel } from '../lib/bookingAvailability';
 import { useRovingTabs } from '../lib/useRovingTabs';
+import { Banner } from './Banner';
 import { GhostButton } from './Buttons';
 
 /**
@@ -107,6 +109,13 @@ export interface ClientStepProps {
   /** Active Kin for the chosen household. Null while the roster is still loading. */
   kin: Kin[] | null;
   kinError: string | null;
+  /**
+   * The roster read came back AT its cap, so there may be Kin it did not return.
+   * Said out loud rather than swallowed: a truncated read that renders as a
+   * short list, or worse as "no Kin on this household yet", is the silent-cap
+   * failure this repo treats as a bug wherever it appears.
+   */
+  kinTruncated: boolean;
 }
 
 export function ClientStep({
@@ -117,6 +126,7 @@ export function ClientStep({
   householdsError,
   kin,
   kinError,
+  kinTruncated,
 }: ClientStepProps) {
   return (
     <div className="nbw__body">
@@ -191,6 +201,13 @@ export function ClientStep({
                 );
               })}
             </div>
+          )}
+          {kinTruncated && (
+            <Banner tone="warning" title="More Kin than fit">
+              This household&rsquo;s roster hit the {KIN_ROSTER_MAX}-row read limit, so there may be
+              Kin missing from the list above. Leave the list empty to book for the whole household,
+              which covers every Kin whether or not it is shown here.
+            </Banner>
           )}
           {kin !== null && kin.length > 0 && state.kinIds.length === 0 && (
             <span className="new-booking__hint">
@@ -670,6 +687,14 @@ export function ReviewStep({
   const visits = buildVisits(state);
   const total = wizardTotal(state, options);
   const days = plannedDayCount(state);
+  // Read off the BUILT visits, never off `state.serviceName`. Step 2 sets a
+  // DEFAULT: it rewrites the template, and days already snapshotted keep the
+  // service they were picked with (the "changes apply only to dates you pick
+  // after this" rule the Dates step states out loud). So an operator who books
+  // Tuesday as a Dog Walk, jumps back and picks Grooming submits one Dog Walk,
+  // and a header reading `state.serviceName` would say Grooming. This renders
+  // what will be sent, per visit. Android's review row does the same.
+  const services = plannedServiceNames(state);
   const firstMs = visits[0]?.startTimeMs;
   const lastMs = visits[visits.length - 1]?.startTimeMs;
 
@@ -691,9 +716,12 @@ export function ReviewStep({
 
         <div className="nbw__review-row">
           <div>
-            <span className="nbw__review-head">{state.serviceName}</span>
+            <span className="nbw__review-head">
+              {services.length === 0 ? 'No service on these visits' : services.join(', ')}
+            </span>
             <span className="nbw__review-sub">
               {state.mode === 'weekly' ? 'Repeating weekly' : 'Individual dates'}
+              {services.length > 1 && `, ${services.length} different services`}
             </span>
           </div>
           <GhostButton label="Edit service" onClick={() => onEditStep('service')} />

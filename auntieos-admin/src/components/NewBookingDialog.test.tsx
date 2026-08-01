@@ -2,7 +2,8 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { Kin, Kinfolk } from '../api/directory';
+import { KIN_ROSTER_MAX, type Kin, type Kinfolk } from '../api/directory';
+import { BOOKING_BUSY_CONFLICT_CODE, COMPANY_HOLIDAY_CONFLICT_CODE } from '../lib/bookingWizard';
 import type { CollectionSpec } from '../lib/firestore';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
@@ -52,6 +53,15 @@ function kinfolk(over: Partial<Kinfolk> = {}): Kinfolk {
 
 function kin(over: Partial<Kin> = {}): Kin {
   return { _id: 'k1', kinfolkId: 'kf1', name: 'Biscuit', status: 'active', ...over };
+}
+
+/**
+ * A callable rejection shaped the way the Functions SDK delivers one: the human
+ * sentence on `message`, the branchable reason on `details.code`. Nothing in
+ * this app reads the sentence to decide anything.
+ */
+function refusal(code: string, message: string): Error {
+  return Object.assign(new Error(message), { details: { code } });
 }
 
 /**
@@ -252,6 +262,41 @@ describe('NewBookingDialog step 1: client and pets', () => {
     expect(screen.getByText(/Kin roster could not be read \(permission-denied\)/)).toBeInTheDocument();
     await next();
     expect(screen.getByRole('heading', { name: 'Select a Service' })).toBeInTheDocument();
+  });
+
+  // DEFECT 5. The wizard used to stream the WHOLE `kin` collection behind one
+  // shared cap ordered by document id, so a household whose kin sit past that
+  // boundary read back as an empty roster and this step said "No Kin on this
+  // household yet" with total confidence.
+  it("asks for ONE household's roster, not the whole capped collection", async () => {
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    const kinSpecs = useCollection.mock.calls
+      .map((call: unknown[]) => call[0] as CollectionSpec)
+      .filter((spec: CollectionSpec) => spec.path === 'kin');
+    expect(kinSpecs.length).toBeGreaterThan(0);
+    expect(kinSpecs[kinSpecs.length - 1]!.filters).toEqual([['kinfolkId', '==', 'kf1']]);
+  });
+
+  it('says so when the roster came back AT the cap, rather than passing a page off as the whole list', async () => {
+    feed({
+      kin: {
+        status: 'ready',
+        data: Array.from({ length: KIN_ROSTER_MAX }, (_, i) =>
+          kin({ _id: `k${i}`, name: `Kin ${i}` }),
+        ),
+      },
+    });
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    expect(screen.getByText(/roster hit the 500-row read limit/)).toBeInTheDocument();
+  });
+
+  it('says nothing about a cap for a roster that fits', async () => {
+    feed({ kin: { status: 'ready', data: [kin(), kin({ _id: 'k2', name: 'Gravy' })] } });
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    expect(screen.queryByText(/read limit/)).toBeNull();
   });
 });
 
@@ -574,6 +619,64 @@ describe('NewBookingDialog availability (carried over intact)', () => {
     ).toBeInTheDocument();
   });
 
+  // DEFECT 3. The warnings were a day-by-time CROSS PRODUCT: every selected day
+  // was checked against every time used anywhere in the plan, so a 19:00 visit
+  // on one day produced a 19:00 warning on every other day too.
+  it('warns about the visits the request will contain, and no others', async () => {
+    getBusinessSettings.mockResolvedValue({ serviceRates: {}, businessHours: HOURS, timeZone: '' });
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await toDates();
+    await screen.findByRole('gridcell', { name: /Mon, Aug 23, open 9:00 AM to 5:00 PM/ });
+    await pickDay(/Tue, Aug 17/);
+    await pickDay(/Mon, Aug 23/);
+
+    // Aug 23 moves to 19:00. Aug 17 stays at 09:00 and is inside hours.
+    await userEvent.click(screen.getByRole('button', { name: /Aug 23/ }));
+    await userEvent.clear(screen.getByLabelText('Aug 23 visit 1 time'));
+    await userEvent.type(screen.getByLabelText('Aug 23 visit 1 time'), '19:00');
+
+    expect(
+      screen.getByText('Aug 23: 19:00 is outside business hours (9:00 AM to 5:00 PM).'),
+    ).toBeInTheDocument();
+    // There is no 19:00 visit on Aug 17, so there is nothing to warn about.
+    expect(
+      screen.queryByText('Aug 17: 19:00 is outside business hours (9:00 AM to 5:00 PM).'),
+    ).toBeNull();
+  });
+
+  // DEFECT 2. Weekly mode only ever reasoned about the START date, so a closure
+  // in week 3 was invisible until submit refused the whole batch.
+  it('refuses a recurrence whose THIRD week lands on a company closure, on the Dates step', async () => {
+    getBusinessSettings.mockResolvedValue({
+      serviceRates: {},
+      businessHours: HOURS,
+      timeZone: '',
+      // Mondays from 2027-08-16: Aug 16, Aug 23, Aug 30, Sep 6.
+      companyHolidays: ['2027-08-30|Founders Day'],
+    });
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await toDates('Walk');
+    await userEvent.click(screen.getByRole('tab', { name: /Repeating Schedule/ }));
+    await pickDay(/Tomorrow/); // 2027-08-16, a Monday
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Mon' }));
+    expect(screen.getByRole('status')).toHaveTextContent('4 visits will be requested.');
+
+    await next();
+    expect(
+      screen.getByText(
+        'Aug 30 is closed for Founders Day. The business will refuse that date, so pick another.',
+      ),
+    ).toBeInTheDocument();
+    // Still on the Dates step: the batch is not carried to Review to be lost there.
+    expect(screen.getByRole('heading', { name: 'Set the repeating schedule' })).toBeInTheDocument();
+    expect(createMultiDateBookingRequest).not.toHaveBeenCalled();
+
+    // Shortening the recurrence to two weeks clears the closure and the gate.
+    await userEvent.click(screen.getByRole('tab', { name: '2' }));
+    await next();
+    expect(screen.getByRole('heading', { name: 'Invoice Options' })).toBeInTheDocument();
+  });
+
   it('warns once per distinct time, not once per visit', async () => {
     getBusinessSettings.mockResolvedValue({ serviceRates: {}, businessHours: HOURS, timeZone: '' });
     render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
@@ -788,6 +891,97 @@ describe('NewBookingDialog steps 4 and 5: invoice options and review', () => {
     // Back on the step that owns the problem, not left on Review with a warning.
     expect(screen.getByRole('status')).toHaveTextContent('Selected Aug 23.');
     vi.setSystemTime(new Date(2027, 7, 15, 12, 0, 0));
+  });
+
+  // DEFECT 4. Review rendered `state.serviceName`, the step-2 DEFAULT, while a
+  // day already picked keeps the service it was snapshotted with. The header
+  // could therefore name a service no submitted visit carries.
+  it('Review names the service the VISITS carry, not the last one picked on step 2', async () => {
+    getBusinessSettings.mockResolvedValue({ serviceRates: RATES, businessHours: {}, timeZone: '' });
+    createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await next();
+    await userEvent.click(await screen.findByRole('button', { name: /30Minute/ }));
+    await next();
+    await pickDay(/Mon, Aug 23/);
+
+    // Back to step 2 and pick something else. The already-picked day keeps its
+    // own service ("changes apply only to dates you pick after this").
+    await userEvent.click(screen.getByRole('button', { name: /Choose Service/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /90Minute/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Review & Confirm/ }));
+
+    const review = screen.getByRole('heading', { name: 'Review & Confirm' }).parentElement!;
+    expect(within(review).getByText('30Minute')).toBeInTheDocument();
+    expect(within(review).queryByText('90Minute')).toBeNull();
+
+    // And what it says is what goes out.
+    await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
+    await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
+    expect(createMultiDateBookingRequest.mock.calls[0]![0].visits[0].serviceName).toBe('30Minute');
+  });
+
+  // DEFECT 1. `overrideBusyConflict` had ZERO occurrences under src/ outside the
+  // generated contract, so the warning banner's "you can still send the request"
+  // was a promise the wizard could not keep: the server refused a real busy
+  // clash and there was no way past it.
+  it('offers Create anyway on a busy-block refusal, and the retry carries the audited override', async () => {
+    createMultiDateBookingRequest
+      .mockRejectedValueOnce(refusal(BOOKING_BUSY_CONFLICT_CODE, 'That time is already busy.'))
+      .mockResolvedValueOnce({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await toDates('Walk');
+    await pickDay(/Mon, Aug 23/);
+    await toReview();
+    await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
+
+    await screen.findByText(/That time is already busy/);
+    expect(
+      screen.getByText(/imported Google Calendar busy block. You can book over it/),
+    ).toBeInTheDocument();
+    // The first attempt never sets the flag.
+    expect(createMultiDateBookingRequest.mock.calls[0]![0]).not.toHaveProperty(
+      'overrideBusyConflict',
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Create anyway' }));
+    await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(2));
+    // The whole point: the flag the server has always honored now reaches it.
+    expect(createMultiDateBookingRequest.mock.calls[1]![0].overrideBusyConflict).toBe(true);
+    expect(createMultiDateBookingRequest.mock.calls[1]![0].visits).toHaveLength(1);
+  });
+
+  it('never offers Create anyway for a company closure, which has no override server-side', async () => {
+    createMultiDateBookingRequest.mockRejectedValue(
+      refusal(COMPANY_HOLIDAY_CONFLICT_CODE, 'Aug 23 is closed for Founders Day.'),
+    );
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await toDates('Walk');
+    await pickDay(/Mon, Aug 23/);
+    await toReview();
+    await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
+
+    await screen.findByText(/closed for Founders Day/);
+    expect(screen.queryByRole('button', { name: 'Create anyway' })).toBeNull();
+  });
+
+  it('does not re-offer Create anyway once the override has already been refused', async () => {
+    createMultiDateBookingRequest.mockRejectedValue(
+      refusal(BOOKING_BUSY_CONFLICT_CODE, 'That time is already busy.'),
+    );
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await toDates('Walk');
+    await pickDay(/Mon, Aug 23/);
+    await toReview();
+    await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Create anyway' }));
+
+    await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(2));
+    // Offering the same losing move twice is worse than saying nothing.
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Create anyway' })).toBeNull(),
+    );
   });
 
   it('fails loud (names the callable) when the create rejects', async () => {

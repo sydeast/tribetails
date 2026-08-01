@@ -3,10 +3,11 @@ import { createMultiDateBookingRequest } from '../api/bookingsWrite';
 import type { CreateMultiDateBookingRequestResult } from '../contracts/bookingContracts.generated';
 import {
   KINFOLK_QUERY,
-  KIN_QUERY,
+  KIN_ROSTER_MAX,
   SORT_OPTION_DEFAULT,
   activeKinByKinfolk,
   filterSortKinfolk,
+  kinForHouseholdQuery,
   kinfolkDisplayName,
   type Kin,
   type Kinfolk,
@@ -30,10 +31,12 @@ import {
 import { parseClosureEntry, type ClosureEntry } from '../lib/closureRecurrence';
 import {
   WIZARD_STEPS,
+  bookingSubmission,
   buildVisits,
   firstBlockedStep,
   initialWizardState,
-  plannedDayIsos,
+  isOverridableBusyRefusal,
+  plannedVisitTimes,
   selectedDays,
   stepBlocker,
   stepIndex,
@@ -89,12 +92,25 @@ interface NewBookingDialogProps {
  *    disabled: the operator is the business and may decide to work a Sunday.
  *    Only the PAST is refused outright.
  *
- * ── WARNINGS ACROSS MANY TIMES ──────────────────────────────────────────────
+ * ── WARNINGS ACROSS MANY VISITS ─────────────────────────────────────────────
  *
- * `selectionWarnings` takes ONE time, because the old form had one. A wizard
- * visit carries its own, so this calls it once per distinct time in the plan
- * and de-duplicates. Same function, same rules, no second implementation to
- * drift.
+ * `selectionWarnings` takes ONE day and ONE time, because the old form had one
+ * of each. A wizard visit carries its own, so this calls it once per CONCRETE
+ * day-and-time pair (`plannedVisitTimes`) and de-duplicates. Same function, same
+ * rules, no second implementation to drift.
+ *
+ * It used to call it with every selected day crossed with every time used
+ * anywhere in the plan, which named visits the request will never contain: a
+ * plan of Aug 17 at 09:00 plus Aug 23 at 19:00 warned "Aug 17: 19:00 is outside
+ * business hours". Android computes per concrete visit for the same reason.
+ *
+ * ── A CLOSURE IS A GATE, A BUSY BLOCK IS A WARNING ──────────────────────────
+ *
+ * `guardCompanyHolidayConflict` refuses a closed date server-side with NO
+ * override, so the Dates step will not advance past one, checked over EVERY
+ * generated day rather than only the start date of a recurrence. A busy block is
+ * the opposite: it stays a warning, and the server's refusal offers "Create
+ * anyway", which resubmits with `overrideBusyConflict`.
  *
  * ── TIMEZONE ────────────────────────────────────────────────────────────────
  *
@@ -109,16 +125,26 @@ interface NewBookingDialogProps {
  */
 export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) {
   const households = useCollection<Kinfolk>(KINFOLK_QUERY);
-  const allKin = useCollection<Kin>(KIN_QUERY);
+
+  const [state, setState] = useState<WizardState>(initialWizardState);
+  // Scoped to the chosen household, not the whole `kin` collection: a shared cap
+  // across every household is how a household past it reads as "no Kin at all".
+  const allKin = useCollection<Kin>(kinForHouseholdQuery(state.kinfolkId));
   const busySlots = useCollection<AvailabilityBusySlot>(AVAILABILITY_BUSY_SLOTS_QUERY);
   const scheduled = useCollection<AvailabilitySession>(AVAILABILITY_SESSIONS_QUERY);
 
-  const [state, setState] = useState<WizardState>(initialWizardState);
   const [step, setStep] = useState<StepKey>('client');
   /** Set when Next is pressed on a blocked step, so the reason is shown then and not before. */
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * True when the server's last refusal was a busy-block clash the operator has
+   * NOT yet overridden, which is the only refusal `overrideBusyConflict` can get
+   * past. A company closure never sets this: `guardCompanyHolidayConflict` has no
+   * override, so a "Create anyway" against one would be a button that cannot win.
+   */
+  const [busyOverridable, setBusyOverridable] = useState(false);
 
   // The operator's KinCare types. `null` while the one-shot settings read is in
   // flight; `[]` both for a never-configured install and for a failed read, so
@@ -177,6 +203,14 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
     return activeKinByKinfolk(allKin.data).get(state.kinfolkId) ?? [];
   }, [allKin, state.kinfolkId]);
 
+  /**
+   * A roster that came back at exactly the cap is a page, not an answer: there
+   * may be Kin below the cut and this screen cannot tell. Disclosed rather than
+   * trusted, the same way `UninvoicedVisitsPicker` reports its own truncated
+   * read instead of presenting a short list as a complete one.
+   */
+  const kinTruncated = allKin.status === 'ready' && allKin.data.length >= KIN_ROSTER_MAX;
+
   // ── availability (unchanged from the single-page dialog) ──────────────────
 
   const hoursKnown = businessHours !== null;
@@ -211,27 +245,28 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
     [todayIso, businessHours, hoursKnown, scheduleKnown, blockedByDate, sessionsByDay, closureEntries],
   );
 
-  const selectedIsos = useMemo(() => plannedDayIsos(state), [state]);
+  /** The closure name covering a day, for the Dates step's hard gate. */
+  const closedDayName = useCallback(
+    (iso: string) => holidayNameForDay(closureEntries, iso),
+    [closureEntries],
+  );
 
   /**
-   * One warning list over every distinct visit TIME in the plan.
+   * One warning list over the CONCRETE visits the request will contain.
    *
-   * `selectionWarnings` still takes a single time (its rules are per day and
-   * per time), so it is called once per time and the results de-duplicated. A
-   * second implementation that walked the visits itself would be the drift this
-   * avoids, and the closed-day line would then appear once per visit.
+   * `selectionWarnings` still takes a single day and a single time (its rules are
+   * per day and per time), so it is called once per real day-and-time pair and
+   * the results de-duplicated. It used to be called once per DISTINCT TIME over
+   * ALL selected days, which is a cross product: a plan of Aug 17 at 09:00 and
+   * Aug 23 at 19:00 warned "Aug 17: 19:00 is outside business hours" about a
+   * visit that does not exist. Android computes per visit for the same reason.
    */
   const warnings = useMemo(() => {
-    const days = selectedIsos.map(availabilityFor);
-    const times = [
-      ...new Set(
-        state.mode === 'weekly'
-          ? state.template.map((slot) => slot.time)
-          : state.plans.flatMap((plan) => plan.visits.map((v) => v.time)),
-      ),
+    const pairs = plannedVisitTimes(state);
+    return [
+      ...new Set(pairs.flatMap(({ dayIso, time }) => selectionWarnings([availabilityFor(dayIso)], time))),
     ];
-    return [...new Set(times.flatMap((time) => selectionWarnings(days, time)))];
-  }, [selectedIsos, availabilityFor, state]);
+  }, [availabilityFor, state]);
 
   /**
    * The device zone as the browser reports it, and whether the business setting
@@ -253,7 +288,7 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
 
   const index = stepIndex(step);
   const isLast = index === WIZARD_STEPS.length - 1;
-  const blocker = stepBlocker(state, step, Date.now());
+  const blocker = stepBlocker(state, step, Date.now(), closedDayName);
 
   /** Steps already satisfied, so a completed circle in the rail is a live control. */
   const reachable = useMemo(() => {
@@ -261,10 +296,10 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
     const now = Date.now();
     for (const s of WIZARD_STEPS) {
       out.push(s.key);
-      if (stepBlocker(state, s.key, now) !== null) break;
+      if (stepBlocker(state, s.key, now, closedDayName) !== null) break;
     }
     return out;
-  }, [state]);
+  }, [state, closedDayName]);
 
   function goNext() {
     if (blocker !== null) {
@@ -298,34 +333,41 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
 
   // ── submit ────────────────────────────────────────────────────────────────
 
-  async function handleSubmit() {
+  /**
+   * `overrideBusyConflict` is false on every first attempt and true only on the
+   * operator's explicit "Create anyway" after the server refused a busy clash.
+   * The flag has been honored server-side since it was written (this dialog is
+   * named in `createMultiDateBookingRequest.ts`'s own comment as the client it
+   * exists for) and until now nothing on this surface ever set it, so the
+   * warning banner's "you can still send the request" was a promise the wizard
+   * could not keep.
+   */
+  async function handleSubmit(overrideBusyConflict = false) {
     if (saving) return;
     // Re-checked from the FIRST step, not just this one. Editing the household
     // after picking dates can empty the plan, and a Back-then-forward path would
     // otherwise reach this button with a hole three steps back.
-    const blocked = firstBlockedStep(state, Date.now());
+    const blocked = firstBlockedStep(state, Date.now(), closedDayName);
     if (blocked !== null) {
       setStep(blocked);
-      setBlockedNotice(stepBlocker(state, blocked, Date.now()));
+      setBlockedNotice(stepBlocker(state, blocked, Date.now(), closedDayName));
       return;
     }
     setSaving(true);
     setError(null);
+    setBusyOverridable(false);
     try {
-      const result = await createMultiDateBookingRequest({
-        kinfolkId: state.kinfolkId,
-        ...(state.kinIds.length > 0 && { kinIds: state.kinIds }),
-        ...(state.notes.trim() !== '' && { notes: state.notes.trim() }),
-        pattern: state.mode === 'weekly' ? 'weekly' : 'individual',
-        ...(state.mode === 'weekly' && { weeklyDays: state.weeklyDays }),
-        visits: buildVisits(state),
-        billing: state.billing,
-        communication: state.communication,
-      });
+      const result = await createMultiDateBookingRequest(
+        bookingSubmission(state, overrideBusyConflict),
+      );
       setSaving(false);
       onCreated(result);
     } catch (err) {
       setSaving(false);
+      // A busy-block clash is the ONE refusal an operator may knowingly go past,
+      // and only on a first try: re-offering the override after it has already
+      // failed would offer the same losing move twice.
+      setBusyOverridable(isOverridableBusyRefusal(err, overrideBusyConflict));
       setError(
         `createMultiDateBookingRequest failed: ${err instanceof Error ? err.message : 'Create failed'}`,
       );
@@ -376,7 +418,28 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
 
       {error !== null && (
         <Banner tone="error" title="Couldn&rsquo;t create the request" className="new-booking__banner">
-          {error}
+          <p className="new-booking__banner-line">{error}</p>
+          {busyOverridable && (
+            <>
+              {/*
+                Only ever offered for a busy-block clash. That block is an
+                imported reading of the operator's own Google Calendar, which
+                may be stale or personal, so the operator is allowed to book
+                over it and the server audits the write as
+                BOOKING_BUSY_CONFLICT_OVERRIDDEN. A company closure is the
+                operator's own typed-in statement that the business is shut and
+                gets no such button, here or on Android.
+              */}
+              <p className="new-booking__banner-line">
+                That clash is an imported Google Calendar busy block. You can book over it.
+              </p>
+              <GhostButton
+                label="Create anyway"
+                onClick={() => void handleSubmit(true)}
+                disabled={saving}
+              />
+            </>
+          )}
         </Banner>
       )}
 
@@ -398,6 +461,7 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
             householdsError={households.status === 'error' ? households.message : null}
             kin={kinForHousehold}
             kinError={allKin.status === 'error' ? allKin.message : null}
+            kinTruncated={kinTruncated}
           />
         )}
 
@@ -465,7 +529,8 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
                         <li key={w}>{w}</li>
                       ))}
                     </ul>
-                    You can still send the request.
+                    You can still send the request. A busy block is refused by the server unless you
+                    choose Create anyway on the last step.
                   </Banner>
                 )}
               </>

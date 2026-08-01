@@ -260,11 +260,49 @@ export function matchesKin(kin: Kin, needle: string): boolean {
  * composite-index-free. The old `updatedAt` desc ordering did not have that
  * property.
  */
+/**
+ * The cap every `kin` listener carries. Named rather than left as a literal
+ * because a caller has to be able to SAY it: a page that comes back at exactly
+ * this many rows may be a truncated read, and a screen that cannot tell has no
+ * way to disclose it.
+ */
+export const KIN_ROSTER_MAX = 500;
+
 export const KIN_QUERY: CollectionSpec = {
   path: 'kin',
   order: ['__name__', 'asc'],
-  max: 500,
+  max: KIN_ROSTER_MAX,
 };
+
+/**
+ * The kin roster for ONE household.
+ *
+ * The booking wizard used to read the WHOLE `kin` collection through
+ * `KIN_QUERY` and group it client-side, which put every household behind one
+ * shared cap ordered by document id: a household whose kin sort past that
+ * boundary read back empty, and the wizard said "No Kin on this household yet"
+ * with total confidence. That is the silent-truncation failure class the
+ * `KIN_QUERY` note above spends a page warning about, arriving through a
+ * different door. Android never had it, because its wizard asks for one
+ * household's kin (`AuntieRepository.getKin(kinfolkId)`); this is that read.
+ *
+ * An equality filter plus `orderBy` on the document id ascending is covered by
+ * Firestore's automatic single-field index, so this needs no composite index --
+ * the same property `KIN_QUERY` documents above for the sandbox scope.
+ *
+ * The cap stays, because an unbounded listener is not an option here (AO-29). A
+ * read that comes back AT the cap is DISCLOSED by the caller rather than quietly
+ * trusted. A blank `kinfolkId` is a real state (no household picked yet) and
+ * matches nothing, which is exactly right: no household, no roster.
+ */
+export function kinForHouseholdQuery(kinfolkId: string): CollectionSpec {
+  return {
+    path: 'kin',
+    order: ['__name__', 'asc'],
+    max: KIN_ROSTER_MAX,
+    filters: [['kinfolkId', '==', kinfolkId]],
+  };
+}
 
 /**
  * Groups ACTIVE (non-archived) kin by kinfolkId, ports

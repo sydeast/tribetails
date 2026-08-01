@@ -13,9 +13,16 @@ import {
   removeDayVisit,
   updateDayVisit,
   buildVisits,
+  bookingSubmission,
+  callableConflictCode,
+  isOverridableBusyRefusal,
   plannedDayCount,
   plannedDayIsos,
+  plannedServiceNames,
+  plannedVisitTimes,
   wizardTotal,
+  BOOKING_BUSY_CONFLICT_CODE,
+  COMPANY_HOLIDAY_CONFLICT_CODE,
   rateToCents,
   formatCents,
   stepBlocker,
@@ -272,6 +279,130 @@ describe('day counts for the review copy', () => {
     state = toggleDay(state, '2026-08-03');
     expect(plannedDayIsos(state)).toEqual(['2026-08-03', '2026-08-10']);
   });
+
+  // DEFECT 2. This used to be `[startDateIso]`, which is why nothing downstream
+  // -- not the warnings, not the closure gate -- could see occurrences 2..n.
+  it('EXPANDS a weekly recurrence to every day it lands on, not just the start', () => {
+    const state = ready({ mode: 'weekly', startDateIso: '2026-08-03', weeklyDays: [1], weeks: 4 });
+    expect(plannedDayIsos(state)).toEqual([
+      '2026-08-03',
+      '2026-08-10',
+      '2026-08-17',
+      '2026-08-24',
+    ]);
+    expect(plannedDayCount(state)).toBe(4);
+  });
+});
+
+describe('the concrete visit times the warnings work over', () => {
+  // DEFECT 3. The dialog used to cross every selected DAY with every time used
+  // anywhere in the plan, so it named visits the request will never contain.
+  it('pairs each day with ITS OWN times, never every time in the plan', () => {
+    let state = toggleDay(ready(), '2026-08-03');
+    state = toggleDay(state, '2026-08-04');
+    state = updateDayVisit(state, '2026-08-04', state.plans[1]!.visits[0]!.id, { time: '19:00' });
+    expect(plannedVisitTimes(state)).toEqual([
+      { dayIso: '2026-08-03', time: '09:00' },
+      { dayIso: '2026-08-04', time: '19:00' },
+    ]);
+  });
+
+  it('says a repeated day-and-time once, however many visits share it', () => {
+    let state = toggleDay(ready(), '2026-08-03');
+    state = addDayVisit(state, '2026-08-03');
+    expect(buildVisits(state)).toHaveLength(2);
+    expect(plannedVisitTimes(state)).toEqual([{ dayIso: '2026-08-03', time: '09:00' }]);
+  });
+
+  it('covers every occurrence of a recurrence, at every template time', () => {
+    let state = ready({ mode: 'weekly', startDateIso: '2026-08-03', weeklyDays: [1], weeks: 2 });
+    state = addTemplateSlot(state);
+    state = updateTemplateSlot(state, state.template[1]!.id, { time: '17:00' });
+    expect(plannedVisitTimes(state)).toEqual([
+      { dayIso: '2026-08-03', time: '09:00' },
+      { dayIso: '2026-08-03', time: '17:00' },
+      { dayIso: '2026-08-10', time: '09:00' },
+      { dayIso: '2026-08-10', time: '17:00' },
+    ]);
+  });
+});
+
+describe('the services Review reports', () => {
+  // DEFECT 4. Review rendered `state.serviceName`, the step-2 DEFAULT, while
+  // days already snapshotted keep the service they were added with.
+  it('reads the BUILT visits, so a back-edit cannot make Review disagree with the payload', () => {
+    let state = toggleDay(ready({ serviceName: 'Dog Walk' }), '2026-08-03');
+    // Back to step 2 and pick something else: the template changes, the day does
+    // not, and the payload still carries the day's own service.
+    state = applyServiceToTemplate(state, {
+      name: 'The Peek-In',
+      rate: '15.00',
+      durationMinutes: null,
+    });
+    expect(state.serviceName).toBe('The Peek-In');
+    expect(buildVisits(state).map((v) => v.serviceName)).toEqual(['Dog Walk']);
+    expect(plannedServiceNames(state)).toEqual(['Dog Walk']);
+  });
+
+  it('names every distinct service once, in visit order', () => {
+    let state = toggleDay(ready(), '2026-08-03');
+    state = addDayVisit(state, '2026-08-03');
+    state = updateDayVisit(state, '2026-08-03', state.plans[0]!.visits[1]!.id, {
+      serviceName: 'Consultation',
+      time: '17:00',
+    });
+    state = toggleDay(state, '2026-08-04');
+    expect(plannedServiceNames(state)).toEqual(['Dog Walk', 'Consultation']);
+  });
+
+  it('is empty when nothing is planned yet', () => {
+    expect(plannedServiceNames(ready())).toEqual([]);
+  });
+});
+
+describe('the submission, and the one refusal an operator may override', () => {
+  // DEFECT 1. `overrideBusyConflict` had ZERO occurrences under src/ outside the
+  // generated contract: the server honored a flag no web caller ever sent.
+  it('sends the override ONLY on an explicit Create anyway', () => {
+    const state = toggleDay(ready(), '2026-08-03');
+    expect(bookingSubmission(state)).not.toHaveProperty('overrideBusyConflict');
+    expect(bookingSubmission(state, true).overrideBusyConflict).toBe(true);
+  });
+
+  it('carries the whole payload, so a new callable field cannot be silently dropped', () => {
+    let state = toggleDay(ready({ kinIds: ['k1'], notes: '  gate code 1234  ' }), '2026-08-03');
+    state = { ...state, communication: { emailConfirmation: true, timeVisibility: false } };
+    expect(bookingSubmission(state, true)).toEqual({
+      kinfolkId: 'kf1',
+      kinIds: ['k1'],
+      notes: 'gate code 1234',
+      pattern: 'individual',
+      visits: buildVisits(state),
+      billing: { mode: 'new-invoice' },
+      communication: { emailConfirmation: true, timeVisibility: false },
+      overrideBusyConflict: true,
+    });
+  });
+
+  it('reads the server code off details, not off the message text', () => {
+    expect(callableConflictCode({ details: { code: BOOKING_BUSY_CONFLICT_CODE } })).toBe(
+      BOOKING_BUSY_CONFLICT_CODE,
+    );
+    expect(callableConflictCode(new Error('booking_busy_conflict'))).toBe('');
+    expect(callableConflictCode(null)).toBe('');
+    expect(callableConflictCode({ details: 'nope' })).toBe('');
+  });
+
+  it('offers the override for a busy clash, never for a company closure', () => {
+    const busy = { details: { code: BOOKING_BUSY_CONFLICT_CODE } };
+    const closed = { details: { code: COMPANY_HOLIDAY_CONFLICT_CODE } };
+    expect(isOverridableBusyRefusal(busy, false)).toBe(true);
+    // A closure guard has no override server-side by design, so offering one
+    // would be offering a submit that cannot succeed.
+    expect(isOverridableBusyRefusal(closed, false)).toBe(false);
+    // And never twice: an override that already failed is a losing move.
+    expect(isOverridableBusyRefusal(busy, true)).toBe(false);
+  });
 });
 
 describe('totals', () => {
@@ -385,5 +516,32 @@ describe('step gating', () => {
   it('reports no blocked step once every requirement is met', () => {
     const state = toggleDay(ready(), '2026-08-03');
     expect(firstBlockedStep(state, NOW)).toBeNull();
+  });
+
+  // DEFECT 2. `plannedDayIsos` used to answer `[startDateIso]` in weekly mode, so
+  // a closure on any occurrence after the first was invisible until the server
+  // refused the whole batch at submit.
+  it('refuses a company closure on ANY generated day, not just the start date', () => {
+    const state = ready({
+      mode: 'weekly',
+      startDateIso: '2026-08-03',
+      weeklyDays: [1],
+      weeks: 4,
+    });
+    // Week 3 of the recurrence: 2026-08-03, -10, -17, -24.
+    const closed = (iso: string) => (iso === '2026-08-17' ? 'Founders Day' : null);
+    expect(stepBlocker(state, 'dates', NOW, closed)).toBe(
+      'Aug 17 is closed for Founders Day. The business will refuse that date, so pick another.',
+    );
+    expect(firstBlockedStep(state, NOW, closed)).toBe('dates');
+    // And nothing is refused when no day is closed.
+    expect(stepBlocker(state, 'dates', NOW)).toBeNull();
+  });
+
+  it('refuses a closed day picked individually too, with the same sentence', () => {
+    const state = toggleDay(ready(), '2026-08-03');
+    expect(stepBlocker(state, 'dates', NOW, () => 'Founders Day')).toBe(
+      'Aug 3 is closed for Founders Day. The business will refuse that date, so pick another.',
+    );
   });
 });

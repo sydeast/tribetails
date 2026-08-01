@@ -1,5 +1,10 @@
 import { expandWeekly, sortedDays, visitMsFromDays, type BookingMode, type ServiceOption } from './newBooking';
-import type { CreateMultiDateBookingRequestArgsVisit } from '../contracts/bookingContracts.generated';
+import { localDateIso } from './invoiceFormat';
+import { shortDayLabel } from './bookingAvailability';
+import type {
+  CreateMultiDateBookingRequestArgs,
+  CreateMultiDateBookingRequestArgsVisit,
+} from '../contracts/bookingContracts.generated';
 
 /**
  * The New Booking wizard's state, kept out of the dialog so every transition
@@ -377,22 +382,82 @@ export function buildVisits(state: WizardState): WizardVisit[] {
 
 /** Ascending list of the days a visit falls on, for the review's "N visits across M days". */
 export function plannedDayCount(state: WizardState): number {
-  if (state.mode === 'weekly') {
-    const days = new Set(
-      buildVisits(state).map((v) => {
-        const d = new Date(v.startTimeMs);
-        return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-      }),
-    );
-    return days.size;
-  }
-  return state.plans.length;
+  return plannedDayIsos(state).length;
 }
 
-/** The days the calendar and the warnings work over, ascending. */
+/**
+ * EVERY local day this request will land on, ascending, weekly recurrences
+ * EXPANDED.
+ *
+ * This used to answer `[startDateIso]` in weekly mode, which made every caller
+ * blind to occurrences 2..n: a four-week Monday recurrence whose third Monday is
+ * a company holiday raised no warning and passed the Dates step, and the server
+ * then refused the WHOLE batch at submit. Android's `plannedDates`
+ * (`BookingWizard.kt`) expands for exactly that reason and this now matches it.
+ *
+ * Derived from the CONCRETE visits rather than from a second expansion of the
+ * recurrence, so the days reasoned about here are by construction the days the
+ * payload carries; a divergence between the two is not expressible.
+ */
 export function plannedDayIsos(state: WizardState): string[] {
-  if (state.mode === 'weekly') return state.startDateIso === '' ? [] : [state.startDateIso];
+  if (state.mode === 'weekly') {
+    return sortedDays(new Set(buildVisits(state).map((v) => localDateIso(new Date(v.startTimeMs)))));
+  }
   return sortedDays(state.plans.map((p) => p.dayIso));
+}
+
+/** One concrete (day, wall-clock time) the request will contain. */
+export interface PlannedVisitTime {
+  dayIso: string;
+  /** `HH:mm`, local. */
+  time: string;
+}
+
+/**
+ * The distinct day-and-time pairs the request WILL contain, ascending.
+ *
+ * The availability warnings are built from this, not from "every selected day"
+ * crossed with "every time used anywhere in the plan". That cross product warned
+ * about visits that do not exist: Aug 17 at 09:00 plus Aug 23 at 19:00 produced
+ * "Aug 17: 19:00 is outside business hours" for a 19:00 visit on Aug 17 the
+ * operator never asked for. Android computes its warnings per concrete visit for
+ * the same reason (`BookingWizardAvailability.kt#bookingSelectionWarnings`).
+ *
+ * De-duplicated, so two visits at the same minute on the same day still say
+ * their one thing once.
+ */
+export function plannedVisitTimes(state: WizardState): PlannedVisitTime[] {
+  const seen = new Set<string>();
+  const out: PlannedVisitTime[] = [];
+  for (const visit of buildVisits(state)) {
+    const at = new Date(visit.startTimeMs);
+    const dayIso = localDateIso(at);
+    const time = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    const key = `${dayIso}T${time}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ dayIso, time });
+  }
+  return out;
+}
+
+/**
+ * The distinct services the SUBMITTED visits carry, in visit order.
+ *
+ * Review renders this rather than `state.serviceName`. Step 2 sets a DEFAULT
+ * that seeds the template; days already snapshotted keep the service they were
+ * added with, so an operator who books Tuesday as a Dog Walk, jumps back to step
+ * 2 and picks Grooming submits one Dog Walk and gets a Review header that says
+ * Grooming. Android's review row reads the built visits for the same reason
+ * (`NewBookingWizard.kt`'s `reviewStep`).
+ */
+export function plannedServiceNames(state: WizardState): string[] {
+  const out: string[] = [];
+  for (const visit of buildVisits(state)) {
+    const name = visit.serviceName.trim();
+    if (name !== '' && !out.includes(name)) out.push(name);
+  }
+  return out;
 }
 
 // ── totals ───────────────────────────────────────────────────────────────────
@@ -451,13 +516,37 @@ export function formatCents(cents: number): string {
 // ── step gating ──────────────────────────────────────────────────────────────
 
 /**
+ * Answers "is this local day a company closure, and what is it called".
+ *
+ * A FUNCTION rather than a list of closure entries, so this module stays pure
+ * and the Firestore read stays in the dialog. The default answers "no closure
+ * anywhere", which is what a caller that has not wired closures yet gets:
+ * degrading to the pre-closure behavior, never to a fabricated refusal.
+ */
+export type ClosedDayName = (dayIso: string) => string | null;
+
+const NO_CLOSURES: ClosedDayName = () => null;
+
+/**
  * Why the operator cannot leave this step yet, or null when they can.
  *
  * A REASON, not a boolean, so the Next button can say what is missing rather
  * than sitting greyed out with no explanation. Every message names the thing to
  * do, not the rule that failed.
+ *
+ * `closedDayName` makes a company closure a HARD gate on the Dates step, over
+ * EVERY generated day. `guardCompanyHolidayConflict` (PR #204) refuses a closed
+ * date server-side with no override by design, so letting the operator carry one
+ * to Review would be offering a submit that cannot succeed, and in weekly mode it
+ * would lose the whole batch at the last step. Same ruling as Android's
+ * `stepBlocker` (`BookingWizard.kt`).
  */
-export function stepBlocker(state: WizardState, step: StepKey, nowMs: number): string | null {
+export function stepBlocker(
+  state: WizardState,
+  step: StepKey,
+  nowMs: number,
+  closedDayName: ClosedDayName = NO_CLOSURES,
+): string | null {
   switch (step) {
     case 'client':
       return state.kinfolkId === '' ? 'Pick a household first.' : null;
@@ -484,6 +573,15 @@ export function stepBlocker(state: WizardState, step: StepKey, nowMs: number): s
       if (visits.length > MAX_VISITS) {
         return `That is ${visits.length} visits. The most a single request can carry is ${MAX_VISITS}, so shorten the recurrence or split the booking.`;
       }
+      // Checked over EVERY generated day, not just the one the operator clicked.
+      // A closure in week 3 of a recurrence is the case the start-date-only check
+      // used to miss entirely.
+      for (const dayIso of plannedDayIsos(state)) {
+        const name = closedDayName(dayIso);
+        if (name !== null) {
+          return `${shortDayLabel(dayIso)} is closed for ${name}. The business will refuse that date, so pick another.`;
+        }
+      }
       return null;
     }
     case 'invoice':
@@ -497,8 +595,13 @@ export function stepBlocker(state: WizardState, step: StepKey, nowMs: number): s
 export const MAX_VISITS = 60;
 
 /** Can the wizard move on from this step. */
-export function canAdvance(state: WizardState, step: StepKey, nowMs: number): boolean {
-  return stepBlocker(state, step, nowMs) === null;
+export function canAdvance(
+  state: WizardState,
+  step: StepKey,
+  nowMs: number,
+  closedDayName: ClosedDayName = NO_CLOSURES,
+): boolean {
+  return stepBlocker(state, step, nowMs, closedDayName) === null;
 }
 
 /**
@@ -508,9 +611,88 @@ export function canAdvance(state: WizardState, step: StepKey, nowMs: number): bo
  * back: editing the household after picking dates can empty the selection, and
  * a Back-then-Next path would otherwise sail past it.
  */
-export function firstBlockedStep(state: WizardState, nowMs: number): StepKey | null {
+export function firstBlockedStep(
+  state: WizardState,
+  nowMs: number,
+  closedDayName: ClosedDayName = NO_CLOSURES,
+): StepKey | null {
   for (const step of WIZARD_STEPS) {
-    if (stepBlocker(state, step.key, nowMs) !== null) return step.key;
+    if (stepBlocker(state, step.key, nowMs, closedDayName) !== null) return step.key;
   }
   return null;
+}
+
+// ── the submission, and the one refusal an operator may override ─────────────
+
+/**
+ * The machine-readable `details.code`s `createMultiDateBookingRequest` can
+ * refuse with. Mirrors `functions/src/lib/bookingBusyConflict.ts` and
+ * `functions/src/lib/companyHolidayConflict.ts`, and Android's
+ * `BOOKING_BUSY_CONFLICT_CODE` / `COMPANY_HOLIDAY_CONFLICT_CODE`. Branching on a
+ * code rather than on the wording of a sentence is the repo convention
+ * (`lib/googleCalendarTargets.ts`, `lib/calendarSyncId.ts`).
+ */
+export const BOOKING_BUSY_CONFLICT_CODE = 'booking_busy_conflict';
+export const COMPANY_HOLIDAY_CONFLICT_CODE = 'company_holiday_conflict';
+
+/**
+ * The `details.code` on a callable rejection, or `''` when the rejection carries
+ * none. Reads the shape defensively rather than importing `FirebaseError`, so
+ * this stays a pure function a test can call with a plain object -- the same
+ * approach `lib/googleOAuthSetup.ts#readOAuthFailure` already takes.
+ */
+export function callableConflictCode(err: unknown): string {
+  if (typeof err !== 'object' || err === null) return '';
+  const details = (err as { details?: unknown }).details;
+  if (typeof details !== 'object' || details === null) return '';
+  const code = (details as { code?: unknown }).code;
+  return typeof code === 'string' ? code : '';
+}
+
+/**
+ * Whether this refusal is the ONE an operator is allowed to knowingly go past.
+ *
+ * A `GOOGLE_BUSY_IMPORT` clash is advisory-grade information about the
+ * operator's own calendar, and `overrideBusyConflict` exists server-side
+ * precisely so an admin can write over it (the server then audits the write as
+ * `BOOKING_BUSY_CONFLICT_OVERRIDDEN`). A company closure is the operator's own
+ * deliberate statement that the business is shut: `guardCompanyHolidayConflict`
+ * has no override parameter by design, so it must never reach this as `true`.
+ *
+ * `alreadyOverridden` is false only on a first attempt. Re-offering "Create
+ * anyway" after an override has already failed would offer the same losing move
+ * twice; Android refuses that for the same reason.
+ */
+export function isOverridableBusyRefusal(err: unknown, alreadyOverridden: boolean): boolean {
+  if (alreadyOverridden) return false;
+  return callableConflictCode(err) === BOOKING_BUSY_CONFLICT_CODE;
+}
+
+/**
+ * The exact payload the wizard sends, one field per callable argument.
+ *
+ * Built here rather than inline in the dialog so a test can assert the whole
+ * thing -- including that an operator's explicit "Create anyway" really does put
+ * `overrideBusyConflict: true` on the wire, which is the flag's entire point and
+ * which nothing on this surface set until now.
+ *
+ * `overrideBusyConflict` is only ever `true` on that explicit retry. `notes` and
+ * `kinIds` are omitted rather than sent blank: the callable treats an omitted
+ * key and a blank value identically, so sending the blank is noise on the wire.
+ */
+export function bookingSubmission(
+  state: WizardState,
+  overrideBusyConflict = false,
+): CreateMultiDateBookingRequestArgs {
+  return {
+    kinfolkId: state.kinfolkId,
+    ...(state.kinIds.length > 0 && { kinIds: state.kinIds }),
+    ...(state.notes.trim() !== '' && { notes: state.notes.trim() }),
+    pattern: state.mode === 'weekly' ? 'weekly' : 'individual',
+    ...(state.mode === 'weekly' && { weeklyDays: state.weeklyDays }),
+    visits: buildVisits(state),
+    billing: state.billing,
+    communication: state.communication,
+    ...(overrideBusyConflict && { overrideBusyConflict: true }),
+  };
 }
