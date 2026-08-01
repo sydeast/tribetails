@@ -6,3 +6,7 @@
 *.hprof
 .release-state
 __pycache__/
+node_modules/
+node_modules
+ui-ideas/
+visual-WRONGKILL/
