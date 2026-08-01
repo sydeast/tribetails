@@ -1,0 +1,75 @@
+/* ============================================================
+   SCREEN CSS: Booking Details (B3, punchlist item). Adapted from the
+   "SCREEN ADD-ONS, Booking Details" block of
+   ui-ideas/mytribe-booking-detail-2026-05-31.html. Same tokens, same
+   feel. `.field`/`.fields` in the mockup are renamed here to
+   `.bk-field`/`.bk-fields` — `tribe.css` already owns `.field` for a
+   label+input form row, and both files load globally, so the mockup's
+   names would silently collide with the form fields on TribeProfile/
+   Account/KinEdit/KinAdd.
+   ============================================================ */
+
+.bk-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
+.bk-head h1 { font-family: var(--serif); font-size: clamp(28px, 3.6vw, 38px); line-height: 1.06; letter-spacing: -.01em; }
+
+/* large status chip, supports every booking state */
+.chip.lg { font-size: 11.5px; padding: 6px 13px; display: inline-flex; align-items: center; gap: 7px; }
+.chip.requested { background: rgba(116, 83, 138, .12); color: var(--purple); }
+.chip.confirmed { background: rgba(223, 132, 49, .16); color: var(--orange); }
+.chip.inprogress { background: var(--tribe-grad); color: #fff; }
+.chip.completed { background: rgba(116, 83, 138, .14); color: var(--purple); }
+.chip.cancelled { background: rgba(213, 83, 90, .14); color: var(--coral); }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip.inprogress .dot { background: #fff; animation: pulse 1.6s var(--ease) infinite; }
+
+/* ===== status timeline ===== */
+.timeline { padding: 26px 24px 22px; margin-bottom: 24px; }
+.tl-track { display: grid; grid-template-columns: repeat(4, 1fr); position: relative; }
+.tl-line { position: absolute; left: 8%; right: 8%; top: 15px; height: 3px; border-radius: 99px; background: var(--hairline); z-index: 0; }
+/* `width` is set inline per booking (progress so far) — see BookingDetail.tsx. */
+.tl-line i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; background: var(--tribe-grad); }
+.tl-step { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.tl-dot { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-family: var(--mono); font-size: 13px;
+  background: #fff; border: 2px solid var(--hairline); color: var(--navy-muted); box-shadow: var(--shadow-card); }
+.tl-step.done .tl-dot { background: var(--tribe-grad); border-color: transparent; color: #fff; }
+.tl-step.now .tl-dot { background: var(--orange); border-color: #fff; color: #fff; box-shadow: 0 0 0 4px rgba(223, 132, 49, .22);
+  animation: pulse 1.8s var(--ease) infinite; }
+.tl-step .lbl { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--navy-muted); }
+.tl-step.now .lbl, .tl-step.done .lbl { color: var(--navy); font-weight: 500; }
+
+/* ===== fields grid (booking detail's own field display box, see header note) ===== */
+.bk-fields { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.bk-field { display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 16px; background: rgba(255, 255, 255, .5);
+  border: 1px solid var(--glass-border); }
+.bk-field .ic { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; font-size: 24px; flex: 0 0 auto; overflow: hidden; }
+.bk-field.f1 .ic { background: rgba(223, 132, 49, .16); } .bk-field.f2 .ic { background: rgba(10, 133, 149, .14); }
+.bk-field.f3 .ic { background: rgba(213, 92, 135, .14); } .bk-field.f4 .ic { background: rgba(116, 83, 138, .14); }
+.bk-field .lab { font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--navy-muted); }
+.bk-field .val { font-size: 15.5px; font-weight: 600; margin-top: 3px; }
+.bk-field .val small { display: block; font-weight: 400; font-size: 12.5px; color: var(--navy-muted); margin-top: 2px; font-family: var(--mono); }
+
+/* on file / additional info */
+.info-line { font-size: 14.5px; line-height: 1.6; color: var(--navy-soft); }
+.info-line + .info-line { margin-top: 10px; }
+.info-line b { font-weight: 600; color: var(--navy); }
+
+/* note box */
+.note-ta { width: 100%; min-height: 120px; resize: vertical; border-radius: 16px; border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, .55); padding: 14px 16px; font-family: var(--sans); font-size: 14.5px; color: var(--navy);
+  line-height: 1.5; transition: .2s var(--ease); }
+.note-ta::placeholder { color: var(--navy-muted); }
+.note-ta:focus { outline: none; border-color: var(--orange); box-shadow: 0 0 0 4px rgba(223, 132, 49, .14); background: #fff; }
+.note-ta.err { border-color: var(--coral); box-shadow: 0 0 0 4px rgba(213, 83, 90, .14); }
+.note-err { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11.5px; color: var(--coral); margin-top: 9px; letter-spacing: .03em; }
+.note-foot { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+.note-ok { font-family: var(--mono); font-size: 11.5px; color: var(--teal); letter-spacing: .03em; }
+
+/* cancel-request confirm panel */
+.cancel-confirm { display: flex; flex-direction: column; gap: 11px; margin-top: 12px; }
+.cancel-pending { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--navy-soft); }
+.cancel-pending .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--coral); flex: 0 0 auto; }
+
+@media (max-width: 880px) {
+  .bk-fields { grid-template-columns: 1fr; }
+  .tl-step .lbl { font-size: 9.5px; }
+}

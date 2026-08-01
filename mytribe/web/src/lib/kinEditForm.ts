@@ -1,4 +1,4 @@
-import type { KinDto, KinPayloadPartial } from '../api/types';
+import type { AddKinRequest, KinDto, KinPayloadPartial } from '../api/types';
 
 /**
  * Pure form logic for the Kin edit screen (KinEdit.tsx), kept out of the
@@ -43,6 +43,23 @@ const LONG_TEXT_FIELDS = [
   'emergencyNotes',
   'sitterNotes',
 ] as const;
+
+/** A blank form for the Add New Kin screen (KinAdd.tsx) — every field starts empty. */
+export function emptyKinForm(): KinEditForm {
+  return {
+    name: '',
+    species: '',
+    breed: '',
+    ageYears: '',
+    photoUrl: '',
+    feedingInstructions: '',
+    walkingInstructions: '',
+    medications: '',
+    allergies: '',
+    emergencyNotes: '',
+    sitterNotes: '',
+  };
+}
 
 /** Seeds the string-backed form from the loaded kin (null becomes empty). */
 export function kinFormFromDto(kin: KinDto): KinEditForm {
@@ -146,4 +163,27 @@ export function buildKinChanges(kin: KinDto, form: KinEditForm): KinPayloadParti
   }
 
   return changes;
+}
+
+/**
+ * Full addKin payload (not a diff, unlike buildKinChanges): every field
+ * normalized, empty text becomes null except `name` (required, trimmed).
+ * Assumes validateKinForm already passed — an unparsable age is sent as null
+ * rather than blocking, mirroring buildKinChanges' fallback.
+ */
+export function buildNewKinPayload(form: KinEditForm): AddKinRequest['kin'] {
+  const parsedAge = parseAge(form.ageYears);
+  return {
+    name: form.name.trim(),
+    species: form.species.trim() || null,
+    breed: form.breed.trim() || null,
+    ageYears: parsedAge === 'invalid' ? null : parsedAge,
+    photoUrl: form.photoUrl.trim() || null,
+    feedingInstructions: form.feedingInstructions.trim() || null,
+    walkingInstructions: form.walkingInstructions.trim() || null,
+    medications: form.medications.trim() || null,
+    allergies: form.allergies.trim() || null,
+    emergencyNotes: form.emergencyNotes.trim() || null,
+    sitterNotes: form.sitterNotes.trim() || null,
+  };
 }

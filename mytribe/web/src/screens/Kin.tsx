@@ -32,9 +32,9 @@ export function Kin() {
             <h2>The Kin</h2>
             <div className="sub">Everyone who shares your home. Tap a card to open the full profile.</div>
           </div>
-          <span className="btn grad navlink-inert" title="Coming soon">
+          <Link className="btn grad" to="/kin/new">
             + Add New
-          </span>
+          </Link>
         </div>
 
         {kin.isLoading ? (
@@ -44,9 +44,9 @@ export function Kin() {
             <div className="ehug">{'\u{1F43E}'}</div>
             <h3>No Kin added yet</h3>
             <p>Add the Kin in your home, names, breeds, photos, care details. Tap each card for full profile.</p>
-            <span className="btn grad navlink-inert" style={{ marginTop: 20 }} title="Coming soon">
+            <Link className="btn grad" style={{ marginTop: 20 }} to="/kin/new">
               + Add New
-            </span>
+            </Link>
           </section>
         ) : (
           <div className="kingrid">
@@ -74,11 +74,11 @@ export function Kin() {
               );
             })}
 
-            <div className="petcard addcard" title="Coming soon">
+            <Link className="petcard addcard" to="/kin/new">
               <div className="plus">+</div>
               <b>Add New</b>
               <small>NEW KIN PROFILE</small>
-            </div>
+            </Link>
           </div>
         )}
 

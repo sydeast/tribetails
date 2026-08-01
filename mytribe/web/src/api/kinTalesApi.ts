@@ -150,6 +150,35 @@ export function loveLine(reaction: KinTaleReactionResult): string {
   return `${loveCount} ${loveCount === 1 ? 'person' : 'people'} loved this`;
 }
 
+// ── createShareLink (functions/src/share/createShareLink.ts) ────────────────
+// Unlike every other wrapper in this file, `familyId` is REQUIRED (not
+// optional): the server's zod schema requires it, and it is also the
+// authorization anchor (requirePrimary gate) — there is no server-side
+// resolveKinfolkAccess fallback to omit it in favor of, the way the read
+// callables have. A SECONDARY household member is denied server-side
+// (requirePrimary); that denial is meant to surface as a visible error here,
+// not be pre-filtered client-side, since this screen has no membership-role
+// signal to pre-filter on.
+
+export interface CreateShareLinkRequest {
+  familyId: string;
+  kinTaleId: string;
+  includePhotos?: boolean;
+  expiresInDays?: number;
+  passcode?: string;
+}
+
+export interface CreateShareLinkResult {
+  shareId: string;
+  shareUrl: string;
+}
+
+/** Creates a public, time-limited share link for one KinTale. Photos included by default (the whole point of sharing). */
+export function createShareLink(kinTaleId: string, familyId: string): Promise<CreateShareLinkResult> {
+  const payload: CreateShareLinkRequest = { familyId, kinTaleId, includePhotos: true };
+  return call<CreateShareLinkRequest, CreateShareLinkResult>('createShareLink', payload);
+}
+
 // ── pure helpers (pagination / filtering / comment threading / labels) ──────
 
 export type KinTalesFilter = 'all' | 'lore' | 'gallery';

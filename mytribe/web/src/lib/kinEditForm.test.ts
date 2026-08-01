@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { buildKinChanges, hasErrors, kinFormFromDto, parseAge, validateKinForm, type KinEditForm } from './kinEditForm';
+import {
+  buildKinChanges,
+  buildNewKinPayload,
+  emptyKinForm,
+  hasErrors,
+  kinFormFromDto,
+  parseAge,
+  validateKinForm,
+  type KinEditForm,
+} from './kinEditForm';
 import type { KinDto } from '../api/types';
 
 function kin(overrides: Partial<KinDto> = {}): KinDto {
@@ -125,5 +134,44 @@ describe('buildKinChanges', () => {
 
   it('leaves the age untouched when the entry is unparsable (validation gates submit)', () => {
     expect(buildKinChanges(kin({ ageYears: 3 }), formFor({ ageYears: 'abc' }))).toEqual({});
+  });
+});
+
+describe('emptyKinForm', () => {
+  it('every field starts blank, and it validates as incomplete (name required)', () => {
+    const form = emptyKinForm();
+    expect(Object.values(form).every((v) => v === '')).toBe(true);
+    expect(validateKinForm(form).name).toBe('Name is required.');
+  });
+});
+
+describe('buildNewKinPayload', () => {
+  it('sends the full payload (not a diff): every blank field becomes null, name is trimmed', () => {
+    const form = { ...emptyKinForm(), name: '  Rex  ', species: 'Dog' };
+    expect(buildNewKinPayload(form)).toEqual({
+      name: 'Rex',
+      species: 'Dog',
+      breed: null,
+      ageYears: null,
+      photoUrl: null,
+      feedingInstructions: null,
+      walkingInstructions: null,
+      medications: null,
+      allergies: null,
+      emergencyNotes: null,
+      sitterNotes: null,
+    });
+  });
+
+  it('parses a valid age and trims every text field', () => {
+    const form: KinEditForm = { ...emptyKinForm(), name: 'Rex', ageYears: '4', breed: '  Beagle  ' };
+    const payload = buildNewKinPayload(form);
+    expect(payload.ageYears).toBe(4);
+    expect(payload.breed).toBe('Beagle');
+  });
+
+  it('sends null for an unparsable age rather than blocking (validation gates submit before this runs)', () => {
+    const form: KinEditForm = { ...emptyKinForm(), name: 'Rex', ageYears: 'not a number' };
+    expect(buildNewKinPayload(form).ageYears).toBeNull();
   });
 });
