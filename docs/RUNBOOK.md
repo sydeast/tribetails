@@ -82,8 +82,8 @@ From the repo root. Each fans out to the project that owns it.
 | `npm run lint` | Functions eslint |
 | `npm run contracts:generate` | Rewrite the generated Contracts module from the server zod schemas |
 | `npm run contracts:check` | Regenerate into memory and fail on any diff. Part of `check`. |
-| `npm run e2e` | Playwright against the emulator |
-| `npm run check` | typecheck, lint, contracts, test, build. What CI runs. |
+| `npm run e2e` | Playwright against the emulator. **Not part of `check`** |
+| `npm run check` | typecheck, lint, contracts, test, build. Not e2e; release step 0b covers that by asking CI. |
 | `npm run deploy` | The production run. See [Deploying](#deploying). |
 
 Suffix any of `test`, `typecheck`, `build` with `:functions`, `:admin` or
@@ -169,6 +169,7 @@ order**, stops at the first failure, and names the step it died in.
 | # | Step | Why here |
 |---|---|---|
 | 0 | Preconditions | Clean tree, on `main`, synced with origin. Shipping uncommitted or stale code is the classic incident. Falls back to `gh` if the SSH agent is down, since it must verify the fact, not one transport. |
+| 0b | CI verdict for HEAD | Asks GitHub whether every check is green for this exact commit, **e2e included**. `npm run check` does not run e2e, so until this existed a red e2e could not stop a release. See below. |
 | 1 | `npm run check` | Typecheck, lint, test, build. Not optional theatre: this is what produces the `dist/` that step 6 uploads. |
 | 1b | Secret preflight | Every secret the code DECLARES must exist. Firebase validates these before uploading, and one missing name fails the whole codebase. Refuses here, before any deploy. |
 | 1c | Android build | Assembles the signed release APK. Runs before the first deploy so a build failure costs nothing; the upload is step 6b. |
@@ -179,7 +180,7 @@ order**, stops at the first failure, and names the step it died in.
 | 6 | Hosting | Admin, then portal. |
 | 6b | Android | Uploads the APK from step 1c to App Distribution, in the same run as the web. |
 | 7 | Verify | Fetches both live sites and compares the hashed bundle they reference against the one just built. |
-| 8 | Prune revisions | Deletes old Cloud Run revisions, keeping the newest 10 per service and every serving one. Runs after verification, because those revisions are rollback targets. |
+| 8 | Prune revisions | Deletes old Cloud Run revisions, keeping the newest 3 per service and every serving one. Runs after verification, because those revisions are rollback targets. Was 10, which floored the sweep above every inventory level that has ever caused trouble; see below. |
 | 9 | Tag the release | Annotates `release/YYYY.MM.DD-<sha>`, naming what actually shipped, and pushes just that tag to origin. Runs after step 7, so nothing gets tagged unless it was verified live. |
 
 **Why step 5 is conditional.** Redeploying the codebase mints a new Cloud Run
@@ -211,12 +212,71 @@ Step 7 is the one whose absence hid the stale admin. Hosting can report a
 successful release while browsers still get the old bundle. A release that
 cannot prove it landed has told you nothing.
 
+**Why step 0b asks CI instead of running e2e.** `npm run check` is typecheck,
+lint, `contracts:check`, test and build. It does not run `npm run e2e` and never
+did, so the Playwright suite could not block a release. That suite is the only
+thing here that drives the admin in a real browser, against the real
+`firestore.rules`, through the real sign-in form. On 2026-08-01 a release went
+out from a commit whose `React admin e2e` job was red on `main`, and the run
+said nothing.
+
+Three ways to close that, and the other two are worse:
+
+- **Put e2e inside `npm run check`.** `check` is also what CI runs and what
+  everyone runs before pushing. e2e needs the auth and Firestore emulators on
+  9399 and 8385, a downloaded Chromium and a JDK, so this makes a busy port fail
+  everybody's `check`, and makes a release that cannot *start* because a dev
+  emulator is holding a port. A new failure mode for the one being fixed.
+- **A dedicated release step running e2e locally.** Same port exposure, narrower,
+  plus 42-49s of wall clock (measured, `auntieos-admin/docs/runbooks/e2e.md`).
+  The minute is affordable; the problem is that it answers a different question.
+  A local pass says this machine agrees today. "CI red, local green" below says
+  these disagree in practice, and CI is the authority for what is red on main.
+- **Ask CI.** One HTTPS request, no emulator, no port, no browser, and it covers
+  every other job for free: a red Android, portal or functions job now stops the
+  release too. `gh` uses an HTTPS token, so it answers when the SSH agent is
+  down, the same reason step 0 already falls back to it.
+
+The gate refuses on any check that failed, and on any still running: shipping
+against a run in flight is shipping against an unknown.
+
+**The path filter is the subtle part.** `React admin e2e` only runs when the
+paths it watches change, so on a functions-only commit GitHub reports it
+`skipped`. Skipped is not a verdict, and it must not be rounded up to green.
+That is the hole a red e2e survives through, needing only one more commit on top
+that touches nothing the filter watches. So when HEAD has no e2e *result*, the
+gate walks back up to 15 commits of first-parent history for the most recent
+commit that has one, uses it, and names which commit it came from. If there is
+no verdict at all within that window it says so loudly and continues, because a
+repo can legitimately go that long without touching the admin.
+
+**When the gate cannot answer** (no `gh`, not authenticated, GitHub unreachable)
+it refuses, and the refusal names `RELEASE_SKIP_CI_GATE=1`, which releases
+without it. An unreachable GitHub must not become an inability to ship a fix.
+That override is for an unavailable gate, not for a gate that said no.
+
+**A dry run is inert, and says so.** `DRY_RUN=1` deploys nothing, writes
+nothing, and claims nothing. It does not write `.release-state`, does not delete
+the built APK, does not tag, and ends under a "Dry run finished" banner listing
+what it actually established rather than a "Released" one. Until 2026-08-01 it
+wrote `.release-state` and signed off with "Commit `<sha>` is live and verified".
+That made the *next* real release compare `mytribe/functions` against
+code that had never shipped, find no diff, and skip the functions deploy. The
+new admin bundle went live calling `getInvoiceLedger`, `listInvites`,
+`transitionBookingStatus` and `getBusinessClosures` against a backend that had
+none of them. `.release-state` is not a log; it is step 5's input.
+
+`bash scripts/release.test.sh` covers both of those and the CI gate, running the
+real script against a throwaway repo with `gh`, `gcloud`, `firebase`, `curl` and
+`npm` stubbed. 15 cases. Run it after touching `scripts/release.sh`.
+
 Knobs, all off by default:
 
 | Variable | Effect |
 |---|---|
-| `DRY_RUN=1` | Print every firebase command, run none |
+| `DRY_RUN=1` | Rehearse: print every firebase command, run none, write nothing, claim nothing |
 | `RELEASE_SKIP_CHECK=1` | Skip step 1. Then `dist/` is whatever was last built, which may not match HEAD |
+| `RELEASE_SKIP_CI_GATE=1` | Release without CI's verdict for HEAD. For when the gate is unavailable, not for when it says no |
 | `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` | Also ship the AuntieOS `default` and `reconcile` codebases |
 | `RELEASE_YES=1` | Do not prompt (CI). Preconditions still apply |
 | `RELEASE_FORCE_FUNCTIONS=1` | Deploy functions even when unchanged |
@@ -227,7 +287,7 @@ Knobs, all off by default:
 | `RELEASE_SKIP_SECRET_CHECK=1` | Skip step 1b |
 | `RELEASE_SKIP_PRUNE=1` | Skip the step 8 retention prune. Revisions then accumulate until someone prunes by hand |
 | `RELEASE_PREDEPLOY_KEEP=N` | Prune to N per service before the functions deploy. Off by default and unproven; see the quota entry below |
-| `RELEASE_KEEP_REVISIONS=N` | Revisions kept per service in step 8 (default 10) |
+| `RELEASE_KEEP_REVISIONS=N` | Revisions kept per service in step 8 (default 3) |
 
 ### Every release is tagged
 
@@ -490,11 +550,41 @@ Cloud Run Admin API, "Total CPU allocation, per project per region",
 Pruning is still worth doing as retention, which is what step 8 is for:
 
 ```bash
-scripts/prune-run-revisions.sh 10   # retention, what step 8 does
+scripts/prune-run-revisions.sh 3   # retention, what step 8 does
 ```
 
 It never touches a serving revision, keeps the newest N per service, and retries
 the 429s the Cloud Run API returns under load.
+
+**The retention default was 10 and could never fire.** A keep of N sets a floor
+of N x services below which the sweep is arithmetically incapable of deleting
+anything. At 238 services, keep-10 floors at 2,380 revisions, above every level
+this project has ever been in trouble at (676 on 2026-07-28, 926 on
+2026-08-01). Confirmed the expensive way: on 2026-08-01 step 8 ran against 926
+revisions across 238 services, a mean of 3.9 apiece, and deleted **zero**. Not a
+bug in the prune; a retention default set above the pressure it exists to
+relieve.
+
+The depth bought nothing usable either. The documented rollback path for
+functions is revert-and-redeploy, and hosting rolls back from the console
+separately; revision-level rollback would be `gcloud run services update-traffic`,
+which is written down nowhere here and has never been run. Keep-10 was holding
+~8 revisions per service of theoretical depth nobody has used, at the price of
+reclaiming none of it.
+
+So the default is **3**: a floor of 714 across 238 services, which would have
+removed ~212 at the 926 that mattered, while still leaving the two previous
+deploys plus the serving revision per service. It stops at 3 rather than 2 even
+though recovery on 2026-08-01 took the inventory to 468 (~2 per service) before
+the last 26 functions would land, because the measurements above say the prune is
+not what fixed that. Picking 2 would be quietly re-adopting the theory that was
+tested and failed.
+
+Step 8 still runs after step 7, so it cannot help the deploy in its own run.
+That is answered across runs rather than within one: a sweep whose keep actually
+fires leaves the inventory at its floor every release, so the next release starts
+from ~714 instead of from 926 and climbing. `RELEASE_PREDEPLOY_KEEP=N` stays
+off by default and unproven, for the reasons above.
 
 **A deploy failed partway and left named functions undeployed.** The failed
 functions are still serving their previous revision, so production is
@@ -564,6 +654,11 @@ and unit tests do not. The build names whichever is missing.
 against the emulator catches font, cascade and auth problems jsdom cannot see.
 Run `npm run e2e`.
 
+**A release refuses with "CI is not green for `<sha>`".** Working as intended,
+and it is release step 0b. Fix the named job on main and release the commit that
+fixes it. `RELEASE_SKIP_CI_GATE=1` is for a gate that cannot answer, not for one
+that answered no; using it that way reproduces 2026-08-01 exactly.
+
 ---
 
 ## Where else to look
@@ -574,6 +669,8 @@ Run `npm run e2e`.
 | `auntieos-admin/CLAUDE.md` | Vertical-slice rule, error-handling philosophy |
 | `mytribe/functions/CALLABLE_CONTRACT.md` | Canonical request and response shapes |
 | `scripts/safe-deploy.sh` | Deploy guards, with the reasoning in the header |
+| `scripts/release.sh` | The production run, step by step, with why each step is where it is |
+| `scripts/release.test.sh` | Runs the release script against a throwaway repo and stubbed CLIs |
 | `auntieos-admin/docs/runbooks/e2e.md` | The Playwright harness |
 | `auntieos-admin/docs/runbooks/visual-regression.md` | Visual harness, escalate-never-approve |
 | `auntieos-admin/docs/handoffs/` | What a given week found |
