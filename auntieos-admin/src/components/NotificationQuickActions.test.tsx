@@ -11,9 +11,13 @@ function entry(over: Partial<NotificationEntry> = {}): NotificationEntry {
 
 function handlers() {
   return {
+    // The default for every pre-existing case below: an ACTIVE row. The archived
+    // branch gets its own describe block at the bottom.
+    archived: false,
     onToggleRead: vi.fn(),
     onNavigate: vi.fn(),
     onArchive: vi.fn(),
+    onRestore: vi.fn(),
     onBookingAction: vi.fn(),
   };
 }
@@ -136,5 +140,51 @@ describe('NotificationQuickActions', () => {
     expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Deny' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Open' })).not.toBeDisabled();
+  });
+});
+
+describe('NotificationQuickActions, the archive direction', () => {
+  it('offers Restore instead of Archive on an archived row', () => {
+    render(
+      <NotificationQuickActions entry={entry()} read={false} busy={false} {...handlers()} archived />,
+    );
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull();
+  });
+
+  it('calls onRestore, never onArchive, from the archived row', async () => {
+    const h = handlers();
+    render(<NotificationQuickActions entry={entry()} read={false} busy={false} {...h} archived />);
+    await userEvent.click(screen.getByRole('button', { name: 'Restore' }));
+    expect(h.onRestore).toHaveBeenCalledTimes(1);
+    expect(h.onArchive).not.toHaveBeenCalled();
+  });
+
+  it('calls onArchive, never onRestore, from an active row', async () => {
+    const h = handlers();
+    render(<NotificationQuickActions entry={entry()} read={false} busy={false} {...h} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    expect(h.onArchive).toHaveBeenCalledTimes(1);
+    expect(h.onRestore).not.toHaveBeenCalled();
+  });
+
+  it('disables Restore while a write for the row is in flight', () => {
+    render(<NotificationQuickActions entry={entry()} read={false} busy {...handlers()} archived />);
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeDisabled();
+  });
+
+  it('keeps the read toggle and the conditional actions on an archived row', () => {
+    render(
+      <NotificationQuickActions
+        entry={entry({ targetType: 'booking', targetId: 'b1' })}
+        read={false}
+        busy={false}
+        {...handlers()}
+        archived
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Mark read' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open' })).toBeInTheDocument();
   });
 });

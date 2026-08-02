@@ -22,13 +22,38 @@ export interface BulkMarkRead {
   selectedIds: ReadonlySet<string>;
   /** Add/remove one id from the selection. */
   toggle: (id: string, checked: boolean) => void;
+  /**
+   * Select exactly these ids, replacing whatever was selected.
+   *
+   * Takes the ids explicitly rather than reaching for the whole stream, because
+   * the caller is the only one that knows which rows are actually ON SCREEN.
+   * Android's "Select all" selects from the unfiltered list while its checkboxes
+   * render only on the filtered rows, so a select-all-then-dismiss under an
+   * active filter acts on notifications the operator never saw. Passing the
+   * visible set in makes that mistake unavailable here.
+   */
+  selectAll: (ids: readonly string[]) => void;
   clear: () => void;
   /** True while a batch write is in flight. */
   busy: boolean;
   /** Fail-loud message for the caller to render; also settable for sibling actions. */
   error: string | null;
   setError: (message: string | null) => void;
-  markSelectedRead: () => Promise<void>;
+  /**
+   * Marks the selection read. Pass an explicit subset to send FEWER ids than are
+   * selected, which the Notifications screen does with the unread ones only.
+   *
+   * Why that matters: the callable skips rows that are already read and reports
+   * how many it really marked, so a selection containing read rows comes back
+   * partial and the partial-batch sentence below fires on a batch in which
+   * nothing failed. Narrowing what is SENT (not what is selected) makes the
+   * report accurate again. The whole selection still clears on success, because
+   * the operator's intent was the whole selection either way.
+   *
+   * Omitting the argument sends the entire selection, which is what the Inbox
+   * digest strip does.
+   */
+  markSelectedRead: (ids?: readonly string[]) => Promise<void>;
 }
 
 export function useBulkMarkRead(rows: Async<readonly { _id: string }[]>): BulkMarkRead {
@@ -57,8 +82,8 @@ export function useBulkMarkRead(rows: Async<readonly { _id: string }[]>): BulkMa
     });
   }
 
-  async function markSelectedRead() {
-    const ids = [...selectedIds];
+  async function markSelectedRead(only?: readonly string[]) {
+    const ids = only === undefined ? [...selectedIds] : [...only];
     if (ids.length === 0 || busy) return;
     setBusy(true);
     setError(null);
@@ -81,6 +106,7 @@ export function useBulkMarkRead(rows: Async<readonly { _id: string }[]>): BulkMa
   return {
     selectedIds,
     toggle,
+    selectAll: (ids: readonly string[]) => setSelectedIds(new Set(ids)),
     clear: () => setSelectedIds(new Set()),
     busy,
     error,

@@ -383,17 +383,31 @@ export function invoicesPageQuery({ startDay, kinfolkId }: InvoicesPageOptions):
  * Does this invoice match the operator's search text?
  *
  * Client-side over the loaded rows, same contract and same disclosure as
- * `kinTaleMatchesSearch`. Number, household and client are each tested on their
- * own: an invoice is found by who it is for or by the number written on it, and
- * those are the two things the row shows.
+ * `kinTaleMatchesSearch`. Number, household, client and the FORMATTED AMOUNT are
+ * each tested on their own: an invoice is found by who it is for, by the number
+ * written on it, or by what it is worth, and those are the things the row shows.
+ *
+ * THE AMOUNT IS MATCHED AS THE TEXT THE ROW PRINTS, not as a number. Android's
+ * `matchesQuery` does the same, and it is why typing "$40" or "40.00" finds the
+ * $40.00 invoice. Matching numerically instead would mean deciding what "40"
+ * means (40? 40.00? 4000 cents? a prefix?) and every answer disagrees with what
+ * the operator can see on the row. Formatting the stored figure and doing a
+ * substring test over it keeps the search and the row describing one string.
+ *
+ * The formatting is inlined rather than imported from `lib/invoiceFormat.ts`
+ * because nothing else in `api/` depends on `lib/`, and a two-line currency
+ * format is not worth inverting that. `formatUsd`'s own tests pin the shape, and
+ * `invoiceMatchesSearch`'s pin that this agrees with it.
  */
 export function invoiceMatchesSearch(
-  row: Pick<InvoiceEntry, 'invoiceNumber' | 'kinfolkName' | 'client'>,
+  row: Pick<InvoiceEntry, 'invoiceNumber' | 'kinfolkName' | 'client' | 'total'>,
   search: string,
 ): boolean {
   const needle = search.trim().toLowerCase();
   if (needle === '') return true;
-  return [row.invoiceNumber ?? '', row.kinfolkName ?? '', row.client ?? ''].some((field) =>
+  const total = typeof row.total === 'number' && Number.isFinite(row.total) ? row.total : 0;
+  const money = `${total < 0 ? '-' : ''}$${Math.abs(total).toFixed(2)}`;
+  return [row.invoiceNumber ?? '', row.kinfolkName ?? '', row.client ?? '', money].some((field) =>
     field.toLowerCase().includes(needle),
   );
 }

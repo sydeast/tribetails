@@ -199,7 +199,12 @@ describe('isArchivedInvoice', () => {
 });
 
 describe('invoiceMatchesSearch', () => {
-  const row = { invoiceNumber: '1042', kinfolkName: 'The Whitfields', client: 'Dana Ruiz' };
+  const row = {
+    invoiceNumber: '1042',
+    kinfolkName: 'The Whitfields',
+    client: 'Dana Ruiz',
+    total: 40,
+  };
 
   it('matches everything on a blank query', () => {
     expect(invoiceMatchesSearch(row, '  ')).toBe(true);
@@ -217,5 +222,32 @@ describe('invoiceMatchesSearch', () => {
 
   it('never throws on the missing fields a real doc genuinely has', () => {
     expect(invoiceMatchesSearch({} as InvoiceEntry, 'anything')).toBe(false);
+  });
+  /**
+   * THE AMOUNT, matched as the text the row prints. Android's search does the
+   * same, and it is what makes "the forty dollar one" a findable thing.
+   */
+  it('finds an invoice by the amount as it is written on the row', () => {
+    expect(invoiceMatchesSearch(row, '$40.00')).toBe(true);
+    expect(invoiceMatchesSearch(row, '40.00')).toBe(true);
+    expect(invoiceMatchesSearch(row, '$40')).toBe(true);
+  });
+  it('does not match an amount this invoice is not worth', () => {
+    expect(invoiceMatchesSearch(row, '$41')).toBe(false);
+    expect(invoiceMatchesSearch(row, '400.00')).toBe(false);
+  });
+  it('matches a negative amount with its sign, the way the row shows it', () => {
+    const credit = { ...row, total: -12.5 };
+    expect(invoiceMatchesSearch(credit, '-$12.50')).toBe(true);
+    expect(invoiceMatchesSearch(credit, '$12.50')).toBe(true);
+  });
+  it('reads a non-finite total as $0.00 rather than matching "nan"', () => {
+    const broken = { ...row, total: Number.NaN };
+    expect(invoiceMatchesSearch(broken, 'nan')).toBe(false);
+    expect(invoiceMatchesSearch(broken, '$0.00')).toBe(true);
+  });
+  it('reads a missing total as $0.00 rather than throwing', () => {
+    const missing = { invoiceNumber: '1042' } as unknown as InvoiceEntry;
+    expect(invoiceMatchesSearch(missing, '$0.00')).toBe(true);
   });
 });

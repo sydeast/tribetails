@@ -26,10 +26,17 @@ export interface NotificationQuickActionsProps {
   entry: NotificationEntry;
   /** Current read state, read off `readAt` by the parent. */
   read: boolean;
+  /**
+   * Current archive state. Decides which DIRECTION the file-away control points,
+   * so an archived row offers Restore and never a second Archive that the server
+   * would accept as a no-op restamp.
+   */
+  archived: boolean;
   /** True while a write for THIS row is in flight. */
   busy: boolean;
   onToggleRead: () => void;
   onArchive: () => void;
+  onRestore: () => void;
   /** Handed a route from the pure table; the router performs the navigation. */
   onNavigate: (route: NotificationRoute) => void;
   onBookingAction: (bookingId: string, action: BatchBookingAction) => void;
@@ -38,9 +45,11 @@ export interface NotificationQuickActionsProps {
 export function NotificationQuickActions({
   entry,
   read,
+  archived,
   busy,
   onToggleRead,
   onArchive,
+  onRestore,
   onNavigate,
   onBookingAction,
 }: NotificationQuickActionsProps) {
@@ -74,7 +83,14 @@ export function NotificationQuickActions({
       ) : null}
 
       <GhostButton label={read ? 'Mark unread' : 'Mark read'} onClick={onToggleRead} disabled={busy} />
-      <GhostButton label="Archive" onClick={onArchive} disabled={busy} />
+      {/* One control, two directions, chosen by the row's own state. Archiving
+          used to have no inverse anywhere in the product, which made this button
+          a one-way door; `unarchiveNotification` is the way back. */}
+      <GhostButton
+        label={archived ? 'Restore' : 'Archive'}
+        onClick={archived ? onRestore : onArchive}
+        disabled={busy}
+      />
     </div>
   );
 }

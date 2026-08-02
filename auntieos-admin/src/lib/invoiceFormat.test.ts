@@ -5,6 +5,7 @@ import {
   invoiceStateInfo,
   isInvoiceOverdue,
   invoiceActionsFor,
+  invoiceDaysOverdue,
   invoicePartialPayment,
   isoDatePrefixOrNull,
   localDateIso,
@@ -219,5 +220,55 @@ describe('invoicePartialPayment', () => {
     // The guard that keeps collecting the balance possible: part-paid is a
     // display refinement of open, so the outstanding action set is untouched.
     expect(invoiceActionsFor('open')).toContain('markPaid');
+  });
+});
+/**
+ * HOW LATE, in days, for the row's meta line and the Overdue card's subline.
+ *
+ * Gated on `isInvoiceOverdue` rather than re-deriving the verdict, so the number
+ * and the chip can never disagree, and null for every case that is not a real
+ * dated overdue balance. "0 days overdue" and "NaN days overdue" are both worse
+ * than the plain due date the caller falls back to.
+ */
+describe('invoiceDaysOverdue', () => {
+  it('counts whole days past the due date on an open invoice', () => {
+    expect(invoiceDaysOverdue('open', '2026-07-04', '2026-07-16')).toBe(12);
+  });
+  it('answers 1 for an invoice one day late, so the copy can say "1 day"', () => {
+    expect(invoiceDaysOverdue('open', '2026-07-15', '2026-07-16')).toBe(1);
+  });
+  it('answers null on the due date itself: due today is not overdue', () => {
+    expect(invoiceDaysOverdue('open', '2026-07-16', '2026-07-16')).toBeNull();
+  });
+  it('answers null for a future due date', () => {
+    expect(invoiceDaysOverdue('open', '2026-08-01', '2026-07-16')).toBeNull();
+  });
+  it('answers null for every state that is not open, however stale the date', () => {
+    for (const state of INVOICE_STATES.filter((s) => s !== 'open')) {
+      expect(invoiceDaysOverdue(state, '2020-01-01', '2026-07-16')).toBeNull();
+    }
+  });
+  it('answers null for an unstamped doc rather than guessing from the date', () => {
+    expect(invoiceDaysOverdue(null, '2020-01-01', '2026-07-16')).toBeNull();
+  });
+  it('answers null for a due date that is not a date at all', () => {
+    expect(invoiceDaysOverdue('open', 'Net 14', '2026-07-16')).toBeNull();
+    expect(invoiceDaysOverdue('open', '', '2026-07-16')).toBeNull();
+  });
+  it('crosses a month and a year boundary without drifting', () => {
+    expect(invoiceDaysOverdue('open', '2025-12-31', '2026-01-01')).toBe(1);
+    expect(invoiceDaysOverdue('open', '2026-01-31', '2026-03-01')).toBe(29);
+  });
+  it('is not shifted by a DST boundary between the two dates', () => {
+    // US spring forward 2026-03-08 sits inside this span. Both ends are calendar
+    // labels parsed at UTC midnight, so the answer is a whole number of days.
+    expect(invoiceDaysOverdue('open', '2026-03-01', '2026-03-15')).toBe(14);
+  });
+  it('agrees with isInvoiceOverdue on every case it answers a number for', () => {
+    const cases = ['2026-07-04', '2026-07-15', '2026-07-16', '2026-08-01', 'Net 14', ''];
+    for (const due of cases) {
+      const days = invoiceDaysOverdue('open', due, '2026-07-16');
+      if (days !== null) expect(isInvoiceOverdue('open', due, '2026-07-16')).toBe(true);
+    }
   });
 });

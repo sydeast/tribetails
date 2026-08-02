@@ -636,3 +636,317 @@ describe('Invoices screen: a failed FIRST page is not a failed LATER page', () =
     expect(reload).not.toHaveBeenCalled();
   });
 });
+/**
+ * THE ROW'S QUICK ACTION, the parity gap that mattered most against Android.
+ *
+ * Android's `RowAction` puts one state-appropriate action on every row, drawn
+ * from the shared `invoiceActionsFor`, so a list of overdue invoices can be
+ * worked without opening each one. The web list had none.
+ *
+ * The button OPENS THE DETAIL ARMED ON THAT ACTION rather than firing the
+ * callable from the row: every one of these reaches a real household, and the
+ * confirm step that spells out what it does already exists. These tests pin both
+ * halves: that the right action appears per stored state, and that pressing it
+ * lands on that confirm step and nothing else.
+ */
+describe('Invoices row quick action', () => {
+  function rowOf(number: string): HTMLElement {
+    return screen.getByText(`#${number}`).closest('.invoices__row') as HTMLElement;
+  }
+  it('offers Send reminder on an open invoice', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'open' })]));
+    render(<Invoices />);
+    expect(within(rowOf('1042')).getByRole('button', { name: 'Send reminder' })).toBeInTheDocument();
+  });
+  it('offers Review and send on a draft', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'draft', editScope: 'all' })]));
+    render(<Invoices />);
+    expect(
+      within(rowOf('1042')).getByRole('button', { name: 'Review and send' }),
+    ).toBeInTheDocument();
+  });
+  it('offers Receipt on a paid invoice, and never Send reminder', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'paid', amountDue: 0, editScope: 'none' })]),
+    );
+    render(<Invoices />);
+    const row = rowOf('1042');
+    expect(within(row).getByRole('button', { name: 'Receipt' })).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Send reminder' })).toBeNull();
+  });
+  it.each(['quote', 'cancelled', 'credit', 'redeemed', 'zero'] as const)(
+    'offers NO row action on a %s invoice, matching the detail panel',
+    (status) => {
+      usePagedCollection.mockReturnValue(paged([entry({ status, editScope: 'none' })]));
+      render(<Invoices />);
+      const row = rowOf('1042');
+      expect(within(row).queryByRole('button', { name: 'Send reminder' })).toBeNull();
+      expect(within(row).queryByRole('button', { name: 'Receipt' })).toBeNull();
+      expect(within(row).queryByRole('button', { name: 'Review and send' })).toBeNull();
+    },
+  );
+  it('offers NO row action on a doc with no recognizable state stamp', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'weird' as InvoiceEntry['status'] })]),
+    );
+    render(<Invoices />);
+    const row = rowOf('1042');
+    expect(within(row).getByText('WEIRD')).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Send reminder' })).toBeNull();
+  });
+  it('never offers Record payment from the row: it needs fields the row has no space for', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'open' })]));
+    render(<Invoices />);
+    expect(
+      within(rowOf('1042')).queryByRole('button', { name: 'Record payment' }),
+    ).toBeNull();
+  });
+  it('opens the detail already on the reminder confirm step, and sends nothing yet', async () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'open' })]));
+    render(<Invoices />);
+    await userEvent.click(within(rowOf('1042')).getByRole('button', { name: 'Send reminder' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/sends a real payment-reminder notification/i)).toBeInTheDocument();
+    // Armed, not fired. The confirm step is the thing that fires it.
+    expect(sendInvoiceReminder).not.toHaveBeenCalled();
+  });
+  it('fires the callable only once the confirm step is confirmed', async () => {
+    sendInvoiceReminder.mockResolvedValue(undefined);
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'open' })]));
+    render(<Invoices />);
+    await userEvent.click(within(rowOf('1042')).getByRole('button', { name: 'Send reminder' }));
+    const dialog = screen.getByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Send reminder' }));
+    expect(sendInvoiceReminder).toHaveBeenCalledWith('inv1');
+  });
+  it('clicking the ROW itself still opens the plain detail, with nothing armed', async () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'open' })]));
+    render(<Invoices />);
+    await userEvent.click(screen.getByRole('button', { name: /#1042/ }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).queryByText(/sends a real payment-reminder notification/i)).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Send reminder' })).toBeInTheDocument();
+  });
+  it('cancelling the armed confirm leaves the operator on the action list, not back on it', async () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'open' })]));
+    render(<Invoices />);
+    await userEvent.click(within(rowOf('1042')).getByRole('button', { name: 'Send reminder' }));
+    const dialog = screen.getByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(within(dialog).queryByText(/sends a real payment-reminder notification/i)).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+  });
+});
+/**
+ * MONEY THE ROW WAS COMPUTING AND THROWING AWAY. The screen already worked out
+ * that an invoice was part paid, in order to pick the PART PAID chip, and then
+ * printed only the total beside it.
+ */
+describe('Invoices row, part-paid amounts', () => {
+  it('names what came in and what is still owed, beside the total', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'open', total: 40, amountDue: 20, paidCents: 2000 })]),
+    );
+    render(<Invoices />);
+    const row = screen.getByText('#1042').closest('.invoices__row') as HTMLElement;
+    expect(within(row).getByText('PART PAID')).toBeInTheDocument();
+    expect(within(row).getByText(/\$20\.00 paid, \$20\.00 still owed/)).toBeInTheDocument();
+    // The big figure is still the TOTAL: these two are the correction to it.
+    expect(within(row).getByText('$40.00')).toBeInTheDocument();
+  });
+  it('says nothing about payments on an invoice with no record of one', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'open', total: 40, amountDue: 40 })]));
+    render(<Invoices />);
+    const row = screen.getByText('#1042').closest('.invoices__row') as HTMLElement;
+    expect(within(row).queryByText(/still owed/)).toBeNull();
+  });
+  it('claims no partial payment on a PAID invoice, whatever paidCents says', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'paid', total: 40, amountDue: 0, paidCents: 4000 })]),
+    );
+    render(<Invoices />);
+    const row = screen.getByText('#1042').closest('.invoices__row') as HTMLElement;
+    expect(within(row).queryByText(/still owed/)).toBeNull();
+    expect(within(row).getByText('PAID')).toBeInTheDocument();
+  });
+});
+/** Days-overdue on the meta line, the age that decides what to do about it. */
+describe('Invoices row, days overdue', () => {
+  it('says how many days late an overdue invoice is, instead of just its due date', () => {
+    // localDateIso reads the LOCAL calendar date, so the due date is derived
+    // from the same clock the screen uses rather than hardcoded.
+    const today = new Date();
+    const past = new Date(today.getTime() - 12 * 86_400_000);
+    const iso = `${past.getFullYear()}-${String(past.getMonth() + 1).padStart(2, '0')}-${String(past.getDate()).padStart(2, '0')}`;
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'open', dueDate: iso })]));
+    render(<Invoices />);
+    const row = screen.getByText('#1042').closest('.invoices__row') as HTMLElement;
+    expect(within(row).getByText('12 days overdue')).toBeInTheDocument();
+    expect(within(row).getByText('OVERDUE')).toBeInTheDocument();
+  });
+  it('keeps the plain due date on an invoice that is not yet late', () => {
+    const soon = new Date(Date.now() + 5 * 86_400_000);
+    const iso = `${soon.getFullYear()}-${String(soon.getMonth() + 1).padStart(2, '0')}-${String(soon.getDate()).padStart(2, '0')}`;
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'open', dueDate: iso })]));
+    render(<Invoices />);
+    const row = screen.getByText('#1042').closest('.invoices__row') as HTMLElement;
+    expect(within(row).getByText(/^due /)).toBeInTheDocument();
+    expect(within(row).queryByText(/overdue/)).toBeNull();
+  });
+  it('falls back to the due date when the stored value is not a date', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'open', dueDate: 'Net 14' })]));
+    render(<Invoices />);
+    const row = screen.getByText('#1042').closest('.invoices__row') as HTMLElement;
+    expect(within(row).getByText('due Net 14')).toBeInTheDocument();
+  });
+});
+/**
+ * THE ARCHIVE MARKER. Archived invoices are out of the Outstanding and Billed
+ * totals at the top of this screen. Under the Included / Only archived facet
+ * they sit among active rows, and without a marker those totals cannot be
+ * checked by eye against the list that is supposed to explain them.
+ */
+describe('Invoices row, archived marker', () => {
+  it('marks an archived row once the facet lets it through', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'a', invoiceNumber: 'ACTIVE' }),
+        entry({ _id: 'b', invoiceNumber: 'FILED', archivedAt: fakeTs('2026-07-16T10:00:00Z') }),
+      ]),
+    );
+    render(<Invoices />);
+    await userEvent.selectOptions(screen.getByLabelText('Archived'), '');
+    const filed = screen.getByText('#FILED').closest('.invoices__row') as HTMLElement;
+    const active = screen.getByText('#ACTIVE').closest('.invoices__row') as HTMLElement;
+    expect(within(filed).getByText('ARCHIVED')).toBeInTheDocument();
+    expect(within(active).queryByText('ARCHIVED')).toBeNull();
+  });
+  it('keeps the state chip beside the marker: archiving is not a state', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'open', archivedAt: fakeTs('2026-07-16T10:00:00Z') })]),
+    );
+    render(<Invoices />);
+    await userEvent.selectOptions(screen.getByLabelText('Archived'), 'only');
+    const row = screen.getByText('#1042').closest('.invoices__row') as HTMLElement;
+    expect(within(row).getByText('OPEN')).toBeInTheDocument();
+    expect(within(row).getByText('ARCHIVED')).toBeInTheDocument();
+  });
+  it('shows no marker at all under the default facet, which hides them anyway', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ archivedAt: fakeTs('2026-07-16T10:00:00Z') })]),
+    );
+    render(<Invoices />);
+    expect(screen.queryByText('ARCHIVED')).toBeNull();
+  });
+});
+/** The Overdue card's subline: who is worst and by how long, matching Android. */
+describe('Invoices Overdue stat subline', () => {
+  function daysAgoIso(days: number): string {
+    const d = new Date(Date.now() - days * 86_400_000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  it('names the household furthest past due, and how far', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'a', invoiceNumber: 'A', kinfolkName: 'The Seeds', dueDate: daysAgoIso(6) }),
+        entry({ _id: 'b', invoiceNumber: 'B', kinfolkName: 'The Thornes', dueDate: daysAgoIso(21) }),
+      ]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('The Thornes, 21 days past')).toBeInTheDocument();
+  });
+  it('falls back to the client when the household has no name', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ kinfolkName: '', client: 'Dana Ruiz', dueDate: daysAgoIso(3) })]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('Dana Ruiz, 3 days past')).toBeInTheDocument();
+  });
+  it('says "all clear" rather than nothing when there are no overdue invoices', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'paid', amountDue: 0 })]));
+    render(<Invoices />);
+    expect(screen.getByText('all clear')).toBeInTheDocument();
+  });
+  it('counts only the invoices the archive facet has left in scope', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'a', invoiceNumber: 'A', kinfolkName: 'The Seeds', dueDate: daysAgoIso(6) }),
+        entry({
+          _id: 'b',
+          invoiceNumber: 'B',
+          kinfolkName: 'The Thornes',
+          dueDate: daysAgoIso(21),
+          archivedAt: fakeTs('2026-07-16T10:00:00Z'),
+        }),
+      ]),
+    );
+    render(<Invoices />);
+    // The Thornes invoice is archived, so it is out of the totals and out of
+    // this subline; the operator has stopped chasing it.
+    expect(screen.getByText('The Seeds, 6 days past')).toBeInTheDocument();
+  });
+  it('is not overdue at all on free text like "Net 14", so the card stays all clear', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ dueDate: 'Net 14' })]));
+    render(<Invoices />);
+    expect(screen.getByText('all clear')).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).toBeNull();
+  });
+  it('names the household with NO number when the date is shaped right but impossible', () => {
+    // '2025-13-01' passes the ISO-prefix shape test (digits and dashes in the
+    // right places) and sorts BEFORE today, so the row is genuinely overdue by
+    // the same lexicographic compare the chip uses. It then fails to parse, so
+    // the age is unknowable. The subline names who and stops; "NaN days past" is
+    // the failure this branch exists to refuse.
+    usePagedCollection.mockReturnValue(
+      paged([entry({ kinfolkName: 'The Seeds', dueDate: '2025-13-01' })]),
+    );
+    render(<Invoices />);
+    const row = screen.getByText('#1042').closest('.invoices__row') as HTMLElement;
+    expect(within(row).getByText('OVERDUE')).toBeInTheDocument();
+    // Scoped to the stat card, since the household name is also on the row.
+    expect(screen.getByText('The Seeds', { selector: '.den-stat-trend' })).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).toBeNull();
+    expect(screen.queryByText(/days past/)).toBeNull();
+  });
+});
+/** The Outstanding card's subline now carries the count, like Android's. */
+describe('Invoices Outstanding stat subline', () => {
+  it('says how many open invoices the total is spread across', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ _id: 'a', invoiceNumber: 'A' }), entry({ _id: 'b', invoiceNumber: 'B' })]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('across 2 open invoices')).toBeInTheDocument();
+  });
+  it('is singular for one', () => {
+    usePagedCollection.mockReturnValue(paged([entry({})]));
+    render(<Invoices />);
+    expect(screen.getByText('across 1 open invoice')).toBeInTheDocument();
+  });
+  it('says across 0 when nothing is open, rather than dropping the line', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'paid', amountDue: 0 })]));
+    render(<Invoices />);
+    expect(screen.getByText('across 0 open invoices')).toBeInTheDocument();
+  });
+});
+/** Searching by the amount as the row prints it, matching Android. */
+describe('Invoices search by amount', () => {
+  it('finds an invoice by the figure written on its row', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'a', invoiceNumber: 'FORTY', total: 40 }),
+        entry({ _id: 'b', invoiceNumber: 'NINETY', total: 90 }),
+      ]),
+    );
+    render(<Invoices />);
+    await userEvent.type(screen.getByLabelText('Search invoices'), '$40');
+    expect(screen.getByText('#FORTY')).toBeInTheDocument();
+    expect(screen.queryByText('#NINETY')).toBeNull();
+  });
+  it('says so when the amount matches nothing loaded, rather than silently emptying', async () => {
+    usePagedCollection.mockReturnValue(paged([entry({ total: 40 })]));
+    render(<Invoices />);
+    await userEvent.type(screen.getByLabelText('Search invoices'), '$999');
+    expect(screen.getByText(/nothing in the loaded invoices matches this filter/i)).toBeInTheDocument();
+  });
+});

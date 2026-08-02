@@ -979,3 +979,96 @@ describe('recording a payment writes both the settlement and the ledger row', ()
     await waitFor(() => expect(getInvoiceLedger).toHaveBeenCalledTimes(2));
   });
 });
+/**
+ * `initialAction`: the panel opened ALREADY ON a confirm step, which is how the
+ * Invoices list's per-row quick action reaches an action without a second click
+ * and without a second confirm flow whose wording could drift from this one.
+ *
+ * It ARMS; it never performs. And it is validated against the stored state
+ * rather than trusted, because the live listener can deliver a newer doc between
+ * the row click and this render.
+ */
+describe('InvoiceDetail initialAction', () => {
+  it('opens on the reminder confirm step without calling anything', () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult());
+    render(<InvoiceDetail invoice={entry()} initialAction="reminder" onClose={vi.fn()} />);
+    expect(screen.getByText(/sends a real payment-reminder notification/i)).toBeInTheDocument();
+    expect(sendInvoiceReminder).not.toHaveBeenCalled();
+  });
+  it('opens on the review-and-send confirm step for a draft', () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult());
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'draft' })}
+        initialAction="reviewSend"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/sends the draft to the household on file/i)).toBeInTheDocument();
+  });
+  it('opens on the receipt confirm step for a paid invoice', () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult());
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'paid', amountDue: 0, editScope: 'none' })}
+        initialAction="receipt"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/issues a receipt and notifies the household/i)).toBeInTheDocument();
+  });
+  it('performs the armed action on confirm, exactly as the in-panel button does', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult());
+    sendInvoiceReminder.mockResolvedValue(undefined);
+    render(<InvoiceDetail invoice={entry()} initialAction="reminder" onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Send reminder' }));
+    await waitFor(() => expect(sendInvoiceReminder).toHaveBeenCalledWith('inv1'));
+  });
+  it('fails loud on the armed action, naming the callable', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult());
+    sendInvoiceReminder.mockRejectedValue(new Error('permission-denied'));
+    render(<InvoiceDetail invoice={entry()} initialAction="reminder" onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Send reminder' }));
+    expect(await screen.findByText(/sendInvoiceReminder failed: permission-denied/i)).toBeInTheDocument();
+  });
+  it('IGNORES an action the stored state does not permit, falling back to the action list', () => {
+    // The list armed "reminder" off an open invoice; by the time this renders,
+    // the live listener has delivered the PAID doc. A reminder confirm here
+    // would offer to nag a household that has already paid.
+    getInvoiceLedger.mockResolvedValue(ledgerResult());
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'paid', amountDue: 0, editScope: 'none' })}
+        initialAction="reminder"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/sends a real payment-reminder notification/i)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Generate receipt' })).toBeInTheDocument();
+  });
+  it('IGNORES an armed action on a doc with no recognizable state stamp', () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult());
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'weird' as InvoiceEntry['status'] })}
+        initialAction="reminder"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/sends a real payment-reminder notification/i)).toBeNull();
+    expect(screen.getByText(/carries no recognized state/i)).toBeInTheDocument();
+  });
+  it('cancelling the armed step lands on the action list and does not re-arm', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult());
+    render(<InvoiceDetail invoice={entry()} initialAction="reminder" onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByText(/sends a real payment-reminder notification/i)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+  });
+  it('opens on the plain action list when nothing is armed', () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult());
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(screen.queryByText(/sends a real payment-reminder notification/i)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Send reminder' })).toBeInTheDocument();
+  });
+});

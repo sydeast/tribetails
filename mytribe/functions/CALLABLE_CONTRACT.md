@@ -1561,6 +1561,77 @@ callable is the enforcement.
 - Write side is `triageOrphanReport` (ASSIGN, DUPLICATE, ARCHIVE), which both
   clients share.
 
+## Notifications inbox (recipient or admin)
+
+The flat top-level `notifications` collection, written only by
+`notifications/dispatcher.ts`. No client writes it directly; these six callables
+are the whole mutation surface, and all six share one gate: a caller may act on a
+notification whose `recipientUid` is their own uid, and an admin (admin claim,
+`role === 'admin'`, or the `AUNTIE_OPERATOR_UIDS` staff gate) may act on any.
+
+**A skip is not an error.** A missing doc, a doc with no `recipientUid`, and
+another recipient's doc are all skipped without a write and without throwing, and
+the count in the response says so. That is what lets a client whose list has gone
+partially stale act on everything it legitimately can. It also means a returned
+`0` is a real answer the client MUST surface: the React admin reports "Nothing was
+archived. The notification may already be gone." rather than reading the resolve
+as success. Argument keys are NOT uniform across the family, and the mismatch is
+deliberate rather than an oversight, so a mirror that guesses will fail zod: the
+read pair takes `notificationId`, the archive family takes `id` / `ids`.
+
+### markNotificationRead / markNotificationUnread
+- req `{ notificationId: string /* 1..200 */ }`
+- res `{ ok: true }`
+- Read stamps `readAt` (serverTimestamp); unread clears it with
+  `FieldValue.delete()`, so on the wire it is ABSENT rather than blank. Clients
+  model it as optional, never as an empty-string sentinel.
+
+### bulkMarkNotificationsRead
+- req `{ ids: string[] /* 1..200 entries, each 1..200 chars */ }`
+- res `{ ok: true, marked: number }`
+- `marked` counts what actually changed, so it is smaller than `ids.length` when
+  the selection contained rows that were already read. **A client that sends
+  already-read ids therefore gets a partial count back for a batch in which
+  nothing went wrong**, which is why the React admin sends only the unread subset
+  of its selection and labels the control with that count.
+- Audited as `NOTIFICATIONS_BULK_READ`.
+
+### archiveNotification / bulkArchiveNotifications
+- req `{ id: string /* 1..200 */ }` and `{ ids: string[] /* 1..200 entries */ }`
+- res `{ archived: number }` (0 or 1 for the single form)
+- Merge-writes `archivedAt` (serverTimestamp) + `archivedByUid`. **Archiving is
+  not deletion**: every field survives and the row is still readable, it simply
+  drops out of the client's active feed.
+- Audited as `NOTIFICATIONS_ARCHIVE`, including when the count is 0, so a refusal
+  leaves evidence rather than silence.
+
+### unarchiveNotification / bulkUnarchiveNotifications
+- req `{ id: string /* 1..200 */ }` and `{ ids: string[] /* 1..200 entries */ }`
+- res `{ unarchived: number }` (0 or 1 for the single form)
+- Merge-writes `archivedAt: null`. **Null, not `FieldValue.delete()`**, for the
+  same reason `unarchiveInvoice` does it: Firestore's `== null` matches only
+  documents that HAVE the field, so an explicit null is the shape a future
+  server-side "active only" predicate could use, while a deleted field is
+  unreachable by any predicate. This deliberately diverges from
+  `markNotificationUnread` above, whose field has no such predicate in its future.
+  Both clients already read null and absent alike (Android's `archivedAt: String?`
+  filtered with `isNullOrBlank()`, the React admin's single
+  `isNotificationArchived` predicate), so neither needed a change to make a
+  restored row reappear.
+- `archivedByUid` is NOT cleared. It records who filed the row away, which stays
+  true after a restore, and clearing it would erase the only trace on the document
+  that an archive ever happened.
+- Audited as `NOTIFICATIONS_UNARCHIVE`, a separate event rather than a flag inside
+  the archive event's payload: the trail is queried by `event`, and folding the
+  two together would make "what was filed away last week" answerable only by
+  parsing payloads.
+- **Why these exist.** Until 2026-08-01 `archivedAt` could only ever be stamped:
+  no callable cleared it and no client listed archived rows, so Archive was a
+  one-way door and a misfiled notification was unreachable from every surface.
+  The Invoices screen already refuses that shape (`unarchiveInvoice` plus a
+  three-state archive facet); a notification should not be the harder thing to
+  undo.
+
 ## Operator preferences
 
 ### saveDashboardLayout
