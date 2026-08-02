@@ -121,18 +121,22 @@ test('no screen the drawer reaches scrolls sideways at 390px', async ({ page }) 
   const offenders: string[] = [];
   for (const entry of railEntries()) {
     await page.goto(`/${entry.slug}`);
-    // `page.goto` is a FULL page load, so each of these ~19 iterations reboots
-    // the app, and `<main>` is owned by the AppShell layout route, which sits
-    // behind `requireAdmin` (`src/router.tsx:104`): `waitForAuthReady()` then
-    // `resolveAccess()`, both awaited against the emulator before the shell
-    // renders at all. Nineteen cold boots of that, each with Playwright's
-    // DEFAULT 5s expect ceiling, is fine on a developer machine and marginal on
-    // a shared CI runner. It went red on main on 2026-08-01 with "element(s) not
-    // found" while passing locally, which is the signature of a budget that is
-    // too tight rather than a screen that fails to render. The enclosing
-    // `test.setTimeout` above was already raised for the same reason; it does
-    // not lower to individual assertions.
-    await expect(page.locator('main')).toBeVisible({ timeout: 30_000 });
+    // NAME THE ROUTE. Without this the failure is a bare "element(s) not found"
+    // against `locator('main')`, which does not say which of the ~19
+    // destinations produced it, and the loop is the only place that knows. Main
+    // went red on 2026-08-01 and the first attempt to fix it guessed at a
+    // timeout budget, because the message gave nothing else to go on.
+    //
+    // `page.goto` is a FULL page load, so each iteration reboots the app, and
+    // `<main>` belongs to the AppShell layout route behind `requireAdmin`
+    // (`src/router.tsx:104`): `waitForAuthReady()` then `resolveAccess()`, both
+    // awaited against the emulator before the shell renders at all. 30s covers
+    // that cold boot on a shared runner with room to spare; a route that is
+    // still without a shell after 30s is not slow, it is not rendering.
+    await expect(
+      page.locator('main'),
+      `/${entry.slug} never rendered the app shell`,
+    ).toBeVisible({ timeout: 30_000 });
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
