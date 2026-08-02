@@ -6,6 +6,7 @@ import { wrapScheduled } from '../lib/wrapScheduled';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
+import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
 const WINDOW_LOWER_MS = 24 * 60 * 60 * 1000;
 const WINDOW_UPPER_MS = 48 * 60 * 60 * 1000;
@@ -96,7 +97,14 @@ export async function runKincareReminderScan(now: number = Date.now()): Promise<
  * `kincare.upcoming.reminder` once per booking.
  */
 export const kincareReminderCron = onSchedule(
-  { schedule: 'every 60 minutes', timeZone: 'America/New_York', secrets: ['SENTRY_DSN'] },
+  // Scans upcoming visits and fans out reminders inside the default 60s
+  // timeout. See notificationDebounceSweep.
+  {
+    schedule: 'every 60 minutes',
+    timeZone: 'America/New_York',
+    secrets: ['SENTRY_DSN'],
+    ...FULL_CPU_SERIAL,
+  },
   wrapScheduled('kincareReminderCron', async () => {
     await runKincareReminderScan(Date.now());
   }),

@@ -4,6 +4,7 @@ import { logEvent } from '../lib/logger';
 import { wrapHttp } from '../lib/wrapHttp';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveShareLink } from '../lib/resolveShareLink';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 type ReqShape = Pick<Request, 'method' | 'path' | 'query'>;
 type ResShape = {
@@ -27,7 +28,9 @@ export async function getShareLinkHandler(req: ReqShape, res: ResShape): Promise
 }
 
 export const getShareLink = onRequest(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  // Public, and verifies the passcode with argon2 (136ms of CPU per verify).
+  // A share link can be pasted anywhere, so it needs burst headroom too.
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'], ...FULL_CPU },
   wrapHttp('getShareLink', async (req: Request, res: Response) => {
     await getShareLinkHandler(req as unknown as ReqShape, res as unknown as ResShape);
   }),

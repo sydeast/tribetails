@@ -8,6 +8,7 @@ import { initSentry } from '../lib/sentry';
 import { isStaff } from '../lib/staffGate';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 interface AccountDto {
   uid: string;
@@ -176,7 +177,16 @@ export const getMyAccount = onCall(
   // AUNTIE_OPERATOR_UIDS is required because isStaff reads it. Binding it is not
   // optional: without it the allowlist arm of isStaff silently evaluates false,
   // which is the exact operator this handler's impersonation branch is for.
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'], minInstances: 1 },
+  // Kept at a full vCPU so the warm instance minInstances buys keeps 80-way
+  // concurrency; below 1 vCPU Cloud Run pins concurrency to 1.
+  // saveMyAccount below takes the 0.25 vCPU fleet default.
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'],
+    minInstances: 1,
+    ...FULL_CPU,
+  },
   wrapCallable('getMyAccount', getMyAccountHandler),
 );
 

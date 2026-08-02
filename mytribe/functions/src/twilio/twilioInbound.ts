@@ -6,6 +6,7 @@ import { logEvent } from '../lib/logger';
 import { wrapHttp } from '../lib/wrapHttp';
 import { normalizeE164 } from '../lib/phoneNormalize';
 import { sanitizePlainText } from '../lib/richText';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 /**
  * WARNING-8: server-authoritative inbound comms writes.
@@ -301,16 +302,36 @@ export async function twilioInboundCallHandler(req: Request, res: Response): Pro
 }
 
 export const twilioInboundSms = onRequest(
-  { region: 'us-central1', memory: '512MiB', secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'] },
+  // 512MiB is deliberate and stays (PR #211). Twilio gives an inbound webhook
+  // a 15s budget and retries on failure, and an exhausted retry is a lost
+  // inbound message, so this keeps a full vCPU and 80-way concurrency.
+  {
+    region: 'us-central1',
+    memory: '512MiB',
+    secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'],
+    ...FULL_CPU,
+  },
   wrapHttp('twilioInboundSms', twilioInboundSmsHandler),
 );
 
 export const twilioInboundVoicemail = onRequest(
-  { region: 'us-central1', memory: '512MiB', secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'] },
+  // 512MiB is deliberate and stays (PR #211). See twilioInboundSms above.
+  {
+    region: 'us-central1',
+    memory: '512MiB',
+    secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'],
+    ...FULL_CPU,
+  },
   wrapHttp('twilioInboundVoicemail', twilioInboundVoicemailHandler),
 );
 
 export const twilioInboundCall = onRequest(
-  { region: 'us-central1', memory: '512MiB', secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'] },
+  // 512MiB is deliberate and stays (PR #211). See twilioInboundSms above.
+  {
+    region: 'us-central1',
+    memory: '512MiB',
+    secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'],
+    ...FULL_CPU,
+  },
   wrapHttp('twilioInboundCall', twilioInboundCallHandler),
 );

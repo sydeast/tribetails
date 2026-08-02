@@ -6,6 +6,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
 const Args = z.object({ familyId: z.string().min(1) });
 
@@ -50,6 +51,14 @@ export async function migrateFoundationV1RollbackHandler(req: CallableRequest<un
 }
 
 export const migrateFoundationV1Rollback = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, timeoutSeconds: 540, secrets: ['SENTRY_DSN'] },
+  // 9-minute bulk rollback. Two copies over the same documents is a hazard,
+  // not throughput.
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    timeoutSeconds: 540,
+    secrets: ['SENTRY_DSN'],
+    ...FULL_CPU_SERIAL,
+  },
   wrapAdminCallable('migrateFoundationV1Rollback', migrateFoundationV1RollbackHandler),
 );

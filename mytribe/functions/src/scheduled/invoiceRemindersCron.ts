@@ -6,6 +6,7 @@ import { wrapScheduled } from '../lib/wrapScheduled';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
+import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
 const REMINDER_WINDOW_DAYS = 3;
 const NOTIFIED_FIELD_REMINDER = 'reminderNotifiedAtMs';
@@ -115,7 +116,14 @@ export async function runInvoiceRemindersScan(now: number = Date.now()): Promise
  * unpaid, and not yet reminded, enqueues `invoice.reminder` once per invoice.
  */
 export const invoiceRemindersCron = onSchedule(
-  { schedule: 'every day 09:00', timeZone: 'America/New_York', secrets: ['SENTRY_DSN'] },
+  // Walks open invoices and fans out reminders inside the default 60s
+  // timeout. See notificationDebounceSweep.
+  {
+    schedule: 'every day 09:00',
+    timeZone: 'America/New_York',
+    secrets: ['SENTRY_DSN'],
+    ...FULL_CPU_SERIAL,
+  },
   wrapScheduled('invoiceRemindersCron', async () => {
     await runInvoiceRemindersScan(Date.now());
   }),
@@ -185,7 +193,13 @@ export async function runInvoiceOverdueScan(now: number = Date.now()): Promise<n
  * `invoice.overdue` once per invoice.
  */
 export const invoiceOverdueCron = onSchedule(
-  { schedule: 'every day 09:30', timeZone: 'America/New_York', secrets: ['SENTRY_DSN'] },
+  // Walks overdue invoices and fans out notices. See invoiceRemindersCron.
+  {
+    schedule: 'every day 09:30',
+    timeZone: 'America/New_York',
+    secrets: ['SENTRY_DSN'],
+    ...FULL_CPU_SERIAL,
+  },
   wrapScheduled('invoiceOverdueCron', async () => {
     await runInvoiceOverdueScan(Date.now());
   }),

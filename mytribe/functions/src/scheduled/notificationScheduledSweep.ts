@@ -3,6 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
+import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
 /**
  * Drains `scheduledNotifications/{auto}` docs whose `fireAtMs` has elapsed.
@@ -18,7 +19,14 @@ import { wrapScheduled } from '../lib/wrapScheduled';
 const SCAN_LIMIT = 200;
 
 export const notificationScheduledSweep = onSchedule(
-  { schedule: 'every 5 minutes', region: 'us-central1', secrets: ['SENTRY_DSN'] },
+  // Dispatches due notifications inside the default 60s timeout. See
+  // notificationDebounceSweep.
+  {
+    schedule: 'every 5 minutes',
+    region: 'us-central1',
+    secrets: ['SENTRY_DSN'],
+    ...FULL_CPU_SERIAL,
+  },
   wrapScheduled('notificationScheduledSweep', async () => {
     const now = Date.now();
     const snap = await db()

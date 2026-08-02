@@ -10,6 +10,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { generateAndStoreInvoicePdf } from '../lib/invoicePdf';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 /**
  * Stage 3 / 16.2 - admin (AuntieOS) invoice PDF download. Loads invoices/{id},
@@ -84,6 +85,8 @@ export async function generateInvoicePdfHandler(
 }
 
 export const generateInvoicePdf = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  // pdf-lib renders the document in-process. A PDF render at 0.25 vCPU is a
+  // timeout, not a saving.
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'], ...FULL_CPU },
   wrapAdminCallable('generateInvoicePdf', generateInvoicePdfHandler),
 );

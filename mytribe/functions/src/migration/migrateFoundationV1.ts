@@ -7,6 +7,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { computeFamilyDiff, type FamilyDiff } from './migrationDiff';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
 const Args = z.object({
   familyId: z.string().optional(),
@@ -84,6 +85,14 @@ export async function migrateFoundationV1Handler(req: CallableRequest<unknown>):
 }
 
 export const migrateFoundationV1 = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, timeoutSeconds: 540, secrets: ['SENTRY_DSN'] },
+  // 9-minute bulk migration. Two copies over the same documents is a hazard,
+  // not throughput.
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    timeoutSeconds: 540,
+    secrets: ['SENTRY_DSN'],
+    ...FULL_CPU_SERIAL,
+  },
   wrapAdminCallable('migrateFoundationV1', migrateFoundationV1Handler),
 );

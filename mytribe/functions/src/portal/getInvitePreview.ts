@@ -5,6 +5,7 @@ import { enforceRateLimit } from '../lib/rateLimit';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import type { InviteRequestDoc } from '../lib/schema';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 /**
  * Public (unauthenticated) preview of an invite for the claim screen.
@@ -60,6 +61,15 @@ export async function getInvitePreviewHandler(
 }
 
 export const getInvitePreview = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] , minInstances: 1 },
+  // First screen an invitee ever hits.
+  // Kept at a full vCPU so the warm instance minInstances buys keeps 80-way
+  // concurrency; below 1 vCPU Cloud Run pins concurrency to 1.
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    secrets: ['SENTRY_DSN'],
+    minInstances: 1,
+    ...FULL_CPU,
+  },
   wrapCallable('getInvitePreview', getInvitePreviewHandler),
 );

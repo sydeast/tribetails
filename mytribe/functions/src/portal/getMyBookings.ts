@@ -8,6 +8,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 interface GetMyBookingsRequest { kinfolkId?: string }
 
@@ -285,6 +286,15 @@ function tsMillis(v: unknown): number | null {
 }
 
 export const getMyBookings = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'], minInstances: 1 },
+  // Portal bookings read.
+  // Kept at a full vCPU so the warm instance minInstances buys keeps 80-way
+  // concurrency; below 1 vCPU Cloud Run pins concurrency to 1.
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'],
+    minInstances: 1,
+    ...FULL_CPU,
+  },
   wrapCallable('getMyBookings', getMyBookingsHandler),
 );

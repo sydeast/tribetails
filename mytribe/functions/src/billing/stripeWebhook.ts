@@ -11,6 +11,7 @@ import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 export async function stripeWebhookHandler(req: Request, res: Response): Promise<void> {
   if (req.method !== 'POST') { res.status(405).end(); return; }
@@ -247,6 +248,12 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
 }
 
 export const stripeWebhook = onRequest(
-  { region: 'us-central1', secrets: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'SENTRY_DSN'] },
+  // Stripe retries on any non-2xx, so shedding here turns into repeated
+  // delivery of payment events. A full vCPU keeps 80-way concurrency.
+  {
+    region: 'us-central1',
+    secrets: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'SENTRY_DSN'],
+    ...FULL_CPU,
+  },
   wrapHttp('stripeWebhook', stripeWebhookHandler),
 );

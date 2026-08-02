@@ -11,6 +11,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { isStaff } from '../lib/staffGate';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 /**
  * Failed-login security subsystem.
@@ -321,7 +322,10 @@ export const recordFailedLogin = onCall(
 export const beforeSignIn = beforeUserSignedIn(
   // minInstances: this blocking fn runs inline in EVERY sign-in; a cold start
   // here surfaced to users as the opaque first-login failure (2026-07-10).
-  { region: 'us-central1', secrets: ['SENTRY_DSN'], minInstances: 1 },
+  // Blocking, so it sits inline in the sign-in itself. At 0.25 vCPU Cloud Run
+  // would pin concurrency to 1 and serialise concurrent logins behind one
+  // request; a full vCPU keeps the 80-way concurrency this needs.
+  { region: 'us-central1', secrets: ['SENTRY_DSN'], minInstances: 1, ...FULL_CPU },
   async (event) => {
     const uid = event.data?.uid;
     if (!uid) return;

@@ -1,3 +1,28 @@
+import { setGlobalOptions } from 'firebase-functions/v2';
+
+// This call MUST stay the first executable statement in this file, above every
+// `export ... from`. `setGlobalOptions` only reaches functions defined AFTER it
+// runs, and `onCall` / `onSchedule` / `onDocument*` all run at module-import
+// time. This file compiles to CommonJS (tsconfig.json `"module": "commonjs"`),
+// where tsc emits `export ... from` as a `require()` at its own source
+// position, so source order is execution order here. Verified against the
+// emitted `lib/index.js` and against the generated endpoint manifest rather
+// than assumed; see the PR body for the proof.
+//
+// cpu 0.25: the fleet default was 1 vCPU (firebase-functions' default at
+//   256MiB) and nothing here ever overrode it. 240 Cloud Run services x 1 vCPU
+//   sits above the 200 vCPU `CpuAllocPerProjectRegion` ceiling for us-central1,
+//   which is what broke five consecutive full deploys on 2026-08-01. Functions
+//   that need more carry an explicit override at their own definition; see
+//   lib/runtimeOptions.ts, including why below 1 vCPU Cloud Run pins
+//   concurrency to 1.
+// memory 256MiB: not a change. It pins what all 233 services already run at so
+//   a future firebase-functions default cannot move it underneath us.
+// maxInstances 20: nothing capped instances before, so a runaway trigger loop
+//   or a traffic spike could scale to Cloud Run's default of 100 and bill
+//   unbounded. 20 instances at 0.25 vCPU bounds one runaway function to 5 vCPU.
+setGlobalOptions({ cpu: 0.25, memory: '256MiB', maxInstances: 20 });
+
 // Sentry is lazy-initialised by each handler at first invocation. Eager
 // init at module-load logged a spurious "SENTRY_DSN unset" on cold-start
 // of any Function whose `secrets:` array didn't include SENTRY_DSN, even

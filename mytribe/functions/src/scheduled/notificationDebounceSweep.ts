@@ -3,6 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
+import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
 /**
  * Drains `pendingNotifications/{uid}_{key}` docs whose fireAfterMs has elapsed.
@@ -25,7 +26,14 @@ import { wrapScheduled } from '../lib/wrapScheduled';
 const SCAN_LIMIT = 100;
 
 export const notificationDebounceSweep = onSchedule(
-  { schedule: 'every 1 minutes', region: 'us-central1', secrets: ['SENTRY_DSN'] },
+  // Runs every minute and dispatches. The default 60s timeout leaves no room
+  // to run 4x slower on a quarter vCPU, and a run can overlap the next tick.
+  {
+    schedule: 'every 1 minutes',
+    region: 'us-central1',
+    secrets: ['SENTRY_DSN'],
+    ...FULL_CPU_SERIAL,
+  },
   wrapScheduled('notificationDebounceSweep', async () => {
     const now = Date.now();
     const snap = await db()
