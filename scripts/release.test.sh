@@ -69,10 +69,59 @@ make_repo() {
 
   printf 'export const health = 1;\n' > "$r/mytribe/functions/index.ts"
 
+  # A SYNTHETIC BUILT FUNCTIONS CODEBASE, because step 5 no longer deploys a
+  # codebase name: it enumerates the deployable functions from the artifact the
+  # Firebase CLI loads (lib/index.js, exports carrying __endpoint) and deploys
+  # them by name in batches. Six functions is enough to have more than one batch
+  # and enough to have a shared module: alpha and beta both require lib/shared,
+  # so a change there must widen to both, and a change to gamma must not.
+  mkdir -p "$r/mytribe/functions/src/portal" "$r/mytribe/functions/src/admin" \
+           "$r/mytribe/functions/src/lib" \
+           "$r/mytribe/functions/lib/portal" "$r/mytribe/functions/lib/admin" \
+           "$r/mytribe/functions/lib/lib"
+
+  printf 'exports.tag = "v1";\n' > "$r/mytribe/functions/lib/lib/shared.js"
+  for f in alpha beta; do
+    cat > "$r/mytribe/functions/lib/portal/$f.js" <<STUBFN
+const shared = require('../lib/shared');
+exports.$f = { __endpoint: { platform: 'gcfv2' }, tag: shared.tag };
+STUBFN
+  done
+  cat > "$r/mytribe/functions/lib/portal/gamma.js" <<'STUBFN'
+exports.gamma = { __endpoint: { platform: 'gcfv2' } };
+STUBFN
+  for f in delta epsilon zeta; do
+    cat > "$r/mytribe/functions/lib/admin/$f.js" <<STUBFN
+exports.$f = { __endpoint: { platform: 'gcfv2' } };
+STUBFN
+  done
+  cat > "$r/mytribe/functions/lib/index.js" <<'STUBFN'
+exports.alpha = require('./portal/alpha').alpha;
+exports.beta = require('./portal/beta').beta;
+exports.gamma = require('./portal/gamma').gamma;
+exports.delta = require('./admin/delta').delta;
+exports.epsilon = require('./admin/epsilon').epsilon;
+exports.zeta = require('./admin/zeta').zeta;
+STUBFN
+
+  # The sources those compile from. Only their PATHS matter to the mapping, but
+  # they have to be real files in git for a diff to name them.
+  printf 'export const tag = "v1";\n' > "$r/mytribe/functions/src/lib/shared.ts"
+  for f in alpha beta; do
+    printf "export const %s = { tag: 1 };\n" "$f" > "$r/mytribe/functions/src/portal/$f.ts"
+  done
+  printf 'export const gamma = {};\n' > "$r/mytribe/functions/src/portal/gamma.ts"
+  for f in delta epsilon zeta; do
+    printf "export const %s = {};\n" "$f" > "$r/mytribe/functions/src/admin/$f.ts"
+  done
+  printf 'export { alpha } from "./portal/alpha";\n' > "$r/mytribe/functions/src/index.ts"
+  printf '{ "name": "mytribe-functions", "scripts": { "build": "tsc" } }\n' \
+    > "$r/mytribe/functions/package.json"
+
   # The same two entries the real .gitignore carries for these, because step 0
   # refuses a dirty tree and .release-state and the APK are both untracked
   # by design. Without this the test would be testing the dirty-tree guard.
-  printf '.release-state\nauntieos-admin/android/app/build/\n' > "$r/.gitignore"
+  printf '.release-state\n.release-functions\nauntieos-admin/android/app/build/\n' > "$r/.gitignore"
 
   ( cd "$r"
     git init -q -b main .
@@ -120,11 +169,47 @@ STUB
 
   # A real deploy would land here. It must be reached only by the wet-run case,
   # and it records that it was, so a DRY_RUN case that leaks through is caught.
+  #
+  # FIREBASE_QUOTA_MAX=N models the incident: the regional CPU quota accepts the
+  # first N functions of a deploy and refuses the rest, which is exactly what
+  # 197-of-223 and 201-of-227 looked like on 2026-08-01. The stub prints
+  # firebase's own per-function result lines, because that is what release.sh
+  # reads to work out which names to retry.
   cat > "$dir/stubs/firebase" <<'STUB'
 #!/usr/bin/env bash
 echo "STUB firebase $*"
 [ -n "${FIREBASE_CALL_LOG:-}" ] && echo "$*" >> "$FIREBASE_CALL_LOG"
-exit 0
+
+only=""
+want_only=0
+for a in "$@"; do
+  if [ "$want_only" = "1" ]; then only="$a"; want_only=0; continue; fi
+  case "$a" in
+    --only) want_only=1 ;;
+    --only=*) only="${a#--only=}" ;;
+  esac
+done
+
+case "$only" in
+  functions:mytribe:*) ;;
+  *) exit 0 ;;
+esac
+
+names="$(printf '%s' "$only" | tr ',' '\n' | sed 's/^functions:mytribe://')"
+limit="${FIREBASE_QUOTA_MAX:-9999}"
+n=0
+rc=0
+for f in $names; do
+  n=$((n + 1))
+  if [ "$n" -le "$limit" ]; then
+    echo "✔  functions[$f(us-central1)] Successful update operation."
+  else
+    echo "⚠  functions[$f(us-central1)] Deployment error."
+    echo "Quota exceeded for quota metric 'Total CPU allocation, per project per region'"
+    rc=1
+  fi
+done
+exit $rc
 STUB
 
   # Step 7 fetches the live sites. Serve exactly what dist/ holds, so the
@@ -329,6 +414,301 @@ if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "RELEASE_SKIP_CI_GATE=1"; the
   ok "RELEASE_SKIP_CI_GATE=1 releases past an unavailable gate, and says so"
 else
   bad "the override did not get past an unavailable gate"; echo "$OUT" | tail -20
+fi
+
+# ---------------------------------------------------------------------------
+# The functions deploy. Everything below exists because of 2026-08-01, when five
+# whole-fleet deploys each died partway against a 200 vCPU regional quota that
+# ~227 one-vCPU services cannot fit inside:
+#
+#     forced                197 ok / 26 failed      release retry   197 / 30
+#     stray package script  131 ok / 95 failed      PREDEPLOY_KEEP=2 201 / 26
+#     targeted retry of 26    0 ok / 26 failed
+#
+# Recovery was always the same: name the casualties, redeploy them small. So the
+# release does that itself now, and these cases hold it to it.
+# ---------------------------------------------------------------------------
+
+# commit_change <dir> <repo-relative path> <line>: land a change on main and
+# push it, so step 0's sync check still passes.
+commit_change() {
+  local dir="$1" file="$2" line="$3"
+  ( cd "$dir/repo"
+    printf '%s\n' "$line" >> "$file"
+    git add -A
+    git commit -qm "change $file"
+    git push -q origin main
+  ) >/dev/null 2>&1
+}
+
+# arm_ci <dir>: give the current HEAD a green CI fixture.
+arm_ci() {
+  fixture_all_green "$1/fixtures/$(cd "$1/repo" && git rev-parse HEAD)"
+}
+
+# fn_deploys <call-log>: one line per functions deploy, holding just the names.
+fn_deploys() {
+  grep -o -- '--only functions:mytribe:[^ ]*' "$1" 2>/dev/null |
+    sed 's/--only //; s/functions:mytribe://g' || true
+}
+
+# ---------------------------------------------------------------------------
+# 9. A real run deploys functions BY NAME, in batches, and never hands firebase
+#    the whole codebase in one target. That single target is the incident.
+# ---------------------------------------------------------------------------
+D4="$(make_repo)"; write_stubs "$D4"; arm_ci "$D4"
+RC="$(run_release "$D4" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=4 RELEASE_FUNCTIONS_SETTLE=0 \
+  FIREBASE_CALL_LOG="$D4/calls")"
+OUT="$(cat "$D4/out")"
+
+if [ "$RC" -ne 0 ]; then
+  bad "a real run with the functions step completes; got $RC"; echo "$OUT" | tail -25
+else
+  ok "a real run with the functions step completes"
+fi
+
+if grep -q -- '--only functions:mytribe ' "$D4/calls" 2>/dev/null ||
+   grep -q -- '--only functions:mytribe$' "$D4/calls" 2>/dev/null; then
+  bad "the release still deploys the whole codebase in one target"
+else
+  ok "the release never deploys '--only functions:mytribe' as one target"
+fi
+
+BATCHES="$(fn_deploys "$D4/calls" | wc -l | tr -d ' ')"
+DEPLOYED="$(fn_deploys "$D4/calls" | tr ',' '\n' | sort -u | grep -c . || true)"
+if [ "$BATCHES" = "2" ] && [ "$DEPLOYED" = "6" ]; then
+  ok "6 functions went out as 2 batches of at most 4"
+else
+  bad "expected 2 batches covering 6 functions; got $BATCHES batch(es), $DEPLOYED function(s)"
+  fn_deploys "$D4/calls"
+fi
+
+if [ "$(cat "$D4/repo/.release-functions" 2>/dev/null | sort | tr '\n' ' ')" = "alpha beta delta epsilon gamma zeta " ]; then
+  ok "a real run records the fleet it shipped in .release-functions"
+else
+  bad "the shipped fleet was not recorded"; cat "$D4/repo/.release-functions" 2>/dev/null
+fi
+
+# ---------------------------------------------------------------------------
+# 10. The quota refuses part of a batch. The release must NOT die on it: work
+#     out which names did not land, retry those, and finish.
+# ---------------------------------------------------------------------------
+D5="$(make_repo)"; write_stubs "$D5"; arm_ci "$D5"
+RC="$(run_release "$D5" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=6 RELEASE_FUNCTIONS_SETTLE=0 RELEASE_RETRY_KEEP=0 \
+  FIREBASE_QUOTA_MAX=4 FIREBASE_CALL_LOG="$D5/calls")"
+OUT="$(cat "$D5/out")"
+
+if [ "$RC" -eq 0 ]; then
+  ok "a partial quota refusal does not fail the release"
+else
+  bad "a partial quota refusal failed the release (rc=$RC)"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "round 2 of 3"; then
+  ok "the casualties are retried in a second, smaller round"
+else
+  bad "no retry round ran after the quota refusal"; echo "$OUT" | tail -25
+fi
+RETRIED="$(fn_deploys "$D5/calls" | tail -1)"
+if [ "$RETRIED" = "gamma,zeta" ]; then
+  ok "the retry names exactly the two functions firebase did not confirm"
+else
+  bad "the retry batch was '$RETRIED', not the two casualties"; fn_deploys "$D5/calls"
+fi
+if printf '%s' "$OUT" | grep -q "is live and verified"; then
+  ok "a release that recovered from the quota still reports the release"
+else
+  bad "the recovered release did not report success"; echo "$OUT" | tail -25
+fi
+
+# ---------------------------------------------------------------------------
+# 11. A quota that never lifts. Rounds run out, and then the release REFUSES,
+#     names every stale function, and stops BEFORE hosting: shipping the clients
+#     ahead of the backend is the thing step 5's position exists to prevent.
+# ---------------------------------------------------------------------------
+D6="$(make_repo)"; write_stubs "$D6"; arm_ci "$D6"
+RC="$(run_release "$D6" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=6 RELEASE_FUNCTIONS_SETTLE=0 RELEASE_RETRY_KEEP=0 \
+  FIREBASE_QUOTA_MAX=0 FIREBASE_CALL_LOG="$D6/calls")"
+OUT="$(cat "$D6/out")"
+
+if [ "$RC" -ne 0 ]; then
+  ok "a quota that never lifts fails the release rather than shipping half of it"
+else
+  bad "an undeployable fleet still reported a release"; echo "$OUT" | tail -25
+fi
+MISSING=0
+for f in alpha beta gamma delta epsilon zeta; do
+  # The list prints in red, so the line ends in an escape, not in the name.
+  printf '%s' "$OUT" | grep -q "    $f" || MISSING=1
+done
+if [ "$MISSING" -eq 0 ]; then
+  ok "the refusal names every function that is stale"
+else
+  bad "the refusal did not name all six stale functions"; echo "$OUT" | tail -30
+fi
+if grep -q 'hosting' "$D6/calls" 2>/dev/null; then
+  bad "hosting shipped even though the backend did not"
+else
+  ok "hosting does not ship when the functions did not"
+fi
+if [ -f "$D6/repo/.release-state" ]; then
+  bad "a failed functions deploy still recorded the commit as released"
+else
+  ok "a failed functions deploy records nothing as released"
+fi
+
+# ---------------------------------------------------------------------------
+# 12. Only what changed. A one-function change must not touch the other five.
+# ---------------------------------------------------------------------------
+D7="$(make_repo)"; write_stubs "$D7"
+(cd "$D7/repo" && git rev-parse HEAD) > "$D7/repo/.release-state"
+commit_change "$D7" "mytribe/functions/src/portal/gamma.ts" "// one line"
+arm_ci "$D7"
+RC="$(run_release "$D7" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_SETTLE=0 FIREBASE_CALL_LOG="$D7/calls")"
+OUT="$(cat "$D7/out")"
+if [ "$RC" -eq 0 ] && [ "$(fn_deploys "$D7/calls")" = "gamma" ]; then
+  ok "a one-function change deploys exactly that function"
+else
+  bad "a one-function change deployed '$(fn_deploys "$D7/calls")' (rc=$RC)"; echo "$OUT" | tail -25
+fi
+
+# ---------------------------------------------------------------------------
+# 13. Shared code is not one function's business. src/lib/shared.ts is required
+#     by alpha and beta, so it must widen to both and stop there. A per-file
+#     mapping that named one function would be the clever wrong answer.
+# ---------------------------------------------------------------------------
+D8="$(make_repo)"; write_stubs "$D8"
+(cd "$D8/repo" && git rev-parse HEAD) > "$D8/repo/.release-state"
+commit_change "$D8" "mytribe/functions/src/lib/shared.ts" "// touched"
+arm_ci "$D8"
+RC="$(run_release "$D8" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_SETTLE=0 FIREBASE_CALL_LOG="$D8/calls")"
+GOT="$(fn_deploys "$D8/calls" | tr ',' '\n' | sort | tr '\n' ' ')"
+if [ "$RC" -eq 0 ] && [ "$GOT" = "alpha beta " ]; then
+  ok "a shared-module change widens to every function that loads it, and no further"
+else
+  bad "a shared-module change deployed '$GOT' (rc=$RC)"; cat "$D8/out" | tail -25
+fi
+
+# ---------------------------------------------------------------------------
+# 14. What it cannot attribute, it does not guess. Editing the src/index.ts
+#     barrel can repoint an export at a different module while touching neither,
+#     and no dependency walk can see that, so it falls back to the whole fleet.
+# ---------------------------------------------------------------------------
+D9="$(make_repo)"; write_stubs "$D9"
+(cd "$D9/repo" && git rev-parse HEAD) > "$D9/repo/.release-state"
+commit_change "$D9" "mytribe/functions/src/index.ts" 'export { beta } from "./portal/beta";'
+arm_ci "$D9"
+RC="$(run_release "$D9" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=6 RELEASE_FUNCTIONS_SETTLE=0 FIREBASE_CALL_LOG="$D9/calls")"
+GOT="$(fn_deploys "$D9/calls" | tr ',' '\n' | sort -u | grep -c . || true)"
+OUT="$(cat "$D9/out")"
+if [ "$RC" -eq 0 ] && [ "$GOT" = "6" ] &&
+   printf '%s' "$OUT" | grep -q "falling back to the whole fleet"; then
+  ok "an unattributable change deploys the whole fleet and says why"
+else
+  bad "an index.ts change deployed $GOT function(s) (rc=$RC) without the fallback"
+  echo "$OUT" | tail -25
+fi
+
+# ---------------------------------------------------------------------------
+# 15. A test-only change reaches no deployed function. It used to cost a
+#     227-function deploy, which is 227 new Cloud Run revisions to change nothing.
+# ---------------------------------------------------------------------------
+D10="$(make_repo)"; write_stubs "$D10"
+mkdir -p "$D10/repo/mytribe/functions/test"
+printf 'it("works", () => {});\n' > "$D10/repo/mytribe/functions/test/alpha.test.ts"
+( cd "$D10/repo" && git add -A && git commit -qm "add a test" && git push -q origin main ) >/dev/null 2>&1
+(cd "$D10/repo" && git rev-parse HEAD) > "$D10/repo/.release-state"
+commit_change "$D10" "mytribe/functions/test/alpha.test.ts" 'it("also works", () => {});'
+arm_ci "$D10"
+RC="$(run_release "$D10" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_SETTLE=0 FIREBASE_CALL_LOG="$D10/calls")"
+OUT="$(cat "$D10/out")"
+if [ "$RC" -eq 0 ] && [ -z "$(fn_deploys "$D10/calls")" ] &&
+   printf '%s' "$OUT" | grep -q "nothing to deploy"; then
+  ok "a test-only change deploys no functions at all, and says so"
+else
+  bad "a test-only change deployed '$(fn_deploys "$D10/calls")' (rc=$RC)"; echo "$OUT" | tail -25
+fi
+
+# ---------------------------------------------------------------------------
+# 16. A dry run is still inert, batching and all. Nothing reaches firebase and
+#     the new manifest is not written, for the same reason .release-state is not.
+# ---------------------------------------------------------------------------
+D11="$(make_repo)"; write_stubs "$D11"; arm_ci "$D11"
+RC="$(run_release "$D11" DRY_RUN=1 RELEASE_YES=1 FIREBASE_CALL_LOG="$D11/calls")"
+if [ "$RC" -eq 0 ] && [ -z "$(fn_deploys "$D11/calls")" ]; then
+  ok "a dry run runs the batching and deploys no function"
+else
+  bad "a dry run reached firebase with '$(fn_deploys "$D11/calls")' (rc=$RC)"
+fi
+if [ -f "$D11/repo/.release-functions" ]; then
+  bad "a dry run wrote .release-functions"
+else
+  ok "a dry run does not write .release-functions"
+fi
+
+# ---------------------------------------------------------------------------
+# 17. No built lib means no names, and no names must mean no deploy. Falling
+#     back to '--only functions:mytribe' here would be falling back to the
+#     incident.
+# ---------------------------------------------------------------------------
+D12="$(make_repo)"; write_stubs "$D12"; arm_ci "$D12"
+rm -f "$D12/repo/mytribe/functions/lib/index.js"
+( cd "$D12/repo" && git add -A && git commit -qm "drop the build" && git push -q origin main ) >/dev/null 2>&1
+arm_ci "$D12"
+RC="$(run_release "$D12" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 FIREBASE_CALL_LOG="$D12/calls")"
+OUT="$(cat "$D12/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "build:functions"; then
+  ok "an unenumerable fleet refuses and names the build that fixes it"
+else
+  bad "an unenumerable fleet did not refuse (rc=$RC)"; echo "$OUT" | tail -20
+fi
+if [ -z "$(fn_deploys "$D12/calls")" ] && ! grep -q 'hosting' "$D12/calls" 2>/dev/null; then
+  ok "an unenumerable fleet deploys nothing at all"
+else
+  bad "something shipped without a function list"; cat "$D12/calls"
+fi
+
+# ---------------------------------------------------------------------------
+# 18. A function deleted from the source is still serving. Deploying by explicit
+#     name never removes anything, so the run has to SAY so; the alternative is
+#     nobody ever noticing.
+# ---------------------------------------------------------------------------
+D13="$(make_repo)"; write_stubs "$D13"; arm_ci "$D13"
+printf 'alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\nomega\n' > "$D13/repo/.release-functions"
+RC="$(run_release "$D13" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_SETTLE=0 FIREBASE_CALL_LOG="$D13/calls")"
+OUT="$(cat "$D13/out")"
+if printf '%s' "$OUT" | grep -q "functions:delete omega"; then
+  ok "a function that left the code is reported with the command that removes it"
+else
+  bad "an orphaned deployed function was not reported"; echo "$OUT" | tail -25
+fi
+
+# ---------------------------------------------------------------------------
+# 19. Cloud Run service names back to export names, which is the direction
+#     recovery needs. Doing this by eye against src/index.ts resolved 79 of 95 on
+#     2026-08-01; a partial answer leaves exactly the functions nobody redeployed,
+#     so anything short of all of them must refuse.
+# ---------------------------------------------------------------------------
+D14="$(make_repo)"; write_stubs "$D14"
+printf 'alpha\nZETA\n' > "$D14/svc-ok"
+if OUT="$(cd "$D14/repo" && node scripts/function-targets.js --from-services "$D14/svc-ok" 2>/dev/null)" &&
+   [ "$OUT" = "$(printf 'alpha\nzeta')" ]; then
+  ok "lowercase Cloud Run service names resolve back to their exports"
+else
+  bad "service names did not resolve; got '$OUT'"
+fi
+printf 'alpha\nnosuchservice\n' > "$D14/svc-bad"
+if (cd "$D14/repo" && node scripts/function-targets.js --from-services "$D14/svc-bad" >/dev/null 2>&1); then
+  bad "an unresolvable service name still returned a partial list"
+else
+  ok "an unresolvable service name refuses rather than answering partially"
 fi
 
 echo

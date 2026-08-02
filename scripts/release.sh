@@ -62,6 +62,17 @@
 #   RELEASE_SKIP_ANDROID=1              ship the web without the Android client.
 #                                       Off by default: shipping them together
 #                                       is the point of steps 1c and 6b.
+#   RELEASE_FUNCTIONS_ALL=1             deploy every function, not only the ones
+#                                       this release can reach. Use it when you
+#                                       do not trust the narrowing.
+#   RELEASE_FUNCTIONS_BATCH=N           functions per firebase deploy (25). The
+#   RELEASE_FUNCTIONS_ROUNDS=N          number of retry rounds for casualties (3).
+#   RELEASE_FUNCTIONS_SETTLE=S          seconds between batches (30). All three
+#                                       exist because the regional CPU quota is
+#                                       200 vCPU and the fleet is ~227 services.
+#   RELEASE_PREDEPLOY_KEEP=N            prune to N revisions per service before a
+#                                       LARGE functions deploy (3; 0 disables).
+#   RELEASE_RETRY_KEEP=N                prune depth between retry rounds (2).
 #   RELEASE_ANDROID_GROUPS=a,b          App Distribution group aliases to send
 #   RELEASE_ANDROID_TESTERS=a@b,c@d     to. Neither set means every tester on
 #                                       the project; nobody at all REFUSES the
@@ -147,6 +158,132 @@ deploy() {
   local prefix="$1" targets="$2"
   cyan "deploy: $prefix -> $targets"
   DRY_RUN="$DRY_RUN" bash "$SAFE_DEPLOY" "$prefix" -- firebase deploy --only "$targets"
+}
+
+# ---------------------------------------------------------------------------
+# Deploying functions a batch at a time. See step 5 for why this exists at all.
+# ---------------------------------------------------------------------------
+
+# WHY 25. Nobody has found the enforced ceiling, so this is set from what has
+# actually landed rather than from a model. The full fleet fails at 197-201
+# successes against a 200 vCPU regional quota, which is the ceiling naming
+# itself. Batches of 20 and 26 are what every hand recovery used, on 2026-07-28
+# and repeatedly on 2026-08-01, and they landed. 25 sits in that measured range
+# with roughly 8x headroom under the wall, so two or three batches can still be
+# settling concurrently and fit. It is deliberately not "as large as we think we
+# can get away with": the cost of being wrong is a half-deployed backend, and the
+# cost of being conservative is minutes.
+FN_BATCH="${RELEASE_FUNCTIONS_BATCH:-25}"
+
+# 3 rounds, each half the batch size of the last (floor 5). A quota refusal means
+# too many at once, so retrying the SAME width is retrying the thing that failed.
+FN_ROUNDS="${RELEASE_FUNCTIONS_ROUNDS:-3}"
+
+# Cloud Run releases the allocation as revisions settle, and the one batch that
+# failed outright on 2026-08-01 (26 by name, 0 landed) was fired immediately
+# after a full deploy had just abandoned ~200 starting revisions. So: wait.
+FN_SETTLE="${RELEASE_FUNCTIONS_SETTLE:-30}"
+FN_RETRY_KEEP="${RELEASE_RETRY_KEEP:-2}"
+
+# deploy_one_function_batch <names-file> <failed-file>
+# Deploys one batch by explicit name and appends every function firebase did not
+# confirm to <failed-file>. Returns non-zero if any did not land.
+deploy_one_function_batch() {
+  local names_file="$1" failed_file="$2"
+  local targets="" name count log
+  count="$(awk 'NF{n++} END{print n+0}' "$names_file")"
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    targets="${targets:+$targets,}functions:mytribe:$name"
+  done < "$names_file"
+
+  log="$names_file.log"
+  cyan "deploy: mytribe -> $count function(s): $(awk 'NF{printf "%s%s", (n++?" ":""), $0}' "$names_file")"
+  if DRY_RUN="$DRY_RUN" bash "$SAFE_DEPLOY" mytribe -- firebase deploy --only "$targets" 2>&1 | tee "$log"; then
+    return 0
+  fi
+
+  # WHICH ONES ACTUALLY DIED, read from firebase's own per-function lines
+  # ("functions[getMyHome(us-central1)] Successful update operation."). Only
+  # CONFIRMED successes are subtracted, so if the format ever changes this
+  # parses nothing, treats the whole batch as failed, and retries too much
+  # rather than too little. There is no version of this that silently drops a
+  # function on the floor.
+  awk '/functions\[/ && /[Ss]uccessful/ {
+         if (match($0, /functions\[[^]]*\]/)) {
+           s = substr($0, RSTART + 10, RLENGTH - 11)
+           sub(/\(.*/, "", s)
+           print s
+         }
+       }' "$log" | sort -u > "$log.ok"
+
+  if [ -s "$log.ok" ]; then
+    grep -vxF -f "$log.ok" "$names_file" >> "$failed_file" || true
+    ylw "batch: $(awk 'NF{n++} END{print n+0}' "$log.ok") of $count landed; the rest will be retried."
+  else
+    awk 'NF' "$names_file" >> "$failed_file"
+    ylw "batch: none of the $count landed (or firebase reported no per-function"
+    ylw "  result this run). All of them will be retried."
+  fi
+  return 1
+}
+
+# deploy_function_names <names-file>: batch, retry, prune, give up loudly.
+# <names-file> is rewritten as it goes and holds the STALE names on failure, so
+# the caller can name them. Returns 0 only when every name landed.
+deploy_function_names() {
+  local pending="$1"
+  local round=1 batch="$FN_BATCH" remaining chunkdir failed chunks i chunk
+
+  while :; do
+    remaining="$(awk 'NF{n++} END{print n+0}' "$pending")"
+    [ "$remaining" -eq 0 ] && return 0
+    [ "$round" -gt "$FN_ROUNDS" ] && return 1
+
+    if [ "$round" -gt 1 ]; then
+      batch=$(( batch / 2 ))
+      [ "$batch" -lt 5 ] && batch=5
+      ylw ""
+      ylw "round $round of $FN_ROUNDS: $remaining function(s) have not landed."
+      ylw "  Retrying them in batches of $batch."
+      if [ "$FN_RETRY_KEEP" != "0" ] && [ "$DRY_RUN" != "1" ]; then
+        ylw "  Pruning to $FN_RETRY_KEEP revisions per service first. Recovery did"
+        ylw "  this between attempts on 2026-08-01; whether it is what made the"
+        ylw "  retries land is NOT established (keep-2 took 1250 revisions to 487"
+        ylw "  and the deploy behind it still lost 26). The smaller batch is the"
+        ylw "  half of this with evidence behind it."
+        bash "$ROOT/scripts/prune-run-revisions.sh" "$FN_RETRY_KEEP" ||
+          ylw "  prune reported problems (see above). Retrying anyway."
+      fi
+    fi
+
+    chunkdir="$FN_WORK/round$round"
+    mkdir -p "$chunkdir"
+    awk -v n="$batch" -v d="$chunkdir" \
+      'NF { if ((c % n) == 0) f = sprintf("%s/%03d", d, int(c / n)); print > f; c++ }' "$pending"
+
+    failed="$chunkdir/failed"
+    : > "$failed"
+    chunks="$(ls "$chunkdir" | grep -c '^[0-9]' || true)"
+    i=0
+    for chunk in "$chunkdir"/[0-9]*; do
+      case "$chunk" in *.log|*.log.ok) continue ;; esac
+      i=$((i + 1))
+      cyan ""
+      cyan "functions batch $i of $chunks (round $round of $FN_ROUNDS)"
+      deploy_one_function_batch "$chunk" "$failed" || true
+      # Settling matters between batches and nowhere else, and a rehearsal that
+      # sleeps five minutes to print commands is a rehearsal nobody runs.
+      if [ "$i" -lt "$chunks" ] && [ "$FN_SETTLE" -gt 0 ] && [ "$DRY_RUN" != "1" ]; then
+        ylw "settling for ${FN_SETTLE}s so Cloud Run releases the allocation ..."
+        sleep "$FN_SETTLE"
+      fi
+    done
+
+    sort -u "$failed" -o "$failed"
+    cp "$failed" "$pending"
+    round=$((round + 1))
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -721,6 +858,16 @@ LAST_RELEASED=""
 [ -f "$STATE_FILE" ] && LAST_RELEASED="$(cat "$STATE_FILE" 2>/dev/null || true)"
 
 FUNCTIONS_CHANGED=1
+# Declared here rather than in the branch that fills it, because the deploy
+# below reads it to decide whether this is a secret rebind (a handful of
+# functions) or a code change (as many as the diff reaches), and under set -u an
+# unset variable there would kill the release at its riskiest step.
+NEWER_SECRETS=""
+# What the closing tag and the .release-functions manifest report. Empty means
+# this run deployed no functions, which is a fact both of them must be able to
+# state rather than round up.
+FUNCTIONS_SHIPPED_DESC=""
+FLEET_LIST=""
 if [ "${RELEASE_FORCE_FUNCTIONS:-0}" = "1" ]; then
   ylw "functions: forced (RELEASE_FORCE_FUNCTIONS=1)"
 elif [ -n "$LAST_RELEASED" ] && git cat-file -e "$LAST_RELEASED^{commit}" 2>/dev/null; then
@@ -753,7 +900,6 @@ if [ "$FUNCTIONS_CHANGED" -eq 0 ]; then
   SINCE="$(TZ=UTC git show -s --format=%cd --date=iso-strict-local "$LAST_RELEASED" 2>/dev/null || true)"
   SINCE_N="$(printf '%s' "$SINCE" | tr -d ':-' | cut -c1-15)"
   SECRET_DECLARED="$(node "$ROOT/scripts/declared-secrets.js" 2>/dev/null || true)"
-  NEWER_SECRETS=""
   if [ -z "$SINCE_N" ] || [ -z "$SECRET_DECLARED" ]; then
     # Same posture as step 1b's "could not list": an unknown is reported, never
     # rendered as a clean answer. Skipping stays the behaviour so a machine
@@ -791,70 +937,197 @@ if [ "$FUNCTIONS_CHANGED" -eq 0 ]; then
   ylw "  burn regional CPU quota to change nothing."
   ylw "  Force with RELEASE_FORCE_FUNCTIONS=1."
 else
-  # THE AUTOMATIC PRE-DEPLOY PRUNE IS GONE. Read this before re-adding it,
-  # because the reasoning that put it here was measured, confident and wrong.
+  # THE FLEET DOES NOT FIT, AND NO AMOUNT OF PRUNING MAKES IT FIT.
   #
-  # Three deploys died mid-run on "Quota exceeded for total allowable CPU per
-  # project per region" (2026-07-26, and twice on 2026-07-28), each leaving
-  # ~20 functions on their previous revision. The diagnosis was that Cloud Run
-  # revisions accumulate and each holds CPU, so this step pruned to 2 per
-  # service to make room. The arithmetic was stated as measured rather than
-  # modelled: a wall near 900 revisions, keep-2 leaving a floor of 460 plus
-  # ~217 minted.
+  # mytribe/functions is ~227 exports, each its own Cloud Run service at 1 vCPU.
+  # A deploy starts a NEW revision beside the serving one, so `--only
+  # functions:mytribe` asks us-central1 for roughly double the fleet at once
+  # against a CpuAllocPerProjectRegion of 200 vCPU. It cannot be satisfied. On
+  # 2026-08-01, five full deploys each died partway:
   #
-  # On 2026-07-28 that prune ran, landed within one revision of its prediction
-  # (676 against a predicted 677), and the deploy failed anyway with the same
-  # 20 functions. Three measurements say why the model was wrong:
+  #     forced (RELEASE_FORCE_FUNCTIONS=1)   197 ok   26 failed
+  #     stray (wrong cwd, package script)    131 ok   95 failed
+  #     release retry                        197 ok   30 failed
+  #     release with PREDEPLOY_KEEP=2        201 ok   26 failed
+  #     targeted redeploy of just those 26     0 ok   26 failed
   #
-  #   - run.googleapis.com/active_revisions reported usage 230 against 230
-  #     services, one apiece, while 676 revisions existed. Idle revisions are
-  #     not counted, so deleting them frees nothing that was being counted.
-  #   - 36 revisions pin min-instances=1; the other 640 scale to zero. At rest
-  #     the project holds ~36 CPU, nowhere near a ceiling.
-  #   - the casualties are always the deploy's last concurrent batch (crons,
-  #     triggers, sweeps), and redeploying those same names as a batch of 20
-  #     succeeds minutes later with no quota change in between.
+  # Note where the successes stop: 197, 201, 197. That is the 200 vCPU ceiling
+  # printing itself, and it is why this is a CEILING and not a timing problem.
+  # Revisions went 702 -> 926 -> 1250 across the day because every attempt mints
+  # ~227 more. Pruning to 487 did not make the next full deploy fit.
   #
-  # That points at concurrent container starts during a bulk deploy rather
-  # than at revision inventory. Be careful how much of that to believe: what
-  # is PROVEN is only that the prune was insufficient and that the resource it
-  # reclaims is not the one being counted. The mechanism is inference.
-  #
-  # But the cost was never in doubt. The prune spent ~250 revisions of
-  # rollback depth immediately before the riskiest step in the release, to buy
-  # headroom there is no evidence it bought. Step 8 still prunes for
-  # retention, after verification, where spending that depth is safe.
-  #
-  # THE OBVIOUS OBJECTION: step 8 runs after this step, so it cannot help the
-  # deploy standing here. True of this run, and it is the whole reason the
-  # question keeps coming back. It is answered ACROSS runs, not within one: a
-  # step 8 whose keep actually fires (3, since 2026-08-01; 10 could not delete
-  # a single revision at 926) leaves the inventory at its floor every release,
-  # so the next release starts from ~714 rather than from 926 and climbing.
-  # That is the only way an after-the-fact sweep helps a deploy that precedes
-  # it, and it is enough, because the headroom a pre-deploy prune would buy has
-  # been measured and was not there. The durable fix remains a quota increase:
-  # Cloud Run Admin API, "Total CPU allocation, per project per region".
-  #
-  # Setting RELEASE_PREDEPLOY_KEEP=N restores the old behaviour for one run.
-  # It is opt-in because it is unproven, not because it is dangerous.
-  STEP="reclaiming Cloud Run quota before the functions deploy"
-  if [ -n "${RELEASE_PREDEPLOY_KEEP:-}" ] && [ "$DRY_RUN" != "1" ]; then
-    ylw "RELEASE_PREDEPLOY_KEEP=$RELEASE_PREDEPLOY_KEEP: pruning before the deploy."
-    ylw "  Opt-in and unproven (see the comment above). This spends rollback"
-    ylw "  depth to buy headroom that may not exist."
-    bash "$ROOT/scripts/prune-run-revisions.sh" "$RELEASE_PREDEPLOY_KEEP" || {
-      # Deploy anyway. A prune that could not run is not proof the quota is
-      # short, and refusing to ship on a housekeeping failure is worse than
-      # trying. If the quota really is short, the deploy says so plainly.
-      ylw "pre-deploy prune reported problems (see above). Deploying anyway;"
-      ylw "  if the CPU quota is exhausted the functions step will say so."
-    }
+  # Every recovery that day had the same shape and it always worked: name the
+  # casualties and redeploy them as a small batch through safe-deploy. So the
+  # release now does by design what recovery did by hand. `firebase deploy
+  # --only functions:mytribe:a,functions:mytribe:b,...` takes an explicit list,
+  # and scripts/function-targets.js produces that list from the built lib/, the
+  # same artifact the Firebase CLI itself loads.
+  STEP="enumerating the mytribe functions"
+  FN_WORK="$(mktemp -d)"
+
+  if ! node "$ROOT/scripts/function-targets.js" > "$FN_WORK/fleet"; then
+    red "REFUSED: the deployable functions could not be enumerated (see above)."
+    red "  Deploying them needs their names, and this script will not fall back"
+    red "  to '--only functions:mytribe': that is the whole-fleet deploy the CPU"
+    red "  quota refused five times on 2026-08-01."
+    red "  Usually this means lib/ is not built:  npm run build:functions"
+    exit 1
+  fi
+  FLEET_COUNT="$(awk 'NF{n++} END{print n+0}' "$FN_WORK/fleet")"
+
+  # WHAT LEFT PRODUCTION SINCE LAST TIME. Deploying by explicit name never
+  # deletes anything, where `--only functions:mytribe` would have offered to
+  # remove functions that no longer exist in the source. That is a real hole this
+  # batching opens, so it is reported rather than left for someone to find: the
+  # manifest below records the fleet at the end of every successful release, and
+  # a name that has since left the code is named here with the command that
+  # removes it. Reported, never done automatically: deleting a live function is
+  # not something a release should decide on its own.
+  FN_MANIFEST="$ROOT/.release-functions"
+  if [ -s "$FN_MANIFEST" ]; then
+    GONE="$(grep -vxF -f "$FN_WORK/fleet" "$FN_MANIFEST" 2>/dev/null || true)"
+    if [ -n "$GONE" ]; then
+      ylw "functions: these were deployed by the last release and are no longer"
+      ylw "  in the code. Nothing here deletes them, so they are still serving:"
+      for g in $GONE; do ylw "    firebase functions:delete $g --project $PROJECT"; done
+    fi
   fi
 
-  STEP="deploying the mytribe functions codebase"
-  deploy mytribe functions:mytribe
-  grn "functions:mytribe: deployed"
+  # WHICH OF THEM THIS RELEASE ACTUALLY HAS TO TOUCH.
+  #
+  # A one-function change has no business redeploying 227 services. .release-state
+  # already names the last released commit, so `git diff --name-status` names the
+  # changed files, and function-targets.js maps those to functions through the
+  # module graph of the BUILT lib/ (statically, so lazy requires are in it).
+  #
+  # The mapping is not per-file-per-function: src/lib/logger.ts is in all 227
+  # closures and src/lib/auditEvents.ts in 196, so a shared-code change correctly
+  # widens to almost everything. Anything it cannot attribute (the src/index.ts
+  # barrel, a delete, a rename, a package.json dependency, a require it cannot
+  # read statically) exits 3, says why, and this falls back to the full fleet.
+  # A correct slow deploy beats a clever wrong one, and every uncertain case
+  # resolves towards deploying MORE functions, never fewer.
+  STEP="working out which functions this release changes"
+  cp "$FN_WORK/fleet" "$FN_WORK/targets"
+  FN_SCOPE="every function"
+
+  if [ "${RELEASE_FUNCTIONS_ALL:-0}" = "1" ]; then
+    ylw "functions: RELEASE_FUNCTIONS_ALL=1, deploying the whole fleet."
+  elif [ "${RELEASE_FORCE_FUNCTIONS:-0}" = "1" ]; then
+    ylw "functions: forced, so the whole fleet is deployed rather than a subset."
+  elif [ -n "$NEWER_SECRETS" ]; then
+    # The code is unchanged and a secret is newer, so what needs rebinding is
+    # exactly the functions that DECLARE that secret. declared-secrets.js already
+    # answers that from the same __endpoint structure, per function.
+    STEP="finding the functions that declare the changed secrets"
+    : > "$FN_WORK/bysecret"
+    SECRET_LOOKUP_OK=1
+    for s in $NEWER_SECRETS; do
+      node "$ROOT/scripts/declared-secrets.js" --by-function "$s" 2>/dev/null |
+        awk -F'\t' -v want="$s" '$2 == want { print $1 }' >> "$FN_WORK/bysecret" ||
+        SECRET_LOOKUP_OK=0
+    done
+    sort -u "$FN_WORK/bysecret" -o "$FN_WORK/bysecret"
+    if [ "$SECRET_LOOKUP_OK" = "1" ] && [ -s "$FN_WORK/bysecret" ]; then
+      cp "$FN_WORK/bysecret" "$FN_WORK/targets"
+      FN_SCOPE="the functions declaring$NEWER_SECRETS"
+    else
+      ylw "functions: could not tell which functions declare those secrets."
+      ylw "  Deploying the whole fleet, because an unbound secret is silent."
+    fi
+  elif [ -n "$LAST_RELEASED" ] && git cat-file -e "$LAST_RELEASED^{commit}" 2>/dev/null; then
+    git diff --name-status "$LAST_RELEASED" HEAD -- mytribe/functions > "$FN_WORK/changed" 2>/dev/null || true
+    if node "$ROOT/scripts/function-targets.js" \
+         --changed-from "$FN_WORK/changed" --base "$LAST_RELEASED" > "$FN_WORK/narrowed"; then
+      cp "$FN_WORK/narrowed" "$FN_WORK/targets"
+      FN_SCOPE="what changed since $(git rev-parse --short "$LAST_RELEASED")"
+    else
+      # Exit 3 (and anything else) means the fleet is known but this change could
+      # not be attributed. The reason is already on the log, above.
+      ylw "functions: falling back to the whole fleet for the reason above."
+    fi
+  else
+    ylw "functions: no usable .release-state, so there is nothing to diff against."
+    ylw "  Deploying the whole fleet, which is the safe direction."
+  fi
+
+  FN_COUNT="$(awk 'NF{n++} END{print n+0}' "$FN_WORK/targets")"
+  cyan "functions: deploying $FN_COUNT of $FLEET_COUNT ($FN_SCOPE)"
+
+  if [ "$FN_COUNT" -eq 0 ]; then
+    # Not a skip and not a failure: the diff was real (that is why this branch
+    # ran) and no deployed function loads any of it. Test-only and docs-only
+    # commits land here, and they used to cost a 227-function deploy.
+    grn "functions: nothing to deploy. No deployed function loads the code that"
+    grn "  changed since the last release."
+    FUNCTIONS_SHIPPED_DESC="none needed ($FN_SCOPE reaches no deployed function)"
+  else
+    # PRUNE BEFORE, NOT ONLY AFTER, and be honest about what it buys.
+    #
+    # The 2026-08-01 evidence is that pruning is NOT a quota fix: keep-2 took the
+    # inventory from 1250 to 487 and the deploy that followed still lost 26
+    # functions. The batching above is the quota fix. What the prune is good for
+    # is retention, and doing it here rather than only at step 8 means a run that
+    # is about to mint hundreds of revisions starts from the floor instead of
+    # from wherever a previous failed release left the inventory.
+    #
+    # So it defaults ON at the same depth step 8 keeps (3), which makes it a
+    # near no-op in steady state: step 8 already left the inventory at that floor
+    # after the last successful release, so this only bites when something went
+    # wrong in between, which is exactly when it is worth doing. It spends no
+    # rollback depth that step 8 was not going to spend an hour later anyway.
+    #
+    # And it only runs for a LARGE deploy. A narrowed release of four functions
+    # has no business sweeping the whole project's revision history first.
+    # RELEASE_PREDEPLOY_KEEP=0 turns it off.
+    STEP="reclaiming Cloud Run revisions before the functions deploy"
+    PREDEPLOY_KEEP="${RELEASE_PREDEPLOY_KEEP:-3}"
+    PREDEPLOY_MIN="${RELEASE_PREDEPLOY_MIN_TARGETS:-50}"
+    if [ "$PREDEPLOY_KEEP" != "0" ] && [ "$FN_COUNT" -ge "$PREDEPLOY_MIN" ] && [ "$DRY_RUN" != "1" ]; then
+      ylw "pruning to $PREDEPLOY_KEEP per service before deploying $FN_COUNT functions."
+      ylw "  Retention, not headroom: the quota fix is the batching below."
+      bash "$ROOT/scripts/prune-run-revisions.sh" "$PREDEPLOY_KEEP" || {
+        # A prune that could not run is not proof the quota is short, and
+        # refusing to ship on a housekeeping failure is worse than trying.
+        ylw "pre-deploy prune reported problems (see above). Deploying anyway."
+      }
+    elif [ "$PREDEPLOY_KEEP" = "0" ]; then
+      ylw "pre-deploy prune disabled (RELEASE_PREDEPLOY_KEEP=0)."
+    elif [ "$DRY_RUN" != "1" ]; then
+      cyan "pre-deploy prune skipped: $FN_COUNT functions is under the $PREDEPLOY_MIN"
+      cyan "  threshold, so there is nothing worth reclaiming depth for."
+    fi
+
+    STEP="deploying the mytribe functions in batches"
+    if deploy_function_names "$FN_WORK/targets"; then
+      grn "functions:mytribe: all $FN_COUNT deployed"
+      FUNCTIONS_SHIPPED_DESC="$FN_COUNT of $FLEET_COUNT, batched in $FN_BATCH ($FN_SCOPE)"
+    else
+      red "REFUSED: $(awk 'NF{n++} END{print n+0}' "$FN_WORK/targets") function(s) did not deploy after $FN_ROUNDS round(s)."
+      red "  These are STALE: production is still serving their previous revision."
+      red "  The rest of this release has not run, so the clients have NOT been"
+      red "  shipped ahead of the backend. That is the whole reason step 5 is here."
+      red ""
+      while IFS= read -r n; do [ -n "$n" ] && red "    $n"; done < "$FN_WORK/targets"
+      red ""
+      red "  Retry just these, smaller and slower:"
+      red "    RELEASE_FUNCTIONS_BATCH=5 RELEASE_FUNCTIONS_SETTLE=60 npm run deploy"
+      red "  Or by hand, having pruned first:"
+      red "    scripts/prune-run-revisions.sh 2"
+      red "    scripts/safe-deploy.sh mytribe -- firebase deploy --only \\"
+      red "      \"$(awk 'NF{printf "%sfunctions:mytribe:%s", (n++?",":""), $0}' "$FN_WORK/targets")\""
+      red ""
+      red "  The durable fix is a quota increase: Cloud Run Admin API,"
+      red "  'Total CPU allocation, per project per region', us-central1."
+      exit 1
+    fi
+  fi
+
+  # Kept for the manifest written after verification, so the NEXT release can
+  # name any function that has since left the code. Read from the artifact here
+  # rather than re-derived later, because by then lib/ may have been rebuilt.
+  FLEET_LIST="$(cat "$FN_WORK/fleet")"
+  rm -rf "$FN_WORK"
 fi
 
 STEP="deploying the admin functions codebases"
@@ -1079,11 +1352,19 @@ fi
 # deploys nothing, so a dry run has nothing to record.
 STEP="recording the released commit"
 if [ "$DRY_RUN" = "1" ]; then
-  ylw "DRY_RUN=1: NOT writing .release-state. It records what is DEPLOYED, and"
-  ylw "  this run deployed nothing. Writing it would make the next real release"
-  ylw "  skip the functions deploy for code that never shipped."
+  ylw "DRY_RUN=1: NOT writing .release-state or .release-functions. They record"
+  ylw "  what is DEPLOYED, and this run deployed nothing. Writing them would make"
+  ylw "  the next real release skip the functions deploy for code that never"
+  ylw "  shipped, and believe a fleet it never saw."
 else
   git rev-parse HEAD > "$ROOT/.release-state"
+  # The fleet as it stood when it last shipped. Deploying by explicit name never
+  # removes anything, so without this nothing would ever notice a function that
+  # was deleted from the source and left running in production. Written under the
+  # same rule and the same guard as .release-state: only what actually shipped.
+  if [ -n "$FLEET_LIST" ]; then
+    printf '%s\n' "$FLEET_LIST" > "$ROOT/.release-functions"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -1110,7 +1391,7 @@ else
 firestore: indexes + rules (mytribe)"
   if [ "$FUNCTIONS_CHANGED" -eq 1 ]; then
     SHIPPED="$SHIPPED
-functions: mytribe"
+functions: mytribe ($FUNCTIONS_SHIPPED_DESC)"
   else
     SHIPPED="$SHIPPED
 functions: mytribe (skipped, unchanged since the last release)"

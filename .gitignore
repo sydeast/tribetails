@@ -5,6 +5,10 @@
 # over GitHub's 100 MB limit.
 *.hprof
 .release-state
+# The function names the last release actually shipped. Per machine, like
+# .release-state, and read for the same reason: to tell what production holds
+# that this code no longer does.
+.release-functions
 __pycache__/
 node_modules/
 node_modules
