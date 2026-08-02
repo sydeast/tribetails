@@ -9,6 +9,14 @@ are STILL migrated, but tagged sentVia="legacy_orphan" with sessionId="" so
 admin UI can fail-loud surface them. Per fail-loud policy: do not silently
 drop docs.
 
+createdAt is the INGEST instant, not visit_logs.submitted. It used to be the
+latter, which is free text, and Firestore's UTF-8 byte ordering then sorted the
+whole imported block above every real row and alphabetically by month name.
+Punchlist F7. The repair for rows already in production is
+mytribe/scripts/backfillKinTaleCreatedAt.ts; this file is the source fix, so a
+re-run of the migration cannot put the defect back. The human submit stamp is
+still carried, parsed and sortable, as _legacySubmittedAt.
+
 Refuses prod write without --allow-prod AND explicit GCLOUD_PROJECT env var.
 Pattern matches MyTribe/scripts/seedNotificationTemplates.ts gate.
 
@@ -23,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,9 +44,53 @@ SERVICE_ACCOUNT = PROJECT_ROOT.parent / "auntieos-ttpc-firebase-adminsdk-fbsvc-7
 
 EXPECTED_PROJECT = "auntieos-ttpc"
 
+MONTHS = ["January", "February", "March", "April", "May", "June",
+          "July", "August", "September", "October", "November", "December"]
+
+# The one grammar visit_logs.submitted uses: "September 3, 2025 2:02pm".
+# All 83 rows this script produced in May 2026 match it exactly. Minutes are
+# optional because the sibling arrival/departure fields use the bare-hour form.
+_LEGACY_STAMP = re.compile(
+    r"^(" + "|".join(MONTHS) + r") (\d{1,2}), (\d{4}) (\d{1,2})(?::(\d{2}))?(am|pm)$"
+)
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_legacy_stamp(raw: str) -> str | None:
+    """'September 3, 2025 2:02pm' -> '2025-09-03T14:02:00Z', else None.
+
+    Deliberately narrow and anchored. A full English month name with a 4-digit
+    year cannot be ambiguous the way '03/09/2025' is, which is the only reason
+    parsing this text is defensible. Anything else returns None and is reported;
+    it is never coerced by a permissive parser.
+
+    The source records NO timezone, so none can be recovered. The wall clock is
+    rendered as Zulu, the convention this corpus already accepted
+    (cleanup_prod_data_pass1.normalize_iso_zulu: "Treats naive local timestamps
+    as Zulu"). Every stamp shifts by the same unknown offset, so the ORDER this
+    field exists to carry is exact even though the instant is approximate.
+    """
+    if not isinstance(raw, str):
+        return None
+    m = _LEGACY_STAMP.match(raw.strip())
+    if not m:
+        return None
+    month = MONTHS.index(m.group(1)) + 1
+    day, year = int(m.group(2)), int(m.group(3))
+    raw_hour = int(m.group(4))
+    minute = int(m.group(5)) if m.group(5) else 0
+    if not 1 <= raw_hour <= 12 or minute > 59:
+        return None
+    hour = (raw_hour % 12) + (12 if m.group(6) == "pm" else 0)
+    try:
+        # Rejects "February 30, 2026" rather than rolling it into March.
+        dt = datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def init_firebase(allow_prod: bool):
@@ -62,18 +115,32 @@ def first_nonblank(*vals: str) -> str:
     return ""
 
 
-def convert(visit_log_id: str, vl: dict, session_ids: set[str]) -> tuple[str, dict, bool]:
-    """Returns (new_doc_id, kin_care_report_dict, is_orphan)."""
+def convert(visit_log_id: str, vl: dict, session_ids: set[str],
+            ingested_at: str | None = None) -> tuple[str, dict, bool]:
+    """Returns (new_doc_id, kin_care_report_dict, is_orphan).
+
+    `ingested_at` is the ONE ingest instant for the whole run, so every row this
+    pass produces shares a single `createdAt`/`_migratedAt` rather than drifting
+    by however long the loop took. Defaults to now for callers that do not care.
+    """
     journal_id = vl.get("journalId", "")
     is_orphan  = journal_id not in session_ids
     timestamp  = first_nonblank(vl.get("submitted", ""), vl.get("arrival", ""), vl.get("departure", ""))
     new_doc_id = f"legacy_{visit_log_id}"
+    ingest     = ingested_at or utc_now_iso()
     report = {
         "sessionId":         "" if is_orphan else journal_id,
         "kinfolkId":         vl.get("kinfolkId", ""),
         "kinfolkName":       "",  # journalId is FK, not name
         "kinIds":            [],
         "serviceType":       vl.get("serviceType", ""),
+        # visitDate / sentAt / arrivedAt / departedAt stay EXACTLY as the source
+        # recorded them, deliberately. They are the human original, and nothing
+        # here can improve them without inventing information: the visit date
+        # cannot be derived from a submit stamp (see `_legacySubmittedAt` below),
+        # and arrival/departure are bare clock times carrying no date at all
+        # ("8:37pm"), several of which run backwards across midnight. Free text
+        # that is honestly free text is not the defect this file had.
         "visitDate":         timestamp,
         "arrivedAt":         vl.get("arrival", ""),
         "departedAt":        vl.get("departure", ""),
@@ -87,11 +154,33 @@ def convert(visit_log_id: str, vl: dict, session_ids: set[str]) -> tuple[str, di
         "sentAt":            timestamp,
         "sentVia":           "legacy_orphan" if is_orphan else "legacy_visit_logs",
         "deliveryReceiptId": vl.get("rawStagingRef", ""),
-        "createdAt":         vl.get("submitted", ""),
-        "updatedAt":         utc_now_iso(),
+        # THE INGEST INSTANT, not visit_logs.submitted.
+        #
+        # This field used to be `vl.get("submitted", "")`, which is free text
+        # ("September 3, 2025 2:02pm"). Firestore orders strings by UTF-8 byte,
+        # so letters beat digits: every row this script wrote sorted ABOVE every
+        # ISO row in a `createdAt desc` query, and sorted among itself
+        # ALPHABETICALLY BY MONTH NAME. The KinTales list was not slightly
+        # mis-sorted, it was sorted by nothing.
+        #
+        # Per the operator's 2026-08-01 ruling, `createdAt` means "created in
+        # AuntieOS", and a row imported from the previous system was created in
+        # AuntieOS at ingest. Same value as `_migratedAt` by construction, so a
+        # re-run of this script cannot reintroduce the defect that
+        # mytribe/scripts/backfillKinTaleCreatedAt.ts exists to repair.
+        "createdAt":         ingest,
+        "updatedAt":         ingest,
+        # The human submit stamp, rendered sortable. It is NOT written into
+        # `visitDate`: measured against the live corpus, 18 of the 83 rows record
+        # an `arrivedAt` clock time LATER in the day than the submit time, so the
+        # visit demonstrably began on the previous calendar day and this stamp is
+        # a submit time, not a visit date. It is kept under a name that says so,
+        # where it carries no claim it cannot support. Blank when the text does
+        # not match the one known grammar; nothing is guessed.
+        "_legacySubmittedAt": parse_legacy_stamp(vl.get("submitted", "")) or "",
         # provenance — separate from deliveryReceiptId for clarity
         "_migratedFrom":     f"visit_logs/{visit_log_id}",
-        "_migratedAt":       utc_now_iso(),
+        "_migratedAt":       ingest,
     }
     return new_doc_id, report, is_orphan
 
@@ -121,16 +210,22 @@ def main():
 
     matched = 0
     orphans = []
+    unparsed = []
+    # ONE ingest instant for the whole run, so every row shares a createdAt
+    # rather than drifting by however long the loop took.
+    ingested_at = utc_now_iso()
     write_batch = db.batch() if not args.dry_run else None
     batch_count = 0
 
     for snap in visit_logs:
         vl = snap.to_dict()
-        new_id, report, is_orphan = convert(snap.id, vl, session_ids)
+        new_id, report, is_orphan = convert(snap.id, vl, session_ids, ingested_at)
         if is_orphan:
             orphans.append((snap.id, vl.get("journalId", "")))
         else:
             matched += 1
+        if not report["_legacySubmittedAt"]:
+            unparsed.append((snap.id, vl.get("submitted", "")))
         if args.dry_run:
             tag = "ORPHAN" if is_orphan else "MATCH"
             print(f"  [{tag}] visit_logs/{snap.id} -> kin_care_reports/{new_id} (sessionId='{report['sessionId']}')")
@@ -146,7 +241,14 @@ def main():
         write_batch.commit()
 
     print()
-    print(f"[migrate] FINAL: total={len(visit_logs)} matched={matched} orphans={len(orphans)} mode={'DRY' if args.dry_run else 'WRITE'}")
+    print(f"[migrate] FINAL: total={len(visit_logs)} matched={matched} orphans={len(orphans)} "
+          f"unparsed_submit_stamps={len(unparsed)} createdAt={ingested_at} "
+          f"mode={'DRY' if args.dry_run else 'WRITE'}")
+    if unparsed:
+        print("[migrate] Submit stamps that did NOT match the known grammar "
+              "(_legacySubmittedAt left blank, nothing guessed):")
+        for vid, raw in unparsed:
+            print(f"  visit_logs/{vid}  submitted='{raw}'")
     if orphans:
         print("[migrate] Orphans (journalId not in kin_care_sessions):")
         for vid, jid in orphans:
