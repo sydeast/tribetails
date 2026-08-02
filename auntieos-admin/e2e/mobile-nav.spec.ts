@@ -118,10 +118,45 @@ test('no screen the drawer reaches scrolls sideways at 390px', async ({ page }) 
   // learned to stack. Measured on every pinned destination, because the heading
   // is on all of them.
   test.setTimeout(300_000);
+
+  // ONE cold boot, then CLIENT-SIDE navigation for the rest.
+  //
+  // This loop used to `page.goto` every destination, which is a full page load,
+  // so it rebooted the app once per rail entry. Each boot re-runs `requireAdmin`
+  // (`src/router.tsx:104`) and re-opens the screen's listeners, and on a shared
+  // CI runner the eighteenth consecutive boot stopped producing a shell at all:
+  // main was red from 2026-08-01 with `/form-schemas never rendered the app
+  // shell`, reproducibly at that one position, while four local runs of the same
+  // commit passed. Raising the per-assertion budget to 30s did not move it,
+  // which is what ruled out slowness. `FormSchemas` itself is sound: it loads
+  // through `AsyncRegion`, names the failing callable and offers Retry, so a
+  // refused callable renders an error INSIDE main rather than removing main.
+  //
+  // The cold boot was never what this test is about. It measures layout at
+  // 390px, and the router swaps screens in place, which is also how an operator
+  // actually moves between them. One boot proves the shell mounts; the rest
+  // navigate the way the app does. `signin.spec.ts` covers cold-boot auth.
+  await page.goto(`/${railEntries()[0]?.slug ?? 'home'}`);
+  await expect(page.locator('main'), 'the shell never mounted').toBeVisible({ timeout: 30_000 });
+
   const offenders: string[] = [];
   for (const entry of railEntries()) {
-    await page.goto(`/${entry.slug}`);
-    await expect(page.locator('main')).toBeVisible();
+    // Client-side: no reload, so the shell stays mounted and only the screen
+    // under `<Outlet/>` is replaced.
+    await page.evaluate((slug) => {
+      window.history.pushState({}, '', `/${slug}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, entry.slug);
+    await expect(
+      page.locator('main'),
+      `/${entry.slug} never rendered the app shell`,
+    ).toBeVisible({ timeout: 30_000 });
+    // The heading is what the router swaps, so waiting on it proves the NEW
+    // screen mounted rather than measuring the previous one still on the page.
+    await expect(
+      page.locator('.den-heading-kicker, .den-heading h1').first(),
+      `/${entry.slug} never rendered a heading`,
+    ).toBeVisible({ timeout: 30_000 });
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );

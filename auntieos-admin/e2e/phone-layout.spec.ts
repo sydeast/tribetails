@@ -82,7 +82,14 @@ async function measure(p: Page): Promise<Measurement> {
  */
 async function openScreen(p: Page, slug: string, kicker: string): Promise<void> {
   await p.goto(`/${slug}`);
-  await expect(p.locator('.den-heading-kicker', { hasText: kicker })).toBeVisible();
+  // Same cold-boot budget as `mobile-nav.spec.ts`, for the same reason: `goto`
+  // reboots the app, and nothing renders until `requireAdmin`
+  // (`src/router.tsx:104`) has awaited `waitForAuthReady()` and then
+  // `resolveAccess()` against the emulator. Playwright's default 5s ceiling is
+  // comfortable on a developer machine and marginal on a shared runner.
+  await expect(p.locator('.den-heading-kicker', { hasText: kicker })).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 /** Printed on every run, pass or fail, so the numbers can be quoted. */
