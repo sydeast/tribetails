@@ -101,6 +101,33 @@ describe('listOrphanReports ordering + honesty', () => {
     expect((await listOrphanReportsHandler(req())).reports.map((r) => r._id)).toEqual(['newer', 'older']);
   });
 
+  it('breaks the F7 tie on _legacySubmittedAt, so an all-imported set still has an order', async () => {
+    // After the punchlist F7 redate every row the visit_logs migration produced
+    // shares ONE ingest instant on createdAt, and that is the whole orphan set.
+    // The primary sort alone would leave them tied and the order arbitrary.
+    const ingest = '2026-05-16T20:36:39.000Z';
+    const ctx = seed([
+      report('legacy_57', { sentVia: 'legacy_visit_logs', kinfolkId: '', triageStatus: '', createdAt: ingest, _legacySubmittedAt: '2025-09-03T14:02:00.000Z' }),
+      report('legacy_10', { sentVia: 'legacy_visit_logs', kinfolkId: '', triageStatus: '', createdAt: ingest, _legacySubmittedAt: '2026-04-03T23:26:00.000Z' }),
+      report('legacy_55', { sentVia: 'legacy_visit_logs', kinfolkId: '', triageStatus: '', createdAt: ingest, _legacySubmittedAt: '2025-11-08T13:34:00.000Z' }),
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await listOrphanReportsHandler(req());
+    expect(res.reports.map((r) => r._id)).toEqual(['legacy_10', 'legacy_55', 'legacy_57']);
+    // And the tie-break stays internal: the row renders id + channel + body.
+    expect(res.reports[0]).not.toHaveProperty('_legacySubmittedAt');
+  });
+
+  it('a row with no _legacySubmittedAt sorts last within its tie, never ahead of a stamped one', async () => {
+    const ingest = '2026-05-16T20:36:39.000Z';
+    const ctx = seed([
+      report('unstamped', { sentVia: 'legacy_visit_logs', kinfolkId: '', triageStatus: '', createdAt: ingest }),
+      report('stamped', { sentVia: 'legacy_visit_logs', kinfolkId: '', triageStatus: '', createdAt: ingest, _legacySubmittedAt: '2025-09-03T14:02:00.000Z' }),
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    expect((await listOrphanReportsHandler(req())).reports.map((r) => r._id)).toEqual(['stamped', 'unstamped']);
+  });
+
   it('sorts a blank createdAt last, never treating it as "now"', async () => {
     const ctx = seed([
       report('dated', { sentVia: 'legacy_orphan', kinfolkId: '', triageStatus: '', createdAt: '2026-05-01T00:00:00.000Z' }),
