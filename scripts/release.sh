@@ -15,6 +15,10 @@
 # WHAT IT DOES, in this order and for these reasons:
 #   0. preconditions  - clean tree, on main, synced with origin. Shipping
 #                       uncommitted or stale code is the classic incident.
+#  0b. ci verdict    - ask GitHub whether CI is green for THIS commit. Step 1
+#                       does not run e2e and never did, so until this existed a
+#                       red e2e job could not stop a release. One didn't, on
+#                       2026-08-01.
 #   1. npm run check  - typecheck, lint, test, build. This is also what
 #                       produces the dist/ that step 5 uploads, so it is not
 #                       optional theatre: skipping it ships a stale bundle.
@@ -40,9 +44,14 @@
 #
 # USAGE
 #   npm run deploy                      the whole run
-#   DRY_RUN=1 npm run deploy            print every firebase command, run none
+#   DRY_RUN=1 npm run deploy            rehearse it: print every firebase command,
+#                                       run none, WRITE NOTHING, claim nothing
 #
 #   RELEASE_SKIP_CHECK=1                skip step 1 (only when you just ran it)
+#   RELEASE_SKIP_CI_GATE=1              release without CI's verdict for HEAD.
+#                                       For when the gate is genuinely
+#                                       unavailable (no gh, no network, GitHub
+#                                       down), not for when it says no.
 #   RELEASE_INCLUDE_ADMIN_FUNCTIONS=1   also ship the AuntieOS functions
 #                                       codebases (default/reconcile). Off by
 #                                       default because they live in a second
@@ -75,6 +84,26 @@ SAFE_DEPLOY="$ROOT/scripts/safe-deploy.sh"
 # rather than through safe-deploy. Omitting it made the preflight die on
 # `PROJECT: unbound variable` under set -u the first time it ran for real.
 PROJECT="auntieos-ttpc"
+
+# DRY_RUN=1 IS A REHEARSAL, and a rehearsal has exactly two obligations: leave
+# the machine exactly as it found it, and claim nothing it did not do. Read once
+# here rather than as `${DRY_RUN:-0}` at each use, because that is a property of
+# the whole script and a per-site default is how one site gets missed.
+#
+# One did. On 2026-08-01 `DRY_RUN=1 RELEASE_YES=1 npm run deploy` deployed
+# nothing, wrote HEAD into .release-state anyway, and signed off with "Commit
+# e4f0245 is live and verified." The real release that followed read that file,
+# found mytribe/functions unchanged since it, and SKIPPED the functions deploy.
+# So a brand new admin bundle went live against a backend with no
+# getInvoiceLedger, no listInvites, no transitionBookingStatus and no
+# getBusinessClosures. User-facing, until a forced redeploy.
+#
+# That is the same class of lie step 7 exists to catch (hosting reporting success
+# while browsers get the old bundle) and that the runbook opens with (`npm run
+# build` read as a shipped build), except told by the release run about itself.
+# So: every mutation below is either DRY_RUN-guarded or is not a mutation, and
+# the closing banner reports a rehearsal as a rehearsal.
+DRY_RUN="${DRY_RUN:-0}"
 
 red()  { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 grn()  { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -117,7 +146,7 @@ confirm() {
 deploy() {
   local prefix="$1" targets="$2"
   cyan "deploy: $prefix -> $targets"
-  DRY_RUN="${DRY_RUN:-0}" bash "$SAFE_DEPLOY" "$prefix" -- firebase deploy --only "$targets"
+  DRY_RUN="$DRY_RUN" bash "$SAFE_DEPLOY" "$prefix" -- firebase deploy --only "$targets"
 }
 
 # ---------------------------------------------------------------------------
@@ -203,12 +232,236 @@ grn "sync: main == origin/main ($(git rev-parse --short HEAD), via $SYNC_VIA)"
 STEP="summarising the release"
 cyan ""
 cyan "HEAD: $(git log -1 --format='%h %s' | cut -c1-100)"
-if [ "${DRY_RUN:-0}" = "1" ]; then
+if [ "$DRY_RUN" = "1" ]; then
   ylw "DRY_RUN=1: every firebase command below will be PRINTED, not run."
 fi
 
 confirm "Release this commit to production (auntieos-ttpc)?"
 fi  # end of the guards skipped under RELEASE_PREFLIGHT_ONLY
+
+# ---------------------------------------------------------------------------
+# 0b. What CI thinks of THIS commit, before anything is built or shipped.
+# ---------------------------------------------------------------------------
+banner "0b. CI verdict for HEAD"
+
+# WHY THIS EXISTS
+# Step 1 runs `npm run check`: typecheck, lint, contracts:check, test, build. It
+# does NOT run `npm run e2e`, and never did. So the Playwright suite could not
+# stop a release no matter how red it was. That suite is the only thing in this
+# repo that drives the admin in a REAL browser, against the real
+# firestore.rules, through the real sign-in form.
+#
+# On 2026-08-01 it did not stop one. That release went out from a commit whose
+# `React admin e2e` job was red on main, and this script said nothing, because
+# nothing here had ever looked.
+#
+# WHY IT ASKS CI RATHER THAN RUNNING E2E HERE
+# Three ways to close this, and the other two are worse for measured reasons.
+#
+#   Put `npm run e2e` inside `npm run check`. `check` is also what CI runs and
+#   what every contributor runs before pushing. e2e needs the auth and Firestore
+#   emulators on 9399 and 8385, a downloaded Chromium and a JDK, so this makes a
+#   busy port or a missing browser fail everybody's `check`, and it makes a
+#   release that cannot START because a dev emulator is holding a port. That is
+#   a new failure mode traded for the one being fixed, spread over more people.
+#
+#   Run it as its own release step. Same emulator and port exposure, narrower,
+#   plus 42-49s of wall clock over three measured runs
+#   (auntieos-admin/docs/runbooks/e2e.md). The minute is affordable. The problem
+#   is that it answers a different question: a local pass says this machine
+#   agrees today. The runbook's own "CI red, local green" entry says these two
+#   disagree in practice, and CI is the authority for what is red on MAIN, which
+#   is the thing that was red.
+#
+#   Ask CI. One HTTPS request, no emulator, no port, no browser, and it covers
+#   every other job for free: a red Android, portal or functions job now stops
+#   the release too, not just e2e. `gh` uses an HTTPS token, so it answers when
+#   the 1Password SSH agent is down, the same reason step 0 already falls back
+#   to it.
+#
+# The third one, then. It is a gate on the verdict, not a second opinion.
+#
+# WHEN THE GATE CANNOT ANSWER the release must still be possible: an unreachable
+# GitHub is not a reason to be unable to ship a fix. So an unavailable gate
+# REFUSES and names RELEASE_SKIP_CI_GATE=1 in the refusal, the same shape as the
+# functions skip naming RELEASE_FORCE_FUNCTIONS=1. Refusing rather than warning
+# is deliberate: a warning in a two-hundred-line release log is not a decision
+# anybody made, and this script's whole posture is that an unknown is reported,
+# never rounded up.
+
+# The job is named "React admin e2e" in .github/workflows/ci.yml. Matched as a
+# substring so renaming the prefix does not silently disable the gate; if the
+# word leaves the name altogether the gate reports that it found no e2e verdict,
+# which is loud, rather than reporting a clean one, which would be a lie.
+CI_E2E_MATCH='e2e'
+CI_E2E_LOOKBACK=15
+
+# ci_check_runs <sha>: one "name<TAB>status<TAB>conclusion" line per check run.
+# The API's default filter is `latest`, one run per check name, so a re-run
+# supersedes the run it replaced rather than both being counted.
+ci_check_runs() {
+  gh api "repos/{owner}/{repo}/commits/$1/check-runs?per_page=100" \
+    --jq '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv' 2>/dev/null || true
+}
+
+# ci_verdict <status> <conclusion>: pass | pending | fail.
+# `skipped` and `neutral` are passes HERE because a path-filtered job that had
+# nothing to do is not a failure. That is not the same as calling a skipped e2e
+# a green e2e. See the lookback below, which is where that distinction is made.
+ci_verdict() {
+  if [ "$1" != "completed" ]; then printf 'pending'; return; fi
+  case "$2" in
+    success|skipped|neutral) printf 'pass' ;;
+    *)                       printf 'fail' ;;
+  esac
+}
+
+# ci_e2e_conclusion <sha>: the e2e job's conclusion for that commit, "pending"
+# if it is still running, or empty if the job produced no check run at all.
+ci_e2e_conclusion() {
+  local line
+  line="$(ci_check_runs "$1" | grep -i "$CI_E2E_MATCH" | head -1 || true)"
+  [ -n "$line" ] || return 0
+  printf '%s' "$line" | awk -F'\t' '{ if ($2 != "completed") print "pending"; else print $3 }'
+}
+
+# ci_refuse <headline> [lines...]: refuse, naming the override.
+# Under RELEASE_PREFLIGHT_ONLY it reports what a real release WOULD have done
+# and continues, because preflight ships nothing and is normally run from a
+# branch GitHub has never seen a commit of. Refusing there would make the one
+# mode that exists to exercise this code the one mode that cannot reach it.
+ci_refuse() {
+  local headline="$1"; shift
+  if [ "$PREFLIGHT_ONLY" = "1" ]; then
+    ylw "preflight: a real release would REFUSE here."
+    ylw "  $headline"
+    for l in "$@"; do ylw "  $l"; done
+    return 0
+  fi
+  red "REFUSED: $headline"
+  for l in "$@"; do red "  $l"; done
+  red ""
+  red "  If the gate is genuinely UNAVAILABLE rather than saying no (gh absent,"
+  red "  not authenticated, GitHub unreachable), release without it:"
+  red "    RELEASE_SKIP_CI_GATE=1 npm run deploy"
+  red "  Do not use it to walk past a red check. That is the 2026-08-01 release."
+  exit 1
+}
+
+STEP="reading CI's verdict for HEAD"
+HEAD_SHA="$(git rev-parse HEAD)"
+HEAD_SHORT="$(git rev-parse --short HEAD)"
+
+# Tracked so the closing summary can say what this run actually established
+# instead of listing the steps it walked past. Same rule as the release tag,
+# which names a skipped functions deploy rather than claiming everything shipped.
+CI_GATE_READ=0
+CHECK_RAN=0
+
+if [ "${RELEASE_SKIP_CI_GATE:-0}" = "1" ]; then
+  ylw "SKIPPED (RELEASE_SKIP_CI_GATE=1). Nothing has checked whether CI is green"
+  ylw "  for $HEAD_SHORT, e2e included. That judgement is yours now."
+elif ! command -v gh >/dev/null 2>&1; then
+  ci_refuse "gh is not installed, so CI's verdict for $HEAD_SHORT cannot be read." \
+    "Install it and sign in:  brew install gh && gh auth login"
+else
+  CI_RUNS="$(ci_check_runs "$HEAD_SHA")"
+
+  if [ -z "$CI_RUNS" ]; then
+    # "No check runs" and "could not ask" are the same output from the API's
+    # point of view and different facts, so this refuses on both rather than
+    # picking one. Either way nothing has judged this commit.
+    ci_refuse "GitHub reports no check runs at all for $HEAD_SHORT." \
+      "Either CI has not started for this commit, or gh could not reach GitHub," \
+      "or it is not authenticated (check with: gh auth status)." \
+      "A commit no job has judged is not a commit to ship."
+  else
+    CI_FAILED=""
+    CI_PENDING=""
+    CI_TOTAL=0
+    while IFS=$'\t' read -r ci_name ci_status ci_concl; do
+      [ -n "$ci_name" ] || continue
+      CI_TOTAL=$((CI_TOTAL + 1))
+      case "$(ci_verdict "$ci_status" "$ci_concl")" in
+        fail)    CI_FAILED="$CI_FAILED
+      $ci_name ($ci_concl)" ;;
+        pending) CI_PENDING="$CI_PENDING
+      $ci_name ($ci_status)" ;;
+      esac
+    done <<< "$CI_RUNS"
+
+    if [ -n "$CI_FAILED" ]; then
+      ci_refuse "CI is not green for $HEAD_SHORT." \
+        "These checks did not pass:$CI_FAILED" \
+        "" \
+        "Fix them on main and release the commit that fixes them. A release is" \
+        "not where you find out a job was red."
+    elif [ -n "$CI_PENDING" ]; then
+      ci_refuse "CI has not finished for $HEAD_SHORT." \
+        "Still running:$CI_PENDING" \
+        "" \
+        "Wait for it. Shipping against a run in flight ships against an unknown," \
+        "and half of what this script does is refuse to round an unknown up."
+    else
+      grn "ci: all $CI_TOTAL checks green for $HEAD_SHORT"
+    fi
+
+    # THE PATH FILTER IS THE SUBTLE PART, and it is the difference between a
+    # gate and a placebo. `React admin e2e` only runs when the paths it watches
+    # change (auntieos-admin/e2e/**, src/**, the rules mirror, the lockfile), so
+    # on a functions-only commit GitHub reports it SKIPPED. Skipped is not a
+    # verdict, and the loop above deliberately counts it as a pass so a
+    # legitimately-not-run job does not block a release.
+    #
+    # Which leaves the exact hole the incident went through: break e2e, land one
+    # more commit that touches nothing the filter watches, and HEAD now carries a
+    # skipped e2e and no memory of the red one. So when HEAD has no e2e RESULT,
+    # walk back along first-parent history for the most recent commit that has
+    # one, and use it, naming which commit it came from, because a verdict
+    # borrowed from three commits ago should look borrowed.
+    STEP="reading the e2e verdict"
+    E2E_CONCL="$(ci_e2e_conclusion "$HEAD_SHA")"
+    E2E_SHA="$HEAD_SHA"
+    if [ -z "$E2E_CONCL" ] || [ "$E2E_CONCL" = "skipped" ]; then
+      E2E_CONCL=""
+      for sha in $(git rev-list --first-parent --max-count="$CI_E2E_LOOKBACK" "$HEAD_SHA~1" 2>/dev/null || true); do
+        c="$(ci_e2e_conclusion "$sha")"
+        if [ -n "$c" ] && [ "$c" != "skipped" ]; then
+          E2E_CONCL="$c"
+          E2E_SHA="$sha"
+          break
+        fi
+      done
+    fi
+
+    if [ -z "$E2E_CONCL" ]; then
+      # Not a refusal. A repo can legitimately go this long without touching the
+      # admin, and refusing here would block releases for a suite that had
+      # nothing to say. But it is not a pass either, and it does not print like
+      # one: nothing in this run knows whether the browser suite is green.
+      ylw "e2e: NO VERDICT for $HEAD_SHORT or the $CI_E2E_LOOKBACK commits before"
+      ylw "  it. The Playwright suite has not judged anything near this commit, so"
+      ylw "  nothing here can tell you the admin works in a browser."
+      ylw "  Run it yourself if this release touches the admin:  npm run e2e"
+    elif [ "$E2E_CONCL" = "pending" ]; then
+      ylw "e2e: still running on $(git rev-parse --short "$E2E_SHA"). No verdict yet."
+    elif [ "$E2E_CONCL" != "success" ]; then
+      ci_refuse "the e2e suite is '$E2E_CONCL' for the admin code in $HEAD_SHORT." \
+        "The verdict is from $(git rev-parse --short "$E2E_SHA"), the most recent" \
+        "commit whose 'React admin e2e' job actually ran. Nothing since then" \
+        "touched the paths that re-trigger it, so it still stands for HEAD." \
+        "" \
+        "Reproduce it locally with:  npm run e2e" \
+        "This is the check that was red and unheard on 2026-08-01."
+    elif [ "$E2E_SHA" = "$HEAD_SHA" ]; then
+      grn "e2e: green on $HEAD_SHORT"
+    else
+      grn "e2e: green as of $(git rev-parse --short "$E2E_SHA"); nothing since then"
+      grn "     changed a path the suite watches."
+    fi
+    CI_GATE_READ=1
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Build and verify, which is also what produces the artifacts we upload.
@@ -223,6 +476,7 @@ elif [ "${RELEASE_SKIP_CHECK:-0}" = "1" ]; then
   ylw "uploaded are whatever was last built, which may not match HEAD."
 else
   npm run check
+  CHECK_RAN=1
   grn "check: passed, and dist/ now matches HEAD"
 fi
 
@@ -325,10 +579,14 @@ elif [ "$PREFLIGHT_ONLY" = "1" ]; then
 elif [ ! -d "$ANDROID_DIR" ]; then
   ylw "SKIPPED: no $ANDROID_DIR on this machine."
 else
-  rm -f "$ANDROID_APK"
-  if [ "${DRY_RUN:-0}" = "1" ]; then
-    ylw "DRY_RUN=1: would run ./gradlew :app:assembleRelease"
+  if [ "$DRY_RUN" = "1" ]; then
+    ylw "DRY_RUN=1: would delete any stale APK and run ./gradlew :app:assembleRelease"
   else
+    # The rm lives INSIDE this branch, not above the if. A rehearsal that
+    # assembles nothing but deletes the signed APK a real run left on disk has
+    # changed the machine to prove nothing, and 6b's retry line would then point
+    # at a file that is gone. rm only where a build replaces what it removed.
+    rm -f "$ANDROID_APK"
     # Fails at execution time, naming the missing piece, when the keystore or
     # the Mapbox token is absent. Refuse the release rather than ship a web
     # half: a partial release is how the two clients diverged in the first
@@ -414,7 +672,7 @@ banner "3. Wait for indexes to finish building"
 # The CLI returns as soon as the index is ACCEPTED, not when it is Enabled.
 # Shipping the querying code against a still-building index is the failure this
 # whole ordering exists to prevent, and it is invisible at build time.
-if [ "${DRY_RUN:-0}" = "1" ]; then
+if [ "$DRY_RUN" = "1" ]; then
   ylw "DRY_RUN=1: skipping the index wait."
 else
   ylw "Index builds are ASYNCHRONOUS. The deploy above returned when Firestore"
@@ -567,10 +825,21 @@ else
   # headroom there is no evidence it bought. Step 8 still prunes for
   # retention, after verification, where spending that depth is safe.
   #
+  # THE OBVIOUS OBJECTION: step 8 runs after this step, so it cannot help the
+  # deploy standing here. True of this run, and it is the whole reason the
+  # question keeps coming back. It is answered ACROSS runs, not within one: a
+  # step 8 whose keep actually fires (3, since 2026-08-01; 10 could not delete
+  # a single revision at 926) leaves the inventory at its floor every release,
+  # so the next release starts from ~714 rather than from 926 and climbing.
+  # That is the only way an after-the-fact sweep helps a deploy that precedes
+  # it, and it is enough, because the headroom a pre-deploy prune would buy has
+  # been measured and was not there. The durable fix remains a quota increase:
+  # Cloud Run Admin API, "Total CPU allocation, per project per region".
+  #
   # Setting RELEASE_PREDEPLOY_KEEP=N restores the old behaviour for one run.
   # It is opt-in because it is unproven, not because it is dangerous.
   STEP="reclaiming Cloud Run quota before the functions deploy"
-  if [ -n "${RELEASE_PREDEPLOY_KEEP:-}" ] && [ "${DRY_RUN:-0}" != "1" ]; then
+  if [ -n "${RELEASE_PREDEPLOY_KEEP:-}" ] && [ "$DRY_RUN" != "1" ]; then
     ylw "RELEASE_PREDEPLOY_KEEP=$RELEASE_PREDEPLOY_KEEP: pruning before the deploy."
     ylw "  Opt-in and unproven (see the comment above). This spends rollback"
     ylw "  depth to buy headroom that may not exist."
@@ -650,7 +919,7 @@ else
     ANDROID_AUDIENCE_DESC="${ANDROID_AUDIENCE_DESC:+$ANDROID_AUDIENCE_DESC, }$(printf '%s' "$ANDROID_TESTERS" | awk -F, '{print NF}') tester(s)"
   fi
 
-  if [ "${DRY_RUN:-0}" = "1" ]; then
+  if [ "$DRY_RUN" = "1" ]; then
     ylw "DRY_RUN=1: would upload $ANDROID_APK to $ANDROID_AUDIENCE_DESC"
   else
     cyan "android: distributing to $ANDROID_AUDIENCE_DESC"
@@ -716,7 +985,7 @@ verify_site() {
   fi
 }
 
-if [ "${DRY_RUN:-0}" = "1" ]; then
+if [ "$DRY_RUN" = "1" ]; then
   ylw "DRY_RUN=1: nothing was deployed, so there is nothing to verify."
 else
   VERIFY_FAILED=0
@@ -742,18 +1011,44 @@ banner "8. Prune old Cloud Run revisions"
 #
 # Runs AFTER verification on purpose: the revisions being deleted are rollback
 # targets, and they are only safe to drop once the thing that replaced them is
-# confirmed serving. Never touches the revision a service is serving, and keeps
-# RELEASE_KEEP_REVISIONS (default 10) per service, so rollback stays possible.
+# confirmed serving. Never touches the revision a service is serving.
 #
-# This is RETENTION, not headroom. Making room for the deploy is step 5's job
-# now, and it prunes harder because it has to. What is left for this sweep is
-# the drift that accumulates between releases: revisions minted by out-of-band
-# `safe-deploy` retries, which nothing else reclaims. On a release that did
-# deploy functions it will usually report nothing to prune, and that is the
-# correct answer, not a broken step.
+# This is RETENTION, not headroom. Read the step 5 comment before believing a
+# prune can rescue a deploy from the CPU quota; it was measured and it cannot.
+#
+# WHY THE DEFAULT IS 3 AND NOT 10.
+#
+# A keep of N sets a FLOOR of N x services below which this step is arithmetically
+# incapable of deleting anything. At 238 services, keep-10 floors at 2,380. The
+# project has never been near 2,380 while in trouble: the 2026-07-28 deploy failed
+# at 676 revisions and the 2026-08-01 one at 926. So this step ran on 2026-08-01
+# against 926 revisions across 238 services, a mean of 3.9 apiece, nothing near
+# ten, and deleted ZERO. Not a bug in the prune. A retention default set above
+# every level the inventory has ever reached, which is a step that cannot fire.
+#
+# What the extra depth bought: nothing this repo uses. The documented rollback
+# path for functions is revert-and-redeploy (the closing lines of this script say
+# so, and so does the runbook); hosting rolls back from the console, separately.
+# Revision-level rollback would be `gcloud run services update-traffic`, which is
+# written down nowhere here and has never been run. So keep-10 was holding ~8
+# revisions per service of theoretical depth nobody has used, at the price of
+# never reclaiming a single one.
+#
+# Keep-3 floors at 714 across 238 services: it would have removed ~212 at the
+# 926 that mattered, and it still leaves the two previous deploys plus the
+# serving revision per service if anyone ever does want that traffic split.
+#
+# It stops at 3 rather than 2 or 1 deliberately. Recovery on 2026-08-01 took the
+# inventory to 468 (~2 per service) before the last 26 functions would land, and
+# it is tempting to make that the default. Don't: the runbook's own measurements
+# say the prune is not what fixed it: the 2026-07-28 prune hit its predicted
+# floor within one revision and the deploy failed anyway, and a batch retry of
+# the same names succeeds minutes later with no quota change. Picking 2 would be
+# quietly re-adopting a theory that was tested and failed. 3 is chosen as
+# retention hygiene, and the only claim made for it is that the step can now fire.
 STEP="pruning old Cloud Run revisions"
-KEEP="${RELEASE_KEEP_REVISIONS:-10}"
-if [ "${DRY_RUN:-0}" = "1" ]; then
+KEEP="${RELEASE_KEEP_REVISIONS:-3}"
+if [ "$DRY_RUN" = "1" ]; then
   ylw "DRY_RUN=1: skipping the prune."
 elif [ "${RELEASE_SKIP_PRUNE:-0}" = "1" ]; then
   ylw "SKIPPED (RELEASE_SKIP_PRUNE=1). Revisions accumulate; the CPU quota is"
@@ -769,8 +1064,27 @@ fi
 # Record what shipped, so the next run can tell whether functions changed.
 # Written only after verification passed: a commit recorded as released when it
 # was not would make the NEXT release skip functions it should have deployed.
+#
+# WHICH IS EXACTLY WHAT A DRY RUN USED TO DO. This write was the one mutation in
+# the script with no DRY_RUN guard, and .release-state is not a log. It is the
+# input to step 5's skip. A rehearsal that writes it tells the next REAL release
+# that this commit's functions are already deployed, so that release compares
+# mytribe/functions against code that never shipped, finds no diff, and skips the
+# deploy. 2026-08-01: a dry run recorded e4f0245, the release behind it skipped
+# functions, and the new admin bundle went live calling getInvoiceLedger,
+# listInvites, transitionBookingStatus and getBusinessClosures against a backend
+# that had none of them.
+#
+# So the guard is not tidiness. The file records what is DEPLOYED, and a dry run
+# deploys nothing, so a dry run has nothing to record.
 STEP="recording the released commit"
-git rev-parse HEAD > "$ROOT/.release-state"
+if [ "$DRY_RUN" = "1" ]; then
+  ylw "DRY_RUN=1: NOT writing .release-state. It records what is DEPLOYED, and"
+  ylw "  this run deployed nothing. Writing it would make the next real release"
+  ylw "  skip the functions deploy for code that never shipped."
+else
+  git rev-parse HEAD > "$ROOT/.release-state"
+fi
 
 # ---------------------------------------------------------------------------
 # 9. Tag what shipped.
@@ -784,7 +1098,7 @@ banner "9. Tag the release"
 STEP="tagging the release"
 TAG=""
 TAG_PUSHED=0
-if [ "${DRY_RUN:-0}" = "1" ]; then
+if [ "$DRY_RUN" = "1" ]; then
   ylw "DRY_RUN=1: skipping the release tag. Nothing shipped in this run, so"
   ylw "  there is nothing to tag or push."
 else
@@ -838,6 +1152,40 @@ fi
 
 trap - EXIT
 STEP="done"
+
+# A DRY RUN GETS ITS OWN ENDING, because the one below is a claim and a dry run
+# has not earned it. "Commit e4f0245 is live and verified" printed at the end of
+# a rehearsal on 2026-08-01, under a "Released" banner, having deployed nothing
+# and verified nothing: step 7 had already said "nothing was deployed, so there
+# is nothing to verify" twenty lines earlier and the summary contradicted it.
+# The whole point of step 7 is that a release which cannot prove it landed has
+# told you nothing; a run that ASSERTS it landed without proving it is worse.
+if [ "$DRY_RUN" = "1" ]; then
+  banner "Dry run finished"
+  ylw "NOTHING SHIPPED. Nothing was deployed, verified, tagged or recorded."
+  ylw "  $(git rev-parse --short HEAD) is not live as a result of this run, and"
+  ylw "  .release-state still names whatever last actually shipped."
+  ylw ""
+  # Listed from what actually ran, not from the steps this run walked past. A
+  # summary that credits a skipped check is the smaller version of the same lie.
+  ylw "What this run DID prove:"
+  ylw "  - the preconditions hold (clean tree, on main, in sync with origin)"
+  if [ "$CI_GATE_READ" = "1" ]; then
+    ylw "  - CI's verdict for this commit was read and nothing was red"
+  else
+    ylw "  - NOT CI's verdict: the gate did not run in this rehearsal"
+  fi
+  if [ "$CHECK_RAN" = "1" ]; then
+    ylw "  - npm run check passed"
+  else
+    ylw "  - NOT the build: npm run check did not run in this rehearsal"
+  fi
+  ylw "  - every firebase command above is the one a real release would run"
+  ylw ""
+  ylw "To release: re-run without DRY_RUN."
+  exit 0
+fi
+
 banner "Released"
 grn "Commit $(git rev-parse --short HEAD) is live and verified."
 if [ "$TAG_PUSHED" -eq 1 ]; then
