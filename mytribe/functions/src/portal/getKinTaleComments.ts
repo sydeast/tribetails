@@ -5,6 +5,7 @@ import { resolveKinTaleAccess } from '../lib/resolveKinTaleAccess';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 const Args = z.object({
   kinfolkId: z.string().optional(),
@@ -53,6 +54,15 @@ export async function getKinTaleCommentsHandler(
 }
 
 export const getKinTaleComments = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'], minInstances: 1 },
+  // Opened on every tale view.
+  // Kept at a full vCPU so the warm instance minInstances buys keeps 80-way
+  // concurrency; below 1 vCPU Cloud Run pins concurrency to 1.
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'],
+    minInstances: 1,
+    ...FULL_CPU,
+  },
   wrapCallable('getKinTaleComments', getKinTaleCommentsHandler),
 );

@@ -4,6 +4,7 @@ import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
+import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
 const DIGEST_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DIGEST_STATUSES = new Set(['confirmed', 'approved']);
@@ -63,7 +64,14 @@ export async function runScheduleDigestScan(
  * and enqueues `schedule.upcoming.digest` for businessAdmins.
  */
 export const scheduleDigestCron = onSchedule(
-  { schedule: 'every day 07:00', timeZone: 'America/New_York', secrets: ['SENTRY_DSN'] },
+  // Builds and sends the daily schedule digest inside the default 60s
+  // timeout. See notificationDebounceSweep.
+  {
+    schedule: 'every day 07:00',
+    timeZone: 'America/New_York',
+    secrets: ['SENTRY_DSN'],
+    ...FULL_CPU_SERIAL,
+  },
   wrapScheduled('scheduleDigestCron', async () => {
     const now = Date.now();
     const windowEnd = now + DIGEST_WINDOW_MS;

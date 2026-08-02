@@ -2,6 +2,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { db } from '../lib/firestoreAdmin';
 import { sendFromTemplate } from '../lib/sendFromTemplate';
 import { wrapScheduled } from '../lib/wrapScheduled';
+import { SERIAL } from '../lib/runtimeOptions';
 
 const DAILY_DIGEST_PAGE_SIZE = 1000;
 
@@ -58,7 +59,13 @@ export async function errorDailyDigestCore(now: Date): Promise<ErrorDailyDigestR
 }
 
 export const errorDailyDigest = onSchedule(
-  { schedule: 'every day 08:00', timeZone: 'America/New_York', secrets: ['SMTP2GO_API_KEY', 'EMAIL_FROM', 'SENTRY_DSN'] },
+  // One digest email a day to the operator. Keeps the 0.25 vCPU default.
+  {
+    schedule: 'every day 08:00',
+    timeZone: 'America/New_York',
+    secrets: ['SMTP2GO_API_KEY', 'EMAIL_FROM', 'SENTRY_DSN'],
+    ...SERIAL,
+  },
   wrapScheduled('errorDailyDigest', async () => {
     await errorDailyDigestCore(new Date());
   }),

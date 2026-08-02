@@ -8,6 +8,7 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 const Args = z.object({
   kinfolkId: z.string().optional(),
@@ -133,6 +134,14 @@ export async function addSecondaryContactHandler(req: CallableRequest<unknown>):
 }
 
 export const addSecondaryContact = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'] , minInstances: 1 },
+  // Kept at a full vCPU so the warm instance minInstances buys keeps 80-way
+  // concurrency; below 1 vCPU Cloud Run pins concurrency to 1.
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'],
+    minInstances: 1,
+    ...FULL_CPU,
+  },
   wrapCallable('addSecondaryContact', addSecondaryContactHandler),
 );

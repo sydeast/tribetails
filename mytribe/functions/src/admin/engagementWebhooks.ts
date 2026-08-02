@@ -13,6 +13,7 @@ import {
   s2gEventDedupeId,
   type EngagementCounter,
 } from '../lib/engagement';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 /**
  * Engagement webhooks for the Communicate "Recent" panel.
@@ -268,11 +269,16 @@ export async function twilioStatusCallbackHandler(req: Request, res: Response): 
 }
 
 export const smtp2goEventWebhook = onRequest(
-  { region: 'us-central1', secrets: ['SENTRY_DSN'] },
+  // One callback per delivered message, so a broadcast arrives as a burst of
+  // them. SMTP2GO retries on non-2xx; a full vCPU keeps 80-way concurrency so
+  // the burst lands in one instance instead of one instance per event.
+  { region: 'us-central1', secrets: ['SENTRY_DSN'], ...FULL_CPU },
   wrapHttp('smtp2goEventWebhook', smtp2goEventWebhookHandler),
 );
 
 export const twilioStatusCallback = onRequest(
-  { region: 'us-central1', secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'] },
+  // One callback per sent SMS, so a broadcast arrives as a burst of them.
+  // See smtp2goEventWebhook above.
+  { region: 'us-central1', secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'], ...FULL_CPU },
   wrapHttp('twilioStatusCallback', twilioStatusCallbackHandler),
 );

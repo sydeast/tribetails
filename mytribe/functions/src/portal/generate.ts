@@ -10,6 +10,7 @@ import { sanitizeRichText, sanitizePlainText, toPlainTextPreview } from '../lib/
 import { readThread } from '../lib/conversations';
 import { generateCopy } from '../lib/aiCopy';
 import { logEvent } from '../lib/logger';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 /**
  * O-8: `generate` — kinfolk-facing AI copy assistance for the Messages
@@ -161,6 +162,9 @@ export const generate = onCall(
     cors: TRIBETAILS_CORS,
     secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS', 'ANTHROPIC_API_KEY'],
     timeoutSeconds: 60,
+    // Interactive LLM call with a 60s budget and someone waiting on it. The
+    // instance cap here is a Cloud Run cap, not an Anthropic spend cap.
+    ...FULL_CPU,
   },
   wrapCallable('generate', generateHandler),
 );

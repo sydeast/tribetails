@@ -7,6 +7,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 const Args = z.object({
   familyId: z.string().min(1),
@@ -59,6 +60,13 @@ export async function approveTribePinChangeHandler(req: CallableRequest<unknown>
 }
 
 export const approveTribePinChange = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['TRIBE_PIN_PEPPER', 'SENTRY_DSN'] },
+  // argon2id: measured 136ms of CPU per hash at parallelism 4, so a quarter
+  // vCPU would stretch it past half a second of wall clock.
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    secrets: ['TRIBE_PIN_PEPPER', 'SENTRY_DSN'],
+    ...FULL_CPU,
+  },
   wrapAdminCallable('approveTribePinChange', approveTribePinChangeHandler),
 );

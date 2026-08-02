@@ -10,6 +10,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { sanitizeRichText } from '../lib/richText';
 import { resolveKinTaleAccess } from '../lib/resolveKinTaleAccess';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 const Body = z.string().min(1).max(2000).refine((s) => s.trim().length > 0, {
   message: 'body cannot be whitespace-only',
@@ -100,7 +101,16 @@ export async function addKinTaleCommentHandler(
 }
 
 export const addKinTaleComment = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'], minInstances: 1 },
+  // Kept at a full vCPU so the warm instance minInstances buys keeps 80-way
+  // concurrency; below 1 vCPU Cloud Run pins concurrency to 1.
+  // getKinTaleReaction / toggleKinTaleLove below take the 0.25 vCPU default.
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'],
+    minInstances: 1,
+    ...FULL_CPU,
+  },
   wrapCallable('addKinTaleComment', addKinTaleCommentHandler),
 );
 

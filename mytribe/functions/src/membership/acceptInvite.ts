@@ -13,6 +13,7 @@ import { enqueueNotification } from '../notifications/dispatcher';
 import { syncKinfolkClaim } from '../lib/kinfolkClaim';
 import type { InviteRequestDoc } from '../lib/schema';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 const Args = z.object({ inviteId: z.string().min(1) });
 
@@ -243,6 +244,9 @@ export const acceptInvite = onCall(
     cors: TRIBETAILS_CORS,
     secrets: ['SENTRY_DSN', 'SMTP2GO_API_KEY', 'EMAIL_FROM'],
     minInstances: 1,
+    // Kept at a full vCPU so the warm instance minInstances buys keeps 80-way
+    // concurrency; below 1 vCPU Cloud Run pins concurrency to 1.
+    ...FULL_CPU,
   },
   wrapCallable('acceptInvite', acceptInviteHandler),
 );

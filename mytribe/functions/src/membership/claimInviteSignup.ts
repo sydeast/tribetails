@@ -7,6 +7,7 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import type { InviteRequestDoc } from '../lib/schema';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 /**
  * Public (unauthenticated) account creation for invited kinfolk.
@@ -79,6 +80,14 @@ export async function claimInviteSignupHandler(
 }
 
 export const claimInviteSignup = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] , minInstances: 1 },
+  // Kept at a full vCPU so the warm instance minInstances buys keeps 80-way
+  // concurrency; below 1 vCPU Cloud Run pins concurrency to 1.
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    secrets: ['SENTRY_DSN'],
+    minInstances: 1,
+    ...FULL_CPU,
+  },
   wrapCallable('claimInviteSignup', claimInviteSignupHandler),
 );

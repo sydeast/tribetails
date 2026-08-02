@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import { wrapHttp } from '../lib/wrapHttp';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveShareLink, type ScrubbedSharePayload } from '../lib/resolveShareLink';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 /**
  * getSharedKinTalePage, public HTTPS endpoint.
@@ -479,7 +480,10 @@ export async function getSharedKinTalePageHandler(req: MinimalReq, res: MinimalR
 }
 
 export const getSharedKinTalePage = onRequest(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  // Public HTML behind the /share/** hosting rewrite, and verifies the
+  // passcode with argon2 (136ms of CPU per verify). A shared link can be
+  // pasted anywhere, so it needs burst headroom as well as the CPU.
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'], ...FULL_CPU },
   wrapHttp('getSharedKinTalePage', async (req: Request, res: Response) => {
     const adapter: MinimalRes = {
       status(code: number) {

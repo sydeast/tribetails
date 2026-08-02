@@ -9,6 +9,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { logEvent } from '../lib/logger';
 import { toPlainTextPreview } from '../lib/richText';
 import { anthropicClient, AI_MODEL, BRAND_VOICE_SYSTEM } from '../lib/aiCopy';
+import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
 /**
  * O-8 bulk job: backfill titles on sent kin tales that never got one.
@@ -173,6 +174,9 @@ export const aiBackfillTaleTitles = onCall(
     cors: TRIBETAILS_CORS,
     secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS', 'ANTHROPIC_API_KEY'],
     timeoutSeconds: 120,
+    // Paginated LLM backfill with a 120s budget. One-shot operator action, so a
+    // second copy would re-title the same page rather than go faster.
+    ...FULL_CPU_SERIAL,
   },
   wrapAdminCallable('aiBackfillTaleTitles', aiBackfillTaleTitlesHandler),
 );

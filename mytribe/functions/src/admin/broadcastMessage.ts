@@ -20,6 +20,7 @@ import {
 } from './audienceCriteria';
 import { SEGMENTS_COLLECTION } from './audienceSegments';
 import { UNSUBSCRIBE_FOOTER, suppressionDocId } from './sendExternalMessage';
+import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
 /**
  * Stage 2 step 6 (Communicate broadcast). Admin sends one admin-authored message
@@ -340,6 +341,9 @@ export const broadcastMessage = onCall(
     // four channels can run past the 60s default. Raise the ceiling so a real
     // broadcast finishes rather than timing out mid-send (partial counts).
     timeoutSeconds: 540,
+    // 9-minute fan-out over a whole audience. A second copy would double-send,
+    // so the cap is about correctness as much as cost.
+    ...FULL_CPU_SERIAL,
     secrets: [
       'SMTP2GO_API_KEY',
       'EMAIL_FROM',

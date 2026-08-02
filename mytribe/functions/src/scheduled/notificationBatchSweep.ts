@@ -5,6 +5,7 @@ import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { getNotificationDef, NOTIFICATION_CATALOG } from '../notifications/catalog';
+import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
 /**
  * Drains pending items from `notificationBatch/{uid}/{batchKey}/{itemId}` and
@@ -311,7 +312,14 @@ export async function runNotificationBatchSweep(
 }
 
 export const notificationBatchSweep = onSchedule(
-  { schedule: 'every 5 minutes', region: 'us-central1', secrets: ['SENTRY_DSN'] },
+  // Assembles and dispatches batched digests inside the default 60s timeout.
+  // See notificationDebounceSweep.
+  {
+    schedule: 'every 5 minutes',
+    region: 'us-central1',
+    secrets: ['SENTRY_DSN'],
+    ...FULL_CPU_SERIAL,
+  },
   wrapScheduled('notificationBatchSweep', async () => {
     await runNotificationBatchSweep(Date.now());
   }),

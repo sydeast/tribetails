@@ -3,6 +3,7 @@ import type { DocumentReference } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
+import { SERIAL } from '../lib/runtimeOptions';
 
 const STALE_AFTER_DAYS = 60;
 const DELETE_BATCH_LIMIT = 500; // Firestore hard cap on writes per WriteBatch.
@@ -81,7 +82,13 @@ export async function runFcmTokenPruneScan(now: number = Date.now()): Promise<nu
  * against devices that no longer exist.
  */
 export const rotateOldFcmTokens = onSchedule(
-  { schedule: 'every monday 04:00', timeZone: 'America/New_York', secrets: ['SENTRY_DSN'] },
+  // Weekly token prune. Keeps the 0.25 vCPU fleet default.
+  {
+    schedule: 'every monday 04:00',
+    timeZone: 'America/New_York',
+    secrets: ['SENTRY_DSN'],
+    ...SERIAL,
+  },
   wrapScheduled('rotateOldFcmTokens', async () => {
     await runFcmTokenPruneScan();
   }),

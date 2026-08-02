@@ -11,6 +11,7 @@ import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { generateAndStoreInvoicePdf } from '../lib/invoicePdf';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
+import { FULL_CPU } from '../lib/runtimeOptions';
 
 /**
  * Stage 3 / 16.2 - kinfolk-portal invoice PDF download ("Download PDF" on the
@@ -92,6 +93,13 @@ export async function getMyInvoicePdfHandler(
 }
 
 export const getMyInvoicePdf = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'] },
+  // pdf-lib renders the document in-process and a kinfolk is waiting on it.
+  // A PDF render at 0.25 vCPU is a timeout, not a saving.
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'],
+    ...FULL_CPU,
+  },
   wrapCallable('getMyInvoicePdf', getMyInvoicePdfHandler),
 );
