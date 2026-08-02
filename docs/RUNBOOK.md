@@ -176,7 +176,7 @@ order**, stops at the first failure, and names the step it died in.
 | 2 | Firestore indexes | Before the code that queries them. A query with no index fails at RUNTIME, not at build. |
 | 3 | Wait for indexes | The CLI returns when Firestore ACCEPTS an index, not when it is Enabled. The run blocks; the CLI will not. |
 | 4 | Firestore rules | From `mytribe` only. Refused outright if the admin mirror has drifted. |
-| 5 | Functions | Before the clients that call them. **Skipped when `mytribe/functions` is unchanged since the last release AND no declared secret is newer than it**. See below. |
+| 5 | Functions | Before the clients that call them. **Skipped when `mytribe/functions` is unchanged since the last release AND no declared secret is newer than it**. Otherwise deployed **by name, in batches of 25, with retries**, because the whole fleet does not fit the regional CPU quota. See below. |
 | 6 | Hosting | Admin, then portal. |
 | 6b | Android | Uploads the APK from step 1c to App Distribution, in the same run as the web. |
 | 7 | Verify | Fetches both live sites and compares the hashed bundle they reference against the one just built. |
@@ -207,6 +207,88 @@ the secrets. If it cannot ask (functions not built, gcloud not signed in) it say
 so and still skips, because an unknown must not turn every run into a
 ~200-function deploy; `RELEASE_FORCE_FUNCTIONS=1` is the override, and the
 warning names it.
+
+**Why step 5 deploys by name in batches.** `--only functions:mytribe` hands the
+CLI all ~227 functions at once. Each is its own Cloud Run service at 1 vCPU, a
+deploy starts a new revision beside the serving one, and
+`CpuAllocPerProjectRegion` in `us-central1` is 200 vCPU. The fleet does not fit
+and cannot be made to fit. On 2026-08-01 five full deploys each died partway:
+
+| attempt | succeeded | failed |
+|---|---|---|
+| forced (`RELEASE_FORCE_FUNCTIONS=1`) | 197 | 26 |
+| stray (wrong cwd, functions package script) | 131 | 95 |
+| release retry | 197 | 30 |
+| release with `RELEASE_PREDEPLOY_KEEP=2` | 201 | 26 |
+| targeted redeploy of just those 26 | 0 | 26 |
+
+Look at where the successes stop: 197, 201, 197, against a quota of 200. That is
+the ceiling printing itself. Revisions went 702 → 926 → 1250 across the day
+because every attempt mints ~227 more, and pruning back to 487 did **not** make
+the next full deploy fit, which is what proves this is a ceiling and not a
+timing problem.
+
+Every recovery that day worked the same way: name the casualties, redeploy them
+as a small batch through `safe-deploy.sh`. The release now does that by design.
+
+- **Batches of 25.** Set from what has landed, not from a model: hand recoveries
+  used 20 and 26 and they worked, and the wall is at ~200. 25 leaves roughly 8x
+  headroom, so two or three batches can still be settling and fit.
+- **30 seconds between batches.** The one batch that failed outright (26 by
+  name, 0 landed) went out immediately after a full deploy abandoned ~200
+  starting revisions. Cloud Run releases the allocation as revisions settle.
+- **Retries, not a dead release.** A quota refusal is expected, not fatal. The
+  run reads firebase's own per-function result lines, retries only the names it
+  did **not** see confirmed, halves the batch size each round (floor 5) and
+  prunes in between. Three rounds by default. If the format of those lines ever
+  changes, nothing is parsed, the whole batch counts as failed, and it retries
+  too much rather than too little.
+- **Then it gives up loudly.** After the last round the release **refuses**,
+  names every stale function and prints the exact retry command. It refuses
+  rather than continuing because step 5 sits before hosting precisely so the
+  clients never ship ahead of the backend.
+
+**Only what changed.** A one-function change has no business redeploying 227
+services. `.release-state` names the last released commit, so `git diff
+--name-status` names the changed files and `scripts/function-targets.js` maps
+those to functions:
+
+```bash
+node scripts/function-targets.js                    # every deployable name
+node scripts/function-targets.js --changed-from F --base SHA
+node scripts/function-targets.js --from-services F  # lowercase service -> export
+```
+
+The names come from `mytribe/functions/lib/index.js`, the artifact the Firebase
+CLI itself loads, taking every export that carries an `__endpoint`, the same
+reason `declared-secrets.js` reads the build rather than the source. It resolved
+227 of 227 the first time it ran and it prints that count every run, so the claim
+stays checkable. Mapping a changed file to functions walks the `require()` graph
+of the built `lib/`, read **statically** so lazy requires inside handler bodies
+are in it. Shared code widens correctly rather than being mapped per file:
+`src/lib/logger.ts` is in all 227 closures and `src/lib/auditEvents.ts` in 196.
+
+It refuses to narrow, and falls back to the full (still batched) fleet, whenever
+it cannot attribute a change: a `src/index.ts` edit (the barrel can repoint an
+export at a different module while touching neither), a delete or a rename, a
+`package.json` change outside its `scripts` block, a `require()` it cannot read
+statically, or a source file with no built counterpart. It says which, every
+time. A correct slow deploy beats a clever wrong one, and every uncertain case
+resolves towards deploying *more* functions, never fewer.
+
+Two consequences worth knowing. A secrets-only rebind now deploys just the
+functions that **declare** those secrets, not the fleet. And deploying by
+explicit name never **deletes** anything, where the whole-codebase deploy would
+have offered to; so the run records the fleet it shipped in `.release-functions`
+(gitignored, per machine, written under the same guard as `.release-state`) and
+the next release names anything that has since left the code, with the
+`firebase functions:delete` command. It reports; it does not delete.
+
+`scripts/function-targets.js --from-services` is the recovery direction: Cloud
+Run service names are the lowercased export names, and mapping them back by eye
+against `src/index.ts` resolved 79 of 95 on 2026-08-01. Reading the same artifact
+resolves all of them or refuses, because a recovery that silently drops names
+leaves exactly the functions nobody redeployed.
 
 Step 7 is the one whose absence hid the stale admin. Hosting can report a
 successful release while browsers still get the old bundle. A release that
@@ -266,9 +348,12 @@ new admin bundle went live calling `getInvoiceLedger`, `listInvites`,
 `transitionBookingStatus` and `getBusinessClosures` against a backend that had
 none of them. `.release-state` is not a log; it is step 5's input.
 
-`bash scripts/release.test.sh` covers both of those and the CI gate, running the
-real script against a throwaway repo with `gh`, `gcloud`, `firebase`, `curl` and
-`npm` stubbed. 15 cases. Run it after touching `scripts/release.sh`.
+`bash scripts/release.test.sh` covers both of those, the CI gate, and the
+batching: the `firebase` stub takes a `FIREBASE_QUOTA_MAX`, refuses everything
+past it exactly as the quota did, and the suite proves the release retries the
+right names, survives, and refuses honestly when the quota never lifts. It runs
+the real script against a throwaway repo with `gh`, `gcloud`, `firebase`, `curl`
+and `npm` stubbed. 38 cases. Run it after touching `scripts/release.sh`.
 
 Knobs, all off by default:
 
@@ -286,8 +371,14 @@ Knobs, all off by default:
 | `RELEASE_ANDROID_TESTERS=a@b,c@d` | Tester emails to distribute to. Neither this nor groups set means every tester on the project |
 | `RELEASE_SKIP_SECRET_CHECK=1` | Skip step 1b |
 | `RELEASE_SKIP_PRUNE=1` | Skip the step 8 retention prune. Revisions then accumulate until someone prunes by hand |
-| `RELEASE_PREDEPLOY_KEEP=N` | Prune to N per service before the functions deploy. Off by default and unproven; see the quota entry below |
+| `RELEASE_PREDEPLOY_KEEP=N` | Prune to N per service before a **large** functions deploy (default 3, `0` disables). See the quota entry below |
+| `RELEASE_PREDEPLOY_MIN_TARGETS=N` | How many functions count as large (default 50). Below it the pre-deploy prune does not run |
 | `RELEASE_KEEP_REVISIONS=N` | Revisions kept per service in step 8 (default 3) |
+| `RELEASE_FUNCTIONS_ALL=1` | Deploy every function, not only the ones this release can reach |
+| `RELEASE_FUNCTIONS_BATCH=N` | Functions per `firebase deploy` (default 25) |
+| `RELEASE_FUNCTIONS_ROUNDS=N` | Retry rounds for functions that did not land (default 3) |
+| `RELEASE_FUNCTIONS_SETTLE=S` | Seconds between batches (default 30) |
+| `RELEASE_RETRY_KEEP=N` | Prune depth between retry rounds (default 2, `0` disables) |
 
 ### Every release is tagged
 
@@ -519,8 +610,28 @@ rather than grepping source, which cannot see arrays built from spreads.
 
 **A functions deploy fails with `Quota exceeded for total allowable CPU per
 project per region`.** It fails the tail of the deploy (18 functions on
-2026-07-26, 20 on 2026-07-28), and the casualties are crons, triggers and
-sweeps, the batch firebase-tools deploys last.
+2026-07-26, 20 on 2026-07-28, 26 to 95 across five attempts on 2026-08-01), and
+the casualties are crons, triggers and sweeps, the batch firebase-tools deploys
+last.
+
+**The release itself no longer does this to you.** Step 5 deploys by name in
+batches of 25 and retries the casualties; see "Why step 5 deploys by name in
+batches" above. If you are reading this entry it is because you ran a
+whole-codebase deploy by hand: `firebase deploy --only functions:mytribe`, or
+`npm run deploy` from inside `mytribe/functions/`, which is the package script
+and is not the release. That second one is the "stray" row in the table above:
+131 of 226. Recover through the release, or batch it yourself:
+
+```bash
+gcloud run services list --region us-central1 --project auntieos-ttpc \
+  --format='value(metadata.name,status.conditions[0].status)' \
+  | awk -F'\t' '$2!="True"{print $1}' > /tmp/stale-services
+node scripts/function-targets.js --from-services /tmp/stale-services > /tmp/stale-names
+```
+
+That second command resolves lowercase service names back to export names or
+refuses; doing it by eye against `src/index.ts` resolved 79 of 95 that day, and
+the 16 it missed are 16 functions nobody would have redeployed.
 
 **Do not prune to fix this.** Pruning was the documented fix here until
 2026-07-28, on the theory that Cloud Run revisions each hold CPU forever. That
@@ -537,15 +648,32 @@ why:
 - redeploying the failed names as a batch of 20 succeeds minutes later with no
   quota change in between.
 
-Read that as: the prune is proven *insufficient*, and it reclaims something
-other than what is being counted. The remaining inference, that the real limit
-is on concurrent container starts during a bulk deploy, fits every observation
-but has not been proven directly. Nobody has found the enforced ceiling;
-`CpuAllocPerProjectRegion` reports 200,000 and publishes no usage series.
+2026-08-01 settled it. A run with `RELEASE_PREDEPLOY_KEEP=2` took the inventory
+from 1,250 revisions to 487, a bigger reclaim than any prune before it, and
+the deploy behind it still lost 26 functions. Pruning is proven to reclaim
+inventory and proven **not** to make a whole-fleet deploy fit.
 
-So the fix is the batch retry below, and the durable fix is a quota increase:
-Cloud Run Admin API, "Total CPU allocation, per project per region",
-`us-central1`.
+Read that as: the prune reclaims something other than what is being counted. The
+remaining inference, that the real limit is on concurrent container starts during
+a bulk deploy, fits every observation but has not been proven directly. Nobody
+has found the enforced ceiling; `CpuAllocPerProjectRegion` reports 200,000 and
+publishes no usage series, while the successes stop dead at 197, 201, 197 against
+a stated 200 vCPU.
+
+So the fix is batching, which is now step 5's normal behaviour, and the durable
+fix is a quota increase: Cloud Run Admin API, "Total CPU allocation, per project
+per region", `us-central1`.
+
+**`RELEASE_PREDEPLOY_KEEP` now defaults to 3, and that is retention, not
+headroom.** It runs only when the deploy is large (50 functions or more,
+`RELEASE_PREDEPLOY_MIN_TARGETS`), which keeps a narrowed four-function release
+from sweeping the whole project's revision history first. At depth 3 it is a
+near no-op in steady state, because step 8 already left the inventory at that
+floor after the last successful release; it only bites when something went wrong
+in between, which is exactly when it is worth doing, and it spends no rollback
+depth step 8 was not going to spend an hour later anyway. It is **not** claimed
+to buy quota headroom: 1,250 to 487 and the deploy still failed. Set it to `0`
+to turn it off.
 
 Pruning is still worth doing as retention, which is what step 8 is for:
 
