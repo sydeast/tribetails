@@ -90,11 +90,22 @@ xargs -P "$PARALLEL" -I{} sh -c '
       sleep $((attempt * 3))
       continue
     fi
-    cat /tmp/prune_err.$$ >> '"$WORK"'/errors.log 2>/dev/null
+    # One line, so the summary below can group by it. gcloud puts the useful
+    # sentence on the line starting ERROR:; anything else is a stack of context
+    # around it. A failure that produced no output at all still records a
+    # reason, because "30 failed" and nothing else is what this run printed on
+    # 2026-08-03 and nobody could act on it.
+    reason=$(grep -m1 "ERROR:" /tmp/prune_err.$$ 2>/dev/null | cut -c1-200)
+    [ -z "$reason" ] && reason=$(grep -m1 . /tmp/prune_err.$$ 2>/dev/null | cut -c1-200)
+    [ -z "$reason" ] && reason="gcloud failed and printed nothing"
+    echo "$reason" >> '"$WORK"'/reasons.txt
+    printf "%s\t%s\n" "$name" "$reason" >> '"$WORK"'/errors.log
     echo "$name" >> '"$WORK"'/failed.txt
     rm -f /tmp/prune_err.$$
     exit 0
   done
+  echo "rate limited (429), still refused after 5 attempts" >> '"$WORK"'/reasons.txt
+  printf "%s\trate limited (429), still refused after 5 attempts\n" "$name" >> '"$WORK"'/errors.log
   echo "$name" >> '"$WORK"'/failed.txt
   rm -f /tmp/prune_err.$$
 ' _ {} < "$WORK/to_delete.txt"
@@ -148,5 +159,22 @@ if [ "$DELETED" -le 0 ] && [ "$TO_DELETE" -gt 0 ]; then
   exit 1
 fi
 
-[ "$FAILED" -gt 0 ] && ylw "$FAILED revisions could not be deleted; they will be retried next release."
+# SAY WHY THEY FAILED.
+#
+# The 2026-08-03 run reported "failed: 30" and stopped there. Thirty deletions
+# refused for an unstated reason reads as weather; it might have been one
+# expired credential, or a serving revision the plan should never have listed,
+# and neither the operator nor the next release could tell which. "They will be
+# retried next release" is only true for causes that pass, and nothing here
+# knew whether this was one.
+#
+# Grouped rather than listed: 30 copies of one message is one fact, and the
+# per-revision detail is in errors.log for anyone who wants it.
+if [ "$FAILED" -gt 0 ]; then
+  ylw "$FAILED revisions could not be deleted; they will be retried next release."
+  if [ -s "$WORK/reasons.txt" ]; then
+    sort "$WORK/reasons.txt" | uniq -c | sort -rn | head -3 |
+      awk '{ n=$1; $1=""; sub(/^ /, ""); printf "  %sx %s\n", n, $0 }' >&2
+  fi
+fi
 grn "prune: $DELETED revisions removed, ~$REMAINING remaining."
