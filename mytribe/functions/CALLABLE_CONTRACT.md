@@ -302,11 +302,10 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   The `invoice.new` notification is best-effort: a dispatch failure is logged and
   swallowed, so a notification outage cannot fail an invoice that was already
   written.
-- `createQuote` was deliberately NOT given line items in Task 5.1; it keeps the
-  flat freeze and the legacy shape.
 
 ### createQuote
-- req: identical to `createInvoice`, plus `sendToKinfolk?: boolean` (default false)
+- req: identical to `createInvoice` (including optional `lineItems` and
+  `invoiceDiscountCents`), plus `sendToKinfolk?: boolean` (default false)
 - res `{ ok: true, invoiceId: string }`
 - A quote is NOT a separate model, it is an invoice in QUOTE status. The caller's
   `status` is IGNORED: the server always stamps `status: 'quote'` (lowercase
@@ -314,6 +313,12 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   from the classifier, which lowercases), so no client can mint a quote that
   fails to read as one.
 - `sendToKinfolk: true` dispatches the issued-quote notification immediately.
+- `lineItems` and `invoiceDiscountCents` are ADDITIVE, with the same semantics as
+  `createInvoice`: omit them and the caller's `total` / `amountDue` are stored
+  verbatim; supply them and the server owns the money, refusing a disagreement
+  rather than silently dropping the lines. Fixed issue #118.
+- Audit `BILLING_QUOTE_CREATED`, payload carrying `itemized`, `lineCount`, and
+  `sendToKinfolk`.
 
 ### markInvoicePaid
 - req `{ invoiceId: string /* 1..200 */, amount?: number /* DOLLARS, MAY BE PARTIAL; defaults to what the recorded payments leave outstanding */, method?: string /* 1..200 */, reference?: string /* 1..200 */, paidAt?: string /* ISO-8601, defaults to now */ }`

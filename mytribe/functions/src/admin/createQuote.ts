@@ -1,4 +1,4 @@
-import { onCall, CallableRequest } from 'firebase-functions/v2/https';
+import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
@@ -9,6 +9,7 @@ import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { computeInvoiceTotals, validateInvoiceMoney, centsToDollars } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
@@ -41,6 +42,13 @@ import { OkSchema } from '../lib/invoiceResponseSchema';
  * doc for open-linked + quick approve/deny.
  */
 // Exported so the callable-contract drift guard can freeze this request shape.
+const LineItem = z.object({
+  description: z.string().min(1).max(200),
+  qty: z.number().positive().max(999),
+  unitCents: z.number().int().min(0).max(10_000_000),
+  discountCents: z.number().int().min(0).optional(),
+});
+
 export const Args = z.object({
   familyId: z.string().min(1),
   kinfolkName: z.string().default(''),
@@ -57,6 +65,10 @@ export const Args = z.object({
   // mints in QUOTE status regardless of what the caller passes.
   status: z.string().default(''),
   sessionIds: z.array(z.string()).default([]),
+  /** Optional itemization. Omitted by every legacy caller; see the header. */
+  lineItems: z.array(LineItem).max(100).optional(),
+  /** Whole-invoice reduction, integer cents. Only meaningful alongside `lineItems`. */
+  invoiceDiscountCents: z.number().int().min(0).optional(),
   /** When true, dispatch an issued-quote notification to the kinfolk. */
   sendToKinfolk: z.boolean().default(false),
 });
@@ -78,6 +90,46 @@ export async function createQuoteHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof Result>> {
   const args = Args.parse(req.data);
+
+  // The itemized fields, or nothing at all. An un-itemized quote must not
+  // pick up a `lineItems: []` or a `totalCents: 0`: mirrors createInvoice.
+  let money: Record<string, unknown> = {};
+
+  if (args.lineItems !== undefined) {
+    const invoiceDiscountCents = args.invoiceDiscountCents ?? 0;
+
+    const moneyError = validateInvoiceMoney(args.lineItems, invoiceDiscountCents);
+    if (moneyError) {
+      throw new HttpsError('failed-precondition', moneyError, { code: 'invoice_money_invalid' });
+    }
+
+    const totals = computeInvoiceTotals(args.lineItems, invoiceDiscountCents, 0);
+    const derivedTotal = centsToDollars(totals.totalCents);
+    const derivedAmountDue = centsToDollars(totals.amountDueCents);
+
+    if (args.total !== derivedTotal) {
+      throw new HttpsError(
+        'failed-precondition',
+        `The total sent ($${args.total.toFixed(2)}) is not the sum of the line items ($${(totals.totalCents / 100).toFixed(2)}). The line items decide the total, so send that figure or correct the items.`,
+        { code: 'invoice_total_mismatch' },
+      );
+    }
+    if (args.amountDue !== derivedAmountDue) {
+      throw new HttpsError(
+        'failed-precondition',
+        `The amount due sent ($${args.amountDue.toFixed(2)}) is not the line-item total ($${(totals.amountDueCents / 100).toFixed(2)}). A new quote has no payments recorded against it, so the two are the same figure.`,
+        { code: 'invoice_amount_due_mismatch' },
+      );
+    }
+
+    money = {
+      lineItems: args.lineItems,
+      invoiceDiscountCents,
+      subtotalCents: totals.subtotalCents,
+      totalCents: totals.totalCents,
+      amountDueCents: totals.amountDueCents,
+    };
+  }
 
   const ref = db().collection('invoices').doc();
   const doc = {
@@ -101,6 +153,7 @@ export async function createQuoteHandler(
     sessionIds: args.sessionIds,
     kinfolkId: args.familyId,
     _id: ref.id,
+    ...money,
   };
   // The state stamp (ADR-0002), in the same write. paidCents is 0 by
   // construction on a brand-new doc.
@@ -115,7 +168,13 @@ export async function createQuoteHandler(
     status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_QUOTE_CREATED,
     severity: 'info', actorRole: 'AUNTIE', actorUid: req.auth!.uid, familyId: args.familyId,
-    payload: { invoiceId: ref.id, invoiceNumber: args.invoiceNumber, sendToKinfolk: args.sendToKinfolk },
+    payload: {
+      invoiceId: ref.id,
+      invoiceNumber: args.invoiceNumber,
+      sendToKinfolk: args.sendToKinfolk,
+      itemized: args.lineItems !== undefined,
+      lineCount: args.lineItems?.length ?? 0,
+    },
   });
 
   if (args.sendToKinfolk) {

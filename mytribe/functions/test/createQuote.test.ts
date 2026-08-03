@@ -147,3 +147,127 @@ describe('createQuote handler effects', () => {
     expect(res.ok).toBe(true);
   });
 });
+
+/**
+ * Itemized quotes (fix for issue #118).
+ *
+ * A quote now accepts `lineItems` and `invoiceDiscountCents` with the same
+ * semantics as `createInvoice`: omit them and the caller's total is stored
+ * verbatim; supply them and the server owns the money, refusing a disagreement
+ * rather than silently dropping the lines.
+ */
+describe('createQuote line items', () => {
+  const twoLines = [
+    { description: 'Dog walk', qty: 3, unitCents: 2500 },
+    { description: 'Overnight stay', qty: 1, unitCents: 8000, discountCents: 500 },
+  ];
+  // 3 x 2500 = 7500, plus 8000 - 500 = 7500 -> subtotal 15000
+  const subtotalCents = 15000;
+
+  it('writes NO cents fields at all for a legacy un-itemized payload', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createQuoteHandler(req(validPayload));
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    expect(write.data).not.toHaveProperty('lineItems');
+    expect(write.data).not.toHaveProperty('totalCents');
+    expect(write.data).not.toHaveProperty('subtotalCents');
+    expect(write.data).not.toHaveProperty('amountDueCents');
+    expect(write.data).not.toHaveProperty('invoiceDiscountCents');
+    // And the caller's dollars are still stored verbatim.
+    expect(write.data.total).toBe(200);
+    expect(write.data.amountDue).toBe(200);
+  });
+
+  it('stores the lines and derives every cents figure from them', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createQuoteHandler(
+      req({ ...validPayload, total: 150, amountDue: 150, lineItems: twoLines }),
+    );
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    expect(write.data.lineItems).toEqual(twoLines);
+    expect(write.data.subtotalCents).toBe(subtotalCents);
+    expect(write.data.totalCents).toBe(subtotalCents);
+    expect(write.data.amountDueCents).toBe(subtotalCents);
+    expect(write.data.invoiceDiscountCents).toBe(0);
+  });
+
+  it('still forces quote status even when line items are present', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createQuoteHandler(
+      req({ ...validPayload, total: 150, amountDue: 150, lineItems: twoLines }),
+    );
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    expect(write.data.status).toBe('quote');
+    expect(write.data.invoiceStatus).toBe('quote');
+  });
+
+  it('applies an invoice-level discount to the total but not the subtotal', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createQuoteHandler(
+      req({
+        ...validPayload,
+        total: 130,
+        amountDue: 130,
+        lineItems: twoLines,
+        invoiceDiscountCents: 2000,
+      }),
+    );
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    expect(write.data.subtotalCents).toBe(subtotalCents);
+    expect(write.data.totalCents).toBe(subtotalCents - 2000);
+    expect(write.data.total).toBe(130);
+  });
+
+  it('REFUSES a total that disagrees with the lines', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createQuoteHandler(req({ ...validPayload, total: 999, amountDue: 999, lineItems: twoLines })),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'invoice_total_mismatch' },
+    });
+    expect(ctx.writes.find((w) => w.path.startsWith('invoices/'))).toBeUndefined();
+  });
+
+  it('REFUSES an amountDue that disagrees with the lines', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createQuoteHandler(req({ ...validPayload, total: 150, amountDue: 10, lineItems: twoLines })),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'invoice_amount_due_mismatch' },
+    });
+  });
+
+  it('refuses a discount larger than the line it is taken off', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createQuoteHandler(
+        req({
+          ...validPayload,
+          total: 0,
+          amountDue: 0,
+          lineItems: [{ description: 'Dog walk', qty: 1, unitCents: 2500, discountCents: 9999 }],
+        }),
+      ),
+    ).rejects.toMatchObject({ details: { code: 'invoice_money_invalid' } });
+  });
+
+  it('records itemized/lineCount in the audit payload', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createQuoteHandler(
+      req({ ...validPayload, total: 150, amountDue: 150, lineItems: twoLines }),
+    );
+    expect(writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: expect.objectContaining({ itemized: true, lineCount: 2 }) }),
+    );
+  });
+});

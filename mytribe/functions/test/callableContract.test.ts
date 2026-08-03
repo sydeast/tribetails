@@ -202,15 +202,11 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // listSupplies / listExpirations take no args (empty request), so nothing to freeze.
 
   // Money + state mutations (flat shapes, top-level freeze is accurate here).
-  // NOTE: `createInvoice` USED to be frozen here and has MOVED to the deep
-  // (recursive-signature) table below. Task 5.1 gave it a `lineItems` array of
-  // objects, and a top-level key freeze would have gone on passing while
-  // `lineItems[].unitCents` was renamed underneath it. That is the exact drift
-  // this guard exists to catch, so the freeze followed the shape.
-  createQuote: {
-    schema: CreateQuoteArgs,
-    keys: ['address', 'amountDue', 'client', 'date', 'discount', 'dueDate', 'familyId', 'invoiceNumber', 'kinfolkName', 'sendToKinfolk', 'sessionIds', 'status', 'terms', 'total'],
-  },
+  // NOTE: `createInvoice` and `createQuote` USED to be frozen here and have
+  // MOVED to the deep (recursive-signature) table below. Both gained a
+  // `lineItems` array of objects, and a top-level key freeze would have gone on
+  // passing while `lineItems[].unitCents` was renamed underneath it. That is
+  // the exact drift this guard exists to catch, so the freeze followed the shape.
   markInvoicePaid: { schema: MarkInvoicePaidArgs, keys: ['amount', 'invoiceId', 'method', 'paidAt', 'reference'] },
   // `mode` defaults to the read-only 'detect'; the destructive mode is always
   // named by the caller, so a shape change here is a change to how a billing
@@ -379,6 +375,19 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
       // `sessionIds[]`, not `sessionIds`: the walker descends arrays, and a
       // string array's element is a leaf it still names.
       'sessionIds[]', 'status', 'terms', 'total',
+    ],
+  },
+  // MOVED here from the flat table (issue #118), when `lineItems` arrived.
+  // The freeze is the SUPERSET: every key of the legacy payload is listed, so
+  // a caller that omits the optional fields still validates.
+  createQuote: {
+    schema: CreateQuoteArgs,
+    signature: [
+      'address', 'amountDue', 'client', 'date', 'discount', 'dueDate', 'familyId',
+      'invoiceDiscountCents', 'invoiceNumber', 'kinfolkName',
+      'lineItems[].description', 'lineItems[].discountCents',
+      'lineItems[].qty', 'lineItems[].unitCents',
+      'sendToKinfolk', 'sessionIds[]', 'status', 'terms', 'total',
     ],
   },
   updateInvoice: {
