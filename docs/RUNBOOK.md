@@ -209,10 +209,11 @@ so and still skips, because an unknown must not turn every run into a
 warning names it.
 
 **Why step 5 deploys by name in batches.** `--only functions:mytribe` hands the
-CLI all ~227 functions at once. Each is its own Cloud Run service at 1 vCPU, a
+CLI all ~227 functions at once. Each was its own Cloud Run service at 1 vCPU, a
 deploy starts a new revision beside the serving one, and
-`CpuAllocPerProjectRegion` in `us-central1` is 200 vCPU. The fleet does not fit
-and cannot be made to fit. On 2026-08-01 five full deploys each died partway:
+`CpuAllocPerProjectRegion` in `us-central1` was 200 vCPU. The fleet did not fit.
+On 2026-08-01 five full deploys each died partway (both of those numbers have
+since changed; the correction is below the table):
 
 | attempt | succeeded | failed |
 |---|---|---|
@@ -230,6 +231,38 @@ timing problem.
 
 Every recovery that day worked the same way: name the casualties, redeploy them
 as a small batch through `safe-deploy.sh`. The release now does that by design.
+
+**That table is history. Two things changed under it.**
+
+PR #219 set `setGlobalOptions({ cpu: 0.25, ... })` in `mytribe/functions/src/index.ts`,
+with 38 functions carrying an explicit override (26 `FULL_CPU`, 12
+`FULL_CPU_SERIAL` in `lib/runtimeOptions.ts`). The fleet's draw is no longer
+~227 vCPU. At 240 services it is roughly 38 + (202 x 0.25), near 90.
+
+The quota increase requested on 2026-08-02 was approved on 2026-08-03:
+`CpuAllocPerProjectRegion` in `us-central1` is now **400 vCPU**, not 200.
+
+So the ceiling that produced 197, 201, 197 is about four times the fleet's
+current draw, and the 2026-08-03 release deployed 202 functions with zero quota
+errors. Read the numbers above as what a 1-vCPU fleet did against a 200 vCPU
+ceiling, and nothing about today.
+
+**Batching stays anyway, and not out of superstition.** The runbook's own
+measurements (below, under the prune) never established that total allocated CPU
+was the thing being enforced: idle revisions were not counted, the project held
+~36 vCPU at rest while deploys failed, and a batch retry of the same names
+succeeded minutes later with no quota change. The surviving hypothesis is a limit
+on concurrent container starts during a bulk deploy, which a CPU quota increase
+does not touch. Batching also gives the release its per-function result parsing
+and its named-casualty retry, which are worth having whatever the ceiling is.
+
+The experiment that would settle it is cheap and nobody has run it: one release
+with `RELEASE_FUNCTIONS_BATCH` set to the fleet size, which deploys in a single
+batch. If it lands, the concurrent-start theory is dead too and the batching is
+purely for reporting. If it dies partway at some number well under 400, that
+number is the real ceiling and it is worth writing down. Do it on a release you
+are willing to babysit, since the failure mode is a mixed-version backend, which
+step 5 refuses to ship clients ahead of.
 
 - **Batches of 25.** Set from what has landed, not from a model: hand recoveries
   used 20 and 26 and they worked, and the wall is at ~200. 25 leaves roughly 8x
@@ -660,9 +693,15 @@ has found the enforced ceiling; `CpuAllocPerProjectRegion` reports 200,000 and
 publishes no usage series, while the successes stop dead at 197, 201, 197 against
 a stated 200 vCPU.
 
-So the fix is batching, which is now step 5's normal behaviour, and the durable
-fix is a quota increase: Cloud Run Admin API, "Total CPU allocation, per project
-per region", `us-central1`.
+So the fix is batching, which is now step 5's normal behaviour.
+
+The quota increase that was the open durable fix here is **done**: requested
+2026-08-02, approved 2026-08-03, `CpuAllocPerProjectRegion` in `us-central1`
+raised from 200 to 400 vCPU. Combined with #219 dropping the fleet default to
+0.25 vCPU, the headroom is roughly four times the fleet's draw. That closes the
+CPU-total explanation; it does not close the concurrent-start one, which is why
+batching stays. The single-batch experiment that would settle that is described
+in step 5's section above.
 
 **`RELEASE_PREDEPLOY_KEEP` now defaults to 3, and that is retention, not
 headroom.** It runs only when the deploy is large (50 functions or more,
