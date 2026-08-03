@@ -9,6 +9,10 @@
 # .release-state, and read for the same reason: to tell what production holds
 # that this code no longer does.
 .release-functions
+# Per-run release logs and the running-release pidfile, written by
+# scripts/release-bg.sh. Machine-local by nature: they record what one operator's
+# machine did on one night, and the durable record of a release is its tag.
+.release-logs/
 __pycache__/
 node_modules/
 node_modules

@@ -85,6 +85,7 @@ From the repo root. Each fans out to the project that owns it.
 | `npm run e2e` | Playwright against the emulator. **Not part of `check`** |
 | `npm run check` | typecheck, lint, contracts, test, build. Not e2e; release step 0b covers that by asking CI. |
 | `npm run deploy` | The production run. See [Deploying](#deploying). |
+| `npm run deploy:bg` | The same run, detached, logged, one command. Use this one. |
 
 Suffix any of `test`, `typecheck`, `build` with `:functions`, `:admin` or
 `:portal` to run one project.
@@ -160,11 +161,34 @@ was read as a shipped one.
 ### The production run
 
 ```bash
-npm run deploy
+npm run deploy:bg     # detached, logged, survives the terminal closing
+npm run deploy        # foreground, when you want to answer the prompts yourself
 ```
 
 That is the whole release. `scripts/release.sh` runs the steps below **in this
 order**, stops at the first failure, and names the step it died in.
+
+**Prefer `deploy:bg`.** The release takes 20 to 40 minutes, and every way of
+launching it by hand has a sharp edge that was hit on 2026-08-03:
+
+- backgrounded with `&`, step 0's confirm reads `/dev/tty`, the job takes
+  SIGTTIN and stops with `[1] + suspended (tty input)`, which reads as a hang;
+- `echo "release pid $!"` pasted into interactive zsh triggers history expansion
+  on the `!`, eats the closing quote, and drops you at `dquote>`;
+- the log path gets improvised, so the previous run's output is wherever it
+  landed.
+
+`scripts/release-bg.sh` handles all three, writes
+`.release-logs/release-<stamp>-<sha>.log`, prints the `tail -f` for it, and
+refuses to start a second release while one is running.
+
+It passes `RELEASE_YES=1`, because a detached run cannot answer a prompt. That
+is safe for step 0's "release this commit?" (running the command IS the answer)
+and **not** automatically safe for step 3's "are all indexes Enabled?", so the
+wrapper checks: if `firestore.indexes.json` changed since the last release, or
+if there is no baseline to compare against, it refuses and sends you to the
+foreground run. `RELEASE_BG_FORCE=1` overrides once you have checked the console
+yourself, and says in its output that it did.
 
 | # | Step | Why here |
 |---|---|---|
