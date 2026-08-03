@@ -766,15 +766,36 @@ PRUNE_MAX_SECONDS=0 scripts/prune-run-revisions.sh 3  # burning down a backlog
 It never touches a serving revision, keeps the newest N per service, and retries
 the 429s the Cloud Run API returns under load.
 
-**It stops after 15 minutes by default** (`PRUNE_MAX_SECONDS`). A deletion takes
-on the order of ninety seconds to come back and a full-fleet release leaves one
-per service, so an unbounded prune is an hour of housekeeping bolted to the end
-of a release that has already succeeded and been verified. On 2026-08-03 one was
-killed at 55 minutes for looking stuck, which was the right instinct and the
-wrong outcome: it was working, it was just going to take that long. Stopping
-early costs nothing durable, because the plan is rebuilt from the live inventory
-every run and the skipped names are simply first in line. Use `0` when you are
-deliberately burning down a backlog and want it to finish.
+**How long it takes depends entirely on what else is running.** Both ends of the
+range were measured on 2026-08-03:
+
+| conditions | result |
+|---|---|
+| nothing else running | 296 deletions, under 5 minutes, 0 failures |
+| during a release | still going at 55 minutes, killed; another run lost 30 of 197 |
+
+Roughly six seconds per deletion at six in parallel when the API is quiet, and
+unbounded when it is not. Do not plan around a per-deletion constant; an earlier
+version of this section asserted ninety seconds as if it were one, generalising
+from the contended case alone. **Run a backlog prune when no deploy is in
+flight** and it costs minutes.
+
+**It stops after 15 minutes by default** (`PRUNE_MAX_SECONDS`), not because the
+work is inherently long but because its duration is unpredictable and step 8
+sits inside a release, where an unbounded tail is what makes someone reach for
+ctrl-c. That is what happened at 55 minutes: it was not stuck, it was contended,
+and nothing in its output could say so. 900 is three times the measured
+uncontended cost of a full backlog, so it never truncates a healthy run.
+Stopping early costs nothing durable, because the plan is rebuilt from the live
+inventory every run and the skipped names are simply first in line. Use `0` when
+you are deliberately burning down a backlog and want it to finish.
+
+**Async deletes were considered and rejected.** `--async` returns when the
+request is accepted rather than when the revision is gone, which turns the
+deleted count back into an accepted count, the distinction the script exists to
+keep. There is also no `gcloud run operations` surface, so async offers no
+completion signal to check afterwards. It was worth pricing while a deletion
+looked like ninety seconds. At six it buys nothing worth that.
 
 **The retention default was 10 and could never fire.** A keep of N sets a floor
 of N x services below which the sweep is arithmetically incapable of deleting
