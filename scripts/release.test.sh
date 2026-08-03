@@ -170,11 +170,17 @@ STUB
   # A real deploy would land here. It must be reached only by the wet-run case,
   # and it records that it was, so a DRY_RUN case that leaks through is caught.
   #
-  # FIREBASE_QUOTA_MAX=N models the incident: the regional CPU quota accepts the
-  # first N functions of a deploy and refuses the rest, which is exactly what
-  # 197-of-223 and 201-of-227 looked like on 2026-08-01. The stub prints
-  # firebase's own per-function result lines, because that is what release.sh
-  # reads to work out which names to retry.
+  # FIREBASE_QUOTA_MAX=N models the incident: the first N functions of a deploy
+  # are accepted and the rest refused, which is what 197-of-223 and 201-of-227
+  # looked like on 2026-08-01. The stub prints firebase's own per-function result
+  # lines, because that is what release.sh reads to work out which names to retry.
+  #
+  # The cause was misread for a week as the Cloud Run CPU ceiling. It is a
+  # per-minute mutation RATE on cloudfunctions.googleapis.com (see the 429 text
+  # below), so the real thing does not refuse a hard first-N; it refuses whatever
+  # arrives after the minute's budget is spent, and the CLI retries it. A hard
+  # first-N is still the right shape for these tests: it produces a deterministic
+  # set of casualties, which is what the retry logic under test consumes.
   cat > "$dir/stubs/firebase" <<'STUB'
 #!/usr/bin/env bash
 echo "STUB firebase $*"
@@ -205,7 +211,12 @@ for f in $names; do
     echo "✔  functions[$f(us-central1)] Successful update operation."
   else
     echo "⚠  functions[$f(us-central1)] Deployment error."
-    echo "Quota exceeded for quota metric 'Total CPU allocation, per project per region'"
+    # The real text, captured 2026-08-03 from a single-batch deploy of all 227.
+    # It is a per-minute RATE on cloudfunctions.googleapis.com, not the Cloud Run
+    # CPU ceiling this stub used to claim. Nothing in release.sh parses it (the
+    # per-function result lines above are what it reads), so this is here to stop
+    # the fixture teaching the wrong cause to the next person who reads it.
+    echo "HTTP Error: 429, Quota exceeded for quota metric 'Per project mutation requests' and limit 'Per project mutation requests per minute per region' of service 'cloudfunctions.googleapis.com'"
     rc=1
   fi
 done

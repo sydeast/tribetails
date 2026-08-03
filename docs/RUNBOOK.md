@@ -247,22 +247,59 @@ current draw, and the 2026-08-03 release deployed 202 functions with zero quota
 errors. Read the numbers above as what a 1-vCPU fleet did against a 200 vCPU
 ceiling, and nothing about today.
 
-**Batching stays anyway, and not out of superstition.** The runbook's own
-measurements (below, under the prune) never established that total allocated CPU
-was the thing being enforced: idle revisions were not counted, the project held
-~36 vCPU at rest while deploys failed, and a batch retry of the same names
-succeeded minutes later with no quota change. The surviving hypothesis is a limit
-on concurrent container starts during a bulk deploy, which a CPU quota increase
-does not touch. Batching also gives the release its per-function result parsing
-and its named-casualty retry, which are worth having whatever the ceiling is.
+### The quota that was actually refusing the deploy
 
-The experiment that would settle it is cheap and nobody has run it: one release
-with `RELEASE_FUNCTIONS_BATCH` set to the fleet size, which deploys in a single
-batch. If it lands, the concurrent-start theory is dead too and the batching is
-purely for reporting. If it dies partway at some number well under 400, that
-number is the real ceiling and it is worth writing down. Do it on a release you
-are willing to babysit, since the failure mode is a mixed-version backend, which
-step 5 refuses to ship clients ahead of.
+**It was never the Cloud Run CPU quota, and it is not a capacity limit at all.**
+Measured 2026-08-03 by deploying all 227 functions in one batch and reading the
+error text instead of inferring it:
+
+```
+HTTP Error: 429, Quota exceeded for quota metric 'Per project mutation requests'
+and limit 'Per project mutation requests per minute per region'
+of service 'cloudfunctions.googleapis.com'
+```
+
+Different service from `CpuAllocPerProjectRegion`, different meter, and a **rate**
+(requests per minute) rather than a ceiling (CPU held at once). Every observation
+that made the CPU story fall apart fits this one exactly:
+
+- Pruning reclaimed inventory and never helped a deploy, because inventory was
+  never the constraint.
+- `active_revisions` read 230 against 230 services while 676 revisions existed,
+  and 36 revisions pinned `min-instances`, so the project sat near 36 vCPU at
+  rest while deploys failed. Nothing was near a CPU ceiling because CPU was the
+  wrong meter.
+- "A batch retry of the same names succeeds minutes later with no quota change"
+  was the observation that broke the CPU theory. It is simply the per-minute
+  window resetting.
+- Successes stopping at 197, 201, 197 read as a 200 vCPU ceiling printing
+  itself. It is a coincidence of scale: that is roughly how many mutations fit
+  in the minutes those deploys ran.
+
+The concurrent-container-start inference is dead too. It was a reasonable guess
+at an unnamed mechanism, and the mechanism turned out to be a documented quota
+nobody had read the error for.
+
+**A single batch of all 227 landed.** 2026-08-03, ~9 minutes, via
+`safe-deploy.sh mytribe -- firebase deploy --only <227 names>`. Thirteen
+functions hit the 429 across fourteen retry waves; the Firebase CLI backed off
+and retried each one, and all 227 finished with `Successful update operation`.
+Zero permanent failures. So a whole-fleet deploy is not impossible, was never
+impossible for the stated reason, and the CLI already handles this quota itself.
+
+**Batching stays as the default anyway**, for reasons that now have the right
+name attached. Pacing mutations is the correct shape of fix for a per-minute
+rate limit, and staying under it beats hitting it and recovering: the retries
+cost wall-clock, and a run that exhausts the CLI's backoff still ends with named
+casualties. Batching also carries the per-function result parsing and the
+named-casualty retry, which are worth having regardless. What changes is that
+the release can stop treating a full-fleet deploy as arithmetically impossible,
+because it isn't.
+
+**If you want the durable fix, raise the right quota:** "Per project mutation
+requests per minute per region" on **`cloudfunctions.googleapis.com`**, not
+another Cloud Run CPU bump. The 400 vCPU increase is real headroom and worth
+keeping; it was aimed at the wrong meter.
 
 - **Batches of 25.** Set from what has landed, not from a model: hand recoveries
   used 20 and 26 and they worked, and the wall is at ~200. 25 leaves roughly 8x
@@ -686,22 +723,26 @@ from 1,250 revisions to 487, a bigger reclaim than any prune before it, and
 the deploy behind it still lost 26 functions. Pruning is proven to reclaim
 inventory and proven **not** to make a whole-fleet deploy fit.
 
-Read that as: the prune reclaims something other than what is being counted. The
-remaining inference, that the real limit is on concurrent container starts during
-a bulk deploy, fits every observation but has not been proven directly. Nobody
-has found the enforced ceiling; `CpuAllocPerProjectRegion` reports 200,000 and
-publishes no usage series, while the successes stop dead at 197, 201, 197 against
-a stated 200 vCPU.
+Read that as: the prune reclaims something other than what is being counted.
+
+**Answered on 2026-08-03, and it was neither of the guesses.** The enforced limit
+is `Per project mutation requests per minute per region` on
+`cloudfunctions.googleapis.com`, returned as an HTTP 429 in the deploy's own
+error text. It is a rate, not a ceiling, which is why every capacity measurement
+above came back clean and why a retry minutes later always worked. Full write-up
+and the log line are under step 5, "The quota that was actually refusing the
+deploy". Everything below in this section is still correct about the prune: it
+reclaims inventory, and inventory was never what was being enforced.
 
 So the fix is batching, which is now step 5's normal behaviour.
 
-The quota increase that was the open durable fix here is **done**: requested
-2026-08-02, approved 2026-08-03, `CpuAllocPerProjectRegion` in `us-central1`
-raised from 200 to 400 vCPU. Combined with #219 dropping the fleet default to
-0.25 vCPU, the headroom is roughly four times the fleet's draw. That closes the
-CPU-total explanation; it does not close the concurrent-start one, which is why
-batching stays. The single-batch experiment that would settle that is described
-in step 5's section above.
+The Cloud Run CPU increase that was the open durable fix here is **done, and was
+aimed at the wrong meter**: requested 2026-08-02, approved 2026-08-03,
+`CpuAllocPerProjectRegion` in `us-central1` raised from 200 to 400 vCPU. Combined
+with #219 dropping the fleet default to 0.25 vCPU, the headroom is roughly four
+times the fleet's draw, which is worth having and fixes nothing here. The quota
+to raise is `Per project mutation requests per minute per region` on
+`cloudfunctions.googleapis.com`.
 
 **`RELEASE_PREDEPLOY_KEEP` now defaults to 3, and that is retention, not
 headroom.** It runs only when the deploy is large (50 functions or more,

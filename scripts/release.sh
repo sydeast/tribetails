@@ -962,21 +962,40 @@ else
   # across the day because every attempt mints ~227 more, and pruning to 487 did
   # not make the next full deploy fit.
   #
-  # BOTH NUMBERS HAVE SINCE MOVED, AND THE BATCHING STAYS.
+  # IT WAS THE WRONG QUOTA. MEASURED 2026-08-03.
   #
-  # #219 set the fleet default to cpu 0.25 (38 functions carry an override), so
-  # the fleet draws ~90 vCPU rather than ~227. The quota increase was approved on
-  # 2026-08-03: us-central1 now allows 400. Headroom is roughly four times the
-  # draw, and the release that day put 202 functions up with no quota error.
+  # Deploying all 227 in ONE batch and reading the error text instead of
+  # inferring it gives:
   #
-  # That closes the CPU-total reading and not the other one. Total allocated CPU
-  # was never confirmed to be the enforced thing: idle revisions were not
-  # counted, the project sat at ~36 vCPU at rest while deploys failed, and a
-  # batch retry of the same names landed minutes later with no quota change. A
-  # limit on concurrent container starts fits all of that and survives a CPU
-  # quota increase untouched. Until someone runs a single-batch release and
-  # watches it land, this stays batched, and the batching earns its keep anyway
-  # through the per-function result parsing and the named-casualty retry below.
+  #   HTTP Error: 429, Quota exceeded for quota metric 'Per project mutation
+  #   requests' and limit 'Per project mutation requests per minute per region'
+  #   of service 'cloudfunctions.googleapis.com'
+  #
+  # Different service from CpuAllocPerProjectRegion, and a RATE rather than a
+  # ceiling. That is why every capacity measurement came back clean: idle
+  # revisions were not counted, the project sat at ~36 vCPU at rest while
+  # deploys failed, and a retry of the same names landed minutes later with no
+  # quota change, which is the per-minute window resetting. 197/201/197 against
+  # a stated 200 vCPU was a coincidence of scale, not the ceiling printing
+  # itself.
+  #
+  # THE SINGLE BATCH LANDED. All 227, ~9 minutes, 13 functions hit the 429
+  # across 14 retry waves, the CLI backed off and retried, all 227 finished
+  # successfully. A whole-fleet deploy is not impossible and never was, for the
+  # stated reason.
+  #
+  # Batching stays as the default because pacing mutations is the right shape of
+  # fix for a per-minute rate limit, and staying under it beats hitting it and
+  # recovering: retries cost wall-clock, and exhausting the CLI's backoff still
+  # ends with named casualties. It also carries the per-function result parsing
+  # and the named-casualty retry below. What it is NOT is the only way to get
+  # the fleet deployed.
+  #
+  # The durable fix, if anyone wants one, is to raise 'Per project mutation
+  # requests per minute per region' on cloudfunctions.googleapis.com. The 400
+  # vCPU Cloud Run increase approved the same day is real headroom aimed at the
+  # wrong meter; #219 (fleet default cpu 0.25, 38 overrides) makes CPU
+  # comfortable regardless, at ~90 vCPU of draw.
   #
   # Every recovery that day had the same shape and it always worked: name the
   # casualties and redeploy them as a small batch through safe-deploy. So the
@@ -1139,11 +1158,13 @@ else
       red "    scripts/safe-deploy.sh mytribe -- firebase deploy --only \\"
       red "      \"$(awk 'NF{printf "%sfunctions:mytribe:%s", (n++?",":""), $0}' "$FN_WORK/targets")\""
       red ""
-      red "  Do NOT go asking for a quota increase: that was the standing advice"
-      red "  here and it has been done. us-central1 allows 400 vCPU since"
-      red "  2026-08-03 and the fleet draws ~90 since #219. If this still failed,"
-      red "  the cause is something other than total allocated CPU, and the"
-      red "  runbook's step 5 section says what is still on the table."
+      red "  This is almost certainly a RATE limit, not a capacity one. Check the"
+      red "  output above for HTTP 429 and this metric:"
+      red "    'Per project mutation requests per minute per region'"
+      red "    service: cloudfunctions.googleapis.com"
+      red "  If that is what you see, retrying smaller and slower is the fix and"
+      red "  the command above does it. Cloud Run CPU is NOT the problem: 400 vCPU"
+      red "  since 2026-08-03 against ~90 of draw. Do not go asking for more of it."
       exit 1
     fi
   fi
