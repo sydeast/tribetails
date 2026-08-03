@@ -257,6 +257,21 @@ jobs:
           else
             echo "scripts/safe-deploy.test.sh not present yet, skipping."
           fi
+      # Same job rather than its own, because it needs the same checkout and
+      # nothing else: a second runner to shell out to bash buys a slower gate.
+      #
+      # It is here because on 2026-08-03 the prune reported "903 revisions
+      # removed, 0 remaining" for a run that deleted at most 197, over a region
+      # that still held 240 serving revisions. The count was a listing minus a
+      # listing, and the second listing came back empty and exited 0. This test
+      # fails against that version of the script.
+      - name: Run the prune accounting test if present
+        run: |
+          if [ -f scripts/prune-run-revisions.test.sh ]; then
+            bash scripts/prune-run-revisions.test.sh
+          else
+            echo "scripts/prune-run-revisions.test.sh not present yet, skipping."
+          fi
   mytribe-gradle:
     name: Portal shared (jvm)
     needs: changes
