@@ -24,6 +24,7 @@
 #   scripts/prune-run-revisions.sh          # keep 10 per service
 #   scripts/prune-run-revisions.sh 5        # keep 5
 #   DRY_RUN=1 scripts/prune-run-revisions.sh
+#   PRUNE_MAX_SECONDS=0 scripts/prune-run-revisions.sh 3   # no time budget
 
 set -uo pipefail
 
@@ -32,6 +33,28 @@ PROJECT=auntieos-ttpc
 REGION=us-central1
 KEEP="${1:-10}"
 PARALLEL="${PRUNE_PARALLEL:-6}"
+
+# WALL-CLOCK BUDGET. 0 disables.
+#
+# A deletion takes on the order of a minute and a half to come back, and the
+# work is one deletion per service per release, so a release that deploys the
+# whole fleet leaves ~227 of them. That is an hour of a release step whose only
+# job is housekeeping, and on 2026-08-03 it was an hour spent AFTER the deploy
+# had already succeeded and been verified. The operator killed one at 55 minutes
+# because it looked stuck, which is the correct instinct and the wrong outcome:
+# the prune was working, it was just going to take that long.
+#
+# The prune does not have to finish. It re-plans from the live inventory every
+# run, so anything skipped is simply first in line next time, and the depth it
+# leaves is bounded by how far behind it gets rather than by any single run.
+# What is NOT acceptable is an unbounded step in the middle of a release, so it
+# stops at the budget and says what it left.
+#
+# 900 (15 min) is chosen to cover a normal release's worth of deletions with
+# room to spare, and to stop well short of the point where anyone reaches for
+# ctrl-c. Set 0 for the old unbounded behaviour when burning down a backlog by
+# hand, which is the case where you do want it to run until it is done.
+MAX_SECONDS="${PRUNE_MAX_SECONDS:-900}"
 
 red() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 grn() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -71,13 +94,38 @@ if [ "${DRY_RUN:-0}" = "1" ]; then
   exit 0
 fi
 
-echo "deleting $TO_DELETE revisions ($PARALLEL at a time, retrying rate limits) ..."
+if [ "$MAX_SECONDS" = "0" ]; then
+  echo "deleting $TO_DELETE revisions ($PARALLEL at a time, retrying rate limits, no time budget) ..."
+else
+  echo "deleting $TO_DELETE revisions ($PARALLEL at a time, retrying rate limits, ${MAX_SECONDS}s budget) ..."
+fi
+
+# CHUNKED, so the budget can be honoured BETWEEN chunks.
+#
+# Feeding the whole list to one xargs and gating the pipe does not work: the
+# list is a few kilobytes, so every name fits in the pipe buffer and is written
+# before the first deletion returns, which makes the gate a no-op. A barrier
+# every 4*PARALLEL names costs a little idle time at each boundary and is the
+# only place where a decision to stop can actually be taken.
+mkdir -p "$WORK/chunks"
+split -l "$((PARALLEL * 4))" "$WORK/to_delete.txt" "$WORK/chunks/c"
+
+DEADLINE=0
+[ "$MAX_SECONDS" != "0" ] && DEADLINE=$(( $(date +%s) + MAX_SECONDS ))
+ATTEMPTED=0
+STOPPED_EARLY=0
 
 # Input is PIPED, not `xargs -a`: that flag is GNU-only and macOS ships BSD
 # xargs, which rejects it. An earlier version used it, xargs exited immediately
 # with a usage error, and the run reported success over having deleted nothing.
 export PROJECT REGION
-xargs -P "$PARALLEL" -I{} sh -c '
+for chunk in "$WORK"/chunks/c*; do
+  if [ "$DEADLINE" != "0" ] && [ "$(date +%s)" -ge "$DEADLINE" ]; then
+    STOPPED_EARLY=1
+    break
+  fi
+  ATTEMPTED=$((ATTEMPTED + $(wc -l < "$chunk" | tr -d ' ')))
+  xargs -P "$PARALLEL" -I{} sh -c '
   name="$1"
   for attempt in 1 2 3 4 5; do
     if gcloud run revisions delete "$name" --project "$PROJECT" --region "$REGION" --quiet >/dev/null 2>/tmp/prune_err.$$; then
@@ -108,7 +156,8 @@ xargs -P "$PARALLEL" -I{} sh -c '
   printf "%s\trate limited (429), still refused after 5 attempts\n" "$name" >> '"$WORK"'/errors.log
   echo "$name" >> '"$WORK"'/failed.txt
   rm -f /tmp/prune_err.$$
-' _ {} < "$WORK/to_delete.txt"
+' _ {} < "$chunk"
+done
 
 # COUNT THE DELETIONS THAT SUCCEEDED. DO NOT RE-LIST AND SUBTRACT.
 #
@@ -142,18 +191,35 @@ REMAINING=$((BEFORE - DELETED))
 
 echo "before: $BEFORE   deleted: $DELETED   failed: $FAILED   remaining (derived): $REMAINING"
 
+# STOPPING EARLY IS A RESULT, NOT AN ERROR, AND IT HAS TO BE SAID.
+#
+# A budget that silently trims the work would be a quieter version of the bug
+# this script keeps having: a number that reads as complete when it is not. The
+# skipped names are not lost, they are simply first in line next run, because
+# the plan is rebuilt from the live inventory every time.
+SKIPPED=$((TO_DELETE - ATTEMPTED))
+if [ "$STOPPED_EARLY" = "1" ]; then
+  ylw "stopped after $ATTEMPTED of $TO_DELETE: the ${MAX_SECONDS}s budget ran out."
+  ylw "  $SKIPPED revisions were not attempted. They are re-planned next run."
+  ylw "  PRUNE_MAX_SECONDS=0 runs to completion, for burning down a backlog."
+fi
+
 # Attempted, minus the two known outcomes, should be nothing. If it is not, some
 # worker died without recording either, so the counts undercount and the caller
-# should know that rather than read a clean total.
-UNACCOUNTED=$((TO_DELETE - DELETED - FAILED))
+# should know that rather than read a clean total. Measured against what was
+# ATTEMPTED rather than what was planned, or every budgeted run would report its
+# own skipped names as workers that vanished.
+UNACCOUNTED=$((ATTEMPTED - DELETED - FAILED))
 if [ "$UNACCOUNTED" -ne 0 ]; then
-  ylw "$UNACCOUNTED of $TO_DELETE candidates recorded neither success nor failure."
+  ylw "$UNACCOUNTED of $ATTEMPTED attempted recorded neither success nor failure."
   ylw "  Treat the counts above as a floor, not a total."
 fi
 
 # A prune that deleted nothing must never read as success: that is how the first
-# version of this hid a run in which xargs had not executed at all.
-if [ "$DELETED" -le 0 ] && [ "$TO_DELETE" -gt 0 ]; then
+# version of this hid a run in which xargs had not executed at all. Keyed on
+# ATTEMPTED, so a run whose budget expired before the first chunk says so above
+# rather than being reported as a failure to delete.
+if [ "$DELETED" -le 0 ] && [ "$ATTEMPTED" -gt 0 ]; then
   red "NOTHING WAS DELETED despite $TO_DELETE candidates. Do not treat this as pruned."
   [ -s "$WORK/errors.log" ] && head -3 "$WORK/errors.log" >&2
   exit 1

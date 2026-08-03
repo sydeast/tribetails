@@ -444,6 +444,7 @@ Knobs, all off by default:
 | `RELEASE_PREDEPLOY_KEEP=N` | Prune to N per service before a **large** functions deploy (default 3, `0` disables). See the quota entry below |
 | `RELEASE_PREDEPLOY_MIN_TARGETS=N` | How many functions count as large (default 50). Below it the pre-deploy prune does not run |
 | `RELEASE_KEEP_REVISIONS=N` | Revisions kept per service in step 8 (default 3) |
+| `PRUNE_MAX_SECONDS=N` | Wall-clock budget for a prune (default 900, `0` unbounded). It stops at the budget, says what it skipped, and the next run re-plans those |
 | `RELEASE_FUNCTIONS_ALL=1` | Deploy every function, not only the ones this release can reach |
 | `RELEASE_FUNCTIONS_BATCH=N` | Functions per `firebase deploy` (default 25) |
 | `RELEASE_FUNCTIONS_ROUNDS=N` | Retry rounds for functions that did not land (default 3) |
@@ -758,11 +759,22 @@ to turn it off.
 Pruning is still worth doing as retention, which is what step 8 is for:
 
 ```bash
-scripts/prune-run-revisions.sh 3   # retention, what step 8 does
+scripts/prune-run-revisions.sh 3                      # retention, what step 8 does
+PRUNE_MAX_SECONDS=0 scripts/prune-run-revisions.sh 3  # burning down a backlog
 ```
 
 It never touches a serving revision, keeps the newest N per service, and retries
 the 429s the Cloud Run API returns under load.
+
+**It stops after 15 minutes by default** (`PRUNE_MAX_SECONDS`). A deletion takes
+on the order of ninety seconds to come back and a full-fleet release leaves one
+per service, so an unbounded prune is an hour of housekeeping bolted to the end
+of a release that has already succeeded and been verified. On 2026-08-03 one was
+killed at 55 minutes for looking stuck, which was the right instinct and the
+wrong outcome: it was working, it was just going to take that long. Stopping
+early costs nothing durable, because the plan is rebuilt from the live inventory
+every run and the skipped names are simply first in line. Use `0` when you are
+deliberately burning down a backlog and want it to finish.
 
 **The retention default was 10 and could never fire.** A keep of N sets a floor
 of N x services below which the sweep is arithmetically incapable of deleting
