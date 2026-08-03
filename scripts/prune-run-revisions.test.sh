@@ -108,6 +108,10 @@ case "$args" in
       echo "ERROR: (gcloud.run.revisions.delete) FAILED_PRECONDITION: stub refuses this one" >&2
       exit 1
     fi
+    # A real deletion takes on the order of 90 seconds. DELETE_SLEEP models that
+    # at a scale a test can afford, so the wall-clock budget has something to
+    # actually expire against.
+    [ -n "${DELETE_SLEEP:-}" ] && sleep "$DELETE_SLEEP"
     echo "$name" >> "$DELETE_LOG"
     exit 0
     ;;
@@ -287,6 +291,80 @@ if [ "$RC4" -eq 0 ] && printf '%s' "$OUT4" | grep -q "nothing to prune"; then
   ok "a keep above the inventory exits clean with nothing to prune"
 else
   bad "keep-10 did not exit clean; rc=$RC4"; printf '%s\n' "$OUT4"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. The wall-clock budget. A release must not hand an hour of housekeeping to
+#    an operator who is watching a deploy, and on 2026-08-03 one was killed at
+#    55 minutes for exactly that reason. Stopping early is fine; stopping
+#    QUIETLY is the thing this whole file exists to prevent.
+#
+#    PRUNE_PARALLEL=1 makes the chunk size 4, so there are boundaries to stop
+#    at; DELETE_SLEEP=1 makes each deletion cost a second. The first chunk takes
+#    ~4s, which is past a 2s budget, so it stops with 4 of 10 attempted.
+# ---------------------------------------------------------------------------
+D5="$(make_env)"
+OUT5="$(PRUNE_PARALLEL=1 PRUNE_MAX_SECONDS=2 DELETE_SLEEP=1 run_prune "$D5" 1)"
+RC5=$?
+
+if [ "$RC5" -eq 0 ]; then
+  ok "a budgeted prune exits 0; stopping early is a result, not a failure"
+else
+  bad "budgeted prune exited $RC5"; printf '%s\n' "$OUT5"
+fi
+
+if has "$OUT5" "stopped after 4 of 10"; then
+  ok "says how much of the plan it got through"
+else
+  bad "did not report stopping early"; printf '%s\n' "$OUT5"
+fi
+
+if has "$OUT5" "6 revisions were not attempted"; then
+  ok "names what it skipped, and that the next run re-plans it"
+else
+  bad "skipped count missing"; printf '%s\n' "$OUT5"
+fi
+
+# The budget must not make the accounting lie in the other direction: skipped
+# names are not workers that vanished, and reporting them as unaccounted-for
+# would turn every budgeted run into a false alarm.
+if has "$OUT5" "recorded neither success nor failure"; then
+  bad "skipped names were reported as lost workers"; printf '%s\n' "$OUT5"
+else
+  ok "skipped names are not counted as unaccounted for"
+fi
+
+if [ "$(wc -l < "$D5/deleted.log" | tr -d ' ')" = "4" ]; then
+  ok "deleted exactly the chunk it had time for"
+else
+  bad "deleted $(wc -l < "$D5/deleted.log" | tr -d ' ') revisions, expected 4"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. PRUNE_MAX_SECONDS=0 is the backlog case: run until done, however long that
+#    takes. It is what you want when burning down by hand and the wrong default
+#    inside a release.
+# ---------------------------------------------------------------------------
+D6="$(make_env)"
+OUT6="$(PRUNE_MAX_SECONDS=0 run_prune "$D6" 1)"
+
+if has "$OUT6" "deleted: 10" && ! has "$OUT6" "stopped after"; then
+  ok "budget 0 runs the whole plan"
+else
+  bad "budget 0 did not run to completion"; printf '%s\n' "$OUT6"
+fi
+
+if has "$OUT6" "no time budget"; then
+  ok "says up front that it is unbounded"
+else
+  bad "unbounded run did not announce itself"; printf '%s\n' "$OUT6"
+fi
+
+# A run that finishes inside its budget must not mention stopping at all.
+if has "$OUT1" "stopped after"; then
+  bad "a run that finished reported stopping early"
+else
+  ok "a run that finishes says nothing about the budget"
 fi
 
 echo
