@@ -314,6 +314,27 @@ The concurrent-container-start inference is dead too. It was a reasonable guess
 at an unnamed mechanism, and the mechanism turned out to be a documented quota
 nobody had read the error for.
 
+**How much room the CPU quota actually has, read off the console the same day**
+(Service: Cloud Run Admin API, `region:us-central1`):
+
+| Quota | Limit | In use | |
+|---|---|---|---|
+| Total CPU allocation, in milli vCPU, per project per region | 400,000 | 16,000 | **4%** |
+| Active Revisions per region | 4,000 | 240 | **6%** |
+| Services per region | 1,000 | 240 | 24% |
+
+Two things fall out of that, and both are stronger than anything inferred.
+
+**There was never a CPU problem, by a factor of twenty-five.** 16 vCPU in use
+against 400 available. Elsewhere this runbook says the fleet "draws ~90 vCPU";
+that is the theoretical sum if every service were warm at once, and it is not
+what the meter counts. What it counts is what is running, which is 16.
+
+**Active Revisions was 240 while the region held 706 revisions.** That is the
+July inference confirmed with a live number: idle revisions are not counted, so
+the prune could never have bought deploy headroom no matter how deep it went.
+The prune is retention. Nothing else.
+
 **A single batch of all 227 landed.** 2026-08-03, ~9 minutes, via
 `safe-deploy.sh mytribe -- firebase deploy --only <227 names>`. Thirteen
 functions hit the 429 across fourteen retry waves; the Firebase CLI backed off
@@ -747,9 +768,12 @@ why:
 
 - `run.googleapis.com/active_revisions` reported usage **230 against 230
   services**, one apiece, while 676 revisions existed. Idle revisions are not
-  counted, so deleting them frees nothing that was being counted.
+  counted, so deleting them frees nothing that was being counted. Still true on
+  2026-08-03 and now with the limit alongside it: **240 active against a limit
+  of 4,000**, six percent, while the region held 706 revisions.
 - 36 revisions pin `min-instances=1`; the other 640 scale to zero. At rest the
-  project holds ~36 CPU, nowhere near a ceiling.
+  project holds ~36 CPU, nowhere near a ceiling. Measured 2026-08-03: **16 vCPU
+  in use against 400 available**, four percent.
 - redeploying the failed names as a batch of 20 succeeds minutes later with no
   quota change in between.
 
@@ -773,10 +797,13 @@ reclaims inventory, and inventory was never what was being enforced.
 So the fix is batching, which is now step 5's normal behaviour.
 
 The Cloud Run CPU increase that was the open durable fix here is **done, and was
-aimed at the wrong meter**: requested 2026-08-02, approved 2026-08-03,
-`CpuAllocPerProjectRegion` in `us-central1` raised from 200 to 400 vCPU. Combined
-with #219 dropping the fleet default to 0.25 vCPU, the headroom is roughly four
-times the fleet's draw, which is worth having and fixes nothing here. The limit
+aimed at the wrong meter**: request `b36b3ae22fb04dd1b2`, Cloud Run Admin API,
+`us-central1`, 200,000 to 400,000 milli vCPU, submitted 2026-08-02 20:43 and
+approved a minute later. Note it is the CLOUD RUN row; Cloud Functions API
+carries a CPU row of its own, still at 200,000, and reading that one is how you
+talk yourself into believing the increase never landed. In use against the
+raised limit: **16,000 of 400,000, four percent**. It is worth having and fixes
+nothing here. The limit
 that actually binds is `Per project mutation requests per minute per region` on
 `cloudfunctions.googleapis.com`, and it is **60 a minute and not adjustable**:
 the console types it as a System limit with Adjustable = No. There is no request
