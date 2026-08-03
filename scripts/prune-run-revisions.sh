@@ -81,6 +81,8 @@ xargs -P "$PARALLEL" -I{} sh -c '
   name="$1"
   for attempt in 1 2 3 4 5; do
     if gcloud run revisions delete "$name" --project "$PROJECT" --region "$REGION" --quiet >/dev/null 2>/tmp/prune_err.$$; then
+      echo "$name" >> '"$WORK"'/deleted.txt
+      rm -f /tmp/prune_err.$$
       exit 0
     fi
     # 429 means slow down, not stop. Anything else is a real failure.
@@ -97,20 +99,54 @@ xargs -P "$PARALLEL" -I{} sh -c '
   rm -f /tmp/prune_err.$$
 ' _ {} < "$WORK/to_delete.txt"
 
-AFTER=$(gcloud run revisions list --project "$PROJECT" --region "$REGION" --format='value(metadata.name)' 2>/dev/null | wc -l | tr -d ' ')
-REMOVED=$((BEFORE - AFTER))
+# COUNT THE DELETIONS THAT SUCCEEDED. DO NOT RE-LIST AND SUBTRACT.
+#
+# This used to recount the region afterwards and report BEFORE - AFTER as the
+# number removed. On 2026-08-03 that printed "before: 903 after: 0 removed: 903"
+# for a run whose own plan deleted 197, and step 8 signed off "903 revisions
+# removed, 0 remaining" over a region that still held 240 serving revisions
+# alone. Every number after the plan was invented.
+#
+# The recount fails SILENTLY. `gcloud run revisions list` can print nothing and
+# still exit 0 (reproduced under a sandboxed shell with no network, where it
+# returned empty after a multi-minute stall). So checking its exit status would
+# not have caught this, and neither would a retry. Any accounting that
+# subtracts a list from a list will read a lost
+# listing as a total wipe, which is the most reassuring possible way to be
+# wrong, and it is wrong in the direction that stops anyone looking.
+#
+# So the workers record what they actually deleted and that file is the count.
+# It cannot over-report: a name lands in deleted.txt only after gcloud returned
+# success for that name. It still catches the xargs-never-ran case the old
+# guard existed for, because then nothing is recorded and the count is zero.
+DELETED=0
+[ -f "$WORK/deleted.txt" ] && DELETED=$(wc -l < "$WORK/deleted.txt" | tr -d ' ')
 FAILED=0
 [ -f "$WORK/failed.txt" ] && FAILED=$(wc -l < "$WORK/failed.txt" | tr -d ' ')
 
-echo "before: $BEFORE   after: $AFTER   removed: $REMOVED   failed: $FAILED"
+# Derived, and labelled as derived. Nothing else mints revisions while this
+# runs (step 8 is after every deploy), so it is sound, but it is arithmetic on
+# the opening listing rather than a fresh observation and must not read as one.
+REMAINING=$((BEFORE - DELETED))
+
+echo "before: $BEFORE   deleted: $DELETED   failed: $FAILED   remaining (derived): $REMAINING"
+
+# Attempted, minus the two known outcomes, should be nothing. If it is not, some
+# worker died without recording either, so the counts undercount and the caller
+# should know that rather than read a clean total.
+UNACCOUNTED=$((TO_DELETE - DELETED - FAILED))
+if [ "$UNACCOUNTED" -ne 0 ]; then
+  ylw "$UNACCOUNTED of $TO_DELETE candidates recorded neither success nor failure."
+  ylw "  Treat the counts above as a floor, not a total."
+fi
 
 # A prune that deleted nothing must never read as success: that is how the first
 # version of this hid a run in which xargs had not executed at all.
-if [ "$REMOVED" -le 0 ] && [ "$TO_DELETE" -gt 0 ]; then
+if [ "$DELETED" -le 0 ] && [ "$TO_DELETE" -gt 0 ]; then
   red "NOTHING WAS DELETED despite $TO_DELETE candidates. Do not treat this as pruned."
   [ -s "$WORK/errors.log" ] && head -3 "$WORK/errors.log" >&2
   exit 1
 fi
 
 [ "$FAILED" -gt 0 ] && ylw "$FAILED revisions could not be deleted; they will be retried next release."
-grn "prune: $REMOVED revisions removed, $AFTER remaining."
+grn "prune: $DELETED revisions removed, ~$REMAINING remaining."

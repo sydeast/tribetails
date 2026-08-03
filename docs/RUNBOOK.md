@@ -711,8 +711,22 @@ tested and failed.
 Step 8 still runs after step 7, so it cannot help the deploy in its own run.
 That is answered across runs rather than within one: a sweep whose keep actually
 fires leaves the inventory at its floor every release, so the next release starts
-from ~714 instead of from 926 and climbing. `RELEASE_PREDEPLOY_KEEP=N` stays
-off by default and unproven, for the reasons above.
+from ~714 instead of from 926 and climbing. `RELEASE_PREDEPLOY_KEEP=N` defaults
+to 3 and runs before a large functions deploy, as retention only; it is not
+claimed to buy headroom, for the reasons above.
+
+**Do not trust the "removed" and "remaining" counts in any prune output logged
+before 2026-08-03.** They were computed by listing the region again after the
+deletions and subtracting, and that listing fails silently: `gcloud run
+revisions list` can print nothing and still exit 0. The 2026-08-03 release
+printed `before: 903 after: 0 removed: 903` and signed off "903 revisions
+removed, 0 remaining" for a run whose own plan deleted 197, over a region that
+still held 240 serving revisions the prune cannot touch. The plan line above it
+(`plan: N revisions, ... delete M`) was correct in those runs; the numbers after
+it were not. The script now counts the deletions its workers completed and does
+not re-list at all, so `deleted:` is a real count and `remaining (derived):` is
+labelled as the arithmetic it is. `scripts/prune-run-revisions.test.sh` holds
+that line.
 
 **A deploy failed partway and left named functions undeployed.** The failed
 functions are still serving their previous revision, so production is
@@ -799,6 +813,7 @@ that answered no; using it that way reproduces 2026-08-01 exactly.
 | `scripts/safe-deploy.sh` | Deploy guards, with the reasoning in the header |
 | `scripts/release.sh` | The production run, step by step, with why each step is where it is |
 | `scripts/release.test.sh` | Runs the release script against a throwaway repo and stubbed CLIs |
+| `scripts/prune-run-revisions.test.sh` | Holds the prune's counts to what it deleted; run it by hand, CI does not |
 | `auntieos-admin/docs/runbooks/e2e.md` | The Playwright harness |
 | `auntieos-admin/docs/runbooks/visual-regression.md` | Visual harness, escalate-never-approve |
 | `auntieos-admin/docs/handoffs/` | What a given week found |
