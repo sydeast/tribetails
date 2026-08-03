@@ -260,8 +260,42 @@ of service 'cloudfunctions.googleapis.com'
 ```
 
 Different service from `CpuAllocPerProjectRegion`, different meter, and a **rate**
-(requests per minute) rather than a ceiling (CPU held at once). Every observation
-that made the CPU story fall apart fits this one exactly:
+(requests per minute) rather than a ceiling (CPU held at once).
+
+**The limit is 60 per minute per region**, read off the console the same day
+(IAM & Admin -> Quotas, Service: Cloud Functions API, dimension
+`region:us-central1`). Every region shows the same 60, so it is the default.
+
+That single number accounts for the whole history. 227 functions against 60 a
+minute is a floor of about four minutes of pure rate-limited pushing before any
+build or retry time, which is why the successful single-batch deploy took nine
+minutes and hit thirteen 429s, and why deploys that ran for two or three minutes
+stopped at 197 and 201. Nothing was near a CPU ceiling; the deploys were simply
+spending their minute's budget and being told to wait.
+
+**It cannot be raised. Do not go looking for the form.** The console types this
+row as a **System limit** rather than a Quota, and its **Adjustable** column
+reads **No**, in every region. Confirmed the same day, along with two rows that
+make the distinction concrete:
+
+| Name | Type | Value | Adjustable |
+|---|---|---|---|
+| Per project mutation requests per minute per region | System limit | 60 | **No** |
+| Per project read requests per minute per region | System limit | 1,200 | **No** |
+| Total CPU allocation, in milli vCPU, per project per region | Quota | 200,000 | Yes |
+
+Reads get twenty times the budget of mutations, which is why nothing but a
+deploy ever notices this. Enabling the **Quota adjuster** (Quotas ->
+Configurations) does not help either: it only manages rows that are adjustable,
+so this one is absent from its list rather than present and switched off.
+
+So the ceiling is 60 a minute, permanently, and the answer is to live inside it.
+That is what step 5's batching does, and what the Firebase CLI's own backoff
+does when a batch is too big. The cost is a few minutes on a full-fleet release,
+and step 5 narrows most releases to the functions that changed, so full-fleet
+deploys are rare.
+
+Every observation that made the CPU story fall apart fits this one exactly:
 
 - Pruning reclaimed inventory and never helped a deploy, because inventory was
   never the constraint.
@@ -728,9 +762,10 @@ Read that as: the prune reclaims something other than what is being counted.
 
 **Answered on 2026-08-03, and it was neither of the guesses.** The enforced limit
 is `Per project mutation requests per minute per region` on
-`cloudfunctions.googleapis.com`, returned as an HTTP 429 in the deploy's own
-error text. It is a rate, not a ceiling, which is why every capacity measurement
-above came back clean and why a retry minutes later always worked. Full write-up
+`cloudfunctions.googleapis.com`, **60 per minute**, returned as an HTTP 429 in
+the deploy's own error text. It is a rate, not a ceiling, which is why every
+capacity measurement above came back clean and why a retry minutes later always
+worked. Full write-up
 and the log line are under step 5, "The quota that was actually refusing the
 deploy". Everything below in this section is still correct about the prune: it
 reclaims inventory, and inventory was never what was being enforced.
@@ -741,9 +776,12 @@ The Cloud Run CPU increase that was the open durable fix here is **done, and was
 aimed at the wrong meter**: requested 2026-08-02, approved 2026-08-03,
 `CpuAllocPerProjectRegion` in `us-central1` raised from 200 to 400 vCPU. Combined
 with #219 dropping the fleet default to 0.25 vCPU, the headroom is roughly four
-times the fleet's draw, which is worth having and fixes nothing here. The quota
-to raise is `Per project mutation requests per minute per region` on
-`cloudfunctions.googleapis.com`.
+times the fleet's draw, which is worth having and fixes nothing here. The limit
+that actually binds is `Per project mutation requests per minute per region` on
+`cloudfunctions.googleapis.com`, and it is **60 a minute and not adjustable**:
+the console types it as a System limit with Adjustable = No. There is no request
+to file. Step 5 has the evidence and what to do instead, which is to keep living
+inside it.
 
 **`RELEASE_PREDEPLOY_KEEP` now defaults to 3, and that is retention, not
 headroom.** It runs only when the deploy is large (50 functions or more,

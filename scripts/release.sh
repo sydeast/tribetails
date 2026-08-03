@@ -991,10 +991,15 @@ else
   # and the named-casualty retry below. What it is NOT is the only way to get
   # the fleet deployed.
   #
-  # The durable fix, if anyone wants one, is to raise 'Per project mutation
-  # requests per minute per region' on cloudfunctions.googleapis.com. The 400
-  # vCPU Cloud Run increase approved the same day is real headroom aimed at the
-  # wrong meter; #219 (fleet default cpu 0.25, 38 overrides) makes CPU
+  # THERE IS NO DURABLE FIX TO ASK FOR. 'Per project mutation requests per
+  # minute per region' on cloudfunctions.googleapis.com is 60, and the console
+  # types it as a System limit with Adjustable = No, in every region. Reads get
+  # 1,200, which is why only a deploy ever notices. The Quota adjuster does not
+  # cover it either; it manages adjustable rows only.
+  #
+  # So 60 a minute is the shape of the world, and batching is how to live in it.
+  # The 400 vCPU Cloud Run increase approved the same day is real headroom aimed
+  # at the wrong meter; #219 (fleet default cpu 0.25, 38 overrides) makes CPU
   # comfortable regardless, at ~90 vCPU of draw.
   #
   # Every recovery that day had the same shape and it always worked: name the
