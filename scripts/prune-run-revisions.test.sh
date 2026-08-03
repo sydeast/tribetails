@@ -89,11 +89,23 @@ case "$args" in
       esac
     done
     if [ "${DELETE_ALL_FAIL:-0}" = "1" ]; then
-      echo "FAILED_PRECONDITION: stub refuses $name" >&2
+      echo "ERROR: (gcloud.run.revisions.delete) PERMISSION_DENIED: stub refuses everything" >&2
+      exit 1
+    fi
+    # Fails with nothing on stderr at all. gcloud does this, and a reason of ""
+    # groups every silent failure into one indistinguishable blank line.
+    if [ -n "${DELETE_FAIL_SILENT:-}" ] && printf '%s\n' "$DELETE_FAIL_SILENT" | grep -qx "$name"; then
+      exit 1
+    fi
+    # A second, different cause in the same run, so the summary has to group
+    # rather than report the first thing it saw.
+    if [ -n "${DELETE_FAIL_ALT:-}" ] && printf '%s\n' "$DELETE_FAIL_ALT" | grep -qx "$name"; then
+      echo "Some context line gcloud printed first" >&2
+      echo "ERROR: (gcloud.run.revisions.delete) NOT_FOUND: revision $name already gone" >&2
       exit 1
     fi
     if [ -n "${DELETE_FAIL:-}" ] && printf '%s\n' "$DELETE_FAIL" | grep -qx "$name"; then
-      echo "FAILED_PRECONDITION: stub refuses $name" >&2
+      echo "ERROR: (gcloud.run.revisions.delete) FAILED_PRECONDITION: stub refuses this one" >&2
       exit 1
     fi
     echo "$name" >> "$DELETE_LOG"
@@ -116,6 +128,9 @@ run_prune() {
   FIXTURES="$dir" CALL_LOG="$dir/calls.log" DELETE_LOG="$dir/deleted.log" \
     bash "$HERE/prune-run-revisions.sh" "$keep" 2>&1
 }
+
+# has <output> <string>: substring match, so a test reads as one line.
+has() { printf '%s' "$1" | grep -qF "$2"; }
 
 # ---------------------------------------------------------------------------
 # 1. The reported count is what was deleted, not a listing minus a listing.
@@ -182,6 +197,54 @@ if printf '%s' "$OUT2" | grep -q "recorded neither success nor failure"; then
   bad "counts that add up were reported as unaccounted for"
 else
   ok "counts that add up raise nothing"
+fi
+
+# ---------------------------------------------------------------------------
+# 2b. A failure has to say WHY. "failed: 30" and nothing else is what the
+#     2026-08-03 run printed, and it left nobody able to tell an expired
+#     credential from a revision that was already gone.
+# ---------------------------------------------------------------------------
+if has "$OUT2" "3x" && has "$OUT2" "FAILED_PRECONDITION: stub refuses this one"; then
+  ok "three identical failures group into one counted reason"
+else
+  bad "failures did not name their cause"; printf '%s\n' "$OUT2"
+fi
+
+# ---------------------------------------------------------------------------
+# 2c. Two causes in one run are two lines. Reporting only the first would be
+#     the same lie in a smaller font: a run that is half expired-credential and
+#     half already-deleted needs different actions for each half.
+# ---------------------------------------------------------------------------
+D2b="$(make_env)"
+OUT2B="$(DELETE_FAIL="$(printf 'alpha-001\nalpha-002\n')" \
+         DELETE_FAIL_ALT="$(printf 'beta-001\n')" run_prune "$D2b" 1)"
+
+if has "$OUT2B" "2x" && has "$OUT2B" "FAILED_PRECONDITION" &&
+   has "$OUT2B" "1x" && has "$OUT2B" "NOT_FOUND"; then
+  ok "two distinct causes are reported separately, with counts"
+else
+  bad "distinct causes collapsed or dropped"; printf '%s\n' "$OUT2B"
+fi
+
+# gcloud prints context lines above the one that says what went wrong. The
+# summary is worthless if it groups on those instead.
+if has "$OUT2B" "Some context line gcloud printed first"; then
+  bad "grouped on a context line instead of the ERROR: line"
+else
+  ok "reads the ERROR: line, not the context above it"
+fi
+
+# ---------------------------------------------------------------------------
+# 2d. A failure that printed nothing still has to appear as a cause, or the
+#     count and the reasons disagree and the reasons look complete.
+# ---------------------------------------------------------------------------
+D2c="$(make_env)"
+OUT2C="$(DELETE_FAIL_SILENT="$(printf 'alpha-001\nbeta-001\n')" run_prune "$D2c" 1)"
+
+if has "$OUT2C" "failed: 2" && has "$OUT2C" "2x gcloud failed and printed nothing"; then
+  ok "a failure with no output still reports as a named cause"
+else
+  bad "silent failures vanished from the reasons"; printf '%s\n' "$OUT2C"
 fi
 
 # ---------------------------------------------------------------------------
