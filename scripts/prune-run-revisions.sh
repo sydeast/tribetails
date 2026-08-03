@@ -36,24 +36,40 @@ PARALLEL="${PRUNE_PARALLEL:-6}"
 
 # WALL-CLOCK BUDGET. 0 disables.
 #
-# A deletion takes on the order of a minute and a half to come back, and the
-# work is one deletion per service per release, so a release that deploys the
-# whole fleet leaves ~227 of them. That is an hour of a release step whose only
-# job is housekeeping, and on 2026-08-03 it was an hour spent AFTER the deploy
-# had already succeeded and been verified. The operator killed one at 55 minutes
-# because it looked stuck, which is the correct instinct and the wrong outcome:
-# the prune was working, it was just going to take that long.
+# THE COST OF A DELETION IS NOT FIXED, AND THAT IS THE WHOLE REASON FOR A BUDGET.
+#
+# Measured 2026-08-03, both ends of the range on the same day:
+#
+#   uncontended   296 deletions, under 5 minutes, 0 failures   (~6s each at P=6)
+#   during a release   still running at 55 minutes, killed; a second run the same
+#                      day lost 30 of 197 outright
+#
+# So the honest statement is that this is fast when it is the only thing talking
+# to the API and slow when it is not. An earlier version of this comment claimed
+# ~90 seconds per deletion as if it were a constant, having generalised from the
+# contended case alone. It is not a constant, and the fast case is the common one.
+#
+# The budget is therefore NOT here because the work is inherently long. It is
+# here because the duration is unpredictable and this step runs inside a release,
+# where an unbounded tail is what makes an operator reach for ctrl-c. On
+# 2026-08-03 one was killed at 55 minutes for looking stuck. It was not stuck; it
+# was contended, and nothing in its output could say so.
 #
 # The prune does not have to finish. It re-plans from the live inventory every
 # run, so anything skipped is simply first in line next time, and the depth it
 # leaves is bounded by how far behind it gets rather than by any single run.
-# What is NOT acceptable is an unbounded step in the middle of a release, so it
-# stops at the budget and says what it left.
 #
-# 900 (15 min) is chosen to cover a normal release's worth of deletions with
-# room to spare, and to stop well short of the point where anyone reaches for
-# ctrl-c. Set 0 for the old unbounded behaviour when burning down a backlog by
-# hand, which is the case where you do want it to run until it is done.
+# 900 (15 min) is three times the measured uncontended cost of a full backlog,
+# so it never truncates a healthy run and does cap a pathological one. Set 0 for
+# unbounded when burning down a backlog by hand, where you do want it to finish.
+#
+# ASYNC DELETES WERE CONSIDERED AND REJECTED, and the measurement is why.
+# `gcloud run revisions delete --async` returns once the request is accepted
+# rather than once the revision is gone, which would turn the deleted count back
+# into an accepted count, the exact distinction this script exists to keep. It
+# was worth pricing when a deletion looked like 90 seconds. At 6 seconds it buys
+# nothing worth that. There is also no `gcloud run operations` surface, so an
+# async delete offers no completion signal to check afterwards.
 MAX_SECONDS="${PRUNE_MAX_SECONDS:-900}"
 
 red() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
