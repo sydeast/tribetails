@@ -68,8 +68,11 @@
 #   RELEASE_FUNCTIONS_BATCH=N           functions per firebase deploy (25). The
 #   RELEASE_FUNCTIONS_ROUNDS=N          number of retry rounds for casualties (3).
 #   RELEASE_FUNCTIONS_SETTLE=S          seconds between batches (30). All three
-#                                       exist because the regional CPU quota is
-#                                       200 vCPU and the fleet is ~227 services.
+#                                       exist because whole-fleet deploys died
+#                                       partway. The CPU-quota reading of that
+#                                       is now closed (400 vCPU since
+#                                       2026-08-03, fleet ~90 since #219); see
+#                                       the runbook for what is left.
 #   RELEASE_PREDEPLOY_KEEP=N            prune to N revisions per service before a
 #                                       LARGE functions deploy (3; 0 disables).
 #   RELEASE_RETRY_KEEP=N                prune depth between retry rounds (2).
@@ -937,13 +940,16 @@ if [ "$FUNCTIONS_CHANGED" -eq 0 ]; then
   ylw "  burn regional CPU quota to change nothing."
   ylw "  Force with RELEASE_FORCE_FUNCTIONS=1."
 else
-  # THE FLEET DOES NOT FIT, AND NO AMOUNT OF PRUNING MAKES IT FIT.
+  # THE FLEET DID NOT FIT, AND NO AMOUNT OF PRUNING MADE IT FIT.
   #
-  # mytribe/functions is ~227 exports, each its own Cloud Run service at 1 vCPU.
-  # A deploy starts a NEW revision beside the serving one, so `--only
-  # functions:mytribe` asks us-central1 for roughly double the fleet at once
-  # against a CpuAllocPerProjectRegion of 200 vCPU. It cannot be satisfied. On
-  # 2026-08-01, five full deploys each died partway:
+  # Both halves of that arithmetic have since moved, and the batching outlived
+  # them; read to the end before deciding this comment still argues for it.
+  #
+  # mytribe/functions is ~227 exports, each its own Cloud Run service, and at
+  # the time each drew 1 vCPU. A deploy starts a NEW revision beside the serving
+  # one, so `--only functions:mytribe` asked us-central1 for roughly double the
+  # fleet at once against a CpuAllocPerProjectRegion of 200 vCPU. On 2026-08-01,
+  # five full deploys each died partway:
   #
   #     forced (RELEASE_FORCE_FUNCTIONS=1)   197 ok   26 failed
   #     stray (wrong cwd, package script)    131 ok   95 failed
@@ -951,10 +957,26 @@ else
   #     release with PREDEPLOY_KEEP=2        201 ok   26 failed
   #     targeted redeploy of just those 26     0 ok   26 failed
   #
-  # Note where the successes stop: 197, 201, 197. That is the 200 vCPU ceiling
-  # printing itself, and it is why this is a CEILING and not a timing problem.
-  # Revisions went 702 -> 926 -> 1250 across the day because every attempt mints
-  # ~227 more. Pruning to 487 did not make the next full deploy fit.
+  # Note where the successes stop: 197, 201, 197, against a stated 200. That
+  # looked like the ceiling printing itself. Revisions went 702 -> 926 -> 1250
+  # across the day because every attempt mints ~227 more, and pruning to 487 did
+  # not make the next full deploy fit.
+  #
+  # BOTH NUMBERS HAVE SINCE MOVED, AND THE BATCHING STAYS.
+  #
+  # #219 set the fleet default to cpu 0.25 (38 functions carry an override), so
+  # the fleet draws ~90 vCPU rather than ~227. The quota increase was approved on
+  # 2026-08-03: us-central1 now allows 400. Headroom is roughly four times the
+  # draw, and the release that day put 202 functions up with no quota error.
+  #
+  # That closes the CPU-total reading and not the other one. Total allocated CPU
+  # was never confirmed to be the enforced thing: idle revisions were not
+  # counted, the project sat at ~36 vCPU at rest while deploys failed, and a
+  # batch retry of the same names landed minutes later with no quota change. A
+  # limit on concurrent container starts fits all of that and survives a CPU
+  # quota increase untouched. Until someone runs a single-batch release and
+  # watches it land, this stays batched, and the batching earns its keep anyway
+  # through the per-function result parsing and the named-casualty retry below.
   #
   # Every recovery that day had the same shape and it always worked: name the
   # casualties and redeploy them as a small batch through safe-deploy. So the
@@ -1117,8 +1139,11 @@ else
       red "    scripts/safe-deploy.sh mytribe -- firebase deploy --only \\"
       red "      \"$(awk 'NF{printf "%sfunctions:mytribe:%s", (n++?",":""), $0}' "$FN_WORK/targets")\""
       red ""
-      red "  The durable fix is a quota increase: Cloud Run Admin API,"
-      red "  'Total CPU allocation, per project per region', us-central1."
+      red "  Do NOT go asking for a quota increase: that was the standing advice"
+      red "  here and it has been done. us-central1 allows 400 vCPU since"
+      red "  2026-08-03 and the fleet draws ~90 since #219. If this still failed,"
+      red "  the cause is something other than total allocated CPU, and the"
+      red "  runbook's step 5 section says what is still on the table."
       exit 1
     fi
   fi
