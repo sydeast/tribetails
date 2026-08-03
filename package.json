@@ -39,6 +39,7 @@
 
     "check": "npm run typecheck && npm run lint && npm run contracts:check && npm test && npm run build",
 
-    "deploy": "bash scripts/release.sh"
+    "deploy": "bash scripts/release.sh",
+    "deploy:bg": "bash scripts/release-bg.sh"
   }
 }

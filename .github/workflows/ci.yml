@@ -272,6 +272,17 @@ jobs:
           else
             echo "scripts/prune-run-revisions.test.sh not present yet, skipping."
           fi
+      # The wrapper's job is to launch a release when nobody can answer a
+      # prompt, so its refusals are the part worth gating: it must not skip the
+      # index confirmation on a release that changes indexes, and it must not
+      # start a second release while one is running.
+      - name: Run the detached-release wrapper test if present
+        run: |
+          if [ -f scripts/release-bg.test.sh ]; then
+            bash scripts/release-bg.test.sh
+          else
+            echo "scripts/release-bg.test.sh not present yet, skipping."
+          fi
   mytribe-gradle:
     name: Portal shared (jvm)
     needs: changes
