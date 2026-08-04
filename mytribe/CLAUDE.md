@@ -41,9 +41,19 @@ Portal mockups are `mytribe/ui-ideas/*.html`, 22 flat files, all stamped
 `auntieos-admin/ui-ideas/` and `page-specs/` describe a different application.
 Never answer a portal screen from the admin tree, or the reverse.
 
-A filename carrying a directive means that directive is part of the spec. The
-portal has no rejected-designs directory, so unlike the admin tree, everything
-here is live.
+The portal has no rejected-designs directory, so unlike the admin tree,
+everything here is live. Filenames are `mytribe-{screen}-{date}.html`, and
+**anything after the date is a directive: the limitation or the need, written by
+the operator, and part of the spec.** Read it as a requirement, not a label.
+
+    -NoRefundtoOP-onlyAccountCredit    a refund never goes back to the original
+                                       payment method; it becomes account credit
+    -justNeedsExpansionForEachSection  the design is right, it needs per-section
+      ForGrandularModification         expansion for granular modification
+    -ADMINONLY                         this variant of the screen is admin-gated
+
+Where a directive file and a plain file describe the same screen, the directive
+file wins. The plain one is the earlier version without the ruling.
 
 **19 of the 22 are tracked. The 3 that are not are exactly the 3 carrying
 directives:**
