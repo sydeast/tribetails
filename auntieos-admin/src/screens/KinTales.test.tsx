@@ -3,14 +3,19 @@ import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vites
 import { render as rtlRender, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type KinTaleEntry } from '../api/kinTales';
+import { GENERATED_DRAFTS_MAX, type GeneratedDraftRow } from '../api/drafts';
+import { type Async } from '../lib/async';
+import { type Kinfolk } from '../api/directory';
 import { type PagedCollection } from '../lib/usePagedCollection';
 import { ToastProvider } from '../components/Toast';
 
 /**
  * The list is PAGED now, so this file mocks `usePagedCollection` rather than
- * `useCollection`. `useCollection` is still mocked because the household facet
- * reads the kinfolk directory through it, and the two must be told apart: a test
- * that stubs only one of them would silently exercise the other for real.
+ * `useCollection`. `useCollection` is still mocked because the screen reads TWO
+ * live collections through it, the kinfolk directory behind the household facet
+ * and `generated_drafts` (the draft half of a KinTale), and the three sources
+ * must be told apart: a test that stubbed them as one would silently feed
+ * household documents to the drafts join and call them KinTales.
  */
 const { usePagedCollection } = vi.hoisted(() => ({ usePagedCollection: vi.fn() }));
 vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
@@ -68,6 +73,31 @@ function entry(over: Partial<KinTaleEntry>): KinTaleEntry {
   };
 }
 
+/**
+ * One `generated_drafts` doc, the collection the KinTales screen now joins in
+ * for its Drafts bucket.
+ *
+ * `createdOn` defaults to NOW rather than to a pinned literal, and that is not
+ * laziness. The reports side is windowed by the SERVER (and the paged hook is
+ * mocked, so no window is applied to it here at all), while the drafts side is
+ * windowed client-side against the real `new Date()` the toolbar computes. A
+ * fixture dated 2026-07-16 would silently fall outside the default "last 7
+ * days" on any day but that one, and every drafts assertion would decay into a
+ * test of the window instead.
+ */
+function draft(over: Partial<GeneratedDraftRow> = {}): GeneratedDraftRow {
+  return {
+    _id: 'draft1',
+    kinfolk_id: 'kf1',
+    kinfolkName: 'The Okafors',
+    communicationType: 'visit_report',
+    generatedCopy: 'Mabel napped in the sun for an hour.',
+    status: 'generated',
+    createdOn: new Date().toISOString(),
+    ...over,
+  };
+}
+
 const loadMore = vi.fn();
 const reload = vi.fn();
 
@@ -110,12 +140,28 @@ afterAll(() => {
 
 const user = userEvent.setup();
 
+/**
+ * `useCollection` is called for two different collections, so the stub routes
+ * on the spec's path rather than answering every call with one value. Setting
+ * one of these does not disturb the other, which is the point: a test about
+ * drafts must not accidentally empty the household facet, and a test about a
+ * failed household read must not also fail the drafts read.
+ */
+let householdsState: Async<Kinfolk[]> = { status: 'ready', data: [] };
+let draftsState: Async<GeneratedDraftRow[]> = { status: 'ready', data: [] };
+const setHouseholds = (state: Async<Kinfolk[]>) => (householdsState = state);
+const setDrafts = (rows: GeneratedDraftRow[], over?: Async<GeneratedDraftRow[]>) =>
+  (draftsState = over ?? { status: 'ready', data: rows });
+
 beforeEach(() => {
   loadMore.mockReset();
   reload.mockReset();
   usePagedCollection.mockReset().mockReturnValue(paged([]));
-  // The household directory behind the facet. Empty unless a case needs it.
-  useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] });
+  householdsState = { status: 'ready', data: [] };
+  draftsState = { status: 'ready', data: [] };
+  useCollection.mockReset().mockImplementation((spec: { path: string }) =>
+    spec.path === 'generated_drafts' ? draftsState : householdsState,
+  );
   // NeedsTriageSection's own read. Empty unless a case needs it; see the note above.
   listOrphanReports.mockReset().mockResolvedValue([]);
 });
@@ -296,7 +342,7 @@ describe('KinTales screen: the date window', () => {
 
 describe('KinTales screen: the kinfolk facet', () => {
   it('offers the whole household directory, not just the households already loaded', () => {
-    useCollection.mockReturnValue({
+    setHouseholds({
       status: 'ready',
       data: [
         { _id: 'kf1', firstName: 'Dana', lastName: 'Ruiz' },
@@ -314,7 +360,7 @@ describe('KinTales screen: the kinfolk facet', () => {
   });
 
   it('composes the facet with the window as a server predicate, in index order', async () => {
-    useCollection.mockReturnValue({
+    setHouseholds({
       status: 'ready',
       data: [{ _id: 'kf2', firstName: 'Sam', lastName: 'Okafor' }],
     });
@@ -330,7 +376,7 @@ describe('KinTales screen: the kinfolk facet', () => {
   });
 
   it('says so when the household list itself failed, rather than offering an empty dropdown', () => {
-    useCollection.mockReturnValue({ status: 'error', message: 'permission-denied' });
+    setHouseholds({ status: 'error', message: 'permission-denied' });
     render(<KinTales />);
     expect(screen.getByText(/Household list unavailable: permission-denied/)).toBeInTheDocument();
     // The list itself is unaffected: a facet that cannot load is not a failed list.
@@ -576,5 +622,172 @@ describe('KinTales screen: a failed FIRST page is not a failed LATER page', () =
     await user.click(within(screen.getByRole('alert')).getByRole('button', { name: /retry/i }));
     expect(loadMore).toHaveBeenCalledOnce();
     expect(reload).not.toHaveBeenCalled();
+  });
+});
+/**
+ * THE REPORTED BUG. The screen showed "Sent 0 / Drafts 0 / Needs another look
+ * 0" and "No KinTales in the last 30 days" while Home, on the same session,
+ * listed KinTales. The two read different collections: this screen paged
+ * `kin_care_reports`, Home's widget read `generated_drafts`. Operator ruling,
+ * 2026-08-04, verbatim: "generated drafts are just drafts of the kintales".
+ * So the Drafts bucket this screen already promised has to be filled from
+ * there, and every claim the screen makes about its own counts has to stay
+ * true while it is.
+ */
+describe('KinTales screen: a draft is a KinTale', () => {
+  const cardFor = (label: string) =>
+    screen
+      .getByText(label, { selector: '.den-stat-label' })
+      .closest('.den-stat, button.den-stat--button') as HTMLElement;
+  it('counts a generated draft in the Drafts bucket', () => {
+    // Fails before the join: the screen read one collection and this bucket
+    // could only ever be 0.
+    setDrafts([draft()]);
+    render(<KinTales />);
+    expect(within(cardFor('Drafts')).getByText('1')).toBeInTheDocument();
+  });
+  it('lists the draft as a row, with its household and its copy', () => {
+    setDrafts([draft()]);
+    render(<KinTales />);
+    const row = screen.getByText('The Okafors').closest('.kintales__row') as HTMLElement;
+    expect(within(row).getByText('Mabel napped in the sun for an hour.')).toBeInTheDocument();
+    expect(within(row).getByText('DRAFT')).toBeInTheDocument();
+  });
+  it('stops claiming an empty window when the window holds drafts', () => {
+    usePagedCollection.mockReturnValue(paged([]));
+    setDrafts([draft()]);
+    render(<KinTales />);
+    expect(screen.queryByText(/No KinTales in the last 7 days/)).toBeNull();
+  });
+  it('shows the draft under the Drafts tab, and hides it under Sent', async () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'SENT' })]));
+    setDrafts([draft()]);
+    render(<KinTales />);
+    await user.click(screen.getByRole('tab', { name: 'Drafts' }));
+    expect(screen.getByText('The Okafors')).toBeInTheDocument();
+    expect(screen.queryByText('The Whitfields')).toBeNull();
+    await user.click(screen.getByRole('tab', { name: 'Sent' }));
+    expect(screen.getByText('The Whitfields')).toBeInTheDocument();
+    expect(screen.queryByText('The Okafors')).toBeNull();
+  });
+  it('names the draft type on the row, so an sms draft never reads as a visit recap', () => {
+    // `generated_drafts` holds drafts of every generator output, not only visit
+    // recaps (generate.js's ALLOWED_TYPES). None is filtered out, so each says
+    // which kind it is.
+    setDrafts([draft({ communicationType: 'sms' })]);
+    render(<KinTales />);
+    const row = screen.getByText('The Okafors').closest('.kintales__row') as HTMLElement;
+    expect(within(row).getByText('sms')).toBeInTheDocument();
+  });
+  it('counts the draft in the total the honesty line quotes', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'SENT' })]));
+    setDrafts([draft()]);
+    render(<KinTales />);
+    expect(
+      screen.getByText('These counts cover all 2 KinTales in the last 7 days.'),
+    ).toBeInTheDocument();
+  });
+  it('searches drafts alongside reports, over the same loaded rows', async () => {
+    usePagedCollection.mockReturnValue(paged([entry({ kinfolkName: 'The Whitfields' })]));
+    setDrafts([draft()]);
+    render(<KinTales />);
+    await user.type(screen.getByRole('searchbox', { name: 'Search KinTales' }), 'okafor');
+    expect(screen.getByText('The Okafors')).toBeInTheDocument();
+    expect(screen.queryByText('The Whitfields')).toBeNull();
+  });
+  it('narrows drafts by the household facet too, not just the reports query', async () => {
+    setHouseholds({
+      status: 'ready',
+      data: [{ _id: 'kf9', firstName: 'Sam', lastName: 'Okafor' }],
+    });
+    setDrafts([draft({ kinfolk_id: 'kf1' })]);
+    render(<KinTales />);
+    expect(screen.getByText('The Okafors')).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('Household'), 'kf9');
+    // The reports side is narrowed server-side; the drafts side has to be
+    // narrowed here, or the facet would silently lie about half the list.
+    expect(screen.queryByText('The Okafors')).toBeNull();
+  });
+  it('applies the date window to drafts, and widens it with the archive preset', async () => {
+    setDrafts([draft({ createdOn: '2019-01-01T00:00:00.000Z' })]);
+    render(<KinTales />);
+    expect(screen.queryByText('The Okafors')).toBeNull();
+    await user.click(screen.getByRole('tab', { name: 'All (archive)' }));
+    expect(screen.getByText('The Okafors')).toBeInTheDocument();
+  });
+  it('keeps an UNDATED draft visible rather than hiding a real row inside the window logic', () => {
+    setDrafts([draft({ createdOn: '' })]);
+    render(<KinTales />);
+    expect(screen.getByText('The Okafors')).toBeInTheDocument();
+    expect(screen.getByText('Date TBD')).toBeInTheDocument();
+  });
+  it('reads the snake_case fields generate.js writes, not just the migrated spelling', () => {
+    setDrafts([
+      {
+        _id: 'gen1',
+        kinfolk_id: 'kf1',
+        kinfolk_name: 'The Ruiz Family',
+        communication_type: 'visit_report',
+        generated_copy: 'Comet chased every leaf in the yard.',
+        status: 'generated',
+        generated_at: new Date().toISOString(),
+      },
+    ]);
+    render(<KinTales />);
+    const row = screen.getByText('The Ruiz Family').closest('.kintales__row') as HTMLElement;
+    expect(within(row).getByText('Comet chased every leaf in the yard.')).toBeInTheDocument();
+  });
+  it('never counts an approved draft as Sent, because nothing on the doc proves a delivery', () => {
+    setDrafts([draft({ status: 'approved' })]);
+    render(<KinTales />);
+    expect(within(cardFor('Sent')).getByText('0')).toBeInTheDocument();
+    expect(within(cardFor('Drafts')).getByText('0')).toBeInTheDocument();
+    // Still on screen under All, with its own honest bucket, exactly as an
+    // unrecognised kin_care_reports status is.
+    expect(screen.getByText('UNKNOWN')).toBeInTheDocument();
+  });
+});
+describe('KinTales screen: the drafts read states what it is worth', () => {
+  it('says the drafts read FAILED rather than reporting a confident 0 drafts', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'SENT' })]));
+    setDrafts([], { status: 'error', message: 'permission-denied' });
+    render(<KinTales />);
+    expect(
+      screen.getByText(
+        'Drafts could not be loaded (permission-denied), so the Drafts count is missing them.',
+      ),
+    ).toBeInTheDocument();
+    // And the report list it could read is untouched.
+    expect(screen.getByText('The Whitfields')).toBeInTheDocument();
+  });
+  it('a failed drafts read is announced, not left as a quiet caption', () => {
+    setDrafts([], { status: 'error', message: 'permission-denied' });
+    render(<KinTales />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Drafts could not be loaded');
+  });
+  it('says the Drafts count is not final while the drafts read is still in flight', () => {
+    setDrafts([], { status: 'loading' });
+    render(<KinTales />);
+    expect(
+      screen.getByText('Drafts are still loading, so the Drafts count is not final yet.'),
+    ).toBeInTheDocument();
+  });
+  it('admits the drafts side is capped once the listener comes back full', () => {
+    setDrafts(
+      Array.from({ length: GENERATED_DRAFTS_MAX }, (_, i) => draft({ _id: `d${String(i)}` })),
+    );
+    render(<KinTales />);
+    expect(
+      screen.getByText(
+        `Drafts are the newest ${String(GENERATED_DRAFTS_MAX)} only; older drafts are not counted.`,
+      ),
+    ).toBeInTheDocument();
+  });
+  it('makes no drafts caveat at all when the whole queue fits under the cap', () => {
+    setDrafts([draft()]);
+    render(<KinTales />);
+    expect(screen.queryByText(/Drafts are the newest/)).toBeNull();
+    expect(screen.queryByText(/Drafts could not be loaded/)).toBeNull();
+    expect(screen.queryByText(/Drafts are still loading/)).toBeNull();
   });
 });
