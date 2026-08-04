@@ -1,6 +1,25 @@
 # React Port Restoration Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **HISTORICAL, written 2026-07-24. Largely executed; audited 2026-08-04.**
+> Read it for the slice-by-slice design, but do not trust its file references
+> without checking them first. Confirmed wrong as of 2026-08-04:
+>
+> - **Four cited design mocks do not exist**, and the plan calls them "newest
+>   committed references": `ui-ideas/auntieos-training-documents-2026-05-27.html`,
+>   `auntieos-invoices-2026-05-27.html`, `auntieos-invoice-detail-2026-05-27.html`
+>   and `auntieos-home-2026-05-27.html`. The only surviving mocks for those
+>   screens sit under `ui-ideas/WrongUIDesigns-UpdateKill/`, which this same plan
+>   correctly orders you never to build from. `ui-ideas/` is gitignored, so
+>   "committed" was never true of any of them. A screen with no live mock does
+>   not get one invented; it waits for the operator re-mock.
+> - `src/screens/widgets/SuppliesTracker.tsx` is really `SuppliesTrackerWidget.tsx`.
+> - `src/screens/KinTaleTemplates.tsx` is 912 lines, not the 756 quoted.
+> - The "full inventory of every remaining `coming soon`" is not full: it omits
+>   `mytribe/web/src/screens/BookingDetail.tsx:288`.
+> - "Android suite (179 test files)" is stated as a current gate; there are 222.
+>
+> Other `path:line` citations have drifted while the content they point at is
+> still right. Treat every line number in here as a hint, not a fact.
 
 **Goal:** Restore every feature lost in the wasm-to-React port of the AuntieOS admin, plus the net-new invoice/list/calendar functionality the operator asked for, as full vertical slices on web AND Android.
 

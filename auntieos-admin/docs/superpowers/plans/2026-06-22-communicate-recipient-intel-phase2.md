@@ -1,6 +1,10 @@
 # Communicate Recipient Intelligence — Phase 2 Implementation Plan (Household-notes migration)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax. NO git in any tree — NO commit steps. NO deploy (operator-gated).
+> **HISTORICAL, written 2026-06-22. Built and deployed 2026-06-23.**
+> Do not run this as a plan; read it for the design. Its "NO git in any tree"
+> instruction was true when written and is wrong now: this repo is under git
+> with CI (`.github/workflows/ci.yml`), and the workflow is branch per task,
+> never commit on `main`, land through a PR.
 
 **Goal:** Give admins a path to migrate the free-text `dossier.householdNotes` blob into the structured `HouseholdData` collection: surface the blob (admin-only) on the kinfolk profile with a "what's still missing" gap list, show it as a fill-in reference on the household editor, and a "Clear from dossier" action once migrated.
 

@@ -1,6 +1,16 @@
 # Remaining work after the 2026-07-31 batch
 
-**Date:** 2026-07-31, blocked-work section updated 2026-08-01
+> **RE-AUDITED 2026-08-04.** Six items below claimed a call site or a field did
+> not exist. All six had shipped by 2026-08-04 and are marked `LANDED
+> 2026-08-04` inline. Check an item against source before picking it up; the
+> rest of the list was not re-verified.
+>
+> Also: **PR #185 was CLOSED unmerged**, superseded by #188. The section below
+> reads as though #185 shipped. The operator ruling it records did take effect,
+> but through #188.
+
+**Date:** 2026-07-31, blocked-work section updated 2026-08-01, six item statuses
+re-audited 2026-08-04
 **Baseline:** `origin/main` at `5fba1d6`, after every PR from #139 to #183 that
 merged. #184, #185 and #186 were open when this was written and are tracked
 under "Blocked right now" rather than counted as landed.
@@ -82,6 +92,9 @@ emergency.
 
 **Size M. The largest regression in the audit, and it is money visibility.**
 
+> **LANDED 2026-08-04.** The path in this item is also wrong: the screen is
+> `auntieos-admin/src/components/InvoiceDetail.tsx`, not `src/screens/`.
+
 `auntieos-admin/src/screens/InvoiceDetail.tsx` contains zero references to
 `sessionIds` or to the `payments` subcollection. Both are real:
 
@@ -101,6 +114,10 @@ is where the shape should come from.
 `markInvoicePaid`, never `recordPayment`. `recordPayment` appears in
 `invoiceContracts.generated.ts` and in no call site under `src/`. The payments
 ledger is therefore written from Android only, and read nowhere in web.
+
+> **LANDED 2026-08-04.** `src/components/InvoiceDetail.tsx` imports and calls
+> `recordPayment`, and `InvoiceDetail.test.tsx` pins the ordering
+> ("calls markInvoicePaid FIRST, then recordPayment with this payment amount").
 
 Needs the operator's re-mock first (see F2): `invoiceNEEDSupdate.html` is stale.
 
@@ -133,6 +150,13 @@ record instead of holding its own copy, and migrate whatever free text exists.
 
 **Size S to M.**
 
+> **LANDED 2026-08-04.** Every write in `src/api/bookingsWrite.ts` is now a
+> callable. `mytribe/functions/src/admin/transitionBookingStatus.ts` owns the
+> transition: admin-claim gated, zod-validated, a real state machine over
+> `functions/src/lib/bookingTransitions.ts`, with `writeAuditEntry` on every
+> path including the refusals. `firestore.rules` no longer permits the direct
+> patch. Line 84 is now the doc comment describing that, not the write.
+
 `src/api/bookingsWrite.ts:84` is a raw client `updateDoc` on `kin_care_sessions`,
 gated only by `isAuntie()`. No state machine, no `writeAuditEntry`.
 `approveBooking`, `rejectBooking`, `cancelBooking` and `markBookingCompleted` all
@@ -152,6 +176,9 @@ semantics were preserved deliberately and must survive the move.
 ```ts
 const status = args.status ?? (args.severity === 'critical' ? 'FAILURE' : 'SUCCESS');
 ```
+
+> **LANDED 2026-08-04.** `mytribe/functions/src/lib/wrapCallable.ts:79` now
+> passes `status: 'FAILURE'` explicitly, so the default no longer applies.
 
 `wrapCallable.ts:78-84` writes its `ERROR_FUNCTION_FAILURE` entry with
 `severity: 'warn'` and no `status`. Warn is not critical, so the default lands on
@@ -178,6 +205,9 @@ problem as a flag with no backing: something that reads as available and is not.
 `expireStaleInvites` are all real. Zero matches for `mintInvite`,
 `revokeInvite` or `setMemberPermissions` anywhere under `auntieos-admin/src`.
 
+> **LANDED 2026-08-04.** `auntieos-admin/src/screens/HouseholdMembers.tsx` is a
+> full screen over all three, with tests in `HouseholdMembers.test.tsx`.
+
 There is no screen, no route, no button. Adding a second Auntie or inviting a
 household to the portal is not possible from any shipped surface.
 
@@ -188,6 +218,9 @@ household to the portal is not possible from any shipped surface.
 `triageOrphanReport` is a real audited callable that Android calls. Zero matches
 under `auntieos-admin/src`. An orphaned report is completed work with no session
 to bill it against, so on web it simply does not surface.
+
+> **LANDED 2026-08-04.** `auntieos-admin/src/api/kinTaleTriage.ts` wraps both
+> sides and `src/components/NeedsTriageSection.tsx` surfaces it in the admin.
 
 ### B3. Portal: Share the Love is absent, and three more callables are inert
 

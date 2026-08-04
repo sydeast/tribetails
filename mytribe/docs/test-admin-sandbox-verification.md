@@ -14,7 +14,8 @@ that one kinfolk + its related records. Live data is unreachable.
   `../scripts/test/seed_test_sandbox.test.ts`). 687 total.
 - Rules emulator tests (real `@firebase/rules-unit-testing` against the Firestore
   emulator), `functions/test/rules/testAdminSandbox.test.ts`:
-  `cd MyTribe/functions && npm run test:rules` (72 total, 13 in the sandbox file).
+  `cd mytribe/functions && npm run test:rules`. Counts move; the sandbox file
+  held 13 cases when this was written and holds 24 as of 2026-08-04.
 
 Both pass with the rules as written. The rules-test harness loads
 `MyTribe/firestore.rules` directly, so the test exercises the deployed contract.
@@ -50,15 +51,17 @@ Both pass with the rules as written. The rules-test harness loads
 - AuntieOS has NO separate top-level `bookings` / `booking_requests` collection;
   the scheduled `kin_care_sessions` doc IS the booking. The seed's SCHEDULED
   session carries `kind: 'BOOKING'`. No phantom collection was fabricated.
-- `firestore.rules` here is the single source of truth (see file header). After
-  any change, sync to `sotu-hosting/firestore.rules` and deploy from there per
-  the existing deploy convention.
+- `mytribe/firestore.rules` is the single source of truth (see file header).
+  After any change, copy it to `auntieos-admin/web/firestore.rules`, which is a
+  byte-identical mirror guarded by a functions test and the pre-commit hook.
+  There is no `sotu-hosting/firestore.rules`; that directory is hosting only.
 
 ## Operator commands
 
 ```sh
-# 1. Deploy rules (from MyTribe, or sync + deploy from sotu-hosting):
-firebase deploy --only firestore:rules --project auntieos-ttpc
+# 1. Deploy rules. Only from mytribe, and only through the wrapper, which
+#    refuses if the auntieos-admin/web mirror has drifted:
+scripts/safe-deploy.sh mytribe -- firebase deploy --only firestore:rules
 
 # 2. Seed (dry-run first, then apply):
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/auntieos-ttpc-sa.json

@@ -4,7 +4,8 @@ This standalone recap is archived. The living "where are we / what is next" stat
 maintained elsewhere now, so this file is a pointer rather than a parallel copy.
 
 For current state, read:
-- `.remember/now.md` and `.remember/today-2026-06-10.md`, the living status notes.
+- `.remember/now.md`, the living status note. Dated daily notes are archived
+  alongside it as `today-YYYY-MM-DD.done.md`.
 - `.remember/remember.md`, the durable project memory.
 - `docs/WRAPUP_2026-06-01_program.md`, the last program wrap-up.
 - `ISSUES.md`, the open-issue and e2e tracker.

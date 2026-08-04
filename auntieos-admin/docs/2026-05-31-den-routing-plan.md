@@ -1,7 +1,15 @@
 # Den Redesign Phase A1 — Thin Hash Router Implementation Plan
 
-> **For agentic workers:** Use superpowers:subagent-driven-development or superpowers:executing-plans to implement task-by-task. Steps use checkbox (`- [ ]`) syntax.
-> **NO GIT in this project ([[feedback_no_git]]):** replace every "commit" with the build/test-verify checkpoint shown. Do NOT run git.
+> **HISTORICAL, written 2026-05-31. Executed. Do not run this as a plan.**
+> It targets the Compose/wasm admin, superseded by `auntieos-admin/src` (React)
+> on 2026-07-20, so the hash router it builds is not the router the live admin
+> uses. Read it for the routing model, not as work to do.
+>
+> Its original header said "NO GIT in this project ... Do NOT run git." That was
+> true on 2026-05-31 and is wrong now: this repo is under git with CI
+> (`.github/workflows/ci.yml`), and the workflow is branch per task, never
+> commit on `main`, land through a PR. The "verify-checkpoint (no git)" steps
+> below should be read as build/test checkpoints, which they still are.
 
 **Goal:** Sync AuntieOS web nav state (`Destination` + detail vars in `App.kt`) with `window.location.hash`, enabling deep-links, refresh-stays-put, back/forward, and per-screen screenshot verification for the redesign.
 

@@ -2,7 +2,9 @@
 
 `README.md` says what the repo is. This says what you do with it.
 
-Every command here was run against the repo on 2026-07-26.
+Every command here was run against the repo on 2026-07-26. The release,
+quota and Cloud Run sections were re-verified 2026-08-03, and the map, test
+counts and contract-freeze sections on 2026-08-04.
 
 ---
 
@@ -90,9 +92,11 @@ From the repo root. Each fans out to the project that owns it.
 Suffix any of `test`, `typecheck`, `build` with `:functions`, `:admin` or
 `:portal` to run one project.
 
-All suites pass on `main`: 196 files / 2053 tests (functions), 210 / 3542
-(admin), 29 / 348 (portal), 1739 Android. A red test is a real regression, not
-something you inherited.
+All suites pass on `main`. The counts move every day, so `npm test` is the
+authority rather than a number written here; as of 2026-08-04 the functions
+suite was 229 files / 2937 tests. (This paragraph read "196 files / 2053 tests"
+until then, which is the failure mode of writing a moving number down once.)
+A red test is a real regression, not something you inherited.
 
 **Known debt:** functions eslint reports ~750 warnings and 0 errors. The warnings
 are almost entirely `no-explicit-any` in older files. They should be burned down
@@ -105,14 +109,21 @@ rather than lived with.
 | Path | What | Ships to |
 |---|---|---|
 | `mytribe/functions` | The backend. Every callable. | Firebase codebase `mytribe` |
-| `mytribe/web` | Kinfolk portal | `kinfolk.tribetails.com` |
+| `mytribe/web` | Kinfolk portal web app | `kinfolk.tribetails.com` |
+| `mytribe/src` | Kinfolk portal Android app, `com.kinfolk.portal` (Compose) | APK |
 | `auntieos-admin/src` | Operator admin | `auntie.tribetails.com` |
-| `auntieos-admin/android` | Operator Android app | APK |
+| `auntieos-admin/android` | Operator Android app, `com.tribetails.auntieos` | APK |
 | `auntieos-admin/web/functions` | AuntieOS-owned functions | Firebase codebase `default` |
+| `auntieos-admin/web/functions-python` | Dossier and 411 reconcile pipeline | Firebase codebase `reconcile` |
+
+Two Android apps ship from this repo, both registered in Firebase, so "the
+Android app" is never specific enough to act on. Name the package. The release
+section below is the authority on which of them a run actually builds and
+distributes; `scripts/distribute-apks.sh` carries both app ids.
 
 Not delivery targets, do not add features: `auntieos-admin/web/composeApp` (wasm
 admin superseded by `auntieos-admin/src`, desktop build paused by owner ruling)
-and `auntieos-admin/sotu-hosting` (ops hosting).
+and `auntieos-admin/sotu-hosting` (ops hosting, no Cloud Functions of its own).
 
 All of it deploys into ONE Firebase project, `auntieos-ttpc`, which is why
 deploys go through a wrapper.
@@ -122,9 +133,9 @@ deploys go through a wrapper.
 ## Making a change
 
 Features here are **full vertical slices**: callable + zod validation + wiring +
-routes + component + error handling + tests, on the admin AND Android. A missing
-callable means build the callable. `auntieos-admin/CLAUDE.md` is the authority
-and overrides habit.
+routes + component + error handling + tests, on the React admin (`auntieos-admin/src`)
+AND the operator Android app (`auntieos-admin/android`). A missing callable means
+build the callable. `auntieos-admin/CLAUDE.md` is the authority and overrides habit.
 
 The only legitimate defer is something needing an EXTERNAL SECRET the operator
 must physically provide. Stop and name the exact secret.
@@ -140,14 +151,23 @@ git merge-base --is-ancestor <sha> origin/main
 
 ### The contract freeze
 
-Three surfaces hand-mirror the callable request shapes: admin, Android, and
-sometimes the portal. Nothing but review discipline keeps them in sync, so
-`mytribe/functions/test/callableContract.test.ts` freezes the field set of every
-cross-app callable, and `mytribe/functions/CALLABLE_CONTRACT.md` is the human
-source the mirrors are built from.
+Two regimes run side by side, and which one applies depends on the callable.
 
-Changing a shape means doing all three in one change: the doc, the frozen set,
-every client mirror. A red test there is the guard working.
+**Generated (ADR-0001).** The invoice family (20 callables) and the booking
+family (9) each export a zod `Result` beside their `Args`, validate outbound,
+and are code-generated into the clients: TypeScript for both web apps, Kotlin
+for the admin Android app. `npm run contracts:generate` writes them,
+`npm run contracts:check` fails on any diff, and CI runs that check
+(`.github/workflows/ci.yml`). For these, review discipline is not what keeps
+the clients in sync; the generator is.
+
+**Hand-mirrored (everything else).** The remaining callables are still
+transcribed per client, with nothing but review discipline holding them
+together. `mytribe/functions/test/callableContract.test.ts` freezes their
+request field set and `mytribe/functions/CALLABLE_CONTRACT.md` is the human
+source the mirrors are built from. Changing one of those shapes means doing it
+in one change: the doc, the frozen set, every client mirror. A red test there is
+the guard working. Closing this gap is the rest of ADR-0001.
 
 ---
 

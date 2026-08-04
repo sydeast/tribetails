@@ -1,13 +1,27 @@
 # AuntieOS cross-app changes (lockstep with MyTribe), 2026-06-01
 
-The MyTribe side of the booking envelope and the pet sync bridge is implemented and
-verified (gated by `mytribe.booking.envelope`, default OFF, so nothing live changes
-yet). These are the matching AuntieOS changes needed to flip the flag on. They touch
-the AuntieOS repo (`web/composeApp` wasm + `android` + shared rules) and require the
-AuntieOS build plus a coordinated deploy, so they are written here as a ready-to-apply
-spec rather than applied from the MyTribe repo.
+> **HISTORICAL, written 2026-06-01. Do not execute this as a task list.**
+> Read it for the data model and the reasoning. Three of its premises have since
+> stopped being true:
+>
+> - **The booking envelope is not flag-gated.** `mytribe.booking.envelope` is
+>   gone along with every other `mytribe.*` flag.
+>   `mytribe/src/commonMain/kotlin/com/kinfolk/portal/config/FeatureFlags.kt:23`
+>   reads `val KEYS: List<String> = emptyList()`, and the envelope ships
+>   always-on. Step E5, "flip the flag ON", has nothing left to flip.
+> - **The two repos are one.** They merged on 2026-07-21. AuntieOS is the
+>   `auntieos-admin/` prefix of this repository, and the absolute path this doc
+>   gave for it does not exist on any machine.
+> - **The delivery target moved.** This spec targets the `web/composeApp` wasm
+>   admin, which was superseded on 2026-07-20 by `auntieos-admin/src` (React).
+>   Much of the work below has since landed there, in
+>   `auntieos-admin/src/api/bookingsWrite.ts` and `bookingNotes.ts`.
 
-AuntieOS repo root: `/Users/sydeast/Documents/TribeTails_Docs/Communication/AuntieOS`.
+The MyTribe side of the booking envelope and the pet sync bridge is implemented and
+verified. These were the matching AuntieOS changes needed to turn it on. They touch
+the AuntieOS tree (`web/composeApp` wasm + `android` + shared rules) and required the
+AuntieOS build plus a coordinated deploy, so they were written here as a
+ready-to-apply spec rather than applied from the MyTribe repo.
 
 ## A. Booking envelope write-back
 

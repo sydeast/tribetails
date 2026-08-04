@@ -1,5 +1,21 @@
 # AuntieOS — Page Spec Scaffold (fill-in for Claude Code)
 
+> **HISTORICAL, written 2026-06. Superseded as design authority; audited 2026-08-04.**
+> Current design authority is `auntieos-admin/page-specs/` (31 numbered specs,
+> start at `00-INDEX.md`), then `auntieos-admin/ui-ideas/`, per
+> `auntieos-admin/CLAUDE.md`. Both are gitignored, so read them by absolute path.
+>
+> **Do not follow the stack rules below.** They say "AuntieOS web is Compose
+> Multiplatform / Wasm. Use the Den / `Auntie*` primitives only." That was true
+> when written and is wrong now: the live admin is `auntieos-admin/src`, React +
+> Vite + TanStack, serving auntie.tribetails.com since 2026-07-20. The Den
+> primitive list describes the superseded Compose app.
+>
+> The `ui-ideas/auntieos-<screen>-2026-05-27.html` naming below no longer
+> resolves for several screens. A screen with no live mockup does not get one
+> invented; it waits for the operator re-mock, tracked in
+> `docs/punchlists/PUNCHLIST_2026-07-31-remaining.md`.
+
 **Purpose:** one section per screen where Auntie writes what each page should be. CC follows this document together with the mockups. Pair this with `AuntieOS_Fix_Backlog_2026-06-02.md` (the bug list) — this file is the *intent*, that file is the *defects*.
 
 ---
