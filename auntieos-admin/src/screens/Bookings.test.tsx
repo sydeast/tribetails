@@ -377,11 +377,11 @@ describe('Bookings bulk actions', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: /Select Household Two/ }));
     expect(within(screen.getByRole('group', { name: 'Bulk actions' })).getByText('1')).toBeInTheDocument();
   });
-  it('Clear empties the selection and hides the bar, leaving Select on', async () => {
+  it('Deselect all empties the selection and hides the bar, leaving Select on', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
     render(<Bookings />);
     await pick('Household One', 'Household Two');
-    await userEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deselect all' }));
     expect(screen.queryByRole('group', { name: 'Bulk actions' })).toBeNull();
     expect(screen.getAllByRole('checkbox')).toHaveLength(2);
   });

@@ -472,9 +472,17 @@ interface BulkBarProps {
 }
 
 /**
- * The mock's floating bar: a live count, the three transitions, and Clear.
- * Rendered only while Select is on AND something is picked, matching the mock's
- * own `bar.classList.toggle('show', picked.length > 0)`.
+ * The mock's floating bar: a live count, the three transitions, and a way to
+ * back out of the selection. Rendered only while Select is on AND something is
+ * picked, matching the mock's own `bar.classList.toggle('show', picked.length
+ * > 0)`.
+ *
+ * The mock labels this button "Clear", and `onClear` does exactly what that
+ * says: `setSelectedIds(new Set())` plus dropping any pending confirm. It
+ * touches no booking data. But sitting next to Approve and Reject, "Clear"
+ * reads as "clear the records", which is why the operator asked what it did.
+ * Labelled "Deselect all" instead, the same rename `ui-ideas/` never had to
+ * make because nobody had put it next to two destructive-sounding verbs yet.
  *
  * The mock also draws a Reschedule button here. It is deliberately NOT built:
  * rescheduling many visits at once means picking a new time PER visit (they do
@@ -499,7 +507,7 @@ function BulkBar({ count, confirming, running, onAsk, onBack, onRun, onClear }: 
             ),
           )}
           <span className="bookings__bulkbar-sep" />
-          <GhostButton label="Clear" onClick={onClear} />
+          <GhostButton label="Deselect all" onClick={onClear} />
         </>
       ) : (
         <>
