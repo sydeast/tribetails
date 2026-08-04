@@ -11,10 +11,19 @@
  * fleet has been over the ceiling, which is why full deploys on 2026-08-01 died
  * partway with "Quota exceeded for total allowable CPU per project per region".
  *
- * `index.ts` now calls `setGlobalOptions({ cpu: 0.25, memory: '256MiB',
+ * `index.ts` now calls `setGlobalOptions({ cpu: 0.25, memory: '512MiB',
  * maxInstances: 20 })`, so the fleet default is a quarter vCPU. The constants
  * below are the explicit exceptions, applied at each function's own definition
  * site so the reason travels with the function.
+ *
+ * THE MEMORY NUMBER IS LOAD-BEARING, AND IT IS THE SAME FACT AS THE PARAGRAPH
+ * BELOW. Because the runtime loads the entire module graph on every cold start,
+ * the ~1.44s measured there has a memory twin: the whole codebase's import
+ * footprint, paid by every function. It reached 257-271 MiB on 2026-08-03 and
+ * OOMed against a 256MiB limit before the readiness probe, which took the
+ * fleet down intermittently and surfaced in browsers as CORS errors. Raised to
+ * 512MiB on 2026-08-04. Adding exports here costs memory on every function in
+ * the codebase, not only on the new one.
  *
  * THE CONCURRENCY CLIFF (the thing that makes 1 vCPU worth paying for)
  * -------------------------------------------------------------------
