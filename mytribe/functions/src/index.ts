@@ -9,13 +9,30 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 // emitted `lib/index.js` and against the generated endpoint manifest rather
 // than assumed; see the PR body for the proof.
 //
-// cpu 0.25: the fleet default was 1 vCPU (firebase-functions' default at
-//   256MiB) and nothing here ever overrode it. 240 Cloud Run services x 1 vCPU
-//   sits above the 200 vCPU `CpuAllocPerProjectRegion` ceiling for us-central1,
-//   which is what broke five consecutive full deploys on 2026-08-01. Functions
-//   that need more carry an explicit override at their own definition; see
-//   lib/runtimeOptions.ts, including why below 1 vCPU Cloud Run pins
-//   concurrency to 1.
+// cpu 0.25: THE REASON THIS WAS SET IS NOT TRUE. It was chosen on 2026-08-01
+//   because 240 Cloud Run services x 1 vCPU appeared to sit above the 200 vCPU
+//   `CpuAllocPerProjectRegion` ceiling for us-central1, and that appeared to be
+//   what broke five consecutive full deploys. Both halves were wrong, and
+//   docs/RUNBOOK.md has said so since 2026-08-03:
+//
+//     - The deploys were refused by a RATE limit, not a capacity one:
+//       'Per project mutation requests per minute per region' on
+//       cloudfunctions.googleapis.com, 60/min, a System limit that cannot be
+//       raised. Batching is what fixed them. cpu does not appear in it.
+//     - `CpuAllocPerProjectRegion` meters RUNNING INSTANCES, not deployed
+//       services, so "240 services x 1 vCPU" was never a quantity Google
+//       counts. Read off the console 2026-08-03: 16,000 of 400,000 milli vCPU
+//       in use. Four percent.
+//
+//   The setting is left in place here because changing it is a real decision
+//   with real trade-offs, not a revert. See docs/adr/0004-functions-runtime-shape.md,
+//   which recommends returning the default to cpu 1 after the lazy-import work
+//   lands, and gives the measurements. What matters at this line is that nobody
+//   reads the old justification and treats the shape as settled.
+//
+//   Functions that need more carry an explicit override at their own
+//   definition; see lib/runtimeOptions.ts, including why below 1 vCPU Cloud Run
+//   pins concurrency to 1.
 // memory 512MiB: RAISED FROM 256MiB on 2026-08-04, because the fleet outgrew it
 //   and every callable in this codebase went down intermittently for it.
 //

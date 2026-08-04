@@ -1,20 +1,32 @@
 /**
  * Shared runtime sizing for the MyTribe Functions fleet.
  *
- * WHY THIS EXISTS
- * ---------------
+ * WHY THIS EXISTS, AND WHY THAT REASON DID NOT SURVIVE
+ * ----------------------------------------------------
  * Every one of the 226 v2 functions in this codebase took the firebase-functions
  * default of 1 vCPU / 256MiB, because nothing here ever called `setGlobalOptions`
- * and nothing set `cpu`. `us-central1` allows 200 vCPU per project per region
- * (`run.googleapis.com/cpu_allocation`, quota `CpuAllocPerProjectRegion`), and
- * the project holds 240 Cloud Run services once AuntieOS's 14 are counted. The
- * fleet has been over the ceiling, which is why full deploys on 2026-08-01 died
- * partway with "Quota exceeded for total allowable CPU per project per region".
+ * and nothing set `cpu`. On 2026-08-01 that was read as the cause of five failed
+ * full deploys: `us-central1` allowed 200 vCPU per project per region
+ * (`run.googleapis.com/cpu_allocation`, quota `CpuAllocPerProjectRegion`), the
+ * project holds 240 Cloud Run services once AuntieOS's 14 are counted, and
+ * 240 x 1 vCPU is over the line. `index.ts` was changed to
+ * `setGlobalOptions({ cpu: 0.25, ... })` on that basis, and the constants below
+ * are the exceptions it forced.
  *
- * `index.ts` now calls `setGlobalOptions({ cpu: 0.25, memory: '512MiB',
- * maxInstances: 20 })`, so the fleet default is a quarter vCPU. The constants
- * below are the explicit exceptions, applied at each function's own definition
- * site so the reason travels with the function.
+ * That diagnosis was wrong, measured 2026-08-03 and written up in
+ * docs/RUNBOOK.md. The deploys were refused by a per-minute mutation rate limit
+ * on cloudfunctions.googleapis.com (60/min, unraisable), which batching fixed.
+ * And `CpuAllocPerProjectRegion` meters running instances rather than deployed
+ * services, so the fleet never drew what the arithmetic claimed: the console
+ * read 16,000 of 400,000 milli vCPU in use, four percent. The quarter-vCPU
+ * default bought headroom that already existed, and the concurrency cliff
+ * described below is what it cost.
+ *
+ * docs/adr/0004-functions-runtime-shape.md has the measurements and recommends
+ * returning the fleet default to cpu 1, which would retire FULL_CPU and leave
+ * the two constants below as what they always really were: maxInstances policy.
+ * Until that lands, the exceptions here are load-bearing and the reasons they
+ * give are still correct. Only the reason for the DEFAULT they escape is not.
  *
  * THE MEMORY NUMBER IS LOAD-BEARING, AND IT IS THE SAME FACT AS THE PARAGRAPH
  * BELOW. Because the runtime loads the entire module graph on every cold start,
