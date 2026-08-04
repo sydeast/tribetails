@@ -10,7 +10,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { approveBookingSeriesCore } from '../admin/approveBookingSeriesCore';
 import { resolveDefaultAssignee, type Assignee } from '../lib/defaultAssignee';
-import { resolveKinNames } from '../lib/resolveKinNames';
+import { materializeKinRoster } from '../lib/kinRoster';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { validateResponse } from '../lib/callableResponse';
@@ -303,6 +303,11 @@ export async function writeEnvelope(opts: {
   batchId: string;
   pattern: 'individual' | 'weekly';
   weeklyDays: number[] | null;
+  /**
+   * The Kin the caller NAMED. Empty means the caller named none, which under
+   * R1 means the whole household and is materialized into the concrete roster
+   * below. It is never persisted as `[]`.
+   */
   kinIds: string[];
   notes: string | null;
   visits: NormalizedVisit[];
@@ -331,12 +336,16 @@ export async function writeEnvelope(opts: {
   const serviceNames = new Set(visits.map((v) => v.serviceName ?? null));
   const homogeneousServiceId = serviceIds.size === 1 ? [...serviceIds][0] : null;
   const homogeneousServiceName = serviceNames.size === 1 ? [...serviceNames][0] : null;
-  const kinIdUnion = [...new Set(kinIds)];
+  // R1: an empty `kinIds` means the WHOLE HOUSEHOLD, and is materialized into
+  // the concrete roster here rather than persisted as the literal `[]` that
+  // left every reader downstream with nothing to name. See kinRoster.ts for the
+  // ruling and for the roster-drift consequence this freeze-at-write accepts.
+  //
   // Resolved once for the whole envelope (every visit here shares the same
   // kinIds today) and stamped on the envelope AND each visit, rather than the
   // `kinNames: []` that used to leave the portal saying "your kin" and
   // Android's Schedule with no Pets line at all.
-  const kinNames = await resolveKinNames(kinfolkId, kinIdUnion);
+  const { kinIds: kinIdUnion, kinNames } = await materializeKinRoster(kinfolkId, kinIds);
 
   const visitIds: string[] = [];
   await firestore.runTransaction(async (tx) => {

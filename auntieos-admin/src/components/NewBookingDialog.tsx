@@ -37,6 +37,7 @@ import {
   initialWizardState,
   isOverridableBusyRefusal,
   plannedVisitTimes,
+  resolveKinIds,
   selectedDays,
   stepBlocker,
   stepIndex,
@@ -53,6 +54,7 @@ import {
   ReviewStep,
   ServiceStep,
   Stepper,
+  kinLabel,
 } from './NewBookingWizardSteps';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
@@ -211,6 +213,17 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
    */
   const kinTruncated = allKin.status === 'ready' && allKin.data.length >= KIN_ROSTER_MAX;
 
+  /**
+   * R1: the Kin ids this booking covers. Every Kin in the home by default,
+   * or the operator's explicit subset when they opted in to one. Derived from
+   * the live roster rather than mirrored into wizard state, so a roster that
+   * loads (or changes) mid-wizard is reflected in what actually gets sent.
+   */
+  const resolvedKinIds = useMemo(
+    () => resolveKinIds(state, (kinForHousehold ?? []).map((k) => k._id)),
+    [state, kinForHousehold],
+  );
+
   // ── availability (unchanged from the single-page dialog) ──────────────────
 
   const hoursKnown = businessHours !== null;
@@ -358,7 +371,7 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
     setBusyOverridable(false);
     try {
       const result = await createMultiDateBookingRequest(
-        bookingSubmission(state, overrideBusyConflict),
+        bookingSubmission(state, resolvedKinIds, overrideBusyConflict),
       );
       setSaving(false);
       onCreated(result);
@@ -377,9 +390,14 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
   const visitCount = buildVisits(state).length;
   const householdLabel =
     householdOptions.find((h) => h.id === state.kinfolkId)?.label ?? 'This household';
-  const kinLabels = (kinForHousehold ?? [])
-    .filter((k) => state.kinIds.includes(k._id))
-    .map((k) => ((k.name ?? '').trim() === '' ? 'Unnamed Kin' : (k.name ?? '')));
+  // R1: the Kin this booking covers, resolved off the LIVE roster: every Kin
+  // in the home by default, or the operator's explicit subset. The same
+  // resolution feeds Review and the payload, so the names an operator confirms
+  // are the ids that get sent.
+  const resolvedKin = (kinForHousehold ?? []).filter((k) =>
+    resolvedKinIds.includes(k._id),
+  );
+  const kinLabels = resolvedKin.map(kinLabel);
 
   return (
     <Dialog

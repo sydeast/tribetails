@@ -27,6 +27,24 @@ assume your default is wrong: re-check, then build it — backend + web + deskto
 
 ---
 
+## RULING R1: A KINCARE SESSION COVERS EVERY KIN IN THE HOME
+
+The operator, repeatedly: *"all KinCare sessions covers ALL KIN in the family …
+KinCare rarely is split between the Kin in a home. IE. kinfolk has a dog and a
+cat. The KinCare will always care for both the dog and cat. I wouldn't go into a
+home and care for one kin while ignoring the other."* So all Kin is the DEFAULT
+and takes zero interaction on every surface; narrowing to a subset is an explicit
+opt-in behind a control ("Choose specific Kin"), never an unticked picker
+labelled "Kin on this booking". A booking is never conceptually for one Kin
+unless someone deliberately narrowed it, an empty `kinIds` never meant "nobody",
+and nothing may persist that emptiness: `mytribe/functions/src/lib/kinRoster.ts`
+materializes the household roster at write time, so `kinIds`/`kinNames` on a
+booking, visit or session are always explicit and every reader can just render
+them. The reference implementation is the Kinfolk portal's wizard
+(`mytribe/web/src/screens/BookingWizard.tsx`); match it rather than reinventing.
+
+---
+
 ## DESIGN AUTHORITY: TWO SOURCES, AND RENDERED PNGS ARE NEITHER
 
 When you need to know what a screen should look like, read these, in this order:

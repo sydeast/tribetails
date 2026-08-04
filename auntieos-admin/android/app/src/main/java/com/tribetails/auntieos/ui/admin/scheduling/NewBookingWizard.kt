@@ -167,7 +167,10 @@ fun NewBookingWizard(
             showBlocker = true
             return
         }
-        onCreate(bookingSubmission(state, override))
+        // R1: the roster is resolved off the LIVE `kin` read, never off wizard
+        // state, so what the operator confirmed on Review is what goes on the
+        // wire even when the roster finished loading mid-wizard.
+        onCreate(bookingSubmission(state, kin.map { it.id }, override))
     }
 
     BackHandler(enabled = !inFlight) { goBack() }
@@ -431,7 +434,7 @@ private fun LazyListScope.clientStep(
         }
     }
     item("client-kin-label") {
-        AuntieFieldLabel("Kin on this booking", optionalNote = "optional")
+        AuntieFieldLabel("Kin covered")
     }
     when {
         state.kinfolkId.isBlank() -> item("client-kin-none") {
@@ -450,13 +453,45 @@ private fun LazyListScope.clientStep(
         kin.isEmpty() -> item("client-kin-empty") {
             HintText("No Kin on this household yet. The booking covers the household.")
         }
-        else -> item("client-kin-chips") {
-            FlowChips(
-                items = kin,
-                label = { it.name.ifBlank { "Unnamed Kin" } },
-                selected = { it.id in state.kinIds },
-                onToggle = { onState(state.toggleKin(it.id)) },
-            )
+        // R1, the operator's ruling: KinCare covers EVERY Kin in the home.
+        // "I wouldn't go into a home and care for one kin while ignoring the
+        // other." So all of them is the default and takes no tap; narrowing is
+        // the thing you have to ask for. Same shape as web's ClientStep and as
+        // the Kinfolk portal's own Step1KinSelect.
+        else -> {
+            item("client-kin-all") {
+                AuntieCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            "All Kin in this home",
+                            style = AuntieTheme.typography.titleSmall,
+                            color = AuntieTheme.colors.textPrimary,
+                        )
+                        Text(
+                            kin.joinToString(", ") { it.name.ifBlank { "Unnamed Kin" } },
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.textDim,
+                        )
+                    }
+                }
+            }
+            item("client-kin-toggle") {
+                GhostButton(
+                    label = if (state.allKinMode) "Choose specific Kin" else "Cover all Kin instead",
+                    onClick = { onState(state.withAllKinMode(!state.allKinMode)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (!state.allKinMode) {
+                item("client-kin-chips") {
+                    FlowChips(
+                        items = kin,
+                        label = { it.name.ifBlank { "Unnamed Kin" } },
+                        selected = { it.id in state.kinIds },
+                        onToggle = { onState(state.toggleKin(it.id)) },
+                    )
+                }
+            }
         }
     }
 }
@@ -775,7 +810,10 @@ private fun LazyListScope.reviewStep(
 
     item("review-summary") {
         val household = allKinfolk.firstOrNull { it.id == state.kinfolkId }?.displayName ?: state.kinfolkId
-        val kinNames = kin.filter { it.id in state.kinIds }.map { it.name.ifBlank { "Unnamed Kin" } }
+        // R1: names the Kin either way, resolved exactly as the payload is, so
+        // Review can never report a coverage the request does not carry.
+        val coveredKinIds = resolveKinIds(state, kin.map { it.id })
+        val kinNames = kin.filter { it.id in coveredKinIds }.map { it.name.ifBlank { "Unnamed Kin" } }
         // Read off the BUILT visits, never off state.serviceName: jumping back to
         // step 2 rewrites the template but not days already snapshotted, and a
         // summary that reported the header field would name a service the
@@ -787,7 +825,11 @@ private fun LazyListScope.reviewStep(
                 ReviewRow("Household", household) { onJump(BookingWizardStep.CLIENT) }
                 ReviewRow(
                     "Kin",
-                    if (kinNames.isEmpty()) "Whole household" else kinNames.joinToString(", "),
+                    when {
+                        kinNames.isEmpty() -> "No Kin on file for this household"
+                        state.allKinMode -> "All Kin in this home: ${kinNames.joinToString(", ")}"
+                        else -> kinNames.joinToString(", ")
+                    },
                 ) { onJump(BookingWizardStep.CLIENT) }
                 ReviewRow(
                     "Service",
