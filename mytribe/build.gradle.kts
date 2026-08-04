@@ -7,7 +7,14 @@ plugins {
     id("org.jetbrains.compose") version "1.11.1"
     id("org.jetbrains.kotlin.plugin.compose") version "2.4.10"
     id("org.jetbrains.kotlin.plugin.serialization") version "2.4.10"
-    id("com.android.application") version "8.7.2"
+    // 9.3.1, up from 8.7.2, because androidx.core 1.19.0 declares "requires
+    // Android Gradle plugin 9.1.0 or higher" in its AAR metadata and
+    // checkReleaseAarMetadata FAILS the build on it rather than warning. That
+    // check is why :assembleRelease did not build at all here, which is why this
+    // app was never in a release run. Raised WITH the dependencies that demand
+    // it, and matched to auntieos-admin/android, which is already on 9.3.1.
+    // Needs Gradle 9.x; the wrapper moves with it.
+    id("com.android.application") version "9.3.1"
     id("com.google.gms.google-services") version "4.5.0"
 }
 
@@ -104,6 +111,16 @@ kotlin {
             }
         }
         androidMain.dependencies {
+            // The Firebase BOM, required from AGP 9 on. gitlive's android
+            // artifacts (firebase-auth-android, -firestore-android,
+            // -messaging-android) declare their com.google.firebase deps with
+            // NO version and expect the consumer to supply the platform. AGP
+            // 8.7.2 resolved them anyway; AGP 9 does not, and the build dies at
+            // :compileReleaseKotlinAndroid with
+            //   Could not find com.google.firebase:firebase-auth:
+            // (note the empty version). Pinning the BOM is the supported answer
+            // and it also stops the three SDKs drifting apart from each other.
+            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:34.5.0"))
             implementation("com.google.firebase:firebase-analytics-ktx:22.5.0")
             // Native Firebase Functions SDK — used by NativeAndroidFunctionsClient
             // to bypass gitlive 2.x's FirebaseEncoder, which throws
@@ -139,7 +156,16 @@ compose.resources {
 
 android {
     namespace = "com.kinfolk.portal"
-    compileSdk = 35
+    // 37 because androidx.core 1.19.0 declares a minimum compileSdk of 37 in
+    // its AAR metadata (coil3 3.5.0, androidx.activity 1.13.0 and
+    // navigationevent 1.0.0 want 36), and checkReleaseAarMetadata fails rather
+    // than warns. Same reasoning and the same number as
+    // auntieos-admin/android/app/build.gradle.kts.
+    //
+    // compileSdk is which APIs the code may reference. targetSdk stays where it
+    // was: raising that changes runtime behaviour on device and is its own
+    // change with its own testing.
+    compileSdk = 37
 
     sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
 

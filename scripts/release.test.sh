@@ -51,9 +51,17 @@ make_repo() {
   mkdir -p "$dir/repo" "$dir/stubs" "$dir/fixtures"
   local r="$dir/repo"
 
+  # Both Android APK output directories. There are two Android apps and their
+  # builds are not the same shape: auntieos-admin/android has an :app submodule
+  # and writes app/build/outputs/…/app-release.apk, while mytribe applies
+  # com.android.application at the ROOT and writes build/outputs/…/
+  # kinfolk-portal-release.apk, named from rootProject.name. A fixture that
+  # only knows the first one cannot catch the release shipping only the first
+  # one, which is what it did until 2026-08-04.
   mkdir -p "$r/scripts" "$r/mytribe/functions" "$r/mytribe/web/dist" \
            "$r/auntieos-admin/web" "$r/auntieos-admin/dist" \
-           "$r/auntieos-admin/android/app/build/outputs/apk/release"
+           "$r/auntieos-admin/android/app/build/outputs/apk/release" \
+           "$r/mytribe/build/outputs/apk/release"
 
   cp "$REPO_SCRIPTS"/*.sh "$r/scripts/" 2>/dev/null
   cp "$REPO_SCRIPTS"/*.js "$r/scripts/" 2>/dev/null
@@ -118,10 +126,34 @@ STUBFN
   printf '{ "name": "mytribe-functions", "scripts": { "build": "tsc" } }\n' \
     > "$r/mytribe/functions/package.json"
 
-  # The same two entries the real .gitignore carries for these, because step 0
+  # A FAKE gradlew per Android app, so the two-app path can be run wet without
+  # an Android SDK. It writes the APK the task it was given is supposed to
+  # produce, and refuses any other task: that is what makes it a test of the
+  # task names rather than of a shell loop. GRADLE_FAIL=<task> makes one of them
+  # fail, which is how the refusal case is exercised.
+  for gw in "$r/auntieos-admin/android/gradlew" "$r/mytribe/gradlew"; do
+    cat > "$gw" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  :app:assembleRelease) out="app/build/outputs/apk/release/app-release.apk" ;;
+  :assembleRelease)     out="build/outputs/apk/release/kinfolk-portal-release.apk" ;;
+  *) echo "stub gradlew: no such task $1 in $PWD" >&2; exit 1 ;;
+esac
+if [ "${GRADLE_FAIL:-}" = "$1" ]; then
+  echo "stub gradlew: FAILING $1 on request" >&2
+  exit 1
+fi
+mkdir -p "$(dirname "$out")"
+printf 'apk built by %s\n' "$1" > "$out"
+echo "STUB gradlew $*"
+STUB
+    chmod +x "$gw"
+  done
+
+  # The same entries the real .gitignore carries for these, because step 0
   # refuses a dirty tree and .release-state and the APK are both untracked
   # by design. Without this the test would be testing the dirty-tree guard.
-  printf '.release-state\n.release-functions\nauntieos-admin/android/app/build/\n' > "$r/.gitignore"
+  printf '.release-state\n.release-functions\nauntieos-admin/android/app/build/\nmytribe/build/\n' > "$r/.gitignore"
 
   ( cd "$r"
     git init -q -b main .
@@ -309,17 +341,39 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2. A dry run must not delete the signed APK a real run left on disk.
+# 2. A dry run must not delete a signed APK a real run left on disk. Checked
+#    for BOTH apps: the rm is per app now, so a rehearsal that spares one and
+#    deletes the other is exactly as wrong as the original defect.
 # ---------------------------------------------------------------------------
 APK="$D/repo/auntieos-admin/android/app/build/outputs/apk/release/app-release.apk"
+APK_MT="$D/repo/mytribe/build/outputs/apk/release/kinfolk-portal-release.apk"
 printf 'not really an apk\n' > "$APK"
+printf 'not really an apk either\n' > "$APK_MT"
 RC="$(run_release "$D" DRY_RUN=1 RELEASE_YES=1)"
 if [ -f "$APK" ]; then
-  ok "dry run leaves an already-built APK on disk"
+  ok "dry run leaves the already-built auntieos APK on disk"
 else
-  bad "dry run DELETED the signed APK it did not rebuild"
+  bad "dry run DELETED the signed auntieos APK it did not rebuild"
 fi
-rm -f "$APK"
+if [ -f "$APK_MT" ]; then
+  ok "dry run leaves the already-built mytribe APK on disk"
+else
+  bad "dry run DELETED the signed mytribe APK it did not rebuild"
+fi
+
+# The rehearsal has to NAME both gradle invocations, with the right task for
+# each. :app:assembleRelease does not exist in mytribe (no :app submodule) and
+# :assembleRelease is not what auntieos-admin/android needs, so a dry run that
+# prints one task twice is printing a command a real run would not issue.
+OUT="$(cat "$D/out")"
+if printf '%s' "$OUT" | grep -q "gradlew :app:assembleRelease" &&
+   printf '%s' "$OUT" | grep -q "gradlew :assembleRelease"; then
+  ok "dry run names both Android builds, each with its own gradle task"
+else
+  bad "dry run does not rehearse both Android builds"
+  printf '%s' "$OUT" | grep -i "assembleRelease" || echo "  (no assembleRelease line at all)"
+fi
+rm -f "$APK" "$APK_MT"
 
 # ---------------------------------------------------------------------------
 # 3. The wet path still records what shipped. The guard above must not have
@@ -720,6 +774,130 @@ if (cd "$D14/repo" && node scripts/function-targets.js --from-services "$D14/svc
   bad "an unresolvable service name still returned a partial list"
 else
   ok "an unresolvable service name refuses rather than answering partially"
+fi
+
+# ---------------------------------------------------------------------------
+# 20. BOTH Android apps ship, and the tag says so per app.
+#
+#     There are two registered, active Android apps in auntieos-ttpc, and until
+#     2026-08-04 release.sh hardcoded one directory and one APK path, so the
+#     Kinfolk Portal client was never built and never distributed while its web
+#     half shipped every release. The comment block the fix lived under said it
+#     existed to end exactly that drift.
+#
+#     These cases run the real two-app path wet against the fake gradlew, and
+#     assert on the two things that can silently regress: whether both uploads
+#     actually happened, to the two DIFFERENT Firebase app ids, and whether the
+#     tag reports them separately. A tag reading "android: distributed" when one
+#     of two went out is the same lie the split BUILT/DISTRIBUTED bookkeeping
+#     was written against, one level up.
+# ---------------------------------------------------------------------------
+AUNTIEOS_APP_ID="1:153396971788:android:6bcb7c5411aeda837f2129"
+MYTRIBE_APP_ID="1:153396971788:android:4e9868bbb96301277f2129"
+
+D15="$(make_repo)"; write_stubs "$D15"
+HEAD15="$(cd "$D15/repo" && git rev-parse HEAD)"
+fixture_all_green "$D15/fixtures/$HEAD15"
+RC="$(run_release "$D15" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
+      FIREBASE_CALL_LOG="$D15/calls")"
+OUT="$(cat "$D15/out")"
+CALLS="$(cat "$D15/calls" 2>/dev/null || true)"
+
+if [ "$RC" -ne 0 ]; then
+  bad "a release with both Android apps completes; got $RC"; echo "$OUT" | tail -25
+else
+  ok "a release with both Android apps completes"
+fi
+if [ -f "$D15/repo/auntieos-admin/android/app/build/outputs/apk/release/app-release.apk" ] &&
+   [ -f "$D15/repo/mytribe/build/outputs/apk/release/kinfolk-portal-release.apk" ]; then
+  ok "step 1c assembles both APKs, each at its own output path"
+else
+  bad "step 1c did not assemble both APKs"
+  printf '%s' "$OUT" | grep -i "android" | head -20
+fi
+if printf '%s' "$CALLS" | grep -q "appdistribution:distribute.*$AUNTIEOS_APP_ID" &&
+   printf '%s' "$CALLS" | grep -q "appdistribution:distribute.*$MYTRIBE_APP_ID"; then
+  ok "step 6b uploads both APKs, each to its own Firebase app id"
+else
+  bad "step 6b did not upload both APKs to their own app ids"
+  printf '%s' "$CALLS" | grep appdistribution || echo "  (no distribute call at all)"
+fi
+# The APK argument has to match the app id it went out under. Crossing them
+# would upload the operator app to the portal's Firebase entry, and every check
+# above would still pass.
+if printf '%s' "$CALLS" | grep "app-release.apk" | grep -q -- "$AUNTIEOS_APP_ID" &&
+   printf '%s' "$CALLS" | grep "kinfolk-portal-release.apk" | grep -q -- "$MYTRIBE_APP_ID"; then
+  ok "each APK goes to the app id that belongs to it"
+else
+  bad "an APK was uploaded under the other app's id"
+  printf '%s' "$CALLS" | grep appdistribution
+fi
+TAGMSG="$(cd "$D15/repo" && git tag -l 'release/*' --format='%(contents)')"
+if printf '%s' "$TAGMSG" | grep -q "android (auntieos): distributed" &&
+   printf '%s' "$TAGMSG" | grep -q "android (mytribe): distributed"; then
+  ok "the tag reports each Android app separately"
+else
+  bad "the tag does not report both Android apps"
+  printf '%s\n' "$TAGMSG"
+fi
+
+# ---------------------------------------------------------------------------
+# 21. The per-app skip ships the healthy app and says which one it dropped.
+#     Without it, one broken Android build would force RELEASE_SKIP_ANDROID=1
+#     and drop the other client with it: one broken app becomes two unshipped
+#     ones, which is the drift, not a fix for it.
+# ---------------------------------------------------------------------------
+D16="$(make_repo)"; write_stubs "$D16"
+HEAD16="$(cd "$D16/repo" && git rev-parse HEAD)"
+fixture_all_green "$D16/fixtures/$HEAD16"
+RC="$(run_release "$D16" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
+      RELEASE_SKIP_ANDROID_MYTRIBE=1 FIREBASE_CALL_LOG="$D16/calls")"
+CALLS="$(cat "$D16/calls" 2>/dev/null || true)"
+TAGMSG="$(cd "$D16/repo" && git tag -l 'release/*' --format='%(contents)')"
+if [ "$RC" -eq 0 ] &&
+   printf '%s' "$CALLS" | grep -q "appdistribution:distribute.*$AUNTIEOS_APP_ID" &&
+   ! printf '%s' "$CALLS" | grep -q "$MYTRIBE_APP_ID"; then
+  ok "a per-app skip still ships the other Android app"
+else
+  bad "a per-app skip did not ship the other Android app (rc $RC)"
+  printf '%s' "$CALLS" | grep appdistribution || echo "  (no distribute call at all)"
+fi
+if printf '%s' "$TAGMSG" | grep -q "android (auntieos): distributed" &&
+   printf '%s' "$TAGMSG" | grep -q "android (mytribe): skipped"; then
+  ok "the tag names the skipped Android app rather than claiming both shipped"
+else
+  bad "the tag hides the skipped Android app"
+  printf '%s\n' "$TAGMSG"
+fi
+
+# ---------------------------------------------------------------------------
+# 22. EITHER Android build failing refuses the release before anything ships.
+#     The whole reason 1c runs where it does is that a build failure there
+#     costs nothing. That has to hold for the second app too, or the portal's
+#     APK gets the "assembles after hosting went out" treatment the first one
+#     was moved here to avoid.
+# ---------------------------------------------------------------------------
+D17="$(make_repo)"; write_stubs "$D17"
+HEAD17="$(cd "$D17/repo" && git rev-parse HEAD)"
+fixture_all_green "$D17/fixtures/$HEAD17"
+RC="$(run_release "$D17" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
+      GRADLE_FAIL=:assembleRelease FIREBASE_CALL_LOG="$D17/calls")"
+OUT="$(cat "$D17/out")"
+CALLS="$(cat "$D17/calls" 2>/dev/null || true)"
+if [ "$RC" -eq 0 ]; then
+  bad "a failed mytribe Android build did not stop the release"
+elif printf '%s' "$OUT" | grep -q "REFUSED: the mytribe Android release APK did not build" &&
+     printf '%s' "$OUT" | grep -q "RELEASE_SKIP_ANDROID_MYTRIBE=1"; then
+  ok "a failed mytribe Android build refuses, names the app, and names its skip"
+else
+  bad "the refusal does not name the app that failed or how to skip it"
+  printf '%s' "$OUT" | tail -20
+fi
+if printf '%s' "$CALLS" | grep -q "deploy"; then
+  bad "a failed Android build refused only AFTER deploying something"
+  printf '%s\n' "$CALLS" | head
+else
+  ok "nothing was deployed before the Android build refused"
 fi
 
 echo

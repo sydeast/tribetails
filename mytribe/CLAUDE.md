@@ -6,8 +6,24 @@ site is kinfolk.tribetails.com, a React app (Vite + TanStack Router/Query) in
 `web/`. `functions/` is the Cloud Functions backend, Firebase codebase `mytribe`,
 and most of the callables the AuntieOS admin invokes live here, not next door.
 
-The Compose `src/` tree is the older Android/desktop build, NOT the portal. When
-you mean the portal, you mean `web/`.
+## The portal has two shipping clients, `web/` and `src/`
+
+`web/` is the React site. `src/` is the Compose Multiplatform tree, and its
+**android target is the portal's Android app**: `com.kinfolk.portal`, registered
+and active in `auntieos-ttpc`, distributed to testers through Firebase App
+Distribution by `scripts/release.sh` in the same run that ships the web. Both
+surfaces ship. Neither is dead, and a change to a portal contract has to land in
+both the way the admin's does.
+
+Say which one you mean. Bare "the portal" means `web/`; the Android client is
+"the portal Android app". The `jvm`/desktop target in `src/` is the one that is
+**not** a delivery surface. It builds, and the owner ruling holds it back from
+release; do not add features to it.
+
+This paragraph used to read "the Compose `src/` tree is the older
+Android/desktop build, NOT the portal", which is how the release script came to
+build one of the two Android apps and nobody noticed for a week: `src/` was read
+as dead, so its versionCode sat at 2 while the web shipped every release.
 
 ## A prefix in the monorepo, not a separate repo
 
