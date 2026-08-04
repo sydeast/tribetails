@@ -1,5 +1,10 @@
 import { useMemo, useState } from 'react';
 import { kinTaleMatchesSearch, kinTalesPageQuery, type KinTaleEntry } from '../api/kinTales';
+import {
+  GENERATED_DRAFTS_QUERY,
+  GENERATED_DRAFTS_MAX,
+  type GeneratedDraftRow,
+} from '../api/drafts';
 import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import {
   kinTaleHeadline,
@@ -10,6 +15,8 @@ import {
   sentViaLabel,
   type KinTaleState,
 } from '../lib/kinTaleFormat';
+import { kinTaleListRows, type KinTaleListRow } from '../lib/kinTaleList';
+import { type Async } from '../lib/async';
 import { useCollection } from '../lib/firestore';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { asyncScalar } from '../lib/async';
@@ -101,6 +108,25 @@ interface KinTalesProps {
  * (never by negation, see lib/kinTaleFormat.ts for the AO-12-style
  * rationale) for both the summary stat strip and the filter tabs.
  *
+ * ── IT READS TWO COLLECTIONS, BECAUSE A KINTALE LIVES IN TWO ────────────────
+ * A KinTale in DRAFT state is not in `kin_care_reports`. The generator writes
+ * it to `generated_drafts`, which is what Home's "KinTales pending" panel has
+ * always read. This screen read only the first, so its own Drafts bucket and
+ * its own Drafts tab reported 0 forever while Home, on the same session, listed
+ * drafts, and the empty state claimed "No KinTales in the last 30 days" about a
+ * window that had them. Operator ruling, 2026-08-04, verbatim: "generated
+ * drafts are just drafts of the kintales". So both are read here and joined by
+ * `lib/kinTaleList.ts`, and the two surfaces now share one query object
+ * (`GENERATED_DRAFTS_QUERY`), which is also one Firestore Watch target.
+ *
+ * The join's limits are REAL and are therefore stated on screen rather than
+ * hidden: the drafts side is a bounded 50-row listener, not a pager, so its
+ * window and household facet are applied client-side and the counts say when
+ * that cap has been reached. A failed or in-flight drafts read never silently
+ * becomes "Drafts 0"; it is named beside the toolbar, because a confident zero
+ * over an unread collection is precisely the defect this screen was reported
+ * for.
+ *
  * WHAT PHASE 4 CHANGED, AND WHY THE COPY CHANGED WITH IT. This screen used to
  * take a flat 200 newest rows and do everything client-side. Every number on it
  * was therefore a fact about a page nobody could see the edges of, and the
@@ -144,7 +170,28 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
   // "filter values must be stable" note, which the paged hook inherits).
   const startIso = useMemo(() => rangeStartIso(range, new Date()), [range]);
   const spec = useMemo(() => kinTalesPageQuery({ startIso, kinfolkId }), [startIso, kinfolkId]);
-  const { state: rows, hasMore, more, loadMore } = usePagedCollection<KinTaleEntry>(spec);
+  const { state: reports, hasMore, more, loadMore } = usePagedCollection<KinTaleEntry>(spec);
+
+  // The DRAFT half of the same entity. Deliberately the identical spec object
+  // Home's widget uses, so the two surfaces share one Watch target and can
+  // never report two different draft sets (see api/drafts.ts).
+  const drafts = useCollection<GeneratedDraftRow>(GENERATED_DRAFTS_QUERY);
+
+  // The joined list. `reports` decides the region's status: it is the paged,
+  // server-windowed side, and a first-page failure there means the list really
+  // is unknown. A drafts failure does NOT blank a readable report list; it is
+  // reported beside the toolbar and in the counts note instead, the same
+  // "a failed facet is not a failed list" split the household select already uses.
+  const rows: Async<KinTaleListRow[]> = useMemo(() => {
+    if (reports.status !== 'ready') return reports;
+    return {
+      status: 'ready',
+      data: kinTaleListRows(reports.data, drafts.status === 'ready' ? drafts.data : [], {
+        startIso,
+        kinfolkId,
+      }),
+    };
+  }, [reports, drafts, startIso, kinfolkId]);
 
   // The facet's options come from the household DIRECTORY, not from the loaded
   // KinTales. Deriving them from the page would offer only households that are
@@ -191,6 +238,24 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
       : `Searching the ${String(loaded)} KinTale${plural} loaded from ${windowLabel}, by household and title.` +
         (hasMore ? ' Load more to reach further back.' : '');
 
+  // WHAT THE DRAFT HALF OF EVERY NUMBER ABOVE IS WORTH. The drafts stream is a
+  // capped listener rather than a pager, so three different things can be true
+  // about it and each has to be said out loud rather than folded into a
+  // confident count: it has not arrived, it failed, or it came back full and is
+  // therefore a page of the drafts rather than all of them.
+  //
+  // Its own line rather than a clause on the one above, because that one only
+  // renders once the first page has landed and a failed drafts read has to be
+  // visible before then too.
+  const draftsNote =
+    drafts.status === 'loading'
+      ? 'Drafts are still loading, so the Drafts count is not final yet.'
+      : drafts.status === 'error'
+        ? `Drafts could not be loaded (${drafts.message}), so the Drafts count is missing them.`
+        : drafts.data.length === GENERATED_DRAFTS_MAX
+          ? `Drafts are the newest ${String(GENERATED_DRAFTS_MAX)} only; older drafts are not counted.`
+          : '';
+
   return (
     <div className="screen">
       {/* d1 / d2 / d3: the Den entrance stagger (styles/base.css). Three blocks
@@ -200,14 +265,19 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
           kicker="The Den · KinTales"
           title="Every recap that goes"
           accentTail="home."
-          subtitle="Every KinTale a Kinfolk receives after care, newest first."
+          subtitle="Every KinTale a Kinfolk receives after care, and every draft still waiting to go. Newest first."
           trailing={
             <PrimaryButton label="New KinTale" {...(onNew ? { onClick: () => onNew() } : {})} leading={<PlusGlyph />} />
           }
         />
+        {/* REPORTS ONLY, never the joined list. This section triages orphaned
+            `kin_care_reports` migration rows through callables keyed on that
+            collection's document ids; handing it a `generated_drafts` row would
+            offer an Assign/Archive action against a document those callables
+            cannot address. */}
         <NeedsTriageSection
           kinfolk={households}
-          candidateReports={rows.status === 'ready' ? rows.data : []}
+          candidateReports={reports.status === 'ready' ? reports.data : []}
         />
       </div>
 
@@ -235,9 +305,19 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
               : `These counts cover ${everyOne} KinTale${plural} in ${windowLabel}.`}
           </p>
         )}
+
+        {draftsNote !== '' && (
+          <p className="kintales__stats-note" {...(drafts.status === 'error' ? { role: 'alert' } : {})}>
+            {draftsNote}
+          </p>
+        )}
       </div>
 
-      <DenPanel title="KinTales" subtitle="Newest first, a page at a time." className="d3">
+      <DenPanel
+        title="KinTales"
+        subtitle="Newest first. Sent recaps arrive a page at a time; drafts sit alongside them."
+        className="d3"
+      >
         <ListToolbar
           label="Filter KinTales"
           search={search}
@@ -353,7 +433,7 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
 }
 
 interface KinTaleRowProps {
-  entry: KinTaleEntry;
+  entry: KinTaleListRow;
   onSelect?: ((kinTaleId: string) => void) | undefined;
 }
 
@@ -381,6 +461,10 @@ function KinTaleRow({ entry, onSelect }: KinTaleRowProps) {
   // draft's blank sentVia would otherwise read as the misleading "imported"
   // sentViaLabel default (see lib/kinTaleFormat.ts#sentViaLabel's doc comment).
   const channel = sentVia.trim() !== '' ? sentViaLabel(sentVia) : null;
+  // `generated_drafts` only. That collection holds drafts of every generator
+  // output, not just visit recaps, so the row names which kind it is rather
+  // than letting an sms draft read as a visit recap. Blank for a report row.
+  const draftType = entry.draftType ?? '';
 
   const body = (
     <>
@@ -404,6 +488,7 @@ function KinTaleRow({ entry, onSelect }: KinTaleRowProps) {
           </span>
         ) : null}
         {channel ? <span className="kintales__row-pip">{channel}</span> : null}
+        {draftType !== '' ? <span className="kintales__row-pip">{draftType}</span> : null}
       </span>
     </>
   );
