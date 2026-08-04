@@ -237,7 +237,13 @@ class AdminDataViewModel(
             _error.value = null
 
             invoiceRepository.getInvoices().onSuccess { invoiceList ->
-                _invoices.value = invoiceList.sortedByDescending { it.date }
+                // Through the shared comparator, not `sortedByDescending { it.date }`.
+                // That was a RAW STRING sort over a field that legacy documents fill
+                // with free text, and letters outrank digits in UTF-8, so a stored
+                // "Feb 12, 2026" ranked above every real date. Every reader of this
+                // flow got that order; InvoicesScreen happened to re-sort and the
+                // others did not.
+                _invoices.value = invoicesByDateDesc(invoiceList)
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to load invoices"
             }

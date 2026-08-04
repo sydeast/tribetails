@@ -13,6 +13,7 @@ import { computeInvoiceTotals, validateInvoiceMoney, centsToDollars } from '../l
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
+import { InvoiceDayArg } from '../lib/invoiceDay';
 
 /**
  * A quote is NOT a separate model: it is an invoice in QUOTE status. This
@@ -55,9 +56,12 @@ export const Args = z.object({
   invoiceNumber: z.string().min(1),
   client: z.string().default(''),
   address: z.string().default(''),
-  date: z.string().default(''),
+  // A DAY, not free text, for the reason spelled out in lib/invoiceDay.ts: a
+  // quote lands in the same flat `invoices` collection the admin list windows
+  // and orders on, so a free-text date here is the same sorting bug.
+  date: InvoiceDayArg,
   terms: z.string().default(''),
-  dueDate: z.string().default(''),
+  dueDate: InvoiceDayArg,
   discount: z.string().default(''),
   total: z.number().nonnegative(),
   amountDue: z.number().nonnegative(),

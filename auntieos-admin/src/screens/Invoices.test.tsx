@@ -44,11 +44,31 @@ function fakeTs(iso: string): Timestamp {
 }
 
 /**
+ * Today as the screen's own `localDateIso` reads it. The screen windows on the
+ * live clock, so a fixture pinned to a literal day would fall out of the default
+ * "Last 7 days" the moment the calendar moved past it.
+ */
+function todayIso(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+/**
  * The default doc is a STAMPED open invoice (`status: 'open'`,
  * `editScope: 'all'`), which is what the server writes for an unpaid sent
  * bill. Per ADR-0002 the stamp arrives ON the doc; these tests hand the screen
  * stored fields and assert rendered chips/filters/totals, they never rely on
  * the screen deriving a state from the money.
+ *
+ * IT IS DATED TODAY, and that is not decoration. The screen windows on `date`,
+ * and `invoiceWithinWindow` now re-tests every loaded row against the bound
+ * because Firestore's string comparison lets free-text dates through. This mock
+ * returns rows without consulting the query at all, so a fixture dated `''` was
+ * being shown by a dated window that could never have returned it: real
+ * Firestore drops a doc with no `date` from `orderBy('date')`, and `'' >= <day>`
+ * is false. Dating the fixture makes the fixture match the query, rather than
+ * making the screen accept a row it will not be handed. The blank case is
+ * asserted where it belongs, under "All (archive)".
  */
 function entry(over: Partial<InvoiceEntry>): InvoiceEntry {
   return {
@@ -57,7 +77,7 @@ function entry(over: Partial<InvoiceEntry>): InvoiceEntry {
     kinfolkName: 'The Whitfields',
     client: '',
     invoiceNumber: '1042',
-    date: '',
+    date: todayIso(),
     dueDate: '',
     total: 40,
     amountDue: 40,
@@ -359,6 +379,47 @@ describe('Invoices screen: the date window', () => {
     render(<Invoices />);
     await userEvent.click(screen.getByRole('tab', { name: 'All (archive)' }));
     expect(screen.queryByText(/Invoices with no date appear only/)).toBeNull();
+  });
+
+  // THE BUG THIS WINDOW HAD. `where('date','>=',<day>)` is a STRING comparison
+  // in UTF-8 byte order, and every letter outranks every digit, so a stored
+  // "Feb 12, 2026" satisfied every ISO cutoff and sorted above every real date.
+  // Last 7 days was showing invoices from months ago, at the top of the list.
+  it('does not show a row whose stored date is free text, whatever the server returned', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'good', invoiceNumber: 'GOOD' }),
+        entry({ _id: 'legacy', invoiceNumber: 'LEGACY', date: 'Feb 12, 2026' }),
+      ]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('#GOOD')).toBeInTheDocument();
+    expect(screen.queryByText('#LEGACY')).toBeNull();
+  });
+
+  it('counts what it dropped, so a short page reads as bad data and not as thin books', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ _id: 'good' }), entry({ _id: 'legacy', date: 'Feb 12, 2026' })]),
+    );
+    render(<Invoices />);
+    expect(
+      screen.getByText(/1 invoice whose stored date is not a real date was left out/),
+    ).toBeInTheDocument();
+  });
+
+  it('says nothing at all when every row really is in the window', () => {
+    usePagedCollection.mockReturnValue(paged([entry({})]));
+    render(<Invoices />);
+    expect(screen.queryByText(/stored date is not a real date/)).toBeNull();
+  });
+
+  it('drops nothing under All (archive), where there is no window to fall outside of', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ _id: 'legacy', invoiceNumber: 'LEGACY', date: 'Feb 12, 2026' })]),
+    );
+    render(<Invoices />);
+    await userEvent.click(screen.getByRole('tab', { name: 'All (archive)' }));
+    expect(screen.getByText('#LEGACY')).toBeInTheDocument();
   });
 });
 
