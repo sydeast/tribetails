@@ -200,19 +200,20 @@ class BookingWizardTest {
     }
 
     @Test
-    fun `several visits on one day all reach the payload with their own time and place`() {
+    fun `several visits on one day all reach the payload with their own time`() {
         var state = readyState()
         state = state.addDayVisit(monday)
         val second = state.plans.single().visits[1]
-        state = state.updateDayVisit(monday, second.id) {
-            it.copy(hour = 17, minute = 30, location = "  Back gate  ")
-        }
+        state = state.updateDayVisit(monday, second.id) { it.copy(hour = 17, minute = 30) }
 
         val visits = buildVisits(state)
         assertEquals(2, visits.size)
         assertTrue("visits must be ascending", visits[0].startTimeMs < visits[1].startTimeMs)
-        assertNull("no place given means null, never an empty string", visits[0].location)
-        assertEquals("Back gate", visits[1].location)
+        assertEquals(
+            17,
+            java.time.Instant.ofEpochMilli(visits[1].startTimeMs)
+                .atZone(ZoneId.systemDefault()).hour,
+        )
     }
 
     @Test

@@ -180,7 +180,6 @@ data class CreateMultiDateBookingRequestArgsVisit(
     val serviceId: String?,
     val serviceName: String,
     val priceCents: Long?,
-    val location: String?,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -192,7 +191,6 @@ data class CreateMultiDateBookingRequestArgsVisit(
         put("serviceId", serviceId)
         put("serviceName", serviceName)
         put("priceCents", priceCents)
-        put("location", location)
     }
 }
 
@@ -460,7 +458,6 @@ data class RequestBookingArgsVisit(
     val serviceId: String,
     val serviceName: String,
     val priceCents: Long?,
-    val location: String?,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -472,7 +469,6 @@ data class RequestBookingArgsVisit(
         put("serviceId", serviceId)
         put("serviceName", serviceName)
         put("priceCents", priceCents)
-        put("location", location)
     }
 }
 

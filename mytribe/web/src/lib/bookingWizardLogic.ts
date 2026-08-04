@@ -101,7 +101,7 @@ export function buildWeeklyVisits(params: BuildWeeklyVisitsParams): RequestBooki
       const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate(), time.hour, time.minute);
       const ms = dt.getTime();
       if (ms > nowMs) {
-        out.push({ startTimeMs: ms, endTimeMs: null, serviceId, serviceName, priceCents, location: null });
+        out.push({ startTimeMs: ms, endTimeMs: null, serviceId, serviceName, priceCents });
       }
     }
     offset++;
@@ -131,7 +131,6 @@ export function buildVisits(
       serviceId: service.id,
       serviceName: service.name,
       priceCents: service.priceCents ?? service.priceMinCents,
-      location: null,
     };
   });
 }

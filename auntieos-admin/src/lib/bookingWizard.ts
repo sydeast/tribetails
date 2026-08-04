@@ -42,14 +42,13 @@ import type {
 // ── one visit ────────────────────────────────────────────────────────────────
 
 /**
- * One visit within a day: when, what, and where.
+ * One visit within a day: when, and what.
  *
- * `location` is a free-text label, and deliberately so. There is no property or
- * location model in this system: the only addresses that exist are free-text
- * fields on the household doc. The server takes the same label (see
- * `requestBooking.ts`'s VisitLocationArgs), so nothing is invented on either
- * side. `''` means "wherever this household's address says", which is what
- * every visit ever written already means.
+ * NOT where. A visit happens at the household's address, and the household doc
+ * is the only place that address lives (operator ruling, 2026-08-04). This
+ * interface used to carry a free-text `location` whose input was placeheld
+ * "Home address", which made it an address override on the booking; the
+ * callable no longer accepts one and the mock never showed one.
  */
 export interface VisitSlot {
   /** Stable across edits, so a React key never re-keys a row the operator is typing in. */
@@ -59,7 +58,6 @@ export interface VisitSlot {
   serviceName: string;
   /** Catalog id when the service came from one; null for a typed-in name. */
   serviceId: string | null;
-  location: string;
 }
 
 /** One selected day and the visits planned on it. */
@@ -119,7 +117,6 @@ export function newSlot(over: Partial<VisitSlot> = {}): VisitSlot {
     time: '09:00',
     serviceName: '',
     serviceId: null,
-    location: '',
     ...over,
   };
 }
@@ -247,12 +244,11 @@ export function addTemplateSlot(state: WizardState): WizardState {
       ...state.template,
       newSlot({
         // Seeded from the row above, which is what "add another visit" means on
-        // a day that already has one: same service, same place, a later time
-        // the operator then sets.
+        // a day that already has one: same service, a later time the operator
+        // then sets.
         time: last?.time ?? '09:00',
         serviceName: last?.serviceName ?? state.serviceName,
         serviceId: last?.serviceId ?? state.serviceId,
-        location: last?.location ?? '',
       }),
     ],
   };
@@ -294,7 +290,6 @@ export function addDayVisit(state: WizardState, dayIso: string): WizardState {
             time: last?.time ?? '09:00',
             serviceName: last?.serviceName ?? state.serviceName,
             serviceId: last?.serviceId ?? state.serviceId,
-            location: last?.location ?? '',
           }),
         ],
       };
@@ -361,23 +356,16 @@ export function buildVisits(state: WizardState): WizardVisit[] {
 
   return rows
     .sort((a, b) => a.ms - b.ms)
-    .map(({ ms, slot }) => {
-      const location = slot.location.trim();
-      return {
-        startTimeMs: ms,
-        // No end time in the wizard's UI; null means what an omitted key used to.
-        endTimeMs: null,
-        serviceName: slot.serviceName.trim(),
-        serviceId: slot.serviceId,
-        // Blank is sent as null, never as '': the server rejects an empty label
-        // rather than storing one, and null is how "no particular place" is
-        // spelled on the wire.
-        location: location === '' ? null : location,
-        // No price override in the wizard's UI; the server resolves the
-        // catalog price from serviceId (NOTE-56).
-        priceCents: null,
-      };
-    });
+    .map(({ ms, slot }) => ({
+      startTimeMs: ms,
+      // No end time in the wizard's UI; null means what an omitted key used to.
+      endTimeMs: null,
+      serviceName: slot.serviceName.trim(),
+      serviceId: slot.serviceId,
+      // No price override in the wizard's UI; the server resolves the
+      // catalog price from serviceId (NOTE-56).
+      priceCents: null,
+    }));
 }
 
 /** Ascending list of the days a visit falls on, for the review's "N visits across M days". */

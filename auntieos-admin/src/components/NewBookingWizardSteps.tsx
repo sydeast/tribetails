@@ -425,18 +425,6 @@ export function VisitRows({ visits, options, scope, onPatch, onAdd, onRemove }: 
                   />
                 )}
               </label>
-              <label className="nbw__visit-field">
-                <span className="new-booking__sublabel">Place (optional)</span>
-                <input
-                  type="text"
-                  className="new-booking__input"
-                  value={slot.location}
-                  onChange={(e) => onPatch(slot.id, { location: e.target.value })}
-                  placeholder="Home address"
-                  aria-label={`${name} place`}
-                  maxLength={120}
-                />
-              </label>
             </div>
             {visits.length > 1 && (
               <GhostButton label="Remove" onClick={() => onRemove(slot.id)} />

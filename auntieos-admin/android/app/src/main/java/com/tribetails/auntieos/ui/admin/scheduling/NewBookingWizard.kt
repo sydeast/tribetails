@@ -820,7 +820,6 @@ private fun LazyListScope.reviewStep(
                                 append(formatClock(at.hour, at.minute))
                                 append(" · ")
                                 append(visit.serviceName)
-                                visit.location?.let { append(" · $it") }
                             },
                             style = AuntieTheme.typography.bodyMedium,
                             color = AuntieTheme.colors.textPrimary,
@@ -1046,21 +1045,8 @@ private fun VisitSlotEditor(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        Spacer(Modifier.height(8.dp))
-        BottomBorderField(
-            value = slot.location,
-            // The callable caps `location` at 120 characters, so the field does too
-            // rather than letting the operator type past a limit and be refused.
-            onValueChange = { place -> if (place.length <= LOCATION_MAX) onEdit { it.copy(location = place) } },
-            label = "Place (optional)",
-            placeholder = "Where this visit happens",
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
-
-/** The callable's `location: z.string().trim().min(1).max(120)`. */
-private const val LOCATION_MAX = 120
 
 private val MINUTE_STEPS = listOf(0, 15, 30, 45)
 

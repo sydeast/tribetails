@@ -78,20 +78,24 @@ class BookingRepository(
      * Times are LOCAL (the caller derives ms from the operator's wall-clock pick).
      *
      * DRIFT FIX (ADR-0003 follow-up): this used to build its own payload map by
-     * hand, and that hand map never had a slot for `priceCents`, `location`,
-     * `billing`, `communication` or `overrideBusyConflict` at all -- not "the UI
-     * doesn't collect them yet", but "there was nowhere on the wire for them to
-     * go even if it did." Now the payload is built through the generated
+     * hand, and that hand map never had a slot for `priceCents`, `billing`,
+     * `communication` or `overrideBusyConflict` at all -- not "the UI doesn't
+     * collect them yet", but "there was nowhere on the wire for them to go even
+     * if it did." Now the payload is built through the generated
      * `CreateMultiDateBookingRequestArgs`/`...Visit`, which has a slot for
-     * every one of those five.
+     * every one of those four.
      *
-     * D1 filled four of them in. The five-step wizard
-     * (`NewBookingWizard.kt`) collects a per-visit place, the kin on the
-     * booking, the billing mode and the two communication switches, so
-     * [NewBookingVisit.location], [kinIds], [billing] and [communication] now
-     * carry real operator input instead of a placeholder null. `priceCents`
-     * stays null on purpose and is the one field no screen will ever fill:
+     * D1 filled three of them in. The five-step wizard (`NewBookingWizard.kt`)
+     * collects the kin on the booking, the billing mode and the two
+     * communication switches, so [kinIds], [billing] and [communication] carry
+     * real operator input instead of a placeholder null. `priceCents` stays
+     * null on purpose and is the one field no screen will ever fill:
      * `resolveService` overwrites a client price with the catalog's (NOTE-56).
+     *
+     * D1 also filled in a per-visit `location`, and that one is GONE as of
+     * 2026-08-04 by operator ruling: addresses come from the household, so a
+     * place field on a visit was an address override the booking has no
+     * business holding. The callable no longer accepts the key.
      *
      * [overrideBusyConflict] is now really used: the wizard offers "Create
      * anyway" after a [BOOKING_BUSY_CONFLICT_CODE] refusal, the same knowing
@@ -130,7 +134,6 @@ class BookingRepository(
                     // Still null, and still honest: `resolveService` discards a
                     // client price (NOTE-56), so no screen collects one.
                     priceCents = null,
-                    location = v.location?.takeIf { it.isNotBlank() },
                 )
             },
             billing = billing,
@@ -1000,23 +1003,21 @@ data class ManageSeriesResult(
  * AO-25: one visit in a multi-date/recurring booking request. [startTimeMs] is
  * epoch ms derived from the operator's LOCAL wall-clock pick (no UTC skew).
  * [serviceId] is optional; when set the server resolves the canonical name+price.
+ *
+ * There is deliberately no `priceCents` here. The field exists on the callable,
+ * but `resolveService` overwrites whatever a client sends with the catalog price
+ * (NOTE-56), so a price control on this path would be a box whose value is
+ * discarded. Web's wizard omits it for the same reason.
+ *
+ * There is no place field either, and that one is not an omission but a ruling
+ * (2026-08-04): a visit happens at the household's address, which is read live
+ * off the household doc by everything that needs it.
  */
 data class NewBookingVisit(
     val startTimeMs: Long,
     val serviceName: String,
     val endTimeMs: Long? = null,
     val serviceId: String? = null,
-    /**
-     * D1: the per-visit place, the callable's `location` (`z.string().trim()
-     * .min(1).max(120).nullable()`). Null means "no place given"; `""` is NOT a
-     * legal value on the wire, so a caller must null a blank rather than send it.
-     *
-     * There is deliberately still no `priceCents` here. The field exists on the
-     * callable, but `resolveService` overwrites whatever a client sends with the
-     * catalog price (NOTE-56), so a price control on this path would be a box
-     * whose value is discarded. Web's wizard omits it for the same reason.
-     */
-    val location: String? = null,
 )
 
 /**

@@ -20,9 +20,9 @@ import org.junit.Test
  *
  * ADR-0003 follow-up: the payload is now built through the generated
  * `CreateMultiDateBookingRequestArgs`, which always sends `serviceId` /
- * `endTimeMs` / `priceCents` / `location` (`null` rather than omitted) --
- * see `BookingRepositoryCreateMultiDateTest` for the drift fix that motivated
- * this (the old hand map had no slot at all for `priceCents`/`location`).
+ * `endTimeMs` / `priceCents` (`null` rather than omitted) -- see
+ * `BookingRepositoryCreateMultiDateTest` for the drift fix that motivated this
+ * (the old hand map had no slot at all for `priceCents`).
  */
 class BookingRepositoryMultiDateTest {
 
@@ -75,7 +75,7 @@ class BookingRepositoryMultiDateTest {
         // ADR-0003 follow-up: the generated Args always sends the key, `null`
         // when the visit has no catalog serviceId, never omitted -- an omitted
         // key is exactly the shape of the drift this follow-up fixed for
-        // `priceCents`/`location` on this same visit object.
+        // `priceCents` on this same visit object.
         assertTrue(visits[1].containsKey("serviceId"))
         assertEquals(null, visits[1]["serviceId"])
     }

@@ -149,10 +149,10 @@ describe('service pick', () => {
 describe('multiple visits per day', () => {
   it('adds a second template row seeded from the first', () => {
     let state = ready();
-    state = updateTemplateSlot(state, state.template[0]!.id, { location: 'Back gate' });
+    state = updateTemplateSlot(state, state.template[0]!.id, { time: '16:30' });
     state = addTemplateSlot(state);
     expect(state.template).toHaveLength(2);
-    expect(state.template[1]?.location).toBe('Back gate');
+    expect(state.template[1]?.time).toBe('16:30');
     expect(state.template[1]?.serviceName).toBe('Dog Walk');
   });
 
@@ -209,16 +209,16 @@ describe('buildVisits', () => {
     expect(first!.time).toBe('09:00');
   });
 
-  it('sends a per-visit location, and null (never blank) when there is none', () => {
+  /**
+   * NO ADDRESS ON A BOOKING (operator ruling, 2026-08-04). This wizard used to
+   * collect a per-visit place, placeheld "Home address", which made it an
+   * address override on the booking. The address lives on the household and
+   * is read live from there; nothing the wizard builds may carry one.
+   */
+  it('puts no location on the wire at all', () => {
     let state = toggleDay(ready(), '2026-08-03');
     state = addDayVisit(state, '2026-08-03');
-    state = updateDayVisit(state, '2026-08-03', state.plans[0]!.visits[0]!.id, {
-      location: '  Back gate  ',
-    });
-    state = updateDayVisit(state, '2026-08-03', state.plans[0]!.visits[1]!.id, { location: '   ' });
-    const visits = buildVisits(state);
-    expect(visits[0]!.location).toBe('Back gate');
-    expect(visits[1]!.location).toBeNull();
+    for (const v of buildVisits(state)) expect(v).not.toHaveProperty('location');
   });
 
   it('sends serviceId null (present, not omitted) for a typed-in service', () => {

@@ -187,7 +187,7 @@ describe('createMultiDateBookingRequest validation + auth', () => {
  * below is the reason: the single-page dialog this wizard replaces is still
  * deployed in older bundles and sends none of them.
  */
-describe('createMultiDateBookingRequest wizard fields (per-visit location, billing, communication)', () => {
+describe('createMultiDateBookingRequest wizard fields (billing, communication)', () => {
   it('still accepts the frozen legacy payload, which carries none of the new fields', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -200,12 +200,22 @@ describe('createMultiDateBookingRequest wizard fields (per-visit location, billi
     const env = envelope(ctx);
     expect(env?.data.billing).toBeNull();
     expect(env?.data.communication).toEqual({ emailConfirmation: false, timeVisibility: false });
-    expect(visitWrites(ctx)[0]?.data.location).toBeNull();
+    expect(visitWrites(ctx)[0]?.data).not.toHaveProperty('location');
   });
-  it('persists a per-visit location on the visit doc, not on the envelope', async () => {
+  /**
+   * NO ADDRESS ON A BOOKING (operator ruling, 2026-08-04). A visit used to
+   * carry a free-text `location`; addresses come from the household doc and
+   * nowhere else, so the field is gone from the schema and from the write.
+   *
+   * A cached wizard bundle in the wild still sends the key, which is why this
+   * asserts ACCEPTED-AND-DROPPED rather than refused: `HandlerArgs` is not
+   * `.strict()`, so zod strips the unknown key and the request still writes.
+   * A refusal here would break every browser that had not reloaded yet.
+   */
+  it('drops a location an old client still sends, rather than refusing the request', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
-    await createMultiDateBookingRequestHandler(
+    const res = await createMultiDateBookingRequestHandler(
       req({
         kinfolkId: 'kf1',
         visits: [
@@ -214,43 +224,9 @@ describe('createMultiDateBookingRequest wizard fields (per-visit location, billi
         ],
       }),
     );
-    // Two places in one series is the case that would be lost by rolling this
-    // up to the envelope, so it is the case the test pins.
-    expect(visitWrites(ctx).map((w) => w.data.location)).toEqual(['Back gate', 'Boarding kennel']);
+    expect(res.visitCount).toBe(2);
+    for (const w of visitWrites(ctx)) expect(w.data).not.toHaveProperty('location');
     expect(envelope(ctx)?.data).not.toHaveProperty('location');
-  });
-  it('trims a padded location rather than storing the operator\'s whitespace', async () => {
-    const ctx = seed();
-    mocks.dbFn.mockReturnValue(ctx.db);
-    await createMultiDateBookingRequestHandler(
-      req({
-        kinfolkId: 'kf1',
-        visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Walk', location: '  Back gate  ' }],
-      }),
-    );
-    expect(visitWrites(ctx)[0]?.data.location).toBe('Back gate');
-  });
-  it('rejects a blank location instead of storing an empty label', async () => {
-    mocks.dbFn.mockReturnValue(seed().db);
-    await expect(
-      createMultiDateBookingRequestHandler(
-        req({
-          kinfolkId: 'kf1',
-          visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Walk', location: '   ' }],
-        }),
-      ),
-    ).rejects.toBeTruthy();
-  });
-  it('accepts an explicit null location, the "no particular place" the wizard sends', async () => {
-    const ctx = seed();
-    mocks.dbFn.mockReturnValue(ctx.db);
-    await createMultiDateBookingRequestHandler(
-      req({
-        kinfolkId: 'kf1',
-        visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Walk', location: null }],
-      }),
-    );
-    expect(visitWrites(ctx)[0]?.data.location).toBeNull();
   });
   it('persists the billing preference on the envelope', async () => {
     const ctx = seed();

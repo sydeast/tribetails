@@ -63,30 +63,24 @@ const LegacyArgs = z.object({
 });
 
 /**
- * WHERE a visit happens, as a free-text LABEL.
+ * Multi-visit (new wizard) shape.
  *
- * Not a foreign key, and that is a finding rather than a shortcut: this
- * codebase has no property or location model. The only addresses that exist
- * are free-text fields on the household doc (`optimizeRoute.ts` reads
- * `serviceAddress` / `homeAddress` / `address` in that order), so there is no
- * id to point at. A label is what an operator can actually supply for "the
- * back gate", "the boarding house", or a second property the household owns.
+ * A VISIT CARRIES NO ADDRESS, and never will. Operator ruling, 2026-08-04:
+ * addresses come from the household. `optimizeRoute.ts` and every navigation
+ * affordance already read `serviceAddress` / `homeAddress` / `address` off the
+ * household doc and nothing else, so a per-visit place field was an override
+ * for an address the booking is not the authority on.
  *
- * Optional and nullable, so the frozen legacy payload still validates: every
- * client that has ever called this omits it, and every visit already written
- * has none. Absent means "wherever this household's address says", which is
- * exactly what the whole collection means today.
+ * This schema is deliberately NOT `.strict()`, which is what makes the removal
+ * safe to deploy ahead of the clients: a cached wizard that still sends
+ * `location` has the key stripped by zod rather than being refused.
  */
-const VisitLocationArgs = z.string().trim().min(1).max(120).nullable().optional();
-
-/** Multi-visit (new wizard) shape. */
 const VisitArgs = z.object({
   startTimeMs: z.number().int().positive(),
   endTimeMs: z.number().int().positive().nullable().optional(),
   serviceId: z.string().min(1),
   serviceName: z.string().min(1).max(120),
   priceCents: z.number().int().nonnegative().nullable().optional(),
-  location: VisitLocationArgs,
 });
 
 /**
@@ -178,9 +172,9 @@ const MultiArgs = z.object({
  * branch here is a patch -- this is a create, so "omitted" and "sent null"
  * already mean the same thing to the handler -- so narrowing the GENERATED
  * shape to one of the two costs nothing real:
- *   - `visits[].endTimeMs` / `priceCents` / `location`: always-present,
- *     nullable (the generated client always sends the key, `null` when
- *     there is no value), never omitted.
+ *   - `visits[].endTimeMs` / `priceCents`: always-present, nullable (the
+ *     generated client always sends the key, `null` when there is no value),
+ *     never omitted.
  *   - the legacy flat `endTimeMs`: optional, never asserted `null` (a
  *     generated legacy caller either has an end time or leaves the key out).
  */
@@ -191,7 +185,6 @@ const ExportedVisitArgs = z
     serviceId: z.string().min(1),
     serviceName: z.string().min(1).max(120),
     priceCents: z.number().int().nonnegative().nullable(),
-    location: z.string().trim().min(1).max(120).nullable(),
   })
   .strict();
 
@@ -257,8 +250,6 @@ export interface NormalizedVisit {
   serviceName: string | null;
   priceCents: number | null;
   title: string | null;
-  /** Free-text place label, or null. See `VisitLocationArgs` for why it is a label. */
-  location?: string | null;
 }
 
 /**
@@ -389,11 +380,10 @@ export async function writeEnvelope(opts: {
         serviceName: v.serviceName,
         serviceType: v.serviceName,
         priceCents: v.priceCents,
-        // Per-visit, unlike billing/communication above: a series can genuinely
-        // run at two places (the house on weekdays, the boarding kennel while
-        // the household travels), and rolling it to the envelope would lose
-        // that. `null` means "wherever this household's address says".
-        location: v.location ?? null,
+        // No `location`. A visit happens at the household's address, which is
+        // read live off the household doc by everything that needs it
+        // (`optimizeRoute.ts`, the address chips, `BookingDetailModal.tsx`).
+        // Operator ruling, 2026-08-04.
         title: v.title ?? v.serviceName,
         startTime: Timestamp.fromMillis(v.startTimeMs),
         endTime: v.endTimeMs != null ? Timestamp.fromMillis(v.endTimeMs) : null,
@@ -475,7 +465,6 @@ export async function requestBookingHandler(
           serviceName: resolved.serviceName,
           priceCents: resolved.priceCents,
           title: resolved.serviceName ?? v.serviceName,
-          location: v.location ?? null,
         };
       }),
     );

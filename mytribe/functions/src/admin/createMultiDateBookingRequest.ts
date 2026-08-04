@@ -42,8 +42,8 @@ import { validateResponse } from '../lib/callableResponse';
  * the two callables write the same envelope through the same `writeEnvelope`,
  * so a field one accepts and the other rejects would mean a booking an operator
  * can file and a household cannot, or the reverse. See requestBooking.ts for
- * what `location`, `billing` and `communication` mean and why each is shaped
- * the way it is; this file does not restate it.
+ * what `billing` and `communication` mean, and for why a visit carries no
+ * address; this file does not restate it.
  *
  * `serviceId` is the one deliberate difference and predates this: the admin may
  * omit it (a service the operator has not put in the catalog yet), where the
@@ -60,7 +60,6 @@ const VisitArgs = z.object({
   serviceId: z.string().min(1).nullable().optional(),
   serviceName: z.string().min(1).max(120),
   priceCents: z.number().int().nonnegative().nullable().optional(),
-  location: z.string().trim().min(1).max(120).nullable().optional(),
 });
 
 /**
@@ -97,7 +96,7 @@ const HandlerArgs = z.object({
  *
  * `HandlerArgs` above mirrors `requestBooking`'s `VisitArgs` field for field
  * (see the module header), including the same `.nullable().optional()`
- * combination on `endTimeMs`, `serviceId`, `priceCents` and `location`.
+ * combination on `endTimeMs`, `serviceId` and `priceCents`.
  * `readModel.ts` refuses that combination outright: Kotlin's one `T?` cannot
  * distinguish "key omitted" from "key sent null", and on a PATCH those two
  * differ. This callable is a CREATE, not a patch, so they already mean the
@@ -117,7 +116,6 @@ const ExportedVisitArgs = z
     serviceId: z.string().min(1).nullable(),
     serviceName: z.string().min(1).max(120),
     priceCents: z.number().int().nonnegative().nullable(),
-    location: z.string().trim().min(1).max(120).nullable(),
   })
   .strict();
 
@@ -195,7 +193,6 @@ export async function createMultiDateBookingRequestHandler(
         serviceName: resolved.serviceName,
         priceCents: resolved.priceCents,
         title: resolved.serviceName ?? v.serviceName,
-        location: v.location ?? null,
       };
     }),
   );

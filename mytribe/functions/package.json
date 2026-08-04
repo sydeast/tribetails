@@ -25,6 +25,7 @@
     "backfill:invoice-date": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillInvoiceDateIso.ts",
     "backfill:household-vet": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillKinfolkVetToHousehold.ts",
     "backfill:kintale-createdat": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillKinTaleCreatedAt.ts",
+    "strip:visit-location": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/stripBookingVisitLocation.ts",
     "seed:emails": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/seedEmailTemplates.ts",
     "seed:notif-templates": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/seedNotificationTemplates.ts",
     "seed:demo-kinfolk": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/seedDemoKinfolk.ts"
