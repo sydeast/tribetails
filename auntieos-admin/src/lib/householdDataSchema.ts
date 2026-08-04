@@ -235,23 +235,18 @@ export interface HouseholdSectionSpec {
  * MASKED
  *   securitySystemInfo          An alarm panel code. Knowing it is knowing how
  *                               to enter the home without tripping anything.
- *   importantDocumentsLocation  Names the drawer holding passports, titles, and
- *                               deeds. It grants no entry, but it is the one
- *                               line on this record that tells someone already
- *                               inside exactly where to go, and every sitter,
- *                               walker, and backup on the roster can read it.
  *
  * DELIBERATELY NOT MASKED
- *   poisonControlNumber, emergencyContactsPriority, evacuationPlan
- *                               Masking these would be actively dangerous. They
- *                               exist to be read in the ninety seconds after
- *                               something goes wrong, one-handed, and a reveal
- *                               toggle is a step between a sitter and a vet.
  *   medicationLocation          A location note that has to be legible at the
  *                               doorstep on a dose schedule. Operational, and
  *                               hiding it costs more than it protects.
  *   food/treat/toys/bedding/leashes/cleaning locations
  *                               Operational, by the parent brief's own rule.
+ *
+ * `importantDocumentsLocation` and the poison-control/emergency-contacts/
+ * evacuation fields used to be listed here too (masked, unmasked, and
+ * unmasked respectively). They no longer have a section to be masked ON, see
+ * the removal note above the catalog below.
  */
 export const HOUSEHOLD_SECTIONS: readonly HouseholdSectionSpec[] = [
   {
@@ -300,44 +295,46 @@ export const HOUSEHOLD_SECTIONS: readonly HouseholdSectionSpec[] = [
       { key: 'lightingPreferences', label: 'Lighting', kind: 'line' },
     ],
   },
-  {
-    id: 'emergency',
-    title: 'Emergency and safety',
-    blurb: 'Read in the first ninety seconds, so none of it hides behind a toggle.',
-    fields: [
-      { key: 'poisonControlNumber', label: 'Poison control', kind: 'phone' },
-      { key: 'emergencyContactsPriority', label: 'Emergency contacts, in order', kind: 'multiline' },
-      { key: 'evacuationPlan', label: 'Evacuation plan', kind: 'multiline' },
-      {
-        key: 'importantDocumentsLocation',
-        label: 'Important documents',
-        kind: 'line',
-        secret: true,
-      },
-    ],
-  },
-  {
-    id: 'providers',
-    title: 'Service providers',
-    blurb: 'The rest of the household roster, and who covers Auntie.',
-    fields: [
-      { key: 'groomerName', label: 'Groomer', kind: 'line' },
-      { key: 'groomerPhone', label: 'Groomer phone', kind: 'phone' },
-      { key: 'trainerName', label: 'Trainer', kind: 'line' },
-      { key: 'trainerPhone', label: 'Trainer phone', kind: 'phone' },
-      // The stored keys stay `petSitterBackup` / `dogWalkerBackup`: they are the
-      // android model's field names and renaming them would be a migration, not
-      // a relabel. The LABELS follow house vocabulary, which has no "pet" in it.
-      { key: 'petSitterBackup', label: 'Backup sitter', kind: 'line' },
-      { key: 'dogWalkerBackup', label: 'Backup dog walker', kind: 'line' },
-    ],
-  },
+  // REMOVED 2026-08-04: "Emergency and safety" (poisonControlNumber,
+  // emergencyContactsPriority, evacuationPlan, importantDocumentsLocation) and
+  // "Service providers" (groomerName, groomerPhone, trainerName, trainerPhone,
+  // petSitterBackup, dogWalkerBackup). Operator, looking at this screen's
+  // modal-edit sections: "I dont need this Emergency & Safety or Service
+  // Provider boxes."
+  //
+  // This is a UI removal only. The ten fields stay in `householdDataSchema`
+  // below and in `HOUSEHOLD_FIELD_KEYS` (now schema-derived rather than
+  // catalog-derived, see the comment on that export), so `getHouseholdData`
+  // still reads them off Firestore into every `HouseholdRecord` and a
+  // create-time save still writes them. Nothing here deletes data or migrates
+  // it away; they simply have no panel and no edit dialog on THIS screen
+  // anymore.
+  //
+  // The emergency-contact data is not going away, it is going to a different
+  // screen: the pending household/family-page redesign (operator screenshot
+  // 2026-08-03 17.18.43) asks for an "Emergency Must Knows" section there,
+  // built from this same emergency-contact data. Do not "clean up" these
+  // fields off `householdDataSchema` or `HOUSEHOLD_FIELD_KEYS` when you don't
+  // see a section using them here — that family-page work is what reads them
+  // next.
 ];
 
-/** Every catalogued key, in section order. Pinned against the schema by test. */
-export const HOUSEHOLD_FIELD_KEYS: readonly HouseholdFieldKey[] = HOUSEHOLD_SECTIONS.flatMap(
-  (section) => section.fields.map((field) => field.key),
-);
+/**
+ * Every stored field, in the schema's own order (which matches the section
+ * order above). Deliberately NOT derived from `HOUSEHOLD_SECTIONS`: two
+ * sections were pulled from this screen's catalog above without pulling their
+ * fields out of Firestore, and if this stayed `HOUSEHOLD_SECTIONS.flatMap(...)`,
+ * `mergeHouseholdRecord` would quietly stop reading those ten fields off an
+ * existing household's doc at all, `blankHouseholdRecord` would build an
+ * incomplete `HouseholdFields` object, and a create-time save would stop
+ * writing them even for brand-new households. None of that is desired: the
+ * record in memory should stay complete, just under-rendered, so the
+ * family-page "Emergency Must Knows" section (see the removal note above) can
+ * read `HouseholdRecord.poisonControlNumber` and friends with no backfill.
+ */
+export const HOUSEHOLD_FIELD_KEYS: readonly HouseholdFieldKey[] = Object.keys(
+  householdDataSchema.shape,
+) as HouseholdFieldKey[];
 
 /** The sections the generic text dialog may edit (everything but the vet picker). */
 export const EDITABLE_HOUSEHOLD_SECTIONS: readonly HouseholdSectionSpec[] =

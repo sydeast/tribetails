@@ -58,8 +58,16 @@ fun HouseholdDataScreen(
                 item { VeterinaryInfoCard(viewModel, onOpenProfile = onBack) }
                 item { HouseholdItemsCard(viewModel) }
                 item { RoutinesCard(viewModel) }
-                item { EmergencySafetyCard(viewModel) }
-                item { ServiceProvidersCard(viewModel) }
+                // REMOVED 2026-08-04 (mirrors the React admin, lib/householdDataSchema.ts):
+                // EmergencySafetyCard and ServiceProvidersCard. Operator: "I dont need
+                // this Emergency & Safety or Service Provider boxes." This is a UI
+                // removal only: `HouseholdData` (data/model/DynamicFields.kt) still
+                // carries all ten fields, `saveHouseholdData` still whole-document
+                // writes them (nothing here strips them from `state.householdData`
+                // before saving), so no data is dropped, only unrendered. The pending
+                // household/family-page redesign's "Emergency Must Knows" section is
+                // where the emergency-contact half is headed next; do not delete these
+                // fields off the model when you don't see a card using them here.
 
                 // Error Message
                 if (state.error != null) {
@@ -387,116 +395,8 @@ private fun RoutinesCard(viewModel: HouseholdDataViewModel) {
     }
 }
 
-@Composable
-private fun EmergencySafetyCard(viewModel: HouseholdDataViewModel) {
-    val state by viewModel.uiState.collectAsState()
-    val data = state.householdData
-
-    AuntieCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                "EMERGENCY & SAFETY",
-                style = AuntieTheme.typography.labelSmall,
-                color = AuntieTheme.colors.kinfolkOrange
-            )
-
-            AuntieField(
-                value = data.poisonControlNumber,
-                onValueChange = viewModel::updatePoisonControlNumber,
-                label = fieldLabel("Poison Control Number", data.poisonControlNumber),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            AuntieField(
-                value = data.emergencyContactsPriority,
-                onValueChange = viewModel::updateEmergencyContactsPriority,
-                label = fieldLabel("Emergency Contacts Priority", data.emergencyContactsPriority),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = false,
-                minLines = 2,
-            )
-
-            AuntieField(
-                value = data.evacuationPlan,
-                onValueChange = viewModel::updateEvacuationPlan,
-                label = fieldLabel("Evacuation Plan", data.evacuationPlan),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = false,
-                minLines = 2,
-            )
-
-            AuntieField(
-                value = data.importantDocumentsLocation,
-                onValueChange = viewModel::updateImportantDocumentsLocation,
-                label = fieldLabel("Important Documents Location", data.importantDocumentsLocation),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
-}
-
-@Composable
-private fun ServiceProvidersCard(viewModel: HouseholdDataViewModel) {
-    val state by viewModel.uiState.collectAsState()
-    val data = state.householdData
-
-    AuntieCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                "SERVICE PROVIDERS",
-                style = AuntieTheme.typography.labelSmall,
-                color = AuntieTheme.colors.kinfolkOrange
-            )
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AuntieField(
-                    value = data.groomerName,
-                    onValueChange = viewModel::updateGroomerName,
-                    label = fieldLabel("Groomer Name", data.groomerName),
-                    modifier = Modifier.weight(1f),
-                )
-                AuntieField(
-                    value = data.groomerPhone,
-                    onValueChange = viewModel::updateGroomerPhone,
-                    label = fieldLabel("Groomer Phone", data.groomerPhone),
-                    modifier = Modifier.weight(1f),
-                )
-            }
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AuntieField(
-                    value = data.trainerName,
-                    onValueChange = viewModel::updateTrainerName,
-                    label = fieldLabel("Trainer Name", data.trainerName),
-                    modifier = Modifier.weight(1f),
-                )
-                AuntieField(
-                    value = data.trainerPhone,
-                    onValueChange = viewModel::updateTrainerPhone,
-                    label = fieldLabel("Trainer Phone", data.trainerPhone),
-                    modifier = Modifier.weight(1f),
-                )
-            }
-
-            AuntieField(
-                value = data.petSitterBackup,
-                onValueChange = viewModel::updatePetSitterBackup,
-                label = fieldLabel("Backup Pet Sitter", data.petSitterBackup),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            AuntieField(
-                value = data.dogWalkerBackup,
-                onValueChange = viewModel::updateDogWalkerBackup,
-                label = fieldLabel("Backup Dog Walker", data.dogWalkerBackup),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
-}
+// EmergencySafetyCard and ServiceProvidersCard were removed here 2026-08-04,
+// with their `item { }` calls above. `HouseholdDataViewModel` still exposes
+// updatePoisonControlNumber / updateGroomerName / etc: they are unused by any
+// composable now, not deleted, on the same "field survives, panel doesn't"
+// basis as the model fields themselves.

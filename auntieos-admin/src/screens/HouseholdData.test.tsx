@@ -81,20 +81,25 @@ function mount(over: Partial<{ kinfolkName: string }> = {}) {
 }
 
 describe('HouseholdData: reading the record', () => {
-  it('renders every section with the values that were read', async () => {
+  it('renders every remaining section with the values that were read', async () => {
     mount();
-    expect(await screen.findByText('Paws and Claws Grooming')).toBeInTheDocument();
-    expect(screen.getByText('Pantry, second shelf')).toBeInTheDocument();
+    expect(await screen.findByText('Pantry, second shelf')).toBeInTheDocument();
 
-    for (const title of [
-      'Veterinary',
-      'Items and locations',
-      'Routines and preferences',
-      'Emergency and safety',
-      'Service providers',
-    ]) {
+    for (const title of ['Veterinary', 'Items and locations', 'Routines and preferences']) {
       expect(screen.getByText(title)).toBeInTheDocument();
     }
+  });
+
+  it('no longer renders Emergency and safety or Service providers, dropped 2026-08-04', async () => {
+    // Operator: "I dont need this Emergency & Safety or Service Provider
+    // boxes." The fixture still carries `groomerName`, on purpose: the data
+    // is not deleted, only unrendered (lib/householdDataSchema.ts). See the
+    // next test for that half of the claim.
+    mount();
+    await screen.findByText('Pantry, second shelf');
+    expect(screen.queryByText('Emergency and safety')).not.toBeInTheDocument();
+    expect(screen.queryByText('Service providers')).not.toBeInTheDocument();
+    expect(screen.queryByText('Paws and Claws Grooming')).not.toBeInTheDocument();
   });
 
   it('names the household in the heading', async () => {
@@ -104,8 +109,8 @@ describe('HouseholdData: reading the record', () => {
 
   it('shows a blank field as "Not set" rather than hiding it, because the gaps are the point', async () => {
     mount();
-    await screen.findByText('Paws and Claws Grooming');
-    expect(screen.getByText('Evacuation plan')).toBeInTheDocument();
+    await screen.findByText('Pantry, second shelf');
+    expect(screen.getByText('Household rules')).toBeInTheDocument();
     expect(screen.getAllByText('Not set').length).toBeGreaterThan(0);
   });
 
@@ -125,7 +130,7 @@ describe('HouseholdData: reading the record', () => {
     getHouseholdData.mockReturnValue(new Promise(() => {}));
     mount();
     expect(screen.getByText(/Reading the household record/)).toBeInTheDocument();
-    expect(screen.queryByText('Paws and Claws Grooming')).not.toBeInTheDocument();
+    expect(screen.queryByText('Pantry, second shelf')).not.toBeInTheDocument();
   });
 });
 
@@ -160,7 +165,7 @@ describe('HouseholdData: empty and error are not the same thing', () => {
 describe('HouseholdData: secrets stay hidden until asked for', () => {
   it('does not put the alarm code in the DOM before it is revealed', async () => {
     mount();
-    await screen.findByText('Paws and Claws Grooming');
+    await screen.findByText('Pantry, second shelf');
 
     expect(screen.queryByText(/code 4417/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Show security system' })).toBeInTheDocument();
@@ -168,7 +173,7 @@ describe('HouseholdData: secrets stay hidden until asked for', () => {
 
   it('reveals it on request, and can hide it again', async () => {
     mount();
-    await screen.findByText('Paws and Claws Grooming');
+    await screen.findByText('Pantry, second shelf');
 
     await user.click(screen.getByRole('button', { name: 'Show security system' }));
     expect(screen.getByText(/code 4417/)).toBeInTheDocument();
@@ -177,53 +182,56 @@ describe('HouseholdData: secrets stay hidden until asked for', () => {
     expect(screen.queryByText(/code 4417/)).not.toBeInTheDocument();
   });
 
-  it('masks the documents location too, since every backup on the roster can read this record', async () => {
+  it('no longer shows or masks important documents, since Emergency and safety has no panel here', async () => {
+    // Before 2026-08-04 this was masked, not hidden: a "Show important
+    // documents" reveal button. The whole section is gone now, so there is no
+    // reveal button and no value in the DOM either, even though the fixture
+    // still carries real data for the field (it is not deleted, see
+    // lib/householdDataSchema.ts).
     getHouseholdData.mockResolvedValue(record({ importantDocumentsLocation: 'Fire safe under the stairs' }));
     mount();
-    await screen.findByText('Paws and Claws Grooming');
+    await screen.findByText('Pantry, second shelf');
 
     expect(screen.queryByText(/Fire safe under the stairs/)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Show important documents' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show important documents' })).not.toBeInTheDocument();
   });
 });
 
 describe('HouseholdData: editing a section', () => {
-  async function openProviders() {
+  // Was "openProviders", editing the (now removed) Service providers section.
+  // Items and locations is the nearest surviving generic-text section: same
+  // dialog, same save-only-this-section contract, no vet-picker involved.
+  async function openItems() {
     mount();
-    await screen.findByText('Paws and Claws Grooming');
-    await user.click(screen.getByRole('button', { name: 'Edit service providers' }));
+    await screen.findByText('Pantry, second shelf');
+    await user.click(screen.getByRole('button', { name: 'Edit items and locations' }));
     return screen.getByRole('dialog');
   }
 
   it('opens a modal that names the section and the household', async () => {
-    const dialog = await openProviders();
-    expect(within(dialog).getByText('Service providers · Nora Whitfield')).toBeInTheDocument();
+    const dialog = await openItems();
+    expect(within(dialog).getByText('Items and locations · Nora Whitfield')).toBeInTheDocument();
   });
 
   it('seeds the form from the record rather than opening blank', async () => {
-    const dialog = await openProviders();
-    expect(within(dialog).getByLabelText('Groomer')).toHaveValue('Paws and Claws Grooming');
+    const dialog = await openItems();
+    expect(within(dialog).getByLabelText('Food')).toHaveValue('Pantry, second shelf');
   });
 
-  it('rejects a phone that cannot be dialed, inline beside the field, and does not save', async () => {
-    const dialog = await openProviders();
-
-    const phone = within(dialog).getByLabelText('Groomer phone');
-    await user.clear(phone);
-    await user.type(phone, 'ask at the desk');
-    await user.click(within(dialog).getByRole('button', { name: /Save section/ }));
-
-    expect(await within(dialog).findByText(/dialed/i)).toBeInTheDocument();
-    expect(phone).toHaveAttribute('aria-invalid', 'true');
-    expect(saveHouseholdSection).not.toHaveBeenCalled();
-  });
+  // Phone-format rejection ('rejects a phone that cannot be dialed') no
+  // longer has a screen-level home: every remaining generic-editable section
+  // (Items and locations, Routines and preferences) is phone-free now that
+  // Service providers (groomerPhone, trainerPhone) is gone, and the
+  // veterinary phone fields are read-through, not typed, via the vet picker.
+  // The rule itself (`isDialablePhone` / `validateHouseholdData`) is still
+  // exercised directly in householdDataSchema.test.ts.
 
   it('rejects an em dash in Auntie voice, inline', async () => {
-    const dialog = await openProviders();
+    const dialog = await openItems();
 
-    const name = within(dialog).getByLabelText('Groomer');
-    await user.clear(name);
-    await user.type(name, 'Paws and Claws—the new one');
+    const food = within(dialog).getByLabelText('Food');
+    await user.clear(food);
+    await user.type(food, 'Pantry—second shelf');
     await user.click(within(dialog).getByRole('button', { name: /Save section/ }));
 
     expect(await within(dialog).findByText(/does not use dashes/i)).toBeInTheDocument();
@@ -231,42 +239,42 @@ describe('HouseholdData: editing a section', () => {
   });
 
   it('saves only the edited section, updates the view, and raises a toast', async () => {
-    const dialog = await openProviders();
+    const dialog = await openItems();
     saveHouseholdSection.mockImplementation(
       async (current: HouseholdRecord, patch: Partial<HouseholdRecord>) => ({ ...current, ...patch }),
     );
 
-    const name = within(dialog).getByLabelText('Groomer');
-    await user.clear(name);
-    await user.type(name, 'Shaggy Chic');
+    const food = within(dialog).getByLabelText('Food');
+    await user.clear(food);
+    await user.type(food, 'Top pantry shelf');
     await user.click(within(dialog).getByRole('button', { name: /Save section/ }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
-    // Only this section's six keys travelled, never all thirty.
+    // Only this section's seven keys travelled, never every field on the record.
     const patch = saveHouseholdSection.mock.calls[0]?.[1] as Record<string, string>;
-    expect(patch['groomerName']).toBe('Shaggy Chic');
-    expect(patch).not.toHaveProperty('foodLocation');
+    expect(patch['foodLocation']).toBe('Top pantry shelf');
+    expect(patch).not.toHaveProperty('householdRules');
     // And never the retired vet keys, which nothing writes any more.
     expect(patch).not.toHaveProperty('primaryVetName');
 
-    expect(await screen.findByText('Shaggy Chic')).toBeInTheDocument();
-    expect(await screen.findByText(/Saved service providers for Nora Whitfield/)).toBeInTheDocument();
+    expect(await screen.findByText('Top pantry shelf')).toBeInTheDocument();
+    expect(await screen.findByText(/Saved items and locations for Nora Whitfield/)).toBeInTheDocument();
   });
 
   it('surfaces a rejected save in a persistent banner and keeps the operator-s edits', async () => {
-    const dialog = await openProviders();
+    const dialog = await openItems();
     saveHouseholdSection.mockRejectedValue(new Error('permission-denied'));
 
-    const name = within(dialog).getByLabelText('Groomer');
-    await user.clear(name);
-    await user.type(name, 'Shaggy Chic');
+    const food = within(dialog).getByLabelText('Food');
+    await user.clear(food);
+    await user.type(food, 'Top pantry shelf');
     await user.click(within(dialog).getByRole('button', { name: /Save section/ }));
 
     expect(await within(dialog).findByText(/permission-denied/)).toBeInTheDocument();
     // Still open, still holding what was typed. A failed save is not a lost edit.
-    expect(within(dialog).getByLabelText('Groomer')).toHaveValue('Shaggy Chic');
-    expect(screen.queryByText(/Saved service providers/)).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Food')).toHaveValue('Top pantry shelf');
+    expect(screen.queryByText(/Saved items and locations/)).not.toBeInTheDocument();
   });
 
   it('starts the record from the empty state, so a first save is not a special case', async () => {
@@ -294,7 +302,7 @@ describe('HouseholdData: editing a section', () => {
 
   it('hides a typed secret behind a reveal in the editor too', async () => {
     mount();
-    await screen.findByText('Paws and Claws Grooming');
+    await screen.findByText('Pantry, second shelf');
     await user.click(screen.getByRole('button', { name: 'Edit routines and preferences' }));
     const dialog = screen.getByRole('dialog');
 

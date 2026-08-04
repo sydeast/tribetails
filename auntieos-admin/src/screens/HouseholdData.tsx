@@ -39,8 +39,17 @@ interface HouseholdDataProps {
  *
  * The android screen is a single scrolling form: 30 always-editable inputs
  * across five cards, one Save button at the bottom, and a whole-document write
- * when you press it. This port keeps all five sections and all 30 fields, and
- * changes two things on purpose.
+ * when you press it. This port originally kept all five sections and all 30
+ * fields, and changed two things on purpose.
+ *
+ * As of 2026-08-04 this screen renders THREE sections, not five. The operator,
+ * looking at this modal-edit UI: "I dont need this Emergency & Safety or
+ * Service Provider boxes." Both are gone from `HOUSEHOLD_SECTIONS`
+ * (lib/householdDataSchema.ts); their ten fields are untouched in Firestore
+ * and in `HouseholdRecord`, just unrendered here, pending the household/
+ * family-page redesign that gives emergency contacts a home of their own. See
+ * the removal comment there before adding either section back or deleting
+ * their fields.
  *
  *  READ FIRST, EDIT ON REQUEST. The resting state is a legible record: what is
  *  on file, what is still blank, section by section. This screen is read at a
