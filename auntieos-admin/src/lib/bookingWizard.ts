@@ -84,7 +84,22 @@ export interface CommunicationChoice {
 
 export interface WizardState {
   kinfolkId: string;
-  /** The Kin these visits are for. Empty means the whole household. */
+  /**
+   * OPERATOR RULING R1: a KinCare session covers ALL Kin in the household. That
+   * is the DEFAULT and costs the operator zero interaction; narrowing to a
+   * subset is an explicit opt-in behind a control.
+   *
+   * True (the initial value) means every Kin on the household's roster. The
+   * roster itself is NOT stored here. [resolveKinIds] resolves it at submit
+   * time off the live read, so a household whose Kin list was still loading
+   * when step 1 rendered cannot freeze a stale answer into the payload.
+   */
+  allKinMode: boolean;
+  /**
+   * The Kin picked while [allKinMode] is off. Ignored entirely while it is on,
+   * so backing out of "Choose specific Kin" restores the whole household rather
+   * than quietly keeping a half-made selection on the wire.
+   */
   kinIds: string[];
   /** Step 2's pick. Seeds every new visit row; a row can then be changed. */
   serviceName: string;
@@ -124,6 +139,8 @@ export function newSlot(over: Partial<VisitSlot> = {}): VisitSlot {
 export function initialWizardState(): WizardState {
   return {
     kinfolkId: '',
+    // R1: whole household, with nothing to click.
+    allKinMode: true,
     kinIds: [],
     serviceName: '',
     serviceId: null,
@@ -137,6 +154,27 @@ export function initialWizardState(): WizardState {
     communication: { emailConfirmation: false, timeVisibility: false },
     notes: '',
   };
+}
+
+/**
+ * The Kin this booking actually covers: the whole household by default (R1), or
+ * exactly the subset the operator opted in to.
+ *
+ * [householdKinIds] is the live roster read for `state.kinfolkId`. Resolving
+ * here rather than mirroring the roster into `state.kinIds` on every load keeps
+ * one source of truth: the payload can never name a Kin who has since been
+ * removed from the household, and can never miss one added while the wizard was
+ * open.
+ *
+ * In specific-Kin mode the picked ids are INTERSECTED with the roster, for the
+ * same reason: a Kin removed mid-wizard must not survive on the wire.
+ */
+export function resolveKinIds(
+  state: WizardState,
+  householdKinIds: readonly string[],
+): string[] {
+  if (state.allKinMode) return [...householdKinIds];
+  return householdKinIds.filter((id) => state.kinIds.includes(id));
 }
 
 // ── steps ────────────────────────────────────────────────────────────────────
@@ -664,17 +702,28 @@ export function isOverridableBusyRefusal(err: unknown, alreadyOverridden: boolea
  * `overrideBusyConflict: true` on the wire, which is the flag's entire point and
  * which nothing on this surface set until now.
  *
- * `overrideBusyConflict` is only ever `true` on that explicit retry. `notes` and
- * `kinIds` are omitted rather than sent blank: the callable treats an omitted
- * key and a blank value identically, so sending the blank is noise on the wire.
+ * `overrideBusyConflict` is only ever `true` on that explicit retry. `notes` is
+ * omitted rather than sent blank: the callable treats an omitted key and a blank
+ * value identically, so sending the blank is noise on the wire.
+ *
+ * `kinIds` is the opposite case, and that is the R1 fix. It used to be omitted
+ * whenever nothing was picked, and the server stored the omission literally, so
+ * a whole-household booking persisted as "covers nobody" and rendered as
+ * "Not set" everywhere downstream. It now carries the RESOLVED ROSTER, the
+ * same thing the Kinfolk portal's wizard has always sent, so the document says
+ * out loud who the visit is for. [householdKinIds] is the live roster for
+ * `state.kinfolkId`; an empty one (no Kin on file, or the read failed) still
+ * omits the key, and the server materializes the roster itself as a backstop.
  */
 export function bookingSubmission(
   state: WizardState,
+  householdKinIds: readonly string[],
   overrideBusyConflict = false,
 ): CreateMultiDateBookingRequestArgs {
+  const kinIds = resolveKinIds(state, householdKinIds);
   return {
     kinfolkId: state.kinfolkId,
-    ...(state.kinIds.length > 0 && { kinIds: state.kinIds }),
+    ...(kinIds.length > 0 && { kinIds }),
     ...(state.notes.trim() !== '' && { notes: state.notes.trim() }),
     pattern: state.mode === 'weekly' ? 'weekly' : 'individual',
     ...(state.mode === 'weekly' && { weeklyDays: state.weeklyDays }),

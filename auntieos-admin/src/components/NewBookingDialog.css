@@ -301,6 +301,31 @@
   color: var(--color-text-dim);
   font-size: var(--type-body-sm-size);
 }
+/* R1: the whole-household default is a stated panel, not an unticked picker,
+   because covering every Kin is what a booking IS unless someone narrows it. */
+.nbw__allkin {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: var(--space-3);
+  border: var(--border-hairline) solid var(--color-primary);
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+}
+.nbw__allkin-title {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.nbw__allkin-names {
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+}
+.nbw__allkin-toggle {
+  margin-top: var(--space-2);
+}
+.nbw__kin {
+  margin-top: var(--space-2);
+}
 .nbw__kin,
 .nbw__services,
 .nbw__modes {

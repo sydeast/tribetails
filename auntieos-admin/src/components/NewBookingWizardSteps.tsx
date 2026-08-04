@@ -100,6 +100,20 @@ export function Stepper({ current, reachable, onJump }: StepperProps) {
 
 // ── step 1: kinfolk and kin ──────────────────────────────────────────────────
 
+/** One Kin's display name, never blank. */
+export function kinLabel(k: Kin): string {
+  const name = (k.name ?? '').trim();
+  return name === '' ? 'Unnamed Kin' : name;
+}
+
+/**
+ * The household's whole roster on one line, so "All Kin in this home" names the
+ * animals instead of asserting a coverage the operator cannot check.
+ */
+export function kinRosterLabel(kin: readonly Kin[]): string {
+  return kin.map(kinLabel).join(', ');
+}
+
 export interface ClientStepProps {
   state: WizardState;
   onChange: (next: WizardState) => void;
@@ -142,10 +156,10 @@ export function ClientStep({
           className="new-booking__input"
           value={state.kinfolkId}
           onChange={(e) =>
-            // Changing household clears the Kin: the previous household's Kin
-            // are not this one's, and carrying them over would file a booking
-            // for animals that live somewhere else.
-            onChange({ ...state, kinfolkId: e.target.value, kinIds: [] })
+            // Changing household clears the Kin AND returns to the R1 default:
+            // the previous household's Kin are not this one's, and a narrowing
+            // decision made about one home says nothing about another.
+            onChange({ ...state, kinfolkId: e.target.value, allKinMode: true, kinIds: [] })
           }
         >
           <option value="">{householdsLoading ? 'Loading households…' : 'Choose a household…'}</option>
@@ -165,7 +179,7 @@ export function ClientStep({
       {state.kinfolkId !== '' && (
         <div className="new-booking__field">
           <span className="new-booking__label" id="new-booking-kin-label">
-            Kin on this booking
+            Kin covered
           </span>
           {kinError !== null ? (
             <span className="new-booking__error" role="alert">
@@ -179,39 +193,68 @@ export function ClientStep({
               No Kin on this household yet. The booking covers the household.
             </span>
           ) : (
-            <div className="nbw__kin" role="group" aria-labelledby="new-booking-kin-label">
-              {kin.map((k) => {
-                const picked = state.kinIds.includes(k._id);
-                return (
-                  <label key={k._id} className={picked ? 'nbw__kin-chip nbw__kin-chip--on' : 'nbw__kin-chip'}>
-                    <input
-                      type="checkbox"
-                      checked={picked}
-                      onChange={() =>
-                        onChange({
-                          ...state,
-                          kinIds: picked
-                            ? state.kinIds.filter((id) => id !== k._id)
-                            : [...state.kinIds, k._id],
-                        })
-                      }
-                    />
-                    <span>{(k.name ?? '').trim() === '' ? 'Unnamed Kin' : k.name}</span>
-                  </label>
-                );
-              })}
+            <div role="group" aria-labelledby="new-booking-kin-label">
+              {/* R1, the operator's ruling: KinCare covers EVERY Kin in the home.
+                  "I wouldn't go into a home and care for one kin while ignoring
+                  the other." So all of them is the default and takes no click;
+                  narrowing to a subset is the thing you have to ask for. Same
+                  shape the Kinfolk portal's wizard has always had
+                  (mytribe/web/src/screens/BookingWizard.tsx Step1KinSelect). */}
+              <div className="nbw__allkin">
+                <div className="nbw__allkin-title">All Kin in this home</div>
+                <span className="nbw__allkin-names">{kinRosterLabel(kin)}</span>
+              </div>
+
+              <GhostButton
+                label={state.allKinMode ? 'Choose specific Kin' : 'Cover all Kin instead'}
+                onClick={() =>
+                  // Leaving specific-Kin mode drops the partial pick rather than
+                  // parking it: a selection that is not on the wire must not sit
+                  // in the UI looking like it is.
+                  onChange({ ...state, allKinMode: !state.allKinMode, kinIds: [] })
+                }
+                className="nbw__allkin-toggle"
+              />
+
+              {!state.allKinMode && (
+                <div className="nbw__kin">
+                  {kin.map((k) => {
+                    const picked = state.kinIds.includes(k._id);
+                    return (
+                      <label
+                        key={k._id}
+                        className={picked ? 'nbw__kin-chip nbw__kin-chip--on' : 'nbw__kin-chip'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={picked}
+                          onChange={() =>
+                            onChange({
+                              ...state,
+                              kinIds: picked
+                                ? state.kinIds.filter((id) => id !== k._id)
+                                : [...state.kinIds, k._id],
+                            })
+                          }
+                        />
+                        <span>{kinLabel(k)}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
           {kinTruncated && (
             <Banner tone="warning" title="More Kin than fit">
-              This household&rsquo;s roster hit the {KIN_ROSTER_MAX}-row read limit, so there may be
-              Kin missing from the list above. Leave the list empty to book for the whole household,
-              which covers every Kin whether or not it is shown here.
+              This household&rsquo;s roster hit the {KIN_ROSTER_MAX}-row read limit, so Kin may be
+              missing above and &ldquo;All Kin in this home&rdquo; can only cover the ones it read.
+              Check the household&rsquo;s Kin list before booking.
             </Banner>
           )}
-          {kin !== null && kin.length > 0 && state.kinIds.length === 0 && (
+          {!state.allKinMode && kin !== null && kin.length > 0 && state.kinIds.length === 0 && (
             <span className="new-booking__hint">
-              None picked, so the booking covers the whole household.
+              No Kin picked yet. Pick at least one, or go back to covering all of them.
             </span>
           )}
         </div>
@@ -695,8 +738,15 @@ export function ReviewStep({
         <div className="nbw__review-row">
           <div>
             <span className="nbw__review-head">{householdLabel}</span>
+            {/* R1: names the Kin either way. "The whole household" used to stand
+                in for an EMPTY kinIds, which is exactly the emptiness that then
+                got persisted and rendered as "Not set" downstream. */}
             <span className="nbw__review-sub">
-              {kinLabels.length === 0 ? 'The whole household' : kinLabels.join(', ')}
+              {kinLabels.length === 0
+                ? 'No Kin on file for this household'
+                : state.allKinMode
+                  ? `All Kin in this home: ${kinLabels.join(', ')}`
+                  : kinLabels.join(', ')}
             </span>
           </div>
           <GhostButton label="Edit household" onClick={() => onEditStep('client')} />

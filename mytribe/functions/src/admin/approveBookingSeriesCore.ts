@@ -3,7 +3,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { resolveKinNames } from '../lib/resolveKinNames';
+import { materializeKinRoster } from '../lib/kinRoster';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 
@@ -130,14 +130,21 @@ export async function approveBookingSeriesCore(opts: {
           firestore: db(),
           visits: [{ startTimeMs: Date.parse(startIso), endTimeMs: endIso ? Date.parse(endIso) : null }],
         });
-        const kinIds = Array.isArray(data.kinIds)
+        const statedKinIds = Array.isArray(data.kinIds)
           ? (data.kinIds as unknown[]).filter((k): k is string => typeof k === 'string')
           : [];
         // Same resolve requestBooking's writeEnvelope uses: this is the session
         // doc the auntie actually runs, and Android's Schedule Pets line reads
         // straight off of it, so a hardcoded [] here is the same bug even
         // though this write never wrote the literal `kinNames: []`.
-        const kinNames = await resolveKinNames(kinfolkId, kinIds);
+        //
+        // R1 applies at approve time too, and this is the one path that repairs
+        // history in flight: an envelope written BEFORE the roster was
+        // materialized still carries `kinIds: []`, and approving it would
+        // otherwise mint a session covering nobody. Materializing here stamps
+        // the roster as it stands the day the visit is confirmed, which is the
+        // roster the Auntie will actually meet.
+        const { kinIds, kinNames } = await materializeKinRoster(kinfolkId, statedKinIds);
         await sessionRef.set({
           kinfolkId,
           kinfolkName,

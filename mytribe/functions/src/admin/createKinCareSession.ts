@@ -8,7 +8,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { resolveKinNames } from '../lib/resolveKinNames';
+import { materializeKinRoster } from '../lib/kinRoster';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 
@@ -69,10 +69,12 @@ export async function createKinCareSessionHandler(
     visits: [{ startTimeMs: Date.parse(args.startTime), endTimeMs: Date.parse(args.endTime) }],
   });
 
-  const kinNames = await resolveKinNames(args.kinfolkId, args.kinIds);
+  // R1: no kinIds stated means the whole household, materialized here rather
+  // than stored as the literal `[]` (see lib/kinRoster.ts).
+  const { kinIds, kinNames } = await materializeKinRoster(args.kinfolkId, args.kinIds);
   const ref = await db().collection('kin_care_sessions').add({
     kinfolkId: args.kinfolkId,
-    kinIds: args.kinIds,
+    kinIds,
     kinNames,
     serviceType: args.serviceType,
     startTime: args.startTime,

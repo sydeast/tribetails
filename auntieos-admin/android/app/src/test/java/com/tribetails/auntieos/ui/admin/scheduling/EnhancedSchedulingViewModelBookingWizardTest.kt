@@ -90,14 +90,19 @@ class EnhancedSchedulingViewModelBookingWizardTest {
 
     private val monday = LocalDate.of(2027, 8, 2)
 
+    /** The chosen household's live Kin roster, as the wizard reads it. */
+    private val roster = listOf("kin-a", "kin-b")
+
     /** A complete wizard state: household, kin, service, two dates, both switches, notes. */
     private fun readySubmission(): BookingWizardSubmission = bookingSubmission(
         BookingWizardState(kinfolkId = "kf1")
+            .withAllKinMode(false)
             .toggleKin("kin-a")
             .withServiceName("Dog Walking")
             .toggleDate(monday)
             .toggleDate(monday.plusDays(1))
             .copy(emailConfirmation = true, timeVisibility = true, notes = "Gate code 1234"),
+        roster,
     )
 
     private fun submit(vm: EnhancedSchedulingViewModel, s: BookingWizardSubmission) =
@@ -156,8 +161,12 @@ class EnhancedSchedulingViewModelBookingWizardTest {
         assertTrue(state.seriesActionMessage!!.contains("2 visit(s)"))
     }
 
+    // R1: the wizard no longer HAS an "empty kin selection" in the ordinary
+    // case: nothing tapped means the whole household, and the roster goes on
+    // the wire. The only empty payload left is a household with no Kin on file,
+    // and that one is still sent as an omitted field rather than an empty array.
     @Test
-    fun `an empty kin selection is sent as an omitted field, not an empty array`() = runTest(testDispatcher) {
+    fun `covering every kin sends the whole roster, not an omitted field`() = runTest(testDispatcher) {
         coEvery {
             bookingRepo.createMultiDateBookingRequest(
                 any(), any(), any(), any(), any(), any(), any(), any(), any(),
@@ -169,6 +178,32 @@ class EnhancedSchedulingViewModelBookingWizardTest {
             vm,
             bookingSubmission(
                 BookingWizardState(kinfolkId = "kf1").withServiceName("Dog Walking").toggleDate(monday),
+                roster,
+            ),
+        )
+        advanceUntilIdle()
+
+        coVerify {
+            bookingRepo.createMultiDateBookingRequest(
+                any(), any(), any(), any(), any(), roster, any(), any(), any(),
+            )
+        }
+    }
+
+    @Test
+    fun `a household with no kin on file is sent as an omitted field, not an empty array`() = runTest(testDispatcher) {
+        coEvery {
+            bookingRepo.createMultiDateBookingRequest(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            )
+        } returns Result.success(MultiDateBookingResult("batch1", listOf("v1"), 1))
+
+        val vm = buildViewModel()
+        submit(
+            vm,
+            bookingSubmission(
+                BookingWizardState(kinfolkId = "kf1").withServiceName("Dog Walking").toggleDate(monday),
+                emptyList(),
             ),
         )
         advanceUntilIdle()

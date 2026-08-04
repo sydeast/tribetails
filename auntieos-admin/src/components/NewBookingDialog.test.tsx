@@ -203,7 +203,19 @@ describe('NewBookingDialog wizard shell', () => {
 });
 
 describe('NewBookingDialog step 1: client and pets', () => {
-  it('offers the household\'s active Kin and sends the picked ids', async () => {
+  /** Flips step 1 out of the whole-household default into the per-Kin picker. */
+  const chooseSpecificKin = () =>
+    userEvent.click(screen.getByRole('button', { name: 'Choose specific Kin' }));
+
+  // OPERATOR RULING R1, verbatim: "all KinCare sessions covers ALL KIN in the
+  // family … I wouldn't go into a home and care for one kin while ignoring the
+  // other. All kin in the home will receive care."
+  //
+  // This replaces a test that asserted the opposite: that picking nothing sent
+  // NO kinIds. The server persisted that omission literally, so the ORDINARY
+  // booking (the whole household) was stored as covering nobody and read back
+  // downstream as "Not set" / "your kin".
+  it("covers ALL the household's Kin by default, with nothing clicked, and sends the roster", async () => {
     feed({
       kin: {
         status: 'ready',
@@ -214,6 +226,36 @@ describe('NewBookingDialog step 1: client and pets', () => {
     render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
 
     await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    // The default states the coverage and names the animals. There is no picker
+    // to touch until the operator asks for one.
+    expect(screen.getByText('All Kin in this home')).toBeInTheDocument();
+    expect(screen.getByText('Biscuit, Gravy')).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Biscuit' })).toBeNull();
+
+    await next();
+    await userEvent.type(screen.getByPlaceholderText('e.g. Dog Walk'), 'Walk');
+    await next();
+    await pickDay(/Mon, Aug 23/);
+    await toReview();
+    await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
+
+    await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
+    // kf2's Kin is not on it: the roster is scoped to the chosen household.
+    expect(createMultiDateBookingRequest.mock.calls[0]![0].kinIds).toEqual(['k1', 'k2']);
+  });
+
+  it("offers the household's active Kin behind the opt-in, and sends the picked ids", async () => {
+    feed({
+      kin: {
+        status: 'ready',
+        data: [kin(), kin({ _id: 'k2', name: 'Gravy' }), kin({ _id: 'k3', name: 'Elsewhere', kinfolkId: 'kf2' })],
+      },
+    });
+    createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await chooseSpecificKin();
     // kf2's Kin is not offered here.
     expect(screen.queryByRole('checkbox', { name: 'Elsewhere' })).toBeNull();
     await userEvent.click(screen.getByRole('checkbox', { name: 'Biscuit' }));
@@ -228,12 +270,33 @@ describe('NewBookingDialog step 1: client and pets', () => {
     expect(createMultiDateBookingRequest.mock.calls[0]![0].kinIds).toEqual(['k1']);
   });
 
-  it('says the booking covers the household when no Kin is picked, and sends no kinIds', async () => {
-    feed({ kin: { status: 'ready', data: [kin()] } });
+  it('backing out of the opt-in returns to covering every Kin, dropping the partial pick', async () => {
+    feed({ kin: { status: 'ready', data: [kin(), kin({ _id: 'k2', name: 'Gravy' })] } });
+    createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await chooseSpecificKin();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Biscuit' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cover all Kin instead' }));
+
+    await next();
+    await userEvent.type(screen.getByPlaceholderText('e.g. Dog Walk'), 'Walk');
+    await next();
+    await pickDay(/Mon, Aug 23/);
+    await toReview();
+    await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
+
+    await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
+    expect(createMultiDateBookingRequest.mock.calls[0]![0].kinIds).toEqual(['k1', 'k2']);
+  });
+
+  it('sends no kinIds only when the household genuinely has no Kin on file', async () => {
+    feed({ kin: { status: 'ready', data: [] } });
     createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
     render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
     await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
-    expect(screen.getByText(/covers the whole household/i)).toBeInTheDocument();
+    expect(screen.getByText(/No Kin on this household yet/i)).toBeInTheDocument();
     await next();
     await userEvent.type(screen.getByPlaceholderText('e.g. Dog Walk'), 'Walk');
     await next();
@@ -250,8 +313,10 @@ describe('NewBookingDialog step 1: client and pets', () => {
     });
     render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
     await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await chooseSpecificKin();
     await userEvent.click(screen.getByRole('checkbox', { name: 'Biscuit' }));
     await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf2');
+    await chooseSpecificKin();
     expect(screen.getByRole('checkbox', { name: 'Elsewhere' })).not.toBeChecked();
   });
 

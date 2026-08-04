@@ -114,11 +114,17 @@ data class VisitLocationSummary(
     val photoLocations: Int = 0 // Number of photos taken during visit
 )
 
-// Enhanced KinCareSession with location tracking
+// Enhanced KinCareSession with location tracking.
+//
+// The singular `kinId` this used to carry is GONE. It modelled a session
+// belonging to ONE Kin, which is the exact thing operator ruling R1 forbids: a
+// KinCare session covers every Kin in the household. It was also never read
+// anywhere in the app (declared here, referenced nowhere), so it was a wrong
+// model with no users. The plural roster lives on `KinCareSession.kinIds` /
+// `kinNames`, which is what every reader actually uses.
 @Keep
 data class KinCareSessionWithLocation(
     @DocumentId val id: String = "",
-    var kinId: String = "",
     var kinfolkId: String = "",
     var startTime: String = "",
     var endTime: String = "",

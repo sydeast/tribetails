@@ -20,6 +20,7 @@ import {
   plannedDayIsos,
   plannedServiceNames,
   plannedVisitTimes,
+  resolveKinIds,
   wizardTotal,
   BOOKING_BUSY_CONFLICT_CODE,
   COMPANY_HOLIDAY_CONFLICT_CODE,
@@ -49,6 +50,9 @@ afterAll(() => {
 });
 
 const PAST = Date.parse('2020-01-01T00:00:00Z');
+
+/** The chosen household's live Kin roster, as the dialog reads it. */
+const ROSTER = ['k1', 'k2'];
 
 function ready(over: Partial<WizardState> = {}): WizardState {
   const base = initialWizardState();
@@ -360,19 +364,46 @@ describe('the services Review reports', () => {
   });
 });
 
+describe('resolveKinIds, R1: all Kin, unless deliberately narrowed', () => {
+  it('is the whole roster in the default mode', () => {
+    expect(resolveKinIds(ready(), ROSTER)).toEqual(['k1', 'k2']);
+  });
+
+  it('is the picked subset once the operator opts in', () => {
+    expect(resolveKinIds(ready({ allKinMode: false, kinIds: ['k2'] }), ROSTER)).toEqual(['k2']);
+  });
+
+  it('drops a picked Kin who is no longer on the household roster', () => {
+    expect(resolveKinIds(ready({ allKinMode: false, kinIds: ['k2', 'gone'] }), ROSTER)).toEqual([
+      'k2',
+    ]);
+  });
+
+  it('reflects a roster that grew while the wizard was open', () => {
+    expect(resolveKinIds(ready(), [...ROSTER, 'k3'])).toEqual(['k1', 'k2', 'k3']);
+  });
+
+  it('ignores a stale subset entirely while all-Kin mode is on', () => {
+    expect(resolveKinIds(ready({ kinIds: ['k1'] }), ROSTER)).toEqual(['k1', 'k2']);
+  });
+});
+
 describe('the submission, and the one refusal an operator may override', () => {
   // DEFECT 1. `overrideBusyConflict` had ZERO occurrences under src/ outside the
   // generated contract: the server honored a flag no web caller ever sent.
   it('sends the override ONLY on an explicit Create anyway', () => {
     const state = toggleDay(ready(), '2026-08-03');
-    expect(bookingSubmission(state)).not.toHaveProperty('overrideBusyConflict');
-    expect(bookingSubmission(state, true).overrideBusyConflict).toBe(true);
+    expect(bookingSubmission(state, ROSTER)).not.toHaveProperty('overrideBusyConflict');
+    expect(bookingSubmission(state, ROSTER, true).overrideBusyConflict).toBe(true);
   });
 
   it('carries the whole payload, so a new callable field cannot be silently dropped', () => {
-    let state = toggleDay(ready({ kinIds: ['k1'], notes: '  gate code 1234  ' }), '2026-08-03');
+    let state = toggleDay(
+      ready({ allKinMode: false, kinIds: ['k1'], notes: '  gate code 1234  ' }),
+      '2026-08-03',
+    );
     state = { ...state, communication: { emailConfirmation: true, timeVisibility: false } };
-    expect(bookingSubmission(state, true)).toEqual({
+    expect(bookingSubmission(state, ROSTER, true)).toEqual({
       kinfolkId: 'kf1',
       kinIds: ['k1'],
       notes: 'gate code 1234',
@@ -382,6 +413,26 @@ describe('the submission, and the one refusal an operator may override', () => {
       communication: { emailConfirmation: true, timeVisibility: false },
       overrideBusyConflict: true,
     });
+  });
+
+  // OPERATOR RULING R1: "all KinCare sessions covers ALL KIN in the family."
+  // The payload used to OMIT kinIds whenever nothing was picked, and the server
+  // persisted the omission literally, so the ORDINARY whole-household booking
+  // was stored as covering nobody and read back as "Not set".
+  it('sends the WHOLE household roster by default, with nothing clicked', () => {
+    const state = toggleDay(ready(), '2026-08-03');
+    expect(state.allKinMode).toBe(true);
+    expect(bookingSubmission(state, ROSTER).kinIds).toEqual(['k1', 'k2']);
+  });
+
+  it('sends only the opted-in subset once the operator narrows it', () => {
+    const state = toggleDay(ready({ allKinMode: false, kinIds: ['k2'] }), '2026-08-03');
+    expect(bookingSubmission(state, ROSTER).kinIds).toEqual(['k2']);
+  });
+
+  it('omits kinIds only when the household genuinely has no Kin on file', () => {
+    const state = toggleDay(ready(), '2026-08-03');
+    expect(bookingSubmission(state, [])).not.toHaveProperty('kinIds');
   });
 
   it('reads the server code off details, not off the message text', () => {

@@ -22,6 +22,9 @@ class BookingWizardTest {
     private val now = LocalDate.of(2027, 1, 1)
         .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
 
+    /** The chosen household's live Kin roster, as the wizard reads it. */
+    private val roster = listOf("kin-a", "kin-b")
+
     private fun readyState(): BookingWizardState =
         BookingWizardState(kinfolkId = "kf1")
             .withServiceName("Dog Walking")
@@ -41,21 +44,69 @@ class BookingWizardTest {
         assertNull(stepBlocker(empty.withKinfolk("kf1"), BookingWizardStep.CLIENT, now))
     }
 
+    // OPERATOR RULING R1, verbatim: "all KinCare sessions covers ALL KIN in the
+    // family … I wouldn't go into a home and care for one kin while ignoring the
+    // other. All kin in the home will receive care."
     @Test
-    fun `changing household drops the previous household's kin`() {
+    fun `a fresh wizard covers every kin in the home, with nothing tapped`() {
+        val state = BookingWizardState().withKinfolk("kf1")
+        assertTrue("all-Kin is the default", state.allKinMode)
+        assertEquals(roster, resolveKinIds(state, roster))
+    }
+
+    @Test
+    fun `narrowing to specific kin is an explicit opt-in and sends only those`() {
         val state = BookingWizardState()
             .withKinfolk("kf1")
+            .withAllKinMode(false)
+            .toggleKin("kin-b")
+        assertEquals(listOf("kin-b"), resolveKinIds(state, roster))
+    }
+
+    @Test
+    fun `leaving the opt-in returns to the whole home and drops the partial pick`() {
+        val state = BookingWizardState()
+            .withKinfolk("kf1")
+            .withAllKinMode(false)
+            .toggleKin("kin-b")
+            .withAllKinMode(true)
+        assertEquals(emptyList<String>(), state.kinIds)
+        assertEquals(roster, resolveKinIds(state, roster))
+    }
+
+    @Test
+    fun `a picked kin who has left the household never reaches the wire`() {
+        val state = BookingWizardState()
+            .withKinfolk("kf1")
+            .withAllKinMode(false)
+            .toggleKin("kin-b")
+            .toggleKin("kin-gone")
+        assertEquals(listOf("kin-b"), resolveKinIds(state, roster))
+    }
+
+    @Test
+    fun `a roster that grew while the wizard was open is covered too`() {
+        val state = BookingWizardState().withKinfolk("kf1")
+        assertEquals(roster + "kin-c", resolveKinIds(state, roster + "kin-c"))
+    }
+
+    @Test
+    fun `changing household drops the previous household's kin and restores the default`() {
+        val state = BookingWizardState()
+            .withKinfolk("kf1")
+            .withAllKinMode(false)
             .toggleKin("kin-a")
             .toggleKin("kin-b")
         assertEquals(listOf("kin-a", "kin-b"), state.kinIds)
 
         val moved = state.withKinfolk("kf2")
         assertEquals(emptyList<String>(), moved.kinIds)
+        assertTrue("a new household starts back at all-Kin", moved.allKinMode)
     }
 
     @Test
     fun `re-picking the same household keeps the kin already chosen`() {
-        val state = BookingWizardState().withKinfolk("kf1").toggleKin("kin-a")
+        val state = BookingWizardState().withKinfolk("kf1").withAllKinMode(false).toggleKin("kin-a")
         assertEquals(listOf("kin-a"), state.withKinfolk("kf1").kinIds)
     }
 
@@ -287,11 +338,12 @@ class BookingWizardTest {
     @Test
     fun `the happy path builds every payload field the callable takes`() {
         val state = readyState()
+            .withAllKinMode(false)
             .toggleKin("kin-a")
             .toggleDate(tuesday)
             .copy(emailConfirmation = true, timeVisibility = true, notes = "  Gate code 1234  ")
 
-        val submission = bookingSubmission(state)
+        val submission = bookingSubmission(state, roster)
 
         assertEquals("kf1", submission.kinfolkId)
         assertEquals(listOf("kin-a"), submission.kinIds)
@@ -315,21 +367,37 @@ class BookingWizardTest {
             .toggleWeekday(5)
             .toggleWeekday(1)
 
-        val submission = bookingSubmission(state)
+        val submission = bookingSubmission(state, roster)
         assertEquals("weekly", submission.pattern)
         assertEquals(listOf(1, 5), submission.weeklyDays)
         assertEquals(4, submission.visits.size)
     }
 
+    // R1: the payload used to carry whatever was ticked, which was normally
+    // NOTHING, and the server persisted that omission literally, so the
+    // ordinary whole-household booking was stored as covering nobody.
+    @Test
+    fun `the default submission carries the whole household roster`() {
+        assertEquals(roster, bookingSubmission(readyState(), roster).kinIds)
+    }
+
+    @Test
+    fun `a household with no kin on file still submits, with an empty roster`() {
+        assertEquals(emptyList<String>(), bookingSubmission(readyState(), emptyList()).kinIds)
+    }
+
     @Test
     fun `blank notes travel as null, not as an empty string`() {
-        assertNull(bookingSubmission(readyState().copy(notes = "   ")).notes)
+        assertNull(bookingSubmission(readyState().copy(notes = "   "), roster).notes)
     }
 
     @Test
     fun `the override flag is only ever set by an explicit Create anyway`() {
-        assertEquals(false, bookingSubmission(readyState()).overrideBusyConflict)
-        assertEquals(true, bookingSubmission(readyState(), overrideBusyConflict = true).overrideBusyConflict)
+        assertEquals(false, bookingSubmission(readyState(), roster).overrideBusyConflict)
+        assertEquals(
+            true,
+            bookingSubmission(readyState(), roster, overrideBusyConflict = true).overrideBusyConflict,
+        )
     }
 
     @Test

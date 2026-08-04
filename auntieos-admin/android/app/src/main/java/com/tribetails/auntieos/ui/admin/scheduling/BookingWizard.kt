@@ -99,7 +99,23 @@ data class DayPlan(val date: LocalDate, val visits: List<VisitSlot>)
 data class BookingWizardState(
     /** Step 1 -> `kinfolkId`. */
     val kinfolkId: String = "",
-    /** Step 1 -> `kinIds` (omitted from the payload when empty, as on web). */
+    /**
+     * OPERATOR RULING R1: a KinCare session covers ALL Kin in the household.
+     * That is the DEFAULT and costs the operator zero interaction; narrowing to
+     * a subset is an explicit opt-in behind a control.
+     *
+     * True (the initial value) means every Kin on the household's roster. The
+     * roster is NOT stored here. [resolveKinIds] resolves it against the live
+     * read at submit time, so a roster that loaded (or changed) after step 1
+     * rendered cannot freeze a stale answer into the payload. Web does the same
+     * (`src/lib/bookingWizard.ts#resolveKinIds`).
+     */
+    val allKinMode: Boolean = true,
+    /**
+     * Step 1 -> `kinIds`: the Kin picked while [allKinMode] is off. Ignored
+     * entirely while it is on, so backing out of "Choose specific Kin" restores
+     * the whole household rather than keeping a half-made selection on the wire.
+     */
     val kinIds: List<String> = emptyList(),
     /** Step 2 -> seeds every visit's `serviceName`. */
     val serviceName: String = "",
@@ -132,15 +148,40 @@ data class BookingWizardState(
 // ---------------------------------------------------------------------------
 
 /**
- * Changing the household clears [BookingWizardState.kinIds]: kin belong to one
- * household, so carrying a previous household's kin forward would submit ids
- * that are not on this booking's family. Web does the same.
+ * Changing the household clears [BookingWizardState.kinIds] AND returns to the
+ * R1 default: kin belong to one household, so carrying a previous household's
+ * kin forward would submit ids that are not on this booking's family, and a
+ * narrowing decision made about one home says nothing about another. Web does
+ * the same.
  */
 fun BookingWizardState.withKinfolk(id: String): BookingWizardState =
-    if (id == kinfolkId) this else copy(kinfolkId = id, kinIds = emptyList())
+    if (id == kinfolkId) this else copy(kinfolkId = id, allKinMode = true, kinIds = emptyList())
+
+/**
+ * Enters or leaves the specific-Kin opt-in. Leaving it DROPS the partial pick
+ * rather than parking it: a selection that is not on the wire must not sit in
+ * the UI looking like it is.
+ */
+fun BookingWizardState.withAllKinMode(allKin: Boolean): BookingWizardState =
+    copy(allKinMode = allKin, kinIds = emptyList())
 
 fun BookingWizardState.toggleKin(kinId: String): BookingWizardState =
     copy(kinIds = if (kinId in kinIds) kinIds - kinId else kinIds + kinId)
+
+/**
+ * The Kin this booking actually covers: the whole household by default (R1), or
+ * exactly the subset the operator opted in to.
+ *
+ * [householdKinIds] is the live roster read for the chosen household. Resolving
+ * here rather than mirroring the roster into [BookingWizardState.kinIds] keeps
+ * one source of truth: the payload can never name a Kin who has since left the
+ * household, and can never miss one added while the wizard was open.
+ *
+ * In specific-Kin mode the picked ids are INTERSECTED with the roster, for the
+ * same reason.
+ */
+fun resolveKinIds(state: BookingWizardState, householdKinIds: List<String>): List<String> =
+    if (state.allKinMode) householdKinIds else householdKinIds.filter { it in state.kinIds }
 
 // ---------------------------------------------------------------------------
 // Step 2: service
@@ -406,17 +447,25 @@ data class BookingWizardSubmission(
  * Builds the submission. [overrideBusyConflict] is true only on the operator's
  * explicit "Create anyway" after a busy refusal; nothing sets it on a first try.
  *
- * `notes` is nulled when blank and `kinIds` left empty rather than sent as an
- * empty array, mirroring web's conditional spreads: the callable treats an
- * omitted key and a blank value identically, so sending the blank would just be
- * noise on the wire.
+ * `notes` is nulled when blank, mirroring web's conditional spread: the callable
+ * treats an omitted key and a blank value identically, so sending the blank
+ * would just be noise on the wire.
+ *
+ * `kinIds` is the opposite case, and that is the R1 fix. It used to be whatever
+ * the operator had ticked, which was normally NOTHING, and the server stored
+ * that omission literally, so the ordinary whole-household booking persisted
+ * as covering nobody. It now carries the RESOLVED ROSTER. [householdKinIds] is
+ * the live roster for `state.kinfolkId`; an empty one (no Kin on file, or the
+ * read failed) still sends an empty list, and the server materializes the
+ * roster itself as a backstop.
  */
 fun bookingSubmission(
     state: BookingWizardState,
+    householdKinIds: List<String>,
     overrideBusyConflict: Boolean = false,
 ): BookingWizardSubmission = BookingWizardSubmission(
     kinfolkId = state.kinfolkId,
-    kinIds = state.kinIds,
+    kinIds = resolveKinIds(state, householdKinIds),
     visits = buildVisits(state),
     notes = state.notes.trim().takeIf { it.isNotEmpty() },
     pattern = bookingPattern(state),

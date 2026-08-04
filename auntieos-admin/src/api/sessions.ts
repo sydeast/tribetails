@@ -59,11 +59,24 @@ export interface SessionEntry {
   kinfolkName?: string | undefined;
   /**
    * Pets/kin this visit covers (`KinCareSession.kinIds`, `FirestoreClient.kt:1932`).
-   * The list itself never reads it; it exists here for the not-yet-built compose
-   * screen (`KinTaleCompose.tsx`), which needs it to scaffold a new KinTale draft's
-   * own `kinIds`, mirroring the wasm's `scaffoldReport(session, template)`.
+   * Under R1 this is EVERY Kin in the household unless the booking was
+   * deliberately narrowed; the server materializes the roster at write time
+   * (`mytribe/functions/src/lib/kinRoster.ts`), so an empty array now means
+   * "this household has no Kin on file", not "unknown".
+   *
+   * Read by `SessionDetail.tsx` and by `KinTaleCompose.tsx`, which scaffolds a
+   * new KinTale draft's own `kinIds` from it, mirroring the wasm's
+   * `scaffoldReport(session, template)`.
    */
   kinIds?: string[] | undefined;
+  /**
+   * Display names for [kinIds], denormalized onto the session by every writer
+   * (`requestBooking.ts#writeEnvelope`, `createKinCareSession.ts`,
+   * `approveBookingSeriesCore.ts`) so a detail view can NAME the Kin without a
+   * read per animal. A nameless Kin contributes an id but no name, so this can
+   * legitimately be shorter than `kinIds`.
+   */
+  kinNames?: string[] | undefined;
   serviceType?: string | undefined;
   /** Free-text ISO instant string, not a Timestamp, see `lib/sessionFormat.ts#sessionTimeOf`. */
   startTime?: string | undefined;

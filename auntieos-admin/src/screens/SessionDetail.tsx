@@ -68,8 +68,15 @@ function localMoment(iso: string, todayIso: string): string {
  *
  * Organized into fielded sections (Kin Care head, Timing, Kin, Notes), the
  * KinfolkProfile layout, so it is not one undifferentiated scroll; an all-blank
- * section (no timing on file, no kin, no notes) is omitted rather than shown
- * empty. Every timestamp goes through lib/sessionFormat.ts's LOCAL (AO-18)
+ * section (no timing on file, no notes) is omitted rather than shown empty.
+ *
+ * KIN IS THE ONE EXCEPTION, and it is R1: a KinCare session covers every Kin in
+ * the household, so "no Kin on this session" is never a reason to hide the
+ * question. Hiding it is what made a whole-household booking -- the ordinary
+ * case -- render with no Kin section at all. It now always renders, and says
+ * plainly when the record predates the materialized roster.
+ *
+ * Every timestamp goes through lib/sessionFormat.ts's LOCAL (AO-18)
  * helpers, the same ones the list uses, never a raw ISO slice or `toLocaleString`.
  * Status is classified by POSITIVE enumeration (`sessionState`, never a negation),
  * so an unrecognized code reads as UNKNOWN rather than being guessed into a bucket
@@ -109,7 +116,12 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
           const info = sessionStateInfo(state);
           const serviceType = str(entry.serviceType);
           const notes = str(entry.notes).trim();
-          const kinCount = arr<string>(entry.kinIds).length;
+          // R1: a KinCare session covers EVERY Kin in the home, so the Kin panel
+          // is always shown. It used to be hidden whenever `kinIds` was empty,
+          // and empty was exactly the whole-household case -- a booking for the
+          // dog AND the cat rendered with no Kin section at all.
+          const kinIds = arr<string>(entry.kinIds);
+          const kinNames = arr<string>(entry.kinNames).filter((n) => n.trim() !== '');
 
           const startKey = sessionDayKey(str(entry.startTime));
           const dayLabel = startKey === 'Undated' ? '' : sessionDayLabel(startKey, todayIso);
@@ -148,13 +160,33 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
                 </DenPanel>
               )}
 
-              {kinCount > 0 && (
-                <DenPanel title="Kin" subtitle="Kin this visit covers.">
+              <DenPanel title="Kin" subtitle="Every Kin in this home, unless the booking was narrowed.">
+                {kinNames.length > 0 ? (
                   <dl className="sdetail__facts">
-                    <Fact label="Kin covered" value={String(kinCount)} />
+                    <Fact label="Kin covered" value={kinNames.join(', ')} />
+                    {/* Named Kin can be fewer than covered Kin: a Kin doc with
+                        no name contributes an id and no name. Said out loud
+                        rather than letting the list quietly under-report. */}
+                    {kinIds.length > kinNames.length && (
+                      <Fact
+                        label="Unnamed Kin"
+                        value={String(kinIds.length - kinNames.length)}
+                      />
+                    )}
                   </dl>
-                </DenPanel>
-              )}
+                ) : kinIds.length > 0 ? (
+                  // Ids but no names: a pre-R1 document, or a household whose
+                  // Kin docs carry no `name`. The count is the honest answer.
+                  <dl className="sdetail__facts">
+                    <Fact label="Kin covered" value={`${kinIds.length} (names not on file)`} />
+                  </dl>
+                ) : (
+                  <EmptyHint>
+                    No Kin are recorded on this session. It was booked before the roster was written
+                    onto the record, so the household&rsquo;s Kin list is what this visit covers.
+                  </EmptyHint>
+                )}
+              </DenPanel>
 
               {notes !== '' && (
                 <DenPanel title="Notes">

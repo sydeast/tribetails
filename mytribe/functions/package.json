@@ -26,6 +26,7 @@
     "backfill:household-vet": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillKinfolkVetToHousehold.ts",
     "backfill:kintale-createdat": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillKinTaleCreatedAt.ts",
     "strip:visit-location": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/stripBookingVisitLocation.ts",
+    "backfill:booking-kin-roster": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillBookingKinRoster.ts",
     "seed:emails": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/seedEmailTemplates.ts",
     "seed:notif-templates": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/seedNotificationTemplates.ts",
     "seed:demo-kinfolk": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/seedDemoKinfolk.ts"
