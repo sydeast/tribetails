@@ -80,6 +80,29 @@ describe('createQuote zod validation', () => {
     const { familyId, ...noFamily } = validPayload;
     await expect(createQuoteHandler(req(noFamily))).rejects.toThrow();
   });
+
+  // A quote lands in the same flat `invoices` collection the admin list windows
+  // and orders on, so free text here is the same sorting bug as in
+  // createInvoice. See functions/src/lib/invoiceDay.ts.
+  describe('date and dueDate are days, not free text', () => {
+    for (const field of ['date', 'dueDate'] as const) {
+      it(`rejects a month-name ${field}`, async () => {
+        const ctx = buildDbMock({});
+        mocks.dbFn.mockReturnValue(ctx.db);
+        await expect(
+          createQuoteHandler(req({ ...validPayload, [field]: 'Feb 12, 2026' })),
+        ).rejects.toThrow();
+      });
+
+      it(`still accepts a blank ${field}, which is the documented default`, async () => {
+        const ctx = buildDbMock({});
+        mocks.dbFn.mockReturnValue(ctx.db);
+        await expect(
+          createQuoteHandler(req({ ...validPayload, [field]: '' })),
+        ).resolves.toMatchObject({ ok: true });
+      });
+    }
+  });
 });
 
 describe('createQuote handler effects', () => {

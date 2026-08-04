@@ -86,6 +86,54 @@ describe('createInvoice zod validation', () => {
     const { familyId, ...noFamily } = validPayload;
     await expect(createInvoiceHandler(req(noFamily))).rejects.toThrow();
   });
+
+  // THE FIELD THE ADMIN LIST RANGE-QUERIES AND ORDERS ON. Firestore compares it
+  // as a string, byte by byte, and every letter outranks every digit, so a
+  // stored "Feb 12, 2026" satisfies `date >= '2026-07-05'` on its first
+  // character and sorts above every real date. "Last 30 days" was listing
+  // six-month-old invoices at the top of the page. `updateInvoice` has enforced
+  // YYYY-MM-DD since W2-1; creation now states the same rule.
+  describe('date and dueDate are days, not free text', () => {
+    for (const field of ['date', 'dueDate'] as const) {
+      it(`rejects a month-name ${field}`, async () => {
+        const ctx = buildDbMock({});
+        mocks.dbFn.mockReturnValue(ctx.db);
+        await expect(
+          createInvoiceHandler(req({ ...validPayload, [field]: 'Feb 12, 2026' })),
+        ).rejects.toThrow();
+      });
+
+      it(`rejects a ${field} that is not a date at all`, async () => {
+        const ctx = buildDbMock({});
+        mocks.dbFn.mockReturnValue(ctx.db);
+        await expect(
+          createInvoiceHandler(req({ ...validPayload, [field]: 'Net 14' })),
+        ).rejects.toThrow();
+      });
+
+      it(`still accepts a blank ${field}, which is the documented default`, async () => {
+        // An invoice nobody has dated yet is a real thing, and inventing "today"
+        // for it would be a fabricated fact on a bill. Every legacy caller omits
+        // these fields and must keep working.
+        const ctx = buildDbMock({});
+        mocks.dbFn.mockReturnValue(ctx.db);
+        await expect(
+          createInvoiceHandler(req({ ...validPayload, [field]: '' })),
+        ).resolves.toMatchObject({ ok: true });
+      });
+    }
+
+    it('still accepts a payload that omits both fields entirely', async () => {
+      const ctx = buildDbMock({});
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { date, dueDate, ...noDates } = validPayload;
+      const res = await createInvoiceHandler(req(noDates));
+      const write = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+      expect(res.ok).toBe(true);
+      expect(write!.data.date).toBe('');
+      expect(write!.data.dueDate).toBe('');
+    });
+  });
 });
 
 describe('createInvoice handler effects', () => {

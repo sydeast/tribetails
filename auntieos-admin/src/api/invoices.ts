@@ -20,11 +20,15 @@ import type {
  * persisted state and never classify — read them through `invoiceStamp` below,
  * never by re-deriving state from the money fields.
  *
- * `date` / `dueDate` are opaque free-text strings too (same zod schema), not
- * Firestore Timestamps and not guaranteed ISO, `lib/invoiceFormat.ts` handles
- * the fallback. `createdAt` IS a real server Timestamp (`FieldValue.serverTimestamp()`
- * in createInvoice.ts / createQuote.ts), which is why it is the query's sort key
- * below rather than the free-text `date`.
+ * `date` / `dueDate` are `YYYY-MM-DD` day STRINGS, never Firestore Timestamps.
+ * All three server writers now enforce that shape or blank
+ * (functions/src/lib/invoiceDay.ts), but a document written before that still
+ * holds whatever text was sent, so nothing here may assume it: read them through
+ * `invoiceDayMs` when the answer is an ordering or a window, and through
+ * `lib/invoiceFormat.ts` when the answer is what to print. `createdAt` IS a real
+ * server Timestamp (`FieldValue.serverTimestamp()` in createInvoice.ts /
+ * createQuote.ts), which is why it is the query's sort key below rather than
+ * `date`.
  *
  * `creditTarget` / `creditRedeemedAt` are stamped by redeemCredit.ts's
  * transaction (`FieldValue.serverTimestamp()` for the latter), present only on
@@ -365,6 +369,17 @@ export interface InvoicesPageOptions {
  * INDEXES. Range and order share `date`, so the plain window needs no composite
  * index. With the household facet, or a sandbox admin's automatic `kinfolkId ==`
  * scope, `invoices (kinfolkId ASC, date DESC)` covers it.
+ *
+ * THIS PREDICATE IS NOT SELF-SUFFICIENT, and pretending otherwise is what made
+ * "Last 30 days" list invoices half a year old. Firestore compares this bound as
+ * a STRING, byte by byte, and every letter outranks every digit, so a stored
+ * `"Feb 12, 2026"` clears `>= '2026-07-05'` on its first character. It also
+ * sorts ABOVE every real date under `orderBy('date','desc')`, which puts exactly
+ * the wrong rows at the top of page one. `createInvoice`/`createQuote` now
+ * refuse to write anything but a `YYYY-MM-DD` day (functions/src/lib/invoiceDay.ts),
+ * but documents already in the collection still hold the old free text until the
+ * backfill is run, so every row this query returns is re-tested against
+ * `invoiceWithinWindow` below before it is shown.
  */
 export function invoicesPageQuery({ startDay, kinfolkId }: InvoicesPageOptions): PagedCollectionSpec {
   const filters: CollectionSpec['filters'] = [];
@@ -377,6 +392,65 @@ export function invoicesPageQuery({ startDay, kinfolkId }: InvoicesPageOptions):
     pageSize: INVOICES_PAGE_SIZE,
     ...(filters.length > 0 ? { filters } : {}),
   };
+}
+
+/**
+ * The stored `date` as an INSTANT, epoch milliseconds at UTC midnight of the
+ * day it names, or null when the field does not name a day at all.
+ *
+ * A real parse, not a shape test, and the difference is the point. `lib/
+ * invoiceFormat.ts#isoDatePrefixOrNull` answers "does this text LOOK like a
+ * day", which is the right question for deciding whether to print it; this
+ * answers "which day is it", which is the only question an ordering or a window
+ * may be built on. `"2026-02-30"` passes the first and fails this one, because
+ * `Date.parse` rolls it into March and the round-trip check catches the roll.
+ *
+ * UTC midnight for both ends, the same convention `invoiceDaysOverdue` already
+ * uses: `date` is a calendar label rather than a moment, so comparing two labels
+ * pinned to the same zero meridian cannot be shifted by a DST boundary falling
+ * between them.
+ */
+export function invoiceDayMs(raw: string): number | null {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const ms = Date.parse(`${s}T00:00:00.000Z`);
+  if (!Number.isFinite(ms)) return null;
+  // Rejects a day that does not exist. Date.parse resolves "2026-02-30" to
+  // March 2 rather than failing, and a window that silently relabels a date is
+  // the same class of lie as one that silently admits the wrong rows.
+  return new Date(ms).toISOString().slice(0, 10) === s ? ms : null;
+}
+
+/**
+ * Does this row REALLY fall inside the window the operator picked?
+ *
+ * The other half of `invoicesPageQuery`, and the half that cannot be fooled.
+ * The server's `where('date','>=',startDay)` is a string comparison over a field
+ * that legacy documents fill with free text; this re-asks the question as
+ * arithmetic on two instants, so a row only survives if its `date` names a real
+ * calendar day on or after the bound.
+ *
+ * A row whose `date` is blank or unreadable is OUT of every dated window rather
+ * than in it. That is not a new exclusion. `orderBy('date')` already drops a
+ * doc with no `date` field, and the screen already tells the operator that
+ * undated invoices live under "All (archive)". It extends the same honest answer
+ * to a doc whose `date` is present but is not a date.
+ *
+ * `startDay: null` is "All (archive)": no window, so nothing is excluded and
+ * every row passes, including the undated ones.
+ */
+export function invoiceWithinWindow(
+  row: Pick<InvoiceEntry, 'date'>,
+  startDay: string | null,
+): boolean {
+  if (startDay === null) return true;
+  const startMs = invoiceDayMs(startDay);
+  // An unreadable BOUND is a caller bug, not a row's fault. Excluding every row
+  // would empty the screen silently, which is the failure this whole function
+  // exists to prevent, so the window simply does not narrow anything.
+  if (startMs === null) return true;
+  const rowMs = invoiceDayMs(row.date ?? '');
+  return rowMs !== null && rowMs >= startMs;
 }
 
 /**

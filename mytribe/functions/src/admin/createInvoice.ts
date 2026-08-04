@@ -10,6 +10,7 @@ import { enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { computeInvoiceTotals, validateInvoiceMoney, centsToDollars } from '../lib/invoiceMath';
+import { InvoiceDayArg } from '../lib/invoiceDay';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
@@ -61,9 +62,13 @@ export const Args = z.object({
   invoiceNumber: z.string().min(1),
   client: z.string().default(''),
   address: z.string().default(''),
-  date: z.string().default(''),
+  // A DAY, not free text. The admin list range-queries and orders on `date`, and
+  // Firestore compares it as a string, so a letter-leading value like
+  // "Feb 12, 2026" outranks every ISO date and lands inside every window.
+  // See lib/invoiceDay.ts; `updateInvoice` has enforced the same shape since W2-1.
+  date: InvoiceDayArg,
   terms: z.string().default(''),
-  dueDate: z.string().default(''),
+  dueDate: InvoiceDayArg,
   discount: z.string().default(''),
   total: z.number().nonnegative(),
   amountDue: z.number().nonnegative(),

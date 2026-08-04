@@ -3,6 +3,7 @@ import {
   invoiceMatchesSearch,
   invoicesPageQuery,
   invoiceStamp,
+  invoiceWithinWindow,
   isArchivedInvoice,
   normalizeInvoice,
   type InvoiceEntry,
@@ -330,15 +331,30 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
     [rows, todayIso],
   );
 
+  // THE WINDOW, RE-ASKED AS ARITHMETIC. `where('date','>=',startDay)` is a
+  // STRING comparison on a field that legacy documents fill with free text, and
+  // in UTF-8 every letter outranks every digit, so a stored "Feb 12, 2026"
+  // cleared the bound on its first character AND sorted above every real date.
+  // "Last 30 days" was listing invoices six months old, at the top of the list.
+  // `invoiceWithinWindow` re-tests each returned row as two instants, so a row
+  // whose `date` is not a real calendar day on or after the bound cannot survive
+  // whatever the server let through. Server writers are fixed too; this stays
+  // because the documents already stored are not, until the backfill is run.
+  const inWindow = useMemo(
+    () => views.filter((v) => invoiceWithinWindow(v.entry, startDay)),
+    [views, startDay],
+  );
+  const misdatedHidden = views.length - inWindow.length;
+
   // The archive facet is list-wide, not a tab: it decides which rows this screen
   // is ABOUT, so the stat strip is projected off the survivors. An archived
   // invoice counted into Outstanding would be money the operator has already
   // decided to stop chasing.
   const inScope = useMemo(
-    () => views.filter((v) => archivedAllows(archived, v.entry)),
-    [views, archived],
+    () => inWindow.filter((v) => archivedAllows(archived, v.entry)),
+    [inWindow, archived],
   );
-  const archivedHidden = views.length - inScope.length;
+  const archivedHidden = inWindow.length - inScope.length;
 
   const openRows = useMemo(() => inScope.filter((r) => r.state === 'open'), [inScope]);
   const overdueRows = useMemo(() => inScope.filter((r) => r.overdue), [inScope]);
@@ -388,15 +404,26 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           ? ` ${String(archivedHidden)} archived invoice${archivedHidden === 1 ? '' : 's'} excluded, counted within the invoices loaded here rather than across the books.`
           : '');
 
-  // THE HONESTY LINE. What the search box actually reaches, plus the one cost of
-  // windowing on the free-text `date` field, said out loud rather than left as a
-  // row that quietly never appears.
+  // THE HONESTY LINE. What the search box actually reaches, plus the two costs of
+  // windowing on the `date` field, said out loud rather than left as rows that
+  // quietly never appear.
+  //
+  // The second sentence is a COUNT, not a warning, and it should read zero on a
+  // healthy collection: it names invoices the server handed back whose `date` is
+  // not a real day, which the window then dropped. Every one of them is a
+  // document written before creation validated the field. Naming them is how the
+  // operator learns the backfill has not been run yet, instead of noticing a
+  // short page and assuming the books are thin.
+  const misdatedNote =
+    misdatedHidden > 0
+      ? ` ${String(misdatedHidden)} invoice${misdatedHidden === 1 ? ' whose stored date is not a real date was' : 's whose stored dates are not real dates were'} left out of this window.`
+      : '';
   const scopeNote =
     (loaded === null
       ? `Search covers invoice number, household and client, within ${windowLabel}.`
       : `Searching the ${String(loaded)} invoice${plural} loaded from ${windowLabel}, by number, household and client.` +
         (hasMore ? ' Load more to reach further back.' : '')) +
-    (range === 'all' ? '' : ' Invoices with no date appear only under All (archive).');
+    (range === 'all' ? '' : ' Invoices with no date appear only under All (archive).' + misdatedNote);
 
   return (
     <div className="screen">

@@ -42,6 +42,7 @@ import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.invoiceActionsFor
 import com.tribetails.auntieos.domain.invoiceIsArchived
 import com.tribetails.auntieos.domain.invoiceIsOverdue
+import com.tribetails.auntieos.domain.invoiceIsoDatePrefixOrNull
 import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
@@ -147,13 +148,51 @@ private fun invoiceIsPaid(i: Invoice): Boolean = invoiceStateOrNull(i) == Invoic
 
 private fun invoiceIsOutstanding(i: Invoice): Boolean = invoiceStateOrNull(i) == InvoiceState.OPEN
 
-/** A date prefix in YYYY-MM-DD shape, or null if the field isn't usable. */
-private fun isoDatePrefixOrNull(date: String): String? =
-    date.trim().take(10).takeIf { it.length == 10 && it[4] == '-' && it[7] == '-' }
+/**
+ * The day this invoice is FILED UNDER, as an epoch day, or null when neither of
+ * its two date fields names a real one.
+ *
+ * A REAL PARSE, not a prefix test, and that is the whole fix. The old helper
+ * here took `date.take(10)` and accepted it if characters 4 and 7 were dashes.
+ * It never checked that the other eight were digits. So `"abcd-ef-ghij"` read as
+ * a valid date and, being a string sort, ranked ABOVE every real one (letters
+ * outrank digits in UTF-8), while `"Feb 12, 2026"` failed the dash test, fell
+ * through to the empty string, and sorted to the very bottom next to the invoices
+ * that genuinely have no date. Both directions of that are the same bug the web
+ * admin's "Last 30 days" window had, in sort clothing rather than filter clothing.
+ *
+ * `LocalDate.parse` is strict: it refuses `2026-13-45` and `2026-02-30` rather
+ * than rolling them into a neighbouring month, so a row can only claim an
+ * ordering it can actually justify.
+ *
+ * `dueDate` remains the fallback, as it always was: a draft raised with only a
+ * due date set is still better placed by that than by nothing.
+ */
+internal fun invoiceSortDayOrNull(invoice: Invoice): Long? =
+    invoiceEpochDayOrNull(invoice.date) ?: invoiceEpochDayOrNull(invoice.dueDate)
+
+private fun invoiceEpochDayOrNull(raw: String): Long? {
+    val iso = invoiceIsoDatePrefixOrNull(raw) ?: return null
+    return runCatching { java.time.LocalDate.parse(iso).toEpochDay() }.getOrNull()
+}
+
+/**
+ * The list order: newest invoice date first.
+ *
+ * An invoice whose date cannot be read sorts LAST, explicitly rather than by
+ * accident of what an unparseable string happens to compare as. `sortedWith` is
+ * stable, so those rows keep the order the query delivered them in instead of
+ * being shuffled into a new arbitrary one on every recomposition.
+ *
+ * Extracted from the inline lambda it used to be so that it is reachable from a
+ * unit test at all, the same reason the facet helpers above are `internal`.
+ */
+internal fun invoicesByDateDesc(invoices: List<Invoice>): List<Invoice> =
+    invoices.sortedWith(compareByDescending<Invoice> { invoiceSortDayOrNull(it) ?: Long.MIN_VALUE })
 
 /** Whole days the invoice is past due, or null if not computable. */
 private fun daysOverdue(i: Invoice, todayIso: String): Int? {
-    val due = isoDatePrefixOrNull(i.dueDate) ?: return null
+    val due = invoiceIsoDatePrefixOrNull(i.dueDate) ?: return null
     return runCatching {
         val d = java.time.LocalDate.parse(due)
         val t = java.time.LocalDate.parse(todayIso)
@@ -171,7 +210,7 @@ private fun formatMoney(amount: Double): String {
 
 /** A human-ish "MMM d" style label from a YYYY-MM-DD prefix, or echoes input. */
 private fun humanizeDate(date: String): String {
-    val iso = isoDatePrefixOrNull(date) ?: return date
+    val iso = invoiceIsoDatePrefixOrNull(date) ?: return date
     return runCatching {
         val d = java.time.LocalDate.parse(iso)
         val month = d.month.name.lowercase().replaceFirstChar { it.uppercase() }.take(3)
@@ -324,9 +363,7 @@ fun InvoicesScreen(
                     invoices.isEmpty() -> item { EmptyState() }
 
                     else -> {
-                        val sorted = invoices.sortedByDescending {
-                            isoDatePrefixOrNull(it.date) ?: isoDatePrefixOrNull(it.dueDate) ?: ""
-                        }
+                        val sorted = invoicesByDateDesc(invoices)
                         val households = householdFacets(invoices)
                         if (household !in households) household = ALL_HOUSEHOLDS
 

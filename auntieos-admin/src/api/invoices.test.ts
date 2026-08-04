@@ -7,6 +7,8 @@ import {
   invoiceMatchesSearch,
   invoicesPageQuery,
   invoiceStamp,
+  invoiceDayMs,
+  invoiceWithinWindow,
   isArchivedInvoice,
   normalizeInvoice,
   type InvoiceEntry,
@@ -123,6 +125,103 @@ describe('invoicesPageQuery: the list screen own paged window', () => {
       (f) => f[0],
     );
     expect(named).not.toContain('archivedAt');
+  });
+});
+
+/**
+ * THE WINDOW, RUN AGAINST DOCUMENTS INSTEAD OF INSPECTED AS AN ARRAY.
+ *
+ * Every assertion above this one describes the SHAPE of the filter tuple, and
+ * every one of them passed while "Last 30 days" listed invoices six months old.
+ * They could not have caught it: `['date','>=','2026-07-05']` is the correct
+ * tuple, and the bug lives entirely in what Firestore does with it.
+ *
+ * So this block applies the predicate. `firestoreStringGte` is not a model of
+ * Firestore, it IS the comparison Firestore performs on two string values:
+ * UTF-8 byte order, which for these inputs is `<` on a JS string. Running
+ * it over a real stored value is what makes the failure visible.
+ */
+describe('the last-30-days window, applied to documents', () => {
+  /** What `where('date','>=',bound)` admits: a byte-order comparison, nothing more. */
+  const firestoreStringGte = (stored: string, bound: string): boolean => stored >= bound;
+
+  /** A cutoff 30 days before 2026-08-04, the shape `Invoices.tsx` computes. */
+  const THIRTY_DAYS_AGO = '2026-07-05';
+
+  it('THE BUG: the server predicate admits a six-month-old letter-leading date', () => {
+    // 'F' is 0x46. Every digit is 0x30-0x39. The comparison is decided on the
+    // first character and never reaches either year, so this invoice (dated
+    // nearly six months before the cutoff) satisfies it, and would satisfy any
+    // ISO cutoff that could ever be written.
+    expect(firestoreStringGte('Feb 12, 2026', THIRTY_DAYS_AGO)).toBe(true);
+    expect(firestoreStringGte('Feb 12, 2026', '2099-12-31')).toBe(true);
+
+    // And it is worse than a stray row: the same ordering puts it ABOVE every
+    // real date under `orderBy('date','desc')`, so it arrives at the TOP of the
+    // first page.
+    expect(['2026-08-01', 'Feb 12, 2026', '2026-07-30'].sort().reverse()[0]).toBe('Feb 12, 2026');
+  });
+
+  it('THE FIX: a document dated "Feb 12, 2026" does not satisfy a last-30-days window', () => {
+    const row = { date: 'Feb 12, 2026' };
+    expect(invoiceWithinWindow(row, THIRTY_DAYS_AGO)).toBe(false);
+  });
+
+  it('drops every legacy free-text spelling the collection is known to hold', () => {
+    // These are the exact fixtures this repo carries for the field:
+    // normalizeInvoice's own row above, functions/test/invoicePdf.test.ts, and
+    // functions/test/enrichTemplateData.test.ts.
+    for (const stored of ['August 11, 2025', 'Sep 1, 2025', 'Jul 1, 2026', 'Net 14', '']) {
+      expect(invoiceWithinWindow({ date: stored }, THIRTY_DAYS_AGO)).toBe(false);
+    }
+  });
+
+  it('keeps the real dates inside the window and refuses the ones outside it', () => {
+    expect(invoiceWithinWindow({ date: '2026-07-30' }, THIRTY_DAYS_AGO)).toBe(true);
+    // The bound day itself is inside: "last 30 days" includes its first day.
+    expect(invoiceWithinWindow({ date: THIRTY_DAYS_AGO }, THIRTY_DAYS_AGO)).toBe(true);
+    expect(invoiceWithinWindow({ date: '2026-07-04' }, THIRTY_DAYS_AGO)).toBe(false);
+    expect(invoiceWithinWindow({ date: '2025-12-31' }, THIRTY_DAYS_AGO)).toBe(false);
+  });
+
+  it('narrows nothing under "All (archive)", including the undated rows', () => {
+    for (const stored of ['', 'Net 14', '2026-07-30', 'Feb 12, 2026']) {
+      expect(invoiceWithinWindow({ date: stored }, null)).toBe(true);
+    }
+  });
+
+  it('does not empty the screen when the BOUND itself is unreadable', () => {
+    // A malformed bound is a caller bug. Excluding every row would be the silent
+    // blank screen this whole guard exists to prevent, so it narrows nothing.
+    expect(invoiceWithinWindow({ date: '2026-07-30' }, 'last month')).toBe(true);
+  });
+});
+
+describe('invoiceDayMs: the stored day as an instant', () => {
+  it('reads a real day as its UTC midnight', () => {
+    expect(invoiceDayMs('2026-07-05')).toBe(Date.parse('2026-07-05T00:00:00.000Z'));
+  });
+
+  it('refuses a day that does not exist, rather than relabelling it', () => {
+    // Date.parse resolves this to March 2. A window that silently moves an
+    // invoice to another month is the same class of lie as one that admits the
+    // wrong rows, so it is refused instead.
+    expect(invoiceDayMs('2026-02-30')).toBeNull();
+    expect(invoiceDayMs('2026-13-01')).toBeNull();
+  });
+
+  it('refuses everything that is not exactly a day', () => {
+    for (const raw of ['', 'Net 14', 'Feb 12, 2026', '2026-7-5', '2026-07-05T12:00:00Z']) {
+      expect(invoiceDayMs(raw)).toBeNull();
+    }
+  });
+
+  it('orders as the calendar does, which is the whole point', () => {
+    const feb = invoiceDayMs('2026-02-12');
+    const jul = invoiceDayMs('2026-07-05');
+    expect(feb).not.toBeNull();
+    expect(jul).not.toBeNull();
+    expect((feb as number) < (jul as number)).toBe(true);
   });
 });
 
