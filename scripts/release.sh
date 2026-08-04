@@ -22,8 +22,10 @@
 #   1. npm run check  - typecheck, lint, test, build. This is also what
 #                       produces the dist/ that step 5 uploads, so it is not
 #                       optional theatre: skipping it ships a stale bundle.
-#  1c. android build  - assemble the signed release APK BEFORE anything ships,
-#                       so a build failure costs nothing. Same rule as step 1.
+#  1c. android build  - assemble BOTH signed release APKs (the AuntieOS
+#                       operator app and the Kinfolk Portal app) BEFORE
+#                       anything ships, so a build failure costs nothing. Same
+#                       rule as step 1.
 #   2. indexes        - BEFORE the code that queries them. A query with no
 #                       index fails at RUNTIME, not at build.
 #   3. index wait     - deploying an index returns before it is Enabled. The
@@ -33,10 +35,13 @@
 #                       reverse: a client calling a function that is not there
 #                       fails at runtime.
 #   6. hosting        - admin, then portal.
-#  6b. android        - upload the APK built in 1c to App Distribution, in the
+#  6b. android        - upload the APKs built in 1c to App Distribution, in the
 #                       SAME run as the web. Android was outside this script
 #                       until 2026-07-28 and had drifted 200 versionCodes
 #                       behind the web while the source trees stayed at parity.
+#                       It then shipped only ONE of the two Android apps until
+#                       2026-08-04, leaving the Kinfolk Portal's client in the
+#                       same hole the fix was written against.
 #   7. verify         - fetch the live bundles and compare to what was just
 #                       built. This is the step whose absence hid the stale
 #                       admin for 33 hours. A release that cannot prove it
@@ -706,52 +711,156 @@ banner "1c. Android release build"
 # CI cannot do this: release signing needs the keystore, which lives in
 # local.properties (gitignored, per machine) alongside the Mapbox downloads
 # token. This script runs where those already are.
-ANDROID_DIR="$ROOT/auntieos-admin/android"
-ANDROID_APK="$ANDROID_DIR/app/build/outputs/apk/release/app-release.apk"
-ANDROID_BUILT=0
-# Tracked separately from ANDROID_BUILT: an APK that assembled but failed to
-# upload (see the non-fatal warning in 6b) shipped nothing, and the closing
-# tag must say so rather than claim every client landed.
-ANDROID_DISTRIBUTED=0
+#
+# THERE ARE TWO ANDROID APPS, AND UNTIL 2026-08-04 THIS STEP SHIPPED ONE.
+#
+# Everything above was written against a single hardcoded ANDROID_DIR of
+# auntieos-admin/android. So it ended the drift for the operator app and left
+# the Kinfolk Portal's Android client in the identical hole, reading the same
+# comment. Both apps are registered and ACTIVE in auntieos-ttpc:
+#
+#   auntieos  com.tribetails.auntieos  auntieos-admin/android, module :app
+#   mytribe   com.kinfolk.portal       mytribe/, Kotlin Multiplatform, ROOT module
+#
+# The portal shipped its web half every release while its Android half sat at
+# versionCode 2 / 0.2.0, because nothing here built it. The operator ruling is
+# parity: each operating system has a web app and an Android app, and both go
+# out in the same run. Desktop is deliberately held off: the compose.desktop
+# block in mytribe/build.gradle.kts is not a release target and is not built.
+#
+# THE TWO BUILDS ARE NOT THE SAME SHAPE, which is the part worth writing down.
+# auntieos-admin/android is a conventional multi-module build with an :app
+# submodule, so its task is :app:assembleRelease and its APK lands under
+# app/build/. mytribe applies com.android.application to the ROOT project, so
+# there is no :app to address: the task is the root project's :assembleRelease
+# and the output lands in mytribe/build/outputs/apk/release/ named from
+# rootProject.name, which is "kinfolk-portal" and not "mytribe". Guessing
+# either from the other is how this breaks again, so both are spelled out.
+#
+# THE BOOKKEEPING IS PER APP FOR THE SAME REASON IT WAS EVER SPLIT. built and
+# distributed were kept as two scalars so the closing tag could not claim a
+# client landed when only its build had. With two apps, one pair of scalars
+# tells that same lie one level up: a tag reading "android: distributed" when
+# one of two went out. So they are arrays, index-aligned with the table below,
+# and step 9 prints a line per app.
+#
+# Parallel indexed arrays rather than one associative array: macOS ships bash
+# 3.2, where `declare -A` does not exist, and this script runs on the
+# operator's mac.
+ANDROID_NAMES=(auntieos mytribe)
+ANDROID_LABELS=(
+  "AuntieOS operator (com.tribetails.auntieos)"
+  "Kinfolk Portal (com.kinfolk.portal)"
+)
+ANDROID_DIRS=(
+  "$ROOT/auntieos-admin/android"
+  "$ROOT/mytribe"
+)
+ANDROID_TASKS=(
+  ":app:assembleRelease"
+  ":assembleRelease"
+)
+ANDROID_APKS=(
+  "$ROOT/auntieos-admin/android/app/build/outputs/apk/release/app-release.apk"
+  "$ROOT/mytribe/build/outputs/apk/release/kinfolk-portal-release.apk"
+)
+# RELEASE_ANDROID_APP_ID stays honoured for auntieos alone. It predates the
+# second app and every use of it means that one; silently widening it to both
+# would point the portal's upload at the operator app's Firebase entry.
+ANDROID_APP_IDS=(
+  "${RELEASE_ANDROID_APP_ID_AUNTIEOS:-${RELEASE_ANDROID_APP_ID:-1:153396971788:android:6bcb7c5411aeda837f2129}}"
+  "${RELEASE_ANDROID_APP_ID_MYTRIBE:-1:153396971788:android:4e9868bbb96301277f2129}"
+)
+# What to say when one of them fails to assemble. Per app, because the two need
+# entirely different things on the machine and a generic "check your keystore"
+# sends you to the wrong tree half the time.
+ANDROID_BUILD_HINTS=(
+"  Release signing needs KEYSTORE_PATH, KEYSTORE_PASSWORD, KEY_ALIAS and
+  KEY_PASSWORD in auntieos-admin/android/local.properties, and
+  MAPBOX_DOWNLOADS_TOKEN in ~/.gradle/gradle.properties."
+'  Needs the Android SDK: sdk.dir in mytribe/local.properties, or ANDROID_HOME
+  in the environment. This app signs with the Android DEBUG keystore
+  (~/.android/debug.keystore, see the signingConfigs block in
+  mytribe/build.gradle.kts), so a machine with no debug keystore fails here
+  too; Android Studio creates one, or `keytool` does.'
+)
+ANDROID_COUNT=${#ANDROID_NAMES[@]}
 
-STEP="assembling the Android release APK"
-if [ "${RELEASE_SKIP_ANDROID:-0}" = "1" ]; then
-  ylw "SKIPPED (RELEASE_SKIP_ANDROID=1). The web ships without the Android"
-  ylw "  client, which is the drift that put Android 200 versionCodes behind."
-elif [ "$PREFLIGHT_ONLY" = "1" ]; then
-  ylw "SKIPPED (preflight only)."
-elif [ ! -d "$ANDROID_DIR" ]; then
-  ylw "SKIPPED: no $ANDROID_DIR on this machine."
-else
-  if [ "$DRY_RUN" = "1" ]; then
-    ylw "DRY_RUN=1: would delete any stale APK and run ./gradlew :app:assembleRelease"
+ANDROID_BUILT=()
+ANDROID_DISTRIBUTED=()
+ANDROID_IDX=0
+while [ "$ANDROID_IDX" -lt "$ANDROID_COUNT" ]; do
+  ANDROID_BUILT[$ANDROID_IDX]=0
+  # Tracked separately from ANDROID_BUILT: an APK that assembled but failed to
+  # upload (see the non-fatal warning in 6b) shipped nothing, and the closing
+  # tag must say so rather than claim that client landed.
+  ANDROID_DISTRIBUTED[$ANDROID_IDX]=0
+  ANDROID_IDX=$((ANDROID_IDX + 1))
+done
+# Whether ANY app produced an APK. Drives the audience resolution below and the
+# 6b entry condition; the per-app arrays decide what actually gets uploaded.
+ANDROID_ANY_BUILT=0
+
+STEP="assembling the Android release APKs"
+ANDROID_IDX=0
+while [ "$ANDROID_IDX" -lt "$ANDROID_COUNT" ]; do
+  ANDROID_NAME="${ANDROID_NAMES[$ANDROID_IDX]}"
+  ANDROID_DIR="${ANDROID_DIRS[$ANDROID_IDX]}"
+  ANDROID_TASK="${ANDROID_TASKS[$ANDROID_IDX]}"
+  ANDROID_APK="${ANDROID_APKS[$ANDROID_IDX]}"
+  # PER-APP SKIP. Warranted now and not before: with one app the only failure
+  # mode was "ship the web alone", which RELEASE_SKIP_ANDROID already covered.
+  # With two, a build broken in ONE app would otherwise force that same
+  # all-or-nothing switch and drop the healthy client with it, turning one
+  # broken app into two unshipped ones, which is the drift this step exists
+  # against. So each app has its own off switch and the run names which app it
+  # skipped.
+  ANDROID_SKIP_VAR="RELEASE_SKIP_ANDROID_$(printf '%s' "$ANDROID_NAME" | tr '[:lower:]' '[:upper:]')"
+
+  cyan "1c.$((ANDROID_IDX + 1)) ${ANDROID_LABELS[$ANDROID_IDX]}"
+  if [ "${RELEASE_SKIP_ANDROID:-0}" = "1" ]; then
+    ylw "SKIPPED (RELEASE_SKIP_ANDROID=1). The web ships without the Android"
+    ylw "  clients, which is the drift that put Android 200 versionCodes behind."
+  elif [ "${!ANDROID_SKIP_VAR:-0}" = "1" ]; then
+    ylw "SKIPPED ($ANDROID_SKIP_VAR=1). The other Android app still ships."
+  elif [ "$PREFLIGHT_ONLY" = "1" ]; then
+    ylw "SKIPPED (preflight only)."
+  elif [ ! -d "$ANDROID_DIR" ]; then
+    ylw "SKIPPED: no $ANDROID_DIR on this machine."
+  elif [ "$DRY_RUN" = "1" ]; then
+    ylw "DRY_RUN=1: would delete any stale APK and run ./gradlew $ANDROID_TASK"
+    ylw "  in $ANDROID_DIR"
   else
     # The rm lives INSIDE this branch, not above the if. A rehearsal that
     # assembles nothing but deletes the signed APK a real run left on disk has
     # changed the machine to prove nothing, and 6b's retry line would then point
     # at a file that is gone. rm only where a build replaces what it removed.
     rm -f "$ANDROID_APK"
-    # Fails at execution time, naming the missing piece, when the keystore or
-    # the Mapbox token is absent. Refuse the release rather than ship a web
-    # half: a partial release is how the two clients diverged in the first
+    # Fails at execution time, naming the missing piece, when a keystore, the
+    # Mapbox token or the SDK is absent. Refuse the release rather than ship a
+    # web half: a partial release is how the clients diverged in the first
     # place.
-    ( cd "$ANDROID_DIR" && ./gradlew :app:assembleRelease --no-daemon ) || {
-      red "REFUSED: the Android release APK did not build."
+    ( cd "$ANDROID_DIR" && ./gradlew "$ANDROID_TASK" --no-daemon ) || {
+      red "REFUSED: the $ANDROID_NAME Android release APK did not build."
       red "  Nothing has been deployed yet, which is why this step runs here."
-      red "  Release signing needs KEYSTORE_PATH, KEYSTORE_PASSWORD, KEY_ALIAS"
-      red "  and KEY_PASSWORD in auntieos-admin/android/local.properties, and"
-      red "  MAPBOX_DOWNLOADS_TOKEN in ~/.gradle/gradle.properties."
-      red "  To ship the web alone anyway: RELEASE_SKIP_ANDROID=1."
+      red "${ANDROID_BUILD_HINTS[$ANDROID_IDX]}"
+      red "  To ship without this app: $ANDROID_SKIP_VAR=1."
+      red "  To ship the web with no Android at all: RELEASE_SKIP_ANDROID=1."
       exit 1
     }
     [ -f "$ANDROID_APK" ] || {
       red "REFUSED: gradle succeeded but $ANDROID_APK is not there."
+      red "  The task ran but wrote its APK somewhere else, so the path in this"
+      red "  script is wrong for $ANDROID_NAME. Distributing nothing is correct;"
+      red "  distributing a stale APK from a previous build would be worse."
       exit 1
     }
-    ANDROID_BUILT=1
-    grn "android: assembled $(basename "$ANDROID_APK") ($(du -h "$ANDROID_APK" | cut -f1))"
+    ANDROID_BUILT[$ANDROID_IDX]=1
+    ANDROID_ANY_BUILT=1
+    grn "android/$ANDROID_NAME: assembled $(basename "$ANDROID_APK") ($(du -h "$ANDROID_APK" | cut -f1))"
   fi
-fi
+  ANDROID_IDX=$((ANDROID_IDX + 1))
+done
 
 # WHO THE BUILD ACTUALLY REACHES, decided before anything ships.
 #
@@ -767,10 +876,17 @@ fi
 #
 # So the audience is resolved HERE, where an empty one can still refuse the
 # whole release, rather than at 6b where the web has already gone out.
+#
+# ONE audience for both apps. App Distribution's tester roster is per project,
+# not per app, and the two apps go to the same internal people; splitting the
+# audience per app would invent a second roster to keep in sync with the first.
 STEP="resolving the Android distribution audience"
 ANDROID_GROUPS="${RELEASE_ANDROID_GROUPS:-}"
 ANDROID_TESTERS="${RELEASE_ANDROID_TESTERS:-}"
-if [ "$ANDROID_BUILT" = "1" ] && [ -z "$ANDROID_GROUPS" ] && [ -z "$ANDROID_TESTERS" ]; then
+# Declared here rather than in 6b because step 9 reads it. 6b fills it in from
+# whichever audience flags it ends up passing.
+ANDROID_AUDIENCE_DESC=""
+if [ "$ANDROID_ANY_BUILT" = "1" ] && [ -z "$ANDROID_GROUPS" ] && [ -z "$ANDROID_TESTERS" ]; then
   # Nothing configured, so fall back to every tester on the project. For an
   # internal tool that IS the audience, and it keeps the roster in the Firebase
   # console instead of hardcoded here where it would rot.
@@ -782,8 +898,8 @@ if [ "$ANDROID_BUILT" = "1" ] && [ -z "$ANDROID_GROUPS" ] && [ -z "$ANDROID_TEST
   # counts separators, so one tester reports as 0 and two report as 1.
   [ -n "$ANDROID_TESTERS" ] && ylw "android: no audience configured; using all $(printf '%s' "$ANDROID_TESTERS" | awk -F, '{print NF}') project tester(s)."
 fi
-if [ "$ANDROID_BUILT" = "1" ] && [ -z "$ANDROID_GROUPS" ] && [ -z "$ANDROID_TESTERS" ]; then
-  red "REFUSED: the Android build has nobody to go to."
+if [ "$ANDROID_ANY_BUILT" = "1" ] && [ -z "$ANDROID_GROUPS" ] && [ -z "$ANDROID_TESTERS" ]; then
+  red "REFUSED: the Android builds have nobody to go to."
   red "  The project has no App Distribution testers and no group was named,"
   red "  so the upload would succeed, warn 'no testers or groups specified',"
   red "  and reach no one. Nothing has deployed yet."
@@ -1215,29 +1331,33 @@ deploy mytribe hosting:kinfolk_portal
 grn "portal: deployed"
 
 # ---------------------------------------------------------------------------
-# 6b. The third client, shipped in the same run as the other two.
+# 6b. The other two clients, shipped in the same run as the web.
 # ---------------------------------------------------------------------------
 banner "6b. Android"
 
-# App Distribution is the channel: the operator admin is an internal tool with
-# named testers. The tester list is managed in the Firebase console; this
-# uploads to whoever is already on it.
+# App Distribution is the channel: both apps are internal tools with named
+# testers. The tester list is managed in the Firebase console, per project and
+# not per app; this uploads to whoever is already on it.
 #
 # The release note carries the commit, so a tester's build always names the
-# code it came from. versionName already embeds the short SHA (build.gradle.kts
-# builds it from gitShortSha), so the APK is self-identifying even off-console.
-STEP="distributing the Android release"
-if [ "$ANDROID_BUILT" != "1" ]; then
+# code it came from. The AuntieOS versionName also embeds the short SHA (its
+# build.gradle.kts builds it from gitShortSha), so that APK is self-identifying
+# even off-console. The Kinfolk Portal APK is NOT: its versionCode and
+# versionName are hardcoded literals, so every build of it reports as
+# "0.2.0 (2)" whatever the code. Until that is derived from git the way the
+# operator app's is, the release note is the only thing telling two of its
+# builds apart, and Android will not treat a newer one as an upgrade.
+STEP="distributing the Android releases"
+if [ "$ANDROID_ANY_BUILT" != "1" ]; then
   ylw "SKIPPED: no APK was assembled in step 1c."
 else
-  ANDROID_APP_ID="${RELEASE_ANDROID_APP_ID:-1:153396971788:android:6bcb7c5411aeda837f2129}"
   ANDROID_NOTES="$(git log -1 --format='%h %s')"
 
   # The audience was resolved and proven non-empty in 1c. Passing it is what
   # turns an upload into a distribution: without one of these two flags the
-  # CLI warns and exits 0, having shipped to nobody.
+  # CLI warns and exits 0, having shipped to nobody. Built once and reused for
+  # every app, because the roster is per project.
   ANDROID_AUDIENCE_ARGS=()
-  ANDROID_AUDIENCE_DESC=""
   if [ -n "$ANDROID_GROUPS" ]; then
     ANDROID_AUDIENCE_ARGS+=(--groups "$ANDROID_GROUPS")
     ANDROID_AUDIENCE_DESC="groups $ANDROID_GROUPS"
@@ -1247,30 +1367,51 @@ else
     ANDROID_AUDIENCE_DESC="${ANDROID_AUDIENCE_DESC:+$ANDROID_AUDIENCE_DESC, }$(printf '%s' "$ANDROID_TESTERS" | awk -F, '{print NF}') tester(s)"
   fi
 
-  if [ "$DRY_RUN" = "1" ]; then
-    ylw "DRY_RUN=1: would upload $ANDROID_APK to $ANDROID_AUDIENCE_DESC"
-  else
-    cyan "android: distributing to $ANDROID_AUDIENCE_DESC"
-    if firebase appdistribution:distribute "$ANDROID_APK" \
-      --app "$ANDROID_APP_ID" \
-      --project "$PROJECT" \
-      --release-notes "$ANDROID_NOTES" \
-      "${ANDROID_AUDIENCE_ARGS[@]}"; then
-      grn "android: distributed to $ANDROID_AUDIENCE_DESC"
-      ANDROID_DISTRIBUTED=1
-    else
-      # The APK is built and signed on disk either way. Failing the release
-      # here would report a landed web deploy as broken; saying nothing would
-      # recreate the silent drift. So: loud, non-fatal, with the retry, and
-      # the retry carries the audience because that is the part forgotten.
-      ylw "android: distribution FAILED. The signed APK is still at:"
-      ylw "  $ANDROID_APK"
-      ylw "  Retry with:"
-      ylw "  firebase appdistribution:distribute '$ANDROID_APK' \\"
-      ylw "    --app $ANDROID_APP_ID --project $PROJECT \\"
-      ylw "    --release-notes '$ANDROID_NOTES' ${ANDROID_AUDIENCE_ARGS[*]}"
+  ANDROID_IDX=0
+  while [ "$ANDROID_IDX" -lt "$ANDROID_COUNT" ]; do
+    ANDROID_NAME="${ANDROID_NAMES[$ANDROID_IDX]}"
+    ANDROID_APK="${ANDROID_APKS[$ANDROID_IDX]}"
+    ANDROID_APP_ID="${ANDROID_APP_IDS[$ANDROID_IDX]}"
+
+    if [ "${ANDROID_BUILT[$ANDROID_IDX]}" != "1" ]; then
+      # Said out loud rather than passed over. One app shipping is not "android
+      # shipped", and a run that only prints the app that went out reads as if
+      # both did.
+      ylw "android/$ANDROID_NAME: nothing was assembled in 1c; not distributing."
+      ANDROID_IDX=$((ANDROID_IDX + 1))
+      continue
     fi
-  fi
+
+    if [ "$DRY_RUN" = "1" ]; then
+      ylw "DRY_RUN=1: would upload $ANDROID_APK to $ANDROID_AUDIENCE_DESC"
+    else
+      cyan "android/$ANDROID_NAME: distributing to $ANDROID_AUDIENCE_DESC"
+      if firebase appdistribution:distribute "$ANDROID_APK" \
+        --app "$ANDROID_APP_ID" \
+        --project "$PROJECT" \
+        --release-notes "$ANDROID_NOTES" \
+        "${ANDROID_AUDIENCE_ARGS[@]}"; then
+        grn "android/$ANDROID_NAME: distributed to $ANDROID_AUDIENCE_DESC"
+        ANDROID_DISTRIBUTED[$ANDROID_IDX]=1
+      else
+        # The APK is built and signed on disk either way. Failing the release
+        # here would report a landed web deploy as broken; saying nothing would
+        # recreate the silent drift. So: loud, non-fatal, with the retry, and
+        # the retry carries the audience because that is the part forgotten.
+        #
+        # The loop CONTINUES past a failure rather than breaking: the second
+        # app's upload has nothing to do with the first one's, and stopping
+        # here would let one bad upload silently un-ship the other client.
+        ylw "android/$ANDROID_NAME: distribution FAILED. The signed APK is still at:"
+        ylw "  $ANDROID_APK"
+        ylw "  Retry with:"
+        ylw "  firebase appdistribution:distribute '$ANDROID_APK' \\"
+        ylw "    --app $ANDROID_APP_ID --project $PROJECT \\"
+        ylw "    --release-notes '$ANDROID_NOTES' ${ANDROID_AUDIENCE_ARGS[*]}"
+      fi
+    fi
+    ANDROID_IDX=$((ANDROID_IDX + 1))
+  done
 fi
 
 # ---------------------------------------------------------------------------
@@ -1455,16 +1596,24 @@ functions: mytribe (skipped, unchanged since the last release)"
     SHIPPED="$SHIPPED
 functions: auntieos-admin (default, reconcile)"
   fi
-  if [ "$ANDROID_DISTRIBUTED" -eq 1 ]; then
-    SHIPPED="$SHIPPED
-android: distributed ($ANDROID_AUDIENCE_DESC)"
-  elif [ "$ANDROID_BUILT" -eq 1 ]; then
-    SHIPPED="$SHIPPED
-android: built, distribution did not confirm (see 6b above)"
-  else
-    SHIPPED="$SHIPPED
-android: skipped"
-  fi
+  # A LINE PER APP, never one "android:" verdict for both. There are two
+  # Android clients; a single line reading "distributed" when one of them
+  # stayed on the shelf is the same lie this whole block is written against,
+  # just one level up from the one the two scalars were split to prevent.
+  ANDROID_IDX=0
+  while [ "$ANDROID_IDX" -lt "$ANDROID_COUNT" ]; do
+    if [ "${ANDROID_DISTRIBUTED[$ANDROID_IDX]}" -eq 1 ]; then
+      SHIPPED="$SHIPPED
+android (${ANDROID_NAMES[$ANDROID_IDX]}): distributed ($ANDROID_AUDIENCE_DESC)"
+    elif [ "${ANDROID_BUILT[$ANDROID_IDX]}" -eq 1 ]; then
+      SHIPPED="$SHIPPED
+android (${ANDROID_NAMES[$ANDROID_IDX]}): built, distribution did not confirm (see 6b above)"
+    else
+      SHIPPED="$SHIPPED
+android (${ANDROID_NAMES[$ANDROID_IDX]}): skipped"
+    fi
+    ANDROID_IDX=$((ANDROID_IDX + 1))
+  done
 
   TAG_MSG="$(git log -1 --format='%h %s')
 

@@ -45,11 +45,12 @@ checks them by RUNNING them rather than by looking for the binary:
 npm run setup
 ```
 
-Idempotent, safe to re-run. Runs preflight, points git at `.githooks`, writes
-`auntieos-admin/android/local.properties` if absent (never overwriting an
-existing one, which also holds signing keys), installs all three JS projects one
-at a time, and then **proves it worked** by typechecking. If any step fails it
-says which step, rather than exiting quietly.
+Idempotent, safe to re-run. Runs preflight, points git at `.githooks`, writes a
+`local.properties` for each of the two Gradle builds if absent
+(`auntieos-admin/android/` and `mytribe/`, never overwriting an existing one,
+which also holds signing keys), installs all three JS projects one at a time,
+and then **proves it worked** by typechecking. If any step fails it says which
+step, rather than exiting quietly.
 
 Optional, for Sentry and an App Check debug token. Both apps run fine without
 them:
@@ -110,9 +111,9 @@ rather than lived with.
 |---|---|---|
 | `mytribe/functions` | The backend. Every callable. | Firebase codebase `mytribe` |
 | `mytribe/web` | Kinfolk portal web app | `kinfolk.tribetails.com` |
-| `mytribe/src` | Kinfolk portal Android app, `com.kinfolk.portal` (Compose) | APK |
+| `mytribe/src` (android target) | Kinfolk portal Android app, `com.kinfolk.portal` | App Distribution |
 | `auntieos-admin/src` | Operator admin | `auntie.tribetails.com` |
-| `auntieos-admin/android` | Operator Android app, `com.tribetails.auntieos` | APK |
+| `auntieos-admin/android` | Operator Android app, `com.tribetails.auntieos` | App Distribution |
 | `auntieos-admin/web/functions` | AuntieOS-owned functions | Firebase codebase `default` |
 | `auntieos-admin/web/functions-python` | Dossier and 411 reconcile pipeline | Firebase codebase `reconcile` |
 
@@ -121,9 +122,15 @@ Android app" is never specific enough to act on. Name the package. The release
 section below is the authority on which of them a run actually builds and
 distributes; `scripts/distribute-apks.sh` carries both app ids.
 
+**Two web apps and two Android apps**, one pair per operating system, and
+`npm run deploy` ships all four in one run. `mytribe/src` is easy to misread as
+dead: it is a Compose Multiplatform tree whose `jvm` target is the paused
+desktop build, but whose `android` target is a live delivery surface.
+
 Not delivery targets, do not add features: `auntieos-admin/web/composeApp` (wasm
-admin superseded by `auntieos-admin/src`, desktop build paused by owner ruling)
-and `auntieos-admin/sotu-hosting` (ops hosting, no Cloud Functions of its own).
+admin superseded by `auntieos-admin/src`, desktop build paused by owner ruling),
+the `jvm`/desktop target of `mytribe/src` (same ruling), and
+`auntieos-admin/sotu-hosting` (ops hosting, no Cloud Functions of its own).
 
 All of it deploys into ONE Firebase project, `auntieos-ttpc`, which is why
 deploys go through a wrapper.
@@ -216,13 +223,13 @@ yourself, and says in its output that it did.
 | 0b | CI verdict for HEAD | Asks GitHub whether every check is green for this exact commit, **e2e included**. `npm run check` does not run e2e, so until this existed a red e2e could not stop a release. See below. |
 | 1 | `npm run check` | Typecheck, lint, test, build. Not optional theatre: this is what produces the `dist/` that step 6 uploads. |
 | 1b | Secret preflight | Every secret the code DECLARES must exist. Firebase validates these before uploading, and one missing name fails the whole codebase. Refuses here, before any deploy. |
-| 1c | Android build | Assembles the signed release APK. Runs before the first deploy so a build failure costs nothing; the upload is step 6b. |
+| 1c | Android build | Assembles **both** signed release APKs, operator and portal. Runs before the first deploy so a build failure costs nothing; the uploads are step 6b. |
 | 2 | Firestore indexes | Before the code that queries them. A query with no index fails at RUNTIME, not at build. |
 | 3 | Wait for indexes | The CLI returns when Firestore ACCEPTS an index, not when it is Enabled. The run blocks; the CLI will not. |
 | 4 | Firestore rules | From `mytribe` only. Refused outright if the admin mirror has drifted. |
 | 5 | Functions | Before the clients that call them. **Skipped when `mytribe/functions` is unchanged since the last release AND no declared secret is newer than it**. Otherwise deployed **by name, in batches of 25, with retries**, because the whole fleet does not fit the regional CPU quota. See below. |
 | 6 | Hosting | Admin, then portal. |
-| 6b | Android | Uploads the APK from step 1c to App Distribution, in the same run as the web. |
+| 6b | Android | Uploads both APKs from step 1c to App Distribution, each to its own Firebase app, in the same run as the web. |
 | 7 | Verify | Fetches both live sites and compares the hashed bundle they reference against the one just built. |
 | 8 | Prune revisions | Deletes old Cloud Run revisions, keeping the newest 3 per service and every serving one. Runs after verification, because those revisions are rollback targets. Was 10, which floored the sweep above every inventory level that has ever caused trouble; see below. |
 | 9 | Tag the release | Annotates `release/YYYY.MM.DD-<sha>`, naming what actually shipped, and pushes just that tag to origin. Runs after step 7, so nothing gets tagged unless it was verified live. |
@@ -522,7 +529,9 @@ batching: the `firebase` stub takes a `FIREBASE_QUOTA_MAX`, refuses everything
 past it exactly as the quota did, and the suite proves the release retries the
 right names, survives, and refuses honestly when the quota never lifts. It runs
 the real script against a throwaway repo with `gh`, `gcloud`, `firebase`, `curl`
-and `npm` stubbed. 38 cases. Run it after touching `scripts/release.sh`.
+and `npm` stubbed, plus a fake `gradlew` per Android app so the two-app build
+and distribution path runs wet without an SDK. 49 cases. Run it after touching
+`scripts/release.sh`.
 
 Knobs, all off by default:
 
@@ -534,8 +543,12 @@ Knobs, all off by default:
 | `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` | Also ship the AuntieOS `default` and `reconcile` codebases |
 | `RELEASE_YES=1` | Do not prompt (CI). Preconditions still apply |
 | `RELEASE_FORCE_FUNCTIONS=1` | Deploy functions even when unchanged |
-| `RELEASE_SKIP_ANDROID=1` | Ship the web without the Android client. Off by default; shipping them together is the point of steps 1c and 6b |
-| `RELEASE_ANDROID_APP_ID=…` | Override the App Distribution app id (defaults to the `com.tribetails.auntieos` app) |
+| `RELEASE_SKIP_ANDROID=1` | Ship the web without **either** Android client. Off by default; shipping them together is the point of steps 1c and 6b |
+| `RELEASE_SKIP_ANDROID_AUNTIEOS=1` | Drop just the operator app. The portal app still builds and ships |
+| `RELEASE_SKIP_ANDROID_MYTRIBE=1` | Drop just the portal app. The operator app still builds and ships |
+| `RELEASE_ANDROID_APP_ID=…` | Override the operator app's App Distribution app id. Predates the second app, so it means that one and only that one |
+| `RELEASE_ANDROID_APP_ID_AUNTIEOS=…` | Same thing, said explicitly. Wins over `RELEASE_ANDROID_APP_ID` |
+| `RELEASE_ANDROID_APP_ID_MYTRIBE=…` | Override the portal app's App Distribution app id |
 | `RELEASE_ANDROID_GROUPS=a,b` | App Distribution group aliases to distribute to |
 | `RELEASE_ANDROID_TESTERS=a@b,c@d` | Tester emails to distribute to. Neither this nor groups set means every tester on the project |
 | `RELEASE_SKIP_SECRET_CHECK=1` | Skip step 1b |
@@ -571,15 +584,15 @@ redeploy a tag directly. Either check the tag out somewhere other than your
 (see below), or `git revert` forward to that state on `main` and release
 normally.
 
-### The Android client ships with the web
+### Both Android clients ship with the web
 
-Steps 1c and 6b exist because it did not, for a long time, and nothing said so.
-The three clients were built to parity, the same callables and contracts and
-invoice state table, held honest by tests in all three trees. The release script
-shipped functions and two hosting targets and never touched Android. Parity was
-real in the source tree and fiction in production: by 2026-07-28 the newest APK
-was versionCode 318 against a web build of 518, which is 47 commits and ~13,400
-added lines nobody could run.
+Steps 1c and 6b exist because Android did not ship at all, for a long time, and
+nothing said so. The clients were built to parity, the same callables and
+contracts and invoice state table, held honest by tests in every tree. The
+release script shipped functions and two hosting targets and never touched
+Android. Parity was real in the source tree and fiction in production: by
+2026-07-28 the newest APK was versionCode 318 against a web build of 518, which
+is 47 commits and ~13,400 added lines nobody could run.
 
 Staleness was not the whole cost. The deployed rules revoked client-direct
 invoice writes on 2026-07-28 (`invoices allow create/update/delete: if false`,
@@ -587,26 +600,67 @@ ADR-0002) and Android's writer moved to callables in PR #105, so any APK from
 before #105 gets `PERMISSION_DENIED` on every invoice create, edit and delete.
 A client that cannot ship rots against a server that keeps moving.
 
-The build runs at 1c, before the first deploy, so a failure costs nothing. The
-upload runs at 6b, beside hosting. **CI cannot do either**: release signing needs
+**Then it happened again, to the other app.** The fix landed as one hardcoded
+`auntieos-admin/android`, so it ended the drift for the operator app and left
+the Kinfolk Portal's Android client in the identical hole, under a comment
+describing that hole. There are two registered, active Android apps in
+`auntieos-ttpc`, and only one of them was in the release:
+
+| App | Package | Source | Gradle task | APK |
+|---|---|---|---|---|
+| AuntieOS operator | `com.tribetails.auntieos` | `auntieos-admin/android`, module `:app` | `:app:assembleRelease` | `app/build/outputs/apk/release/app-release.apk` |
+| Kinfolk Portal | `com.kinfolk.portal` | `mytribe/`, Kotlin Multiplatform, **root** module | `:assembleRelease` | `build/outputs/apk/release/kinfolk-portal-release.apk` |
+
+The two builds are not the same shape, which is the part worth remembering.
+`mytribe` applies `com.android.application` to the root project, so there is no
+`:app` to address and `:app:assembleRelease` does not exist there; the APK is
+named from `rootProject.name`, which is `kinfolk-portal`, not `mytribe`.
+
+The builds run at 1c, before the first deploy, so a failure costs nothing. The
+uploads run at 6b, beside hosting. **CI cannot do either**: release signing needs
 the keystore, and the Mapbox SDK needs a downloads token, and both are per
 machine and gitignored. That is why this lives in the release you run locally
 and not in Actions. What it needs:
 
-| Needs | Where |
-|---|---|
-| `KEYSTORE_PATH`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` | `auntieos-admin/android/local.properties` |
-| `MAPBOX_DOWNLOADS_TOKEN` | `~/.gradle/gradle.properties`, or the environment |
-| An App Distribution tester list | Firebase console, per project |
+| Needs | For | Where |
+|---|---|---|
+| `KEYSTORE_PATH`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` | operator app | `auntieos-admin/android/local.properties` |
+| `MAPBOX_DOWNLOADS_TOKEN` | operator app | `~/.gradle/gradle.properties`, or the environment |
+| `sdk.dir` (or `ANDROID_HOME`) | portal app | `mytribe/local.properties` |
+| `~/.android/debug.keystore` | portal app, see signing below | Android Studio, or `keytool` |
+| An App Distribution tester list | both | Firebase console, per project |
 
-A missing keystore or token **refuses the release** at 1c rather than shipping a
-web half, because a partial release is how the clients diverged to begin with.
-Override with `RELEASE_SKIP_ANDROID=1` when you mean it.
+A missing keystore, token or SDK **refuses the release** at 1c rather than
+shipping a web half, because a partial release is how the clients diverged to
+begin with. `RELEASE_SKIP_ANDROID=1` drops both when you mean it;
+`RELEASE_SKIP_ANDROID_AUNTIEOS=1` and `RELEASE_SKIP_ANDROID_MYTRIBE=1` drop one
+and keep the other, which is what you want when a single app's build is broken:
+the all-or-nothing switch would turn one broken app into two unshipped ones.
+
+**The portal app is signed with the Android debug keystore.** Not the release
+keystore the operator app uses. There is no Play Store listing for either app
+and App Distribution rejects an unsigned APK, so the `signingConfigs` block in
+`mytribe/build.gradle.kts` points `release` at `~/.android/debug.keystore` with
+the well-known public `android`/`androiddebugkey` credentials. That is a real
+difference in what testers install, not a formality: a debug-signed APK cannot
+be upgraded in place to a release-signed one later, and it is not shippable to
+Play. It is recorded here rather than quietly ridden because "release build"
+and "release signing" are not the same claim.
+
+**The portal app's version does not move.** `versionCode = 2` and
+`versionName = "0.2.0"` are literals in `mytribe/build.gradle.kts`, so every
+build of it reports as `0.2.0 (2)` whatever the code, and Android will not treat
+a newer one as an upgrade. The operator app solved this in `auntieos-admin` by
+deriving both from git (`git rev-list --count` and the short SHA); the portal app
+has not, and until it does the release note is the only thing telling two of its
+builds apart.
 
 A distribution failure at 6b is loud but not fatal: the web has already landed
 by then, the signed APK is on disk, and the run prints the retry command with
 its audience flags. Failing the release there would report a good deploy as
-broken.
+broken. One app's failed upload does not stop the other's: the loop carries on,
+and each app gets its own line in the run and its own line in the tag, so a tag
+never says "android: distributed" when one of two went out.
 
 **Uploading is not distributing.** `appdistribution:distribute` needs
 `--testers` or `--groups`. Given neither it uploads the binary, attaches the
@@ -620,11 +674,13 @@ else `RELEASE_ANDROID_TESTERS`, else every tester on the project, read from
 `appdistribution:testers:list --json`. The roster stays in the Firebase console
 rather than in this repo, where a checked-in list of people would rot. If it
 resolves to nobody the release is **refused** while nothing has shipped, and the
-refusal prints the command that adds a tester.
+refusal prints the command that adds a tester. One audience covers both apps:
+App Distribution's roster is per project, and a second per-app list would only
+be a first list to forget to update.
 
-`versionName` embeds the short SHA (`build.gradle.kts` builds it from
-`gitShortSha`), so a tester's screenshot names the commit it came from without
-anyone checking the console.
+The operator app's `versionName` embeds the short SHA (its `build.gradle.kts`
+builds it from `gitShortSha`), so a tester's screenshot names the commit it came
+from without anyone checking the console. The portal app's does not; see above.
 
 The AuntieOS functions codebases are **skipped by default** and the run says so
 rather than omitting them quietly. They live in the second tree
