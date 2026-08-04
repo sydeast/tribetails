@@ -900,6 +900,74 @@ else
   ok "nothing was deployed before the Android build refused"
 fi
 
+# ---------------------------------------------------------------------------
+# 21. The minimum-bill refusal. Not a rate limit, and the old advice made it
+# worse: on 2026-08-04 a 256MiB -> 512MiB fleet change was refused by
+# firebase-tools once per batch, all 9 batches, all 3 rounds, and the closing
+# diagnostic told the operator to retry smaller and slower. It cannot be
+# retried smaller. These cases hold that line in both directions.
+# ---------------------------------------------------------------------------
+D15="$(make_repo)"; write_stubs "$D15"; arm_ci "$D15"
+
+# A firebase that refuses exactly the way the real one did.
+cat > "$D15/stubs/firebase" <<'STUB'
+#!/usr/bin/env bash
+echo "STUB firebase $*"
+[ -n "${FIREBASE_CALL_LOG:-}" ] && echo "$*" >> "$FIREBASE_CALL_LOG"
+case "$*" in
+  *functions:mytribe:*)
+    for a in "$@"; do
+      # --force is the whole point: with it, the deploy is allowed through.
+      if [ "$a" = "--force" ]; then echo "✔  functions[alpha(us-central1)] Successful update operation."; exit 0; fi
+    done
+    echo "Error: Pass the --force option to deploy functions that increase the minimum bill"
+    exit 1 ;;
+  *) exit 0 ;;
+esac
+STUB
+chmod +x "$D15/stubs/firebase"
+
+RC="$(run_release "$D15" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=4 RELEASE_FUNCTIONS_SETTLE=0)"
+if grep -q 'raises the minimum bill' "$D15/out"; then
+  ok "the minimum-bill refusal is named, not reported as a rate limit"
+else
+  bad "a minimum-bill refusal was not identified as one"
+fi
+if grep -q 'RELEASE_FUNCTIONS_FORCE=1' "$D15/out"; then
+  ok "the refusal prints the flag that resolves it"
+else
+  bad "the refusal did not name RELEASE_FUNCTIONS_FORCE=1"
+fi
+if [ "$RC" != "0" ]; then
+  ok "a refused functions deploy still fails the release"
+else
+  bad "a release whose functions were refused reported success"
+fi
+
+# The flag, when set, actually reaches firebase.
+D16="$(make_repo)"; write_stubs "$D16"; arm_ci "$D16"
+cp "$D15/stubs/firebase" "$D16/stubs/firebase"
+run_release "$D16" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=4 RELEASE_FUNCTIONS_SETTLE=0 \
+  RELEASE_FUNCTIONS_FORCE=1 FIREBASE_CALL_LOG="$D16/calls" >/dev/null
+if grep -q -- '--force' "$D16/calls" 2>/dev/null; then
+  ok "RELEASE_FUNCTIONS_FORCE=1 passes --force to the functions deploy"
+else
+  bad "RELEASE_FUNCTIONS_FORCE=1 did not reach firebase as --force"
+fi
+
+# And is genuinely off by default, since it also permits deletion.
+D17="$(make_repo)"; write_stubs "$D17"; arm_ci "$D17"
+run_release "$D17" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=4 RELEASE_FUNCTIONS_SETTLE=0 \
+  FIREBASE_CALL_LOG="$D17/calls" >/dev/null
+if grep -q -- '--force' "$D17/calls" 2>/dev/null; then
+  bad "--force was passed without RELEASE_FUNCTIONS_FORCE being set"
+else
+  ok "--force is off unless asked for"
+fi
+
 echo
 echo "release tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

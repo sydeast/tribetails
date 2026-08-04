@@ -78,6 +78,12 @@
 #                                       is now closed (400 vCPU since
 #                                       2026-08-03, fleet ~90 since #219); see
 #                                       the runbook for what is left.
+#   RELEASE_FUNCTIONS_FORCE=1           pass --force to the functions deploy.
+#                                       Needed when a change RAISES the minimum
+#                                       bill (memory, cpu, minInstances); without
+#                                       it firebase-tools refuses every batch.
+#                                       Also lets firebase DELETE functions it
+#                                       cannot find in source, so read the diff.
 #   RELEASE_PREDEPLOY_KEEP=N            prune to N revisions per service before a
 #                                       LARGE functions deploy (3; 0 disables).
 #   RELEASE_RETRY_KEEP=N                prune depth between retry rounds (2).
@@ -195,6 +201,26 @@ FN_ROUNDS="${RELEASE_FUNCTIONS_ROUNDS:-3}"
 # failed outright on 2026-08-01 (26 by name, 0 landed) was fired immediately
 # after a full deploy had just abandoned ~200 starting revisions. So: wait.
 FN_SETTLE="${RELEASE_FUNCTIONS_SETTLE:-30}"
+
+# OFF BY DEFAULT, AND IT SHOULD STAY THAT WAY.
+#
+# `--force` is how you get past firebase-tools refusing a deploy that raises the
+# minimum bill (memory, cpu, minInstances). It is not free: the same flag also
+# lets firebase DELETE any function it cannot find in the source. Every deploy
+# here passes an explicit `--only functions:mytribe:<name>,...` list, which
+# bounds what it could act on, but the honest reading is that this trades a
+# guardrail for an unblock. So it is an opt-in per run, never a default, and the
+# batch that hits the refusal prints the flag and the reason rather than leaving
+# an operator to find it.
+FN_FORCE_FLAG=""
+if [ "${RELEASE_FUNCTIONS_FORCE:-0}" = "1" ]; then
+  FN_FORCE_FLAG="--force"
+fi
+
+# Set when firebase-tools refuses the deploy for raising the minimum bill, which
+# is a verdict rather than a capacity problem, so the retry rounds stop instead
+# of re-sending the identical rejected request twice more.
+FN_REFUSED_BILL=0
 FN_RETRY_KEEP="${RELEASE_RETRY_KEEP:-2}"
 
 # deploy_one_function_batch <names-file> <failed-file>
@@ -211,8 +237,51 @@ deploy_one_function_batch() {
 
   log="$names_file.log"
   cyan "deploy: mytribe -> $count function(s): $(awk 'NF{printf "%s%s", (n++?" ":""), $0}' "$names_file")"
-  if DRY_RUN="$DRY_RUN" bash "$SAFE_DEPLOY" mytribe -- firebase deploy --only "$targets" 2>&1 | tee "$log"; then
+  # shellcheck disable=SC2086
+  if DRY_RUN="$DRY_RUN" bash "$SAFE_DEPLOY" mytribe -- firebase deploy $FN_FORCE_FLAG --only "$targets" 2>&1 | tee "$log"; then
     return 0
+  fi
+
+  # RAISING A LIMIT IS ITS OWN FAILURE, AND IT IS NOT A RATE LIMIT.
+  #
+  # firebase-tools refuses any deploy that raises the floor of the bill, and it
+  # says so in one line and then exits:
+  #
+  #   Error: Pass the --force option to deploy functions that increase the
+  #   minimum bill
+  #
+  # Every batch fails identically and instantly. On 2026-08-04 that took down a
+  # whole release: the fleet moved from 256MiB to 512MiB (the fix for a cold
+  # start that was OOMing and returning 503 on every callable), all 9 batches
+  # refused, all 3 rounds refused, and the closing diagnostic then told the
+  # operator it was "almost certainly a RATE limit" and to retry smaller and
+  # slower. Smaller and slower cannot fix a deploy that is being refused on
+  # principle. That misdirection is corrected below and named here.
+  #
+  # It is caught HERE, per batch, rather than only at the end, so the run stops
+  # on the first batch instead of grinding through 27 doomed deploys.
+  if grep -q 'increase the minimum bill' "$log" 2>/dev/null; then
+    red "REFUSED by firebase-tools: this deploy raises the minimum bill."
+    red "  Nothing in this batch landed, and retrying smaller will not help."
+    red "  Something in mytribe/functions asks for more than it used to:"
+    red "  memory, cpu, minInstances, or a new always-on trigger. That is a"
+    red "  deliberate change, so it takes a deliberate flag:"
+    red ""
+    red "    RELEASE_FUNCTIONS_FORCE=1 npm run deploy"
+    red ""
+    red "  Read the diff before you set it. --force also lets firebase DELETE"
+    red "  functions it cannot find in the source, and the bill it is warning"
+    red "  about is a real recurring cost, not a formality."
+    # EVERY NAME IN THIS BATCH IS STALE, and saying so is what makes the release
+    # fail. An earlier version returned here without recording them, so the
+    # caller saw an empty pending list, concluded the fleet had landed, and
+    # reported a successful release that had deployed nothing. A refusal that
+    # reports success is worse than the refusal.
+    awk 'NF' "$names_file" >> "$failed_file"
+    # Nothing about a smaller batch changes this answer, so stop the rounds
+    # rather than spending two more on the same refusal.
+    FN_REFUSED_BILL=1
+    return 1
   fi
 
   # WHICH ONES ACTUALLY DIED, read from firebase's own per-function lines
@@ -251,6 +320,9 @@ deploy_function_names() {
     remaining="$(awk 'NF{n++} END{print n+0}' "$pending")"
     [ "$remaining" -eq 0 ] && return 0
     [ "$round" -gt "$FN_ROUNDS" ] && return 1
+    # A minimum-bill refusal is a verdict, not a capacity problem. Retrying it
+    # smaller is retrying the identical rejected request.
+    [ "${FN_REFUSED_BILL:-0}" = "1" ] && return 1
 
     if [ "$round" -gt 1 ]; then
       batch=$(( batch / 2 ))
@@ -1283,13 +1355,22 @@ else
       red "    scripts/safe-deploy.sh mytribe -- firebase deploy --only \\"
       red "      \"$(awk 'NF{printf "%sfunctions:mytribe:%s", (n++?",":""), $0}' "$FN_WORK/targets")\""
       red ""
-      red "  This is almost certainly a RATE limit, not a capacity one. Check the"
-      red "  output above for HTTP 429 and this metric:"
-      red "    'Per project mutation requests per minute per region'"
-      red "    service: cloudfunctions.googleapis.com"
-      red "  If that is what you see, retrying smaller and slower is the fix and"
-      red "  the command above does it. Cloud Run CPU is NOT the problem: 400 vCPU"
-      red "  since 2026-08-03 against ~90 of draw. Do not go asking for more of it."
+      red "  READ THE ERROR ABOVE BEFORE BELIEVING ANY OF THE NEXT PARAGRAPH."
+      red "  This block used to assert a rate limit outright. On 2026-08-04 the"
+      red "  real error was 'Pass the --force option to deploy functions that"
+      red "  increase the minimum bill', printed once per batch, and the advice"
+      red "  to retry smaller and slower was worse than useless: every retry was"
+      red "  refused for the same reason. Two causes, two different fixes:"
+      red ""
+      red "    'increase the minimum bill'  -> RELEASE_FUNCTIONS_FORCE=1, and"
+      red "                                    read the diff first. Not a limit"
+      red "                                    at all, a deliberate cost change."
+      red "    HTTP 429 / 'Per project mutation requests per minute per region'"
+      red "                                 -> a RATE limit. Retrying smaller and"
+      red "                                    slower is the fix, as above."
+      red ""
+      red "  Cloud Run CPU is NOT either of them: 400 vCPU since 2026-08-03"
+      red "  against ~90 of draw. Do not go asking for more of it."
       exit 1
     fi
   fi
