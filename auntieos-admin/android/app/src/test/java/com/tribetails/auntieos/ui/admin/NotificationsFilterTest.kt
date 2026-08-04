@@ -12,9 +12,9 @@ class NotificationsFilterTest {
 
     private val all = listOf(
         // n1 unread (no readAt), n2 read (readAt set), n3 unread (blank readAt).
-        NotificationEntry(id = "n1", category = "booking", status = "dispatched", readAt = null),
-        NotificationEntry(id = "n2", category = "payment", status = "dispatched", readAt = "2026-06-05T10:00:00Z"),
-        NotificationEntry(id = "n3", category = "booking", status = "dispatched", readAt = ""),
+        NotificationEntry(id = "n1", category = "booking", readAt = null),
+        NotificationEntry(id = "n2", category = "payment", readAt = "2026-06-05T10:00:00Z"),
+        NotificationEntry(id = "n3", category = "booking", readAt = ""),
     )
 
     @Test

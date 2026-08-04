@@ -1,8 +1,8 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
+import { promoteQueuedNotification } from '../notifications/promoteQueued';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { getNotificationDef, NOTIFICATION_CATALOG } from '../notifications/catalog';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
@@ -149,7 +149,7 @@ export function resolveBatchBucket(
 
 /**
  * Age of one item, in ms. `createdAt` (a serverTimestamp) is what the
- * dispatcher's baseDoc stamps and is therefore the primary source. `createdAtMs`
+ * dispatcher stamps on every queue doc and is therefore the primary source. `createdAtMs`
  * is read first only so a doc carrying one is still honored, and `createTime`
  * is the last resort so a malformed item ages out rather than pinning its
  * bucket at `now` forever. Exported for testing.
@@ -224,10 +224,14 @@ export async function runNotificationBatchSweep(
   let emitted = 0;
   for (const bucket of grouped.values()) {
     let windowMs: number;
+    // Held past the try so the digest can take its human title/description from
+    // the same def that declared the batch window.
+    let digestDef: ReturnType<typeof getNotificationDef>;
     try {
       const def = getNotificationDef(bucket.catalogKey);
       if (def.deliveryMode !== 'batched') continue;
       windowMs = def.batchWindowMs ?? 5 * 60 * 1000;
+      digestDef = def;
     } catch {
       logEvent({
         severity: 'warn',
@@ -253,24 +257,33 @@ export async function runNotificationBatchSweep(
         // and a read-per-ref would blow the transaction deadline at this chunk
         // size for no guarantee (the digest write is unconditional either way).
         for (const item of chunk) tx.delete(item.ref);
-        const newRef = db().collection('notifications').doc();
-        tx.set(newRef, {
-          key: bucket.catalogKey,
-          category: bucket.category,
-          recipientUid: bucket.uid,
-          actorUid: null,
-          data: {
-            items: chunk.map((i) => ({ itemId: i.itemId, ...i.data, createdAtMs: i.createdAtMs })),
-            itemCount: chunk.length,
-            batchKey: bucket.batchKey,
-            windowMs,
+        // A digest has no single originating row whose title it could copy, so
+        // its human content comes from the catalog def that declared the batch.
+        // Before this it carried no title at all and the card rendered the key.
+        promoteQueuedNotification(
+          tx,
+          {
+            key: bucket.catalogKey,
+            category: bucket.category,
+            recipientUid: bucket.uid,
+            actorUid: null,
+            title: digestDef.label,
+            description: digestDef.description,
+            channels: bucket.channels,
           },
-          channels: bucket.channels,
-          status: 'pending',
-          mode: 'batched-promoted',
-          originBatchKey: bucket.batchKey,
-          createdAt: FieldValue.serverTimestamp(),
-        });
+          {
+            mode: 'batched-promoted',
+            origin: { originBatchKey: bucket.batchKey },
+            overrides: {
+              data: {
+                items: chunk.map((i) => ({ itemId: i.itemId, ...i.data, createdAtMs: i.createdAtMs })),
+                itemCount: chunk.length,
+                batchKey: bucket.batchKey,
+                windowMs,
+              },
+            },
+          },
+        );
       });
       emitted += 1;
       if (deferred > 0) {

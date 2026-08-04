@@ -2,6 +2,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { resolveActor, type ResolvedActor } from '../lib/resolveActor';
+import { buildNotificationDetail } from './buildNotificationDetail';
 import { getNotificationDef } from './catalog';
 import { loadBusinessOverride, loadUserPrefs, resolveChannels, streamForRecipient } from './prefs';
 import { resolveRecipients } from './recipientResolver';
@@ -14,6 +15,29 @@ import type {
 } from './types';
 
 const ALL_CHANNELS: Channel[] = ['email', 'sms', 'push'];
+
+/**
+ * The work-order collection. `notificationDispatch/{id}` is id-matched to
+ * `notifications/{id}` and holds every field the delivery pipeline needs:
+ * mode, channel list, dispatch status, and the per-channel subdocs beneath it.
+ *
+ * IT USED TO BE THE SAME DOCUMENT, and that was the defect behind operator
+ * ruling R5. `notifications/{id}` is mail: it is what an operator or a kinfolk
+ * reads and acts on. The dispatch record is plumbing: which transports were
+ * chosen, whether the fan-out ran, what the provider said. Both were written to
+ * the inbox doc, so the Notifications screen rendered "trigger", "channels:
+ * email, sms" and "dispatched" as primary card content, and both admin clients
+ * put a "Dispatched" counter in the stat strip. The operator's words: "there are
+ * many Activity Log records and workflow (Channels, trigger, and dispatched are
+ * activity log not notification) in Notifications."
+ *
+ * The record of what the pipeline DID is not lost by moving it here, it is
+ * promoted: `onNotificationDispatchCreate` writes NOTIFICATION_DISPATCHED and
+ * `onNotificationChannelCreate` writes NOTIFICATION_RECEIVED, both into the
+ * hash-chained `activity_log`, which is where the operator said this belongs and
+ * where the second of those two already went.
+ */
+export const DISPATCH_COLLECTION = 'notificationDispatch';
 
 /**
  * Resolves the originating entity (targetType + targetId) for a dispatch so the
@@ -177,7 +201,25 @@ async function routeByDeliveryMode(
   actor: ResolvedActor,
 ): Promise<string | null> {
   const { targetType, targetId } = resolveTargetRef(args);
-  const baseDoc = {
+  // R5: the entity detail the CARD renders, resolved server-side once, here.
+  // Every value in it (household, pets, service, date, time, notes, amount) was
+  // already being computed downstream for outbound templates and thrown away;
+  // see buildNotificationDetail's docstring for the full accounting.
+  const detail = await buildNotificationDetail(
+    def.key,
+    recipientUid,
+    args.data,
+    actor.actorName,
+  );
+
+  /**
+   * THE INBOX CONTENT, and nothing else. No `status`, no `mode`, no `channels`:
+   * those describe the delivery pipeline and now live on the work-order doc
+   * (see DISPATCH_COLLECTION above). Typed loosely rather than as
+   * `NotificationDoc` because `createdAt` is a FieldValue sentinel here and a
+   * Timestamp on read, which no single interface can honestly say.
+   */
+  const content = {
     key: def.key,
     category: def.category,
     recipientUid,
@@ -190,7 +232,9 @@ async function routeByDeliveryMode(
     actorName: actor.actorName,
     actorPhotoUrl: actor.actorPhotoUrl,
     data: args.data,
-    channels: activeChannelList(channels),
+    // Omitted entirely when nothing resolved, so a client can distinguish
+    // "no detail available" from "detail with every field blank".
+    ...(detail ? { detail } : {}),
     // Deep-link reference for open-linked + quick approve/deny. Always present
     // (additive; '' when no entity is resolvable) so the client can branch on it.
     targetType,
@@ -198,10 +242,34 @@ async function routeByDeliveryMode(
     createdAt: FieldValue.serverTimestamp(),
   };
 
+  const activeChannels = activeChannelList(channels);
+
+  /**
+   * The queue documents (`pendingNotifications`, `notificationBatch`,
+   * `scheduledNotifications`) are workflow records in their own right: nothing
+   * reads them as an inbox, and a sweep promotes them into a real notification
+   * later. So they legitimately carry `status`/`mode`/`channels` alongside the
+   * content the sweep will hand on. This is the base for all three.
+   */
+  const queueDoc = { ...content, channels: activeChannels };
+
   switch (def.deliveryMode) {
     case 'trigger': {
       const ref = db().collection('notifications').doc();
-      await ref.set({ ...baseDoc, status: 'pending', mode: 'trigger' });
+      await ref.set(content);
+      // The work order goes SECOND and under the same id. Its onCreate trigger
+      // fans out to channel subdocs, and that trigger reads the notification it
+      // is delivering, so the mail must exist before the postman is called.
+      await db().collection(DISPATCH_COLLECTION).doc(ref.id).set({
+        notificationId: ref.id,
+        key: def.key,
+        recipientUid,
+        data: args.data,
+        mode: 'trigger',
+        channels: activeChannels,
+        status: 'pending',
+        createdAt: FieldValue.serverTimestamp(),
+      });
       return ref.id;
     }
 
@@ -211,7 +279,7 @@ async function routeByDeliveryMode(
       const ref = db().collection('pendingNotifications').doc(docId);
       await ref.set(
         {
-          ...baseDoc,
+          ...queueDoc,
           status: 'pending',
           mode: 'debounced',
           debounceStrategy: def.debounceStrategy ?? 'snapshot',
@@ -237,7 +305,7 @@ async function routeByDeliveryMode(
       // and batchKey straight off these segments. Changing the depth here
       // breaks both and strands every row already written.
       //
-      // `baseDoc.createdAt` (serverTimestamp) is the item's age field. The
+      // `queueDoc.createdAt` (serverTimestamp) is the item's age field. The
       // sweep sorts on it in memory rather than in the query, so no
       // COLLECTION_GROUP index is needed for this or any future batchKey; see
       // the sweep's docstring. Renaming or dropping it silently ages every
@@ -247,7 +315,7 @@ async function routeByDeliveryMode(
         .doc(recipientUid)
         .collection(def.batchKey)
         .doc();
-      await ref.set({ ...baseDoc, status: 'pending', mode: 'batched' });
+      await ref.set({ ...queueDoc, status: 'pending', mode: 'batched' });
       return ref.id;
     }
 
@@ -263,7 +331,7 @@ async function routeByDeliveryMode(
         });
       }
       const ref = db().collection('scheduledNotifications').doc();
-      await ref.set({ ...baseDoc, status: 'pending', mode: 'scheduled', fireAtMs });
+      await ref.set({ ...queueDoc, status: 'pending', mode: 'scheduled', fireAtMs });
       return ref.id;
     }
 

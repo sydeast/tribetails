@@ -42,8 +42,8 @@ describe('notifications api', () => {
 
   it('isRead is true only once readAt is present', () => {
     const base: NotificationEntry = {
-      _id: 'n1', key: 'k', category: 'c', recipientUid: 'u', status: 'dispatched', mode: 'trigger',
-      channels: [], createdAt: fakeTs('2026-07-16T09:00:00Z'), targetType: '', targetId: '',
+      _id: 'n1', key: 'k', category: 'c', recipientUid: 'u',
+      createdAt: fakeTs('2026-07-16T09:00:00Z'), targetType: '', targetId: '',
     };
     expect(isRead(base)).toBe(false);
     expect(isRead({ ...base, readAt: fakeTs('2026-07-16T10:00:00Z') })).toBe(true);

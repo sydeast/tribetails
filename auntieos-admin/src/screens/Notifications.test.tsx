@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Timestamp } from 'firebase/firestore';
 import { type Async } from '../lib/async';
@@ -69,14 +69,33 @@ function entry(over: Partial<NotificationEntry>): NotificationEntry {
     key: 'kincare.booking.confirm',
     category: 'bookings',
     recipientUid: 'u1',
-    status: 'dispatched',
-    mode: 'trigger',
-    channels: ['email', 'sms'],
     createdAt: fakeTs('2026-07-16T09:30:00Z'),
     targetType: 'booking',
     targetId: 'b1',
     ...over,
   };
+}
+
+/**
+ * A row carrying the server-resolved entity detail R5 added. Deliberately the
+ * operator's own example, "I see the A KinCare visit was assigned ... but I do
+ * not see the KinCare/Booking details", so the tests below read as the
+ * complaint they close.
+ */
+function detailed(over: Partial<NotificationEntry> = {}): NotificationEntry {
+  return entry({
+    title: 'A KinCare visit was assigned',
+    detail: {
+      requestedBy: 'Dana Ruiz',
+      kinfolkName: 'The Rivera Home',
+      kinName: 'Rex',
+      serviceType: 'Drop-in visit',
+      bookingDate: 'Mon, Jun 15',
+      bookingTime: '2:30 PM',
+      notes: 'Gate code is 4417.',
+    },
+    ...over,
+  });
 }
 
 beforeEach(() => {
@@ -92,14 +111,50 @@ beforeEach(() => {
 });
 
 describe('Notifications screen', () => {
-  it('renders streamed rows grouped by day, with key/category/mode/channels/status', () => {
+  it('renders streamed rows grouped by day, with the key and the category', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Notifications />);
     expect(screen.getByText('2026-07-16')).toBeInTheDocument();
     expect(screen.getByText('kincare.booking.confirm')).toBeInTheDocument();
-    expect(screen.getByText('bookings · trigger')).toBeInTheDocument();
-    expect(screen.getByText('channels: email, sms')).toBeInTheDocument();
-    expect(screen.getByText('dispatched')).toBeInTheDocument();
+    // Scoped to the ROW: "bookings" is also the text of the category filter
+    // chip, and an unscoped getByText now matches both. It used to be unique
+    // only because the meta line read "bookings · trigger", i.e. because the
+    // delivery mode was on the card.
+    expect(within(screen.getByRole('listitem')).getByText('bookings')).toBeInTheDocument();
+  });
+
+  /**
+   * THE R5 REGRESSION GUARD, and the reason it is an assertion rather than a
+   * deletion. Operator ruling, verbatim: "there are many Activity Log records
+   * and workflow (Channels, trigger, and dispatched are activity log not
+   * notification) in Notifications." Three tests used to assert these strings
+   * WERE on the card; without something asserting they are not, the next person
+   * to add a status pill "for debugging" reintroduces the whole complaint and
+   * the suite stays green.
+   *
+   * The fixture deliberately carries the legacy fields, because production is
+   * full of documents that still do (the split backfill is optional). Rendering
+   * has to ignore them, not merely be starved of them.
+   */
+  it('never renders delivery workflow on a card, even for a legacy row that still carries it', () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        {
+          ...entry({}),
+          // Cast: these are exactly the fields NotificationEntry no longer
+          // declares, and the point is that a doc on the wire can still have
+          // them.
+          status: 'dispatched',
+          mode: 'trigger',
+          channels: ['email', 'sms'],
+        } as NotificationEntry,
+      ],
+    });
+    render(<Notifications />);
+    expect(screen.queryByText('dispatched')).toBeNull();
+    expect(screen.queryByText(/channels:/)).toBeNull();
+    expect(screen.queryByText('bookings · trigger')).toBeNull();
   });
 
   it('shows an unread badge counting only unread rows', () => {
@@ -333,20 +388,34 @@ describe('Notifications feed context (issue #20)', () => {
  * failed read the card must say it does not know, not zero.
  */
 describe('Notifications stat strip', () => {
-  it('counts the inbox, the unread, and the dispatched separately', () => {
+  /**
+   * The third tile WAS "Dispatched", counting rows the sender had gotten out of
+   * the door: the delivery pipeline's health, on a screen about the operator's
+   * workload, and the tile R5 named. It now counts what is waiting on a
+   * decision, from the same source as the Approve/Deny buttons, so the number
+   * and the buttons cannot disagree.
+   */
+  it('counts the inbox, the unread, and the ones needing a decision separately', () => {
     mockStreams({
       status: 'ready',
       data: [
-        entry({ _id: 'n1', status: 'dispatched' }),
-        entry({ _id: 'n2', status: 'pending' }),
-        entry({ _id: 'n3', status: 'dispatched', readAt: fakeTs('2026-07-16T10:00:00Z') }),
+        entry({ _id: 'n1', targetType: 'booking', targetId: 'b1' }),
+        entry({ _id: 'n2', targetType: 'invoice', targetId: 'i1' }),
+        entry({
+          _id: 'n3',
+          targetType: 'booking',
+          targetId: 'b2',
+          readAt: fakeTs('2026-07-16T10:00:00Z'),
+        }),
       ],
     });
     render(<Notifications />);
     expect(screen.getByText('In your inbox')).toBeInTheDocument();
+    expect(screen.getByText('Needs a decision')).toBeInTheDocument();
+    expect(screen.queryByText('Dispatched')).toBeNull();
     expect(screen.getByText('3')).toBeInTheDocument();
-    // 2 unread (n1, n2) and 2 dispatched (n1, n3): different axes, and the two
-    // figures are deliberately allowed to be equal without being the same fact.
+    // 2 unread (n1, n2) and 2 needing a decision (n1, n3): different axes, and
+    // the two figures are allowed to be equal without being the same fact.
     expect(screen.getAllByText('2')).toHaveLength(2);
   });
 
@@ -739,5 +808,85 @@ describe('Notifications quick actions (issue #20)', () => {
     await userEvent.click(screen.getByRole('button', { name: /^archive \d+$/i }));
     expect(await screen.findByText(/boom/i)).toBeInTheDocument();
     expect(screen.getByText('1 selected')).toBeInTheDocument();
+  });
+});
+/**
+ * THE CARD OPENS (operator ruling R5, 2026-08-03).
+ *
+ * Verbatim: "CTAs on the Notifications have nothing to do with the actual
+ * notification nor am I able to open card to view more details. I see the A
+ * KinCare visit was assigned and the CTAs for the workflow but I do not see the
+ * KinCare/Booking details. Who requested, For which kinfolk, what date, what
+ * time, wheres the notes."
+ *
+ * One assertion per question the operator asked, because that list is the
+ * acceptance criterion, plus the negative case that matters most: a row whose
+ * server-side resolution came back empty offers no control at all rather than a
+ * control that opens onto nothing.
+ */
+describe('Notifications card detail', () => {
+  it('summarises kin, date and time on the collapsed row, so rows are told apart at a glance', () => {
+    mockStreams({ status: 'ready', data: [detailed()] });
+    render(<Notifications />);
+    expect(screen.getByText('Rex · Mon, Jun 15 · 2:30 PM')).toBeInTheDocument();
+  });
+  it('opens to answer who requested it, for which kinfolk, which kin, the date, the time and the notes', async () => {
+    mockStreams({ status: 'ready', data: [detailed()] });
+    render(<Notifications />);
+    const opener = screen.getByRole('button', { name: /A KinCare visit was assigned/ });
+    expect(opener).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(opener);
+    expect(opener).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Requested by')).toBeInTheDocument();
+    expect(screen.getByText('Dana Ruiz')).toBeInTheDocument();
+    expect(screen.getByText('Household')).toBeInTheDocument();
+    expect(screen.getByText('The Rivera Home')).toBeInTheDocument();
+    expect(screen.getByText('Kin')).toBeInTheDocument();
+    expect(screen.getByText('Date')).toBeInTheDocument();
+    expect(screen.getByText('Mon, Jun 15')).toBeInTheDocument();
+    expect(screen.getByText('Time')).toBeInTheDocument();
+    expect(screen.getByText('2:30 PM')).toBeInTheDocument();
+    expect(screen.getByText('Notes')).toBeInTheDocument();
+    expect(screen.getByText('Gate code is 4417.')).toBeInTheDocument();
+  });
+  it('closes again, because triage means comparing rows and not living inside one', async () => {
+    mockStreams({ status: 'ready', data: [detailed()] });
+    render(<Notifications />);
+    const opener = screen.getByRole('button', { name: /A KinCare visit was assigned/ });
+    await userEvent.click(opener);
+    expect(screen.getByText('Requested by')).toBeInTheDocument();
+    await userEvent.click(opener);
+    expect(screen.queryByText('Requested by')).toBeNull();
+  });
+  it('offers no opener at all when the server resolved nothing, rather than an empty box', () => {
+    mockStreams({ status: 'ready', data: [entry({ title: 'Something happened' })] });
+    render(<Notifications />);
+    expect(screen.queryByRole('button', { name: /Something happened/ })).toBeNull();
+    expect(screen.getByText('Something happened')).toBeInTheDocument();
+  });
+  it('shows only the fields that resolved, never a labelled blank', async () => {
+    mockStreams({
+      status: 'ready',
+      data: [detailed({ detail: { kinName: 'Rex', requestedBy: 'Dana Ruiz' } })],
+    });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: /A KinCare visit was assigned/ }));
+    expect(screen.getByText('Kin')).toBeInTheDocument();
+    expect(screen.getByText('Requested by')).toBeInTheDocument();
+    expect(screen.queryByText('Date')).toBeNull();
+    expect(screen.queryByText('Notes')).toBeNull();
+  });
+  /**
+   * The CTAs were never the broken half: `NotificationQuickActions` has always
+   * acted on the entity via batchUpdateBookings. The complaint was that they sat
+   * beside a card that would not say what entity they would act ON. So opening
+   * must not disturb them.
+   */
+  it('keeps the entity CTAs working while the card is open', async () => {
+    mockStreams({ status: 'ready', data: [detailed()] });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: /A KinCare visit was assigned/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(batchUpdateBookings).toHaveBeenCalledWith(['b1'], 'APPROVE');
   });
 });

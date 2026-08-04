@@ -48,9 +48,13 @@ function makeEvent(channel: string, parentData: Record<string, unknown>) {
   // call signature, which makes `setSpy.mock.calls[n][0]` an out-of-range index
   // on an empty tuple and silently un-typechecks every status assertion.
   const setSpy = vi.fn(async (_patch: ChannelPatch) => {});
+  // R5: the parent is the WORK ORDER, not the notification. It is id-matched to
+  // the notification it delivers and carries key/recipientUid/data itself, so
+  // this handler still does exactly one parent read and never has to reach
+  // across into `notifications/`.
   const parentRef = {
     id: 'notif1',
-    path: 'notifications/notif1',
+    path: 'notificationDispatch/notif1',
     get: async () => ({ data: () => parentData }),
   };
   const channelRef = {

@@ -91,8 +91,32 @@
 .log { display: flex; flex-direction: column; gap: 1rem; }
 .log__day-label { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-dim); margin: 0 0 0.4rem; }
 .log__rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.log__row { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--color-border-soft); }
+/* The row is now a container for a summary BUTTON plus its disclosed detail, so
+   the grid moved down onto `.log__summary`. The li keeps the divider. */
+.log__row { border-bottom: 1px solid var(--color-border-soft); }
 .log__row:last-child { border-bottom: none; }
+.log__summary { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 0.75rem; width: 100%; padding: 0.5rem 0; font: inherit; color: inherit; background: none; border: 0; text-align: left; cursor: pointer; }
+.log__summary:hover { background: var(--color-surface-2); }
+.log__row--open .log__summary { background: var(--color-surface-2); }
+
+/* The disclosed record. Monospace on the payload and the chain seal because
+   both are machine values an operator compares character by character; the
+   identity fields above them are prose and stay in the body face. */
+.log__detail { padding: 0.25rem 0 0.9rem; }
+.log__detail-heading { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-dim); margin: 0.9rem 0 0.3rem; }
+.log__fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 0.15rem 1.25rem; margin: 0; }
+.log__field { display: flex; flex-direction: column; min-width: 0; }
+.log__field-label { font-size: 0.66rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-dim); }
+.log__field-value { margin: 0; font-size: 0.82rem; color: var(--color-text-primary); overflow-wrap: anywhere; }
+.log__fields--mono .log__field-value { font-family: var(--font-mono); font-size: 0.76rem; }
+.log__fields--mono .log__field-label { text-transform: none; letter-spacing: 0; font-family: var(--font-mono); }
+
+.log__toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
+.log__filters { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.log__search { display: flex; align-items: center; gap: var(--space-2); }
+.log__search-label { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-dim); }
+.log__search-input { font: inherit; font-size: 0.82rem; padding: 0.25rem var(--space-3); border-radius: var(--radius-pill); border: var(--border-hairline) solid var(--color-border-soft); background: var(--color-surface); color: var(--color-text-primary); min-width: 14rem; }
+.log__count { font-size: 0.76rem; color: var(--color-text-dim); margin: 0 0 var(--space-3); }
 .log__seq { font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-text-faint); white-space: nowrap; }
 .log__body { display: flex; flex-direction: column; min-width: 0; }
 .log__action { font-weight: 600; font-size: 0.9rem; }
@@ -266,6 +290,32 @@
   font-size: 0.92rem;
   color: var(--color-text-primary);
 }
+/* The headline doubles as the disclosure control when the row has resolved
+   detail to show (R5). Styled to sit flush with the plain-heading version so a
+   feed of mixed rows does not look ragged: same weight, same size, no button
+   chrome, just a caret and a pointer. */
+.notif-row__key--button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: flex-start;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--color-text-primary);
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.notif-row__key--button:hover {
+  color: var(--color-accent);
+}
+.notif-row__caret {
+  font-size: 0.7rem;
+  color: var(--color-text-dim);
+}
 .notif-row__meta {
   font-size: 0.82rem;
   color: var(--color-text-dim);
@@ -274,33 +324,49 @@
   font-size: 0.86rem;
   color: var(--color-text-primary);
 }
-.notif-row__channels {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.02em;
-  color: var(--color-text-faint);
-}
-.notif-row__status {
-  align-self: flex-start;
-  margin-top: var(--space-1);
-  font-size: 0.72rem;
-  font-weight: 600;
-  padding: 0.1rem var(--space-2);
-  border-radius: var(--radius-pill);
-  white-space: nowrap;
-  text-transform: capitalize;
-}
-.notif-row__status--dispatched {
-  background: color-mix(in srgb, var(--color-success) 18%, transparent);
-  color: var(--color-success);
-}
-.notif-row__status--pending {
-  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
-  color: var(--color-warning);
-}
-.notif-row__status--unknown {
-  background: var(--color-surface-2);
+/* Kin · date · time on a COLLAPSED row: the three values that tell one KinCare
+   notification apart from the next. */
+.notif-row__summary {
+  font-size: 0.8rem;
   color: var(--color-text-dim);
+}
+
+/* The opened card: the entity detail the server resolved at dispatch time. A
+   definition list because that is what it is: labelled facts about one record.
+   Two columns on anything wider than a phone, so Date and Time sit side by side
+   instead of stacking into a long ladder. */
+.notif-row__detail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-1) var(--space-4);
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
+}
+.notif-row__detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+}
+/* Notes are free text and the only field that wraps, so it takes the full row
+   rather than being squeezed into a column with a one-word label. */
+.notif-row__detail-item--block {
+  grid-column: 1 / -1;
+}
+.notif-row__detail-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+.notif-row__detail-value {
+  margin: 0;
+  font-size: 0.86rem;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
 }
 
 .notif-row__side {

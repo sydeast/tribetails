@@ -77,7 +77,6 @@ function notif(over: Partial<NotificationEntry>): NotificationEntry {
     key: 'kincare.booking.confirm',
     title: 'Booking confirmed',
     category: 'bookings',
-    status: 'dispatched',
     createdAt: fakeTs('2026-07-16T09:30:00Z'),
     ...over,
   };

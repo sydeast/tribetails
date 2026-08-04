@@ -27,9 +27,14 @@ import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
  * to a saved audience segment (or inline criteria) across one or more channels:
  *
  *   - inapp -> writes a `notifications/{id}` doc per kinfolk that has a linked
- *              MyTribe uid. channels:[] so onNotificationCreate marks it
- *              'no-channels' (no per-channel email/sms duplicate); the MyTribe
- *              app renders the in-app entry from the title/body on the doc.
+ *              MyTribe uid, and NO `notificationDispatch/{id}` work order, so
+ *              the catalog fan-out never runs for it (R5, 2026-08-03). It used
+ *              to write `channels: []` onto the notification and lean on
+ *              onNotificationCreate to stamp it 'no-channels'; with delivery
+ *              state off the inbox document, "there is no work order" says the
+ *              same thing without putting pipeline state on a card. The
+ *              email/sms/push surfaces below are sent directly, not via the
+ *              catalog, because there is no template for ad-hoc broadcast copy.
  *   - email -> SendGrid per kinfolk with an email on file, honoring opt-outs.
  *   - sms   -> Twilio per kinfolk with a phone on file, honoring opt-outs.
  *   - push  -> FCM multicast to the kinfolk's `fcm_tokens` (resolved via uid).
@@ -184,17 +189,16 @@ export async function broadcastMessageHandler(
             recipientUid: k.uid,
             actorUid: uid,
             data: { kinfolkId: k.id },
-            // channels:[] -> onNotificationCreate stamps 'no-channels' (the
-            // email/sms/push surfaces are handled directly below, not via the
-            // catalog fan-out which has no template for ad-hoc broadcast copy).
-            channels: [],
             title: subject,
+            // `description` is the field every card renderer already reads for
+            // the second line (it carries the catalog description on dispatched
+            // notifications). `body` alone was written by nothing else and read
+            // by nothing, so a broadcast landed in the inbox as a bare subject.
+            description: body,
             body,
             broadcast: true,
             targetType: 'kinfolk',
             targetId: k.id,
-            status: 'pending',
-            mode: 'broadcast',
             createdAt: FieldValue.serverTimestamp(),
           });
           c.sent += 1;

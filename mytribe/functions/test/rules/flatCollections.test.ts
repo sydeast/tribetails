@@ -344,13 +344,29 @@ describe('rules: flat top-level collections', () => {
   // the `signedIn() && ...` branch above it (isTestAdmin implies auth), so it
   // could never decide. These pin that removing it changed no outcome: the
   // recipient branch already covers a test admin reading its own dispatch.
+  //
+  // ── R5, 2026-08-03: the channel subdocs moved ────────────────────────────
+  // They used to hang off the INBOX document at
+  // `notifications/{id}/channels/{channel}`, so per-channel delivery state was
+  // structurally authorised beneath the thing an operator reads as mail. They
+  // now sit under the work order at
+  // `notificationDispatch/{id}/channels/{channel}`, and the fixture seeds both
+  // documents because that is what the dispatcher now writes.
+  //
+  // The GATE is unchanged in effect: the same recipient sees the same things,
+  // and nobody gained or lost visibility in the split. That is the property
+  // these tests exist to hold. A refactor that quietly widened a read gate
+  // would be a security change wearing a cleanup's clothes.
 
   async function seedNotification(recipientUid: string): Promise<void> {
     const env = await getEnv();
     await env.withSecurityRulesDisabled(async (ctx) => {
       const db = ctx.firestore();
       await db.doc('notifications/n1').set({ recipientUid, key: 'kincare.requested' });
-      await db.doc('notifications/n1/channels/email').set({ status: 'SENT' });
+      await db
+        .doc('notificationDispatch/n1')
+        .set({ notificationId: 'n1', recipientUid, key: 'kincare.requested', status: 'dispatched' });
+      await db.doc('notificationDispatch/n1/channels/email').set({ status: 'SENT' });
     });
   }
 
@@ -359,7 +375,8 @@ describe('rules: flat top-level collections', () => {
     await seedNotification('u-recipient');
     const fs = asUser(env, 'u-recipient').firestore();
     await assertSucceeds(fs.doc('notifications/n1').get());
-    await assertSucceeds(fs.doc('notifications/n1/channels/email').get());
+    await assertSucceeds(fs.doc('notificationDispatch/n1').get());
+    await assertSucceeds(fs.doc('notificationDispatch/n1/channels/email').get());
   });
 
   it('notifications: a test admin who IS the recipient still reads it (branch was redundant)', async () => {
@@ -367,7 +384,7 @@ describe('rules: flat top-level collections', () => {
     await seedNotification('test-admin-uid');
     const fs = asTestAdmin(env).firestore();
     await assertSucceeds(fs.doc('notifications/n1').get());
-    await assertSucceeds(fs.doc('notifications/n1/channels/email').get());
+    await assertSucceeds(fs.doc('notificationDispatch/n1/channels/email').get());
   });
 
   it('notifications: a test admin who is NOT the recipient is denied (as before)', async () => {
@@ -375,18 +392,60 @@ describe('rules: flat top-level collections', () => {
     await seedNotification('someone-else');
     const fs = asTestAdmin(env).firestore();
     await assertFails(fs.doc('notifications/n1').get());
-    await assertFails(fs.doc('notifications/n1/channels/email').get());
+    await assertFails(fs.doc('notificationDispatch/n1').get());
+    await assertFails(fs.doc('notificationDispatch/n1/channels/email').get());
   });
 
   it('notifications: a non-recipient is denied, the operator is not, nobody writes', async () => {
     const env = await getEnv();
     await seedNotification('u-recipient');
     await assertFails(asUser(env, 'u-other').firestore().doc('notifications/n1').get());
-    await assertFails(asUser(env, 'u-other').firestore().doc('notifications/n1/channels/email').get());
+    await assertFails(asUser(env, 'u-other').firestore().doc('notificationDispatch/n1').get());
+    await assertFails(
+      asUser(env, 'u-other').firestore().doc('notificationDispatch/n1/channels/email').get(),
+    );
     await assertSucceeds(asAuntie(env).firestore().doc('notifications/n1').get());
+    await assertSucceeds(asAuntie(env).firestore().doc('notificationDispatch/n1').get());
     await assertFails(
       asUser(env, 'u-recipient').firestore().doc('notifications/n1').update({ read: true }),
     );
+    // The work order is server-written too. A recipient who could stamp
+    // `status: 'dispatched'` on their own would be able to suppress their own
+    // delivery before the fan-out trigger ever saw it.
+    await assertFails(
+      asUser(env, 'u-recipient')
+        .firestore()
+        .doc('notificationDispatch/n1')
+        .update({ status: 'dispatched' }),
+    );
+  });
+
+  /**
+   * The LEGACY shape is no longer readable by a client, and that is deliberate.
+   *
+   * Documents written before the split still carry `notifications/{id}/channels/*`
+   * subdocs, and the rule that authorised them is gone. Nothing on any platform
+   * ever queried them (the only reader was the Cloud Function trigger, and
+   * Admin SDK writes bypass rules entirely), so closing them costs nothing and
+   * removes the structural claim that delivery state belongs under an inbox
+   * document. `mytribe/scripts/backfillNotificationDeliverySplit.ts` relocates
+   * them onto the work order.
+   */
+  it('notifications: legacy channel subdocs under the inbox doc are closed to clients', async () => {
+    const env = await getEnv();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await db
+        .doc('notifications/legacy1')
+        .set({ recipientUid: 'u-recipient', key: 'kincare.requested' });
+      await db.doc('notifications/legacy1/channels/email').set({ status: 'SENT' });
+    });
+    // The notification itself still reads, so no legacy inbox goes dark.
+    await assertSucceeds(asUser(env, 'u-recipient').firestore().doc('notifications/legacy1').get());
+    await assertFails(
+      asUser(env, 'u-recipient').firestore().doc('notifications/legacy1/channels/email').get(),
+    );
+    await assertFails(asAuntie(env).firestore().doc('notifications/legacy1/channels/email').get());
   });
 
   /**

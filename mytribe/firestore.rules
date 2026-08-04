@@ -711,12 +711,37 @@ service cloud.firestore {
       allow read: if isAuntie()
                   || (signedIn() && resource.data.recipientUid == request.auth.uid);
       allow write: if false;
- // Channel subdocs follow the same recipient gate, resolved through the parent
- // notification doc.
+ //
+ // THE `channels` SUBCOLLECTION MATCH THAT SAT HERE IS GONE (operator ruling
+ // R5, 2026-08-03). Per-channel delivery state - status, providerMessageId,
+ // sentAt, errorMessage, attempts - is pipeline plumbing, and structurally
+ // authorising it beneath the INBOX document is part of what made the inbox
+ // look like a workflow queue to every client that read it. Those subdocs now
+ // live under `notificationDispatch/{id}/channels/{channel}` (below).
+ //
+ // Legacy `notifications/{id}/channels/*` subdocs written before the split are
+ // now unreadable by clients. That is deliberate and costs nothing: no client
+ // on any platform ever queried them (the only reader was the Cloud Function
+ // trigger, and Admin SDK writes bypass rules entirely). The backfill script
+ // `mytribe/scripts/backfillNotificationDeliverySplit.ts` relocates them.
+    }
+ // ── Delivery work orders (R5) ────────────────────────────────────────────
+ // `notificationDispatch/{id}` is id-matched to `notifications/{id}` and holds
+ // the delivery pipeline: mode, channel list, dispatch status, and the
+ // per-channel subdocs beneath it. Same recipient gate as the notification it
+ // delivers, so nobody gains or loses visibility by the split - what changes is
+ // that a client reading its INBOX no longer receives workflow fields it then
+ // rendered as card content.
+    match /notificationDispatch/{id} {
+      allow read: if isAuntie()
+                  || (signedIn() && resource.data.recipientUid == request.auth.uid);
+      allow write: if false;
+ // Resolved through the parent work order, which carries `recipientUid`
+ // directly - no cross-collection get() into `notifications/` is needed.
       match /channels/{channelId} {
         allow read: if isAuntie()
           || (signedIn()
-              && get(/databases/$(database)/documents/notifications/$(id)).data.recipientUid == request.auth.uid);
+              && get(/databases/$(database)/documents/notificationDispatch/$(id)).data.recipientUid == request.auth.uid);
         allow write: if false;
       }
     }

@@ -55,13 +55,75 @@ data class ActivityLogEntry(
     var seq: Long? = null,
     var prevHash: String = "",
     var entryHash: String = "",
+    // ── The forensic fields (operator ruling R5, 2026-08-03) ─────────────────
+    // "the Activity Log is seriously lacking, cant see shit or what the fuck
+    // actually happened."
+    //
+    // `writeAuditEntry` has sealed every one of these onto every entry since
+    // 2026-05-19; its own docstring calls them "retained for forensic value ...
+    // surfaced in detail views", and no detail view existed on either platform.
+    // So `payload`, the field where each event type records its specifics
+    // (writeAuditEntry gives it nowhere else), was read by nothing.
+    //
+    // Untyped on purpose: the payload shape is per-event-type and has no schema.
+    // Read it through `activityPayloadRows` in ui/admin/ActivityLogScreen.kt.
+    var payload: Map<String, Any?> = emptyMap(),
+    var severity: String = "",         // info | warn | critical
+    var actorRole: String = "",        // SYSTEM | PRIMARY | AUNTIE | …
+    var familyId: String = "",
+    var requestId: String = "",
+    var clientRequestId: String = "",
+    var ip: String = "",
+    var userAgent: String = "",
+)
+
+/**
+ * The entity detail a notification CARD renders, resolved server-side at dispatch
+ * and stamped on `notifications/{id}.detail` (operator ruling R5, 2026-08-03).
+ * Mirrors `NotificationDetail` in mytribe/functions/src/notifications/types.ts
+ * and the web `NotificationDetail` in src/api/notifications.ts.
+ *
+ * The operator's list, verbatim: "Who requested, For which kinfolk, what date,
+ * what time, wheres the notes." Every one of those was already being computed by
+ * `enrichTemplateData` to fill merge fields in the outbound email, then thrown
+ * away, so the card said "A KinCare visit was assigned" and nothing else.
+ *
+ * BLANK MEANS UNRESOLVED. Kotlin has no absent-vs-empty distinction for a
+ * non-null String field the way the wire format does, so the renderer's rule is
+ * simply: a blank field renders no line. Never a placeholder.
+ */
+@Keep
+data class NotificationDetail(
+    var kinfolkName: String = "",
+    var kinName: String = "",
+    var serviceType: String = "",
+    var bookingDate: String = "",
+    var bookingTime: String = "",
+    var notes: String = "",
+    var invoiceNumber: String = "",
+    var amount: String = "",
+    var dueDate: String = "",
+    var requestedBy: String = "",
 )
 
 /**
  * Firestore collection: `notifications`. Catalog-dispatched notifications
- * written by MyTribe functions notification subsystem. Each doc has a
- * recipient uid + status; AuntieOS Android displays the operator's own
- * inbox of business-side notifications.
+ * written by the MyTribe functions notification subsystem. AuntieOS Android
+ * displays the operator's own inbox of business-side notifications.
+ *
+ * NO DELIVERY STATE (operator ruling R5, 2026-08-03). `status`, `mode` and
+ * `channels` used to be fields here and were rendered as primary card content:
+ * the row printed "bookings · trigger", a "channels: email, sms" line and a
+ * dispatch-status pill, and the stat strip carried a "Dispatched" tile. The
+ * ruling was blunt: "Channels, trigger, and dispatched are activity log not
+ * notification." That state now lives on `notificationDispatch/{id}` (id-matched
+ * to the notification) and the RECORD of it goes to the hash-chained
+ * `activity_log` as NOTIFICATION_DISPATCHED / NOTIFICATION_RECEIVED.
+ *
+ * Legacy documents still carry those three fields on the wire; Firestore's POJO
+ * deserializer ignores unknown fields, so they simply stop arriving. That is what
+ * makes `mytribe/scripts/backfillNotificationDeliverySplit.ts` a convergence step
+ * rather than a prerequisite for this build.
  */
 @Keep
 data class NotificationEntry(
@@ -70,15 +132,16 @@ data class NotificationEntry(
     var category: String = "",
     var recipientUid: String = "",
     var actorUid: String? = null,
-    var status: String = "",           // pending | dispatched
-    var mode: String = "",             // trigger | debounced | batched | scheduled
-    var channels: List<String> = emptyList(),
     // AO-28 content, written by dispatcher.ts from the catalog def: `title` is
     // the label, `description` the description, `actorName` the resolved actor.
     // Blank on rows dispatched before AO-28, so the row falls back to `key`.
     var title: String = "",
     var description: String = "",
     var actorName: String = "",
+    // R5 entity detail. Null when the server resolved nothing for this
+    // notification (or on a doc written before the split), which the row reads
+    // as "this card has nothing to open".
+    var detail: NotificationDetail? = null,
     // The emitter's free-form merge bag (`data: args.data` in dispatcher.ts).
     // Untyped on purpose: it is whatever the calling function passed to
     // enqueueNotification, with no schema. It is where the household reference

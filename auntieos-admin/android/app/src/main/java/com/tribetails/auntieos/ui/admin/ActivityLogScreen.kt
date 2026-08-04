@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.composables.icons.lucide.Activity
 import com.composables.icons.lucide.Bell
@@ -388,33 +389,198 @@ private fun DaySeparator(label: String, count: Int) {
 /**
  * Read-only detail overlay for a clicked activity entry (spec 22 item 1). Surfaces
  * the FULL record the row truncates. All fields already on the model; nothing faked.
+ *
+ * ── OPERATOR RULING R5, 2026-08-03 ─────────────────────────────────────────
+ * "the Activity Log is seriously lacking, cant see shit or what the fuck
+ * actually happened."
+ *
+ * Android was ahead of web here. Rows were already clickable and this overlay
+ * already existed, and it STILL could not answer that, because it showed six
+ * fields and none of them was `payload`. `writeAuditEntry` puts every event
+ * type's specifics there (a NOTIFICATION_RECEIVED entry's recipient and provider
+ * message id, a BOOKING_SUBMITTED entry's household and visit count) and calls
+ * the field "retained for forensic value ... surfaced in detail views". It was
+ * surfaced in none, on either platform. Same for `severity`, `actorRole`,
+ * `familyId`, `requestId`, `ip` and `userAgent`, all sealed since 2026-05-19.
+ *
+ * So the overlay now shows the full record in three blocks (identity and
+ * provenance, what happened, and the chain seal), matching the web
+ * build's opened row field for field.
  */
 @Composable
 private fun ActivityDetailModal(entry: ActivityLogEntry, onDismiss: () -> Unit) {
-    val target = listOf(entry.targetCollection, entry.targetId).filter { it.isNotBlank() }.joinToString("/")
+    val payload = activityPayloadRows(entry)
+    val chain = activityChainRows(entry)
     AuntieModal(
         onDismissRequest = onDismiss,
         title = humanizeAction(entry.actionType),
         confirmButton = { GhostButton(label = "Close", onClick = onDismiss) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            DetailKv("When", entry.timestamp.ifBlank { "-" })
-            DetailKv("Action", entry.actionType.ifBlank { "-" })
-            DetailKv("Status", entry.status.ifBlank { "-" })
-            DetailKv("Actor", entry.actorId.ifBlank { "-" })
-            if (entry.description.isNotBlank()) DetailKv("Detail", entry.description)
-            DetailKv("Target", target.ifBlank { "-" })
+            activityDetailRows(entry).forEach { (label, value) -> DetailKv(label, value) }
+
+            DetailSectionHeading("What happened")
+            if (payload.isEmpty()) {
+                // Stated, not omitted. An entry whose writer recorded no
+                // specifics is a fact about the writer, and a vanished section
+                // would read as "this screen has nothing more to show".
+                Text(
+                    "This entry was written with no payload.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim,
+                )
+            } else {
+                payload.forEach { (label, value) -> DetailKv(label, value, mono = true) }
+            }
+
+            DetailSectionHeading("Chain seal")
+            if (chain.isEmpty()) {
+                Text(
+                    "Legacy entry, written before the hash chain. Not covered by verification.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim,
+                )
+            } else {
+                chain.forEach { (label, value) -> DetailKv(label, value, mono = true) }
+            }
         }
     }
 }
 
 @Composable
-private fun DetailKv(label: String, value: String) {
+private fun DetailSectionHeading(label: String) {
+    Text(
+        label.uppercase(),
+        style = AuntieTheme.typography.labelSmall,
+        color = AuntieTheme.colors.textDim,
+    )
+}
+
+/**
+ * One labelled fact. `mono` is for the payload and the chain seal: both are
+ * machine values an operator compares character by character, and the payload's
+ * dotted-path labels are not prose so they are not upper-cased either.
+ */
+@Composable
+private fun DetailKv(label: String, value: String, mono: Boolean = false) {
     val c = AuntieTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(label.uppercase(), style = AuntieTheme.typography.labelSmall, color = c.kinfolkOrange)
-        Text(value, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(
+            if (mono) label else label.uppercase(),
+            style = if (mono) AuntieTheme.typography.mono.copy(fontSize = 10.sp)
+                    else AuntieTheme.typography.labelSmall,
+            color = if (mono) c.textDim else c.kinfolkOrange,
+        )
+        Text(
+            value,
+            style = if (mono) AuntieTheme.typography.mono.copy(fontSize = 11.sp)
+                    else AuntieTheme.typography.bodyMedium,
+            color = c.textPrimary,
+        )
     }
+}
+
+// ---- the FULL sealed record, as pure lists (R5) -------------------------------
+//
+// Mirrors the web build's `lib/activityDetail.ts` decision for decision (same
+// field order, same drop-the-blanks rule, same dotted-path payload flattening)
+// so the two clients cannot disagree about what an audit entry says.
+//
+// Nothing here reformats what the writer recorded. The audit trail is EVIDENCE,
+// and a detail view that prettied its contents would be editing the record on
+// the way to the reader. The one transformation applied is flattening nested
+// payload maps to dotted paths, which is presentation of structure, not content.
+
+/**
+ * Identity and provenance, in a fixed order, blanks dropped.
+ *
+ * The FULL ISO timestamp leads rather than the `HH:mm` slice the row shows: the
+ * point of opening an entry is to see what the row truncates, and "which second"
+ * is routinely the question when reconciling against a provider's logs.
+ * Pure; unit-tested.
+ */
+internal fun activityDetailRows(entry: ActivityLogEntry): List<Pair<String, String>> {
+    val rows = mutableListOf<Pair<String, String>>()
+    fun add(label: String, value: String) {
+        if (value.isNotBlank()) rows += label to value.trim()
+    }
+    add("When", entry.timestamp)
+    add("Action", entry.actionType)
+    add("Status", entry.status)
+    add("Severity", entry.severity)
+    add("Actor", entry.actorId)
+    add("Actor role", entry.actorRole)
+    add("Household", entry.familyId)
+    add("Detail", entry.description)
+    // A path, not a link. Where no route exists the path is still the most useful
+    // thing that can honestly be shown (spec 22 item 1: "render the path
+    // read-only, do not fabricate a link").
+    if (entry.targetId.isNotBlank()) {
+        add("Target", "${entry.targetCollection.ifBlank { "target" }}/${entry.targetId}")
+    }
+    add("Request", entry.requestId)
+    add("Client request", entry.clientRequestId)
+    add("IP", entry.ip)
+    add("User agent", entry.userAgent)
+    return rows
+}
+
+/**
+ * The chain seal, or an empty list for a legacy pre-chain entry so the caller can
+ * say so rather than showing a blank block.
+ *
+ * FULL hashes, never the row's 8-character prefix: an opened entry is where
+ * someone verifies a hash by eye against verifyActivityLogChain, and a truncated
+ * hash verifies nothing. Pure; unit-tested.
+ */
+internal fun activityChainRows(entry: ActivityLogEntry): List<Pair<String, String>> {
+    val seq = entry.seq ?: return emptyList()
+    val rows = mutableListOf("Sequence" to "#$seq")
+    if (entry.entryHash.isNotBlank()) rows += "Entry hash" to entry.entryHash
+    if (entry.prevHash.isNotBlank()) rows += "Previous hash" to entry.prevHash
+    return rows
+}
+
+/**
+ * The `payload` map flattened to sorted dotted paths.
+ *
+ * THIS IS THE FIELD THAT ANSWERS "what the fuck actually happened", and it was
+ * rendered nowhere. Sorted so two entries of the same type list their fields in
+ * the same order, which is what makes them comparable by eye; `writeAuditEntry`
+ * already sorts these keys at write time because the hash is computed over the
+ * canonical form, so the order is stable on the wire too. Pure; unit-tested.
+ */
+internal fun activityPayloadRows(entry: ActivityLogEntry): List<Pair<String, String>> {
+    val out = mutableListOf<Pair<String, String>>()
+
+    fun renderScalar(v: Any?): String = when (v) {
+        // A recorded null is a decision the writer made; blanking it hides that.
+        null -> "null"
+        is String -> v
+        is Number, is Boolean -> v.toString()
+        else -> v.toString()
+    }
+
+    fun walk(value: Any?, path: String) {
+        when (value) {
+            // Arrays render on one line: an audit payload's lists are short
+            // (channel names, ids), and exploding them into `channels.0` /
+            // `channels.1` buries the fact that they are one field.
+            is List<*> -> out += path to value.joinToString(", ") { renderScalar(it) }
+            is Map<*, *> -> {
+                val keys = value.keys.map { it.toString() }.sorted()
+                // An empty nested map is reported rather than dropped: "present
+                // and empty" differs from "absent", and in an audit trail that
+                // difference can matter.
+                if (keys.isEmpty()) out += path to "{}"
+                else keys.forEach { k -> walk(value[k], if (path.isEmpty()) k else "$path.$k") }
+            }
+            else -> out += path to renderScalar(value)
+        }
+    }
+
+    entry.payload.keys.sorted().forEach { k -> walk(entry.payload[k], k) }
+    return out
 }
 
 @Composable

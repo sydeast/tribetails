@@ -24,7 +24,6 @@ function entry(over: Partial<NotificationEntry>): NotificationEntry {
     key: 'kincare.booking.confirm',
     title: 'Booking confirmed',
     category: 'bookings',
-    status: 'dispatched',
     createdAt: ts('2026-07-16T09:30:00Z'),
     ...over,
   };
@@ -39,10 +38,26 @@ beforeEach(() => {
 });
 
 describe('NotificationsDigest', () => {
-  it('renders the unread rows with their human title and meta', () => {
-    render(<NotificationsDigest state={ready([entry({})])} />);
+  /**
+   * The meta line WAS `category · status`, and `status` was the dispatcher's own
+   * pipeline state on a digest row (R5). What replaces it is the notification's
+   * own subject, resolved server-side: kin, date, time. A digest exists to be
+   * glanced at, and "bookings · dispatched" told an operator nothing about which
+   * booking.
+   */
+  it('renders the unread rows with their human title and the entity summary', () => {
+    render(
+      <NotificationsDigest
+        state={ready([entry({ detail: { kinName: 'Rex', bookingDate: 'Mon, Jun 15' } })])}
+      />,
+    );
     expect(screen.getByText('Booking confirmed')).toBeInTheDocument();
-    expect(screen.getByText('bookings · dispatched')).toBeInTheDocument();
+    expect(screen.getByText('bookings · Rex · Mon, Jun 15')).toBeInTheDocument();
+  });
+  it('falls back to the category alone when the server resolved no detail', () => {
+    render(<NotificationsDigest state={ready([entry({})])} />);
+    expect(screen.getByText('bookings')).toBeInTheDocument();
+    expect(screen.queryByText(/dispatched/)).toBeNull();
   });
 
   it('falls back to the raw catalog key when a row has no title', () => {

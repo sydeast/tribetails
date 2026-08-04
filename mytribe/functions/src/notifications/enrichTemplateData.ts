@@ -89,7 +89,17 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'survey.event': [],
 };
 
-/** Tokens the enricher can hydrate from standard entities by id. */
+/**
+ * Tokens the enricher can hydrate from standard entities by id.
+ *
+ * A SUPERSET of the tokens any template references, and deliberately so since
+ * R5: `buildNotificationDetail` asks this same enricher for the fields a CARD
+ * needs, passing them as `extraFields`. `notes` is the first such token, no
+ * email or SMS body references it, but "wheres the notes" was one of the four
+ * things the operator could not see on a notification. Adding a card-only token
+ * here does not affect the TEMPLATE_FIELDS/seed drift guard, which cross-checks
+ * TEMPLATE_FIELDS against the on-disk seeds and never reads this set.
+ */
 const ENRICHABLE: ReadonlySet<string> = new Set([
   'kinfolkName',
   'kinName',
@@ -102,6 +112,7 @@ const ENRICHABLE: ReadonlySet<string> = new Set([
   'email',
   'kinfolkEmail',
   'displayName',
+  'notes',
 ]);
 
 type Doc = Record<string, unknown> | null;
@@ -139,9 +150,21 @@ export async function enrichTemplateData(
   key: string,
   recipientUid: string,
   data: Record<string, unknown>,
+  /**
+   * Tokens to hydrate IN ADDITION to the ones this key's templates reference.
+   *
+   * The card detail (`buildNotificationDetail`) wants a consistent set of
+   * entity fields regardless of which merge fields a given key's email happens
+   * to use: an assignment notification's template needs `bookingDate` but not
+   * `kinfolkName`, and the card needs both. Rather than widening TEMPLATE_FIELDS
+   * (which is seed-mirrored and must keep describing the templates exactly),
+   * the caller names what it additionally wants. Unknown or non-ENRICHABLE
+   * names are ignored, same as they are in TEMPLATE_FIELDS.
+   */
+  extraFields: readonly string[] = [],
 ): Promise<Record<string, unknown>> {
   const ctx: Record<string, unknown> = { ...data };
-  const fields = TEMPLATE_FIELDS[key] ?? [];
+  const fields = [...(TEMPLATE_FIELDS[key] ?? []), ...extraFields];
   const want = new Set(fields.filter((f) => ENRICHABLE.has(f) && !hasValue(ctx[f])));
   if (want.size === 0) return ctx;
 
@@ -265,6 +288,33 @@ export async function enrichTemplateData(
       logErr('booking', visitId || bookingId, err);
     }
     return (booking = null);
+  }
+
+  /**
+   * The booking ENVELOPE (`families/{fid}/bookings/{batchId}`), as distinct from
+   * the visit session `loadBooking` prefers.
+   *
+   * `notes` is an envelope-level field: `writeEnvelope` stamps the requester's
+   * free text once for the whole request, not once per visit. So a notification
+   * carrying `{ batchId, visitId }` resolves its session through `loadBooking`
+   * and finds no notes there; they are one level up. Loaded lazily and only when
+   * the `notes` token is actually wanted, so no key pays for this read unless it
+   * is building a card detail.
+   */
+  let envelopeLoaded = false;
+  let envelope: Doc = null;
+  async function loadBookingEnvelope(): Promise<Doc> {
+    if (envelopeLoaded) return envelope;
+    envelopeLoaded = true;
+    const batchId = str(data.batchId) || str(data.bookingId);
+    if (!familyId || !batchId) return (envelope = null);
+    try {
+      const snap = await firestore.doc(`families/${familyId}/bookings/${batchId}`).get();
+      if (snap.exists) return (envelope = (snap.data() as Doc) ?? null);
+    } catch (err) {
+      logErr('bookingEnvelope', batchId, err);
+    }
+    return (envelope = null);
   }
 
   async function loadKinName(): Promise<string> {
@@ -486,6 +536,15 @@ export async function enrichTemplateData(
     let v = str(data.kinName) || joinNames(data.kinNames);
     if (!v) v = await loadKinName();
     fill('kinName', v);
+  }
+
+  // Card-only token (see ENRICHABLE). Session first, then the envelope that
+  // actually owns the field, so a `{batchId, visitId}` dispatch still finds it.
+  if (want.has('notes')) {
+    let v = str(data.notes);
+    if (!v) v = str((await loadBooking())?.notes);
+    if (!v) v = str((await loadBookingEnvelope())?.notes);
+    fill('notes', v);
   }
 
   return ctx;
