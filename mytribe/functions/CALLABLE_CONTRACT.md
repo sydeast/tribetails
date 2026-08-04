@@ -1227,9 +1227,14 @@ the handler.
   shape and why it is one schema covering two accepted payloads. The kinfolk
   portal only ever sends the multi-visit shape today (`kinfolkId?`, `kinIds?`,
   `notes?`, `pattern?`, `weeklyDays?`, `visits: [{ startTimeMs, endTimeMs,
-  serviceId, serviceName, priceCents, location }]`, `billing?`,
-  `communication?`); the legacy single-visit shape (`serviceType`,
-  `startTimeMs`, ...) has no live caller but the server still accepts it.
+  serviceId, serviceName, priceCents }]`, `billing?`, `communication?`); the
+  legacy single-visit shape (`serviceType`, `startTimeMs`, ...) has no live
+  caller but the server still accepts it.
+- A VISIT CARRIES NO ADDRESS (operator ruling, 2026-08-04). `visits[]` held a
+  free-text `location` until then, and `createMultiDateBookingRequest` mirrored
+  it; addresses come from the household doc and are read live from it. Neither
+  parsing schema is `.strict()`, so a cached client still sending the key has
+  it stripped rather than being refused.
 - res `{ batchId: string, bookingIds: string[], bookingId: string }`. Both
   write paths return this identical shape; `bookingId` is always `batchId`
   (kept as a legacy alias, no caller has ever seen it absent).

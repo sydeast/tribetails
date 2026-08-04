@@ -64,9 +64,13 @@ enum class BookingWizardStep(val label: String, val subtitle: String) {
 enum class BookingWizardMode { DATES, WEEKLY }
 
 /**
- * One visit within a day: its own wall-clock time, service and place. Several of
+ * One visit within a day: its own wall-clock time and service. Several of
  * these on one day is the multiple-visits-per-day case the single-page dialog
  * could not express at all (it had one shared time for the whole request).
+ *
+ * NOT a place. A visit happens at the household's address, and the household
+ * doc is the only place that address lives (operator ruling, 2026-08-04). This
+ * carried a free-text `location` until then; the callable no longer takes one.
  */
 data class VisitSlot(
     val id: Long,
@@ -80,7 +84,6 @@ data class VisitSlot(
      * same (`applyServiceToTemplate` forces `serviceId: null`).
      */
     val serviceId: String? = null,
-    val location: String = "",
 ) {
     /** "09:00", the operator's local wall clock. */
     val timeLabel: String get() = "%02d:%02d".format(hour, minute)
@@ -264,9 +267,6 @@ private fun VisitSlot.toVisit(startTimeMs: Long) = NewBookingVisit(
     // would be inventing data the operator never entered.
     endTimeMs = null,
     serviceId = serviceId?.takeIf { it.isNotBlank() },
-    // Blank means "no place given", which is a null on the wire, not "".
-    // The callable's `location` is `.trim().min(1)`, so "" would be rejected.
-    location = location.trim().takeIf { it.isNotEmpty() },
 )
 
 /**

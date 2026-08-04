@@ -13,18 +13,24 @@ import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
  * ADR-0003 follow-up drift fix: `BookingRepository.createMultiDateBookingRequest`
  * used to build its own payload map by hand, and that map had NO slot at all
- * for `priceCents`, `location`, `billing`, `communication` or
- * `overrideBusyConflict` -- not "the UI doesn't collect them", but "there was
- * nowhere on the wire for them to go even if it did." Now the payload is
- * built through the generated `CreateMultiDateBookingRequestArgs`, which has
- * a slot for all five. These tests prove the wire payload actually carries
- * them.
+ * for `priceCents`, `billing`, `communication` or `overrideBusyConflict` --
+ * not "the UI doesn't collect them", but "there was nowhere on the wire for
+ * them to go even if it did." Now the payload is built through the generated
+ * `CreateMultiDateBookingRequestArgs`, which has a slot for all four. These
+ * tests prove the wire payload actually carries them.
+ *
+ * The drift fix also opened a slot for a per-visit `location`. That one was
+ * CLOSED again on 2026-08-04 by operator ruling: addresses come from the
+ * household, so a place on a visit was an address override the booking has no
+ * business holding. The key is gone from the generated Args, and the first
+ * test below asserts it never reaches the wire.
  */
 class BookingRepositoryCreateMultiDateTest {
 
@@ -42,7 +48,7 @@ class BookingRepositoryCreateMultiDateTest {
     }
 
     @Test
-    fun `DRIFT FIX - the wire payload now carries priceCents and location on every visit, as an honest null`() = runBlocking {
+    fun `DRIFT FIX - the wire payload carries priceCents as an honest null, and no location at all`() = runBlocking {
         val functions = mockk<FirebaseFunctions>()
         val payload = stub(functions, mapOf("batchId" to "batch1", "visitIds" to listOf("v1"), "visitCount" to 1))
 
@@ -55,9 +61,8 @@ class BookingRepositoryCreateMultiDateTest {
         val visits = payload.captured["visits"] as List<Map<String, Any?>>
         assertEquals(1, visits.size)
         assertTrue("priceCents key must be present", visits[0].containsKey("priceCents"))
-        assertTrue("location key must be present", visits[0].containsKey("location"))
         assertEquals(null, visits[0]["priceCents"])
-        assertEquals(null, visits[0]["location"])
+        assertFalse("no location key on a visit, ever", visits[0].containsKey("location"))
     }
 
     @Test
@@ -109,24 +114,6 @@ class BookingRepositoryCreateMultiDateTest {
     // -----------------------------------------------------------------------
     // D1: the wizard fills the slots the drift fix opened.
     // -----------------------------------------------------------------------
-    @Test
-    fun `D1 - a per-visit place reaches the wire, trimmed to null when blank`() = runBlocking {
-        val functions = mockk<FirebaseFunctions>()
-        val payload = stub(functions, mapOf("batchId" to "batch1", "visitIds" to listOf("v1", "v2"), "visitCount" to 2))
-        repoWith(functions).createMultiDateBookingRequest(
-            kinfolkId = "kf1",
-            visits = listOf(
-                NewBookingVisit(startTimeMs = 1000L, serviceName = "Dog Walking", location = "Back gate"),
-                // The callable's `location` is `.trim().min(1)`, so a blank must
-                // travel as null; sending "" would be refused outright.
-                NewBookingVisit(startTimeMs = 2000L, serviceName = "Dog Walking", location = "   "),
-            ),
-        )
-        @Suppress("UNCHECKED_CAST")
-        val visits = payload.captured["visits"] as List<Map<String, Any?>>
-        assertEquals("Back gate", visits[0]["location"])
-        assertEquals(null, visits[1]["location"])
-    }
     @Test
     fun `D1 - kinIds reach the wire when the wizard collected any`() = runBlocking {
         val functions = mockk<FirebaseFunctions>()

@@ -150,23 +150,25 @@ class BookingContractsGeneratedTest {
 
     @Test
     fun `the generated encoder always sends the always-present visit fields, null when unset`() {
-        // The ADR-0003 follow-up narrowing: endTimeMs/serviceId/priceCents/location
-        // are always-present-but-nullable in the generated Args, never omitted.
+        // The ADR-0003 follow-up narrowing: endTimeMs/serviceId/priceCents are
+        // always-present-but-nullable in the generated Args, never omitted.
         val visit = CreateMultiDateBookingRequestArgsVisit(
             startTimeMs = 1L,
             endTimeMs = null,
             serviceId = null,
             serviceName = "Dog Walking",
             priceCents = null,
-            location = null,
         )
         val payload = visit.toPayload()
         assertTrue(payload.containsKey("endTimeMs"))
         assertTrue(payload.containsKey("serviceId"))
         assertTrue(payload.containsKey("priceCents"))
-        assertTrue(payload.containsKey("location"))
         assertNull(payload["endTimeMs"])
         assertNull(payload["serviceId"])
+        // A visit carries no address (operator ruling, 2026-08-04): the
+        // household doc is where an address lives, so the generated encoder has
+        // no key to send even if a caller wanted one.
+        assertFalse(payload.containsKey("location"))
     }
 
     // ── batchUpdateBookings: the failed[] array ──────────────────────────────

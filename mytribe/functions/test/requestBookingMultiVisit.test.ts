@@ -335,7 +335,14 @@ describe('requestBookingHandler wizard fields', () => {
       },
     });
   }
-  it('persists per-visit location, booking-level billing and communication', async () => {
+  /**
+   * NO ADDRESS ON A BOOKING (operator ruling, 2026-08-04). The visit doc used
+   * to carry a free-text `location`; addresses come from the household doc and
+   * nowhere else. `MultiArgs` is not `.strict()`, so a cached portal bundle
+   * that still sends the key has it stripped and its request still writes --
+   * asserted here, because refusing it would break every unreloaded browser.
+   */
+  it('persists booking-level billing and communication, and drops a location an old client sends', async () => {
     const ctx = portalDb();
     mocks.dbFn.mockReturnValue(ctx.db);
     const { requestBookingHandler } = await import('../src/portal/requestBooking');
@@ -360,7 +367,8 @@ describe('requestBookingHandler wizard fields', () => {
     const visit = ctx.writes.find((w) =>
       w.path.startsWith(`families/3/bookings/${res.batchId}/kinCares/`),
     );
-    expect(visit?.data?.location).toBe('Side door');
+    expect(visit?.data).not.toHaveProperty('location');
+    expect(envelope?.data).not.toHaveProperty('location');
   });
   it('a payload with none of the new fields still writes, with both toggles off', async () => {
     const ctx = portalDb();
@@ -400,6 +408,6 @@ describe('requestBookingHandler wizard fields', () => {
     const visit = ctx.writes.find((w) =>
       w.path.startsWith(`families/3/bookings/${res.batchId}/kinCares/`),
     );
-    expect(visit?.data?.location).toBeNull();
+    expect(visit?.data).not.toHaveProperty('location');
   });
 });

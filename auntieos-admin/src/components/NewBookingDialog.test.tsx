@@ -459,7 +459,9 @@ describe('NewBookingDialog step 3: dates, times, services and places per visit',
     await userEvent.clear(screen.getByLabelText('Aug 23 visit 2 time'));
     await userEvent.type(screen.getByLabelText('Aug 23 visit 2 time'), '16:30');
     await userEvent.selectOptions(screen.getByLabelText('Aug 23 visit 2 service'), '90Minute');
-    await userEvent.type(screen.getByLabelText('Aug 23 visit 2 place'), 'Back gate');
+    // No place control to type into, and that is asserted rather than assumed:
+    // addresses come from the household (operator ruling, 2026-08-04).
+    expect(screen.queryByLabelText('Aug 23 visit 2 place')).toBeNull();
 
     await toReview();
     await userEvent.click(screen.getByRole('button', { name: /create 2 visits/i }));
@@ -472,10 +474,7 @@ describe('NewBookingDialog step 3: dates, times, services and places per visit',
     expect(new Date(visits[0].startTimeMs).getHours()).toBe(9);
     expect(new Date(visits[1].startTimeMs).getHours()).toBe(16);
     expect(new Date(visits[1].startTimeMs).getMinutes()).toBe(30);
-    // A place on one visit and none on the other, which is the point of it
-    // being per-visit. Blank is null on the wire, never ''.
-    expect(visits[0].location).toBeNull();
-    expect(visits[1].location).toBe('Back gate');
+    for (const v of visits) expect(v).not.toHaveProperty('location');
   });
 
   it('the Daily Visit Schedule seeds NEW days only, never rewrites a day already tuned', async () => {

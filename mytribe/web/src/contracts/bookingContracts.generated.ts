@@ -94,7 +94,6 @@ export interface CreateMultiDateBookingRequestArgsVisit {
   serviceId: string | null;
   serviceName: string;
   priceCents: number | null;
-  location: string | null;
 }
 
 /**
@@ -230,7 +229,6 @@ export interface RequestBookingArgsVisit {
   serviceId: string;
   serviceName: string;
   priceCents: number | null;
-  location: string | null;
 }
 
 /**
