@@ -17,6 +17,7 @@ import {
 } from '../lib/kinTaleFormat';
 import { kinTaleListRows, type KinTaleListRow } from '../lib/kinTaleList';
 import { type Async } from '../lib/async';
+import { createdAtProvenanceNote } from '../lib/createdAtProvenance';
 import { useCollection } from '../lib/firestore';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { asyncScalar } from '../lib/async';
@@ -465,6 +466,14 @@ function KinTaleRow({ entry, onSelect }: KinTaleRowProps) {
   // output, not just visit recaps, so the row names which kind it is rather
   // than letting an sms draft read as a visit recap. Blank for a report row.
   const draftType = entry.draftType ?? '';
+  // WHY THIS ROW IS WHERE IT IS. The list is ordered `createdAt desc`, and on a
+  // handful of imported rows that date is the day they were IMPORTED rather
+  // than the day they were written, because nothing recoverable said otherwise
+  // (operator's ruling 2026-08-04; see lib/createdAtProvenance.ts). Unmarked,
+  // such a row is indistinguishable from one genuinely created that day, which
+  // is the same defect one field along. Blank for every row whose date can be
+  // taken at face value.
+  const provenanceNote = createdAtProvenanceNote(entry.createdAtSource);
 
   const body = (
     <>
@@ -489,6 +498,9 @@ function KinTaleRow({ entry, onSelect }: KinTaleRowProps) {
         ) : null}
         {channel ? <span className="kintales__row-pip">{channel}</span> : null}
         {draftType !== '' ? <span className="kintales__row-pip">{draftType}</span> : null}
+        {provenanceNote !== '' ? (
+          <span className="kintales__row-pip kintales__row-pip--provenance">{provenanceNote}</span>
+        ) : null}
       </span>
     </>
   );

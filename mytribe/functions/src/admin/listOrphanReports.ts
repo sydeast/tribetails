@@ -29,15 +29,25 @@ import { validateResponse } from '../lib/callableResponse';
  * in that nonsense order, so an orphan sat near the top for a reason that was a
  * bug.
  *
- * Punchlist F7 (`mytribe/scripts/backfillKinTaleCreatedAt.ts`) redated those
- * rows: legacy `createdAt` is now the ingest timestamp already stored in
- * `_migratedAt`, and `createdAt` means "created in AuntieOS". The ordering is
- * real, and the accident that used to float orphans to the top is gone in the
- * direction that matters here: every orphan's ingest date is fixed at the May
- * 2026 migration, so orphans drift down the main list and off it as new reports
- * accumulate. A client-side filter over that page would quietly go empty, which
- * is the AO-12/AO-29 failure class this codebase treats as a bug rather than a
- * display nuance.
+ * `mytribe/scripts/backfillKinTaleCreatedAtProvenance.ts` repairs those rows:
+ * an imported row's `createdAt` becomes the ORIGINAL creation instant recovered
+ * from the previous system, and `createdAtSource` says whether that is what it
+ * is. `createdAt` means "when this record came into existence", not "when it
+ * entered AuntieOS"; the ingest instant keeps `_migratedAt`.
+ *
+ * (An earlier ruling, 2026-08-01, said the opposite and shipped as punchlist F7's
+ * `backfillKinTaleCreatedAt.ts`, redating every imported row to its ingest stamp.
+ * The operator REVERSED it on 2026-08-04 and that script is deleted. This
+ * paragraph used to describe it, and is spelled out rather than quietly edited
+ * because an agent reading the old text would conclude every orphan is pinned at
+ * May 2026.)
+ *
+ * The ordering is real either way, and the accident that used to float orphans
+ * to the top is gone: an orphan now sorts by the date its visit was actually
+ * written up, which for every one of them is 2025 or early 2026, so they drift
+ * down the main list and off it as new reports accumulate. A client-side filter
+ * over that page would quietly go empty, which is the AO-12/AO-29 failure class
+ * this codebase treats as a bug rather than a display nuance.
  *
  * A dedicated, unordered, single-filter read was correct under the old regime
  * and is correct under the new one: it makes "an orphan is reachable regardless
@@ -143,13 +153,19 @@ export async function listOrphanReportsHandler(
   // Newest migration rows first. A blank createdAt sorts last rather than
   // being treated as "now": '' < every real ISO string lexically.
   //
-  // THEN `_legacySubmittedAt`, and that tie-break is what keeps the primary
-  // sort meaningful after F7. Every row the visit_logs migration produced now
-  // carries the SAME ingest instant on `createdAt`, so on this collection
-  // `createdAt desc` alone leaves the entire orphan set tied and the order
-  // arbitrary. `_legacySubmittedAt` is the original submit stamp, parsed and
-  // sortable, written by the same migration; it is read here and never
-  // returned, because the row renders id + channel + body and no timestamp.
+  // THEN `_legacySubmittedAt`, which is what keeps the primary sort meaningful
+  // on the rows the provenance backfill could NOT recover an original for.
+  // Those keep the ingest instant in `createdAt`, and they all share it, so
+  // `createdAt desc` alone leaves that subset tied and its order arbitrary.
+  // `_legacySubmittedAt` is the original submit stamp, parsed and sortable,
+  // written by the same migration; it is read here and never returned, because
+  // the row renders id + channel + body and no timestamp.
+  //
+  // It is a no-op for a row whose original WAS recovered, since `createdAt` is
+  // then already that instant and the rows do not tie. Kept rather than removed
+  // for the rows where it still does work, and because a tie-break that is
+  // sometimes unnecessary costs nothing while its absence is a silent
+  // arbitrary ordering.
   reports.sort((a, b) => {
     if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
     const sa = submitted.get(a._id) ?? '';

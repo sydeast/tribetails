@@ -204,6 +204,12 @@
 .kintales__row-pip {
   color: var(--color-accent);
 }
+/* A caveat about the date, not a feature of the tale. Dim rather than accent so
+   it reads as a footnote beside the kin/photo/channel pips it sits with. */
+.kintales__row-pip--provenance {
+  color: var(--color-text-faint);
+  font-style: italic;
+}
 
 /* ── status chip ─────────────────────────────────────────────────────────── */
 

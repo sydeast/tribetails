@@ -9,13 +9,35 @@ are STILL migrated, but tagged sentVia="legacy_orphan" with sessionId="" so
 admin UI can fail-loud surface them. Per fail-loud policy: do not silently
 drop docs.
 
-createdAt is the INGEST instant, not visit_logs.submitted. It used to be the
-latter, which is free text, and Firestore's UTF-8 byte ordering then sorted the
-whole imported block above every real row and alphabetically by month name.
-Punchlist F7. The repair for rows already in production is
-mytribe/scripts/backfillKinTaleCreatedAt.ts; this file is the source fix, so a
-re-run of the migration cannot put the defect back. The human submit stamp is
-still carried, parsed and sortable, as _legacySubmittedAt.
+createdAt is the ORIGINAL creation instant, recovered from visit_logs.submitted,
+and it is never the ingest date. Per the operator's ruling of 2026-08-04:
+
+    "createdAt is incorrect when we migrated historical data. the old data's
+     actual createdAt should be its original creation as in from the old system
+     not the date that it was migrated"
+
+This field has now been wrong in two different directions and both are worth
+naming, because the second was a deliberate fix that overshot.
+
+  1. It was the RAW free text, "September 3, 2025 2:02pm". Firestore orders
+     strings by UTF-8 byte, so letters beat digits: the whole imported block
+     sorted above every real row, and among itself ALPHABETICALLY BY MONTH NAME.
+  2. Punchlist F7 (2026-08-01) fixed the sort by writing the INGEST instant
+     instead. Sortable, and a lie about every one of the 83 rows: each claimed
+     to have been created the day it was imported.
+
+Both are fixed by the same move. `submitted` is PARSED to a real ISO instant, so
+it sorts correctly, and it is written where it belongs. The ingest instant keeps
+_migratedAt, the field that was always named for it, so nothing is lost.
+
+createdAtSource says which of the two `createdAt` actually is, and it is what
+stops "imported that day" and "created that day" from being the same bytes. It
+is "original" when `submitted` parsed, "import" when it did not. Nothing is ever
+guessed: a row with neither is refused, not stamped with now.
+
+The repair for rows already in production is
+mytribe/scripts/backfillKinTaleCreatedAtProvenance.ts. This file is the source
+fix, so a re-run of the migration cannot put either defect back.
 
 Refuses prod write without --allow-prod AND explicit GCLOUD_PROJECT env var.
 Pattern matches MyTribe/scripts/seedNotificationTemplates.ts gate.
@@ -115,19 +137,39 @@ def first_nonblank(*vals: str) -> str:
     return ""
 
 
+def created_at_stamp(submitted_iso: str | None, ingest: str) -> tuple[str, str]:
+    """Returns (createdAt, createdAtSource) for one imported row.
+
+    THE WRITE PATH FOR THIS IMPORT, in one place, so the field and the marker
+    that says whether to believe it cannot be written apart from each other.
+    Mirrors `resolveMigratedCreatedAt` in mytribe/scripts/createdAtProvenance.ts,
+    which is the same contract for the TypeScript side.
+
+    A parsed submit stamp is the row's real creation instant -> "original".
+    Nothing parsed means the source recorded no date this script can read, so
+    createdAt falls back to the ingest instant and is MARKED "import": it is a
+    true fact about the row, it is not a creation date, and a reader can tell.
+    """
+    if submitted_iso:
+        return submitted_iso, "original"
+    return ingest, "import"
+
+
 def convert(visit_log_id: str, vl: dict, session_ids: set[str],
             ingested_at: str | None = None) -> tuple[str, dict, bool]:
     """Returns (new_doc_id, kin_care_report_dict, is_orphan).
 
     `ingested_at` is the ONE ingest instant for the whole run, so every row this
-    pass produces shares a single `createdAt`/`_migratedAt` rather than drifting
-    by however long the loop took. Defaults to now for callers that do not care.
+    pass produces shares a single `_migratedAt` rather than drifting by however
+    long the loop took. Defaults to now for callers that do not care.
     """
     journal_id = vl.get("journalId", "")
     is_orphan  = journal_id not in session_ids
     timestamp  = first_nonblank(vl.get("submitted", ""), vl.get("arrival", ""), vl.get("departure", ""))
     new_doc_id = f"legacy_{visit_log_id}"
     ingest     = ingested_at or utc_now_iso()
+    submitted  = parse_legacy_stamp(vl.get("submitted", ""))
+    created_at, created_at_source = created_at_stamp(submitted, ingest)
     report = {
         "sessionId":         "" if is_orphan else journal_id,
         "kinfolkId":         vl.get("kinfolkId", ""),
@@ -154,21 +196,24 @@ def convert(visit_log_id: str, vl: dict, session_ids: set[str],
         "sentAt":            timestamp,
         "sentVia":           "legacy_orphan" if is_orphan else "legacy_visit_logs",
         "deliveryReceiptId": vl.get("rawStagingRef", ""),
-        # THE INGEST INSTANT, not visit_logs.submitted.
+        # THE ORIGINAL CREATION INSTANT, parsed from visit_logs.submitted.
         #
-        # This field used to be `vl.get("submitted", "")`, which is free text
-        # ("September 3, 2025 2:02pm"). Firestore orders strings by UTF-8 byte,
-        # so letters beat digits: every row this script wrote sorted ABOVE every
-        # ISO row in a `createdAt desc` query, and sorted among itself
-        # ALPHABETICALLY BY MONTH NAME. The KinTales list was not slightly
-        # mis-sorted, it was sorted by nothing.
+        # Per the operator's 2026-08-04 ruling: a report written in September
+        # 2025 was created in September 2025, whatever day this script happened
+        # to run. `_migratedAt` below carries the ingest instant, so both facts
+        # are on the row, in fields named for what they are.
         #
-        # Per the operator's 2026-08-01 ruling, `createdAt` means "created in
-        # AuntieOS", and a row imported from the previous system was created in
-        # AuntieOS at ingest. Same value as `_migratedAt` by construction, so a
-        # re-run of this script cannot reintroduce the defect that
-        # mytribe/scripts/backfillKinTaleCreatedAt.ts exists to repair.
-        "createdAt":         ingest,
+        # PARSED, not the raw text. The raw form is "September 3, 2025 2:02pm",
+        # and Firestore orders strings by UTF-8 byte, so letters beat digits:
+        # writing it unparsed sorted every imported row above every ISO row in a
+        # `createdAt desc` query, and sorted them among themselves ALPHABETICALLY
+        # BY MONTH NAME. `parse_legacy_stamp` is what makes this both true and
+        # sortable, and it refuses anything it cannot read rather than coercing
+        # it.
+        #
+        # `createdAtSource` travels with it, always. See `created_at_stamp`.
+        "createdAt":         created_at,
+        "createdAtSource":   created_at_source,
         "updatedAt":         ingest,
         # The human submit stamp, rendered sortable. It is NOT written into
         # `visitDate`: measured against the live corpus, 18 of the 83 rows record
@@ -177,7 +222,7 @@ def convert(visit_log_id: str, vl: dict, session_ids: set[str],
         # a submit time, not a visit date. It is kept under a name that says so,
         # where it carries no claim it cannot support. Blank when the text does
         # not match the one known grammar; nothing is guessed.
-        "_legacySubmittedAt": parse_legacy_stamp(vl.get("submitted", "")) or "",
+        "_legacySubmittedAt": submitted or "",
         # provenance — separate from deliveryReceiptId for clarity
         "_migratedFrom":     f"visit_logs/{visit_log_id}",
         "_migratedAt":       ingest,
@@ -242,11 +287,13 @@ def main():
 
     print()
     print(f"[migrate] FINAL: total={len(visit_logs)} matched={matched} orphans={len(orphans)} "
-          f"unparsed_submit_stamps={len(unparsed)} createdAt={ingested_at} "
+          f"created_at_original={len(visit_logs) - len(unparsed)} "
+          f"created_at_import={len(unparsed)} ingest={ingested_at} "
           f"mode={'DRY' if args.dry_run else 'WRITE'}")
     if unparsed:
-        print("[migrate] Submit stamps that did NOT match the known grammar "
-              "(_legacySubmittedAt left blank, nothing guessed):")
+        print("[migrate] Submit stamps that did NOT match the known grammar. These rows carry "
+              "createdAtSource='import': their createdAt is the ingest instant, NOT a creation "
+              "date, and _legacySubmittedAt is left blank. Nothing was guessed:")
         for vid, raw in unparsed:
             print(f"  visit_logs/{vid}  submitted='{raw}'")
     if orphans:

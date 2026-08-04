@@ -262,6 +262,34 @@ describe('KinTales screen', () => {
     expect(screen.getByText('imported')).toBeInTheDocument();
   });
 
+  it('marks a row whose createdAt is the IMPORT date, not a creation date', () => {
+    // The list is ordered `createdAt desc`. On a row the migration could not
+    // recover an original for, that date is the day it was imported. Unmarked,
+    // it is indistinguishable from a tale genuinely written that day, which is
+    // the operator's 2026-08-04 defect repeating one field along.
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'SENT', sentVia: 'legacy_visit_logs', createdAtSource: 'import' })]),
+    );
+    render(<KinTales />);
+    expect(screen.getByText('Imported, original date unknown')).toBeInTheDocument();
+  });
+
+  it('does NOT mark an imported row whose original creation instant was recovered', () => {
+    // That row's date is a real creation date. A caveat on all 83 imported rows
+    // would be noise that trains the operator to stop reading caveats.
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'SENT', sentVia: 'legacy_visit_logs', createdAtSource: 'original' })]),
+    );
+    render(<KinTales />);
+    expect(screen.queryByText(/original date unknown/i)).toBeNull();
+  });
+
+  it('does not mark a row this system created, whose createdAtSource is absent entirely', () => {
+    usePagedCollection.mockReturnValue(paged([entry({})]));
+    render(<KinTales />);
+    expect(screen.queryByText(/original date unknown/i)).toBeNull();
+  });
+
   it('clicking a row calls onSelect with the KinTale id', async () => {
     usePagedCollection.mockReturnValue(paged([entry({ _id: 'tale-42' })]));
     const onSelect = vi.fn();
