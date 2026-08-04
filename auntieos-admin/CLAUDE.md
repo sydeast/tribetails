@@ -41,12 +41,30 @@ When you need to know what a screen should look like, read these, in this order:
    (`...-cardsShouldOpenDisplayingFullerDetails.html`) means that directive is
    part of the spec.
 
+Both paths are this tree's only. The Kinfolk portal keeps its own mockups in
+`mytribe/ui-ideas/` and has no page-specs; see `mytribe/CLAUDE.md`. A portal
+screen is never answered from here.
+
 `visual/mockups/` is Playwright output rendered from source 2 at some past
 moment. It is never itself a design source. On 2026-08-01 the operator deleted it
 along with `visual/baselines/`, because both held the pre-ruling concept round and
 captures of the superseded Compose app, and agents kept building from them. The
 harness stays; `web/visual/manifest.json` now lists only screens whose mockup is
 live, with the withdrawn ones under `pendingRemock`.
+
+`visual/baselines/` is populated again and the new contents are trustworthy.
+Commit `6bd585c`, the same day, added a fourth capture surface, `react`, and
+recorded 19 goldens under `visual/baselines/react/` from captures in
+`visual/react/`. Those photograph the React admin that auntie.tribetails.com has
+served since 2026-07-20, pinned deterministic (reduced motion, fixed clock, fixed
+timezone and locale, every non-localhost request aborted) and byte-identical
+across four runs. `web/visual/baseline.mjs:31` carries all four surfaces.
+
+That changes what the goldens are good for, not what they are. `visual/react/`
+answers "what does the shipped admin look like today", which is a regression
+question. What a screen SHOULD look like still comes from page-specs, then
+ui-ideas. `visual/web/`, `visual/desktop/` and `visual/android/` remain captures
+of the superseded Compose app and answer nothing.
 
 A screen with no live mockup does not get one invented. It waits for the operator
 re-mock, tracked in `docs/punchlists/PUNCHLIST_2026-07-31-remaining.md` (F1 to F5).
