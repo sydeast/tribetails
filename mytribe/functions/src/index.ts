@@ -16,12 +16,44 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 //   that need more carry an explicit override at their own definition; see
 //   lib/runtimeOptions.ts, including why below 1 vCPU Cloud Run pins
 //   concurrency to 1.
-// memory 256MiB: not a change. It pins what all 233 services already run at so
-//   a future firebase-functions default cannot move it underneath us.
+// memory 512MiB: RAISED FROM 256MiB on 2026-08-04, because the fleet outgrew it
+//   and every callable in this codebase went down intermittently for it.
+//
+//   The Functions runtime loads all of `index.js` on every cold start whatever
+//   the target is (see lib/runtimeOptions.ts, which measures the same graph at
+//   ~1.44s of CPU). So the import cost is the WHOLE codebase's, not the called
+//   function's, and it grows with every export added here. On 2026-08-03 it
+//   crossed 256MiB. Cloud Run logs for that evening, across
+//   getBusinessNotificationOverrides, getGoogleCalendarConnection,
+//   getFeatureFlags and listMembers:
+//
+//     'Memory limit of 256 MiB exceeded with 257 MiB used'
+//     Default STARTUP TCP probe failed 1 time consecutively for container
+//       "worker" on port 8080. The instance was not started.
+//     The request failed because the instance failed the readiness check.
+//
+//   Readings ranged 256 to 271 MiB, which is why it presented as flaky rather
+//   than broken: a cold start that happened to fit came up and served, and one
+//   that did not died before the probe. A container killed at startup returns
+//   503 at the edge with no CORS headers on it, so every one of these arrived in
+//   the browser as "blocked by CORS policy" and in the client as
+//   `functions/internal`, because lib/fns.ts maps any transport failure to
+//   internal. Nothing reached a handler; auth and permissions were never
+//   involved.
+//
+//   512MiB is the next step up and needs no CPU change: Cloud Run requires
+//   0.5 vCPU only above 512MiB, so 0.25 vCPU still holds and the
+//   CpuAllocPerProjectRegion ceiling that drove the cpu 0.25 decision is
+//   untouched. Memory has its own separate quota.
+//
+//   THIS BUYS HEADROOM, IT DOES NOT FIX THE SHAPE. Every function paying the
+//   import cost of all 227 is the actual defect, and the next 256MiB of growth
+//   returns this outage. Splitting the module graph so a function loads only
+//   what it uses is the real fix and is not this change.
 // maxInstances 20: nothing capped instances before, so a runaway trigger loop
 //   or a traffic spike could scale to Cloud Run's default of 100 and bill
 //   unbounded. 20 instances at 0.25 vCPU bounds one runaway function to 5 vCPU.
-setGlobalOptions({ cpu: 0.25, memory: '256MiB', maxInstances: 20 });
+setGlobalOptions({ cpu: 0.25, memory: '512MiB', maxInstances: 20 });
 
 // Sentry is lazy-initialised by each handler at first invocation. Eager
 // init at module-load logged a spurious "SENTRY_DSN unset" on cold-start
