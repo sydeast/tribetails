@@ -10,6 +10,19 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { INVITE_TTL_DAYS, SECONDARY_LABEL_MAX } from '../lib/schema';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
+/**
+ * FLAGGED 2026-08-04, NOT DELETED: this callable appears to have no caller.
+ *
+ * It is exported from `index.ts` and deployed, and its own test exercises the
+ * handler, but a repo-wide search finds no client that calls it: the kinfolk
+ * portal's primary-invites-secondary flow goes through
+ * `portal/addSecondaryContact.ts` (TribeProfile.tsx's InviteKinfolkCard), and
+ * the admin path is `admin/mintInvite.ts`. It is the older and stricter of the
+ * two primary-side mints (`loadMember` + `requirePrimary` before it writes
+ * anything) and it sends three emails the newer path does not, so if the two
+ * are ever reconciled this is the one to reconcile TOWARDS. Left deployed and
+ * unchanged: an unreferenced invite mint is a thing to report, not to remove.
+ */
 const PermSchema = z.object({
   billing_full: z.boolean(),
   messaging_direct: z.boolean(),

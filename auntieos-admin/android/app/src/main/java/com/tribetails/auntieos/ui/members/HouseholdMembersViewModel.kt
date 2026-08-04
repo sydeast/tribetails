@@ -121,6 +121,10 @@ class HouseholdMembersViewModel(
         next: Boolean,
     ) {
         if (_uiState.value.savingPermission != null) return
+        // A primary holds every entitlement by role, no toggle is drawn for one,
+        // and the server refuses the write. Belt and braces, so a future row
+        // layout cannot reintroduce the gesture quietly.
+        if (permissionsFollowRole(member.role)) return
         val before = _uiState.value.members
         _uiState.value = _uiState.value.copy(
             members = before.map { m ->
@@ -149,21 +153,23 @@ class HouseholdMembersViewModel(
         }
     }
 
+    /**
+     * Invites this household's PRIMARY. There is no role argument because the
+     * admin has no other invite to send: the secondary is invited by the
+     * household's own primary, from MyTribe.
+     */
     fun mintInvite(
         invitedEmail: String,
-        secondaryLabel: String,
-        role: MembersRepository.MemberRole,
-        permissions: MembersRepository.MemberPermissions,
         onSent: () -> Unit,
     ) {
         if (_uiState.value.minting) return
         _uiState.value = _uiState.value.copy(minting = true, mintError = null)
         viewModelScope.launch {
-            repository.mintInvite(kinfolkId, invitedEmail, secondaryLabel, role, permissions).fold(
+            repository.mintInvite(kinfolkId, invitedEmail).fold(
                 onSuccess = {
                     _uiState.value = _uiState.value.copy(
                         minting = false,
-                        toast = "Invite sent to ${invitedEmail.trim()}. It expires in " +
+                        toast = "Primary invite sent to ${invitedEmail.trim()}. It expires in " +
                             "${MembersRepository.INVITE_TTL_DAYS} days.",
                     )
                     onSent()
@@ -242,6 +248,23 @@ class HouseholdMembersViewModel(
         )
     }
 }
+
+/**
+ * True when this member's entitlements are theirs by ROLE, and the flags on
+ * their member doc are inert.
+ *
+ * RULING (2026-08-04): "admin can edit permissions but not like primary's
+ * access to full billing, home access, kin edit, etc. The screen makes it seem
+ * like these account must needs can be turned off."
+ *
+ * They cannot. `requirePerm` and `hasKinfolkPerm` in
+ * `mytribe/functions/src/lib/memberGate.ts` both answer for a PRIMARY before
+ * they ever read `permissions`, so every flag on a primary is dead data, and
+ * `setMemberPermissions` now refuses a primary target outright. The React
+ * mirror is `permissionsFollowRole` in `auntieos-admin/src/api/members.ts`.
+ */
+internal fun permissionsFollowRole(role: MembersRepository.MemberRole): Boolean =
+    role == MembersRepository.MemberRole.PRIMARY
 
 /** Pure, so the optimistic flip is testable without a ViewModel. */
 internal fun applyPermission(

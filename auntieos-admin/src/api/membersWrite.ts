@@ -20,10 +20,7 @@
  */
 
 import { call } from '../lib/fns';
-import { type MemberPermissions, type MemberRole, type PermissionKey } from './members';
-
-/** `SECONDARY_LABEL_MAX` in `mytribe/functions/src/lib/schema.ts`. */
-export const SECONDARY_LABEL_MAX = 24;
+import { type MemberRole, type PermissionKey } from './members';
 
 /** `INVITE_TTL_DAYS` in `mytribe/functions/src/lib/schema.ts`. */
 export const INVITE_TTL_DAYS = 14;
@@ -31,9 +28,6 @@ export const INVITE_TTL_DAYS = 14;
 export interface MintInviteInput {
   familyId: string;
   invitedEmail: string;
-  secondaryLabel?: string;
-  proposedRole?: MemberRole;
-  proposedPermissions: MemberPermissions;
 }
 
 export interface MintInviteResult {
@@ -41,29 +35,21 @@ export interface MintInviteResult {
 }
 
 /**
- * A sensible starting permission set for a new SECONDARY: they can talk to the
- * Auntie and read the feed, and nothing else. Billing, kin edits and home
- * access are grants the operator makes deliberately, not defaults.
+ * Mints a PRIMARY claim for one household and emails the link.
  *
- * `kintales_only` is true because the server forces it true anyway; sending
- * false would be a lie the response would silently correct.
- */
-export const DEFAULT_INVITE_PERMISSIONS: MemberPermissions = {
-  billing_full: false,
-  messaging_direct: true,
-  messaging_group: true,
-  kin_edit: false,
-  kintales_only: true,
-  home_access: false,
-};
-
-/**
- * Mints one invite and emails the claim link.
+ * RULING (2026-08-04): the primary kinfolk invites the secondary; the admin
+ * does not, and the admin's only invite is inviting the primary to the portal.
+ * So there is no role argument here any more, and no starting permission set:
+ * a primary holds every entitlement by role, `mintInvite` writes
+ * `FULL_PERMISSIONS` server-side, and the callable now REFUSES
+ * `proposedRole: 'SECONDARY'` rather than accepting it as it used to by
+ * default. The secondary is invited from the kinfolk portal, by their own
+ * primary, through `addSecondaryContact`.
  *
- * `proposedPermissions` must carry ALL SIX booleans: the server's Zod schema
- * requires every key, so a partial object comes back as a validation failure,
- * not a merge. The local guards below cost no round trip and produce a message
- * the operator can act on.
+ * `SECONDARY_LABEL_MAX` and `DEFAULT_INVITE_PERMISSIONS` used to live here for
+ * the label and permission fields of that form. Both are gone with it: a label
+ * describes a secondary's place in a household, and a starting permission set
+ * is a choice that has no effect on a primary.
  */
 export async function mintInvite(input: MintInviteInput): Promise<MintInviteResult> {
   const familyId = input.familyId.trim();
@@ -75,28 +61,15 @@ export async function mintInvite(input: MintInviteInput): Promise<MintInviteResu
   // this exists so an obvious typo does not cost a round trip to say so.
   if (!invitedEmail.includes('@')) throw new Error(`"${invitedEmail}" is not an email address.`);
 
-  const secondaryLabel = (input.secondaryLabel ?? '').trim();
-  if (secondaryLabel.length > SECONDARY_LABEL_MAX) {
-    throw new Error(`The label must be ${SECONDARY_LABEL_MAX} characters or fewer.`);
-  }
-
   return call<
-    {
-      familyId: string;
-      invitedEmail: string;
-      secondaryLabel: string;
-      proposedRole: MemberRole;
-      proposedPermissions: MemberPermissions;
-    },
+    { familyId: string; invitedEmail: string; proposedRole: MemberRole },
     MintInviteResult
   >('mintInvite', {
     familyId,
     invitedEmail,
-    // The server defaults a blank label to 'Folk' after sanitising; send its
-    // default explicitly rather than an empty string it would have to guess at.
-    secondaryLabel: secondaryLabel === '' ? 'Folk' : secondaryLabel,
-    proposedRole: input.proposedRole ?? 'SECONDARY',
-    proposedPermissions: { ...input.proposedPermissions, kintales_only: true },
+    // Sent explicitly, though the server defaults it: this is the one grant
+    // this call can make, and it should read that way at the call site.
+    proposedRole: 'PRIMARY',
   });
 }
 
@@ -108,7 +81,13 @@ export async function revokeInvite(inviteId: string): Promise<void> {
 }
 
 /**
- * Changes one or more permission flags on an existing member.
+ * Changes one or more permission flags on an existing SECONDARY.
+ *
+ * SECONDARY, not "member": the server answers `failed-precondition` /
+ * `target not SECONDARY` for a primary target, because a primary's
+ * entitlements come from the role and no enforcement path reads their flags.
+ * The roster must therefore never offer a primary a permission toggle; this
+ * function does not take a role and cannot check it for you.
  *
  * `kintales_only` is not in the server's argument schema, so it is stripped
  * here too: sending it would be silently dropped, and a toggle that silently
@@ -170,9 +149,11 @@ export interface InviteKinfolkToPortalResult {
 /**
  * Invites an EXISTING household to the kinfolk portal as its PRIMARY.
  *
- * Distinct from `mintInvite`, which adds a SECONDARY to a household that
- * already has a portal account. This one resolves the kinfolk record's email,
- * ensures the MyTribe family envelope exists, and sends a PRIMARY claim.
+ * The same grant as `mintInvite`, reached differently: this one resolves the
+ * address off the kinfolk record, ensures the MyTribe family envelope exists,
+ * and skips a household that already has an active primary. `mintInvite` takes
+ * an address the operator types, for a household whose record carries the
+ * wrong one or none.
  */
 export async function inviteKinfolkToPortal(
   kinfolkId: string,

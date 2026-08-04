@@ -30,7 +30,6 @@ import com.tribetails.auntieos.data.repository.inviteDate
 import com.tribetails.auntieos.data.repository.inviteHandle
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
-import com.tribetails.auntieos.ui.components.AuntieChip
 import com.tribetails.auntieos.ui.components.AuntieDialog
 import com.tribetails.auntieos.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
@@ -67,6 +66,19 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * (`DirectoryViewModel.inviteKinfolkToPortal`), which is where this screen is
  * reached from. The empty roster says so rather than growing a second button
  * for the same call.
+ *
+ * WHO INVITES WHOM (ruling, 2026-08-04). The admin invites the PRIMARY. The
+ * PRIMARY invites the secondary, from MyTribe, and this screen offers no way to
+ * do it on their behalf: the invite dialog has one field and mints a primary
+ * claim.
+ *
+ * WHAT A PRIMARY MAY LOSE: nothing. Their entitlements are inherent to the role
+ * (`requirePerm` answers for a PRIMARY before it reads the flags), so a primary
+ * renders as granted-by-role rather than as five switches. This screen drew
+ * those switches, which made billing, home access and kin edit look revocable
+ * when the writes behind them changed nothing any enforcement path reads.
+ * `permissionsFollowRole` is the check, and `setMemberPermissions` now refuses
+ * a primary target too.
  */
 @Composable
 fun HouseholdMembersScreen(
@@ -129,8 +141,10 @@ fun HouseholdMembersBody(
         item {
             DenPanel(
                 title = "Members",
-                subtitle = "Everyone with a MyTribe account on this household. " +
-                    "KinTales access is locked on by the server and cannot be turned off here or anywhere.",
+                subtitle = "Everyone with a MyTribe account on this household. A secondary's " +
+                    "permissions are yours to set; a primary's come with the role and are shown " +
+                    "here rather than offered as switches. KinTales access is locked on by the " +
+                    "server for everyone.",
                 trailing = {
                     if (state.membersLoaded) {
                         AuntieStatusPill(
@@ -174,7 +188,7 @@ fun HouseholdMembersBody(
                     "reads Expired here from the moment it lapses, even though the nightly sweep " +
                     "has not stamped it yet.",
                 trailing = {
-                    PrimaryButton(label = "Send invite", onClick = { inviteOpen = true })
+                    PrimaryButton(label = "Invite a primary", onClick = { inviteOpen = true })
                 },
             ) {
                 when {
@@ -212,9 +226,7 @@ fun HouseholdMembersBody(
         SendInviteDialog(
             minting = state.minting,
             onDismiss = { if (!state.minting) inviteOpen = false },
-            onSend = { email, label, role, perms ->
-                viewModel.mintInvite(email, label, role, perms) { inviteOpen = false }
-            },
+            onSend = { email -> viewModel.mintInvite(email) { inviteOpen = false } },
         )
     }
 
@@ -319,6 +331,21 @@ private fun MemberBlock(
 
         Spacer(Modifier.height(dims.space3))
 
+        val byRole = permissionsFollowRole(member.role)
+        if (byRole) {
+            // Prose, not disabled switches: a greyed-out toggle still says
+            // "this could be switched", which is the thing the ruling is about.
+            Text(
+                "Held by role, not by setting. The primary of a household has full billing, " +
+                    "home access, kin edits and messaging because they are the primary, and the " +
+                    "server reads the role rather than these flags. There is nothing here to " +
+                    "switch off.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+            Spacer(Modifier.height(dims.space2))
+        }
+
         PERMISSION_ROWS.forEach { row ->
             val busy = savingPermission == row.key?.let { "${member.uid}:${it.name}" }
             Row(
@@ -336,24 +363,29 @@ private fun MemberBlock(
                             style = AuntieTheme.typography.bodyMedium,
                             color = c.textPrimary,
                         )
-                        if (row.key == null) {
+                        if (row.key == null && !byRole) {
                             AuntieStatusPill(label = "LOCKED ON", tone = AuntieStatusTone.Teal)
                         }
                     }
                     Text(row.description, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                 }
-                if (busy) {
-                    Text("Saving…", style = AuntieTheme.typography.bodySmall, color = c.textDim)
-                    Spacer(Modifier.width(dims.space2))
+                if (byRole) {
+                    // State, where a secondary's row carries a control.
+                    AuntieStatusPill(label = "GRANTED", tone = AuntieStatusTone.Success)
+                } else {
+                    if (busy) {
+                        Text("Saving…", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        Spacer(Modifier.width(dims.space2))
+                    }
+                    AuntieToggle(
+                        // A null key is `kintales_only`, which the server refuses
+                        // to change, so it renders on and disabled rather than as
+                        // a control that silently no-ops.
+                        checked = row.key?.let { readPermission(member.permissions, it) } ?: true,
+                        onCheckedChange = { next -> row.key?.let { onToggle(it, next) } },
+                        enabled = row.key != null && savingPermission == null,
+                    )
                 }
-                AuntieToggle(
-                    // A null key is `kintales_only`, which the server refuses to
-                    // change, so it renders on and disabled rather than as a
-                    // control that silently no-ops.
-                    checked = row.key?.let { readPermission(member.permissions, it) } ?: true,
-                    onCheckedChange = { next -> row.key?.let { onToggle(it, next) } },
-                    enabled = row.key != null && savingPermission == null,
-                )
             }
         }
     }
@@ -398,34 +430,34 @@ private fun InviteRow(
     }
 }
 
+/**
+ * The admin invite: one address, one grant, a PRIMARY claim.
+ *
+ * The role chips (defaulting to Secondary), the label field and the starting
+ * permission toggles are gone. Per the ruling the admin does not invite the
+ * secondary, and a primary has no permission set to choose because the
+ * entitlements are the role's.
+ */
 @Composable
 private fun SendInviteDialog(
     minting: Boolean,
     onDismiss: () -> Unit,
-    onSend: (
-        email: String,
-        label: String,
-        role: MembersRepository.MemberRole,
-        permissions: MembersRepository.MemberPermissions,
-    ) -> Unit,
+    onSend: (email: String) -> Unit,
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     var email by remember { mutableStateOf("") }
-    var label by remember { mutableStateOf("") }
-    var role by remember { mutableStateOf(MembersRepository.MemberRole.SECONDARY) }
-    var perms by remember { mutableStateOf(DEFAULT_INVITE_PERMISSIONS) }
 
     val emailReady = email.trim().isNotBlank() && email.contains("@")
-    val labelTooLong = label.trim().length > MembersRepository.SECONDARY_LABEL_MAX
 
     AuntieDialog(
         visible = true,
-        title = "Send an invite",
+        title = "Invite a primary by email",
         onDismiss = onDismiss,
         maxWidth = 620.dp,
-        hint = "Emails a claim link to one person and adds them to this household when they " +
-            "accept. The link expires in ${MembersRepository.INVITE_TTL_DAYS} days.",
+        hint = "The same primary claim link the household profile sends, addressed to whoever " +
+            "you type here, for a household whose record carries the wrong email or none. It " +
+            "expires in ${MembersRepository.INVITE_TTL_DAYS} days.",
         footer = {
             GhostButton(
                 label = "Cancel",
@@ -434,9 +466,9 @@ private fun SendInviteDialog(
                 modifier = Modifier.weight(1f),
             )
             PrimaryButton(
-                label = if (minting) "Sending…" else "Send invite",
-                onClick = { onSend(email, label, role, perms) },
-                enabled = !minting && emailReady && !labelTooLong,
+                label = if (minting) "Sending…" else "Send primary invite",
+                onClick = { onSend(email) },
+                enabled = !minting && emailReady,
                 loading = minting,
                 modifier = Modifier.weight(1f),
             )
@@ -460,64 +492,14 @@ private fun SendInviteDialog(
         )
 
         Spacer(Modifier.height(dims.space3))
-        BottomBorderField(
-            value = label,
-            onValueChange = { label = it },
-            label = "Label",
-            placeholder = MembersRepository.DEFAULT_SECONDARY_LABEL,
-            enabled = !minting,
-            isError = labelTooLong,
-            errorMessage = if (labelTooLong) {
-                "The label must be ${MembersRepository.SECONDARY_LABEL_MAX} characters or fewer."
-            } else {
-                null
-            },
-            modifier = Modifier.fillMaxWidth(),
-        )
         Text(
-            "${label.trim().length} / ${MembersRepository.SECONDARY_LABEL_MAX}. Optional, and the " +
-                "server strips brackets and dashes, so the saved label can differ from what you type.",
+            "Whoever accepts becomes this household's primary and holds every entitlement by " +
+                "role, so there is no role to pick and no starting permissions to set. To add a " +
+                "second co-parent, the primary invites them from MyTribe; that is not something " +
+                "the Den does on their behalf.",
             style = AuntieTheme.typography.bodySmall,
-            color = c.textFaint,
+            color = c.textDim,
         )
-
-        Spacer(Modifier.height(dims.space3))
-        AuntieFieldLabel(text = "Role")
-        Row(horizontalArrangement = Arrangement.spacedBy(dims.space2)) {
-            MembersRepository.MemberRole.entries.forEach { option ->
-                AuntieChip(
-                    label = if (option == MembersRepository.MemberRole.SECONDARY) "Secondary" else "Primary",
-                    selected = role == option,
-                    onClick = { role = option },
-                )
-            }
-        }
-        Text(
-            "Secondary is a co-parent on an existing household. Primary claims the household " +
-                "account itself.",
-            style = AuntieTheme.typography.bodySmall,
-            color = c.textFaint,
-        )
-
-        Spacer(Modifier.height(dims.space3))
-        AuntieFieldLabel(text = "Starting permissions")
-        PERMISSION_ROWS.forEach { row ->
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(dims.space3),
-                modifier = Modifier.fillMaxWidth().padding(vertical = dims.space2),
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(row.label, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
-                    Text(row.description, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-                }
-                AuntieToggle(
-                    checked = row.key?.let { readPermission(perms, it) } ?: true,
-                    onCheckedChange = { next -> row.key?.let { perms = applyPermission(perms, it, next) } },
-                    enabled = row.key != null && !minting,
-                )
-            }
-        }
     }
 }
 
@@ -572,19 +554,10 @@ internal val PERMISSION_ROWS: List<PermissionRow> = listOf(
     ),
 )
 
-/**
- * A new secondary can talk to the Auntie and read the feed, and nothing else.
- * Billing, kin edits and home access are grants the operator makes on purpose.
- * `kintalesOnly` is true because the server forces it true anyway.
- */
-internal val DEFAULT_INVITE_PERMISSIONS = MembersRepository.MemberPermissions(
-    billingFull = false,
-    messagingDirect = true,
-    messagingGroup = true,
-    kinEdit = false,
-    kintalesOnly = true,
-    homeAccess = false,
-)
+// DEFAULT_INVITE_PERMISSIONS lived here: the starting permission set the admin
+// invite form offered for a new SECONDARY. It went with the form. The admin
+// invites the PRIMARY, whose entitlements are the role's, and the server writes
+// FULL_PERMISSIONS for that invite without asking the client.
 
 internal data class InviteGroup(
     val heading: String,

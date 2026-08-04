@@ -238,8 +238,18 @@ class MembersRepositoryTest {
 
     // ── mintInvite ──────────────────────────────────────────────────────────
 
+    /**
+     * RULING (2026-08-04): the admin invites the PRIMARY. The secondary is
+     * invited by the household's own primary, from MyTribe, through
+     * `addSecondaryContact`.
+     *
+     * Five cases lived here, four of them passing MemberRole.SECONDARY and a
+     * permission set, one asserting the label default. All of them described
+     * the admin-side secondary invite the ruling removes, and none of them
+     * ever asked what role the call actually minted.
+     */
     @Test
-    fun `HAPPY mintInvite sends all six permission flags and returns the new id`() = runBlocking {
+    fun `HAPPY mintInvite sends a PRIMARY claim and returns the new id`() = runBlocking {
         val functions = mockk<FirebaseFunctions>()
         val payload = slot<Map<String, Any?>>()
         callableReturning(functions, "mintInvite", mapOf("inviteId" to "rq_new"), payload)
@@ -247,57 +257,36 @@ class MembersRepositoryTest {
         val result = repoWith(functions).mintInvite(
             familyId = "fam1",
             invitedEmail = "  jane@example.com ",
-            secondaryLabel = " Sister ",
-            proposedRole = MembersRepository.MemberRole.SECONDARY,
-            permissions = MembersRepository.MemberPermissions(messagingDirect = true, kinEdit = true),
         )
 
         assertTrue(result.isSuccess)
         assertEquals("rq_new", result.getOrNull())
         assertEquals("fam1", payload.captured["familyId"])
         assertEquals("jane@example.com", payload.captured["invitedEmail"])
-        assertEquals("Sister", payload.captured["secondaryLabel"])
-        assertEquals("SECONDARY", payload.captured["proposedRole"])
-        @Suppress("UNCHECKED_CAST")
-        val perms = payload.captured["proposedPermissions"] as Map<String, Any?>
-        assertEquals(6, perms.size)
-        assertEquals(true, perms["messaging_direct"])
-        assertEquals(true, perms["kin_edit"])
-        assertEquals(false, perms["billing_full"])
-        // Forced true because the server forces it true; sending false would be
-        // a claim the response silently corrects.
-        assertEquals(true, perms["kintales_only"])
-    }
-
-    @Test
-    fun `mintInvite sends the server's own default label when none was typed`() = runBlocking {
-        val functions = mockk<FirebaseFunctions>()
-        val payload = slot<Map<String, Any?>>()
-        callableReturning(functions, "mintInvite", mapOf("inviteId" to "rq_new"), payload)
-
-        repoWith(functions).mintInvite(
-            "fam1", "jane@example.com", "   ",
-            MembersRepository.MemberRole.PRIMARY, MembersRepository.MemberPermissions(),
-        )
-
-        assertEquals("Folk", payload.captured["secondaryLabel"])
         assertEquals("PRIMARY", payload.captured["proposedRole"])
     }
 
     @Test
-    fun `NEGATIVE mintInvite refuses a blank or malformed email, and an over-long label, with no round trip`() = runBlocking {
+    fun `mintInvite offers no role, label or permission set to send`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val payload = slot<Map<String, Any?>>()
+        callableReturning(functions, "mintInvite", mapOf("inviteId" to "rq_new"), payload)
+
+        repoWith(functions).mintInvite("fam1", "jane@example.com")
+
+        // The server writes FULL_PERMISSIONS for a primary claim; a client that
+        // sent its own set would be choosing something the role already decides.
+        assertEquals(setOf("familyId", "invitedEmail", "proposedRole"), payload.captured.keys)
+    }
+
+    @Test
+    fun `NEGATIVE mintInvite refuses a blank or malformed email with no round trip`() = runBlocking {
         val functions = mockk<FirebaseFunctions>()
         val repo = repoWith(functions)
-        val perms = MembersRepository.MemberPermissions()
 
-        assertTrue(repo.mintInvite("fam1", "  ", "", MembersRepository.MemberRole.SECONDARY, perms).isFailure)
-        assertTrue(repo.mintInvite("fam1", "jane", "", MembersRepository.MemberRole.SECONDARY, perms).isFailure)
-        assertTrue(
-            repo.mintInvite(
-                "fam1", "jane@example.com", "x".repeat(MembersRepository.SECONDARY_LABEL_MAX + 1),
-                MembersRepository.MemberRole.SECONDARY, perms,
-            ).isFailure,
-        )
+        assertTrue(repo.mintInvite("fam1", "  ").isFailure)
+        assertTrue(repo.mintInvite("fam1", "jane").isFailure)
+        assertTrue(repo.mintInvite("  ", "jane@example.com").isFailure)
         io.mockk.verify(exactly = 0) { functions.getHttpsCallable(any()) }
     }
 
@@ -308,10 +297,7 @@ class MembersRepositoryTest {
         every { ref.call(any()) } returns Tasks.forException(RuntimeException("SMTP2GO rejected the send"))
         every { functions.getHttpsCallable("mintInvite") } returns ref
 
-        val result = repoWith(functions).mintInvite(
-            "fam1", "jane@example.com", "", MembersRepository.MemberRole.SECONDARY,
-            MembersRepository.MemberPermissions(),
-        )
+        val result = repoWith(functions).mintInvite("fam1", "jane@example.com")
 
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()!!.message!!.contains("SMTP2GO"))
@@ -321,13 +307,11 @@ class MembersRepositoryTest {
     fun `ERROR mintInvite fails when the response carries no inviteId`() = runBlocking {
         val functions = mockk<FirebaseFunctions>()
         callableReturning(functions, "mintInvite", mapOf("ok" to true))
-        val result = repoWith(functions).mintInvite(
-            "fam1", "jane@example.com", "", MembersRepository.MemberRole.SECONDARY,
-            MembersRepository.MemberPermissions(),
-        )
+        val result = repoWith(functions).mintInvite("fam1", "jane@example.com")
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()!!.message!!.contains("no inviteId"))
     }
+
 
     // ── revokeInvite / setMemberPermissions / removeMember ──────────────────
 
