@@ -159,7 +159,7 @@ export function parseArgs(argv: string[]): Args {
     } else if (a === '--help' || a === '-h') {
       console.log(
         [
-          'backfillKinTaleCreatedAtProvenance.ts — restore the ORIGINAL creation instant on imported KinTales',
+          'backfillKinTaleCreatedAtProvenance.ts: restore the ORIGINAL creation instant on imported KinTales',
           '',
           '  npm run backfill:kintale-provenance                    # DRY RUN (default)',
           '  npm run backfill:kintale-provenance -- --allow-prod    # apply',
