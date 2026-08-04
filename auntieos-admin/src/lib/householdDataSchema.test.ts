@@ -20,11 +20,37 @@ const veterinary = HOUSEHOLD_SECTIONS.find((s) => s.id === 'veterinary')!;
 const routines = HOUSEHOLD_SECTIONS.find((s) => s.id === 'routines')!;
 
 describe('the catalog and the schema stay in step', () => {
-  it('catalogues exactly the schema keys, no more and no fewer', () => {
-    // The one thing keeping the read view, the editor, and the validator from
-    // drifting apart. A field added to the schema and forgotten in the catalog
-    // is a field nobody can ever fill in, and it would fail HERE, not live.
+  it('carries exactly the schema keys, no more and no fewer', () => {
+    // HOUSEHOLD_FIELD_KEYS is schema-derived, not catalog-derived (2026-08-04),
+    // precisely so a field can lose its rendered SECTION without losing its
+    // place in the read/write round trip. This still pins the two lists
+    // together; it stops a field added to the schema and forgotten here from
+    // silently failing to round-trip through getHouseholdData/saveHouseholdSection.
     expect([...HOUSEHOLD_FIELD_KEYS].sort()).toEqual(Object.keys(householdDataSchema.shape).sort());
+  });
+
+  it('drops the emergency and provider sections from the rendered catalog without dropping their fields from the round trip', () => {
+    // Operator, 2026-08-04, looking at this screen's modal-edit sections: "I
+    // dont need this Emergency & Safety or Service Provider boxes." The
+    // sections are gone; the data is not, because a future family-page
+    // "Emergency Must Knows" section is meant to read it (see the removal
+    // comment on HOUSEHOLD_SECTIONS in householdDataSchema.ts).
+    expect(HOUSEHOLD_SECTIONS.some((s) => s.id === 'emergency')).toBe(false);
+    expect(HOUSEHOLD_SECTIONS.some((s) => s.id === 'providers')).toBe(false);
+    for (const key of [
+      'poisonControlNumber',
+      'emergencyContactsPriority',
+      'evacuationPlan',
+      'importantDocumentsLocation',
+      'groomerName',
+      'groomerPhone',
+      'trainerName',
+      'trainerPhone',
+      'petSitterBackup',
+      'dogWalkerBackup',
+    ] as const) {
+      expect(HOUSEHOLD_FIELD_KEYS).toContain(key);
+    }
   });
 
   /**
@@ -60,17 +86,13 @@ describe('the catalog and the schema stay in step', () => {
     }
   });
 
-  it('masks the two access-sensitive fields and nothing operational', () => {
+  it('masks the one access-sensitive field left in the catalog, and nothing operational', () => {
+    // `importantDocumentsLocation` was masked too, until "Emergency and
+    // safety" (its only section) was removed 2026-08-04. It is still in the
+    // schema and still not secret there; there is just no rendered field left
+    // for a mask to apply to.
     const secrets = HOUSEHOLD_SECTIONS.flatMap((s) => s.fields.filter((f) => f.secret).map((f) => f.key));
-    expect([...secrets].sort()).toEqual(['importantDocumentsLocation', 'securitySystemInfo']);
-  });
-
-  it('leaves the emergency read-in-90-seconds fields unmasked', () => {
-    // Masking these would put a reveal toggle between a sitter and a vet.
-    const emergency = HOUSEHOLD_SECTIONS.find((s) => s.id === 'emergency')!;
-    for (const key of ['poisonControlNumber', 'emergencyContactsPriority', 'evacuationPlan']) {
-      expect(emergency.fields.find((f) => f.key === key)?.secret).toBeUndefined();
-    }
+    expect([...secrets].sort()).toEqual(['securitySystemInfo']);
   });
 });
 
