@@ -747,20 +747,33 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
     other invite functions) and the `invite.verify-email` template in
     `mytribe/seeds/emailTemplates/`, seeded by `npm run seed:emails`.
 
-### mintInvite (pre-existing, documented here 2026-08-01)
-- req `{ familyId: string, invitedEmail: string /* email */, secondaryLabel?: string /* <=24, default 'Folk' */, proposedRole?: 'PRIMARY' | 'SECONDARY' /* default SECONDARY */, proposedPermissions: { billing_full, messaging_direct, messaging_group, kin_edit, kintales_only, home_access: boolean } }`
+### mintInvite (PRIMARY-only since 2026-08-04)
+- req `{ familyId: string, invitedEmail: string /* email */, proposedRole?: 'PRIMARY' }`
 - res `{ inviteId: string }`
 - GATE: `wrapAdminCallable`.
-- `proposedPermissions` requires ALL SIX booleans; a partial object is a Zod
-  failure. The server then FORCES `kintales_only: true` regardless of what was
-  sent, so clients render that toggle locked on rather than as a control that
-  appears to do something.
-- `secondaryLabel` is sanitised server-side (`[<>{} -]` stripped, trimmed, capped
-  at `SECONDARY_LABEL_MAX` = 24, empty falling back to `'Folk'`), so the stored
-  label can differ from what was typed.
+- **This mints a PRIMARY claim and nothing else.** RULING: the primary kinfolk
+  invites the secondary; the admin does not, and the admin's only invite is
+  inviting the primary to the portal. The secondary path is
+  `addSecondaryContact`, called by the primary from the portal.
+- `proposedRole` is a `z.literal('PRIMARY')`, defaulted. Sending `'SECONDARY'`
+  is `invalid-argument`, deliberately: it used to be the DEFAULT, and silently
+  upgrading such a call to a PRIMARY claim would hand out the larger grant of
+  the two without the caller asking.
+- `proposedPermissions` and `secondaryLabel` were removed from the schema
+  2026-08-04. Both are still accepted-and-ignored (non-strict `z.object`) so an
+  older client keeps working. The doc is written with `FULL_PERMISSIONS`, the
+  same set `inviteKinfolkToPortal` writes for the same grant: a PRIMARY's
+  entitlements come from the role (`requirePerm` returns before it reads the
+  flags), and `acceptInvite` copies `proposedPermissions` verbatim onto the
+  member doc, so a restricted set only ever produced a primary who READ as
+  restricted on the roster.
 - Writes one `inviteRequests` doc with an `INVITE_TTL_DAYS` (14) expiry, sends
-  `invite.primary` / `invite.secondary`, flips the doc to `EMAIL_SENT`, and audits
+  `invite.primary`, flips the doc to `EMAIL_SENT`, and audits
   `MEMBERSHIP_INVITE_SENT`.
+- Sibling: `inviteKinfolkToPortal` sends the same grant to the address on the
+  `kinfolk` record and skips a household that already has an ACTIVE primary.
+  `mintInvite` takes a typed address, for a household whose record carries the
+  wrong one or none, and does NOT check for an existing primary.
 
 ### revokeInvite (pre-existing, documented here 2026-08-01)
 - req `{ inviteId: string }`
@@ -794,7 +807,18 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   `wrapAdminCallable` gates the WHOLE callable, every flag alike; it has never
   been a `billing_full`-specific control and is not one now. It says who may use
   the operator console, not what a household PRIMARY may grant.
-- Errors: `not-found` when `families/{familyId}/members/{targetUid}` does not exist.
+- Errors: `not-found` when `families/{familyId}/members/{targetUid}` does not
+  exist; `failed-precondition` (`target not SECONDARY`) when the target is the
+  household's PRIMARY.
+- **The target must be a SECONDARY** (guard added 2026-08-04, matching
+  `updateSecondaryPermissions`). RULING: "admin can edit permissions but not
+  like primary's access to full billing, home access, kin edit, etc." A
+  PRIMARY's entitlements are inherent to the role: `requirePerm` and
+  `hasKinfolkPerm` both answer for a PRIMARY before they read `permissions`. A
+  write against a PRIMARY therefore moved a field no enforcement path consults,
+  while the audit log recorded a billing revocation that never took effect.
+  Clients must render a primary's entitlements as granted by role, not as
+  toggles.
 - **`kintales_only` is not in the argument schema at all**, so no caller on any
   path can turn it off. Clients render it locked on.
 - Every key present is a field-level merge (`permissions.<k>`), so a partial

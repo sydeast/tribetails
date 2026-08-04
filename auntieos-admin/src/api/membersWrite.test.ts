@@ -3,9 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { call } = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('../lib/fns', () => ({ call }));
 
-import { DEFAULT_INVITE_PERMISSIONS } from './membersWrite';
 import {
-  SECONDARY_LABEL_MAX,
   describePortalInviteOutcome,
   inviteKinfolkToPortal,
   mintInvite,
@@ -18,105 +16,58 @@ beforeEach(() => {
   call.mockReset();
 });
 
+/**
+ * RULING (2026-08-04): the admin invites the PRIMARY, and the primary invites
+ * the secondary from MyTribe.
+ *
+ * Three cases here used to pin the opposite: one asserted the role DEFAULTED to
+ * SECONDARY "matching the server", one asserted a PRIMARY invite was a thing
+ * that could be asked for as an option, and one asserted a starting permission
+ * set went over the wire. All three described an admin-side secondary invite,
+ * which is the affordance the ruling removes.
+ */
 describe('mintInvite', () => {
-  it('sends every field the server requires, with the full six-flag permission shape', async () => {
+  it('sends a PRIMARY invite, trimmed, and nothing else', async () => {
     call.mockResolvedValue({ inviteId: 'rq_1' });
 
     await expect(
-      mintInvite({
-        familyId: ' fam1 ',
-        invitedEmail: '  jane@example.com ',
-        secondaryLabel: ' Sister ',
-        proposedRole: 'SECONDARY',
-        proposedPermissions: { ...DEFAULT_INVITE_PERMISSIONS, kin_edit: true },
-      }),
+      mintInvite({ familyId: ' fam1 ', invitedEmail: '  jane@example.com ' }),
     ).resolves.toEqual({ inviteId: 'rq_1' });
 
     expect(call).toHaveBeenCalledWith('mintInvite', {
       familyId: 'fam1',
       invitedEmail: 'jane@example.com',
-      secondaryLabel: 'Sister',
-      proposedRole: 'SECONDARY',
-      proposedPermissions: {
-        billing_full: false,
-        messaging_direct: true,
-        messaging_group: true,
-        kin_edit: true,
-        kintales_only: true,
-        home_access: false,
-      },
-    });
-  });
-
-  it('defaults the role to SECONDARY and a blank label to Folk, matching the server', async () => {
-    call.mockResolvedValue({ inviteId: 'rq_1' });
-    await mintInvite({
-      familyId: 'fam1',
-      invitedEmail: 'jane@example.com',
-      proposedPermissions: DEFAULT_INVITE_PERMISSIONS,
-    });
-    const payload = call.mock.calls[0]?.[1] as Record<string, unknown>;
-    expect(payload['proposedRole']).toBe('SECONDARY');
-    expect(payload['secondaryLabel']).toBe('Folk');
-  });
-
-  it('forces kintales_only true, because the server does and a false would be a lie', async () => {
-    call.mockResolvedValue({ inviteId: 'rq_1' });
-    await mintInvite({
-      familyId: 'fam1',
-      invitedEmail: 'jane@example.com',
-      proposedPermissions: { ...DEFAULT_INVITE_PERMISSIONS, kintales_only: false },
-    });
-    const payload = call.mock.calls[0]?.[1] as { proposedPermissions: Record<string, boolean> };
-    expect(payload.proposedPermissions['kintales_only']).toBe(true);
-  });
-
-  it('can mint a PRIMARY invite when asked', async () => {
-    call.mockResolvedValue({ inviteId: 'rq_1' });
-    await mintInvite({
-      familyId: 'fam1',
-      invitedEmail: 'jane@example.com',
       proposedRole: 'PRIMARY',
-      proposedPermissions: DEFAULT_INVITE_PERMISSIONS,
     });
-    expect((call.mock.calls[0]?.[1] as Record<string, unknown>)['proposedRole']).toBe('PRIMARY');
+  });
+
+  it('carries no role choice, no label and no permission set for a caller to set', async () => {
+    call.mockResolvedValue({ inviteId: 'rq_1' });
+    await mintInvite({ familyId: 'fam1', invitedEmail: 'jane@example.com' });
+    const payload = call.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(payload['proposedRole']).toBe('PRIMARY');
+    expect(payload).not.toHaveProperty('secondaryLabel');
+    expect(payload).not.toHaveProperty('proposedPermissions');
   });
 
   it('rejects a blank household id, a blank email and an address with no @, without a round trip', async () => {
-    const perms = DEFAULT_INVITE_PERMISSIONS;
-    await expect(
-      mintInvite({ familyId: ' ', invitedEmail: 'a@b.com', proposedPermissions: perms }),
-    ).rejects.toThrow('requires a household id');
-    await expect(
-      mintInvite({ familyId: 'fam1', invitedEmail: '  ', proposedPermissions: perms }),
-    ).rejects.toThrow('email address is required');
-    await expect(
-      mintInvite({ familyId: 'fam1', invitedEmail: 'jane', proposedPermissions: perms }),
-    ).rejects.toThrow('is not an email address');
-    expect(call).not.toHaveBeenCalled();
-  });
-
-  it('rejects an over-long label with the real limit named', async () => {
-    await expect(
-      mintInvite({
-        familyId: 'fam1',
-        invitedEmail: 'a@b.com',
-        secondaryLabel: 'x'.repeat(SECONDARY_LABEL_MAX + 1),
-        proposedPermissions: DEFAULT_INVITE_PERMISSIONS,
-      }),
-    ).rejects.toThrow(`${SECONDARY_LABEL_MAX} characters or fewer`);
+    await expect(mintInvite({ familyId: ' ', invitedEmail: 'a@b.com' })).rejects.toThrow(
+      'requires a household id',
+    );
+    await expect(mintInvite({ familyId: 'fam1', invitedEmail: '  ' })).rejects.toThrow(
+      'email address is required',
+    );
+    await expect(mintInvite({ familyId: 'fam1', invitedEmail: 'jane' })).rejects.toThrow(
+      'is not an email address',
+    );
     expect(call).not.toHaveBeenCalled();
   });
 
   it('propagates a mint failure fail-loud instead of reporting a sent invite', async () => {
     call.mockRejectedValue(new Error('SMTP2GO rejected the send'));
-    await expect(
-      mintInvite({
-        familyId: 'fam1',
-        invitedEmail: 'a@b.com',
-        proposedPermissions: DEFAULT_INVITE_PERMISSIONS,
-      }),
-    ).rejects.toThrow('SMTP2GO rejected the send');
+    await expect(mintInvite({ familyId: 'fam1', invitedEmail: 'a@b.com' })).rejects.toThrow(
+      'SMTP2GO rejected the send',
+    );
   });
 });
 
@@ -181,6 +132,16 @@ describe('setMemberPermissions', () => {
     call.mockRejectedValue(new Error('permission-denied: Admin claim required.'));
     await expect(setMemberPermissions('fam1', 'u1', { billing_full: true })).rejects.toThrow(
       'Admin claim required',
+    );
+  });
+
+  it('propagates the primary-target refusal rather than swallowing it as a no-op', async () => {
+    // The screen renders a primary's entitlements as granted-by-role and offers
+    // no toggle, so this should be unreachable. If some other caller does reach
+    // it, the refusal has to arrive rather than read as a save.
+    call.mockRejectedValue(new Error('failed-precondition: target not SECONDARY'));
+    await expect(setMemberPermissions('fam1', 'u-primary', { billing_full: false })).rejects.toThrow(
+      'target not SECONDARY',
     );
   });
 });

@@ -106,23 +106,28 @@ class HouseholdMembersViewModelTest {
         assertNull(s.invitesError)
     }
 
-    @Test fun `HAPPY minting an invite reloads the list and reports the TTL`() = runTest(testDispatcher) {
+    /**
+     * RULING (2026-08-04): the admin invites the PRIMARY. The secondary is
+     * invited by the household's own primary, from MyTribe. This case used
+     * to pass a role and a starting permission set, both of which describe
+     * the admin-side secondary invite the ruling removes.
+     */
+    @Test fun `HAPPY minting a primary invite reloads the list and reports the TTL`() = runTest(testDispatcher) {
         stubLoads()
-        coEvery { repo.mintInvite(any(), any(), any(), any(), any()) } returns Result.success("rq_new")
+        coEvery { repo.mintInvite(any(), any()) } returns Result.success("rq_new")
         val vm = vm()
         vm.load(); advanceUntilIdle()
 
         var closed = false
-        vm.mintInvite(
-            "new@example.com", "Cousin", MembersRepository.MemberRole.SECONDARY,
-            DEFAULT_INVITE_PERMISSIONS,
-        ) { closed = true }
+        vm.mintInvite("new@example.com") { closed = true }
         advanceUntilIdle()
 
         assertTrue(closed)
         assertFalse(vm.uiState.value.minting)
+        assertTrue(vm.uiState.value.toast!!.contains("Primary invite sent"))
         assertTrue(vm.uiState.value.toast!!.contains("new@example.com"))
         assertTrue(vm.uiState.value.toast!!.contains("14 days"))
+        coVerify(exactly = 1) { repo.mintInvite("fam1", "new@example.com") }
         coVerify(exactly = 2) { repo.listInvites("fam1") }
     }
 
@@ -264,15 +269,13 @@ class HouseholdMembersViewModelTest {
     @Test fun `ERROR a failed mint keeps the dialog open and never claims an invite was sent`() =
         runTest(testDispatcher) {
             stubLoads()
-            coEvery { repo.mintInvite(any(), any(), any(), any(), any()) } returns
+            coEvery { repo.mintInvite(any(), any()) } returns
                 Result.failure(RuntimeException("SMTP2GO rejected the send"))
             val vm = vm()
             vm.load(); advanceUntilIdle()
 
             var closed = false
-            vm.mintInvite(
-                "new@example.com", "", MembersRepository.MemberRole.SECONDARY, DEFAULT_INVITE_PERMISSIONS,
-            ) { closed = true }
+            vm.mintInvite("new@example.com") { closed = true }
             advanceUntilIdle()
 
             assertFalse(closed)
@@ -368,12 +371,45 @@ class HouseholdMembersViewModelTest {
         )
     }
 
-    @Test fun `a new secondary starts with messaging only, never billing or home access`() {
-        assertFalse(DEFAULT_INVITE_PERMISSIONS.billingFull)
-        assertFalse(DEFAULT_INVITE_PERMISSIONS.homeAccess)
-        assertFalse(DEFAULT_INVITE_PERMISSIONS.kinEdit)
-        assertTrue(DEFAULT_INVITE_PERMISSIONS.messagingDirect)
-        assertTrue(DEFAULT_INVITE_PERMISSIONS.kintalesOnly)
+    // DEFAULT_INVITE_PERMISSIONS had a test here, asserting the starting set
+    // a new SECONDARY got from the admin invite form. Both are gone: the
+    // admin does not invite a secondary, and a primary's entitlements are
+    // the role's.
+
+    // ── the primary is not a set of switches ────────────────────────────────
+
+    @Test fun `a primary's entitlements follow the role, and a secondary's do not`() {
+        assertTrue(permissionsFollowRole(MembersRepository.MemberRole.PRIMARY))
+        assertFalse(permissionsFollowRole(MembersRepository.MemberRole.SECONDARY))
+    }
+
+    /**
+     * RULING (2026-08-04): "admin can edit permissions but not like
+     * primary's access to full billing, home access, kin edit, etc. The
+     * screen makes it seem like these account must needs can be turned
+     * off."
+     *
+     * No toggle is drawn for a primary, and the server refuses the write.
+     * This pins the last line of defence: even called directly the
+     * ViewModel sends nothing, so a future row layout cannot reintroduce
+     * the gesture and have it quietly reach the wire.
+     */
+    @Test fun `NEGATIVE toggling a primary's permission writes nothing at all`() = runTest(testDispatcher) {
+        val primary = member(uid = "u-primary").copy(role = MembersRepository.MemberRole.PRIMARY)
+        stubLoads(members = listOf(primary))
+        val vm = vm()
+        vm.load(); advanceUntilIdle()
+
+        MembersRepository.PermissionKey.entries.forEach { key ->
+            vm.togglePermission(primary, key, false)
+        }
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { repo.setMemberPermission(any(), any(), any(), any()) }
+        assertNull(vm.uiState.value.savingPermission)
+        assertNull(vm.uiState.value.permissionError)
+        // And the row on screen is untouched: no optimistic flip to revert.
+        assertEquals(primary.permissions, vm.uiState.value.members.single().permissions)
     }
 
     @Test fun `applyPermission and readPermission agree on every key`() {

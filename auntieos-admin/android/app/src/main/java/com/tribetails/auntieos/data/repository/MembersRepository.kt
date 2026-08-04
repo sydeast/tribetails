@@ -143,20 +143,21 @@ class MembersRepository(
     // ── writes ──────────────────────────────────────────────────────────────
 
     /**
-     * Mints one invite and emails the claim link. Returns the new invite id.
+     * Mints a PRIMARY claim for this household and emails the link. Returns the
+     * new invite id.
      *
-     * `proposedPermissions` goes over the wire with ALL SIX flags because the
-     * server's Zod schema requires every key; a partial object comes back as a
-     * validation failure, not a merge. `kintales_only` is forced true here
-     * because the server forces it true anyway, and sending false would be a
-     * claim the response silently corrects.
+     * RULING (2026-08-04): the primary kinfolk invites the secondary; the admin
+     * does not, and the admin's only invite is inviting the primary to the
+     * portal. So there is no role parameter, no label and no starting
+     * permission set: the server writes `FULL_PERMISSIONS` because a primary's
+     * entitlements come with the role, and it now REFUSES
+     * `proposedRole: "SECONDARY"` rather than defaulting to it as it did. The
+     * secondary is invited from MyTribe, by their own primary, through
+     * `addSecondaryContact`.
      */
     suspend fun mintInvite(
         familyId: String,
         invitedEmail: String,
-        secondaryLabel: String,
-        proposedRole: MemberRole,
-        permissions: MemberPermissions,
     ): Result<String> = runCatching {
         require(familyId.isNotBlank()) { "mintInvite requires a household id" }
         val email = invitedEmail.trim()
@@ -164,26 +165,13 @@ class MembersRepository(
         // Cheap shape check only; the server's z.string().email() is the real
         // gate. This exists so an obvious typo does not cost a round trip.
         require(email.contains("@")) { "\"$email\" is not an email address." }
-        val label = secondaryLabel.trim()
-        require(label.length <= SECONDARY_LABEL_MAX) {
-            "The label must be $SECONDARY_LABEL_MAX characters or fewer."
-        }
         authGate.ensureAuthenticated()
         val payload = mapOf(
             "familyId" to familyId,
             "invitedEmail" to email,
-            // The server defaults a blank label to 'Folk' after sanitising;
-            // send its default rather than an empty string it must guess at.
-            "secondaryLabel" to label.ifBlank { DEFAULT_SECONDARY_LABEL },
-            "proposedRole" to proposedRole.name,
-            "proposedPermissions" to mapOf(
-                "billing_full" to permissions.billingFull,
-                "messaging_direct" to permissions.messagingDirect,
-                "messaging_group" to permissions.messagingGroup,
-                "kin_edit" to permissions.kinEdit,
-                "kintales_only" to true,
-                "home_access" to permissions.homeAccess,
-            ),
+            // Sent explicitly though the server defaults it: this is the one
+            // grant the call can make, and it should read that way here.
+            "proposedRole" to MemberRole.PRIMARY.name,
         )
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("mintInvite").call(payload).await().data
@@ -203,7 +191,13 @@ class MembersRepository(
     }
 
     /**
-     * Changes one permission flag on an existing member.
+     * Changes one permission flag on an existing SECONDARY.
+     *
+     * SECONDARY, not "member": the server answers `failed-precondition` /
+     * `target not SECONDARY` for a primary target, because a primary's
+     * entitlements come from the role and no enforcement path reads their
+     * flags. Callers must not render a primary a toggle; this function takes no
+     * role and cannot check it for them.
      *
      * One flag per call on purpose: the server audits each flag separately
      * (`billing_full` at severity `warn`), and a per-row toggle is the only
@@ -243,13 +237,13 @@ class MembersRepository(
     }.onFailure { AuntieLog.e("MembersRepository.removeMember failed", it) }
 
     companion object {
-        /** `SECONDARY_LABEL_MAX` in `mytribe/functions/src/lib/schema.ts`. */
-        const val SECONDARY_LABEL_MAX = 24
-
         /** `INVITE_TTL_DAYS` in `mytribe/functions/src/lib/schema.ts`. */
         const val INVITE_TTL_DAYS = 14
 
-        const val DEFAULT_SECONDARY_LABEL = "Folk"
+        // SECONDARY_LABEL_MAX and DEFAULT_SECONDARY_LABEL lived here for the
+        // admin invite form's label field. Both went with it: a label names a
+        // secondary's place in a household, and this client no longer mints a
+        // secondary invite. `Member.secondaryLabel` is still read and displayed.
     }
 }
 

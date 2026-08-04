@@ -71,6 +71,27 @@ re-mock, tracked in `docs/punchlists/PUNCHLIST_2026-07-31-remaining.md` (F1 to F
 
 ---
 
+## RULING: WHO INVITES WHOM, AND WHAT A PRIMARY CANNOT LOSE
+
+The PRIMARY kinfolk invites the secondary, from MyTribe
+(`portal/addSecondaryContact.ts`, the InviteKinfolkCard on `TribeProfile.tsx`).
+The admin does not. The admin's only invite is inviting the primary to the
+portal, which is `inviteKinfolkToPortal` and the now PRIMARY-only `mintInvite`.
+A primary's entitlements (full billing, home access, kin edit, messaging) are
+inherent to the role and CANNOT be turned off by anybody: `requirePerm` and
+`hasKinfolkPerm` in `mytribe/functions/src/lib/memberGate.ts` both answer for a
+PRIMARY before they read `permissions`, so those flags are dead data, and
+`setMemberPermissions` refuses a non-SECONDARY target the way
+`updateSecondaryPermissions` always has. No surface may render them as toggles;
+show them as granted by role (`permissionsFollowRole`, mirrored in
+`src/api/members.ts` and the Android `HouseholdMembersViewModel.kt`). Admin
+editing a SECONDARY's permissions is legitimate and unchanged. This has been
+rebuilt wrong more than once, in both directions, so if a diff has an admin
+minting a SECONDARY invite or a switch beside a primary's billing, it is wrong
+however plausible the mock looks.
+
+---
+
 Error Handling Philosophy: Fail Loud, Never Fake
 
 Never silently swallow errors. Surface them.

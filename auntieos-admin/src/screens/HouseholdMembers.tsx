@@ -9,6 +9,7 @@ import {
   listHouseholdMembers,
   memberLabel,
   memberStatusTone,
+  permissionsFollowRole,
   type HouseholdInvite,
   type HouseholdMember,
   type InviteStatus,
@@ -16,9 +17,7 @@ import {
   type PermissionKey,
 } from '../api/members';
 import {
-  DEFAULT_INVITE_PERMISSIONS,
   INVITE_TTL_DAYS,
-  SECONDARY_LABEL_MAX,
   describePortalInviteOutcome,
   inviteKinfolkToPortal,
   mintInvite,
@@ -41,9 +40,23 @@ import './HouseholdMembers.css';
  *
  * The first surface for `mintInvite`, `revokeInvite`, `setMemberPermissions`,
  * `removeMember` and `inviteKinfolkToPortal`, all of which have been registered
- * callables with no caller anywhere in `src/`. Without this screen a second
- * co-parent cannot be added and a household cannot be let into the portal at
- * all, which is why it blocks onboarding.
+ * callables with no caller anywhere in `src/`. Without this screen a household
+ * cannot be let into the portal at all, which is why it blocks onboarding.
+ *
+ * WHO INVITES WHOM (ruling, 2026-08-04). The admin invites the PRIMARY. The
+ * PRIMARY invites the secondary, from MyTribe, and this screen offers no way to
+ * do it for them. Both panels below therefore send the same grant: "Portal
+ * access" mails the address on the kinfolk record, and "Invite a primary"
+ * mails an address the operator types.
+ *
+ * WHAT A PRIMARY MAY LOSE: nothing. A primary's entitlements are inherent to
+ * the role, because `requirePerm` in memberGate.ts answers for PRIMARY before
+ * it reads the flags. Their rows therefore render as granted-by-role rather
+ * than as switches.
+ * This screen once drew five live toggles on a primary, which made billing,
+ * home access and kin edit look revocable when the writes behind them changed
+ * nothing any enforcement path reads. `setMemberPermissions` now refuses a
+ * primary target too; `permissionsFollowRole` is the check.
  *
  * PLACEMENT follows page-specs Decision 8 (LOCKED), which re-homed both mocks
  * out of Settings: household members live under Directory / Households /
@@ -128,11 +141,9 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
 
-  // Invite form.
+  // Invite form. One field: the address. The role is not a choice (an admin
+  // invites the primary), and a primary has no starting permission set to pick.
   const [email, setEmail] = useState('');
-  const [label, setLabel] = useState('');
-  const [role, setRole] = useState<MemberRole>('SECONDARY');
-  const [invitePerms, setInvitePerms] = useState({ ...DEFAULT_INVITE_PERMISSIONS });
 
   const loadMembers = useCallback(() => {
     let live = true;
@@ -181,6 +192,10 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
 
   async function togglePermission(member: HouseholdMember, key: PermissionKey, next: boolean) {
     if (members.status !== 'ready' || savingPerm !== null) return;
+    // No toggle is rendered for a primary, and the server refuses the write
+    // anyway. Belt and braces, so a future row layout cannot reintroduce it
+    // quietly.
+    if (permissionsFollowRole(member.role)) return;
     const busyKey = `${member.uid}:${key}`;
     const prev = members.data;
     // Optimistic, then reverted on failure. A toggle that snaps back with a
@@ -212,17 +227,9 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
     setMinting(true);
     setInviteError(null);
     try {
-      const { inviteId } = await mintInvite({
-        familyId: kinfolkId,
-        invitedEmail: email,
-        secondaryLabel: label,
-        proposedRole: role,
-        proposedPermissions: invitePerms,
-      });
-      showToast(`Invite sent to ${email.trim()} (${inviteHandle(inviteId)}).`);
+      const { inviteId } = await mintInvite({ familyId: kinfolkId, invitedEmail: email });
+      showToast(`Primary invite sent to ${email.trim()} (${inviteHandle(inviteId)}).`);
       setEmail('');
-      setLabel('');
-      setInvitePerms({ ...DEFAULT_INVITE_PERMISSIONS });
       loadInvites();
     } catch (err: unknown) {
       setInviteError(`mintInvite failed: ${errText(err, 'The invite was not sent.')}`);
@@ -293,7 +300,6 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
   }
 
   const emailReady = email.trim() !== '' && email.includes('@');
-  const labelTooLong = label.trim().length > SECONDARY_LABEL_MAX;
 
   return (
     <div className="screen">
@@ -354,7 +360,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
       <div className="d2">
         <DenPanel
           title="Members"
-          subtitle="Everyone with a MyTribe account on this household. KinTales access is locked on by the server and cannot be turned off here or anywhere."
+          subtitle="Everyone with a MyTribe account on this household. A secondary's permissions are yours to set; a primary's come with the role and are shown here rather than offered as switches. KinTales access is locked on by the server for everyone."
         >
           <AsyncRegion
             state={members}
@@ -395,34 +401,56 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
                       />
                     </div>
 
-                    <ul className="hmembers__perms">
-                      {PERMISSION_META.map((perm) => {
-                        const busy = savingPerm === `${member.uid}:${perm.key}`;
-                        const locked = perm.serverLocked === true;
-                        return (
-                          <li key={perm.key} className="hmembers__perm">
-                            <div className="hmembers__perm-text">
-                              <span className="hmembers__perm-name">
-                                {perm.label}
-                                {locked && <span className="hmembers__perm-flag">locked on</span>}
-                              </span>
-                              <span className="hmembers__perm-desc">{perm.description}</span>
-                            </div>
-                            {busy && (
-                              <span role="status" className="hmembers__saving">
-                                Saving…
-                              </span>
-                            )}
-                            <Toggle
-                              checked={member.permissions[perm.key]}
-                              label={`${perm.label} for ${memberLabel(member)}`}
-                              disabled={locked || savingPerm !== null}
-                              onChange={(next) => void togglePermission(member, perm.key, next)}
-                            />
-                          </li>
-                        );
-                      })}
-                    </ul>
+                    {permissionsFollowRole(member.role) ? (
+                      <>
+                        <p className="hmembers__inherent">
+                          Held by role, not by setting. The primary of a household has full
+                          billing, home access, kin edits and messaging because they are the
+                          primary, and the server reads the role rather than these flags. There
+                          is nothing here to switch off.
+                        </p>
+                        <ul className="hmembers__perms">
+                          {PERMISSION_META.map((perm) => (
+                            <li key={perm.key} className="hmembers__perm">
+                              <div className="hmembers__perm-text">
+                                <span className="hmembers__perm-name">{perm.label}</span>
+                                <span className="hmembers__perm-desc">{perm.description}</span>
+                              </div>
+                              <span className="hmembers__perm-state">Granted</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : (
+                      <ul className="hmembers__perms">
+                        {PERMISSION_META.map((perm) => {
+                          const busy = savingPerm === `${member.uid}:${perm.key}`;
+                          const locked = perm.serverLocked === true;
+                          return (
+                            <li key={perm.key} className="hmembers__perm">
+                              <div className="hmembers__perm-text">
+                                <span className="hmembers__perm-name">
+                                  {perm.label}
+                                  {locked && <span className="hmembers__perm-flag">locked on</span>}
+                                </span>
+                                <span className="hmembers__perm-desc">{perm.description}</span>
+                              </div>
+                              {busy && (
+                                <span role="status" className="hmembers__saving">
+                                  Saving…
+                                </span>
+                              )}
+                              <Toggle
+                                checked={member.permissions[perm.key]}
+                                label={`${perm.label} for ${memberLabel(member)}`}
+                                disabled={locked || savingPerm !== null}
+                                onChange={(next) => void togglePermission(member, perm.key, next)}
+                              />
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -433,8 +461,8 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
 
       <div className="d2">
         <DenPanel
-          title="Send an invite"
-          subtitle={`Emails a claim link to one person and adds them to this household when they accept. The link expires in ${INVITE_TTL_DAYS} days.`}
+          title="Invite a primary by email"
+          subtitle={`The same primary claim link as the button above, sent to an address you type, for a household whose record carries the wrong email or none. It expires in ${INVITE_TTL_DAYS} days. Unlike the button above this does not check for an existing primary first, so read the roster before sending.`}
         >
           <form
             className="hmembers__form"
@@ -461,84 +489,17 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
                 </span>
               </div>
 
-              <div className="hmembers__field">
-                <label htmlFor="hmembers-label">Label</label>
-                <input
-                  id="hmembers-label"
-                  type="text"
-                  value={label}
-                  maxLength={SECONDARY_LABEL_MAX}
-                  placeholder="Folk"
-                  onChange={(e) => setLabel(e.target.value)}
-                  aria-invalid={labelTooLong}
-                />
-                <span className="hmembers__hint">
-                  {label.trim().length} / {SECONDARY_LABEL_MAX}. Optional, and the server strips
-                  brackets and dashes, so the saved label can differ from what you type.
-                </span>
-              </div>
-
-              <div className="hmembers__field">
-                <span className="hmembers__field-label" id="hmembers-role-label">
-                  Role
-                </span>
-                <div
-                  className="hmembers__segmented"
-                  role="radiogroup"
-                  aria-labelledby="hmembers-role-label"
-                >
-                  {(['SECONDARY', 'PRIMARY'] as const).map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      role="radio"
-                      aria-checked={role === r}
-                      data-selected={role === r}
-                      className="hmembers__segment"
-                      onClick={() => setRole(r)}
-                    >
-                      {r === 'SECONDARY' ? 'Secondary' : 'Primary'}
-                    </button>
-                  ))}
-                </div>
-                <span className="hmembers__hint">
-                  Secondary is a co-parent on an existing household. Primary claims the household
-                  account itself.
-                </span>
-              </div>
-
-              <div className="hmembers__field">
-                <span className="hmembers__field-label">Starting permissions</span>
-                <ul className="hmembers__perms hmembers__perms--form">
-                  {PERMISSION_META.map((perm) => {
-                    const locked = perm.serverLocked === true;
-                    return (
-                      <li key={perm.key} className="hmembers__perm">
-                        <div className="hmembers__perm-text">
-                          <span className="hmembers__perm-name">
-                            {perm.label}
-                            {locked && <span className="hmembers__perm-flag">locked on</span>}
-                          </span>
-                          <span className="hmembers__perm-desc">{perm.description}</span>
-                        </div>
-                        <Toggle
-                          checked={locked ? true : invitePerms[perm.key]}
-                          label={`${perm.label} on this invite`}
-                          disabled={locked}
-                          onChange={(next) =>
-                            setInvitePerms((prev) => ({ ...prev, [perm.key]: next }))
-                          }
-                        />
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
+              <p className="hmembers__inherent">
+                Whoever accepts becomes this household's primary and holds every entitlement by
+                role, so there is no role to pick and no starting permissions to set. To add a
+                second co-parent, the primary invites them from MyTribe; that is not something
+                the Den does on their behalf.
+              </p>
 
               <PrimaryButton
-                label={minting ? 'Sending…' : 'Send invite'}
+                label={minting ? 'Sending…' : 'Send primary invite'}
                 onClick={() => void submitInvite()}
-                disabled={minting || !emailReady || labelTooLong}
+                disabled={minting || !emailReady}
                 busy={minting}
               />
             </fieldset>

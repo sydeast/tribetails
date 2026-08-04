@@ -133,24 +133,19 @@ describe('HouseholdMembers HAPPY', () => {
     });
   });
 
-  it('mints an invite with the form values and reloads the invite list', async () => {
+  it('mints a primary invite from the one field it offers, and reloads the invite list', async () => {
     const user = userEvent.setup();
     api.mintInvite.mockResolvedValue({ inviteId: 'rq_new' });
     mount();
 
     await user.type(await screen.findByLabelText('Email address'), 'new@example.com');
-    await user.type(screen.getByLabelText('Label'), 'Cousin');
-    await user.click(screen.getByRole('button', { name: 'Send invite' }));
+    await user.click(screen.getByRole('button', { name: 'Send primary invite' }));
 
     await waitFor(() => {
-      expect(api.mintInvite).toHaveBeenCalledWith(
-        expect.objectContaining({
-          familyId: 'fam1',
-          invitedEmail: 'new@example.com',
-          secondaryLabel: 'Cousin',
-          proposedRole: 'SECONDARY',
-        }),
-      );
+      expect(api.mintInvite).toHaveBeenCalledWith({
+        familyId: 'fam1',
+        invitedEmail: 'new@example.com',
+      });
     });
     // Reloaded, so the new invite appears without a manual refresh.
     await waitFor(() => expect(api.listHouseholdInvites).toHaveBeenCalledTimes(2));
@@ -182,6 +177,83 @@ describe('HouseholdMembers HAPPY', () => {
 
     await waitFor(() => expect(api.inviteKinfolkToPortal).toHaveBeenCalledWith('fam1'));
     expect(await screen.findByText(/Portal invite sent to the Walls/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * RULING (2026-08-04): "admin can edit permissions but not like primary's
+ * access to full billing, home access, kin edit, etc. The screen makes it seem
+ * like these account must needs can be turned off."
+ *
+ * The screen drew five live switches on the primary's row. Every write behind
+ * them was inert (`requirePerm` answers for a PRIMARY before it reads the
+ * flags), so the toggles claimed a power over the household's owner that
+ * nothing had. These are the cases that stop that coming back.
+ */
+describe('HouseholdMembers PRIMARY entitlements are not switches', () => {
+  const primary = () =>
+    member({
+      uid: 'u-primary',
+      role: 'PRIMARY',
+      secondaryLabel: null,
+      invitedEmail: 'loretta@example.com',
+      permissions: {
+        billing_full: true,
+        messaging_direct: true,
+        messaging_group: true,
+        kin_edit: true,
+        kintales_only: true,
+        home_access: true,
+      },
+    });
+
+  it('offers a primary no toggle at all, for billing, home access or anything else', async () => {
+    mount({ members: [primary()] });
+
+    await screen.findByText('loretta@example.com');
+    for (const label of ['Full billing', 'Home access', 'Edit kin', 'Direct messaging']) {
+      expect(
+        screen.queryByRole('switch', { name: `${label} for loretta@example.com` }),
+      ).not.toBeInTheDocument();
+    }
+    expect(screen.queryAllByRole('switch')).toHaveLength(0);
+  });
+
+  it('says the entitlements are held by role, and shows each one as granted', async () => {
+    mount({ members: [primary()] });
+
+    expect(await screen.findByText(/Held by role, not by setting/)).toBeInTheDocument();
+    // Every permission still appears; it reads as state rather than as control.
+    const row = (await screen.findByText('loretta@example.com')).closest('li');
+    expect(within(row as HTMLElement).getAllByText('Granted')).toHaveLength(6);
+  });
+
+  it('keeps the secondary rows fully editable in the same list', async () => {
+    const user = userEvent.setup();
+    api.setMemberPermissions.mockResolvedValue(undefined);
+    mount({ members: [primary(), member()] });
+
+    await user.click(
+      await screen.findByRole('switch', { name: 'Full billing for marcus@example.com' }),
+    );
+    await waitFor(() => {
+      expect(api.setMemberPermissions).toHaveBeenCalledWith('fam1', 'u1', { billing_full: true });
+    });
+    // Only the secondary's five editable flags are switches on this screen.
+    expect(screen.getAllByRole('switch')).toHaveLength(6);
+  });
+
+  it('offers no way for an admin to invite a secondary, and says who does', async () => {
+    mount({ members: [primary()] });
+
+    await screen.findByText('loretta@example.com');
+    expect(screen.getByRole('button', { name: 'Send primary invite' })).toBeInTheDocument();
+    // The role radiogroup defaulted to Secondary, which is the one invite an
+    // admin does not send.
+    expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Secondary' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Label')).not.toBeInTheDocument();
+    expect(screen.getByText(/the primary invites them from MyTribe/)).toBeInTheDocument();
   });
 });
 
@@ -248,18 +320,18 @@ describe('HouseholdMembers NEGATIVE', () => {
     expect(locked).toBeDisabled();
   });
 
-  it('keeps Send invite disabled until the email looks like an address', async () => {
+  it('keeps the primary invite disabled until the email looks like an address', async () => {
     const user = userEvent.setup();
     mount();
 
-    const send = await screen.findByRole('button', { name: 'Send invite' });
+    const send = await screen.findByRole('button', { name: 'Send primary invite' });
     expect(send).toBeDisabled();
 
     await user.type(screen.getByLabelText('Email address'), 'jane');
-    expect(screen.getByRole('button', { name: 'Send invite' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send primary invite' })).toBeDisabled();
 
     await user.type(screen.getByLabelText('Email address'), '@example.com');
-    expect(screen.getByRole('button', { name: 'Send invite' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Send primary invite' })).toBeEnabled();
     expect(api.mintInvite).not.toHaveBeenCalled();
   });
 
@@ -319,7 +391,7 @@ describe('HouseholdMembers ERROR', () => {
     mount();
 
     await user.type(await screen.findByLabelText('Email address'), 'new@example.com');
-    await user.click(screen.getByRole('button', { name: 'Send invite' }));
+    await user.click(screen.getByRole('button', { name: 'Send primary invite' }));
 
     expect(await screen.findByText(/mintInvite failed/)).toBeInTheDocument();
     expect(screen.getByText(/SMTP2GO rejected the send/)).toBeInTheDocument();

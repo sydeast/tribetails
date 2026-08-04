@@ -94,6 +94,26 @@ export const EDITABLE_PERMISSION_KEYS: readonly PermissionKey[] = PERMISSION_MET
   (p) => p.serverLocked !== true,
 ).map((p) => p.key);
 
+/**
+ * True when this member's entitlements are theirs by ROLE, and the flags on
+ * their member doc are inert.
+ *
+ * RULING (2026-08-04): "admin can edit permissions but not like primary's
+ * access to full billing, home access, kin edit, etc. The screen makes it seem
+ * like these account must needs can be turned off."
+ *
+ * They cannot. `requirePerm` and `hasKinfolkPerm` in
+ * `mytribe/functions/src/lib/memberGate.ts` both answer for a PRIMARY before
+ * they ever read `permissions`, so every flag on a primary is dead data, and
+ * `setMemberPermissions` now refuses a primary target outright. Any surface
+ * rendering a member's permissions MUST ask this first: a toggle a primary
+ * appears able to lose billing or home access to is a control that lies twice
+ * over, once about what it does and once about what the role is.
+ */
+export function permissionsFollowRole(role: MemberRole): boolean {
+  return role === 'PRIMARY';
+}
+
 export interface HouseholdMember {
   uid: string;
   secondaryLabel: string | null;
