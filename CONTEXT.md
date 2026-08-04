@@ -3,16 +3,20 @@
 Terms used across tribetails. Architecture reviews, ADRs, and PRs use these
 names exactly; if a concept is missing, add it here in the PR that names it.
 
-- **Callable Contract**: the request/response shapes of the ~171 `onCall`
-  functions in `mytribe/functions`, consumed by three clients (kinfolk portal
-  web, admin web, Android). Authority is the server zod schema. Formerly
-  hand-mirrored per client under the 2026-07-18 Option C ruling; superseded by
-  ADR-0001 (generated contracts).
+- **Callable Contract**: the request/response shapes of the 185 `onCall`
+  functions in `mytribe/functions` (count as of 2026-08-04). Four clients call
+  them: the kinfolk portal web app, the kinfolk portal Android app, the admin
+  web app, and the admin Android app. Authority is the server zod schema.
+  Formerly hand-mirrored per client under the 2026-07-18 Option C ruling;
+  superseded by ADR-0001 (generated contracts).
 
 - **Contracts module**: the generated artifacts produced from server zod:
   TypeScript types for both web clients, Kotlin data classes and decoders for
-  Android. Committed to the repo; CI regenerates and fails on any diff.
-  See ADR-0001.
+  the admin Android app. Committed to the repo; CI regenerates and fails on any
+  diff. See ADR-0001. Generation targets three of the four clients
+  (`mytribe/functions/scripts/contracts/artifacts.ts`); the kinfolk portal
+  Android app calls callables through `GitliveFunctionsClient` and is not
+  generated into yet.
 
 - **Invoice State Classifier**: the single server-side derivation of an
   invoice's `status` (8 states) and `editScope`. Precedence: an explicit

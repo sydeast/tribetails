@@ -1,8 +1,23 @@
 # Design — UI Visual Comparison Harness (app ↔ ui-ideas mockups)
 
+> **HISTORICAL, written 2026-05-31. Built, then substantially changed.**
+> Read it for the design reasoning, and
+> `auntieos-admin/docs/runbooks/visual-regression.md` for how the harness works
+> today. Three of its premises stopped being true:
+> - **There is a git repo and a CI gate** (`.github/workflows/ci.yml`). The
+>   "no git repo -> no CI gate" lines below were true when written.
+> - **`visual/mockups/` is gone**, deleted by the operator on 2026-08-01, so it
+>   is no longer the "single source of mockup truth". Design authority is
+>   `auntieos-admin/page-specs` first, then `auntieos-admin/ui-ideas`. Both are
+>   gitignored, so read them by absolute path.
+> - **There are four capture surfaces, not three.** `react` was added in commit
+>   `6bd585c` and is the only one with goldens: `visual/baselines/react/` holds
+>   19. The web, desktop and android captures photograph the superseded Compose
+>   app and answer nothing about the live admin.
+
 **Date:** 2026-05-31
-**Status:** Approved design, pre-implementation
-**Surfaces:** Web (Compose Wasm/Skia), Desktop (Compose Desktop JVM/Skia), Android (native Compose)
+**Status:** Historical. Approved design, since implemented and partly superseded.
+**Surfaces (as designed):** Web (Compose Wasm/Skia), Desktop (Compose Desktop JVM/Skia), Android (native Compose)
 **Tools:** Playwright (web) + Roborazzi (desktop + android)
 
 ---

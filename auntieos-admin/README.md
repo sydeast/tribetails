@@ -15,11 +15,11 @@ could not see the other.
 | Path | What it is |
 |---|---|
 | `src/` | **The React admin.** The live web surface at auntie.tribetails.com. |
-| `android/` | The Android app. A permanent surface, not a port target. |
+| `android/` | The operator Android app (`com.tribetails.auntieos`). A permanent surface, not a port target. Not the only Android app in the repo; see below. |
 | `web/composeApp/` | Kotlin Multiplatform: shared logic plus the desktop (jvm) app. The wasm admin it also builds is superseded by `src/`. |
 | `web/functions/` | AuntieOS-owned Cloud Functions (Node). Firebase codebase `default`. |
 | `web/functions-python/` | The dossier and 411 reconcile pipeline. Firebase codebase `reconcile`. |
-| `visual/` | Golden screenshots for web, desktop and android, plus the comparison harness. |
+| `visual/` | The comparison harness and its captures, on four surfaces: `react` (the live admin) plus `web`, `desktop` and `android`, which all photograph the superseded Compose app. Only `react` has goldens; `visual/baselines/react/` holds 19. See `docs/runbooks/visual-regression.md`. |
 | `docs/` | Specs, runbooks, reviews, punch lists, and the backlog. |
 | `scripts/` | Build and ops helpers. `loud-build.sh` is the one to use for anything slow. |
 | `twilio-service/` | Telephony (canonical — see [`docs/twilio/README.md`](../docs/twilio/README.md) at repo root for setup/env vars/known issues). `twilio-functions/` was the pre-migration copy; archived under `archive/twilio-functions-deprecated/`. |
@@ -28,7 +28,9 @@ could not see the other.
 MyTribe, the Kinfolk portal, is a sibling prefix in this monorepo under
 `mytribe/`, not a separate repository. It owns `firestore.rules` (this tree
 carries a mirror, guarded by a functions test and the root pre-commit hook) and
-most of the callables this admin invokes.
+most of the callables this admin invokes. It also ships its own Android app,
+`com.kinfolk.portal`, built from the Compose `mytribe/src/` tree. So the repo
+has two Android apps, and `android/` here is only the operator one.
 
 ## Running it
 

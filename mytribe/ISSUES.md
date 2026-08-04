@@ -1,9 +1,19 @@
 # MyTribe — Open Issues / E2E Test Backlog
 
-Each entry is an open issue AND a future end-to-end test. Status legend:
-`OPEN` = not started · `WIP` = in flight · `BLOCKED` = needs decision/info · `FIXED` = code merged · `VERIFIED` = manually confirmed across all 3 platforms (web, desktop, android).
+> **HISTORICAL. Maintained until roughly 2026-06; audited 2026-08-04.**
+> The statuses below are not current, and five of them are contradicted by
+> shipped code (marked inline as `CORRECTION 2026-08-04`). Do not pick work off
+> this file. Live work is tracked in
+> `auntieos-admin/docs/punchlists/PUNCHLIST_2026-07-31-remaining.md`.
+>
+> Two framing lines are also stale. The desktop (JVM) build is PAUSED by owner
+> ruling, so parity means web plus Android, not three platforms. And the portal's
+> web client is React under `mytribe/web/`; the `*Screen.kt` files named
+> throughout are the Compose Android client, which is a separate surface rather
+> than the web one.
 
-**Platform parity is non-negotiable**: every fix must be confirmed on web + desktop + android before VERIFIED.
+Each entry is an open issue AND a future end-to-end test. Status legend:
+`OPEN` = not started · `WIP` = in flight · `BLOCKED` = needs decision/info · `FIXED` = code merged · `VERIFIED` = manually confirmed on every shipping platform.
 
 ---
 
@@ -61,6 +71,7 @@ Each entry is an open issue AND a future end-to-end test. Status legend:
 - **Status**: FIXED — pending deploy + VERIFIED
 - **Function**: `functions/src/portal/getMyKinTales.ts`
 - **Source**: `families/{kinfolkId}/kinTales/*` (AuntieOS writes via `ingestKinTale`). Read-only.
+  - **CORRECTION 2026-08-04**: that path is dead. `functions/src/portal/getMyKinTales.ts:73` reads the top-level `kin_care_reports` collection.
 - **Pagination**: `before` cursor = sentAt epoch millis, max 50/page
 - **DTO**: `KinTale` with `body, authorDisplayName, mediaIds, sentAtMs, shared`
 - **Screen**: `KinTalesScreen.kt` rewrite — All/Lore/Gallery filter chips, share icon if `shared`, photo-count badge, Load More button
@@ -74,8 +85,10 @@ Each entry is an open issue AND a future end-to-end test. Status legend:
 - **Client wrapper**: `PortalApi.getMyInvoices(kinfolkId)`
 - **Screen**: `InvoicesScreen.kt` rewrite + new `InvoiceDetailScreen.kt`
 - **Heuristic**: `amountDue == 0` → paid (production data uses string `status: "Yes"/"No"` for "viewed", not paid-state)
+  - **CORRECTION 2026-08-04**: that classifier is retired. Under ADR-0002 the server stamps `status` onto the invoice doc and clients render the stamp; see `functions/src/portal/getMyInvoices.ts:25-27`.
 - **Date sort**: lexical on long-form English dates — bug, fix when AuntieOS writes ISO timestamps
 - **Pay button**: disabled — phase 2C `payInvoice`
+  - **CORRECTION 2026-08-04**: `payInvoice` shipped and is exported from `functions/src/index.ts`, backed by Stripe Checkout.
 - **Deploy**: `firebase deploy --only functions:getMyInvoices --project auntieos-ttpc`
 - **E2E test**: open shown above paid; tap invoice → detail view loads ✓ wired
 
@@ -131,12 +144,14 @@ Each entry is an open issue AND a future end-to-end test. Status legend:
 
 ### #13 App Check
 - **Status**: OPEN
+  - **CORRECTION 2026-08-04**: no longer open on web. `mytribe/web/src/lib/firebase.ts:73-74` calls `initializeAppCheck` with `ReCaptchaEnterpriseProvider`, and `functions/src/lib/wrapCallable.ts` handles enforcement. See `docs/O3_APP_CHECK_RULING_2026-07-13.md` for the ruling that governs it.
 - **Why**: Firebase project hardening + abuse prevention before public release
 - **Tasks**: register App Check provider per platform (Play Integrity, reCAPTCHA, DeviceCheck-via-web), client init, enforce on rules + functions
 
 ### #14 Crashlytics + Analytics + Sentry
 - **Status**: OPEN
 - **Notes**: Sentry stub exists for js; nothing wired on android/jvm. Crashlytics gradle plugin not on classpath.
+  - **CORRECTION 2026-08-04**: Sentry is wired. The portal web app depends on `@sentry/react` (`mytribe/web/package.json`) and the functions initialise Sentry per handler (`functions/src/index.ts`). Crashlytics is the part still unaddressed.
 
 ### #15 Deep linking + claim invite flow
 - **Status**: FIXED — pending VERIFIED
@@ -264,4 +279,4 @@ Goal: each issue above gets a corresponding e2e test in `src/commonTest/` (logic
 
 ---
 
-Updated: continuously.
+Last maintained ~2026-06. Audited and annotated 2026-08-04; not maintained since.

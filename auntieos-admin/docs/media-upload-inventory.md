@@ -16,7 +16,7 @@ Work-list for Stage 1 item 1A (Kin photo pipeline) + Phase 17.2 (branding). Gene
 | 3 | Admin/operator profile photo | STUB (badge not clickable, flag `settingsProfilePicUpload`) | STUB | REAL (`uploadAvatar`, USER) | web is the gap |
 | 4 | Kinfolk (primary) profile photo | no affordance | no affordance | no affordance | `Kinfolk.profilePictureUrl` exists both sides, no upload UI anywhere |
 | 5 | Secondary kinfolk photo | none | none | none | household member = MyTribe (Decision 8) |
-| 6 | Kin (pet) photo | NO field | NO field | NO field | Kin model has no `profilePictureUrl` — needs model add + UI |
+| 6 | Kin (pet) photo | field exists, no upload UI | field exists, no upload UI | field exists, no upload UI | **Corrected 2026-08-04:** the field DOES exist on both sides, `auntieos-admin/src/api/directory.ts:164` and `Models.kt:248` ("Kin (pet) photo; parity with web"). Only the upload UI is missing |
 | 7 | KinTale media (visit photos) | REAL | STUB | REAL | desktop gap |
 | 8 | Media Gallery | REAL | STUB | REAL | desktop gap |
 | 9 | Communicate message attachments | not wired | not wired | not wired | no plumbing on composer |

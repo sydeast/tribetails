@@ -28,7 +28,15 @@ npm run preview    # serve the production build locally
 npm test           # vitest unit tests
 ```
 
-## What is here (Phase 1)
+## What is here
+
+The portal is well past the Phase 1 shell this section used to describe.
+`src/screens/` holds 33 screens and `src/router.tsx` defines 49 route entries,
+including Invoices, InvoiceDetail, BookingWizard, BookingDetail, KinTales,
+Messages, TribeHub and Account. Read `src/router.tsx` for the current map
+rather than a list here, which is what went stale.
+
+The guest funnel, which has its own quirks worth knowing before you touch it:
 
 - `/signin` sign-in (enter submits, show/hide password, friendly inline errors,
   password-reset email with the mockup's toast states)
@@ -36,11 +44,6 @@ npm test           # vitest unit tests
   and `/claim/<id>` link forms)
 - `/account/secure-reset?oobCode=...&email=...` flagged-reset flow (signed out,
   hits the public `confirmSecureReset` endpoint)
-- `/home` placeholder shell: renders `getMyHome` displayName, shows the
-  launch-error screen on failure, and the add-to-home-screen helper
-- Typed API for `getMyAccess`, `getMyHome`, `getInvitePreview`,
-  `claimInviteSignup`, `acceptInvite` (`src/api/`); the remaining callables are
-  listed in `src/api/callables.ts` for Phase 2/3
 
 ## Contracts to keep in sync
 
@@ -57,10 +60,20 @@ npm test           # vitest unit tests
   (cloudfunctions.net, googleapis.com, firebaseio.com) are never cached. See
   the notes in `vite.config.ts` before changing the caching strategy.
 
-## Deploy (later)
+## Deploy
 
-Not wired yet. The build output in `dist/` is static and can go to Firebase
-Hosting on the same project. Before first deploy: confirm the hosting domain
-is in the Auth authorized domains and in the functions' CORS allowlist
-(`functions/src/lib/cors.ts`), then point the invite and reset email links at
-the new URLs.
+Wired and live. `dist/` goes to Firebase Hosting target `kinfolk_portal`
+(`mytribe/firebase.json`, mapped in `mytribe/.firebaserc` to the
+`kinfolk-portal` site) at kinfolk.tribetails.com. A second target,
+`mytribe_beta` -> `mytribe-kinfolk-beta`, exists for beta builds.
+
+Do not deploy it by hand. The portal ships as step 6 of the production release,
+`npm run deploy:bg`; see `docs/RUNBOOK.md`. The single-target escape hatch is:
+
+```bash
+scripts/safe-deploy.sh mytribe -- firebase deploy --only hosting:kinfolk_portal
+```
+
+Adding a NEW hosting domain still needs it in the Auth authorized domains and
+in the functions' CORS allowlist (`functions/src/lib/cors.ts`), with the invite
+and reset email links pointed at it.

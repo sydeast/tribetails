@@ -1,6 +1,10 @@
 # Communicate Recipient Intelligence — Phase 3 Implementation Plan (Refresh-intelligence relocation)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`). NO git (no commits). NO deploy (operator-gated).
+> **HISTORICAL, written 2026-06-22. Built and deployed 2026-06-23.**
+> Do not run this as a plan; read it for the design. Its "NO git (no commits)"
+> instruction was true when written and is wrong now: this repo is under git
+> with CI (`.github/workflows/ci.yml`), and the workflow is branch per task,
+> never commit on `main`, land through a PR.
 
 **Goal:** Put the "Refresh intelligence" action where it belongs — on the kinfolk profile and the kin-edit screens (web + android) — after Phase 1 removed it from Communicate. It reuses the existing `synthesize_kinfolk_profile` callable; no new backend.
 

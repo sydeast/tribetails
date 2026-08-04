@@ -1,6 +1,11 @@
 # Communicate Recipient Intelligence — Phase 1 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **HISTORICAL, written 2026-06-22. Built and deployed 2026-06-23.**
+> Do not run this as a plan; read it for the design. Two of its premises are
+> now wrong: this repo is under git with CI (`.github/workflows/ci.yml`), so
+> the "no git" line below is dated rather than an instruction, and the plan
+> ships to the Compose/wasm admin, which `auntieos-admin/src` (React)
+> superseded on 2026-07-20.
 
 **Goal:** Make the Communicate recipient-context panel a useful read — short AI summaries (dossier `tldr` + per-kin 411 `tldr`) instead of full text, a disclosed "where things last left off" last-communication box, an "Admin only / internal" marker — and remove the misplaced Refresh-intelligence button (relocated in Phase 3).
 
@@ -8,7 +13,7 @@
 
 **Tech Stack:** Python 3 + Firebase Functions (`https_fn.on_call`) + Anthropic SDK + pytest; Kotlin Multiplatform / Compose (web `commonMain`, `kotlin.test`); Kotlin / Compose android (`org.junit` + MockK); Firestore.
 
-**Deploy:** operator-gated — NO deploy steps here. No git in any tree — NO commit steps. The `git add`/`git commit` step from the writing-plans template is intentionally omitted from every task.
+**Deploy:** operator-gated — NO deploy steps here. No git in any tree — NO commit steps. The `git add`/`git commit` step from the writing-plans template is intentionally omitted from every task. *(2026-08-04: the no-git premise expired; see the banner at the top.)*
 
 ---
 

@@ -105,9 +105,12 @@ developer to the existing one), do this in order:
    standing up a fresh service rather than reusing the existing one.
 4. **Build the Studio Flow.** Console → Studio → Create new Flow → build it
    per `docs/twilio/studio-flow-reference.md` (widget-by-widget graph), or
-   import `auntieos-admin/studio_flow_v2.json` directly and replace every
-   `your-service-name-XXXX.twil.io` placeholder URL with your real deployed
-   domain from step 3. Upload the 6 audio assets it references
+   import `auntieos-admin/studio_flow_v2.json` directly. That JSON is NOT
+   templated: it hardcodes the live domain `tribetailsattendant-8587.twil.io`
+   in 13 places and contains no placeholders. A fresh import therefore points
+   your new flow at the production service. If you are standing up a separate
+   service, search-and-replace that domain with the one from step 3 before you
+   publish the flow. Upload the 6 audio assets it references
    (`after_hours_greeting`, `open_hours_greeting`, `open_hours_retry`,
    `gather_intro`, `try_text_suggestion`, `thank_you_vm`) into
    `twilio-service/assets/`.

@@ -2,7 +2,7 @@
 
 Date: 2026-07-28
 Status: Accepted. Supersedes the Option C (guarded hand-mirror) choice in
-`mytribe/functions/2026-07-18-AO5-AO8-shared-contract-design.md`.
+`auntieos-admin/docs/2026-07-18-AO5-AO8-shared-contract-design.md`.
 
 ## Context
 

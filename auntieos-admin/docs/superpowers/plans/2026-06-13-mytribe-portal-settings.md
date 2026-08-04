@@ -1,6 +1,10 @@
 # MyTribe Portal Settings Implementation Plan
 
-> **For agentic workers:** execute phase by phase. Each phase compiles + (at the end) deploys on its own. Steps use checkbox (`- [ ]`) syntax.
+> **HISTORICAL, written 2026-06-13.** Do not run this as a plan; read it for
+> the design. It targets the Compose/wasm admin, superseded by
+> `auntieos-admin/src` (React) on 2026-07-20, and its per-phase
+> `firebase deploy` steps are replaced by the single ordered release run
+> (`npm run deploy:bg`, see `docs/RUNBOOK.md`).
 
 **Goal:** Operator-controlled MyTribe portal customization (logo, color theme, banner, Home layout, chat settings) from a new "MyTribe" section in AuntieOS Settings, plus removal of the 11 spurious MyTribe feature flags.
 
@@ -8,7 +12,7 @@
 
 **Tech stack:** Kotlin Compose Multiplatform (both apps), Firebase callables/Firestore (functions in `MyTribe/functions`, deployed to `auntieos-ttpc`), gitlive Firebase SDK.
 
-**Repos:** MyTribe `/Users/sydeast/Projects/testai/CascadeProjects/MyTribe`; AuntieOS `/Users/sydeast/Documents/TribeTails_Docs/Communication/AuntieOS/web/composeApp`.
+**Repos:** one, since the 2026-07-21 merge. MyTribe is `mytribe/` and AuntieOS is `auntieos-admin/`, both prefixes of the `tribetails` monorepo. *(This line originally named two standalone checkouts; neither path exists.)*
 
 **Verify per phase:** MyTribe `./gradlew compileKotlinJvm compileKotlinJs`; functions `npx tsc --noEmit`; AuntieOS `./gradlew :composeApp:compileKotlinJvm` (or wasm). Deploy at phase end: `firebase deploy --only "functions:mytribe:<names>"`, MyTribe web (`jsBrowserDistribution` + `hosting:kinfolk_portal`), AuntieOS web.
 

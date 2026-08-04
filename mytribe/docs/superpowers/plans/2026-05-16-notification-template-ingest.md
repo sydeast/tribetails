@@ -1,6 +1,20 @@
 # Notification Template Ingest — Phase 1 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **HISTORICAL, written 2026-05-16. Shipped. Do not run this as a plan.**
+> The 34 unchecked boxes below are not open work; the outputs already exist as
+> `mytribe/scripts/seedNotificationTemplates.ts`,
+> `mytribe/functions/src/notifications/templateParsers.ts` and 44 template dirs
+> under `mytribe/seeds/notificationTemplates/`.
+>
+> Four things in the pre-flight section have expired:
+> - **The paths are gone.** Both absolute checkouts it names predate the
+>   2026-07-21 monorepo merge. MyTribe is the `mytribe/` prefix of this repo.
+> - **`git` IS used.** This repo is under git with CI
+>   (`.github/workflows/ci.yml`); the workflow is branch per task, never commit
+>   on `main`, land through a PR.
+> - **34 catalog keys is now 43** in
+>   `mytribe/functions/src/notifications/catalog.ts`.
+> - The source template tree it copies from no longer exists outside the repo.
 
 **Goal:** Seed 34 catalog-keyed notification templates × 3 channels (email/sms/push) into Firestore so the MyTribe dispatcher can render Handlebars output for every catalog key with authored on-disk content.
 

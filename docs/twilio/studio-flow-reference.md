@@ -1,4 +1,10 @@
 ### Tribe Tails Pet Care — Twilio Studio Flow Blueprint (Twilio Assets Edition)
+
+> **The canonical flow is `auntieos-admin/studio_flow_v2.json`, not this file.**
+> This is a hand-written blueprint and it drifted from the JSON. Four points
+> were corrected against it on 2026-08-04 and are marked `CORRECTED 2026-08-04`
+> inline. Where the two still disagree, the JSON wins: it is what runs.
+
 📁 Recommended Asset Organization
 Inside your Twilio Console (under Functions > Assets), upload your custom audio clips. For maximum compatibility with all mobile networks and devices, ensure they are saved as .mp3 or mono .wav files.
 • after_hours_greeting.mp3
@@ -37,7 +43,9 @@ record_voicemail_after_hours (Record Voicemail)
 open_hours_greeting (Gather Input, Digits: 1, Timeout: 8s)
    │   🔊 Twilio Asset: /open_hours_greeting.mp3
    ├─► keypress ──► route_open_hours
-   └─► timeout / speech ──► try_text_suggestion
+   └─► timeout / speech ──► open_hours_retry
+       CORRECTED 2026-08-04: this read try_text_suggestion. The JSON sends both
+       to open_hours_retry, which is also what the widget detail below says.
 
 route_open_hours (Split Based On...)
    ├─► == "3" ──► gather_intro
@@ -58,8 +66,11 @@ gather_intro (Gather Speech, Timeout: 5s)
                     └─► success ──► add_call_recording
                                         └─► success ──► caller_queue (Enqueue)
                                                             ├─► callComplete ──► END
-                                                            ├─► failedToEnqueue ─► record_voicemail_business
-                                                            └─► callFailure ────► record_voicemail_business
+                                                            ├─► failedToEnqueue ─► try_text_suggestion
+                                                            └─► callFailure ────► try_text_suggestion
+       CORRECTED 2026-08-04: both read record_voicemail_business. The JSON sends
+       them to try_text_suggestion, so a caller who cannot be enqueued gets the
+       text-us prompt and a hangup, NOT a voicemail box.
 
 ======================= TERMINUS & SINK WIDGETS =======================
 
@@ -83,7 +94,11 @@ check_hours_business
 • Transitions: • Success ──► split_hours • Failed ──► open_hours_greeting
 split_hours
 • Type: Split Based On...
-• Variable to Analyze: {{widgets.check_hours_business.Body}}
+• Variable to Analyze: {{widgets.check_hours_business.body}}
+  CORRECTED 2026-08-04: this read `.Body`. Studio is case-sensitive here and the
+  JSON uses lowercase `.body`. The capitalized form resolves to empty, so the
+  split always falls through No Match to after_hours_greeting and the line is
+  never open.
 • Transitions: • Matches Value yes ──► open_hours_greeting • No Match / no ──► after_hours_greeting
 2. After-Hours Logic (Anti-Spam Gateway)
 after_hours_greeting
@@ -146,12 +161,17 @@ add_call_recording
 • Type: Call Recording
 • Record Call: True
 • Recording Channels: dual
-• Recording Status Callback URL: https://your-service-name-XXXX.twil.io/notify-recording
+• Recording Status Callback URL: NOT SET.
+  CORRECTED 2026-08-04: this named a `/notify-recording` callback. The JSON's
+  `add_call_recording` sets only `record_call` and `recording_channels`, so
+  `twilio-service/functions/notify-recording.js` is never invoked by this flow.
+  Wire the callback if you want it; do not assume it already fires.
 • Transitions: • Success ──► caller_queue
 caller_queue
 • Type: Enqueue Call
 • Queue Name: TribeTails_Call_Queue
-• Transitions: • Call Complete ──► END • Failed to Enqueue / Call Failure ──► record_voicemail_business
+• Transitions: • Call Complete ──► END • Failed to Enqueue / Call Failure ──► try_text_suggestion
+  CORRECTED 2026-08-04: this read record_voicemail_business.
 5. Terminus Points (The Sinks)
 try_text_suggestion
 • Type: Say/Play

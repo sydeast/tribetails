@@ -1,14 +1,20 @@
 # Tribe Tails
 
-Monorepo for the Tribe Tails pet-care system. Three codebases that ship as one
-product, kept in one repo so a change that spans them lands as one commit.
+Monorepo for the Tribe Tails pet-care system. Two products, the operator admin
+and the kinfolk portal, over one backend, kept in one repo so a change that
+spans them lands as one commit.
 
 | Folder | What it is |
 |---|---|
-| `mytribe/` | Cloud Functions (the real backend, all callables) + the kinfolk portal React app at `kinfolk.tribetails.com` |
+| `mytribe/functions` | Cloud Functions. The real backend, 185 callables |
+| `mytribe/web` | The kinfolk portal React app at `kinfolk.tribetails.com` |
+| `mytribe/src` | The kinfolk portal Android app (Compose, `com.kinfolk.portal`). Live, not a leftover |
 | `auntieos-admin/src` | The live operator admin at `auntie.tribetails.com` |
-| `auntieos-admin/android` | The operator Android app |
+| `auntieos-admin/android` | The operator Android app (`com.tribetails.auntieos`) |
 | `auntieos-admin/web` | AuntieOS-owned functions, plus the SUPERSEDED Compose wasm build and the PAUSED desktop (JVM) build |
+
+Two Android apps ship from here, so "the Android app" is never specific enough
+to act on. Name the package.
 
 All of it deploys into a single Firebase project, `auntieos-ttpc`.
 
@@ -18,10 +24,11 @@ deploys, secrets and troubleshooting.
 ## Why one repo
 
 Features here are vertical slices. A single change routinely touches a callable
-in `mytribe/`, a model in `auntieos-admin/web/`, and a screen in
-`auntieos-admin/src/`, and those pieces are only correct together. Separate
-repos made that several commits that could drift out of sync; one repo makes it
-one commit that either lands whole or not at all.
+in `mytribe/functions/`, a generated contract on both web clients, and a screen
+in `auntieos-admin/src/` and `auntieos-admin/android/`, and those pieces are
+only correct together. Separate repos made that several commits that could
+drift out of sync; one repo makes it one commit that either lands whole or not
+at all.
 The two also share `firestore.rules` on one Firebase project, so a deploy from
 either could overwrite the other's. `mytribe/firestore.rules` is the source of
 truth and `auntieos-admin/web/firestore.rules` is a mirror, with a test and a
@@ -32,26 +39,36 @@ History from all three original repos is preserved, grafted in via
 
 ## Deploying
 
-Both trees deploy into the one project `auntieos-ttpc`, so a careless deploy
-from the wrong tree can clobber the other's live config. Production deploys go
-through `scripts/safe-deploy.sh`. It pins `--project auntieos-ttpc`, refuses a
-bare `firebase deploy` (which would ship hosting, every functions codebase,
-rules and indexes at once), and refuses to push `firestore.rules` from anywhere
-but `mytribe`, and only when its mirror in `auntieos-admin/web/firestore.rules`
-is byte-identical. Every refusal says, in red, what it stopped and why.
+The production release is one command:
+
+    npm run deploy:bg     # detached, logged, survives the terminal closing
+    npm run deploy        # foreground, when you want to answer the prompts
+
+`scripts/release.sh` runs the whole ordered procedure: preconditions, CI
+verdict, `npm run check`, the Android build, indexes, index wait, rules,
+functions, both hosting targets, the APK upload, and a verify step that fetches
+the live bundles and proves they changed. Order is the point. Indexes go before
+the code that queries them and functions before the clients that call them,
+because both failures land at runtime rather than at build.
+
+Do not rebuild that sequence by hand. A menu of deploy commands is what this
+repo had before, and on 2026-07-26 the live admin sat 33 hours and ~19 merged
+PRs behind `main` because a green `npm run build` was read as a shipped one.
+Build writes `dist/` on your disk and uploads nothing.
+
+`docs/RUNBOOK.md` has the step table, the environment overrides
+(`RELEASE_SKIP_ANDROID`, `RELEASE_ANDROID_GROUPS`, and the rest), and what to do
+when a step fails.
+
+Underneath, every deploy goes through `scripts/safe-deploy.sh`. It pins
+`--project auntieos-ttpc`, refuses a bare `firebase deploy` (which would ship
+hosting, every functions codebase, rules and indexes at once), and refuses to
+push `firestore.rules` from anywhere but `mytribe`, and only when its mirror in
+`auntieos-admin/web/firestore.rules` is byte-identical. Every refusal says, in
+red, what it stopped and why. Call it directly only when you genuinely want one
+target and not a release:
 
     scripts/safe-deploy.sh <prefix> -- firebase deploy --only <targets>
-
-The three you actually run:
-
-    # live React admin at auntie.tribetails.com
-    scripts/safe-deploy.sh auntieos-admin -- firebase deploy --only hosting:app
-
-    # the callables
-    scripts/safe-deploy.sh mytribe -- firebase deploy --only functions:mytribe
-
-    # firestore indexes (rules change the same way, from mytribe only)
-    scripts/safe-deploy.sh mytribe -- firebase deploy --only firestore:indexes
 
 Set `DRY_RUN=1` to print the firebase command the wrapper would run instead of
 running it.

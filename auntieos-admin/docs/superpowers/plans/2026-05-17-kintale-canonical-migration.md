@@ -1,6 +1,10 @@
 # KinTale Canonical Migration — MyTribe Pipeline Fix
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **HISTORICAL, written 2026-05-17. Shipped. Do not run this as a plan.**
+> The repoint landed: `mytribe/functions/src/portal/getMyKinTales.ts:73` reads
+> the canonical `kin_care_reports` collection. Read it for the field mapping.
+> It predates the 2026-07-21 monorepo merge, so the standalone repo paths in it
+> resolve to `mytribe/` and `auntieos-admin/` today.
 
 **Goal:** Repoint all MyTribe Cloud Functions + triggers from the defunct `families/{kinfolkId}/kinTales/` collection to the canonical `kin_care_reports/` collection that AuntieOS now writes to, restoring kinfolk's ability to see KinTales.
 

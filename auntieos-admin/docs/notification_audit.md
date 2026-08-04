@@ -2,12 +2,19 @@
 > - #1 Template authorship: Firestore now has `emailTemplates: 45`, `pushTemplates: 35`, `smsTemplates: 34`, `kintale_templates: 1` (verified 2026-05-17 via firestore stream).
 > - #2 Test deployment: functions deployed multiple times since 2026-05-12; `nightly_reconcile` python313 added 2026-05-17.
 > - #3 UI surfaces (KinTale comment/note/booking-note/rating): **STILL OPEN.** Backends wired, UI sites not built.
-> - #4 sotu-hosting rules drift reconciliation: **UNKNOWN — needs separate audit.**
+> - #4 sotu-hosting rules drift reconciliation: **MOOT as of 2026-08-04.** There
+>   is no `sotu-hosting/firestore.rules`; that directory is hosting only. The
+>   two rules files are `mytribe/firestore.rules` (source of truth) and
+>   `auntieos-admin/web/firestore.rules` (byte-identical mirror, guarded by a
+>   test and the pre-commit hook).
 > - #5 Smoke-test plan: testing scope, excluded from this audit.
+>
+> **Counts re-checked 2026-08-04:** the catalog holds 43 entries, not the 37
+> stated below. Treat every number in this audit as of its 2026-05-12 date.
 
 # Notification System Audit — Fresh (2026-05-12 evening, post deferred-orphan sprint)
 
-Catalog source of truth: `MyTribe/functions/src/notifications/catalog.ts` — **37 entries** (2026-05-12: `kintale.note.added` removed — ambiguous semantics, no implementation, no spec).
+Catalog source of truth: `mytribe/functions/src/notifications/catalog.ts`. **37 entries as of 2026-05-12** (`kintale.note.added` removed that day: ambiguous semantics, no implementation, no spec). It holds **43** as of 2026-08-04.
 Shared Firestore: `auntieos-ttpc`.
 
 Supersedes prior audits. Reflects state after BOTH the morning orphan sprint AND the deferred-orphan sprint completed 2026-05-12.

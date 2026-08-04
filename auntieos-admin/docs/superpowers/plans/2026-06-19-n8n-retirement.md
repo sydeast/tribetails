@@ -1,6 +1,11 @@
 # n8n Retirement Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **HISTORICAL, written 2026-06-19. Phase A executed 2026-06-21.**
+> Do not run this as a plan; read it for the design and the execution status
+> below. Its "do not run git / MyTribe is not a git repo" checkpoints were true
+> when written and are wrong now: MyTribe is the `mytribe/` prefix of this git
+> repo, CI runs at `.github/workflows/ci.yml`, and the workflow is branch per
+> task, never commit on `main`, land through a PR.
 
 > ## ⚑ EXECUTION STATUS (updated 2026-06-21)
 > **Phase A (A1-A7) is DONE and green; nothing deployed (operator-gated).** Executed subagent-driven. See `docs/archive/handoffs/HANDOFF_2026-06-21-n8n-retirement-EXECUTED.md`.
