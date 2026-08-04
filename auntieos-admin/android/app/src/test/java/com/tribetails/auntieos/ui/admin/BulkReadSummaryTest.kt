@@ -32,10 +32,17 @@ class BulkReadSummaryTest {
         assertEquals("Nothing selected.", bulkReadSummary(requested = 0, marked = 0))
     }
 
-    @Test fun `unread is keyed off readAt marker, not dispatch status`() {
-        assertTrue(isNotificationUnread(NotificationEntry(id = "n1", status = "dispatched", readAt = null)))
-        assertTrue(isNotificationUnread(NotificationEntry(id = "n2", status = "pending", readAt = "")))
-        assertFalse(isNotificationUnread(NotificationEntry(id = "n3", status = "dispatched", readAt = "2026-06-05T10:00:00Z")))
+    /**
+     * Unread has always been readAt, never dispatch status; this used to say so
+     * by SETTING a contradictory `status` on each fixture and proving it was
+     * ignored. R5 deleted the field from the model outright (delivery state now
+     * lives on `notificationDispatch/{id}`), so the contradiction can no longer
+     * be expressed, which is a stronger guarantee than the test was giving.
+     */
+    @Test fun `unread is keyed off the readAt marker`() {
+        assertTrue(isNotificationUnread(NotificationEntry(id = "n1", readAt = null)))
+        assertTrue(isNotificationUnread(NotificationEntry(id = "n2", readAt = "")))
+        assertFalse(isNotificationUnread(NotificationEntry(id = "n3", readAt = "2026-06-05T10:00:00Z")))
     }
 
     // ── bulk archive summary (Step 4) ────────────────────────────────────────────

@@ -1,16 +1,20 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
+import { promoteQueuedNotification } from '../notifications/promoteQueued';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
 /**
  * Drains `pendingNotifications/{uid}_{key}` docs whose fireAfterMs has elapsed.
  *
- * Each pending doc is promoted to a fresh `notifications/{id}` doc with
- * mode='debounced-promoted' + status='pending'. The trigger fan-out
- * (onNotificationCreate) then dispatches to channel subdocs as usual.
+ * Each pending doc is promoted to a fresh `notifications/{id}` inbox doc plus its
+ * id-matched `notificationDispatch/{id}` work order carrying
+ * mode='debounced-promoted' + status='pending'. The fan-out trigger
+ * (onNotificationCreate, now watching the work order) then dispatches to channel
+ * subdocs as usual. Both documents are built by `promoteQueuedNotification`,
+ * which is also why the promoted card now keeps its title, description, actor and
+ * deep-link target; this sweep used to drop all four.
  *
  * Debounce semantics:
  *   - 'snapshot' strategy: the pending doc's `data` field is the latest
@@ -50,18 +54,9 @@ export const notificationDebounceSweep = onSchedule(
         await db().runTransaction(async (tx) => {
           const fresh = await tx.get(doc.ref);
           if (!fresh.exists) return;
-          const newRef = db().collection('notifications').doc();
-          tx.set(newRef, {
-            key: data.key,
-            category: data.category,
-            recipientUid: data.recipientUid,
-            actorUid: data.actorUid ?? null,
-            data: data.data ?? {},
-            channels: data.channels ?? [],
-            status: 'pending',
+          promoteQueuedNotification(tx, data, {
             mode: 'debounced-promoted',
-            originPendingId: doc.id,
-            createdAt: FieldValue.serverTimestamp(),
+            origin: { originPendingId: doc.id },
           });
           tx.delete(doc.ref);
         });

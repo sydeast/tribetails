@@ -337,15 +337,34 @@ describe('notificationBatchSweep: promotion', () => {
       `${NOTIFICATION_BATCH_ROOT}/u1/kintale-comments/c-b`,
     ]);
 
+    // R5: a promotion writes the PAIR. The digest card carries the rollup and
+    // the human content; the work order carries the mode and the provenance.
     const digest = ctx.sink.writes.find((w) => w.path.startsWith('notifications/'));
     expect(digest).toBeDefined();
     expect(digest!.data).toMatchObject({
       key: 'kintale.comment.added',
       recipientUid: 'u1',
+    });
+    expect(digest!.data.mode, 'digest card must carry no delivery mode').toBeUndefined();
+    // The three sweeps used to drop every AO-28 field on promotion, so a
+    // debounced or batched notification arrived with a bare catalog key while
+    // the byte-identical trigger-path event arrived with a human title. One
+    // shared promoter now fills both, and this pins it.
+    expect(digest!.data.title).toBe('New comment on a KinTale (comment box)');
+    expect((digest!.data.data as { itemCount: number }).itemCount).toBe(2);
+
+    const order = ctx.sink.writes.find((w) => w.path.startsWith('notificationDispatch/'));
+    expect(order).toBeDefined();
+    expect(order!.data).toMatchObject({
+      key: 'kintale.comment.added',
+      recipientUid: 'u1',
       mode: 'batched-promoted',
+      status: 'pending',
       originBatchKey: 'kintale-comments',
     });
-    expect((digest!.data.data as { itemCount: number }).itemCount).toBe(2);
+    expect(order!.data.notificationId).toBe(
+      digest!.path.slice('notifications/'.length),
+    );
   });
 
   it('holds a bucket whose oldest item is still inside the window', async () => {

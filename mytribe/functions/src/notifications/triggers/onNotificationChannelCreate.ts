@@ -12,10 +12,23 @@ import { AUDIT_EVENTS } from '../../lib/auditEvents';
 const CHANNELS: ReadonlySet<Channel> = new Set(['email', 'sms', 'push']);
 
 /**
- * Processes a single channel subdoc. Looks up the parent notification, resolves
+ * Processes a single channel subdoc. Looks up the parent WORK ORDER, resolves
  * the catalog def, and calls the channel sender. On success/failure, stamps
  * status + providerMessageId / error on the subdoc. Failures throw, which the
  * wrapTrigger wrap captures to Sentry and Cloud Functions retries.
+ *
+ * THE SUBDOCS MOVED (operator ruling R5, 2026-08-03). They used to hang off the
+ * notification itself, at `notifications/{id}/channels/{channel}`, so an inbox
+ * document carried a subcollection of per-channel `status` / `providerMessageId`
+ * / `sentAt` / `errorMessage` / `attempts`. All of that is delivery plumbing, and
+ * it now lives under the work order at
+ * `notificationDispatch/{id}/channels/{channel}`. The parent doc carries `key`,
+ * `recipientUid` and the merge `data` itself, so this handler still needs
+ * exactly one parent read and never has to reach across into `notifications/`.
+ *
+ * The audit write below is UNCHANGED and was already correct: NOTIFICATION_RECEIVED
+ * has always gone to the hash-chained `activity_log`, targeting the notification
+ * id. That was the half of this that was already wired to the right home.
  *
  * Exported separately from the CloudFunction wrapper so it is unit-testable
  * without a real Firestore CloudEvent (matches the `...Handler` convention used
@@ -33,15 +46,25 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
 
     const parentRef = snap.ref.parent.parent;
     if (!parentRef) {
-      throw new Error('onNotificationChannelCreate: channel subdoc has no parent notification ref');
+      throw new Error('onNotificationChannelCreate: channel subdoc has no parent dispatch ref');
     }
     const parentSnap = await parentRef.get();
     const parent = parentSnap.data() as
-      | { key?: string; recipientUid?: string; data?: Record<string, unknown> }
+      | {
+          key?: string;
+          recipientUid?: string;
+          data?: Record<string, unknown>;
+          notificationId?: string;
+        }
       | undefined;
     if (!parent || !parent.key || !parent.recipientUid) {
-      throw new Error(`onNotificationChannelCreate: parent notification ${parentRef.path} missing key/recipientUid`);
+      throw new Error(`onNotificationChannelCreate: parent dispatch ${parentRef.path} missing key/recipientUid`);
     }
+    // Id-matched by construction (dispatcher writes the work order under the
+    // notification's own id), but read the explicit field first so a future
+    // change to that convention surfaces here instead of silently auditing
+    // against the wrong document id.
+    const notificationId = parent.notificationId ?? parentRef.id;
 
     const def = getNotificationDef(parent.key);
     const sender = channelSenders[channel];
@@ -100,11 +123,11 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
         // Audit target is the notification doc itself; recipientUid kept in
         // payload so admin Activity Log "Target" column stays consistent
         // (collection + doc id) per writeAuditEntry canonical schema.
-        targetUid: parentRef.id,
+        targetUid: notificationId,
         targetCollection: 'notifications',
         description: `Notification ${parent.key} delivered via ${channel}`,
         payload: {
-          notificationId: parentRef.id,
+          notificationId,
           key: parent.key,
           channel,
           recipientUid: parent.recipientUid,
@@ -130,7 +153,11 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
 
 export const onNotificationChannelCreate = onDocumentCreated(
   {
-    document: 'notifications/{id}/channels/{channel}',
+    // Repointed from `notifications/{id}/channels/{channel}` (R5). The export
+    // name is kept so Firebase updates this trigger in place rather than
+    // standing up a second one alongside the old path; see the note in
+    // onNotificationCreate.ts for why that window would be harmful.
+    document: 'notificationDispatch/{id}/channels/{channel}',
     secrets: [
       'SENTRY_DSN',
       'SMTP2GO_API_KEY',

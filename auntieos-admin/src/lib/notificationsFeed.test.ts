@@ -4,7 +4,7 @@ import type { NotificationEntry } from '../api/notifications';
 import {
   NOTIF_UNREAD_FILTER,
   activeNotifications,
-  dispatchedNotificationCount,
+  actionableNotificationCount,
   isNotificationArchived,
   notificationCategories,
   notificationsForArchived,
@@ -189,39 +189,65 @@ describe('notificationsForArchived', () => {
   });
 });
 /**
- * A DIFFERENT AXIS FROM READ STATE. `status` is the dispatcher's own pipeline;
- * `readAt` is the operator. Collapsing them would hide a delivery outage behind
- * a healthy-looking inbox.
+ * REPLACES `dispatchedNotificationCount`, whose tests sat here.
+ *
+ * That helper counted rows whose `status` the dispatcher had stamped
+ * 'dispatched', and its docstring defended the figure as "a different axis from
+ * read state, a delivery outage would otherwise hide behind a healthy-looking
+ * inbox". The reasoning was sound and the SCREEN was wrong: monitoring the
+ * delivery pipeline is a real need, but the operator's Notifications inbox is
+ * not where it belongs, which is exactly what ruling R5 said. The pipeline is
+ * now audited into the hash-chained `activity_log` as NOTIFICATION_DISPATCHED,
+ * where an outage shows up as entries that stop arriving, and the raw state is
+ * on `notificationDispatch/{id}` for anyone debugging one.
+ *
+ * The tile now answers the question the strip should answer: how many of these
+ * are waiting on a decision from the operator. Same source as the Approve/Deny
+ * buttons, so the count and the buttons cannot disagree.
  */
-describe('dispatchedNotificationCount', () => {
-  it('counts only rows the sender says it delivered', () => {
+describe('actionableNotificationCount', () => {
+  it('counts rows whose quick actions offer a decision (a booking with a target)', () => {
     expect(
-      dispatchedNotificationCount([
-        entry({ _id: 'a', status: 'dispatched' }),
-        entry({ _id: 'b', status: 'pending' }),
+      actionableNotificationCount([
+        entry({ _id: 'a', targetType: 'booking', targetId: 'b1' }),
+        entry({ _id: 'b', targetType: 'invoice', targetId: 'i1' }),
       ]),
     ).toBe(1);
   });
-  it('counts a dispatched row that is still unread, because the two are unrelated', () => {
-    expect(dispatchedNotificationCount([entry({ _id: 'a', status: 'dispatched' })])).toBe(1);
-  });
-  it('is case and whitespace insensitive, matching what the dispatcher really writes', () => {
-    expect(dispatchedNotificationCount([entry({ _id: 'a', status: ' Dispatched ' })])).toBe(1);
-  });
-  it('does not count an absent or blank status as delivered', () => {
+  it('counts an actionable row that is already read, because the two are unrelated', () => {
     expect(
-      dispatchedNotificationCount([entry({ _id: 'a' }), entry({ _id: 'b', status: '' })]),
+      actionableNotificationCount([
+        entry({
+          _id: 'a',
+          targetType: 'booking',
+          targetId: 'b1',
+          readAt: ts('2026-07-16T10:00:00Z'),
+        }),
+      ]),
+    ).toBe(1);
+  });
+  it('does not count a booking notification with no target id, which shows no buttons', () => {
+    expect(
+      actionableNotificationCount([entry({ _id: 'a', targetType: 'booking', targetId: '' })]),
     ).toBe(0);
+  });
+  it('does not count a row with no target at all', () => {
+    expect(actionableNotificationCount([entry({ _id: 'a' })])).toBe(0);
   });
   it('excludes archived rows, like every other figure on the strip', () => {
     expect(
-      dispatchedNotificationCount([
-        entry({ _id: 'a', status: 'dispatched', archivedAt: ts('2026-07-16T10:00:00Z') }),
+      actionableNotificationCount([
+        entry({
+          _id: 'a',
+          targetType: 'booking',
+          targetId: 'b1',
+          archivedAt: ts('2026-07-16T10:00:00Z'),
+        }),
       ]),
     ).toBe(0);
   });
   it('is 0 on an empty feed', () => {
-    expect(dispatchedNotificationCount([])).toBe(0);
+    expect(actionableNotificationCount([])).toBe(0);
   });
 });
 /**

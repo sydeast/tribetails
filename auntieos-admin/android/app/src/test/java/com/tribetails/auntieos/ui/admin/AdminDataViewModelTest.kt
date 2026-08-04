@@ -257,8 +257,8 @@ class AdminDataViewModelTest {
 
     @Test
     fun `loadNotifications populates notifications sorted by createdAt desc`() = runTest(testDispatcher) {
-        val older = NotificationEntry(id = "n1", key = "invoice.new", createdAt = "2026-05-01T09:00:00", status = "dispatched")
-        val newer = NotificationEntry(id = "n2", key = "kincare.booking.confirm", createdAt = "2026-05-02T09:00:00", status = "pending")
+        val older = NotificationEntry(id = "n1", key = "invoice.new", createdAt = "2026-05-01T09:00:00")
+        val newer = NotificationEntry(id = "n2", key = "kincare.booking.confirm", createdAt = "2026-05-02T09:00:00")
         coEvery { mockRepo.getNotifications() } returns Result.success(listOf(older, newer))
 
         val vm = buildViewModel()

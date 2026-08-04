@@ -31,8 +31,72 @@ describe('enqueueNotification fan-out (audience:both)', () => {
     });
 
     expect(ids.length).toBe(3); // 1 kinfolk + 2 admins
+    // R5: each copy is now a PAIR: the inbox doc and its id-matched work order.
     const writtenPaths = ctx.writes.map((w) => w.path);
-    expect(writtenPaths.every((p) => p.startsWith('notifications/'))).toBe(true);
+    expect(
+      writtenPaths.every(
+        (p) => p.startsWith('notifications/') || p.startsWith('notificationDispatch/'),
+      ),
+    ).toBe(true);
+    const notifIds = writtenPaths
+      .filter((p) => p.startsWith('notifications/'))
+      .map((p) => p.slice('notifications/'.length))
+      .sort();
+    const dispatchIds = writtenPaths
+      .filter((p) => p.startsWith('notificationDispatch/'))
+      .map((p) => p.slice('notificationDispatch/'.length))
+      .sort();
+    expect(notifIds).toHaveLength(3);
+    // Id-matched, which is the whole basis of the split: the work order is
+    // findable from the notification and vice versa without a query.
+    expect(dispatchIds).toEqual(notifIds);
+  });
+
+  /**
+   * THE R5 SPLIT, asserted from both sides.
+   *
+   * This replaces assertions that pinned `channels` onto the notification doc.
+   * Delivery state on an inbox record is what made both admin clients render
+   * "channels: email, sms" and a "Dispatched" counter as card content, which the
+   * operator called out as workflow leaking into Notifications. Asserting only
+   * its ABSENCE would be a weaker test than the one it replaces, so this also
+   * proves the state landed on the work order: the field did not vanish, it
+   * moved, and a future change that drops it entirely fails here.
+   */
+  it('SPLIT: delivery state lands on the work order and NEVER on the notification', async () => {
+    const ctx = buildDbMock({
+      docs: { 'businessSettings/admins': { uids: ['admin1'] } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await enqueueNotification({
+      key: 'kincare.booking.confirm',
+      recipientUid: 'kinUid',
+      data: { bookingId: 'b1', kinfolkId: 'kfId' },
+    });
+
+    const inbox = ctx.writes.filter((w) => w.path.startsWith('notifications/'));
+    expect(inbox.length).toBeGreaterThan(0);
+    for (const w of inbox) {
+      expect(w.data.status, 'inbox doc must carry no dispatch status').toBeUndefined();
+      expect(w.data.mode, 'inbox doc must carry no delivery mode').toBeUndefined();
+      expect(w.data.channels, 'inbox doc must carry no channel list').toBeUndefined();
+      // ...while keeping everything a card actually renders.
+      expect(w.data.title).toBeTruthy();
+      expect(w.data.targetType).toBe('booking');
+    }
+
+    const orders = ctx.writes.filter((w) => w.path.startsWith('notificationDispatch/'));
+    expect(orders.length).toBe(inbox.length);
+    for (const w of orders) {
+      expect(w.data).toMatchObject({
+        key: 'kincare.booking.confirm',
+        mode: 'trigger',
+        status: 'pending',
+        channels: ['email'],
+      });
+      expect(w.data.notificationId).toBe(w.path.slice('notificationDispatch/'.length));
+    }
   });
 
   it('SAD: missing recipientUid still dispatches business side (primary fails, secondary OK)', async () => {
@@ -173,10 +237,13 @@ describe('enqueueNotification fan-out (audience:both)', () => {
     });
 
     expect(ids.length).toBe(2);
-    const kinWrite = ctx.writes.find((w) => w.data.recipientUid === 'kinUid');
-    const staffWrite = ctx.writes.find((w) => w.data.recipientUid === 'admin1');
-    expect(kinWrite!.data.channels).toEqual(['email']); // sms gated off for the kinfolk stream
-    expect(staffWrite!.data.channels).toEqual(['email', 'sms']); // business stream keeps sms
+    // Resolved channels are read off the WORK ORDER since R5; the notification
+    // doc for each copy no longer carries them.
+    const orders = ctx.writes.filter((w) => w.path.startsWith('notificationDispatch/'));
+    const kinOrder = orders.find((w) => w.data.recipientUid === 'kinUid');
+    const staffOrder = orders.find((w) => w.data.recipientUid === 'admin1');
+    expect(kinOrder!.data.channels).toEqual(['email']); // sms gated off for the kinfolk stream
+    expect(staffOrder!.data.channels).toEqual(['email', 'sms']); // business stream keeps sms
   });
 
   it('STREAMS: streams.business.enabled=false suppresses only the business copies', async () => {
@@ -261,7 +328,10 @@ describe('enqueueNotification fan-out (audience:both)', () => {
     });
 
     expect(ids.length).toBe(2);
-    for (const w of ctx.writes.filter((w) => w.path.startsWith('notifications/'))) {
+    // Read off the WORK ORDER, not the notification (R5): the resolved channel
+    // set is delivery state, and the assertion follows it to its new home
+    // rather than being deleted along with the field it was reading.
+    for (const w of ctx.writes.filter((w) => w.path.startsWith('notificationDispatch/'))) {
       expect(w.data.channels, `${String(w.data.recipientUid)} copy`).toEqual(['email']);
     }
   });
@@ -285,7 +355,14 @@ describe('enqueueNotification fan-out (audience:both)', () => {
     expect(notifDoc?.data).toMatchObject({
       key: 'auth.password.reset',
       recipientUid: 'kinUid',
+    });
+    // The email channel is proven on the work order (R5), where it now lives.
+    const order = ctx.writes.find((w) => w.path.startsWith('notificationDispatch/'));
+    expect(order?.data).toMatchObject({
+      key: 'auth.password.reset',
+      recipientUid: 'kinUid',
       channels: ['email'],
+      status: 'pending',
     });
   });
 });

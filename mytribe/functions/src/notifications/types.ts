@@ -160,6 +160,112 @@ export interface EnqueueArgs {
   targetId?: string;
 }
 
+/**
+ * The entity detail a notification CARD renders, resolved once server-side at
+ * enqueue time and stamped on `notifications/{id}.detail`.
+ *
+ * WHY THIS EXISTS (operator ruling R5, 2026-08-03). The card used to say
+ * "A KinCare visit was assigned" and nothing else: no household, no pet, no
+ * date, no time, no notes. Every one of those values was already computed, by
+ * `enrichTemplateData`, at channel fan-out time, purely so a `{{token}}` could
+ * be substituted into an email, and then thrown away. The card fell back to a
+ * catalog label plus whatever the client could re-derive.
+ *
+ * So this is a WRITE-BACK, not a new computation: `buildNotificationDetail`
+ * asks the same enricher for the same fields and persists the answer. Clients
+ * render it; they never recompute it. A client that re-resolved a booking would
+ * need read access to `families/{id}/bookings/**`, which the admin has and the
+ * recipient kinfolk does not, so the two surfaces would disagree about the same
+ * notification.
+ *
+ * EVERY FIELD IS OPTIONAL AND EVERY ABSENT FIELD MEANS "not resolvable", never
+ * "empty". A key whose event has no booking has no `bookingDate`, and the card
+ * renders no date line rather than a blank one or a fabricated placeholder.
+ */
+export interface NotificationDetail {
+  /** Household display name (the emitter's, else the family/client doc's). */
+  kinfolkName?: string;
+  /** The kin (pets) the event concerns, comma-joined. */
+  kinName?: string;
+  /** Service the visit/booking is for. */
+  serviceType?: string;
+  /** Booking date, pre-formatted in the business timezone ("Mon, Jun 15"). */
+  bookingDate?: string;
+  /** Booking start time, pre-formatted in the business timezone ("2:30 PM"). */
+  bookingTime?: string;
+  /** Free-text notes the requester attached to the booking. */
+  notes?: string;
+  /** Invoice number, for invoice-class notifications. */
+  invoiceNumber?: string;
+  /** Invoice amount, pre-formatted ("$120.00"). */
+  amount?: string;
+  /** Invoice due date, pre-formatted. */
+  dueDate?: string;
+  /**
+   * Who caused the event, resolved from `actorUid`. Duplicated from the doc's
+   * own `actorName` on purpose: the card's detail block is a self-contained
+   * answer to "who requested this", and reading it from two places on the same
+   * doc is how the two drift.
+   */
+  requestedBy?: string;
+}
+
+/**
+ * The INBOX document: `notifications/{id}`.
+ *
+ * This is what an operator or a kinfolk reads. It carries what the event WAS
+ * and what it points at. It carries no delivery state at all, and that absence
+ * is the whole point of this interface existing.
+ *
+ * The delivery pipeline lives in `NotificationDispatchDoc` below, on its own
+ * collection, and the record of what the pipeline DID lives in `activity_log`.
+ * Those two facts used to be stamped here, so the inbox rendered "trigger",
+ * "channels: email, sms" and "dispatched" as primary card content and the
+ * operator quite reasonably said the Notifications screen had become a second
+ * Activity Log.
+ */
+export interface NotificationDoc {
+  key: string;
+  category: Category | string;
+  recipientUid: string;
+  actorUid: string | null;
+  /** Catalog label. */
+  title: string;
+  /** Catalog description. */
+  description: string;
+  actorName: string;
+  actorPhotoUrl: string;
+  /** The emitter's free-form merge bag, verbatim. */
+  data: Record<string, unknown>;
+  targetType: NotificationTargetType;
+  targetId: string;
+  /** Resolved entity detail for the card. Absent when nothing resolved. */
+  detail?: NotificationDetail;
+}
+
+/**
+ * The WORK ORDER: `notificationDispatch/{id}`, id-matched to its notification.
+ *
+ * Everything the delivery pipeline needs and nothing a reader of the inbox
+ * does. `onNotificationDispatchCreate` fans this out into
+ * `notificationDispatch/{id}/channels/{channel}` subdocs, one per channel, and
+ * `onNotificationChannelCreate` drives each one to sent/skipped/failed.
+ *
+ * `status` and `mode` are honest fields HERE: this document IS the workflow.
+ * They were dishonest on the notification doc, which is a piece of mail.
+ */
+export interface NotificationDispatchDoc {
+  /** Id of the `notifications/{id}` this is delivering. Same as this doc's id. */
+  notificationId: string;
+  key: string;
+  recipientUid: string;
+  /** Merge bag, needed by the channel senders. */
+  data: Record<string, unknown>;
+  mode: string;
+  channels: Channel[];
+  status: 'pending' | 'dispatched' | 'no-channels';
+}
+
 /** Per-user prefs document shape (stored on clients/{uid} or staff/{uid}). */
 export interface UserNotificationPrefs {
   byCategory?: Partial<Record<Category, Partial<ResolvedChannels>>>;

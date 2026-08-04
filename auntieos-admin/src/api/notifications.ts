@@ -23,13 +23,51 @@ import type { Timestamp } from 'firebase/firestore';
  *
  * EVERY document-sourced field below is optional, including ones dispatcher.ts
  * always writes today. This interface is a CAST over raw Firestore data, not a
- * validation of it: nothing checks a document actually has `channels` before
- * TypeScript promises `string[]`, and `.length` on an absent field throws,
- * which React's error boundary turns into a blank Notifications page over one
- * legacy or hand-seeded row. Read them through `str`/`arr` (lib/coerce) or a
- * `??`/`||` fallback at the point of use. `_id` stays required, `useCollection`
- * sets it from the document id, so it is never absent.
+ * validation of it: nothing checks a document actually has the field before
+ * TypeScript promises its type, and a `.length` or `.slice()` on an absent one
+ * throws, which React's error boundary turns into a blank Notifications page
+ * over a single legacy or hand-seeded row. Read them through `str`/`rec`
+ * (lib/coerce) or a `??`/`||` fallback at the point of use. `_id` stays
+ * required, `useCollection` sets it from the document id, so it is never absent.
+ *
+ * NO DELIVERY STATE (operator ruling R5, 2026-08-03). `status`, `mode` and
+ * `channels` used to sit here and were rendered as primary card content: the
+ * row printed "bookings · trigger", "channels: email, sms" and a "dispatched"
+ * pill, and the stat strip carried a "Dispatched" tile. That is the delivery
+ * pipeline's state, not the notification's, and the operator's ruling was
+ * blunt: "Channels, trigger, and dispatched are activity log not notification."
+ * It now lives on `notificationDispatch/{id}` (id-matched to the notification),
+ * and the record of what the pipeline DID is written to the hash-chained
+ * `activity_log` as NOTIFICATION_DISPATCHED / NOTIFICATION_RECEIVED, which is
+ * where the Activity Log screen shows it.
+ *
+ * Legacy documents still carry those three fields on the wire. They are simply
+ * not read, which is what makes `mytribe/scripts/backfillNotificationDeliverySplit.ts`
+ * a convergence step rather than a prerequisite: an unmigrated row renders
+ * identically to a new one.
  */
+/**
+ * The resolved entity detail on a notification (`detail` below). Mirrors
+ * `NotificationDetail` in mytribe/functions/src/notifications/types.ts.
+ *
+ * Every field optional, and an absent field is a real signal: the server could
+ * not resolve it. `lib/notificationDetail.ts` turns this into labelled display
+ * rows and drops the absent ones, which is the only place a renderer should
+ * read it.
+ */
+export interface NotificationDetail {
+  kinfolkName?: string;
+  kinName?: string;
+  serviceType?: string;
+  bookingDate?: string;
+  bookingTime?: string;
+  notes?: string;
+  invoiceNumber?: string;
+  amount?: string;
+  dueDate?: string;
+  requestedBy?: string;
+}
+
 export interface NotificationEntry {
   _id: string;
   key?: string | undefined; // catalog key, e.g. 'kincare.booking.confirm'
@@ -44,9 +82,23 @@ export interface NotificationEntry {
   description?: string;
   actorName?: string | null;
   actorPhotoUrl?: string | null;
-  status?: string | undefined; // pending | dispatched
-  mode?: string | undefined; // trigger | debounced | batched | scheduled
-  channels?: string[] | undefined;
+  /**
+   * The entity this notification is ABOUT, resolved server-side at dispatch and
+   * stamped on the doc (operator ruling R5, 2026-08-03).
+   *
+   * Every value here was already being computed by `enrichTemplateData` to fill
+   * merge fields in the outbound email, and then discarded, so the card said "A
+   * KinCare visit was assigned" and nothing more. The operator's list, verbatim:
+   * "Who requested, For which kinfolk, what date, what time, wheres the notes."
+   * That list is this interface.
+   *
+   * NEVER RECOMPUTED HERE. Resolving a booking client-side would need read
+   * access to `families/{id}/bookings/**`, which an admin has and a recipient
+   * kinfolk does not, so the two surfaces would disagree about the same
+   * notification. An absent field means "not resolvable", never "empty": render
+   * no line rather than a blank one.
+   */
+  detail?: NotificationDetail;
   createdAt?: Timestamp | null | undefined;
   readAt?: Timestamp;
   targetType?: string | undefined; // '' | 'booking' | 'invoice' | 'kintale' | 'kinfolk'

@@ -1,4 +1,5 @@
 import { dayKey, isRead, type NotificationEntry } from '../api/notifications';
+import { applicableNotificationActions } from './notificationActions';
 
 /**
  * Pure `notifications` feed selectors, shared by the Notifications SCREEN and
@@ -92,22 +93,30 @@ export function unreadNotificationCount(rows: readonly NotificationEntry[]): num
 }
 
 /**
- * How many of these rows the dispatcher says it actually DELIVERED.
+ * How many of these rows are waiting on a DECISION from the operator.
  *
- * A separate axis from read state, and the reason the Notifications stat strip
- * carries both: `status` describes the dispatcher's own pipeline (a `pending`
- * row is one the sender has not gotten out of the door yet), while `readAt`
- * describes the operator. A dispatched notification can be unread, and an unread
- * notification can be one that never went anywhere. Collapsing the two would
- * hide a delivery outage behind a healthy-looking inbox.
+ * REPLACES `dispatchedNotificationCount`, which counted rows whose `status` the
+ * dispatcher had stamped 'dispatched'. That figure fed the stat strip's third
+ * tile, and it was the clearest expression of the problem operator ruling R5
+ * named: it described the delivery pipeline's own health on a screen that is
+ * supposed to describe the operator's workload. "Dispatched" is now recorded in
+ * the hash-chained `activity_log` (NOTIFICATION_DISPATCHED) and the state itself
+ * lives on `notificationDispatch/{id}`; neither belongs on a card or in a count
+ * beside "Unread".
+ *
+ * What replaces it answers the question the screen should have been answering:
+ * how many of these need you to do something. That is exactly the set whose
+ * quick-action bar offers Approve / Deny, i.e. booking notifications carrying a
+ * real target, so the number and the buttons can never disagree: both come from
+ * the same `applicableNotificationActions` decision.
  *
  * Counted over the ACTIVE feed, like every other figure on the strip, so
  * archiving a row takes it out of all three counts together rather than out of
  * some of them.
  */
-export function dispatchedNotificationCount(rows: readonly NotificationEntry[]): number {
+export function actionableNotificationCount(rows: readonly NotificationEntry[]): number {
   return activeNotifications(rows).filter(
-    (r) => (r.status ?? '').trim().toLowerCase() === 'dispatched',
+    (r) => applicableNotificationActions(r).bookingId !== '',
   ).length;
 }
 

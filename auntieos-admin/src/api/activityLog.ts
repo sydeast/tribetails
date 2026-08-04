@@ -23,6 +23,33 @@ export interface ActivityLogEntry {
   seq?: number; // hash-chain sequence; absent on legacy pre-chain rows
   prevHash?: string | undefined;
   entryHash?: string | undefined;
+  /**
+   * THE FORENSIC FIELDS, and they were the operator's complaint about this
+   * screen: "the Activity Log is seriously lacking, cant see shit or what the
+   * fuck actually happened."
+   *
+   * `writeAuditEntry` has written every one of these on every entry since
+   * 2026-05-19. Its own docstring calls them "Functions-only fields retained
+   * for forensic value (not read by mobile/web admin lists, surfaced in detail
+   * views)", and there was no detail view, so nothing ever surfaced them. The
+   * row rendered actionType, description, actor and target and stopped, which is
+   * why a NOTIFICATION_RECEIVED entry could say "Notification X delivered via
+   * email" and be unable to tell you to whom, over which provider, or with what
+   * message id, all three of which were sitting in `payload` on the same
+   * document.
+   *
+   * `payload` is `unknown` on purpose: it is per-event-type and has no schema,
+   * so any narrower promise here would be one nothing keeps. Read it through
+   * `activityPayloadRows` (lib/activityDetail.ts), which flattens it defensively.
+   */
+  payload?: unknown;
+  severity?: string | undefined; // info | warn | critical
+  actorRole?: string | undefined; // SYSTEM | PRIMARY | AUNTIE | …
+  familyId?: string | undefined;
+  requestId?: string | undefined;
+  clientRequestId?: string | undefined;
+  ip?: string | undefined;
+  userAgent?: string | undefined;
 }
 
 /**

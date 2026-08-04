@@ -88,16 +88,32 @@ describe('broadcastMessage happy path', () => {
     expect(mocks.twilioCreate.mock.calls[0][0].body).toBe('B');
   });
 
-  it('writes an in-app notification doc with title + body and empty channels', async () => {
+  /**
+   * R5: a broadcast writes an inbox document and NO work order.
+   *
+   * It used to write `channels: []` onto the notification so the fan-out trigger
+   * would stamp it 'no-channels'. That was delivery state on a card, used to
+   * express "do not deliver this". The ABSENCE of a `notificationDispatch` doc
+   * now says the same thing, in the collection that owns the question, so this
+   * asserts absence rather than an empty array.
+   */
+  it('writes an in-app notification doc with title + body and NO dispatch work order', async () => {
     const ctx = kinfolkDb();
     mocks.dbFn.mockReturnValue(ctx.db);
     await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['inapp'], subject: 'T', body: 'B' }));
     const w = ctx.writes.find((x) => x.path.startsWith('notifications/'));
     expect(w?.data.title).toBe('T');
     expect(w?.data.body).toBe('B');
-    expect(w?.data.channels).toEqual([]);
+    // Mirrored onto `description`, the field every card renderer already reads.
+    // `body` alone was written by this callable and read by nothing, so a
+    // broadcast landed in the inbox as a bare subject line.
+    expect(w?.data.description).toBe('B');
+    expect(w?.data.channels).toBeUndefined();
+    expect(w?.data.status).toBeUndefined();
+    expect(w?.data.mode).toBeUndefined();
     expect(w?.data.recipientUid).toBe('u1');
     expect(w?.data.key).toBe('broadcast.message');
+    expect(ctx.writes.some((x) => x.path.startsWith('notificationDispatch/'))).toBe(false);
   });
 });
 

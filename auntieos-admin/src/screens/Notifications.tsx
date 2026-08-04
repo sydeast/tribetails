@@ -19,7 +19,7 @@ import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/director
 import { useCollection } from '../lib/firestore';
 import {
   NOTIF_UNREAD_FILTER,
-  dispatchedNotificationCount,
+  actionableNotificationCount,
   isNotificationArchived,
   notificationCategories,
   notificationsByDay,
@@ -30,11 +30,16 @@ import {
   type NotificationArchivedMode,
 } from '../lib/notificationsFeed';
 import { notificationKinfolkName, notificationTargetLabel } from '../lib/notificationContext';
+import {
+  hasNotificationDetail,
+  notificationDetailRows,
+  notificationDetailSummary,
+} from '../lib/notificationDetail';
 import { type NotificationRoute } from '../lib/notificationActions';
 import { useBulkMarkRead } from '../lib/useBulkMarkRead';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { asyncScalar } from '../lib/async';
-import { arr, str } from '../lib/coerce';
+import { str } from '../lib/coerce';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { NotificationQuickActions } from '../components/NotificationQuickActions';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -60,17 +65,44 @@ export interface NotificationsProps {
 /**
  * Admin Notifications inbox ("The Den · Notifications").
  *
- * WHY THIS IS NOT THE ACTIVITY LOG (operator issue #20). Both screens read an
- * append-only stream of events, and until now both RENDERED like one: a key, a
- * category, a timestamp. That is correct for `ActivityLog.tsx`, whose austerity
- * is the point, it is a tamper-evident, hash-chained audit trail and its rows
- * are evidence. It is wrong here. A notification is not evidence, it is a piece
- * of WORK: it concerns a household, it points at an invoice or a booking or a
- * KinTale, and the operator should be able to act on it without first going to
- * find out what it was about. So this feed carries the context the docs already
- * hold (household, catalog title and description, actor, linked entity) and a
- * quick-action bar that does the obvious next thing. The Activity Log is
- * untouched.
+ * WHY THIS IS NOT THE ACTIVITY LOG (operator issue #20, and then ruling R5).
+ * Both screens read an append-only stream of events, and both once RENDERED
+ * like one: a key, a category, a timestamp. That is correct for
+ * `ActivityLog.tsx`, whose austerity is the point, it is a tamper-evident,
+ * hash-chained audit trail and its rows are evidence. It is wrong here. A
+ * notification is not evidence, it is a piece of WORK: it concerns a household,
+ * it points at an invoice or a booking or a KinTale, and the operator should be
+ * able to act on it without first going to find out what it was about.
+ *
+ * Issue #20 added the household and the catalog title. R5 (2026-08-03) finished
+ * the job, because half of it was still wrong in both directions:
+ *
+ *   1. WORKFLOW WAS STILL ON THE CARD. The row printed the delivery mode
+ *      ("bookings · trigger"), the transports ("channels: email, sms") and a
+ *      dispatch-status pill, and the stat strip counted "Dispatched". Verbatim:
+ *      "there are many Activity Log records and workflow (Channels, trigger,
+ *      and dispatched are activity log not notification) in Notifications."
+ *      Every one of those is gone from here. The state lives on
+ *      `notificationDispatch/{id}` and the RECORD of it is written to
+ *      `activity_log` (NOTIFICATION_DISPATCHED / NOTIFICATION_RECEIVED), so the
+ *      Activity Log gained exactly what this screen lost.
+ *
+ *   2. THE ENTITY DETAIL WAS MISSING. Verbatim: "I see the A KinCare visit was
+ *      assigned and the CTAs for the workflow but I do not see the
+ *      KinCare/Booking details. Who requested, For which kinfolk, what date,
+ *      what time, wheres the notes." Those five are now resolved server-side at
+ *      dispatch and stamped on the doc as `detail`; the row summarises them
+ *      inline and OPENS to the full block (see NotificationRow).
+ *
+ * WHY AN EXPANSION AND NOT A DETAIL ROUTE. There is no notification-detail
+ * mockup in `ui-ideas/`, and CLAUDE.md is explicit that a screen with no live
+ * mockup does not get one invented. What the mockups DO carry is a directive in
+ * a filename, `auntieos-manage-bookings-2026-05-27-cardsShouldOpenDisplayingFullerDetails.html`,
+ * and per CLAUDE.md a filename directive is part of the spec: cards should
+ * OPEN DISPLAYING FULLER DETAILS. An in-place disclosure is the literal reading
+ * of that, and it is also the better one here: triage means comparing rows, and
+ * a route would throw the feed away to show one. The entities themselves keep
+ * their own screens, which is what the Open button is for.
  *
  * TWO LISTENERS. The feed itself (`NOTIFICATIONS_QUERY`, createdAt desc, capped
  * 200) plus the `kinfolk` directory (`KINFOLK_QUERY`), because notification docs
@@ -280,7 +312,7 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
   // whole reason StatCard exists; see the note on it in DenScreenKit.tsx.
   const totalCount = asyncScalar(rows, () => inScope.length);
   const unreadStat = asyncScalar(rows, () => unreadNotificationCount(inScope));
-  const dispatchedStat = asyncScalar(rows, () => dispatchedNotificationCount(inScope));
+  const actionableStat = asyncScalar(rows, () => actionableNotificationCount(inScope));
 
   // The heading badge. Only claimed once the stream has actually resolved, never
   // a fabricated 0 while loading/erroring (the StatCard / AsyncRegion policy
@@ -330,11 +362,20 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
           tone={unreadStat.kind === 'value' && unreadStat.value > 0 ? 'warning' : 'muted'}
           feature={unreadStat.kind === 'value' && unreadStat.value > 0}
         />
-        {/* A DIFFERENT AXIS FROM UNREAD, and the reason both are here: `status`
-            is the dispatcher's pipeline, `readAt` is the operator. A pile of
-            pending rows is a delivery problem, and it would be invisible behind
-            a healthy-looking unread count. */}
-        <StatCard label="Dispatched" value={dispatchedStat} trend="delivered by the sender" tone="success" />
+        {/* WAS "Dispatched", counting rows the SENDER had gotten out of the
+            door. That is the delivery pipeline's health, on a screen about the
+            operator's workload, and it is the tile operator ruling R5 named
+            outright. What is here instead answers the question the strip should
+            answer: how many of these are waiting on a decision from you. It is
+            derived from the same `applicableNotificationActions` that decides
+            which rows get Approve/Deny buttons, so the number and the buttons
+            can never disagree. */}
+        <StatCard
+          label="Needs a decision"
+          value={actionableStat}
+          trend="approve or deny"
+          tone={actionableStat.kind === 'value' && actionableStat.value > 0 ? 'warning' : 'muted'}
+        />
       </div>
 
       {selectedIds.size > 0 ? (
@@ -561,18 +602,25 @@ function NotificationRow({
   // different action. Android's Invoices list has exactly this hole and its own
   // comment names it.
   const archived = isNotificationArchived(entry);
-  // `channels` is absent on rows dispatched before it was written; `.length` on
-  // undefined would blank the page.
-  const channels = arr<string>(entry.channels);
   const targetLabel = notificationTargetLabel(entry);
   // AO-28: prefer the human title (catalog label); fall back to the raw key for
   // pre-AO-28 rows.
   const title = entry.title || entry.key || '(no key)';
 
+  // R5: the card opens. Collapsed by default because triage is a scanning task
+  // and eight open cards is not a feed; the inline summary below is what makes
+  // the collapsed state useful enough to leave collapsed.
+  const [open, setOpen] = useState(false);
+  const detailRows = notificationDetailRows(entry);
+  const canOpen = hasNotificationDetail(entry);
+  const summary = notificationDetailSummary(entry);
+  const detailId = `notif-detail-${entry._id}`;
+
   const rowClass = [
     'notif-row',
     read ? null : 'notif-row--unread',
     archived ? 'notif-row--archived' : null,
+    open ? 'notif-row--open' : null,
   ]
     .filter(Boolean)
     .join(' ');
@@ -595,22 +643,58 @@ function NotificationRow({
           </span>
         ) : null}
 
-        <span className="notif-row__key">{title}</span>
+        {/* THE HEADLINE IS THE DISCLOSURE CONTROL when there is something to
+            disclose, so the whole title is the hit target rather than a small
+            chevron beside it. A row whose server-side `detail` resolved nothing
+            renders a plain heading and no control at all: a button that opens
+            onto an empty box is worse than no button, the same rule
+            `applicableNotificationActions` applies to the Open CTA. */}
+        {canOpen ? (
+          <button
+            type="button"
+            className="notif-row__key notif-row__key--button"
+            aria-expanded={open}
+            aria-controls={detailId}
+            onClick={() => setOpen((v) => !v)}
+          >
+            {title}
+            <span aria-hidden="true" className="notif-row__caret">
+              {open ? '▾' : '▸'}
+            </span>
+          </button>
+        ) : (
+          <span className="notif-row__key">{title}</span>
+        )}
         {entry.description ? <span className="notif-row__desc">{entry.description}</span> : null}
+
+        {/* Kin · date · time on the collapsed row. The whole complaint was that
+            a KinCare notification looked identical to every other KinCare
+            notification; these are the three values that tell them apart. */}
+        {summary !== '' && !open ? (
+          <span className="notif-row__summary">{summary}</span>
+        ) : null}
+
+        {open ? (
+          <dl className="notif-row__detail" id={detailId}>
+            {detailRows.map((row) => (
+              <div
+                key={row.field}
+                className={
+                  row.multiline
+                    ? 'notif-row__detail-item notif-row__detail-item--block'
+                    : 'notif-row__detail-item'
+                }
+              >
+                <dt className="notif-row__detail-label">{row.label}</dt>
+                <dd className="notif-row__detail-value">{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
 
         <span className="notif-row__meta">
           {entry.actorName ? `${entry.actorName} · ` : ''}
-          {entry.category || 'uncategorized'} · {entry.mode || 'trigger'}
-        </span>
-
-        {channels.length > 0 ? (
-          <span className="notif-row__channels">channels: {channels.join(', ')}</span>
-        ) : null}
-
-        <span
-          className={`notif-row__status notif-row__status--${(entry.status || 'unknown').toLowerCase()}`}
-        >
-          {entry.status || 'unknown'}
+          {entry.category || 'uncategorized'}
         </span>
 
         <NotificationQuickActions
