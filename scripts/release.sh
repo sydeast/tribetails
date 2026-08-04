@@ -76,6 +76,10 @@
 #   RELEASE_PREDEPLOY_KEEP=N            prune to N revisions per service before a
 #                                       LARGE functions deploy (3; 0 disables).
 #   RELEASE_RETRY_KEEP=N                prune depth between retry rounds (2).
+#   RELEASE_PRUNE_BRANCHES=0            skip deleting merged remote branches
+#                                       after the tag (on by default).
+#   BRANCH_PRUNE_MIN_AGE_DAYS=N         how long a merged branch stays quiet
+#                                       before the prune will take it (1).
 #   RELEASE_ANDROID_GROUPS=a,b          App Distribution group aliases to send
 #   RELEASE_ANDROID_TESTERS=a@b,c@d     to. Neither set means every tester on
 #                                       the project; nobody at all REFUSES the
@@ -1480,6 +1484,22 @@ $SHIPPED"
     TAG_PUSHED=1
     grn "tag: $TAG pushed"
   fi
+fi
+
+# BRANCH HYGIENE, AFTER THE TAG AND ONLY AFTER IT.
+#
+# It runs here, past the point where the release is already true, because that
+# is what makes it safe to be non-fatal: nothing below this line can make a
+# shipped release un-ship. The script never exits non-zero for the same reason.
+#
+# It only deletes remote branches already merged into main, skips open PR heads
+# and anything merged more recently than its grace period, and writes a restore
+# line per deletion first. See scripts/prune-merged-branches.sh for why the
+# grace period exists (PR #231 merged mid-push and the branch still held work).
+if [ "${RELEASE_PRUNE_BRANCHES:-1}" = "1" ]; then
+  bash "$ROOT/scripts/prune-merged-branches.sh" || true
+else
+  ylw "branch prune disabled (RELEASE_PRUNE_BRANCHES=0)."
 fi
 
 trap - EXIT
