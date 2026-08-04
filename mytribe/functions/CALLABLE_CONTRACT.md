@@ -1577,10 +1577,16 @@ callable is the enforcement.
   (`"September 3, 2025 2:02pm"`) and ISO everywhere else. Firestore orders
   strings by UTF-8 byte, so every legacy row sorts above every ISO row in DESC,
   and legacy rows sort among themselves alphabetically by month name. Verified
-  against prod 2026-08-01. After the operator's redating (legacy `createdAt`
-  becomes the `_migratedAt` ingest stamp; `createdAt` then means created in
-  AuntieOS) the ordering becomes real and orphans, pinned at the May 2026 ingest
-  date, drift off the page as new reports accumulate. This callable is one
+  against prod 2026-08-01. The repair is
+  `mytribe/scripts/backfillKinTaleCreatedAtProvenance.ts`: an imported row's
+  `createdAt` becomes the ORIGINAL creation instant recovered from the previous
+  system, the ingest instant keeps `_migratedAt`, and a new `createdAtSource`
+  field (`live` / `original` / `import`) says which of the two `createdAt`
+  actually is. After it the ordering becomes real, and orphans, sorted by when
+  their visits were really written up in 2025 and early 2026, drift off the page
+  as new reports accumulate. (An earlier ruling on 2026-08-01 redated imported
+  rows to the ingest stamp instead. The operator reversed it on 2026-08-04 and
+  that script is deleted.) This callable is one
   bounded, unordered, single-predicate read, correct under both regimes and
   served by Firestore's automatic per-field index; a second predicate, or an
   `orderBy` on another field, would force a composite index. The rest of the

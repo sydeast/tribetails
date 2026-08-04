@@ -1,11 +1,22 @@
 """Unit tests for the visit_logs -> kin_care_reports migration helpers.
 
-Covers punchlist F7's source fix: `createdAt` must be the INGEST instant, never
-`visit_logs.submitted` free text, so that a re-run of this migration cannot
-reintroduce the two-format defect that
-mytribe/scripts/backfillKinTaleCreatedAt.ts exists to repair.
+Covers the source fix for the operator's 2026-08-04 ruling: `createdAt` must be
+the ORIGINAL creation instant PARSED from `visit_logs.submitted`, never the raw
+free text (which sorts by month name) and never the ingest date (which makes
+every imported row claim it was created the day it was imported). A row whose
+submit stamp cannot be parsed is MARKED `createdAtSource='import'` rather than
+passing its ingest date off as a creation date.
+
+Both halves matter, because this field has been wrong in both directions. The
+repair for rows already in production is
+mytribe/scripts/backfillKinTaleCreatedAtProvenance.ts; these tests pin the
+source, so a re-run of this migration cannot reintroduce either defect.
 """
-from migrate_visit_logs_to_kin_care_reports import convert, parse_legacy_stamp
+from migrate_visit_logs_to_kin_care_reports import (
+    convert,
+    created_at_stamp,
+    parse_legacy_stamp,
+)
 
 
 class TestParseLegacyStamp:
@@ -76,28 +87,56 @@ VL = {
 }
 
 
-class TestConvertCreatedAt:
-    def test_created_at_is_the_ingest_instant_not_the_submit_text(self):
-        _, report, _ = convert("57", VL, {"j1"}, "2026-05-16T20:36:39Z")
-        assert report["createdAt"] == "2026-05-16T20:36:39Z"
-        assert report["createdAt"] != VL["submitted"]
+class TestCreatedAtStamp:
+    def test_a_parsed_submit_stamp_is_the_original(self):
+        assert created_at_stamp("2025-09-03T14:02:00Z", "2026-05-16T20:36:39Z") == (
+            "2025-09-03T14:02:00Z", "original")
 
-    def test_created_at_equals_migrated_at_by_construction(self):
+    def test_no_submit_stamp_falls_back_to_ingest_and_MARKS_it(self):
+        # The whole point of the marker: this createdAt is the day the row was
+        # imported, it is not a creation date, and a reader can tell.
+        assert created_at_stamp(None, "2026-05-16T20:36:39Z") == (
+            "2026-05-16T20:36:39Z", "import")
+
+    def test_it_never_returns_live_because_an_imported_row_was_not_created_here(self):
+        for submitted in ("2025-09-03T14:02:00Z", None, ""):
+            assert created_at_stamp(submitted, "2026-05-16T20:36:39Z")[1] != "live"
+
+
+class TestConvertCreatedAt:
+    def test_created_at_is_the_ORIGINAL_creation_instant_not_the_ingest_date(self):
+        # The operator's 2026-08-04 ruling, in one assertion. A report written in
+        # September 2025 was created in September 2025.
         _, report, _ = convert("57", VL, {"j1"}, "2026-05-16T20:36:39Z")
-        # The redate migration reads _migratedAt to repair old rows. If a re-run
-        # of THIS script disagreed with itself, that repair would have no anchor.
-        assert report["createdAt"] == report["_migratedAt"]
+        assert report["createdAt"] == "2025-09-03T14:02:00Z"
+        assert report["createdAtSource"] == "original"
+
+    def test_created_at_is_parsed_not_the_raw_free_text(self):
+        # Unparsed, "September 3, 2025 2:02pm" sorts above every ISO row by
+        # UTF-8 byte and among itself alphabetically by month name.
+        _, report, _ = convert("57", VL, {"j1"}, "2026-05-16T20:36:39Z")
+        assert report["createdAt"] != VL["submitted"]
+        assert report["createdAt"] < "2025-12-02T19:00:00Z"
+
+    def test_the_ingest_instant_keeps_its_own_field(self):
+        # Nothing is lost by moving createdAt off it: _migratedAt is the field
+        # that was always named for when the row entered this system.
+        _, report, _ = convert("57", VL, {"j1"}, "2026-05-16T20:36:39Z")
+        assert report["_migratedAt"] == "2026-05-16T20:36:39Z"
+        assert report["createdAt"] != report["_migratedAt"]
 
     def test_the_human_submit_stamp_survives_parsed_and_sortable(self):
         _, report, _ = convert("57", VL, {"j1"}, "2026-05-16T20:36:39Z")
         assert report["_legacySubmittedAt"] == "2025-09-03T14:02:00Z"
 
-    def test_unparseable_submit_stamp_leaves_it_blank_never_guessed(self):
+    def test_unparseable_submit_stamp_is_MARKED_import_never_guessed(self):
         vl = dict(VL, submitted="sometime last Tuesday")
         _, report, _ = convert("57", vl, {"j1"}, "2026-05-16T20:36:39Z")
         assert report["_legacySubmittedAt"] == ""
-        # And createdAt is still the ingest instant: the two are independent.
+        # It keeps a date that is TRUE (the day it was imported) and says so,
+        # rather than passing the import date off as a creation date.
         assert report["createdAt"] == "2026-05-16T20:36:39Z"
+        assert report["createdAtSource"] == "import"
 
     def test_the_human_original_is_still_on_the_row_verbatim(self):
         _, report, _ = convert("57", VL, {"j1"}, "2026-05-16T20:36:39Z")
@@ -109,7 +148,16 @@ class TestConvertCreatedAt:
     def test_one_ingest_instant_is_shared_across_a_run(self):
         _, a, _ = convert("1", VL, {"j1"}, "2026-05-16T20:36:39Z")
         _, b, _ = convert("2", VL, {"j1"}, "2026-05-16T20:36:39Z")
-        assert a["createdAt"] == b["createdAt"]
+        assert a["_migratedAt"] == b["_migratedAt"]
+
+    def test_two_rows_from_different_days_no_longer_share_a_created_at(self):
+        # The F7 redate collapsed all 83 rows onto one instant, which made their
+        # true sequence unreadable by any query. Recovering the original restores
+        # it.
+        _, a, _ = convert("1", VL, {"j1"}, "2026-05-16T20:36:39Z")
+        _, b, _ = convert("2", dict(VL, submitted="March 31, 2026 10:16am"), {"j1"},
+                          "2026-05-16T20:36:39Z")
+        assert a["createdAt"] < b["createdAt"]
 
     def test_orphan_tagging_is_unchanged(self):
         doc_id, report, is_orphan = convert("79", VL, set(), "2026-05-16T20:36:39Z")

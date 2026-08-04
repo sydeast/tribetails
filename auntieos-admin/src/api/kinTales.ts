@@ -84,8 +84,29 @@ export interface KinTaleEntry {
   sentAt?: string | undefined;
   /** Free-text send channel, or a `legacy_*` backfill marker, see `lib/kinTaleFormat.ts#sentViaLabel`. */
   sentVia?: string | undefined;
-  /** Same caveat as `visitDate`; stamped on every real write (create AND update). */
+  /**
+   * WHEN THIS RECAP CAME INTO EXISTENCE. Same free-text ISO caveat as
+   * `visitDate`, and stamped on every real write (create AND update).
+   *
+   * For a report imported from the previous system this is the previous
+   * system's own creation instant, NOT the day it was imported (operator's
+   * ruling, 2026-08-04). Read `createdAtSource` before treating it as a fact
+   * about the record; on some imported rows it is the import date, because
+   * nothing recoverable said otherwise.
+   */
   createdAt?: string | undefined;
+  /**
+   * Which instant `createdAt` above actually is: `'live'` (this system stamped
+   * it), `'original'` (recovered from the previous system), or `'import'` (the
+   * original was unrecoverable, so `createdAt` is the day the row was
+   * imported and is NOT a creation date).
+   *
+   * ABSENT ON EVERY ROW THIS SYSTEM CREATED, and that is the honest shape
+   * rather than a gap: only the migration writes it. Read it through
+   * `lib/createdAtProvenance.ts#readCreatedAtSource`, which resolves absence to
+   * `'live'` and says why that is sound.
+   */
+  createdAtSource?: string | undefined;
 }
 
 /**
@@ -118,6 +139,18 @@ export interface KinTaleEntry {
  * (the filter tabs in `KinTales.tsx`), same as the wasm's own client-side
  * `bucketFor` grouping, just bounded now instead of run over an unbounded
  * stream.
+ *
+ * STILL `createdAt` AFTER THE 2026-08-04 PROVENANCE RULING, and that is a
+ * decision rather than an oversight. The ruling moved imported rows' `createdAt`
+ * onto their ORIGINAL creation instant; it did not add a second date field for
+ * this query to choose between. It could not have: Firestore has no COALESCE,
+ * no `orderBy` spans two fields, and this query is server-ordered, capped, and
+ * paged with a `startAfter` cursor. Splitting the truth across
+ * `createdAt` + `originalCreatedAt` would leave only a denormalized third sort
+ * field (which is `createdAt` under another name, plus something new that can
+ * drift) or an unbounded read sorted in memory (the AO-29 pattern the cap above
+ * exists to make unavailable). One field carries the truth, `_migratedAt` keeps
+ * the ingest instant, and `createdAtSource` says which is which.
  */
 export const KINTALES_QUERY: CollectionSpec = {
   path: 'kin_care_reports',

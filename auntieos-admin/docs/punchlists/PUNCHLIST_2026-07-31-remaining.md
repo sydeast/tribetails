@@ -433,21 +433,73 @@ among itself **alphabetically by month name**. The first page of the KinTales
 list in prod today is September, September, September, and onward through the
 alphabet. That ordering is not a nuance, it is the list being wrong.
 
-The operator's proposal, which resolves both problems, is to redate the legacy
-rows to their date added. The ingest stamp is already on every row as
-`_migratedAt` (`"2026-05-16T20:36:39Z"`), and the original human date is already
-preserved twice, in `visitDate` and `sentAt`, so nothing is lost.
+**SETTLED 2026-08-04, in the opposite direction to the 2026-08-01 proposal.**
+The paragraph below is kept as written because the reversal is the useful part
+of this entry, not the conclusion.
 
-Two open sub-questions before anyone writes to prod:
+> ~~The operator's proposal, which resolves both problems, is to redate the
+> legacy rows to their date added. The ingest stamp is already on every row as
+> `_migratedAt` (`"2026-05-16T20:36:39Z"`), and the original human date is
+> already preserved twice, in `visitDate` and `sentAt`, so nothing is lost.~~
 
-1. Should `visitDate` also be parsed from free text into ISO, so the real visit
-   order is sortable? Otherwise the legacy block collapses to one identical
-   ingest timestamp and their true sequence is only readable by a human.
-2. The migration script still writes free text at line 90. It must be corrected
-   in the same change, or a re-run reintroduces exactly this.
+That shipped as `backfillKinTaleCreatedAt.ts` (PR #217, 2026-08-01) and the
+operator reversed it three days later, verbatim:
 
-This is a prod data write, so it needs the operator's explicit go-ahead and
+> "createdAt is incorrect when we migrated historical data. the old data's actual
+> createdAt should be its original creation as in from the old system not the
+> date that it was migrated (this is going to be true for almost all historical
+> data: invoices, kintales, media, comments)"
+
+Redating fixed the sort and made all 83 rows claim to have been created the day
+they were imported. Sub-question 1 below anticipated exactly that ("the legacy
+block collapses to one identical ingest timestamp") and it was answered by
+building the tie-break into `listOrphanReports` rather than by not collapsing
+them.
+
+**The answer that stands:** `createdAt` means WHEN THE RECORD CAME INTO
+EXISTENCE. For an imported row that is the previous system's own instant, parsed
+from `visit_logs.submitted`, so it is both true and sortable. `_migratedAt` keeps
+the ingest instant. A new `createdAtSource` (`live` / `original` / `import`) says
+which of the two `createdAt` is, so a row whose original could not be recovered
+is MARKED rather than passing its import date off as a creation date.
+
+Sub-question 1 (parse `visitDate` too) is answered NO and stays answered no: 18
+of the 83 rows record an `arrivedAt` clock time later in the day than the submit
+stamp, so that stamp is not the visit date, and writing it into `visitDate` would
+launder a known-wrong date into a form indistinguishable from a real one.
+Sub-question 2 is closed: the source script writes the parsed original now, so a
+re-run cannot reintroduce either defect.
+
+Shipped as `mytribe/scripts/backfillKinTaleCreatedAtProvenance.ts`
+(`npm run backfill:kintale-provenance`). `backfillKinTaleCreatedAt.ts` is
+DELETED rather than left in place, because it was one `npm run` away from
+writing the import date over every historical KinTale.
+
+This is still a prod data write, so it needs the operator's explicit go-ahead and
 belongs in the runbook rather than an improvised session.
+
+**Still open, and NOT covered by that script:**
+
+- **Invoices.** Same defect class, and confirmed migrated (the 14 real invoices
+  carried a `"Yes"`/`"No"` `status` from the original import until 2026-07-20).
+  Their `createdAt` came from an ad-hoc backfill on 2026-07-20 whose script was
+  never committed, so the value it used is unknowable from this repo. The
+  original invoice date does survive in the free-text `date` field, which is the
+  only recovery lane and is being redefined on branch `fix/invoicedate`. Repair
+  after that lands.
+- **`kin_care_sessions`.** The same uncommitted 2026-07-20 run stamped
+  `createdAt` on 76 of them (`HANDOFF_2026-07-20-EVENING.md:77`), and
+  `BOOKINGS_QUERY` orders on it. Not raised by the operator, found while
+  answering this.
+- **`formSchemas`.** `migrate_dynamic_fields_to_form_schemas.py:183` writes
+  `createdAt: SERVER_TIMESTAMP` at migration time. Same shape, no read path
+  orders on it, and the source `dynamic_fields` docs were left intact in prod, so
+  it is recoverable whenever it starts to matter.
+- **Media and comments are NOT affected.** The operator's list named them, and
+  the investigation found no importer for either has ever existed: the previous
+  system's media fields are verified empty in prod and its file type carries no
+  date at all, and comments are written only by two callables with client writes
+  denied by `firestore.rules:288-290`.
 
 ---
 
