@@ -93,7 +93,7 @@ export async function listGoogleCalendarsHandler(
   const freeBusyCalendarId = await readFreeBusyCalendarId(db());
 
   try {
-    const calendar = calendarClientForRefreshToken(doc.refreshToken);
+    const calendar = await calendarClientForRefreshToken(doc.refreshToken);
     const resp = await calendar.calendarList.list({ maxResults: 250, showHidden: false });
     return {
       calendars: toCalendarSummaries(resp.data.items ?? []),

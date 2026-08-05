@@ -1,5 +1,4 @@
 import { randomUUID } from 'crypto';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { getAdmin } from './firestoreAdmin';
 import { lineAmountCents } from './invoiceMath';
 
@@ -199,6 +198,11 @@ export function winAnsiSafe(s: string): string {
  * so it is unit-testable on its own. Single Letter-size page, Helvetica.
  */
 export async function renderInvoicePdf(inv: InvoiceForPdf): Promise<Uint8Array> {
+  // pdf-lib is loaded here, not at file scope. Two functions render invoice
+  // PDFs; the Functions runtime loads all of `index.js` on every cold start
+  // whatever the target is, so at file scope the other 225 were carrying a PDF
+  // engine they never touch.
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
   const doc = await PDFDocument.create();
   const page = doc.addPage([612, 792]); // US Letter
   const font = await doc.embedFont(StandardFonts.Helvetica);

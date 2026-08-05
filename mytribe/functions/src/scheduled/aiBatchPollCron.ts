@@ -66,7 +66,7 @@ export async function runAiBatchPoll(): Promise<void> {
     .get();
   if (pending.empty) return;
 
-  const client = anthropicClient();
+  const client = await anthropicClient();
 
   for (const doc of pending.docs) {
     const batchId = doc.id;
@@ -94,7 +94,7 @@ export async function runAiBatchPoll(): Promise<void> {
 }
 
 async function pollOneBatch(
-  client: ReturnType<typeof anthropicClient>,
+  client: Awaited<ReturnType<typeof anthropicClient>>,
   doc: FirebaseFirestore.QueryDocumentSnapshot,
   batchId: string,
 ): Promise<void> {

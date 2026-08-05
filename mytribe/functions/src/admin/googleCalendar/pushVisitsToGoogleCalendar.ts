@@ -235,7 +235,7 @@ async function runPush(
     .limit(500)
     .get();
 
-  const calendar = calendarClientForRefreshToken(refreshToken);
+  const calendar = await calendarClientForRefreshToken(refreshToken);
   const skipped: PushSkip[] = [];
   let pushed = 0;
   let removed = 0;

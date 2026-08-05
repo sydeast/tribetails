@@ -1,4 +1,4 @@
-import Twilio from 'twilio';
+import type Twilio from 'twilio';
 import { sendsAreSuppressed, suppressedId, logSuppressedSend } from './sendGuard';
 
 let cached: ReturnType<typeof Twilio> | null = null;
@@ -34,8 +34,14 @@ function suppressedClient(): ReturnType<typeof Twilio> {
  * When SEND_SUPPRESS=1 this returns a stub that logs and never contacts Twilio
  * (see lib/sendGuard.ts). Secrets are not required in that mode, so a non-prod
  * deploy needs no Twilio credentials at all.
+ *
+ * The SDK is loaded at first real send, not at file scope, because the Functions
+ * runtime loads all of `index.js` on every cold start whatever the target is,
+ * and the SMS senders are a handful of functions out of 227. The suppressed
+ * path never loads it at all, so SEND_SUPPRESS=1 deploys and the whole test
+ * suite pay nothing for a client they will never call.
  */
-export function getTwilio(): ReturnType<typeof Twilio> {
+export async function getTwilio(): Promise<ReturnType<typeof Twilio>> {
   if (cached) return cached;
   if (sendsAreSuppressed()) {
     cached = suppressedClient();
@@ -45,7 +51,8 @@ export function getTwilio(): ReturnType<typeof Twilio> {
   const token = process.env.TWILIO_AUTH_TOKEN;
   if (!sid) throw new Error('TWILIO_ACCOUNT_SID environment variable is required');
   if (!token) throw new Error('TWILIO_AUTH_TOKEN environment variable is required');
-  cached = Twilio(sid, token);
+  const { default: TwilioSdk } = await import('twilio');
+  cached = TwilioSdk(sid, token);
   return cached;
 }
 

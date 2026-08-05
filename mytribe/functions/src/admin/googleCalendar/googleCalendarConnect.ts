@@ -234,7 +234,7 @@ export async function googleOAuthCallbackHandler(req: Request, res: Response): P
     // Doing it this way keeps the grant to calendar scopes alone: asking for a
     // profile scope purely to render one line of text would widen the consent
     // screen for no functional gain.
-    const calendar = calendarClientForRefreshToken(refreshToken);
+    const calendar = await calendarClientForRefreshToken(refreshToken);
     const primary = await calendar.calendarList.get({ calendarId: 'primary' });
     const googleAccountEmail = typeof primary.data.id === 'string' ? primary.data.id : '';
 

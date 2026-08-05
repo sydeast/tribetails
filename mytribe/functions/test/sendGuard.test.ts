@@ -67,7 +67,7 @@ describe('sendGuard', () => {
 describe('SMS suppression (lib/twilio.ts)', () => {
   it('PROD PARITY: with SEND_SUPPRESS unset, a real Twilio send happens', async () => {
     const { getTwilio } = await import('../src/lib/twilio');
-    const res = await getTwilio().messages.create({
+    const res = await (await getTwilio()).messages.create({
       from: '+15550001111',
       to: '+15559998888',
       body: 'real',
@@ -79,7 +79,7 @@ describe('SMS suppression (lib/twilio.ts)', () => {
   it('with SEND_SUPPRESS=1, Twilio is NEVER contacted', async () => {
     process.env.SEND_SUPPRESS = '1';
     const { getTwilio } = await import('../src/lib/twilio');
-    const res = await getTwilio().messages.create({
+    const res = await (await getTwilio()).messages.create({
       from: '+15550001111',
       to: '+15559998888',
       body: 'should not send',
@@ -91,7 +91,7 @@ describe('SMS suppression (lib/twilio.ts)', () => {
   it('the suppressed client still satisfies the caller contract (sid + status)', async () => {
     process.env.SEND_SUPPRESS = '1';
     const { getTwilio } = await import('../src/lib/twilio');
-    const res = await getTwilio().messages.create({ from: 'a', to: 'b', body: 'c' });
+    const res = await (await getTwilio()).messages.create({ from: 'a', to: 'b', body: 'c' });
     // smsChannel.ts / sendExternalMessage.ts / broadcastMessage.ts read .sid,
     // and sendExternalMessage also reads .status for the engagement ledger.
     expect(typeof res.sid).toBe('string');
@@ -103,7 +103,7 @@ describe('SMS suppression (lib/twilio.ts)', () => {
     delete process.env.TWILIO_ACCOUNT_SID;
     delete process.env.TWILIO_AUTH_TOKEN;
     const { getTwilio } = await import('../src/lib/twilio');
-    await expect(getTwilio().messages.create({ from: 'a', to: 'b', body: 'c' })).resolves.toBeDefined();
+    await expect((await getTwilio()).messages.create({ from: 'a', to: 'b', body: 'c' })).resolves.toBeDefined();
   });
 });
 

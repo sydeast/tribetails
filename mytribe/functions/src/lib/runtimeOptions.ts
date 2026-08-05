@@ -18,12 +18,21 @@
  *
  * THE MEMORY NUMBER IS LOAD-BEARING, AND IT IS THE SAME FACT AS THE PARAGRAPH
  * BELOW. Because the runtime loads the entire module graph on every cold start,
- * the ~1.44s measured there has a memory twin: the whole codebase's import
+ * the CPU cost measured there has a memory twin: the whole codebase's import
  * footprint, paid by every function. It reached 257-271 MiB on 2026-08-03 and
  * OOMed against a 256MiB limit before the readiness probe, which took the
  * fleet down intermittently and surfaced in browsers as CORS errors. Raised to
  * 512MiB on 2026-08-04. Adding exports here costs memory on every function in
  * the codebase, not only on the new one.
+ *
+ * SIX SDKs CAME OUT OF THAT GRAPH ON 2026-08-04 and are now loaded inside the
+ * handlers that use them (googleapis, @google-cloud/recaptcha-enterprise,
+ * twilio, stripe, pdf-lib, @anthropic-ai/sdk). Measured on the built lib/:
+ * import RSS 245MB -> 150MB, process RSS after import 288MB -> 192MB, 3512
+ * modules -> 1851. What is left is firebase-functions and its Firestore/gRPC
+ * stack (~56MB, genuinely every function's), @sentry/node (~26MB, imported by
+ * 147 of the 227), and this codebase's own compiled modules. Adding a
+ * file-scope import of a heavy SDK puts it back on all 227.
  *
  * THE CONCURRENCY CLIFF (the thing that makes 1 vCPU worth paying for)
  * -------------------------------------------------------------------
@@ -37,11 +46,16 @@
  *               concurrent request pays a cold start.
  *   cpu 1    -> concurrency 80. One warm instance absorbs a burst.
  *
- * Loading this codebase's module graph costs ~1.44s of CPU (measured:
- * `require('./lib/index.js')` = 1.07s user + 0.37s sys), because the Functions
+ * Loading this codebase's module graph costs ~0.7s of CPU, because the Functions
  * runtime loads all of `index.js` whatever the target is. At 0.25 vCPU that is
- * roughly 5.8s of wall clock on a cold start. That is tolerable on a nightly
+ * roughly 2.8s of wall clock on a cold start. That is tolerable on a nightly
  * cron and not tolerable on a login, which is what the split below encodes.
+ *
+ * It was ~1.44s until the lazy-import change above. Re-measured on one machine
+ * across the same change so the halving is a comparison and not two anecdotes:
+ * `require('./lib/index.js')` went from 1.15s user + 0.38s sys to 0.57s user +
+ * 0.12s sys. The absolute figure moves with the machine; treat the ratio, not
+ * the second, as the durable number, and re-measure before quoting it.
  *
  * `maxInstances` is the runaway-billing cap. Nothing set one before, so a loop
  * or a spike could scale to the Cloud Run default of 100 and bill unbounded.

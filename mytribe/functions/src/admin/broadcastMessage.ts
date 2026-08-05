@@ -243,7 +243,8 @@ export async function broadcastMessageHandler(
         c.skipped += 1;
       } else {
         try {
-          await getTwilio().messages.create({ from: getTwilioFromNumber(), to: e164, body });
+          const twilio = await getTwilio();
+          await twilio.messages.create({ from: getTwilioFromNumber(), to: e164, body });
           c.sent += 1;
         } catch (err) {
           c.failed += 1;

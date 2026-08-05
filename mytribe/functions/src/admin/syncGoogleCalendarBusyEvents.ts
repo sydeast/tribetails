@@ -1,6 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { z } from 'zod';
-import { google } from 'googleapis';
 import { db } from '../lib/firestoreAdmin';
 import { initSentry } from '../lib/sentry';
 import { logEvent } from '../lib/logger';
@@ -313,6 +312,13 @@ async function runSync(
   const now = new Date();
   const timeMin = now.toISOString();
   const timeMax = new Date(now.getTime() + lookAheadDays * 24 * 60 * 60 * 1000).toISOString();
+
+  // Loaded here rather than at file scope. `googleapis` eagerly requires every
+  // Google API it ships, and at file scope that 109MiB was charged to the cold
+  // start of all 227 functions, not to the three that talk to Calendar. See
+  // lib/googleOAuth.ts for the full argument and why `await import()` and not
+  // `require()`.
+  const { google } = await import('googleapis');
 
   // ADC: resolves the Functions runtime service account, no key file shipped.
   const auth = new google.auth.GoogleAuth({

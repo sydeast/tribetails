@@ -19,7 +19,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   if (!sig) { res.status(400).json({ error: 'missing-signature' }); return; }
   let event;
   try {
-    event = verifyStripeWebhook(req.rawBody, sig);
+    event = await verifyStripeWebhook(req.rawBody, sig);
   } catch {
     logEvent({ severity: 'warn', function: 'stripeWebhook', event: 'stripe.signature.fail' });
     res.status(400).json({ error: 'bad-signature' });
