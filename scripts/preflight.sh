@@ -162,6 +162,67 @@ else
   ylw "gradlew" "missing"
 fi
 
+# THE PYTHON CODEBASE, which nothing else in this repo sets up.
+#
+# `auntieos-admin/web/firebase.json` declares a second functions codebase,
+# `reconcile`, on a pinned Python runtime. Deploying it needs an interpreter of
+# exactly that version AND a venv beside its source, and the Firebase CLI builds
+# neither: it discovers endpoints by RUNNING the code out of
+# `functions-python/venv`, so a missing venv stops the deploy with
+#
+#   Error: Failed to find location of Firebase Functions SDK: Missing virtual
+#   environment at venv directory. Did you forget to run 'python3.13 -m venv venv'?
+#
+# On 2026-08-05 that ended a release after 25 minutes of successful function
+# deploys, on a machine that had Python 3.14 and no 3.13. bootstrap.sh does not
+# create this venv and never has; it was set up by hand once and nothing
+# recorded that.
+#
+# OPTIONAL, DELIBERATELY. The reconcile codebase only ships under
+# RELEASE_INCLUDE_ADMIN_FUNCTIONS=1, so a machine that never deploys it is not
+# broken for lacking this. Failing here would fail every ordinary release and CI.
+#
+# THE VERSION IS READ FROM firebase.json, not written here. A runtime bump would
+# otherwise leave this check quietly validating the old interpreter, which is
+# the same failure it exists to prevent.
+PYFN="auntieos-admin/web/functions-python"
+PYCFG="auntieos-admin/web/firebase.json"
+if [ -d "$PYFN" ] && [ -f "$PYCFG" ] && command -v node >/dev/null 2>&1; then
+  # "python313" -> "3.13". Empty when the codebase is gone or is not Python.
+  PYVER="$(node -e '
+    try {
+      const cfg = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      const fns = Array.isArray(cfg.functions) ? cfg.functions : [cfg.functions];
+      const py = fns.find((f) => f && typeof f.runtime === "string" && f.runtime.startsWith("python"));
+      if (!py) process.exit(0);
+      const m = /^python(\d)(\d+)$/.exec(py.runtime);
+      if (m) console.log(m[1] + "." + m[2]);
+    } catch {}
+  ' "$PYCFG" 2>/dev/null)"
+
+  if [ -n "$PYVER" ]; then
+    PYBIN="python$PYVER"
+    VENVPY="$PYFN/venv/bin/$PYBIN"
+    if ! command -v "$PYBIN" >/dev/null 2>&1; then
+      ylw "$PYBIN" "not found. Only needed to deploy the 'reconcile' codebase."
+      NOTES+=("$PYBIN is missing, so the 'reconcile' Python functions cannot deploy (RELEASE_INCLUDE_ADMIN_FUNCTIONS=1). Install with: brew install python@$PYVER")
+    elif [ ! -d "$PYFN/venv" ]; then
+      ylw "reconcile" "no venv. The Firebase CLI runs this codebase to find its endpoints."
+      NOTES+=("$PYFN has no venv. Run: (cd $PYFN && $PYBIN -m venv venv && venv/bin/pip install -r requirements.txt)")
+    elif [ ! -x "$VENVPY" ]; then
+      # A venv built by a DIFFERENT interpreter has no bin/python<pinned>, so
+      # this catches the runtime having moved out from under an old venv.
+      ylw "reconcile" "venv exists but was not built with $PYBIN"
+      NOTES+=("$PYFN/venv does not carry $PYBIN, so it was built by another interpreter. Rebuild: (cd $PYFN && rm -rf venv && $PYBIN -m venv venv && venv/bin/pip install -r requirements.txt)")
+    elif [ -f "$PYFN/requirements.txt" ] && ! "$VENVPY" -c 'import firebase_functions' >/dev/null 2>&1; then
+      ylw "reconcile" "venv present but its requirements are not installed"
+      NOTES+=("$PYFN/venv cannot import firebase_functions. Run: $PYFN/venv/bin/pip install -r $PYFN/requirements.txt")
+    else
+      grn "reconcile" "$PYBIN and its venv are ready"
+    fi
+  fi
+fi
+
 hdr "Repo"
 for p in mytribe/functions mytribe/web auntieos-admin; do
   # `npm ci` REFUSES to run without a lockfile. Catch that here rather than

@@ -146,7 +146,112 @@ else
   bad "a missing lockfile stopped failing; got rc=$RC"
 fi
 
-rm -rf "$D1" "$D2" "$D3" "$D4" "$D5"
+# ---------------------------------------------------------------------------
+# The Python codebase.
+#
+# `auntieos-admin/web/firebase.json` declares a second functions codebase on a
+# pinned Python runtime, and the Firebase CLI discovers its endpoints by RUNNING
+# the code out of `functions-python/venv`. Nothing in this repo creates that
+# venv, so on 2026-08-05 a release died after 25 minutes of successful deploys
+# with "Missing virtual environment at venv directory".
+#
+# Every case here is a WARNING rather than a failure: the codebase only ships
+# under RELEASE_INCLUDE_ADMIN_FUNCTIONS=1, so a machine that never deploys it is
+# not broken. The tests assert both halves of that: the right message, and
+# exit 0 anyway.
+# ---------------------------------------------------------------------------
+
+# add_python_codebase <repo> [runtime]: the firebase.json and source directory
+# the check reads. Runtime defaults to the real one.
+add_python_codebase() {
+  local dir="$1" runtime="${2:-python313}"
+  mkdir -p "$dir/auntieos-admin/web/functions-python"
+  cat > "$dir/auntieos-admin/web/firebase.json" <<JSON
+{ "functions": [
+  { "source": "functions", "codebase": "default", "runtime": "nodejs22" },
+  { "source": "functions-python", "codebase": "reconcile", "runtime": "$runtime" }
+] }
+JSON
+  printf 'firebase-functions==0.5.0\n' > "$dir/auntieos-admin/web/functions-python/requirements.txt"
+}
+
+# a venv skeleton built by <version>, without needing that interpreter present.
+fake_venv() {
+  mkdir -p "$1/auntieos-admin/web/functions-python/venv/bin"
+  printf '#!/bin/sh\nexit 0\n' > "$1/auntieos-admin/web/functions-python/venv/bin/python$2"
+  chmod +x "$1/auntieos-admin/web/functions-python/venv/bin/python$2"
+}
+
+# --------------------------------------------------------------- no venv at all
+D6="$(make_repo)"
+for p in mytribe/functions mytribe/web auntieos-admin; do install_dep "$D6" "$p" "1.3.0"; done
+add_python_codebase "$D6"
+RC="$(run_preflight "$D6")"
+if [ "$RC" = "0" ]; then
+  ok "a missing python venv WARNS and does not fail preflight"
+else
+  bad "a missing python venv failed preflight; the reconcile codebase is opt-in"
+fi
+# Only assert the message when the pinned interpreter is actually on this
+# machine; without it the run correctly stops at the earlier branch instead.
+if command -v python3.13 >/dev/null 2>&1; then
+  if grep -q "no venv" "$D6/out"; then
+    ok "a missing python venv is named, with the command that creates it"
+  else
+    bad "a missing python venv was not reported"
+  fi
+  if grep -q "python3.13 -m venv venv" "$D6/out"; then
+    ok "the fix command carries the pinned interpreter"
+  else
+    bad "the fix command did not name python3.13"
+  fi
+fi
+
+# ------------------------------------------- a venv built by another interpreter
+# The shape left behind when the runtime pin moves and the old venv stays.
+D7="$(make_repo)"
+for p in mytribe/functions mytribe/web auntieos-admin; do install_dep "$D7" "$p" "1.3.0"; done
+add_python_codebase "$D7"
+fake_venv "$D7" "3.11"
+RC="$(run_preflight "$D7")"
+if [ "$RC" = "0" ] && { ! command -v python3.13 >/dev/null 2>&1 || grep -q "not built with python3.13" "$D7/out"; }; then
+  ok "a venv from a different interpreter is caught, and still does not fail"
+else
+  bad "a mismatched venv was not caught; got rc=$RC"
+  grep -iE "reconcile|python" "$D7/out" | head -3
+fi
+
+# ----------------------------------------------- the version comes from the file
+# The pin is read from firebase.json, so a runtime bump cannot leave this check
+# validating the interpreter the repo no longer uses.
+D8="$(make_repo)"
+for p in mytribe/functions mytribe/web auntieos-admin; do install_dep "$D8" "$p" "1.3.0"; done
+add_python_codebase "$D8" "python399"
+RC="$(run_preflight "$D8")"
+if grep -q "python3.99" "$D8/out"; then
+  ok "the required python version is read from firebase.json, not hardcoded"
+else
+  bad "a changed runtime pin was not reflected in the report"
+  grep -iE "reconcile|python" "$D8/out" | head -3
+fi
+if [ "$RC" = "0" ]; then
+  ok "an uninstallable pinned interpreter still does not fail preflight"
+else
+  bad "a missing pinned interpreter failed preflight; got rc=$RC"
+fi
+
+# --------------------------------------------------- no python codebase declared
+# A repo without one must say nothing at all rather than inventing a warning.
+D9="$(make_repo)"
+for p in mytribe/functions mytribe/web auntieos-admin; do install_dep "$D9" "$p" "1.3.0"; done
+RC="$(run_preflight "$D9")"
+if [ "$RC" = "0" ] && ! grep -qi "reconcile" "$D9/out"; then
+  ok "a repo with no python codebase reports nothing about one"
+else
+  bad "reported a python codebase that is not declared; got rc=$RC"
+fi
+
+rm -rf "$D1" "$D2" "$D3" "$D4" "$D5" "$D6" "$D7" "$D8" "$D9"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
