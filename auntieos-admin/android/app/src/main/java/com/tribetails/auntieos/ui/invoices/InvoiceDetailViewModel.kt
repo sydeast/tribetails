@@ -610,16 +610,34 @@ internal fun buildInvoicePayment(
     referenceNumber: String,
     date: String,
     notes: String,
+    /** GROSS: what the client tipped, before the processor fee. */
+    tip: Double = 0.0,
+    /** The processor's cut, off the business's proceeds. Not part of [amount]. */
+    fee: Double = 0.0,
+    /**
+     * THE WHOLE SUM THE CLIENT HANDED OVER, when it is more than the applied
+     * amount plus the tip. `0.0` means "exactly those two", the ordinary case.
+     */
+    paymentTotal: Double = 0.0,
+    autoApply: Boolean = false,
+    sendConfirmationEmail: Boolean = false,
 ): Payment = Payment(
     kinfolkId = invoice.kinfolkId,
     kinfolkName = invoice.kinfolkName,
     date = date.trim(),
     paymentMethod = paymentMethod.trim(),
     referenceNumber = referenceNumber.trim(),
-    amount = amount,
+    // THE TRANSACTION, not the settlement. `markInvoicePaid` settles the invoice
+    // with [amount]; this row records what the client actually paid, which is
+    // larger whenever there was a tip or money left over.
+    amount = if (paymentTotal > 0.0) paymentTotal else amount + tip,
+    tip = tip,
+    fee = fee,
     notes = notes.trim(),
     invoiceId = invoice.id,
     invoiceNumber = invoice.invoiceNumber,
+    autoApply = autoApply,
+    sendConfirmationEmail = sendConfirmationEmail,
 )
 /**
  * Did the server refuse this archive because money is still owed, as opposed to

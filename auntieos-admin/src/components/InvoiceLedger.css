@@ -124,3 +124,16 @@
   font-weight: var(--type-title-sm-weight);
   color: var(--color-text-primary);
 }
+/* PAYMENT HISTORY is eight columns wide now (transaction date, method,
+   reference, amount, applied to, tip, fee, balance), which is more than a
+   narrow window has room for. It scrolls INSIDE its own box rather than
+   pushing the overlay sideways: a panel whose whole body scrolls horizontally
+   takes the invoice header with it. */
+.invoice-ledger__table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.invoice-ledger__table > caption {
+  display: block;
+}

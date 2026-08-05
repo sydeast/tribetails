@@ -145,3 +145,58 @@
 .invoice-detail__edit-fields .invoice-detail__field {
   flex: 1 1 12rem;
 }
+/* ── The record-payment form, 2026-08-04 ───────────────────────────────────
+   Tip, Fees, the payment total, staff notes and two switches, alongside the
+   Amount collected box that was already here. The row wraps rather than
+   scrolls: this is a confirm step inside an overlay, and a form that needs
+   sideways scrolling to be read is a form whose last field never gets filled.
+   Every box keeps a comfortable minimum so a dollar amount is never squeezed
+   to three characters on a narrow window. */
+.invoice-detail__confirm-fields .invoice-detail__field {
+  flex: 1 1 9rem;
+  min-width: 8rem;
+}
+/* Notes take the whole row. It is prose, not a figure. */
+.invoice-detail__field--wide {
+  flex: 1 1 100% !important;
+}
+/* THE UNAPPLIED BALANCE, given its own line and its own weight because it is
+   the number she is meant to look at before saving. It sits between the boxes
+   and the switches, which is where the decision it feeds is made. */
+.invoice-detail__unapplied {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  padding-top: var(--space-2);
+  border-top: var(--border-hairline) solid var(--color-border-soft);
+}
+.invoice-detail__unapplied-label {
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+}
+.invoice-detail__unapplied-value {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+}
+.invoice-detail__unapplied-note,
+.invoice-detail__unapplied-unknown {
+  flex: 1 1 12rem;
+  color: var(--color-text-dim);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+.invoice-detail__check {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}
+.invoice-detail__check input {
+  flex: 0 0 auto;
+}

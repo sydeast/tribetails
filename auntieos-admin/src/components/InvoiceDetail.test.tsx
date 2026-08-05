@@ -80,6 +80,55 @@ function ledgerResult(over: Partial<GetInvoiceLedgerResult> = {}): GetInvoiceLed
   };
 }
 
+/**
+ * One row of the settlement authority, complete. Cases override the one field
+ * they are about.
+ */
+function subPayment(
+  over: Partial<GetInvoiceLedgerResult['payments'][number]> = {},
+): GetInvoiceLedgerResult['payments'][number] {
+  return {
+    paymentId: 'p1',
+    amountCents: 2000,
+    method: 'check',
+    reference: '#881',
+    paidAt: '2026-07-20T10:00:00Z',
+    recordedBy: 'admin1',
+    sourcePaymentId: null,
+    ...over,
+  };
+}
+/**
+ * One Payment History row, complete.
+ *
+ * The DEFAULT IS A LEGACY ROW: `tipBasis: 'unknown'`, no fee. That is what the
+ * database is mostly full of, and it is the shape the migration left
+ * unreconcilable, so it is the shape most cases should be written against.
+ */
+function ledgerPayment(
+  over: Partial<GetInvoiceLedgerResult['ledgerPayments'][number]> = {},
+): GetInvoiceLedgerResult['ledgerPayments'][number] {
+  return {
+    paymentId: 'r1',
+    amountCents: 4000,
+    tipCents: 0,
+    feeCents: 0,
+    tipBasis: 'unknown',
+    reconciles: true,
+    appliedCents: 0,
+    unappliedCents: 4000,
+    proceedsCents: 4000,
+    autoApply: false,
+    appliedInvoiceId: '',
+    appliedInvoiceNumber: '',
+    method: 'card',
+    reference: 'ch_1',
+    date: '2026-07-20',
+    notes: '',
+    recordedBy: 'a1',
+    ...over,
+  };
+}
 function ledgerSession(
   over: Partial<GetInvoiceLedgerResult['sessions'][number]> = {},
 ): GetInvoiceLedgerResult['sessions'][number] {
@@ -132,7 +181,23 @@ beforeEach(() => {
   archiveInvoice.mockReset().mockResolvedValue(undefined);
   unarchiveInvoice.mockReset().mockResolvedValue(undefined);
   getInvoiceLedger.mockReset().mockResolvedValue(ledgerResult());
-  recordPayment.mockReset().mockResolvedValue({ ok: true, paymentId: 'led1', kinfolkId: 'kf1' });
+  recordPayment.mockReset().mockResolvedValue({
+    ok: true,
+    paymentId: 'led1',
+    kinfolkId: 'kf1',
+    amountCents: 4000,
+    tipCents: 0,
+    feeCents: 0,
+    tipBasis: 'gross',
+    appliedCents: 0,
+    unappliedCents: 4000,
+    proceedsCents: 4000,
+    tipNetCents: 0,
+    autoApply: false,
+    application: null,
+    creditedToAccountCents: 0,
+    confirmationEmailSent: false,
+  });
 });
 
 /**
@@ -689,16 +754,7 @@ describe('the payments panel', () => {
   it('renders the subcollection rows, the collected total, and what is still owed', async () => {
     getInvoiceLedger.mockResolvedValue(
       ledgerResult({
-        payments: [
-          {
-            paymentId: 'p1',
-            amountCents: 2000,
-            method: 'check',
-            reference: '#881',
-            paidAt: '2026-07-20T10:00:00Z',
-            recordedBy: 'admin1',
-          },
-        ],
+        payments: [subPayment()],
         paidCents: 2000,
         amountDueCents: 2000,
       }),
@@ -737,7 +793,7 @@ describe('the payments panel', () => {
     getInvoiceLedger.mockResolvedValue(
       ledgerResult({
         payments: [
-          { paymentId: 'p1', amountCents: 500, method: null, reference: null, paidAt: null, recordedBy: null },
+          subPayment({ amountCents: 500, method: null, reference: null, paidAt: null, recordedBy: null }),
         ],
         paidCents: 500,
       }),
@@ -752,47 +808,28 @@ describe('the payments panel', () => {
     // had not.
     getInvoiceLedger.mockResolvedValue(
       ledgerResult({
-        payments: [
-          { paymentId: 'p1', amountCents: 4000, method: 'cash', reference: null, paidAt: '2026-07-20T10:00:00Z', recordedBy: 'a1' },
-        ],
+        payments: [subPayment({ amountCents: 4000, method: 'cash', reference: null, recordedBy: 'a1' })],
         paidCents: 4000,
         amountDueCents: 0,
         ledgerPayments: [
-          {
-            paymentId: 'r1',
-            amountCents: 4000,
-            tipCents: 500,
-            method: 'card',
-            reference: 'ch_1',
-            date: '2026-07-20',
-            notes: '',
-            recordedBy: 'a1',
-          },
+          ledgerPayment({ tipCents: 500, tipBasis: 'gross', feeCents: 271, reconciles: true }),
         ],
       }),
     );
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
     expect(await screen.findByText(/NOT counted in the figures above/i)).toBeInTheDocument();
-    // The tip rides on the ledger row's own amount and nowhere near the balance.
-    expect(screen.getByText(/includes \$5\.00 tip/i)).toBeInTheDocument();
+    // The tip is its OWN column now, and the fee beside it. Neither goes
+    // anywhere near the balance.
+    expect(screen.getByText('Payment history', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('$5.00')).toBeInTheDocument();
+    expect(screen.getByText('$2.71')).toBeInTheDocument();
     expect(screen.getByText('Collected').closest('tr')).toHaveTextContent('$40.00');
   });
   it('names the Stripe case: a ledger that covers a balance nothing settled', async () => {
     getInvoiceLedger.mockResolvedValue(
       ledgerResult({
         amountDueCents: 4000,
-        ledgerPayments: [
-          {
-            paymentId: 'r1',
-            amountCents: 4000,
-            tipCents: 0,
-            method: 'card',
-            reference: 'ch_1',
-            date: '2026-07-20',
-            notes: '',
-            recordedBy: null,
-          },
-        ],
+        ledgerPayments: [ledgerPayment({ recordedBy: null })],
       }),
     );
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
@@ -1070,5 +1107,355 @@ describe('InvoiceDetail initialAction', () => {
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
     expect(screen.queryByText(/sends a real payment-reminder notification/i)).toBeNull();
     expect(screen.getByRole('button', { name: 'Send reminder' })).toBeInTheDocument();
+  });
+});
+/**
+ * ── THE FEE / TIP / AUTO-APPLY FORM, 2026-08-04 ───────────────────────────
+ *
+ * The operator's legacy Add New Transaction screen carried Fees, Tip, an
+ * Unapplied Balance, an Auto-apply toggle, staff Notes and a Send Confirmation
+ * Email switch alongside the amount. None of them existed here. Invoice #1029
+ * is what their absence cost: Amount $137.50, Applied $127.50, Tip $7.29, and
+ * $2.71 that nothing on the record could account for.
+ */
+describe('the record-payment form: fee, gross tip, notes and the two switches', () => {
+  async function openForm(invoice = entry({ amountDue: 127.5, total: 127.5 })) {
+    render(<InvoiceDetail invoice={invoice} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+  }
+  async function submit() {
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+  }
+  it('offers every field her legacy screen had, beside the one that was already here', async () => {
+    await openForm();
+    expect(screen.getByLabelText(/amount collected/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/tip in dollars/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/processor fee in dollars/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/staff-only notes/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/automatically apply any unapplied amount/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/send a confirmation email/i)).toBeInTheDocument();
+  });
+  it('records invoice #1029: the gross tip and the fee, on top of what settled the bill', async () => {
+    markInvoicePaid.mockResolvedValue({
+      paymentId: 'pay1',
+      state: 'settled' as const,
+      totalCents: 12750,
+      paidCents: 12750,
+      amountDueCents: 0,
+      overpaidCents: 0,
+    });
+    await openForm();
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '127.50');
+    await userEvent.type(screen.getByLabelText(/tip in dollars/i), '10');
+    await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '2.71');
+    await submit();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    // The invoice is settled by the APPLIED part alone.
+    expect(markInvoicePaid).toHaveBeenCalledWith('inv1', expect.objectContaining({ amount: 127.5 }));
+    // The ledger row is the whole TRANSACTION: $137.50, tip included.
+    expect(recordPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 137.5, tip: 10, fee: 2.71 }),
+    );
+  });
+  it('NEVER sends an apply, because markInvoicePaid already settled the invoice', async () => {
+    // Sending one would put the same money against the same bill twice.
+    markInvoicePaid.mockResolvedValue(settledResult());
+    await openForm();
+    await submit();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment.mock.calls[0]![0]).not.toHaveProperty('apply');
+  });
+  it('sends zero for an untouched tip and fee, which is what a blank box means', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    await openForm();
+    await submit();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment).toHaveBeenCalledWith(expect.objectContaining({ tip: 0, fee: 0 }));
+  });
+  it('sends the switches OFF unless she turned them on', async () => {
+    // A confirmation is a message to a real household. It goes out because she
+    // ticked the box, never because the panel assumed she meant to.
+    markInvoicePaid.mockResolvedValue(settledResult());
+    await openForm();
+    await submit();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ autoApply: false, sendConfirmationEmail: false }),
+    );
+  });
+  it('sends both switches on when she turns them on', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    await openForm();
+    await userEvent.click(screen.getByLabelText(/automatically apply any unapplied amount/i));
+    await userEvent.click(screen.getByLabelText(/send a confirmation email/i));
+    await submit();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ autoApply: true, sendConfirmationEmail: true }),
+    );
+  });
+  it('sends the staff notes, trimmed', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/staff-only notes/i), '  took the fee out of the tip  ');
+    await submit();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ notes: 'took the fee out of the tip' }),
+    );
+  });
+  it('clears every new field between one payment and the next', async () => {
+    // A tip left in the box from the last household is a tip recorded against
+    // the wrong one.
+    markInvoicePaid.mockResolvedValue(settledResult());
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/tip in dollars/i), '10');
+    await userEvent.click(screen.getByLabelText(/send a confirmation email/i));
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(screen.getByLabelText(/tip in dollars/i)).toHaveValue('');
+    expect(screen.getByLabelText(/send a confirmation email/i)).not.toBeChecked();
+  });
+});
+describe('the record-payment form: refusals it makes before any money moves', () => {
+  async function openForm() {
+    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+  }
+  it('refuses an unreadable tip instead of silently recording none', async () => {
+    // Reading "abc" as $0 would drop a tip she believes she entered.
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/tip in dollars/i), 'abc');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/"abc" is not a tip/i)).toBeInTheDocument();
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+    expect(recordPayment).not.toHaveBeenCalled();
+  });
+  it('refuses an unreadable fee the same way', async () => {
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), 'lots');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/"lots" is not a fee/i)).toBeInTheDocument();
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+  });
+  it('refuses a negative fee, which is not a fee', async () => {
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '-2.71');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/is not a fee/i)).toBeInTheDocument();
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+  });
+  it('refuses a payment that does not cover what is applied plus the tip', async () => {
+    // The mis-key the Unapplied Balance exists to catch, refused BEFORE
+    // markInvoicePaid runs rather than after it has already collected.
+    await openForm();
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '127.50');
+    await userEvent.type(screen.getByLabelText(/tip in dollars/i), '10');
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '100');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/does not cover/i)).toBeInTheDocument();
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+  });
+});
+describe('the Unapplied Balance, shown before Save', () => {
+  async function openForm(amountDue = 127.5) {
+    render(<InvoiceDetail invoice={entry({ amountDue, total: amountDue })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+  }
+  it('reads zero on the ordinary payment, where nothing is left over', async () => {
+    await openForm();
+    expect(screen.getByText('Unapplied balance')).toBeInTheDocument();
+    expect(screen.getByText('$0.00')).toBeInTheDocument();
+  });
+  it('shows the leftover the moment a bigger payment is typed', async () => {
+    // $300 handed over against a $127.50 bill, no tip: $172.50 over.
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '300');
+    await waitFor(() => expect(screen.getByText('$172.50')).toBeInTheDocument());
+  });
+  it('takes the GROSS tip out of the leftover, because the tip is not unapplied money', async () => {
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '300');
+    await userEvent.type(screen.getByLabelText(/tip in dollars/i), '10');
+    await waitFor(() => expect(screen.getByText('$162.50')).toBeInTheDocument());
+  });
+  it('does NOT move when a fee is entered: the fee is off proceeds, not off the payment', async () => {
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '300');
+    await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '2.71');
+    await waitFor(() => expect(screen.getByText('$172.50')).toBeInTheDocument());
+  });
+  it('says what will happen to the leftover, and it depends on the auto-apply switch', async () => {
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '300');
+    expect(await screen.findByText(/will not be applied to anything/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText(/automatically apply any unapplied amount/i));
+    expect(await screen.findByText(/held as this household's account credit/i)).toBeInTheDocument();
+  });
+  it('shows NOTHING rather than a figure derived from a half-typed number', async () => {
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/tip in dollars/i), 'abc');
+    expect(await screen.findByText(/cannot be read/i)).toBeInTheDocument();
+  });
+});
+describe('what the operator is told after the payment lands', () => {
+  it('says where the leftover went when it became account credit', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    recordPayment.mockResolvedValue({
+      ok: true,
+      paymentId: 'led1',
+      kinfolkId: 'kf1',
+      amountCents: 30000,
+      tipCents: 0,
+      feeCents: 0,
+      tipBasis: 'gross',
+      appliedCents: 0,
+      unappliedCents: 17250,
+      proceedsCents: 30000,
+      tipNetCents: 0,
+      autoApply: true,
+      application: null,
+      creditedToAccountCents: 17250,
+      confirmationEmailSent: false,
+    });
+    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/added to the household's account credit/i)).toBeInTheDocument();
+  });
+  it('says the confirmation did NOT go out rather than letting her assume it did', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    recordPayment.mockResolvedValue({
+      ok: true,
+      paymentId: 'led1',
+      kinfolkId: 'kf1',
+      amountCents: 12750,
+      tipCents: 0,
+      feeCents: 0,
+      tipBasis: 'gross',
+      appliedCents: 0,
+      unappliedCents: 12750,
+      proceedsCents: 12750,
+      tipNetCents: 0,
+      autoApply: false,
+      application: null,
+      creditedToAccountCents: 0,
+      confirmationEmailSent: false,
+    });
+    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByLabelText(/send a confirmation email/i));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(
+      await screen.findByText(/confirmation email did not go out/i),
+    ).toBeInTheDocument();
+  });
+});
+/**
+ * ── PAYMENT HISTORY, THE COLUMN SET ───────────────────────────────────────
+ *
+ * Measured against the operator's production screen, three columns were
+ * missing from this table: Applied to #n, Tip and Balance. Tip was not even a
+ * server gap: `getInvoiceLedger` has returned `tipCents` since this panel
+ * shipped and the panel simply never rendered it. Fee is the fourth, and the
+ * only one that needed a new field.
+ */
+describe('payment history columns', () => {
+  function renderWithRow(over: Partial<GetInvoiceLedgerResult['ledgerPayments'][number]> = {}) {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({ amountDueCents: 0, ledgerPayments: [ledgerPayment(over)] }),
+    );
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+  }
+  it('renders every column her production screen has, plus the fee', async () => {
+    renderWithRow();
+    expect(await screen.findByRole('columnheader', { name: /transaction date/i })).toBeInTheDocument();
+    for (const name of [/^method$/i, /reference #/i, /^amount$/i, /applied to/i, /^tip$/i, /^fee$/i, /^balance$/i]) {
+      expect(screen.getByRole('columnheader', { name })).toBeInTheDocument();
+    }
+  });
+  it('reads invoice #1029 across, and the row adds up', async () => {
+    // amount(137.50) = applied(127.50) + tipGross(10.00) + balance(0.00)
+    renderWithRow({
+      amountCents: 13750,
+      tipCents: 1000,
+      feeCents: 271,
+      tipBasis: 'gross',
+      reconciles: true,
+      appliedCents: 12750,
+      unappliedCents: 0,
+      appliedInvoiceId: 'inv1029',
+      appliedInvoiceNumber: '1029',
+      date: 'February 17, 2026',
+    });
+    expect(await screen.findByText('February 17, 2026')).toBeInTheDocument();
+    expect(screen.getByText('$137.50')).toBeInTheDocument();
+    expect(screen.getByText('#1029')).toBeInTheDocument();
+    expect(screen.getByText('$127.50')).toBeInTheDocument();
+    expect(screen.getByText('$10.00')).toBeInTheDocument();
+    expect(screen.getByText('$2.71')).toBeInTheDocument();
+  });
+  it('does NOT add the tip onto the amount, which would count the gratuity twice', async () => {
+    // The amount on the operator's data already contains the tip.
+    renderWithRow({ amountCents: 13750, tipCents: 1000, tipBasis: 'gross', reconciles: true });
+    expect(await screen.findByText('$137.50')).toBeInTheDocument();
+    expect(screen.queryByText('$147.50')).toBeNull();
+  });
+  it('marks a gross tip as gross, because that is the tax-relevant fact', async () => {
+    renderWithRow({ tipCents: 1000, tipBasis: 'gross', reconciles: true });
+    expect(await screen.findByText('gross')).toBeInTheDocument();
+  });
+  it('says a migrated fee is NOT RECORDED, never $0.00, because zero would be a claim', async () => {
+    renderWithRow({ tipCents: 729, tipBasis: 'unknown', reconciles: false, feeCents: 0 });
+    expect(await screen.findByText('not recorded')).toBeInTheDocument();
+  });
+  it('names the rows that cannot be reconciled, and guesses nothing to make them balance', async () => {
+    renderWithRow({ tipCents: 729, tipBasis: 'unknown', reconciles: false });
+    expect(await screen.findByText(/Some of these rows cannot be reconciled/i)).toBeInTheDocument();
+    expect(screen.getByText(/migrated without its processor fee/i)).toBeInTheDocument();
+    // NO BACK-COMPUTED GROSS. The gross cannot be recovered from a net tip
+    // whose deduction is unknown, and a guess would put a number that was never
+    // collected onto a tax return.
+    expect(screen.getByText(/no gross tip has been guessed/i)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing has been guessed to make them balance/i)).toBeInTheDocument();
+  });
+  it('stays quiet on a row that reconciles on its own', async () => {
+    renderWithRow({ tipCents: 1000, feeCents: 271, tipBasis: 'gross', reconciles: true });
+    await screen.findByText('$10.00');
+    expect(screen.queryByText(/Some of these rows cannot be reconciled/i)).toBeNull();
+  });
+  it('says NOT APPLIED rather than $0.00 when the payment touched no balance', async () => {
+    // A payment that applied to nothing is a different fact from one that
+    // applied zero dollars.
+    renderWithRow({ appliedInvoiceId: '', appliedInvoiceNumber: '' });
+    expect(await screen.findByText('not applied')).toBeInTheDocument();
+  });
+  it('says a leftover is held as credit when auto-apply is on', async () => {
+    renderWithRow({
+      amountCents: 30000,
+      appliedCents: 18000,
+      unappliedCents: 12000,
+      autoApply: true,
+      tipBasis: 'gross',
+      reconciles: true,
+      appliedInvoiceId: 'inv1',
+      appliedInvoiceNumber: '1042',
+    });
+    expect(await screen.findByText('held as credit')).toBeInTheDocument();
+    expect(screen.getByText('$120.00')).toBeInTheDocument();
+  });
+  it('does not claim a leftover is held when auto-apply is off', async () => {
+    renderWithRow({
+      amountCents: 30000,
+      appliedCents: 18000,
+      unappliedCents: 12000,
+      autoApply: false,
+      tipBasis: 'gross',
+      reconciles: true,
+    });
+    await screen.findByText('$120.00');
+    expect(screen.queryByText('held as credit')).toBeNull();
   });
 });

@@ -52,10 +52,14 @@ import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.invoiceActionsFor
 import com.tribetails.auntieos.domain.invoiceIsOverdue
 import com.tribetails.auntieos.domain.formatCentsUsd
+import com.tribetails.auntieos.domain.dollarsToCents
+import com.tribetails.auntieos.domain.parseOptionalMoney
+import com.tribetails.auntieos.domain.unappliedCents
 import com.tribetails.auntieos.domain.invoicePartPaid
 import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.ui.components.AuntieCheckbox
 import com.tribetails.auntieos.ui.components.AuntieChip
 import com.tribetails.auntieos.ui.components.AuntieDialog
 import com.tribetails.auntieos.ui.components.AuntieIconButton
@@ -955,17 +959,56 @@ private fun RecordPaymentDialog(
     var reference by remember(invoice.id) { mutableStateOf("") }
     var date      by remember(invoice.id) { mutableStateOf("") }
     var notes     by remember(invoice.id) { mutableStateOf("") }
-
+    // ── The fee tranche, 2026-08-04 ──────────────────────────────────────────
+    // Blank, not "0.00". An empty tip box means no tip was entered; a prefilled
+    // zero is a claim that there was none, and she would have to clear it to
+    // type one.
+    var tip       by remember(invoice.id) { mutableStateOf("") }
+    var fee       by remember(invoice.id) { mutableStateOf("") }
+    var total     by remember(invoice.id) { mutableStateOf("") }
+    var autoApply by remember(invoice.id) { mutableStateOf(false) }
+    // OFF by default. A confirmation is a message to a real household, so it
+    // goes out because she ticked the box, never because the dialog assumed.
+    var sendConfirmation by remember(invoice.id) { mutableStateOf(false) }
     val amountValue = amount.trim().toDoubleOrNull()
-    val canSave = amountValue != null && amountValue > 0.0 && method.isNotBlank()
-
+    val tipValue    = parseOptionalMoney(tip)
+    val feeValue    = parseOptionalMoney(fee)
+    val totalValue  = parseOptionalMoney(total)
+    // THE UNAPPLIED BALANCE, recomputed as she types, so a mis-keyed amount is
+    // caught while it is still a typo rather than a payment. Null while a box is
+    // half-typed: the dialog then shows nothing rather than a figure derived
+    // from a number it cannot read.
+    val unapplied: Long? = if (amountValue != null && tipValue != null && totalValue != null) {
+        val appliedC = dollarsToCents(amountValue)
+        val tipC     = dollarsToCents(tipValue)
+        val paymentC = if (totalValue > 0.0) dollarsToCents(totalValue) else appliedC + tipC
+        unappliedCents(paymentC, appliedC, tipC)
+    } else null
+    val canSave = amountValue != null && amountValue > 0.0 && method.isNotBlank() &&
+        feeValue != null && unapplied != null && unapplied >= 0L
     AuntieModal(
         onDismissRequest = onDismiss,
         title = "Record payment",
         confirmButton = {
             PrimaryButton(
                 label   = "Record payment",
-                onClick = { onSubmit(buildInvoicePayment(invoice, amountValue ?: 0.0, method, reference, date, notes)) },
+                onClick = {
+                    onSubmit(
+                        buildInvoicePayment(
+                            invoice = invoice,
+                            amount = amountValue ?: 0.0,
+                            paymentMethod = method,
+                            referenceNumber = reference,
+                            date = date,
+                            notes = notes,
+                            tip = tipValue ?: 0.0,
+                            fee = feeValue ?: 0.0,
+                            paymentTotal = totalValue ?: 0.0,
+                            autoApply = autoApply,
+                            sendConfirmationEmail = sendConfirmation,
+                        )
+                    )
+                },
                 loading = submitting,
                 enabled = canSave && !submitting,
             )
@@ -974,10 +1017,34 @@ private fun RecordPaymentDialog(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             AuntieField(value = amount, onValueChange = { amount = it }, label = "Amount *", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+            AuntieField(value = tip, onValueChange = { tip = it }, label = "Tip", placeholder = "before any processor fee", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+            AuntieField(value = fee, onValueChange = { fee = it }, label = "Fees", placeholder = "what the processor took", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+            AuntieField(value = total, onValueChange = { total = it }, label = "Payment amount, if more than the above", placeholder = "same as amount plus tip", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
             AuntieField(value = method, onValueChange = { method = it }, label = "Method *", placeholder = "card, cash, transfer...", modifier = Modifier.fillMaxWidth())
             AuntieField(value = reference, onValueChange = { reference = it }, label = "Reference #", modifier = Modifier.fillMaxWidth())
             AuntieField(value = date, onValueChange = { date = it }, label = "Date (YYYY-MM-DD)", modifier = Modifier.fillMaxWidth())
-            AuntieField(value = notes, onValueChange = { notes = it }, label = "Notes", modifier = Modifier.fillMaxWidth())
+            AuntieField(value = notes, onValueChange = { notes = it }, label = "Notes (staff only)", placeholder = "not shown to the household", modifier = Modifier.fillMaxWidth())
+            Text(
+                text  = recordPaymentBalanceCopy(unapplied, autoApply),
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textDim,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AuntieCheckbox(checked = autoApply, onCheckedChange = { autoApply = it })
+                Text(
+                    text  = "Automatically apply any unapplied amount to future invoices",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim,
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AuntieCheckbox(checked = sendConfirmation, onCheckedChange = { sendConfirmation = it })
+                Text(
+                    text  = "Send a confirmation email to the household",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim,
+                )
+            }
             Text(
                 text  = "A payment smaller than the balance leaves this invoice open for the rest.",
                 style = AuntieTheme.typography.bodySmall,
@@ -985,6 +1052,32 @@ private fun RecordPaymentDialog(
             )
         }
     }
+}
+/**
+ * The Unapplied Balance line, in words.
+ *
+ * PURE AND UNIT-TESTED, like every other decision on this screen. It says three
+ * different things and which one it says is the point:
+ *
+ *   nothing readable  a box is half-typed, so no figure is shown rather than one
+ *                     derived from a number the dialog cannot read
+ *   negative          the mis-key: more is being applied than actually came in
+ *   positive          money over, and what happens to it depends on the
+ *                     auto-apply switch, so the copy follows the switch
+ */
+internal fun recordPaymentBalanceCopy(unappliedCents: Long?, autoApply: Boolean): String = when {
+    unappliedCents == null ->
+        "Unapplied balance: not yet, one of the amounts above cannot be read."
+    unappliedCents < 0L ->
+        "This payment does not cover the amount applied plus the tip. " +
+            "Raise the payment amount, or lower one of the other two."
+    unappliedCents == 0L -> "Unapplied balance ${formatCentsUsd(0)}."
+    autoApply ->
+        "Unapplied balance ${formatCentsUsd(unappliedCents)}, and it will be held as this " +
+            "household's account credit for their next invoice."
+    else ->
+        "Unapplied balance ${formatCentsUsd(unappliedCents)}, and it will not be applied to " +
+            "anything unless you switch on auto-apply."
 }
 
 // ── Edit dialog: "Link Sessions" ─────────────────────────────────────────────

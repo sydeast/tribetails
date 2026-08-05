@@ -2,7 +2,9 @@ import type { GetInvoiceLedgerResult } from '../contracts/invoiceContracts.gener
 import { formatCentsUsd } from '../lib/invoiceReconcile';
 import {
   ledgerCoversBalance,
-  ledgerRowTotalCents,
+  ledgerRowAppliedLabel,
+  ledgerRowBalanceCents,
+  ledgerRowCaveat,
   paymentDayLabel,
   paymentMethodLabel,
   paymentsTotalCents,
@@ -168,49 +170,123 @@ function PaymentsPanel({
         </table>
       )}
 
-      {/* THE ROOT LEDGER, SEPARATE AND SAID TO BE SEPARATE. These rows are real
-          money on a real invoice, but the settlement arithmetic never reads
-          them, so folding them into the table above would either double a
-          payment recorded through both paths or claim a balance had moved when
-          it had not. */}
+      {/* PAYMENT HISTORY: the transactions themselves, and the ONE table on this
+          screen that can show a tip or a fee, because the root `payments`
+          collection is the only place either is recorded.
+          IT IS STILL SEPARATE FROM THE AUTHORITY ABOVE, and still says so. The
+          settlement arithmetic never reads these rows, so folding the two
+          together would either double a payment recorded through both paths or
+          claim a balance had moved when it had not.
+          THE COLUMNS ARE THE OPERATOR'S OWN, matched to her production screen:
+          Transaction Date, Method, Reference #, Amount, Applied to #n, Tip, and
+          Balance, plus Fee, which is the field whose absence made invoice
+          (Applied to, Tip, Balance) were not missing from the SERVER: the
+          callable has returned `tipCents` since this panel shipped and the panel
+          simply never showed it. */}
       {ledgerPayments.length > 0 && (
         <table className="invoice-ledger__table">
           <caption className="invoice-ledger__caption">
-            Also in the payment ledger. Recorded against this invoice for the books, and NOT counted
-            in the figures above.
+            Payment history. What the client actually paid, recorded for the books, and NOT counted
+            in the figures above. A row reads across as amount = applied + tip + balance; the fee is
+            the processor's cut, taken off what reaches the business rather than off the bill.
           </caption>
           <thead>
             <tr>
+              <th scope="col">Transaction date</th>
               <th scope="col">Method</th>
-              <th scope="col">Date</th>
-              <th scope="col">Reference</th>
+              <th scope="col">Reference #</th>
               <th scope="col" className="invoice-ledger__num">Amount</th>
+              <th scope="col">Applied to</th>
+              <th scope="col" className="invoice-ledger__num">Tip</th>
+              <th scope="col" className="invoice-ledger__num">Fee</th>
+              <th scope="col" className="invoice-ledger__num">Balance</th>
             </tr>
           </thead>
           <tbody>
-            {ledgerPayments.map((row) => (
-              <tr key={row.paymentId}>
-                <td>{paymentMethodLabel(row.method)}</td>
-                <td>{row.date.trim() === '' ? 'no date recorded' : row.date}</td>
-                <td>
-                  {row.reference.trim() === '' ? (
-                    <span className="invoice-ledger__missing">none</span>
-                  ) : (
-                    row.reference
-                  )}
-                </td>
-                <td className="invoice-ledger__num">
-                  {formatCentsUsd(ledgerRowTotalCents(row))}
-                  {row.tipCents > 0 && (
-                    <span className="invoice-ledger__note">
-                      includes {formatCentsUsd(row.tipCents)} tip
-                    </span>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {ledgerPayments.map((row) => {
+              const appliedTo = ledgerRowAppliedLabel(row);
+              return (
+                <tr key={row.paymentId}>
+                  <td>{row.date.trim() === '' ? 'no date recorded' : row.date}</td>
+                  <td>{paymentMethodLabel(row.method)}</td>
+                  <td>
+                    {row.reference.trim() === '' ? (
+                      <span className="invoice-ledger__missing">none</span>
+                    ) : (
+                      row.reference
+                    )}
+                  </td>
+                  {/* THE WHOLE SUM COLLECTED, tip included. Not amount + tip:
+                      on the operator's real data the tip is already inside this
+                      figure, and adding them counts the gratuity twice. */}
+                  <td className="invoice-ledger__num">{formatCentsUsd(row.amountCents)}</td>
+                  <td>
+                    {appliedTo === '' ? (
+                      // Never "$0.00 applied". A payment that touched no balance
+                      // is a different fact from one that applied nothing.
+                      <span className="invoice-ledger__missing">not applied</span>
+                    ) : (
+                      <>
+                        {appliedTo}
+                        <span className="invoice-ledger__note">
+                          {formatCentsUsd(row.appliedCents)}
+                        </span>
+                      </>
+                    )}
+                  </td>
+                  <td className="invoice-ledger__num">
+                    {formatCentsUsd(row.tipCents)}
+                    {/* The tax-relevant fact, said once per row that has one:
+                        the stored tip is the GROSS. The net is derived, never
+                        stored, so nothing can lose the deductible half again. */}
+                    {row.tipCents > 0 && row.tipBasis === 'gross' && (
+                      <span className="invoice-ledger__note">gross</span>
+                    )}
+                  </td>
+                  <td className="invoice-ledger__num">
+                    {row.feeCents > 0 ? (
+                      formatCentsUsd(row.feeCents)
+                    ) : row.reconciles ? (
+                      formatCentsUsd(0)
+                    ) : (
+                      // A zero here would be a claim. On a migrated row the fee
+                      // is not zero, it is unrecorded, and those are different.
+                      <span className="invoice-ledger__missing">not recorded</span>
+                    )}
+                  </td>
+                  <td className="invoice-ledger__num">
+                    {formatCentsUsd(ledgerRowBalanceCents(row))}
+                    {/* Where the leftover went, said on the row. Auto-apply puts
+                        it into the household's account credit for a future
+                        invoice; without it the money is simply unapplied. */}
+                    {row.unappliedCents > 0 && row.autoApply && (
+                      <span className="invoice-ledger__note">held as credit</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
+      )}
+      {/* THE ROWS THAT CANNOT BE MADE TO ADD UP, named rather than left as
+          arithmetic that silently fails. This is the defect itself: the
+          migration kept the NET tip and dropped the fee, so on those rows the
+          gross is unrecoverable and no amount of display can recover it. */}
+      {ledgerPayments.some((row) => ledgerRowCaveat(row) !== '') && (
+        <Banner tone="warning" title="Some of these rows cannot be reconciled">
+          <p>
+            {ledgerPayments
+              .filter((row) => ledgerRowCaveat(row) !== '')
+              .map((row) => ledgerRowCaveat(row))
+              .filter((msg, i, all) => all.indexOf(msg) === i)
+              .join(' ')}
+          </p>
+          <p>
+            Nothing has been guessed to make them balance. Payments recorded from now on store the
+            gross tip and the processor fee separately, so they reconcile on their own.
+          </p>
+        </Banner>
       )}
 
       {/* The Stripe case, named rather than left as a contradiction on screen.

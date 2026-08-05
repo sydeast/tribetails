@@ -423,6 +423,7 @@ data class GetInvoiceLedgerResultPayment(
     val reference: String?,
     val paidAt: String?,
     val recordedBy: String?,
+    val sourcePaymentId: String?,
 )
 
 /**
@@ -438,6 +439,7 @@ internal fun decodeGetInvoiceLedgerResultPayment(raw: Map<String, Any?>?): GetIn
         reference = raw?.get("reference") as? String,
         paidAt = raw?.get("paidAt") as? String,
         recordedBy = raw?.get("recordedBy") as? String,
+        sourcePaymentId = raw?.get("sourcePaymentId") as? String,
     )
 
 /** Nested in the `getInvoiceLedger` contract. */
@@ -445,6 +447,16 @@ data class GetInvoiceLedgerResultLedgerPayment(
     val paymentId: String,
     val amountCents: Long,
     val tipCents: Long,
+    val feeCents: Long,
+    /** One of `gross`, `net`, `unknown`. `""` when the payload omits it. */
+    val tipBasis: String,
+    val reconciles: Boolean,
+    val appliedCents: Long,
+    val unappliedCents: Long,
+    val proceedsCents: Long,
+    val autoApply: Boolean,
+    val appliedInvoiceId: String,
+    val appliedInvoiceNumber: String,
     val method: String,
     val reference: String,
     val date: String,
@@ -462,6 +474,15 @@ internal fun decodeGetInvoiceLedgerResultLedgerPayment(raw: Map<String, Any?>?):
         paymentId = (raw?.get("paymentId") as? String).orEmpty(),
         amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
         tipCents = (raw?.get("tipCents") as? Number)?.toLong() ?: 0L,
+        feeCents = (raw?.get("feeCents") as? Number)?.toLong() ?: 0L,
+        tipBasis = (raw?.get("tipBasis") as? String).orEmpty(),
+        reconciles = raw?.get("reconciles") as? Boolean ?: false,
+        appliedCents = (raw?.get("appliedCents") as? Number)?.toLong() ?: 0L,
+        unappliedCents = (raw?.get("unappliedCents") as? Number)?.toLong() ?: 0L,
+        proceedsCents = (raw?.get("proceedsCents") as? Number)?.toLong() ?: 0L,
+        autoApply = raw?.get("autoApply") as? Boolean ?: false,
+        appliedInvoiceId = (raw?.get("appliedInvoiceId") as? String).orEmpty(),
+        appliedInvoiceNumber = (raw?.get("appliedInvoiceNumber") as? String).orEmpty(),
         method = (raw?.get("method") as? String).orEmpty(),
         reference = (raw?.get("reference") as? String).orEmpty(),
         date = (raw?.get("date") as? String).orEmpty(),
@@ -879,6 +900,24 @@ internal fun decodePostInvoiceEventResult(raw: Map<String, Any?>?): PostInvoiceE
 
 // ---------- recordPayment ----------
 
+/** Nested in the `recordPayment` contract. */
+data class RecordPaymentArgsApply(
+    val invoiceId: String,
+    /** The server defaults this to `""`. */
+    val invoiceNumber: String = "",
+    val amount: Double,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("invoiceId", invoiceId)
+        put("invoiceNumber", invoiceNumber)
+        put("amount", amount)
+    }
+}
+
 /** Request payload for the `recordPayment` callable. */
 data class RecordPaymentArgs(
     /** The server defaults this to `""`. */
@@ -900,12 +939,20 @@ data class RecordPaymentArgs(
     val amount: Double,
     /** The server defaults this to `0.0`. */
     val tip: Double = 0.0,
+    /** The server defaults this to `0.0`. */
+    val fee: Double = 0.0,
     /** The server defaults this to `""`. */
     val notes: String = "",
     /** The server defaults this to `""`. */
     val invoiceId: String = "",
     /** The server defaults this to `""`. */
     val invoiceNumber: String = "",
+    /** Optional: omitted from the payload when null. */
+    val apply: RecordPaymentArgsApply? = null,
+    /** The server defaults this to `false`. */
+    val autoApply: Boolean = false,
+    /** The server defaults this to `false`. */
+    val sendConfirmationEmail: Boolean = false,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -922,17 +969,66 @@ data class RecordPaymentArgs(
         put("email", email)
         put("amount", amount)
         put("tip", tip)
+        put("fee", fee)
         put("notes", notes)
         put("invoiceId", invoiceId)
         put("invoiceNumber", invoiceNumber)
+        if (apply != null) put("apply", apply.toPayload())
+        put("autoApply", autoApply)
+        put("sendConfirmationEmail", sendConfirmationEmail)
     }
 }
+
+/** Nested in the `recordPayment` contract. */
+data class RecordPaymentResultApplication(
+    val invoiceId: String,
+    val invoiceNumber: String,
+    val paymentId: String,
+    val appliedCents: Long,
+    /** One of `unpaid`, `partial`, `settled`, `overpaid`. `""` when the payload omits it. */
+    val state: String,
+    val totalCents: Long,
+    val paidCents: Long,
+    val amountDueCents: Long,
+    val overpaidCents: Long,
+)
+
+/**
+ * Fail-soft decode of `RecordPaymentResultApplication` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeRecordPaymentResultApplication(raw: Map<String, Any?>?): RecordPaymentResultApplication =
+    RecordPaymentResultApplication(
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        invoiceNumber = (raw?.get("invoiceNumber") as? String).orEmpty(),
+        paymentId = (raw?.get("paymentId") as? String).orEmpty(),
+        appliedCents = (raw?.get("appliedCents") as? Number)?.toLong() ?: 0L,
+        state = (raw?.get("state") as? String).orEmpty(),
+        totalCents = (raw?.get("totalCents") as? Number)?.toLong() ?: 0L,
+        paidCents = (raw?.get("paidCents") as? Number)?.toLong() ?: 0L,
+        amountDueCents = (raw?.get("amountDueCents") as? Number)?.toLong() ?: 0L,
+        overpaidCents = (raw?.get("overpaidCents") as? Number)?.toLong() ?: 0L,
+    )
 
 /** Response from the `recordPayment` callable. */
 data class RecordPaymentResult(
     val ok: Boolean,
     val paymentId: String,
     val kinfolkId: String,
+    val amountCents: Long,
+    val tipCents: Long,
+    val feeCents: Long,
+    /** One of `gross`, `net`, `unknown`. `""` when the payload omits it. */
+    val tipBasis: String,
+    val appliedCents: Long,
+    val unappliedCents: Long,
+    val proceedsCents: Long,
+    val tipNetCents: Long,
+    val autoApply: Boolean,
+    val application: RecordPaymentResultApplication?,
+    val creditedToAccountCents: Long,
+    val confirmationEmailSent: Boolean,
 )
 
 /**
@@ -945,6 +1041,18 @@ internal fun decodeRecordPaymentResult(raw: Map<String, Any?>?): RecordPaymentRe
         ok = raw?.get("ok") as? Boolean ?: false,
         paymentId = (raw?.get("paymentId") as? String).orEmpty(),
         kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+        tipCents = (raw?.get("tipCents") as? Number)?.toLong() ?: 0L,
+        feeCents = (raw?.get("feeCents") as? Number)?.toLong() ?: 0L,
+        tipBasis = (raw?.get("tipBasis") as? String).orEmpty(),
+        appliedCents = (raw?.get("appliedCents") as? Number)?.toLong() ?: 0L,
+        unappliedCents = (raw?.get("unappliedCents") as? Number)?.toLong() ?: 0L,
+        proceedsCents = (raw?.get("proceedsCents") as? Number)?.toLong() ?: 0L,
+        tipNetCents = (raw?.get("tipNetCents") as? Number)?.toLong() ?: 0L,
+        autoApply = raw?.get("autoApply") as? Boolean ?: false,
+        application = contractRawMap(raw?.get("application"))?.let { nested -> decodeRecordPaymentResultApplication(nested) },
+        creditedToAccountCents = (raw?.get("creditedToAccountCents") as? Number)?.toLong() ?: 0L,
+        confirmationEmailSent = raw?.get("confirmationEmailSent") as? Boolean ?: false,
     )
 
 // ---------- redeemCredit ----------
@@ -1089,6 +1197,47 @@ internal fun decodeRepairInvoicePaymentsResult(raw: Map<String, Any?>?): RepairI
         repaired = (raw?.get("repaired") as? Number)?.toLong() ?: 0L,
         skipped = decodeRepairInvoicePaymentsResultSkipped(raw?.get("skipped")),
         nextCursor = raw?.get("nextCursor") as? String,
+    )
+
+// ---------- runAutoApply ----------
+
+/** Request payload for the `runAutoApply` callable. */
+data class RunAutoApplyArgs(
+    val invoiceId: String,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("invoiceId", invoiceId)
+    }
+}
+
+/** Response from the `runAutoApply` callable. */
+data class RunAutoApplyResult(
+    val ok: Boolean,
+    val invoiceId: String,
+    /** One of ``, `invoice_missing`, `invoice_not_collectable`, `no_household`, `no_credit`. `""` when the payload omits it. */
+    val skipped: String,
+    val appliedCents: Long,
+    val amountDueCents: Long,
+    val accountBalanceCents: Long,
+)
+
+/**
+ * Fail-soft decode of `RunAutoApplyResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeRunAutoApplyResult(raw: Map<String, Any?>?): RunAutoApplyResult =
+    RunAutoApplyResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        skipped = (raw?.get("skipped") as? String).orEmpty(),
+        appliedCents = (raw?.get("appliedCents") as? Number)?.toLong() ?: 0L,
+        amountDueCents = (raw?.get("amountDueCents") as? Number)?.toLong() ?: 0L,
+        accountBalanceCents = (raw?.get("accountBalanceCents") as? Number)?.toLong() ?: 0L,
     )
 
 // ---------- reviewAndSendDraftInvoice ----------

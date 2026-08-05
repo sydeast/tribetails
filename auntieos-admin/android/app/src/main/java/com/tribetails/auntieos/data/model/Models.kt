@@ -474,13 +474,50 @@ data class Payment(
     var paymentMethod: String = "",
     var referenceNumber: String = "",
     var email: String = "",
+    /**
+     * The GROSS tip: what the client actually tipped, BEFORE the processor fee.
+     *
+     * THE MEANING OF THIS FIELD CHANGED on 2026-08-04, which is why [tipBasis]
+     * exists beside it. The previous system stored the NET tip and the migration
+     * into Firestore dropped the fee, so invoice #1029 reads Amount $137.50,
+     * Applied $127.50, Tip $7.29 and cannot be made to add up: $2.71 is a
+     * processor fee nothing recorded. Operator ruling: "store both, and display
+     * the latter. itll help with taxes": the gross tip is income and the fee is
+     * a deductible expense, so a net-only record loses both numbers.
+     */
     var tip: Double = 0.0,
+    /**
+     * The processor's cut, deducted from what the business receives. NOT part of
+     * [amount]: the client paid [amount], the business banks `amount - fee`.
+     */
+    var fee: Double = 0.0,
+    /**
+     * Which convention [tip] follows: `"gross"`, `"net"`, or absent.
+     *
+     * ABSENT READS AS UNKNOWN, never as net. Rows in this collection were
+     * written by a legacy migration, by the Stripe webhook and by this client
+     * before the fee existed, so absence is not evidence of anything. See
+     * `domain/PaymentMoney.kt`.
+     */
+    var tipBasis: String = "",
+    /** The whole sum collected from the client, the gross tip included. */
     var amount: Double = 0.0,
+    /** STAFF ONLY. Never rendered on a kinfolk-facing surface. */
     var notes: String = "",
     // Confident payment->invoice link (parity with web Payment). Populated by the
     // Record-Payment-on-invoice-detail flow + match_payments_to_invoices.py.
     var invoiceId: String = "",
-    var invoiceNumber: String = ""
+    var invoiceNumber: String = "",
+    /**
+     * "Will automatically apply any Unapplied amount to FUTURE invoices."
+     *
+     * When set, the server moves the leftover into the household's EXISTING
+     * account credit (`families/{id}.accountBalanceCents`) and spends it on the
+     * next invoice that becomes collectable.
+     */
+    var autoApply: Boolean = false,
+    /** Ask the server to send the household the payment confirmation. Not stored. */
+    var sendConfirmationEmail: Boolean = false
 )
 
 @Keep

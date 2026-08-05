@@ -20,6 +20,8 @@ import type {
   RepairInvoicePaymentsResult,
   ReviewAndSendDraftInvoiceArgs,
   ReviewAndSendDraftInvoiceResult,
+  RunAutoApplyArgs,
+  RunAutoApplyResult,
   SendInvoiceReminderArgs,
   SendInvoiceReminderResult,
   UnarchiveInvoiceArgs,
@@ -170,11 +172,56 @@ export async function markInvoicePaid(
  * request has a `.default('')`, so an empty method or reference is a valid
  * stored value rather than a refusal. `amount` is DOLLARS as a float, the
  * legacy shape of this collection.
+ *
+ * ── THE FEE FIELDS, 2026-08-04 ────────────────────────────────────────────
+ *
+ * `tip` IS THE GROSS TIP and `fee` is the processor's cut, stored beside it.
+ * That pairing is the whole point: the previous system stored the NET tip and
+ * the migration dropped the fee, so invoice #1029 reads Amount $137.50,
+ * Applied $127.50, Tip $7.29 and cannot be made to add up. Operator ruling:
+ * "store both, and display the latter. itll help with taxes": the gross tip is
+ * income, the fee is a deductible expense, and a net-only record loses both.
+ *
+ * `amount` IS THE WHOLE TRANSACTION, tip included. Not the part that settles an
+ * invoice. The identity a reader checks is `amount = applied + tipGross +
+ * unapplied`, and the fee is deliberately outside it: it comes off what the
+ * business banks, not off what the household owed.
+ *
+ * `apply` MOVES AN INVOICE BALANCE and nothing else here does. `invoiceId`
+ * stays a display link. THIS PANEL DOES NOT SEND IT: it calls `markInvoicePaid`
+ * first, which has already settled the invoice, so an apply here would collect
+ * the same money twice. One payment applies to one invoice; there is no split.
+ *
+ * `autoApply` puts the leftover into `families/{id}.accountBalanceCents`, the
+ * EXISTING account credit the portal already shows, and the invoice trigger
+ * spends it on the next bill. `sendConfirmationEmail` enqueues the existing
+ * `invoice.payment.applied` notification. Both default off.
  */
 export async function recordPayment(
   input: RecordPaymentArgs,
 ): Promise<RecordPaymentResult> {
   return call<RecordPaymentArgs, RecordPaymentResult>('recordPayment', input);
+}
+/**
+ * runAutoApply (admin): spends a household's account credit on ONE named
+ * invoice, now.
+ *
+ * The on-demand half of "will automatically apply any Unapplied amount to
+ * future invoices". `onInvoiceAutoApply` runs the same pass by itself when an
+ * invoice becomes collectable, but that only fires on the TRANSITION, so this
+ * exists for the two ordinary cases it cannot reach: auto-apply switched on
+ * after the invoice was already sent, and a trigger that failed.
+ *
+ * IT DRAWS ON THE EXISTING CREDIT LEDGER, `families/{id}.accountBalanceCents`,
+ * the balance `redeemCredit` fills. There is no second ledger.
+ *
+ * SAFE TO PRESS TWICE: the balance is decremented as it is spent, so a second
+ * run finds nothing and answers `skipped: 'no_credit'`. Every `skipped` value
+ * is a normal outcome and NOT an error. The callable throws only for an
+ * unknown invoice or a sandbox admin reaching outside their tribe.
+ */
+export async function runAutoApply(invoiceId: string): Promise<RunAutoApplyResult> {
+  return call<RunAutoApplyArgs, RunAutoApplyResult>('runAutoApply', { invoiceId });
 }
 
 /**

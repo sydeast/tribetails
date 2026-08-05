@@ -84,9 +84,26 @@ describe('getInvoiceLedger payments (the settlement authority)', () => {
         reference: '#881',
         paidAt: '2026-07-20T10:00:00Z',
         recordedBy: 'admin1',
+        // NULL on a markInvoicePaid row: one payment, one invoice, no split to
+        // point back at. It is non-null only when one root payment was applied
+        // across several bills (lib/paymentApply.ts).
+        sourcePaymentId: null,
       },
     ]);
     expect(res.paidCents).toBe(2000);
+  });
+  it('carries sourcePaymentId back to the one payment a split settlement came in on', async () => {
+    // Without it, a $300 payment split across three invoices reads as three
+    // separate payments and nothing on any screen says the money arrived once.
+    mocks.dbFn.mockReturnValue(
+      seed({
+        subPayments: [
+          { id: 'p1', data: { amountCents: 12750, sourcePaymentId: 'rootpay1' } },
+        ],
+      }).db,
+    );
+    const res = await run();
+    expect(res.payments[0]!.sourcePaymentId).toBe('rootpay1');
   });
 
   it('reports the balance a PARTIAL payment leaves, not a settled invoice', async () => {
@@ -185,6 +202,19 @@ describe('getInvoiceLedger ledgerPayments (the display ledger)', () => {
         paymentId: 'r1',
         amountCents: 3000,
         tipCents: 500,
+        // NO FEE ON A LEGACY ROW, and `reconciles: false` is the whole point of
+        // this case. The row carries a tip whose basis nobody recorded, so
+        // `amount = applied + tipGross` cannot be checked against it and the
+        // panel has to say so instead of printing figures that do not add up.
+        feeCents: 0,
+        tipBasis: 'unknown',
+        reconciles: false,
+        appliedCents: 0,
+        unappliedCents: 2500,
+        proceedsCents: 3000,
+        autoApply: false,
+        appliedInvoiceId: '',
+        appliedInvoiceNumber: '',
         method: 'card',
         reference: 'ch_123',
         date: '2026-07-22',
@@ -192,6 +222,134 @@ describe('getInvoiceLedger ledgerPayments (the display ledger)', () => {
         recordedBy: 'admin1',
       },
     ]);
+  });
+  it('reads invoice #1029: the gross tip, the fee beside it, and a row that reconciles', async () => {
+    // The live shape this whole tranche exists for. $137.50 collected, $127.50
+    // applied to the bill, a $10.00 GROSS tip, and the $2.71 processor fee that
+    // used to be dropped. amount = applied + tipGross closes exactly.
+    mocks.dbFn.mockReturnValue(
+      seed({
+        rootPayments: [
+          {
+            id: 'r1029',
+            data: {
+              invoiceId: 'inv1',
+              amount: 137.5,
+              amountCents: 13750,
+              tip: 10,
+              tipCents: 1000,
+              fee: 2.71,
+              feeCents: 271,
+              tipBasis: 'gross',
+              autoApply: false,
+              appliedCents: 12750,
+              appliedInvoiceId: 'inv1',
+              appliedInvoiceNumber: '1029',
+              paymentMethod: 'venmo',
+              referenceNumber: 'VN-1029',
+              date: 'February 17, 2026',
+              notes: 'took the fee out of the tip',
+              recordedBy: 'admin1',
+            },
+          },
+        ],
+      }).db,
+    );
+    const row = (await run()).ledgerPayments[0]!;
+    expect(row.amountCents).toBe(13750);
+    expect(row.tipCents).toBe(1000);
+    expect(row.feeCents).toBe(271);
+    expect(row.tipBasis).toBe('gross');
+    expect(row.reconciles).toBe(true);
+    expect(row.appliedCents).toBe(12750);
+    // amount - applied - tipGross
+    expect(row.unappliedCents).toBe(0);
+    // amount - fee: what she actually banks
+    expect(row.proceedsCents).toBe(13479);
+    // The "Applied to #n" column. ONE invoice, never a list.
+    expect(row.appliedInvoiceId).toBe('inv1');
+    expect(row.appliedInvoiceNumber).toBe('1029');
+  });
+  it('prefers the stored cents over the dollar float, per field', async () => {
+    // The same precedence `paidCentsFromPayments` uses on the subcollection. A
+    // disagreeing pair can only mean the float lost precision, so the integer
+    // wins and nothing re-derives cents from dollars downstream.
+    mocks.dbFn.mockReturnValue(
+      seed({
+        rootPayments: [
+          {
+            id: 'r1',
+            data: { invoiceId: 'inv1', amount: 1, amountCents: 13750, fee: 1, feeCents: 271 },
+          },
+        ],
+      }).db,
+    );
+    const row = (await run()).ledgerPayments[0]!;
+    expect(row.amountCents).toBe(13750);
+    expect(row.feeCents).toBe(271);
+  });
+  it('reconciles a row with no tip at all, whatever its basis says', async () => {
+    // A Stripe row, and every payment nobody tipped on. There is no convention
+    // to be wrong about when the number is zero, and a caveat on all of them is
+    // the noise that trains an operator to stop reading caveats.
+    mocks.dbFn.mockReturnValue(
+      seed({ rootPayments: [{ id: 'r1', data: { invoiceId: 'inv1', amount: 30 } }] }).db,
+    );
+    const row = (await run()).ledgerPayments[0]!;
+    expect(row.tipCents).toBe(0);
+    expect(row.tipBasis).toBe('unknown');
+    expect(row.reconciles).toBe(true);
+  });
+  it('reports an Applied-to that names a DIFFERENT invoice than the one being viewed', async () => {
+    // A payment can be linked here for display and applied elsewhere. Saying so
+    // is the point of the column: the alternative is a row on this invoice's
+    // history that looks like it paid this invoice and did not.
+    mocks.dbFn.mockReturnValue(
+      seed({
+        rootPayments: [
+          {
+            id: 'r1',
+            data: {
+              invoiceId: 'inv1',
+              amount: 50,
+              appliedCents: 5000,
+              appliedInvoiceId: 'inv9',
+              appliedInvoiceNumber: '1042',
+            },
+          },
+        ],
+      }).db,
+    );
+    const row = (await run()).ledgerPayments[0]!;
+    expect(row.appliedInvoiceId).toBe('inv9');
+    expect(row.appliedInvoiceNumber).toBe('1042');
+    expect(row.appliedCents).toBe(5000);
+  });
+  it('reports the unapplied leftover a household is holding as credit', async () => {
+    // $300 collected, $180 applied, auto-apply on. $120 is the Balance column,
+    // and it is sitting in families/{id}.accountBalanceCents waiting for a
+    // future invoice.
+    mocks.dbFn.mockReturnValue(
+      seed({
+        rootPayments: [
+          {
+            id: 'r1',
+            data: {
+              invoiceId: 'inv1',
+              amountCents: 30000,
+              appliedCents: 18000,
+              appliedInvoiceId: 'inv1',
+              autoApply: true,
+              tipBasis: 'gross',
+            },
+          },
+        ],
+      }).db,
+    );
+    const row = (await run()).ledgerPayments[0]!;
+    expect(row.unappliedCents).toBe(12000);
+    expect(row.autoApply).toBe(true);
+    expect(row.reconciles).toBe(true);
   });
 
   it('does NOT count the display ledger toward paidCents', async () => {

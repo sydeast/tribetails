@@ -97,7 +97,23 @@ export const Args = z.object({
   paidAt: z.string().optional(),
 });
 
-type InvoiceDoc = {
+/**
+ * THE GUARDS BELOW ARE EXPORTED, and this callable is still their only
+ * definition.
+ *
+ * `lib/paymentApply.ts` puts one recorded payment across SEVERAL invoices, and
+ * every invoice it touches has to be refused on exactly the grounds this
+ * callable refuses one: a draft, a quote, a cancelled invoice, a credit, an
+ * already-settled bill, or a paid-with-no-payments doc whose label is the only
+ * evidence there is. Re-stating those five rules in a second file is how a
+ * multi-invoice apply quietly grows a sixth opinion about what is payable, and
+ * the shape of that bug is a household's credit note being collected against.
+ *
+ * Exported rather than moved into a lib: this module is where the reasoning
+ * behind each refusal is written down, and the reasoning is the load-bearing
+ * part of it.
+ */
+export type InvoiceDoc = {
   kinfolkId?: string;
   status?: string;
   paymentStatus?: string;
@@ -108,7 +124,7 @@ type InvoiceDoc = {
   [k: string]: unknown;
 };
 
-function normalizedStatus(d: InvoiceDoc): string {
+export function normalizedStatus(d: InvoiceDoc): string {
   return typeof d.status === 'string' ? d.status.trim().toLowerCase() : '';
 }
 
@@ -117,7 +133,7 @@ function normalizedStatus(d: InvoiceDoc): string {
  * what actually decides the refusal is this crossed with the recorded payments,
  * in [alreadySettledRefusal] below.
  */
-function claimsPaid(d: InvoiceDoc): boolean {
+export function claimsPaid(d: InvoiceDoc): boolean {
   return d.paymentStatus === 'PAID' || normalizedStatus(d) === 'paid';
 }
 
@@ -152,7 +168,7 @@ function claimsPaid(d: InvoiceDoc): boolean {
  * labelled paid that HAS payments summing to less than its total. That is not
  * refused. It is exactly the invoice whose balance is owed.
  */
-function alreadySettledRefusal(
+export function alreadySettledRefusal(
   d: InvoiceDoc,
   paymentCount: number,
   state: InvoiceSettlementState,
@@ -173,7 +189,7 @@ function alreadySettledRefusal(
   return null;
 }
 
-function isDraftOrQuote(d: InvoiceDoc): boolean {
+export function isDraftOrQuote(d: InvoiceDoc): boolean {
   const s = normalizedStatus(d);
   return s === 'draft' || s === 'quote';
 }
@@ -186,7 +202,7 @@ function isDraftOrQuote(d: InvoiceDoc): boolean {
  * overpayment. Refused explicitly rather than allowed to produce a plausible
  * number. Redemption is its own flow (`redeemCredit`).
  */
-function refusedLifecycle(d: InvoiceDoc): string | null {
+export function refusedLifecycle(d: InvoiceDoc): string | null {
   const s = normalizedStatus(d);
   if (s === 'cancelled') return 'This invoice is cancelled, so a payment cannot be recorded against it.';
   if (s === 'credit') {
