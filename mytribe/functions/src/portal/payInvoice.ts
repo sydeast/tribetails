@@ -82,7 +82,7 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     integerCentsOrNull(inv['amountDueCents']) ?? Math.round(numericFrom(inv['amountDue']) * 100);
   if (amountCents <= 0) throw new HttpsError('failed-precondition', 'Invoice is fully paid.');
 
-  const stripe = getStripe();
+  const stripe = await getStripe();
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
     payment_method_types: ['card'],

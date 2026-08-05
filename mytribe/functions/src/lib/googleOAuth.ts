@@ -1,5 +1,5 @@
 import { HttpsError } from 'firebase-functions/v2/https';
-import { google } from 'googleapis';
+import type { calendar_v3 } from 'googleapis';
 import { GOOGLE_OAUTH_NOT_CONFIGURED_CODE, GOOGLE_OAUTH_REVOKED_CODE } from './googleCalendarTargets';
 
 /**
@@ -119,9 +119,27 @@ export function buildConsentUrl(clientId: string, state: string): string {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
-/** Fresh OAuth2 client. Not cached: `setCredentials` mutates it per connection. */
-function oauthClient() {
+/**
+ * Fresh OAuth2 client. Not cached: `setCredentials` mutates it per connection.
+ *
+ * `googleapis` is loaded HERE rather than at file scope, and that is the single
+ * most expensive line this codebase had. Measured: 109MiB of resident memory,
+ * charged to the cold start of all 227 functions. The package's entry point
+ * eagerly requires every Google API it ships (917 files, ~34MiB of source), and
+ * the Functions runtime loads the whole of `index.js` whatever the target is, so
+ * `getMyHome` was carrying a Calendar client it will never call. Eight functions
+ * here touch Google Calendar; they are the only ones that should pay for it.
+ *
+ * `await import()` rather than an in-function `require()`: tsconfig compiles to
+ * CommonJS, so tsc emits this as `Promise.resolve().then(() => require(...))`,
+ * the same deferred single load, memoised in the same require cache. The
+ * difference shows up in test, where a bare `require()` escapes Vitest's module
+ * graph and silently loads the real SDK straight past the `vi.mock('googleapis')`
+ * in four suites. Measured with a probe, not assumed; see the PR body.
+ */
+async function oauthClient() {
   const { clientId, clientSecret } = readGoogleOAuthConfig();
+  const { google } = await import('googleapis');
   return new google.auth.OAuth2(clientId, clientSecret, GOOGLE_OAUTH_REDIRECT_URI);
 }
 
@@ -141,7 +159,7 @@ export interface ExchangedTokens {
  * message says that.
  */
 export async function exchangeCodeForRefreshToken(code: string): Promise<ExchangedTokens> {
-  const client = oauthClient();
+  const client = await oauthClient();
   const { tokens } = await client.getToken(code);
   const refreshToken = typeof tokens.refresh_token === 'string' ? tokens.refresh_token.trim() : '';
   if (refreshToken === '') {
@@ -160,9 +178,12 @@ export async function exchangeCodeForRefreshToken(code: string): Promise<Exchang
  * refreshes the access token itself from the refresh token, so no access token
  * is ever stored by us.
  */
-export function calendarClientForRefreshToken(refreshToken: string) {
-  const client = oauthClient();
+export async function calendarClientForRefreshToken(
+  refreshToken: string,
+): Promise<calendar_v3.Calendar> {
+  const client = await oauthClient();
   client.setCredentials({ refresh_token: refreshToken });
+  const { google } = await import('googleapis');
   return google.calendar({ version: 'v3', auth: client });
 }
 
@@ -172,7 +193,7 @@ export function calendarClientForRefreshToken(refreshToken: string) {
  * Google account that nothing in this app can see or remove.
  */
 export async function revokeRefreshToken(refreshToken: string): Promise<void> {
-  const client = oauthClient();
+  const client = await oauthClient();
   await client.revokeToken(refreshToken);
 }
 

@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import type Anthropic from '@anthropic-ai/sdk';
 
 /**
  * O-8: shared Anthropic client + brand-voice system prompt for the `generate`
@@ -16,14 +16,24 @@ export const AI_MODEL = 'claude-opus-4-8';
 
 let cachedClient: Anthropic | null = null;
 
-/** Lazy singleton so the secret is read at call time, not at module load. */
-export function anthropicClient(): Anthropic {
+/**
+ * Lazy singleton so the secret is read at call time, not at module load, and so
+ * the SDK itself is loaded at call time too.
+ *
+ * Three functions in this codebase generate copy. Every one of the other 224
+ * was paying for the SDK's module graph on its cold start, because the Functions
+ * runtime loads all of `index.js` whatever the target is. `import type` above
+ * erases completely at compile time, so the `Anthropic.TextBlock` annotations
+ * below cost nothing at runtime.
+ */
+export async function anthropicClient(): Promise<Anthropic> {
   if (!cachedClient) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
       throw new Error('ANTHROPIC_API_KEY is not bound; add it to this function\'s secrets array.');
     }
-    cachedClient = new Anthropic({ apiKey });
+    const { default: AnthropicSdk } = await import('@anthropic-ai/sdk');
+    cachedClient = new AnthropicSdk({ apiKey });
   }
   return cachedClient;
 }
@@ -86,7 +96,7 @@ export interface GenerateCopyArgs {
  * callable timeout. The system prompt carries the cache breakpoint.
  */
 export async function generateCopy(args: GenerateCopyArgs): Promise<string> {
-  const client = anthropicClient();
+  const client = await anthropicClient();
   const response = await client.messages.create({
     model: AI_MODEL,
     max_tokens: args.maxTokens ?? 1024,

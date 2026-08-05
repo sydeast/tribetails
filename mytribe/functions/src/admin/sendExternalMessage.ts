@@ -215,7 +215,8 @@ export async function sendExternalMessageHandler(req: CallableRequest<unknown>):
       });
     } else {
       const statusCallback = process.env.TWILIO_STATUS_CALLBACK_URL;
-      const message = await getTwilio().messages.create({
+      const twilio = await getTwilio();
+      const message = await twilio.messages.create({
         from: getTwilioFromNumber(),
         to: normalized,
         body: args.body,

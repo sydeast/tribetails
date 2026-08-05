@@ -2,7 +2,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
 import crypto from 'crypto';
 import { z } from 'zod';
-import { RecaptchaEnterpriseServiceClient } from '@google-cloud/recaptcha-enterprise';
+import type { RecaptchaEnterpriseServiceClient } from '@google-cloud/recaptcha-enterprise';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
@@ -19,9 +19,21 @@ const RECAPTCHA_MIN_SCORE = 0.5;
 
 // Lazy-init to keep cold-start fast for the (rare) malformed-body branch
 // that rejects before ever needing to verify.
+//
+// The MODULE is loaded lazily too, and that is the expensive half. This is the
+// only function in the codebase that verifies a reCAPTCHA, but the Functions
+// runtime loads all of `index.js` on every cold start whatever the target is,
+// so a file-scope import charged the reCAPTCHA client's gRPC/protobuf stack to
+// all 227 of them. Constructing the client is what needs the module, so that is
+// where it is fetched.
 let recaptchaClient: RecaptchaEnterpriseServiceClient | null = null;
-function getRecaptchaClient(): RecaptchaEnterpriseServiceClient {
-  if (!recaptchaClient) recaptchaClient = new RecaptchaEnterpriseServiceClient();
+async function getRecaptchaClient(): Promise<RecaptchaEnterpriseServiceClient> {
+  if (!recaptchaClient) {
+    const { RecaptchaEnterpriseServiceClient: Client } = await import(
+      '@google-cloud/recaptcha-enterprise'
+    );
+    recaptchaClient = new Client();
+  }
   return recaptchaClient;
 }
 
@@ -32,7 +44,7 @@ function getRecaptchaClient(): RecaptchaEnterpriseServiceClient {
  */
 async function verifyRecaptcha(token: string): Promise<string | null> {
   try {
-    const client = getRecaptchaClient();
+    const client = await getRecaptchaClient();
     const [assessment] = await client.createAssessment({
       parent: `projects/${RECAPTCHA_PROJECT_ID}`,
       assessment: {

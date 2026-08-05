@@ -1,6 +1,5 @@
 import { onRequest, Request } from 'firebase-functions/v2/https';
 import type { Response } from 'express';
-import twilio from 'twilio';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapHttp } from '../lib/wrapHttp';
@@ -125,13 +124,18 @@ async function matchKinfolkByPhone(
  * operator to the exact public function URL, and only fall back to deriving the
  * absolute URL from the request when that env is unset.
  */
-function twilioVerify(req: Request, urlEnv: string): boolean {
+async function twilioVerify(req: Request, urlEnv: string): Promise<boolean> {
   const token = process.env.TWILIO_AUTH_TOKEN;
   if (!token) return false; // fail closed: cannot verify without the auth token
   const sig = req.header('X-Twilio-Signature') ?? '';
   const url = (process.env[urlEnv] || '').trim() || `https://${req.hostname}${req.originalUrl}`;
   const params = (req.body ?? {}) as Record<string, string>;
   try {
+    // Loaded here, not at file scope: only these three webhooks and
+    // twilioStatusCallback need the SDK, and a file-scope import charged it to
+    // the cold start of every other function in `index.js`. The fail-closed
+    // token check above still runs before anything is loaded.
+    const { default: twilio } = await import('twilio');
     return twilio.validateRequest(token, sig, url, params);
   } catch {
     return false;
@@ -148,12 +152,17 @@ function respondTwiml(res: Response): void {
  * Shared guard: 405 on non-POST, 403 on bad/unverifiable signature. Returns the
  * parsed form body when the request is authentic, else null (response sent).
  */
-function guard(req: Request, res: Response, fn: string, urlEnv: string): Record<string, string> | null {
+async function guard(
+  req: Request,
+  res: Response,
+  fn: string,
+  urlEnv: string,
+): Promise<Record<string, string> | null> {
   if (req.method !== 'POST') {
     res.status(405).end();
     return null;
   }
-  if (!twilioVerify(req, urlEnv)) {
+  if (!(await twilioVerify(req, urlEnv))) {
     logEvent({ severity: 'warn', function: fn, event: `${fn}.verify.fail` });
     res.status(403).json({ error: 'bad-signature' });
     return null;
@@ -177,7 +186,7 @@ function collectMediaUrls(body: Record<string, string>): string[] {
 // 1. Inbound SMS / MMS  ->  sms_messages/{MessageSid}
 // ---------------------------------------------------------------------------
 export async function twilioInboundSmsHandler(req: Request, res: Response): Promise<void> {
-  const body = guard(req, res, 'twilioInboundSms', 'TWILIO_INBOUND_SMS_URL');
+  const body = await guard(req, res, 'twilioInboundSms', 'TWILIO_INBOUND_SMS_URL');
   if (!body) return;
 
   const sid = (body.MessageSid || '').trim();
@@ -217,7 +226,7 @@ export async function twilioInboundSmsHandler(req: Request, res: Response): Prom
 // 2. Inbound voicemail transcription  ->  voicemails/{RecordingSid}
 // ---------------------------------------------------------------------------
 export async function twilioInboundVoicemailHandler(req: Request, res: Response): Promise<void> {
-  const body = guard(req, res, 'twilioInboundVoicemail', 'TWILIO_INBOUND_VOICEMAIL_URL');
+  const body = await guard(req, res, 'twilioInboundVoicemail', 'TWILIO_INBOUND_VOICEMAIL_URL');
   if (!body) return;
 
   // Twilio's transcription callback always carries a RecordingSid; recording
@@ -261,7 +270,7 @@ export async function twilioInboundVoicemailHandler(req: Request, res: Response)
 // 3. Inbound call recording / status  ->  calls_log/{CallSid}
 // ---------------------------------------------------------------------------
 export async function twilioInboundCallHandler(req: Request, res: Response): Promise<void> {
-  const body = guard(req, res, 'twilioInboundCall', 'TWILIO_INBOUND_CALL_URL');
+  const body = await guard(req, res, 'twilioInboundCall', 'TWILIO_INBOUND_CALL_URL');
   if (!body) return;
 
   const sid = (body.CallSid || '').trim();

@@ -1,7 +1,6 @@
 import { onRequest, Request } from 'firebase-functions/v2/https';
 import type { Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
-import twilio from 'twilio';
 import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -225,7 +224,7 @@ export async function smtp2goEventWebhookHandler(req: Request, res: Response): P
   res.status(200).json({ ok: true, applied });
 }
 
-function twilioVerify(req: Request): boolean {
+async function twilioVerify(req: Request): Promise<boolean> {
   const token = process.env.TWILIO_AUTH_TOKEN;
   if (!token) return false; // fail closed: cannot verify without the auth token
   const sig = req.header('X-Twilio-Signature') ?? '';
@@ -234,6 +233,9 @@ function twilioVerify(req: Request): boolean {
   const url = process.env.TWILIO_STATUS_CALLBACK_URL || `https://${req.hostname}${req.originalUrl}`;
   const params = (req.body ?? {}) as Record<string, string>;
   try {
+    // Loaded here, not at file scope: see twilio/twilioInbound.ts. The
+    // fail-closed token check above still runs before anything is loaded.
+    const { default: twilio } = await import('twilio');
     return twilio.validateRequest(token, sig, url, params);
   } catch {
     return false;
@@ -245,7 +247,7 @@ export async function twilioStatusCallbackHandler(req: Request, res: Response): 
     res.status(405).end();
     return;
   }
-  if (!twilioVerify(req)) {
+  if (!(await twilioVerify(req))) {
     logEvent({ severity: 'warn', function: 'twilioStatusCallback', event: 'twilio.verify.fail' });
     res.status(403).json({ error: 'bad-signature' });
     return;

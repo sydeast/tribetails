@@ -120,7 +120,7 @@ export async function aiBackfillTaleTitlesHandler(
     return { ok: true, candidates: candidates.length, batched: 0, batchId: null };
   }
 
-  const client = anthropicClient();
+  const client = await anthropicClient();
   const batch = await client.messages.batches.create({
     requests: candidates.map((tale) => ({
       custom_id: tale.id,

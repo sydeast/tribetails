@@ -44,7 +44,8 @@ export async function sendSmsChannel(args: ChannelSendArgs): Promise<ChannelSend
   const body = stripUnresolvedTokens(
     Handlebars.compile(tpl.text)({ ...data, recipientUid, notificationKey: def.key }),
   );
-  const message = await getTwilio().messages.create({
+  const twilio = await getTwilio();
+  const message = await twilio.messages.create({
     from: getTwilioFromNumber(),
     to: phone,
     body,
