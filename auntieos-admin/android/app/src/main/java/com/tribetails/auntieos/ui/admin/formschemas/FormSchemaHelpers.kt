@@ -4,6 +4,13 @@ import com.tribetails.auntieos.data.model.FormSchema
 import com.tribetails.auntieos.data.model.FormSchemaField
 import com.tribetails.auntieos.data.model.FormSchemaFieldType
 import com.tribetails.auntieos.data.model.FormSchemaSection
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.util.Locale
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FormSchema pure helpers. Extracted as top-level functions per
@@ -11,6 +18,95 @@ import com.tribetails.auntieos.data.model.FormSchemaSection
 // without Compose / Robolectric. The Compose ViewModel/screen layer composes
 // these to drive editor behavior.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** What a row shows when the server sent no `updatedAt` at all. */
+const val NO_UPDATED_AT_LABEL = "date unknown"
+
+/**
+ * A schema row's "last updated" text: LOCAL `MM-DD HH:mm`.
+ *
+ * THE BUG THIS FIXES: [FormSchemaListScreen]'s row subtitle used to print
+ * `row.updatedAt` raw, so the operator read `updated 2026-08-02T10:15:00.000Z
+ * by e2e-admin` off the list. The React admin had the identical defect in its
+ * own `metaLine`; both are fixed together and both now produce the SAME string
+ * for the same input.
+ *
+ * The format is the React admin's `lib/time.ts#formatWhen`, ported: two-digit
+ * month, day, hour and minute in the OPERATOR'S zone. Local, never UTC, is the
+ * whole point (the AO-18 rule): `updatedAt` arrives from `listFormSchemas` as a
+ * UTC instant, and a schema saved at 5:15am in Chicago must not read 10:15.
+ * That also means this is NOT the `substring(11, 16)` slicing that
+ * `KinTaleLogsScreen.kt#shortDateTime` and `InboxScreen.kt#shortDateTime` still
+ * do; those print the UTC clock and are the bug this deliberately avoids.
+ *
+ * Three input classes, three honest outputs, never a crash and never a
+ * fabricated date:
+ *  - a real instant  -> `08-02 05:15`
+ *  - blank / absent  -> [NO_UPDATED_AT_LABEL]. `FormSchemaSummary.updatedAt` is
+ *    a non-null String on this platform, so a schema saved before the field
+ *    existed arrives as `""`. Not "never updated": absent is unknown, not proof
+ *    nobody saved it.
+ *  - anything else   -> the raw trimmed text, verbatim, so a value this cannot
+ *    read is one the operator can actually SEE and report.
+ */
+fun formSchemaUpdatedLabel(updatedAt: String): String {
+    val raw = updatedAt.trim()
+    if (raw.isEmpty()) return NO_UPDATED_AT_LABEL
+    val local = parseFormSchemaInstant(raw) ?: return raw
+    return String.format(
+        Locale.US,
+        "%02d-%02d %02d:%02d",
+        local.monthValue,
+        local.dayOfMonth,
+        local.hour,
+        local.minute,
+    )
+}
+
+/**
+ * The stored string as a LOCAL wall clock, or null when it cannot be read.
+ *
+ * The four accepted shapes are the ones the React sibling's `new Date(...)`
+ * also reads for this field, in the same order and with the same zone
+ * semantics, so the two platforms agree on every input either of them
+ * formats:
+ *  1. `2026-08-02T10:15:00.000Z`  the ONLY shape any live writer produces
+ *     (`saveFormSchema` stamps `FieldValue.serverTimestamp()`, and
+ *     `listFormSchemas#toIsoOrNull` hands it over as `.toISOString()`).
+ *  2. `2026-08-02T05:15:00-05:00`  an explicit offset.
+ *  3. `2026-08-02T05:15:00`        no designator, which ISO-8601 reads as
+ *     LOCAL time, exactly as JS does.
+ *  4. `2026-08-02`                 date-only, anchored at UTC midnight,
+ *     matching JS's date-only rule rather than the JVM's start-of-local-day.
+ *
+ * Free text outside that grammar ("sometime last Tuesday") returns null here
+ * and is echoed verbatim by the caller. JS's `Date` would additionally read a
+ * few English forms such as "July 1, 2026"; that divergence is accepted rather
+ * than chased, because both platforms still degrade honestly (one formats, one
+ * shows the operator the raw value) and no writer emits those forms.
+ */
+private fun parseFormSchemaInstant(raw: String): LocalDateTime? {
+    val zone = ZoneId.systemDefault()
+    return runCatching { Instant.parse(raw).atZone(zone).toLocalDateTime() }.getOrNull()
+        ?: runCatching { OffsetDateTime.parse(raw).atZoneSameInstant(zone).toLocalDateTime() }.getOrNull()
+        ?: runCatching { LocalDateTime.parse(raw) }.getOrNull()
+        ?: runCatching { LocalDate.parse(raw).atStartOfDay(ZoneOffset.UTC).withZoneSameInstant(zone).toLocalDateTime() }
+            .getOrNull()
+}
+
+/**
+ * The row subtitle's meta tail: `updated 08-02 05:15 by e2e-admin`.
+ *
+ * A blank `updatedBy` drops the whole "by" clause rather than printing
+ * `by -`, which is what the React `metaLine` does with the same pair (it
+ * filters blank parts out) and is the only reading that stays true when the
+ * pair is absent together, as it is on a schema older than either field.
+ */
+fun formSchemaUpdatedMeta(updatedAt: String, updatedBy: String): String {
+    val who = updatedBy.trim()
+    val label = formSchemaUpdatedLabel(updatedAt)
+    return if (who.isEmpty()) "updated $label" else "updated $label by $who"
+}
 
 /** Pinpoints a validation error to a section + optional field index. */
 data class FormSchemaValidationError(

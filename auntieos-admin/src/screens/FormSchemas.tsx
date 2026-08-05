@@ -5,6 +5,7 @@ import {
   type FormSchemaSummary,
 } from '../api/formSchemas';
 import { type Async } from '../lib/async';
+import { formSchemaUpdatedLabel } from '../lib/formSchemaFormat';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
@@ -19,6 +20,21 @@ import './FormSchemas.css';
  * comment in the Kotlin source) but the sortCol/sortAsc state, defaulted to
  * UpdatedAt/desc, was never removed, so this fixed order IS the shipped
  * behavior, not a simplification of it.
+ *
+ * COMPARING THE RAW STRING IS CORRECT HERE, and that is a checked claim rather
+ * than an assumption, because the sibling defect in PR #241 was exactly this
+ * shape: `invoices.date` / `payments.date` hold free text ("February 17,
+ * 2026"), so a byte compare ordered them alphabetically by month name. This
+ * field is not that. `formSchemas.updatedAt` is written ONLY by the
+ * `saveFormSchema` callable as `FieldValue.serverTimestamp()`
+ * (mytribe/functions/src/admin/saveFormSchema.ts:214) and is handed to this
+ * client only after `listFormSchemas`'s `toIsoOrNull` has run
+ * `.toDate().toISOString()` over it (listFormSchemas.ts:69), so every non-null
+ * value is a fixed-width `YYYY-MM-DDTHH:mm:ss.sssZ` UTC instant, for which
+ * lexicographic order and chronological order are the same order. See
+ * `lib/formSchemaFormat.ts` for the full write-path audit, including why the
+ * `isAuntie()` direct-write grant in firestore.rules:770 does not put free
+ * text in this field in practice.
  */
 export function sortByUpdatedAtDesc(rows: FormSchemaSummary[]): FormSchemaSummary[] {
   return [...rows].sort((a, b) => {
@@ -39,9 +55,27 @@ export function filterSchemas(rows: FormSchemaSummary[], query: string): FormSch
   );
 }
 
-/** The non-blank parts of a row's meta line, joined the way the reference renders them. */
+/**
+ * The non-blank parts of a row's meta line, joined the way the reference
+ * renders them: `v4  ·  08-02 10:15  ·  by e2e-admin`.
+ *
+ * The middle part is `formSchemaUpdatedLabel`, NOT `row.updatedAt`. This line
+ * used to interpolate the raw field, so the operator read
+ * `2026-08-02T10:15:00.000Z` off the row, in UTC, milliseconds and all. It went
+ * unnoticed because the screen's golden photographed a failed-callable error
+ * panel until PR #251 put real rows in the picture.
+ *
+ * `formSchemaUpdatedLabel` never returns blank, so unlike the version and
+ * `updatedBy` parts the timestamp part is never dropped: a schema with no
+ * `updatedAt` says `date unknown` out loud rather than leaving a gap the
+ * operator has to interpret.
+ */
 export function metaLine(row: FormSchemaSummary): string {
-  return [`v${row.version}`, row.updatedAt, row.updatedBy ? `by ${row.updatedBy}` : null]
+  return [
+    `v${row.version}`,
+    formSchemaUpdatedLabel(row.updatedAt),
+    row.updatedBy ? `by ${row.updatedBy}` : null,
+  ]
     .filter((part): part is string => Boolean(part))
     .join('  ·  ');
 }

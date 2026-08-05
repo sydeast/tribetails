@@ -97,7 +97,42 @@ internal fun formSchemaDeleteErrorMessage(label: String, cause: Throwable): Stri
     return "Couldn't delete \"$label\": $reason"
 }
 
-private enum class SortColumn { NAME, VERSION, UPDATED_AT, UPDATED_BY }
+internal enum class SortColumn { NAME, VERSION, UPDATED_AT, UPDATED_BY }
+
+/**
+ * The list order. Lifted out of the composable so it is unit-testable, the same
+ * treatment [formSchemaSearchFilter] already has; the comparators are the ones
+ * that were inline here, unchanged.
+ *
+ * COMPARING `updatedAt` AS A STRING IS CORRECT, and that is a checked claim.
+ * The sibling defect confirmed in production (PR #241) was this exact shape:
+ * `invoices.date` / `payments.date` hold free text like "February 17, 2026", so
+ * a byte compare ordered rows alphabetically by month name. This field is not
+ * that. `formSchemas.updatedAt` is written ONLY by the `saveFormSchema`
+ * callable, as `FieldValue.serverTimestamp()`, and reaches any client only
+ * after `listFormSchemas#toIsoOrNull` has run `.toDate().toISOString()` over
+ * it, so every non-blank value is a fixed-width `YYYY-MM-DDTHH:mm:ss.sssZ` UTC
+ * instant, for which lexicographic order IS chronological order. The React
+ * admin's `sortByUpdatedAtDesc` rests on the same audit and is left comparing
+ * raw strings for the same reason.
+ *
+ * A blank `updatedAt` sorts LAST in the shipped (descending) order, because ""
+ * precedes every instant ascending. That matches the React sibling, which sorts
+ * blanks last explicitly.
+ */
+internal fun formSchemaSort(
+    schemas: List<FormSchemaSummary>,
+    column: SortColumn,
+    descending: Boolean,
+): List<FormSchemaSummary> {
+    val comparator: Comparator<FormSchemaSummary> = when (column) {
+        SortColumn.NAME       -> compareBy { it.name.lowercase() }
+        SortColumn.VERSION    -> compareBy { it.version }
+        SortColumn.UPDATED_AT -> compareBy { it.updatedAt }
+        SortColumn.UPDATED_BY -> compareBy { it.updatedBy.lowercase() }
+    }
+    return if (descending) schemas.sortedWith(comparator.reversed()) else schemas.sortedWith(comparator)
+}
 
 @Composable
 fun FormSchemaListScreen(
@@ -156,13 +191,7 @@ fun FormSchemaListScreen(
     }
 
     val sorted = remember(schemas, sortColumn, sortDescending) {
-        val comparator: Comparator<FormSchemaSummary> = when (sortColumn) {
-            SortColumn.NAME       -> compareBy { it.name.lowercase() }
-            SortColumn.VERSION    -> compareBy { it.version }
-            SortColumn.UPDATED_AT -> compareBy { it.updatedAt }
-            SortColumn.UPDATED_BY -> compareBy { it.updatedBy.lowercase() }
-        }
-        if (sortDescending) schemas.sortedWith(comparator.reversed()) else schemas.sortedWith(comparator)
+        formSchemaSort(schemas, sortColumn, sortDescending)
     }
 
     // Filter the already-sorted list by name or id (always on). Empty query is a
@@ -335,14 +364,19 @@ private fun SchemaRow(
     onRequestDelete: () -> Unit,
 ) {
     // Fold the web table's Updated / Updated-by columns into the row subtitle so the
-    // same metadata survives the single-line AuntieEntityRow layout. No em dash: a
-    // blank value renders a plain hyphen.
-    val updated = row.updatedAt.ifBlank { "-" }
-    val by = row.updatedBy.ifBlank { "-" }
+    // same metadata survives the single-line AuntieEntityRow layout.
+    //
+    // Through [formSchemaUpdatedMeta], NOT the raw fields. This line used to
+    // interpolate `row.updatedAt` directly and printed the machine instant
+    // ("updated 2026-08-02T10:15:00.000Z by e2e-admin") at the operator; the
+    // helper formats it as a LOCAL `MM-DD HH:mm` and says `date unknown` out
+    // loud when the field is absent, instead of the old bare "-" that read the
+    // same as a blank author. The React admin's `metaLine` was fixed in the same
+    // change and produces the same string for the same input.
     val subtitle = if (deleting) {
         "Deleting..."
     } else {
-        "${row.id}  ·  updated $updated by $by"
+        "${row.id}  ·  ${formSchemaUpdatedMeta(row.updatedAt, row.updatedBy)}"
     }
 
     AuntieEntityRow(
