@@ -17,6 +17,27 @@ interface Props<T> {
 }
 
 /**
+ * The one in-flight marker in the app: `div[role=status][aria-live=polite]`
+ * wrapping either a caller's skeleton or the default "Loading ___…" line.
+ *
+ * Extracted out of `AsyncRegion` so the ROUTE-level wait can render the same
+ * thing (`components/RoutePending.tsx`). A lazily-loaded screen and a
+ * lazily-loaded collection are the same event as far as the operator and the
+ * screen reader are concerned, and the visual harness already waits on exactly
+ * this selector before it photographs anything (`e2e/visual.capture.spec.ts`),
+ * so a second spinner idiom would be a second thing for it to learn.
+ */
+export function AsyncLoading({ what, children }: { what: string; children?: ReactNode }) {
+  return (
+    // role=status, not just grey boxes: the wasm canvas exposed nothing to
+    // screen readers (AO-15) and we are not repeating that.
+    <div role="status" aria-live="polite">
+      {children ?? <p className="async-loading">Loading {what}…</p>}
+    </div>
+  );
+}
+
+/**
  * Renders exactly one of: loading, error, empty, data.
  *
  * Modelled on Form Schemas, the one screen in the wasm admin that gets this
@@ -38,13 +59,7 @@ export function AsyncRegion<T>({ state, what, isEmpty, empty, loading, children 
 
   switch (r.kind) {
     case 'loading':
-      return (
-        // role=status, not just grey boxes: the wasm canvas exposed nothing to
-        // screen readers (AO-15) and we are not repeating that.
-        <div role="status" aria-live="polite">
-          {loading ?? <p className="async-loading">Loading {what}…</p>}
-        </div>
-      );
+      return <AsyncLoading what={what}>{loading}</AsyncLoading>;
 
     case 'error':
       return (

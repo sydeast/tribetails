@@ -74,7 +74,12 @@ export default defineConfig({
     },
     {
       name: 'operator',
-      testMatch: /(bookings|no-production-egress|mobile-nav|phone-layout)\.spec\.ts/,
+      // `cascade-bookings` is named here rather than left to the unanchored
+      // `bookings` alternative that happens to match it: which project a spec
+      // runs in decides whether it has a session, and that should be readable
+      // rather than inferred from a substring.
+      testMatch:
+        /(bookings|cascade-bookings|no-production-egress|mobile-nav|phone-layout)\.spec\.ts/,
       dependencies: ['setup'],
       use: { ...devices['Desktop Chrome'], storageState: './e2e/.auth/operator.json' },
     },

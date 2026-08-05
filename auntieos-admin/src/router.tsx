@@ -1,46 +1,37 @@
-import { useState } from 'react';
 import {
   Outlet,
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   redirect,
-  useNavigate,
 } from '@tanstack/react-router';
 import { waitForAuthReady } from './lib/auth';
 import { resolveAccess } from './lib/access';
-import { SignIn } from './screens/SignIn';
-import { Home } from './screens/Home';
-import { FeatureFlags } from './screens/FeatureFlags';
-import { ActivityLog } from './screens/ActivityLog';
-import { Notifications } from './screens/Notifications';
-import { FormSchemas } from './screens/FormSchemas';
-import { Invoices } from './screens/Invoices';
-import { Directory } from './screens/Directory';
-import { HouseholdMembers } from './screens/HouseholdMembers';
-import { Bookings } from './screens/Bookings';
-import { Sessions } from './screens/Sessions';
-import { KinTales } from './screens/KinTales';
-import { Gallery } from './screens/Gallery';
-import { Templates } from './screens/Templates';
-import { KinTaleTemplates } from './screens/KinTaleTemplates';
-import { TribalIntel } from './screens/TribalIntel';
-import { Schedule } from './screens/Schedule';
-import { CoveragePackageBuilder } from './screens/CoveragePackageBuilder';
-import { Inbox } from './screens/Inbox';
-import { Settings } from './screens/Settings';
-import { Communicate } from './screens/Communicate';
-import { AccountRouteView } from './screens/Account';
-import { MyNotificationsEdit } from './screens/MyNotificationsEdit';
-import { NotificationGate } from './screens/NotificationGate';
-import { VetClinics } from './screens/VetClinics';
-import { Media } from './screens/Media';
-import { type MediaTargetType } from './lib/mediaScopeFormat';
-import { FormSchemaEditor } from './screens/FormSchemaEditor';
-import { KinTaleCompose } from './screens/KinTaleCompose';
-import { KinTaleDetail } from './screens/KinTaleDetail';
 import { AppShell } from './components/AppShell';
-import { type NotificationRoute } from './lib/notificationActions';
+import { RoutePending } from './components/RoutePending';
+// Every admin screen below is code-split via lazyRouteComponent (each resolves
+// to its own chunk at build time) instead of being imported here. The single
+// bundle had reached 1,666 KB: the whole app, all 26 routes and the Firebase
+// SDK, downloaded before first paint by an operator who was about to open one
+// screen. MyTribe/web made this move first (`mytribe/web/src/router.tsx`,
+// note O-26) and this is the same mechanism against the same defect.
+//
+// TWO THINGS STAY STATIC, both on purpose:
+//   SignIn    the first thing an unauthenticated visitor needs. Splitting it
+//             would put a network round trip in front of the sign-in form.
+//   AppShell  the nav rail and the outlet. It is on every admin route, so a
+//             chunk of its own would be a second blocking request for a
+//             guaranteed dependency, and the rail is what the pending state
+//             renders INSIDE.
+//
+// Routes that are more than one screen (a list plus its editor, a search-param
+// adapter) live in `./routes/`. They have to be separate modules rather than
+// small functions in this file: an adapter defined here would import its
+// screens at the top of this file and put them straight back in the entry
+// chunk, which is exactly the split we are making. See `src/routes/README.md`.
+import { SignIn } from './screens/SignIn';
+
 /**
  * Search-param validator for the deep links the Notifications feed emits.
  *
@@ -120,237 +111,93 @@ const adminRoute = createRoute({
 const homeRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'home',
-  component: Home,
+  component: lazyRouteComponent(() => import('./screens/Home'), 'Home'),
 });
 
 const featureFlagsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'feature-flags',
-  component: FeatureFlags,
+  component: lazyRouteComponent(() => import('./screens/FeatureFlags'), 'FeatureFlags'),
 });
 
 const activityRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'activity',
-  component: ActivityLog,
+  component: lazyRouteComponent(() => import('./screens/ActivityLog'), 'ActivityLog'),
 });
 
-/**
- * Performs the navigations the Notifications feed asks for.
- *
- * The feed hands up a `NotificationRoute` from its own tested routing table
- * (`lib/notificationActions.ts`) rather than calling the router itself, so the
- * table stays unit-testable and the screen stays renderable without a router.
- * The cast is the price of a runtime-computed destination: TanStack types
- * `navigate()` against the literal route tree, which cannot express "one of
- * four routes, decided from Firestore data". Every `to` the table can produce
- * is a route registered below, and `notificationActions.test.ts` pins all four.
- */
-function NotificationsView() {
-  const navigate = useNavigate();
-  const go = (route: NotificationRoute) => {
-    void navigate(route as unknown as Parameters<typeof navigate>[0]);
-  };
-  return <Notifications onNavigate={go} />;
-}
 const notificationsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'notifications',
-  component: NotificationsView,
+  component: lazyRouteComponent(() => import('./routes/NotificationsView'), 'NotificationsView'),
 });
-
-function FormSchemasView() {
-  const [editor, setEditor] = useState<{ id?: string } | null>(null);
-  if (editor) {
-    return (
-      <FormSchemaEditor
-        {...(editor.id ? { schemaId: editor.id } : {})}
-        onSaved={() => setEditor(null)}
-        onCancel={() => setEditor(null)}
-      />
-    );
-  }
-  return <FormSchemas onNew={() => setEditor({})} onSelect={(id) => setEditor({ id })} />;
-}
 
 const formSchemasRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'form-schemas',
-  component: FormSchemasView,
+  component: lazyRouteComponent(() => import('./routes/FormSchemasView'), 'FormSchemasView'),
 });
-
-/** Adapts `/invoices?invoiceId=&composeQuoteForKinfolkId=` to Invoices' props. */
-function InvoicesView() {
-  const { invoiceId, composeQuoteForKinfolkId } = invoicesRoute.useSearch();
-  return (
-    <Invoices
-      {...(invoiceId ? { initialInvoiceId: invoiceId } : {})}
-      {...(composeQuoteForKinfolkId ? { composeQuoteForKinfolkId } : {})}
-    />
-  );
-}
 
 const invoicesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'invoices',
   validateSearch: optionalIdSearch(['invoiceId', 'composeQuoteForKinfolkId'] as const),
-  component: InvoicesView,
+  component: lazyRouteComponent(() => import('./routes/InvoicesView'), 'InvoicesView'),
 });
 
 const directoryRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'directory',
-  component: Directory,
+  component: lazyRouteComponent(() => import('./screens/Directory'), 'Directory'),
 });
-
-/**
- * Deep link to ONE household's profile, `/directory/{kinfolkId}`.
- *
- * Directory already owns the profile as a sibling view of its list; this route
- * just opens the list on that view, and closing it navigates back to the bare
- * list so the URL and the screen never disagree. Added for the Schedule detail
- * sheet's kinfolk link (operator issue 16), which needs somewhere real to
- * point: a link to a route that does not exist is worse than no link.
- */
-function DirectoryProfileRouteView() {
-  const { kinfolkId } = directoryProfileRoute.useParams();
-  const navigate = useNavigate();
-  return (
-    <Directory
-      initialKinfolkId={kinfolkId}
-      onProfileClose={() => void navigate({ to: '/directory' })}
-    />
-  );
-}
 
 const directoryProfileRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'directory/$kinfolkId',
-  component: DirectoryProfileRouteView,
+  component: lazyRouteComponent(
+    () => import('./routes/DirectoryProfileView'),
+    'DirectoryProfileView',
+  ),
 });
-
-/**
- * B1. `/household-members/{kinfolkId}` — members and invites for ONE household.
- *
- * Its own route rather than a fourth Directory sub-view, because it is the
- * destination of the household profile's "Members and invites" action and has
- * to be linkable on its own. Closing it returns to that household's profile,
- * which is where it was opened from, so the URL and the screen never disagree.
- */
-function HouseholdMembersRouteView() {
-  const { kinfolkId } = householdMembersRoute.useParams();
-  const navigate = useNavigate();
-  return (
-    <HouseholdMembers
-      kinfolkId={kinfolkId}
-      onBack={() => void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })}
-    />
-  );
-}
 
 const householdMembersRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'household-members/$kinfolkId',
-  component: HouseholdMembersRouteView,
+  component: lazyRouteComponent(
+    () => import('./routes/HouseholdMembersView'),
+    'HouseholdMembersView',
+  ),
 });
 
 const bookingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'bookings',
-  component: Bookings,
+  component: lazyRouteComponent(() => import('./screens/Bookings'), 'Bookings'),
 });
 
 const sessionsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'sessions',
-  component: Sessions,
+  component: lazyRouteComponent(() => import('./screens/Sessions'), 'Sessions'),
 });
-
-/**
- * Three-state router wrapper, replacing the old two-state (list/compose)
- * `compose` local state now that the detail/view surface (`KinTaleDetail.tsx`)
- * exists alongside compose/edit (`KinTaleCompose.tsx`):
- *
- *   list      KinTales.tsx, the row feed.
- *   detail    KinTaleDetail.tsx, VIEWING one report: the recap, comment
- *             thread, and reaction. Reached by clicking a row (`onSelect`).
- *   compose   KinTaleCompose.tsx, EDITING (an existing `kinTaleId`) or
- *             starting a brand-new draft (`onNew`, no id).
- *
- * `onSelect` opens DETAIL, not compose: clicking a row in a list is a "view
- * this" gesture (the Inbox.tsx/Sessions.tsx convention for a row click),
- * never an implicit "start editing". Editing is its own explicit affordance,
- * `KinTaleDetail`'s own Edit button, which routes to `compose` carrying the
- * same `kinTaleId`. Both `detail` and `compose` return to `list` on close.
- */
-type KinTalesMode =
-  | { kind: 'list' }
-  | { kind: 'detail'; kinTaleId: string }
-  | { kind: 'compose'; kinTaleId?: string };
-
-function KinTalesView() {
-  // `/kintales?kinTaleId=<id>` opens straight into DETAIL, the destination of a
-  // kintale notification's "Open". Initial state only, so closing the detail
-  // returns to the list rather than bouncing back off a stale URL.
-  const { kinTaleId } = kinTalesRoute.useSearch();
-  const navigate = useNavigate();
-  const [mode, setMode] = useState<KinTalesMode>(
-    kinTaleId ? { kind: 'detail', kinTaleId } : { kind: 'list' },
-  );
-
-  /**
-   * Back to the list, and drop `?kinTaleId=` on the way out. Without clearing
-   * the search param the URL keeps naming a report the operator has closed, and
-   * a reload would reopen it.
-   */
-  function closeToList() {
-    setMode({ kind: 'list' });
-    if (kinTaleId) void navigate({ to: '/kintales', search: {} });
-  }
-
-  if (mode.kind === 'compose') {
-    return (
-      <KinTaleCompose
-        {...(mode.kinTaleId ? { kinTaleId: mode.kinTaleId } : {})}
-        onClose={closeToList}
-      />
-    );
-  }
-  if (mode.kind === 'detail') {
-    return (
-      <KinTaleDetail
-        kinTaleId={mode.kinTaleId}
-        onEdit={(id) => setMode({ kind: 'compose', kinTaleId: id })}
-        onClose={closeToList}
-      />
-    );
-  }
-  return (
-    <KinTales
-      onNew={() => setMode({ kind: 'compose' })}
-      onSelect={(id) => setMode({ kind: 'detail', kinTaleId: id })}
-    />
-  );
-}
 
 const kinTalesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'kintales',
   validateSearch: optionalIdSearch(['kinTaleId'] as const),
-  component: KinTalesView,
+  component: lazyRouteComponent(() => import('./routes/KinTalesView'), 'KinTalesView'),
 });
-
 
 const galleryRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'gallery',
-  component: Gallery,
+  component: lazyRouteComponent(() => import('./screens/Gallery'), 'Gallery'),
 });
 
 const templatesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'templates',
-  component: Templates,
+  component: lazyRouteComponent(() => import('./screens/Templates'), 'Templates'),
 });
 
 /**
@@ -362,43 +209,46 @@ const templatesRoute = createRoute({
 const kinTaleTemplatesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'kintale-templates',
-  component: KinTaleTemplates,
+  component: lazyRouteComponent(() => import('./screens/KinTaleTemplates'), 'KinTaleTemplates'),
 });
 
 const tribalIntelRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'tribal-intel',
-  component: TribalIntel,
+  component: lazyRouteComponent(() => import('./screens/TribalIntel'), 'TribalIntel'),
 });
 
 const coveragePackagesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'packages',
-  component: CoveragePackageBuilder,
+  component: lazyRouteComponent(
+    () => import('./screens/CoveragePackageBuilder'),
+    'CoveragePackageBuilder',
+  ),
 });
 
 const scheduleRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'schedule',
-  component: Schedule,
+  component: lazyRouteComponent(() => import('./screens/Schedule'), 'Schedule'),
 });
 
 const inboxRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'inbox',
-  component: Inbox,
+  component: lazyRouteComponent(() => import('./screens/Inbox'), 'Inbox'),
 });
 
 const settingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'settings',
-  component: Settings,
+  component: lazyRouteComponent(() => import('./screens/Settings'), 'Settings'),
 });
 
 const communicateRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'communicate',
-  component: Communicate,
+  component: lazyRouteComponent(() => import('./screens/Communicate'), 'Communicate'),
 });
 
 // AccountRouteView (not Account) so the screen's "Open my notification
@@ -408,38 +258,34 @@ const communicateRoute = createRoute({
 const accountRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'account',
-  component: AccountRouteView,
+  component: lazyRouteComponent(() => import('./screens/Account'), 'AccountRouteView'),
 });
 
 const myNotificationsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'my-notifications',
-  component: MyNotificationsEdit,
+  component: lazyRouteComponent(
+    () => import('./screens/MyNotificationsEdit'),
+    'MyNotificationsEdit',
+  ),
 });
 
 const notificationGateRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'notification-gate',
-  component: NotificationGate,
+  component: lazyRouteComponent(() => import('./screens/NotificationGate'), 'NotificationGate'),
 });
 
 const vetClinicsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'vet-clinics',
-  component: VetClinics,
+  component: lazyRouteComponent(() => import('./screens/VetClinics'), 'VetClinics'),
 });
-
-/** Adapts the `media/$type/$id` route params to Media's typed props. */
-function MediaRouteView() {
-  const { type, id } = mediaRoute.useParams();
-  const targetType: MediaTargetType = type === 'household' ? 'household' : 'kin';
-  return <Media targetType={targetType} targetId={id} />;
-}
 
 const mediaRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'media/$type/$id',
-  component: MediaRouteView,
+  component: lazyRouteComponent(() => import('./routes/MediaView'), 'MediaView'),
 });
 
 const routeTree = rootRoute.addChildren([
@@ -448,7 +294,21 @@ const routeTree = rootRoute.addChildren([
   adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute]),
 ]);
 
-export const router = createRouter({ routeTree, defaultPreload: 'intent' });
+export const router = createRouter({
+  routeTree,
+  // Preload on INTENT (hover / touch-start / keyboard focus of a rail link).
+  // This was already set before the screens were split, and it is what makes
+  // the split cost nothing on the second click: the rail is 19 links an
+  // operator's pointer crosses constantly, so a screen's chunk is usually
+  // fetched and parsed before the click lands. Not 'render', which would
+  // prefetch all 19 on first paint and rebuild the single bundle out of 19
+  // requests; not 'viewport', which for a rail that is entirely on screen is
+  // 'render' with extra steps.
+  defaultPreload: 'intent',
+  // What the outlet renders while a screen's chunk is in flight. Without one
+  // the wait is a blank content area beside a live nav rail.
+  defaultPendingComponent: RoutePending,
+});
 
 declare module '@tanstack/react-router' {
   interface Register {

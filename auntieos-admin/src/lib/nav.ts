@@ -151,6 +151,8 @@ const BY_SLUG = new Map<string, Destination>([
 
 const BY_DEST = new Map<Destination, string>(NAV.map((e) => [e.dest, e.slug]));
 
+const TITLE_BY_DEST = new Map<Destination, string>(NAV.map((e) => [e.dest, e.title]));
+
 export interface Route {
   readonly dest: Destination;
   readonly detailId?: string;
@@ -192,6 +194,26 @@ export function routeWarning(hash: string): string | null {
   const slug = segments(hash)[0];
   if (slug === undefined) return null;
   return BY_SLUG.has(slug) ? null : `The page "${slug}" isn't available. Showing Home instead.`;
+}
+
+/**
+ * The rail's own name for the screen a location lands on, or null.
+ *
+ * Reads the FIRST segment only, the same rule `parseHash` uses, so
+ * `/directory/abc123` is still "Directory". Takes a TanStack pathname or a
+ * hash; `segments` strips either prefix.
+ *
+ * Used by the route-level loading state, so an operator waiting on a screen's
+ * chunk is told WHICH screen. Null rather than a "Loading…" default: inventing
+ * a name for an unknown slug is the kind of confident-but-wrong string the
+ * `lib/async.ts` header is about, and the caller has a truthful fallback.
+ */
+export function screenTitle(location: string): string | null {
+  const slug = segments(location)[0];
+  if (slug === undefined) return null;
+  const dest = BY_SLUG.get(slug);
+  if (dest === undefined) return null;
+  return TITLE_BY_DEST.get(dest) ?? null;
 }
 
 /** Build a hash for a route. */
