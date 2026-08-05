@@ -173,6 +173,59 @@ for p in mytribe/functions mytribe/web auntieos-admin; do
     NOTES+=("$p has no package-lock.json. Use 'npm install' there, or restore the lockfile.")
     MISSING=1
   fi
+
+  # IS WHAT IS INSTALLED WHAT THE LOCKFILE SAYS?
+  #
+  # A lockfile can be present and correct while node_modules is neither. On
+  # 2026-08-04 PR #250 swapped `googleapis` for `@googleapis/calendar`, the
+  # release ran on a checkout that had never installed it, and `npm run check`
+  # died 90 seconds in with nine TS2307/TS7006 errors naming a module rather
+  # than naming the real problem. Nothing before that point looked wrong: the
+  # tree was clean, the lockfile was present, CI was green (CI installs from
+  # scratch, so CI can never see this).
+  #
+  # NO node_modules AT ALL IS NOT A FAILURE. That is the state of a fresh clone,
+  # and bootstrap.sh runs this script before it installs anything. Failing there
+  # would refuse to start the very thing that fixes it. Only a PARTIAL or STALE
+  # install fails, because that is the state that lies.
+  if [ ! -d "$p/node_modules" ]; then
+    ylw "$(basename "$p")" "not installed yet. 'npm run setup' will do it."
+    NOTES+=("$p has no node_modules. Run 'npm run setup' (or 'npm ci' in $p).")
+  elif ! command -v node >/dev/null 2>&1; then
+    ylw "$(basename "$p")" "installed, but node is missing so it cannot be verified"
+  else
+    # Every name in package.json against what is on disk, and each one's version
+    # against the lockfile's resolved entry. Reports the first few by name: an
+    # operator who can read "@googleapis/calendar" fixes this in one command.
+    DRIFT="$(node -e '
+      const fs = require("fs"), path = require("path");
+      const root = process.argv[1];
+      const read = (f) => JSON.parse(fs.readFileSync(path.join(root, f), "utf8"));
+      let pj, lock;
+      try { pj = read("package.json"); lock = read("package-lock.json"); }
+      catch { process.exit(0); }
+      const want = { ...(pj.dependencies || {}), ...(pj.devDependencies || {}) };
+      const locked = lock.packages || {};
+      const bad = [];
+      for (const name of Object.keys(want)) {
+        const p = path.join(root, "node_modules", name, "package.json");
+        if (!fs.existsSync(p)) { bad.push(name + " (absent)"); continue; }
+        const want2 = locked["node_modules/" + name];
+        if (!want2 || !want2.version) continue;
+        let got;
+        try { got = JSON.parse(fs.readFileSync(p, "utf8")).version; } catch { continue; }
+        if (got !== want2.version) bad.push(name + " (" + got + ", lockfile says " + want2.version + ")");
+      }
+      if (bad.length) console.log(bad.slice(0, 4).join(", ") + (bad.length > 4 ? ", +" + (bad.length - 4) + " more" : ""));
+    ' "$p" 2>/dev/null)"
+    if [ -z "$DRIFT" ]; then
+      grn "$(basename "$p")" "lockfile present, install matches it"
+    else
+      red "$(basename "$p")" "install does NOT match the lockfile: $DRIFT"
+      NOTES+=("$p is installed but out of sync with its lockfile ($DRIFT). Run: npm ci --prefix $p")
+      MISSING=1
+    fi
+  fi
 done
 
 if [ ${#NOTES[@]} -gt 0 ]; then
