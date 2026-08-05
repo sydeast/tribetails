@@ -6,6 +6,7 @@ import {
   railGroup,
   routeToHash,
   routeWarning,
+  screenTitle,
   type Destination,
   type NavGroup,
 } from './nav';
@@ -137,5 +138,45 @@ describe('routeToHash round-trips', () => {
   it('round-trips a detail id', () => {
     const r = { dest: 'directory' as Destination, detailId: 'abc123' };
     expect(parseHash(routeToHash(r))).toEqual(r);
+  });
+});
+
+/**
+ * `screenTitle` is what the route-level loading state says out loud while a
+ * screen's chunk is in flight, so it is read by an operator and by a screen
+ * reader on every slow navigation.
+ */
+describe('screenTitle', () => {
+  it('names the screen a TanStack pathname lands on', () => {
+    expect(screenTitle('/bookings')).toBe('Bookings');
+    expect(screenTitle('/kintales')).toBe('KinTales');
+  });
+
+  it('uses the rail label, not the slug', () => {
+    // The rail says "Auntie Time"; the slug and the code say sessions. The
+    // operator clicked the words on the rail, so those are the words to echo.
+    expect(screenTitle('/sessions')).toBe('Auntie Time');
+    expect(screenTitle('/tribal-intel')).toBe('Tribal Intel');
+  });
+
+  it('reads the first segment only, so a detail route keeps its screen name', () => {
+    expect(screenTitle('/directory/abc123')).toBe('Directory');
+    expect(screenTitle('/media/kin/abc123')).toBe('Media');
+  });
+
+  it('accepts a hash as well as a pathname', () => {
+    expect(screenTitle('#/invoices')).toBe('Invoices');
+  });
+
+  it('is null rather than a guess for an unknown or empty location', () => {
+    expect(screenTitle('/bogus')).toBeNull();
+    expect(screenTitle('/')).toBeNull();
+    expect(screenTitle('')).toBeNull();
+  });
+
+  it('names every rail entry, so no pinned screen loads under a generic label', () => {
+    for (const e of railEntries()) {
+      expect(screenTitle(`/${e.slug}`), `no title for ${e.slug}`).toBe(e.title);
+    }
   });
 });

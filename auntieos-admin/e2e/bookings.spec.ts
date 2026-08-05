@@ -54,7 +54,7 @@ test('a filter that matches nothing says so instead of showing an empty panel', 
 });
 
 test('a real booking row takes the hover fill', async ({ page }) => {
-  // The counterpart to `cascade.spec.ts`'s probe pair, on a row the app truly
+  // The counterpart to `cascade-bookings.spec.ts`'s probe pair, on a row the app truly
   // rendered. That spec proves the static override wins its ordering fight
   // against a mounted probe; this one proves the rule it overrides is live on
   // a real screen, so neither half can rot into a test of nothing.
