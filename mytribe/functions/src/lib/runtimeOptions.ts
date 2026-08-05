@@ -34,17 +34,24 @@
  * footprint, paid by every function. It reached 257-271 MiB on 2026-08-03 and
  * OOMed against a 256MiB limit before the readiness probe, which took the
  * fleet down intermittently and surfaced in browsers as CORS errors. Raised to
- * 512MiB on 2026-08-04. Adding exports here costs memory on every function in
- * the codebase, not only on the new one.
+ * 512MiB on 2026-08-04 and returned to 256MiB the same day once the graph was
+ * cut (below). Adding exports here costs memory on every function in the
+ * codebase, not only on the new one.
  *
  * SIX SDKs CAME OUT OF THAT GRAPH ON 2026-08-04 and are now loaded inside the
- * handlers that use them (googleapis, @google-cloud/recaptcha-enterprise,
+ * handlers that use them (@googleapis/calendar, @google-cloud/recaptcha-enterprise,
  * twilio, stripe, pdf-lib, @anthropic-ai/sdk). Measured on the built lib/:
  * import RSS 245MB -> 150MB, process RSS after import 288MB -> 192MB, 3512
  * modules -> 1851. What is left is firebase-functions and its Firestore/gRPC
  * stack (~56MB, genuinely every function's), @sentry/node (~26MB, imported by
  * 147 of the 227), and this codebase's own compiled modules. Adding a
  * file-scope import of a heavy SDK puts it back on all 227.
+ *
+ * DEFERRING A HEAVY SDK IS NOT THE SAME AS MAKING IT CHEAP. The `googleapis`
+ * bundle still cost +97 MiB at first use even from inside the handler, which
+ * put the five Calendar functions over 256MiB at the moment an operator pressed
+ * a button. It was replaced with `@googleapis/calendar`, the one-API package,
+ * at +0.9 MiB. When a dependency is only needed for one API, take that package.
  *
  * THE CONCURRENCY CLIFF (the thing that makes 1 vCPU worth paying for)
  * -------------------------------------------------------------------

@@ -33,8 +33,13 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 //   Functions that need more carry an explicit override at their own
 //   definition; see lib/runtimeOptions.ts, including why below 1 vCPU Cloud Run
 //   pins concurrency to 1.
-// memory 512MiB: RAISED FROM 256MiB on 2026-08-04, because the fleet outgrew it
-//   and every callable in this codebase went down intermittently for it.
+// memory 256MiB: RAISED to 512MiB on 2026-08-04 because the fleet outgrew
+//   256MiB, then RETURNED to 256MiB later the same day once the reason was
+//   removed rather than accommodated. Both halves of that are below, in order,
+//   because the first half is the outage this number exists to prevent.
+//
+//   THE OUTAGE (why it went up). Every callable in this codebase went down
+//   intermittently on 2026-08-03.
 //
 //   The Functions runtime loads all of `index.js` on every cold start whatever
 //   the target is (see lib/runtimeOptions.ts, which measures the same graph at
@@ -58,19 +63,48 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 //   internal. Nothing reached a handler; auth and permissions were never
 //   involved.
 //
-//   512MiB is the next step up and needs no CPU change: Cloud Run requires
-//   0.5 vCPU only above 512MiB, so 0.25 vCPU still holds and the
-//   CpuAllocPerProjectRegion ceiling that drove the cpu 0.25 decision is
-//   untouched. Memory has its own separate quota.
+//   512MiB was the next step up and needed no CPU change: Cloud Run requires
+//   0.5 vCPU only above 512MiB, so 0.25 vCPU still held and the
+//   CpuAllocPerProjectRegion ceiling that drove the cpu 0.25 decision was
+//   untouched. Memory has its own separate quota. That raise was written up at
+//   the time as buying headroom rather than fixing the shape, and said so: every
+//   function paying the import cost of all 227 was the actual defect.
 //
-//   THIS BUYS HEADROOM, IT DOES NOT FIX THE SHAPE. Every function paying the
-//   import cost of all 227 is the actual defect, and the next 256MiB of growth
-//   returns this outage. Splitting the module graph so a function loads only
-//   what it uses is the real fix and is not this change.
+//   THE FIX (why it came back down, 2026-08-04). The shape was fixed. Six heavy
+//   SDKs moved out of the import graph and into the handlers that use them, and
+//   the last of them, `googleapis`, was narrowed to the one API this codebase
+//   calls. Measured on the built lib/ with an RSS probe, three runs each:
+//
+//     import of lib/index.js       290 -> 192.6-193.1 MiB  (3512 -> 1851 modules)
+//     peak when Calendar is used   288.5-290.8 -> 193.5-194.3 MiB
+//
+//   (RSS from `process.memoryUsage()`, in MiB, which is the unit the limit is
+//   in. The repo's older notes write these numbers as "MB"; they are the same
+//   readings.)
+//
+//   The second line is the one that decides this number. Lazy loading alone
+//   left `require('googleapis')` costing +95.4-97.7 MiB at the moment an
+//   operator pressed a Calendar button, which took the process 32-35 MiB PAST
+//   the 256MiB limit and would have reproduced the outage on the five Calendar
+//   functions. `@googleapis/calendar` is the same generated client for the same
+//   API and costs +0.9-1.0 MiB, so the peak now sits ~62 MiB under the limit
+//   with nothing needing an override. See lib/googleOAuth.ts.
+//
+//   THE BILL IS WHY THIS IS WORTH DOING RATHER THAN LEAVING AT 512MiB.
+//   `firebase deploy` refuses any deploy that raises the minimum bill and needs
+//   `--force` to proceed, which is what the raise cost. Twelve functions carry
+//   `minInstances: 1` and pay their memory floor standing, around the clock;
+//   none of them touch Calendar. Coming back to 256MiB halves that floor.
+//
+//   THE 256MiB CEILING IS STILL REAL, AND IT IS NOW ~62 MiB AWAY. Adding a
+//   file-scope import of a heavy SDK, or enough new exports here, puts it back.
+//   Load heavy dependencies inside the handler that uses them, and prefer the
+//   one-API package over a bundle. lib/runtimeOptions.ts has the same warning
+//   next to the same graph.
 // maxInstances 20: nothing capped instances before, so a runaway trigger loop
 //   or a traffic spike could scale to Cloud Run's default of 100 and bill
 //   unbounded. 20 instances at 0.25 vCPU bounds one runaway function to 5 vCPU.
-setGlobalOptions({ cpu: 0.25, memory: '512MiB', maxInstances: 20 });
+setGlobalOptions({ cpu: 0.25, memory: '256MiB', maxInstances: 20 });
 
 // Sentry is lazy-initialised by each handler at first invocation. Eager
 // init at module-load logged a spurious "SENTRY_DSN unset" on cold-start

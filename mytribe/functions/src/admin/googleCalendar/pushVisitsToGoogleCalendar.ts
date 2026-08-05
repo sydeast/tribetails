@@ -368,7 +368,7 @@ function errorText(err: unknown): string {
   return typeof err === 'string' ? err : 'The push to Google Calendar failed.';
 }
 
-/** Best-effort HTTP status extraction across googleapis error shapes. */
+/** Best-effort HTTP status extraction across Google API client error shapes. */
 export function googleStatus(err: unknown): number | undefined {
   if (typeof err !== 'object' || err === null) return undefined;
   const e = err as { code?: unknown; status?: unknown; response?: { status?: unknown } };

@@ -313,22 +313,24 @@ async function runSync(
   const timeMin = now.toISOString();
   const timeMax = new Date(now.getTime() + lookAheadDays * 24 * 60 * 60 * 1000).toISOString();
 
-  // Loaded here rather than at file scope. `googleapis` eagerly requires every
-  // Google API it ships, and at file scope that 109MiB was charged to the cold
-  // start of all 227 functions, not to the three that talk to Calendar. See
-  // lib/googleOAuth.ts for the full argument and why `await import()` and not
-  // `require()`.
-  const { google } = await import('googleapis');
+  // Loaded here rather than at file scope, and the one-API package rather than
+  // the `googleapis` bundle. At file scope the bundle's 109MiB was charged to
+  // the cold start of all 227 functions; deferred to here it was still +97 MiB
+  // at the moment of use, which on its own put this function over a 256MiB
+  // limit. `@googleapis/calendar` is the same generated client for the same API
+  // and costs +0.9 MiB. See lib/googleOAuth.ts for the full argument, the numbers,
+  // and why `await import()` and not `require()`.
+  const { auth: googleAuth, calendar: calendarApi } = await import('@googleapis/calendar');
 
   // ADC: resolves the Functions runtime service account, no key file shipped.
-  const auth = new google.auth.GoogleAuth({
+  const auth = new googleAuth.GoogleAuth({
     // Least privilege: free/busy only. The freebusy.query below returns busy
     // intervals (start/end) and never event titles, attendees, or descriptions.
     // The calendar is shared at "free/busy only" so no personal detail can leak
     // into the apps even via this token.
     scopes: ['https://www.googleapis.com/auth/calendar.freebusy'],
   });
-  const calendar = google.calendar({ version: 'v3', auth });
+  const calendar = calendarApi({ version: 'v3', auth });
 
   let busy: BusyInterval[];
   try {
@@ -485,7 +487,7 @@ export function calendarFreebusyErrorMessage(calId: string, reasons: string[]): 
   );
 }
 
-/** Best-effort HTTP status extraction across googleapis error shapes. */
+/** Best-effort HTTP status extraction across Google API client error shapes. */
 function extractGoogleStatus(err: unknown): number | undefined {
   if (typeof err !== 'object' || err === null) return undefined;
   const e = err as { code?: unknown; status?: unknown; response?: { status?: unknown } };
