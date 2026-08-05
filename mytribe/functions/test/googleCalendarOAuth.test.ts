@@ -2,11 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: vi.fn(), auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
-vi.mock('googleapis', () => ({
-  google: {
-    auth: { OAuth2: class { setCredentials() {} } },
-    calendar: () => ({}),
-  },
+vi.mock('@googleapis/calendar', () => ({
+  auth: { OAuth2: class { setCredentials() {} } },
+  calendar: () => ({}),
 }));
 
 import {
@@ -162,7 +160,7 @@ describe('buildConsentUrl', () => {
 });
 
 describe('isInvalidGrant', () => {
-  it('recognizes a revoked grant from either shape googleapis throws', () => {
+  it('recognizes a revoked grant from either shape the Google client throws', () => {
     expect(isInvalidGrant({ response: { data: { error: 'invalid_grant' } } })).toBe(true);
     expect(isInvalidGrant(new Error('invalid_grant: Token has been expired or revoked.'))).toBe(true);
   });

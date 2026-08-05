@@ -13,16 +13,14 @@ vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), get
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEventFn }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
-vi.mock('googleapis', () => ({
-  google: {
-    auth: {
-      OAuth2: class {
-        setCredentials() {}
-        revokeToken = mocks.revokeToken;
-      },
+vi.mock('@googleapis/calendar', () => ({
+  auth: {
+    OAuth2: class {
+      setCredentials() {}
+      revokeToken = mocks.revokeToken;
     },
-    calendar: () => ({ calendarList: { list: mocks.calendarListList } }),
   },
+  calendar: () => ({ calendarList: { list: mocks.calendarListList } }),
 }));
 
 import {

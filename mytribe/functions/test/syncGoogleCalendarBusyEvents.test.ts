@@ -20,11 +20,9 @@ vi.mock('../src/lib/writeAuditEntry', () => ({
 vi.mock('firebase-functions/params', () => ({
   defineSecret: () => ({ value: mocks.calendarIdValue }),
 }));
-vi.mock('googleapis', () => ({
-  google: {
-    auth: { GoogleAuth: class { constructor() {} } },
-    calendar: () => ({ freebusy: { query: mocks.freebusyQuery } }),
-  },
+vi.mock('@googleapis/calendar', () => ({
+  auth: { GoogleAuth: class { constructor() {} } },
+  calendar: () => ({ freebusy: { query: mocks.freebusyQuery } }),
 }));
 
 import {
@@ -513,7 +511,7 @@ describe('syncGoogleCalendarBusyEvents handler', () => {
     expect(mocks.freebusyQuery).not.toHaveBeenCalled();
   });
 
-  it('ERROR: other googleapis failure surfaces unavailable', async () => {
+  it('ERROR: other Google API failure surfaces unavailable', async () => {
     mocks.dbFn.mockReturnValue(
       buildDbMock({
         queryDocs: {

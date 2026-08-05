@@ -1,5 +1,5 @@
 import { HttpsError } from 'firebase-functions/v2/https';
-import type { calendar_v3 } from 'googleapis';
+import type { calendar_v3 } from '@googleapis/calendar';
 import { GOOGLE_OAUTH_NOT_CONFIGURED_CODE, GOOGLE_OAUTH_REVOKED_CODE } from './googleCalendarTargets';
 
 /**
@@ -122,25 +122,41 @@ export function buildConsentUrl(clientId: string, state: string): string {
 /**
  * Fresh OAuth2 client. Not cached: `setCredentials` mutates it per connection.
  *
- * `googleapis` is loaded HERE rather than at file scope, and that is the single
- * most expensive line this codebase had. Measured: 109MiB of resident memory,
- * charged to the cold start of all 227 functions. The package's entry point
- * eagerly requires every Google API it ships (917 files, ~34MiB of source), and
- * the Functions runtime loads the whole of `index.js` whatever the target is, so
- * `getMyHome` was carrying a Calendar client it will never call. Eight functions
- * here touch Google Calendar; they are the only ones that should pay for it.
+ * THE SDK IS LOADED HERE, NOT AT FILE SCOPE, AND IT IS THE NARROW PACKAGE.
+ * Two separate savings, in that order, and both were measured:
+ *
+ *   1. At file scope, `googleapis` cost 109MiB of resident memory charged to
+ *      the cold start of all 227 functions, because the Functions runtime loads
+ *      the whole of `index.js` whatever the target is. `getMyHome` was carrying
+ *      a Calendar client it will never call. Moving the load in here charged it
+ *      to the five functions that reach this line: googleOAuthCallback,
+ *      listGoogleCalendars, disconnectGoogleCalendar, pushVisitsToGoogleCalendar
+ *      and (through its own copy of this import) syncGoogleCalendarBusyEvents.
+ *   2. That only moved the cost, it did not remove it. `require('googleapis')`
+ *      eagerly instantiates every Google API the bundle ships, and measured on
+ *      the built lib/ it took the process from 193 MiB to 290 MiB: +97 MiB,
+ *      over the 256MiB limit, at the moment an operator pressed a Calendar
+ *      button. `@googleapis/calendar` is the same generated client for the one
+ *      API we use, published by the same team, and costs +0.9 MiB to a 193.5
+ *      MiB peak. Same code path, same `calendar_v3` types, 99% less of it.
+ *
+ * So do not "simplify" this back to `googleapis`: that one import is the
+ * difference between 256MiB and 512MiB on every Calendar function. If a second
+ * Google API is ever needed, add its own `@googleapis/<api>` package rather
+ * than the bundle.
  *
  * `await import()` rather than an in-function `require()`: tsconfig compiles to
  * CommonJS, so tsc emits this as `Promise.resolve().then(() => require(...))`,
  * the same deferred single load, memoised in the same require cache. The
  * difference shows up in test, where a bare `require()` escapes Vitest's module
- * graph and silently loads the real SDK straight past the `vi.mock('googleapis')`
- * in four suites. Measured with a probe, not assumed; see the PR body.
+ * graph and silently loads the real SDK straight past the
+ * `vi.mock('@googleapis/calendar')` in four suites. Measured with a probe, not
+ * assumed; see the PR body.
  */
 async function oauthClient() {
   const { clientId, clientSecret } = readGoogleOAuthConfig();
-  const { google } = await import('googleapis');
-  return new google.auth.OAuth2(clientId, clientSecret, GOOGLE_OAUTH_REDIRECT_URI);
+  const { auth } = await import('@googleapis/calendar');
+  return new auth.OAuth2(clientId, clientSecret, GOOGLE_OAUTH_REDIRECT_URI);
 }
 
 export interface ExchangedTokens {
@@ -174,17 +190,17 @@ export async function exchangeCodeForRefreshToken(code: string): Promise<Exchang
 }
 
 /**
- * A Calendar API client acting as the connected account. The googleapis client
- * refreshes the access token itself from the refresh token, so no access token
- * is ever stored by us.
+ * A Calendar API client acting as the connected account. The client refreshes
+ * the access token itself from the refresh token, so no access token is ever
+ * stored by us.
  */
 export async function calendarClientForRefreshToken(
   refreshToken: string,
 ): Promise<calendar_v3.Calendar> {
   const client = await oauthClient();
   client.setCredentials({ refresh_token: refreshToken });
-  const { google } = await import('googleapis');
-  return google.calendar({ version: 'v3', auth: client });
+  const { calendar } = await import('@googleapis/calendar');
+  return calendar({ version: 'v3', auth: client });
 }
 
 /**
