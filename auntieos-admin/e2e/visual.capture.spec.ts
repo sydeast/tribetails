@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installCallableStubs } from './visual/callableStubs';
 import { readManifest } from './visual/manifest';
 import { collisions, mapScreen, type Mapping } from './visual/routes';
 import { VISUAL_LOCALE, VISUAL_NOW, VISUAL_OUT_DIR, VISUAL_TIMEZONE } from './visual/fixtures';
@@ -122,6 +123,23 @@ test.beforeEach(async ({ page }) => {
     const local = host === '127.0.0.1' || host === 'localhost' || host === '::1';
     return local ? route.continue() : route.abort('failed');
   });
+
+  /**
+   * The callable answers, layered ON TOP of the abort above and never instead
+   * of it.
+   *
+   * ORDER IS THE MECHANISM. Playwright consults route handlers in REVERSE
+   * registration order, so installing this second is what puts it first for the
+   * callable port while the catch-all keeps every other request, the non-local
+   * abort included. `127.0.0.1:5399` is loopback, so both rules hold at once and
+   * neither is weakened: nothing leaves the machine, and the screens that need a
+   * callable get a fixed, server-shaped answer instead of a red panel.
+   *
+   * A callable NOT named in `callableStubs.ts` still falls through to the
+   * unserved port and still fails loud, which is how a screen that grows a new
+   * dependency announces itself rather than quietly photographing an empty list.
+   */
+  await installCallableStubs(page);
 });
 
 /**
@@ -207,6 +225,50 @@ async function settle(page: Page): Promise<void> {
       new Promise<void>((resolve) => {
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
       }),
+  );
+
+  await refuseUnstubbedCallable(page);
+}
+
+/**
+ * The sentence `lib/fns.ts` writes when a callable was invoked that no stub
+ * answers. It appears verbatim inside the app's own error panel, so finding it
+ * on screen is finding a harness failure, and finding NOTHING like it is not a
+ * claim that the screen is error-free.
+ */
+const NOT_STUBBED = 'was called in e2e emulator mode';
+
+/**
+ * Refuses to photograph a screen whose data never arrived.
+ *
+ * THIS IS THE GUARD THAT WAS MISSING, and its absence put an error panel in
+ * seven of the nineteen goldens. This spec asserts nothing about pixels,
+ * deliberately, and it read that as licence to photograph whatever the browser
+ * happened to be showing. What it was showing, on nine of the nineteen screens,
+ * was a failed callable rendered in a red `Banner`: `invoice-detail`'s entire
+ * Payment History was the sentence "Couldn't load this invoice's payments or
+ * visits". A regression in the payments table cannot show up in a picture that
+ * has no payments table in it.
+ *
+ * IT IS NOT A PIXEL ASSERTION and does not become one. It says nothing about
+ * what the screen should look like; it says the harness must not be part of what
+ * the screen looks like. An error state the APP is entitled to show, a refused
+ * write, an empty list, a validation panel, all still photograph exactly as they
+ * are. Only this one sentence, which no user can ever see because
+ * `E2E_EMULATOR_HOST` folds to `''` in a production build, fails the capture.
+ *
+ * The failure names the screen and points at the stub table, because the fix is
+ * always the same: add the callable to `e2e/visual/callableStubs.ts`, with an
+ * answer shaped like the server's.
+ */
+async function refuseUnstubbedCallable(page: Page): Promise<void> {
+  const shouting = page.getByText(NOT_STUBBED, { exact: false });
+  const count = await shouting.count();
+  if (count === 0) return;
+  const said = (await shouting.first().innerText()).replace(/\s+/g, ' ').trim();
+  throw new Error(
+    `a callable this screen needs is not stubbed, so the capture would be a photograph of the ` +
+      `error panel rather than of the screen. Add it to e2e/visual/callableStubs.ts. The app said: ${said}`,
   );
 }
 

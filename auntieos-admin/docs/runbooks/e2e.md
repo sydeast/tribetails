@@ -108,6 +108,18 @@ an absolute-URL `fetch` added later, or a webfont that escapes Vite's bundling,
 would each be a slow flake in the screenshots. The production guarantee is the
 pin, which holds whether or not a spec remembers to install a route.
 
+The visual surface is also the one place that stubs callables in BULK, and
+`e2e/visual/callableStubs.ts` is the worked example to copy from. It is the same
+one route as above, registered once in `beforeEach` and dispatching on the
+callable's name, and it is installed AFTER the abort so that Playwright's
+reverse-order matching gives it the callable port while the abort keeps
+everything else. Read it before writing your own: it shows what a stub has to get
+right beyond the wire format, which is that the answer must be shaped like the
+callable's real contract and must not contradict what the seed wrote. Between
+2026-08-01 and 2026-08-04 nobody had stubbed anything there, and nine of the
+nineteen captured screens rendered a failed callable in a red `Banner`. Seven of
+those pictures were the approved golden.
+
 Until 2026-08-01 none of this was true. The emulator branch connected auth and
 Firestore and left `functions` alone, so every `httpsCallable` in a run went to
 `https://us-central1-auntieos-ttpc.cloudfunctions.net/<name>`. One visit to
@@ -219,11 +231,17 @@ proved nothing about them either. What changed is that the run now tells you so
 instead of failing quietly against a backend it should never have been touching.
 
 `/home` is the concrete case. Its five widgets call `listConversations`,
-`listExpirations`, `listExpenses`, `listSupplies` and `optimizeRoute`, and in a
-run every one of them renders `CallableNotStubbedError`. `signin.spec.ts` lands
-on that screen and asserts only that sign-in succeeded, which is all it ever
-asserted. A spec that wants to make a claim about a widget must stub its callable
-first.
+`listExpirations`, `listExpenses`, `listSupplies` and `optimizeRoute`, and in an
+ordinary `npm run e2e` every one of them renders `CallableNotStubbedError`.
+`signin.spec.ts` lands on that screen and asserts only that sign-in succeeded,
+which is all it ever asserted. A spec that wants to make a claim about a widget
+must stub its callable first.
+
+The visual capture run does stub all five (`e2e/visual/callableStubs.ts`), and
+that changes nothing about this gap. A stub proves the CLIENT renders a given
+response; the response was written by hand in this repo, so nothing about the
+server is under test either way. What it buys is a screenshot of the widget
+rather than of its error panel.
 
 ### Why the functions emulator is not started
 
