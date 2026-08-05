@@ -25,10 +25,17 @@
  * WHAT IS DELIBERATELY NOT HERE: the collections behind screens whose data
  * arrives through a CALLABLE (Templates, Form Schemas, most of Home, the Inbox
  * THREAD list and the conversation panel). The functions emulator is not
- * running, so those screens resolve their error state whatever is in Firestore
- * and nothing written here would change it. The Inbox CHANNEL lists are the
- * exception and are seeded: `api/inboxChannels.ts` reads those four
- * collections straight through `useCollection`.
+ * running, and the visual surface answers those callables with fixed route
+ * stubs instead (`e2e/visual/callableStubs.ts`), so a document written here
+ * would be read by nobody. The rule is about the READER, not about the
+ * collection, and two things fall on the other side of it:
+ *
+ *   the Inbox CHANNEL lists, which `api/inboxChannels.ts` streams straight
+ *   through `useCollection`, and
+ *   `conversations`, which the nav rail's unread badge streams through
+ *   `lib/useUnreadInbox.ts` on every screen even though the thread list itself
+ *   is callable-backed. Those documents are seeded at the bottom of this file
+ *   and have to say the same thing the stub says.
  */
 
 /**
@@ -90,6 +97,18 @@ export async function seedDenseRows(put: Put, now: number): Promise<void> {
   // household column holds "Wanda Thorne" fits at any width; the width question
   // is only asked by a name that does not. These are ordinary real-world
   // household names, not padding.
+  // PARTIALLY PAID, and these are the same figures
+  // `e2e/visual/callableStubs.ts` hands back from `getInvoiceLedger`: $240.00
+  // billed, $60.00 collected, $180.00 still owed. The detail overlay prints
+  // "Paid so far" and "Still owed" from THIS document, then prints "Collected"
+  // and "Still owed" again a few rows lower from the callable. Two sources, one
+  // picture, so they have to agree or the golden shows an invoice arguing with
+  // itself.
+  //
+  // `editScope` is `metadataOnly` for the same reason: a payment exists, so the
+  // server freezes the money and leaves the metadata open, and a fixture
+  // claiming `all` would describe an invoice the server would refuse to edit
+  // that way.
   await put('invoices', 'vis-invoice-001', {
     kinfolkId: 'e2e-kf-1',
     kinfolkName: 'Wanda Thorne',
@@ -98,9 +117,10 @@ export async function seedDenseRows(put: Put, now: number): Promise<void> {
     date: dayIso(-2),
     dueDate: dayIso(12),
     total: 240,
-    amountDue: 240,
+    amountDue: 180,
+    paidCents: 6000,
     status: 'open',
-    editScope: 'all',
+    editScope: 'metadataOnly',
     sessionIds: ['e2e-sess-completed'],
     lineItems: [
       { description: 'Overnight stay', qty: 2, unitCents: 9000 },
@@ -293,5 +313,32 @@ export async function seedDenseRows(put: Put, now: number): Promise<void> {
     body: 'Could we move the tablet to breakfast rather than the evening while I am away?',
     direction: 'inbound',
     timestamp: isoAt(-1.4),
+  });
+
+  // ── conversations ─────────────────────────────────────────────────────────
+  // The message THREADS arrive through `listConversations`, a callable, which
+  // the visual surface stubs (`e2e/visual/callableStubs.ts`). These documents
+  // are here because the callable is not the only reader: `useUnreadInbox`
+  // streams this collection on every screen to put the unread count on the nav
+  // rail, and it does that with or without a functions emulator. The two must
+  // therefore describe the same two threads and the same read state, or the
+  // rail and the Inbox disagree in a picture that shows both.
+  //
+  // Both READ. An unread thread would be a fine thing to photograph, but it
+  // would put a badge on the rail of all nineteen goldens, which is a change to
+  // every screen made for the sake of one.
+  await put('conversations', 'e2e-kf-1', {
+    kinfolkId: 'e2e-kf-1',
+    kinfolkName: 'Wanda Thorne',
+    unreadForAdmin: false,
+    lastMessageAtMs: Date.parse(`${dayIso(0)}T09:12:00.000Z`),
+    messageCount: 14,
+  });
+  await put('conversations', 'e2e-kf-2', {
+    kinfolkId: 'e2e-kf-2',
+    kinfolkName: 'Nora Halbrook',
+    unreadForAdmin: false,
+    lastMessageAtMs: Date.parse(`${dayIso(-1)}T17:40:00.000Z`),
+    messageCount: 6,
   });
 }

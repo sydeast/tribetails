@@ -218,6 +218,16 @@ export default async function seed(): Promise<void> {
     status: 'completed',
     startTime: isoDaysFromNow(-4),
     completedAt: isoDaysFromNow(-4),
+    // THE OTHER HALF OF A LINK. `vis-invoice-001.sessionIds` has named this
+    // visit since the rows were written, and the visit named nothing back, which
+    // is exactly the half-written link `getInvoiceLedger` reports as
+    // `linkedBack: false` and the detail panel calls out as a visit that can be
+    // billed a second time. That is a real shape and it deserves a test; it does
+    // not deserve to be the fixture behind the invoice screenshot, where it
+    // would put a warning banner in the golden. `linkInvoiceSessions` writes
+    // both directions in one transaction, so this is what a correctly linked
+    // visit looks like.
+    invoiceId: 'vis-invoice-001',
     createdAt: new Date('2026-07-19T10:00:00Z'),
   });
   await put('kin_care_sessions', cancelled.id, {
