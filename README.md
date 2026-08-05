@@ -60,6 +60,19 @@ Build writes `dist/` on your disk and uploads nothing.
 (`RELEASE_SKIP_ANDROID`, `RELEASE_ANDROID_GROUPS`, and the rest), and what to do
 when a step fails.
 
+Two things a release needs that `npm run setup` does not provide. Run
+`bash scripts/preflight.sh` first; it reports both, with the command that fixes
+each.
+
+- **`RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` also ships the `reconcile` Python
+  codebase**, which needs `python3.13` and a venv at
+  `auntieos-admin/web/functions-python/venv`. Nothing creates that venv. The
+  Firebase CLI runs the code to discover its endpoints, so without it a deploy
+  cannot even list what it would ship.
+- **An install can drift from its lockfile**, and nothing about a clean tree or
+  green CI says otherwise: CI installs from scratch every run, so only a
+  long-lived checkout drifts.
+
 Underneath, every deploy goes through `scripts/safe-deploy.sh`. It pins
 `--project auntieos-ttpc`, refuses a bare `firebase deploy` (which would ship
 hosting, every functions codebase, rules and indexes at once), and refuses to

@@ -29,9 +29,56 @@ too and refuses to start if anything required is absent.
 | **firebase-tools** | emulators and every deploy | `npm install -g firebase-tools` |
 | Android SDK | Android builds only | Android Studio, or set `ANDROID_HOME` |
 | gh | PRs from the terminal | `brew install gh` |
+| Python 3.13 | the `reconcile` functions codebase only | `brew install python@3.13` |
 
-Two of these fail in ways that do not name themselves, which is why preflight
-checks them by RUNNING them rather than by looking for the binary:
+### The Python codebase has a setup step nothing performs
+
+`auntieos-admin/web/firebase.json` declares a second functions codebase,
+`reconcile`, on a pinned Python runtime. The Firebase CLI discovers its
+endpoints by RUNNING that code out of a venv beside its source, so without the
+venv a deploy cannot even list what it would ship:
+
+```
+Error: Failed to find location of Firebase Functions SDK: Missing virtual
+environment at venv directory. Did you forget to run 'python3.13 -m venv venv'?
+```
+
+`npm run setup` does not create it and never has. It was built by hand once and
+nothing recorded that, so on 2026-08-05 a release ran 25 minutes of successful
+function deploys and then stopped here, on a machine holding Python 3.14 and no
+3.13.
+
+```bash
+brew install python@3.13
+cd auntieos-admin/web/functions-python
+python3.13 -m venv venv && venv/bin/pip install -r requirements.txt
+```
+
+Preflight reports all four ways this is wrong (no interpreter, no venv, a venv
+built by a different interpreter, requirements never installed) and reads the
+required version from `firebase.json` rather than hardcoding it, so a runtime
+bump cannot leave it validating the old one. It WARNS rather than fails: this
+codebase only ships under `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1`, and a machine
+that never deploys it is not broken for lacking a venv.
+
+### An install either matches its lockfile or it does not, and only one of those looks wrong
+
+Preflight also checks, per project, that what is in `node_modules` is what the
+lockfile pins. The release that forced this had a clean tree, a present
+lockfile and green CI, and died 90 seconds into `npm run check` with nine TS2307
+errors naming `@googleapis/calendar`: PR #250 swapped that dependency and the
+checkout never installed it. CI cannot catch this, because CI installs from
+scratch every run. Only a long-lived checkout drifts.
+
+A missing `node_modules` entirely is a note rather than a failure, since that is
+a fresh clone and `npm run setup` is the fix, and `bootstrap.sh` calls preflight
+BEFORE installing. A PARTIAL or STALE install fails, because that is the state
+that looks installed and is not. The first run of this check found two more
+instances nobody knew about, including a Fraunces font version that had been
+producing an unexplained e2e failure.
+
+Two of the tool checks above fail in ways that do not name themselves, which is
+why preflight checks them by RUNNING them rather than by looking for the binary:
 
 - **No JDK** produces `Could not start Firestore Emulator`, which mentions
   neither Java nor the fix. macOS makes this worse by shipping a `/usr/bin/java`
@@ -530,7 +577,7 @@ past it exactly as the quota did, and the suite proves the release retries the
 right names, survives, and refuses honestly when the quota never lifts. It runs
 the real script against a throwaway repo with `gh`, `gcloud`, `firebase`, `curl`
 and `npm` stubbed, plus a fake `gradlew` per Android app so the two-app build
-and distribution path runs wet without an SDK. 49 cases. Run it after touching
+and distribution path runs wet without an SDK. 54 cases. Run it after touching
 `scripts/release.sh`.
 
 Knobs, all off by default:
@@ -540,7 +587,10 @@ Knobs, all off by default:
 | `DRY_RUN=1` | Rehearse: print every firebase command, run none, write nothing, claim nothing |
 | `RELEASE_SKIP_CHECK=1` | Skip step 1. Then `dist/` is whatever was last built, which may not match HEAD |
 | `RELEASE_SKIP_CI_GATE=1` | Release without CI's verdict for HEAD. For when the gate is unavailable, not for when it says no |
-| `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` | Also ship the AuntieOS `default` and `reconcile` codebases |
+| `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` | Also ship the AuntieOS `default` and `reconcile` codebases. `reconcile` needs the Python venv above |
+| `RELEASE_FUNCTIONS_FORCE=1` | Pass `--force` to the functions deploy. Needed when a change RAISES the minimum bill; see below. Also lets firebase DELETE functions missing from source, so read the diff |
+| `RELEASE_PRUNE_BRANCHES=0` | Skip deleting merged remote branches after the tag |
+| `BRANCH_PRUNE_MIN_AGE_DAYS=N` | How long a merged branch stays quiet before the prune takes it (default 1) |
 | `RELEASE_YES=1` | Do not prompt (CI). Preconditions still apply |
 | `RELEASE_FORCE_FUNCTIONS=1` | Deploy functions even when unchanged |
 | `RELEASE_SKIP_ANDROID=1` | Ship the web without **either** Android client. Off by default; shipping them together is the point of steps 1c and 6b |
@@ -575,6 +625,38 @@ from the deploy log.
 or push failure does not fail the release: by step 9 the web is already live
 and verified, so the run reports the problem and leaves it for you to tag by
 hand rather than call a good deploy broken.
+
+### Merged branches are deleted after the tag
+
+Immediately after step 9, `scripts/prune-merged-branches.sh` deletes remote
+branches already merged into `main`. Nothing deleted one before, and by
+2026-08-04 origin held 197 with 180 of them merged, so `git branch -r` was
+mostly archaeology.
+
+It runs there, past the point where the release is already true, and it can
+never fail the release. Both facts are the same decision: a non-zero exit here
+would turn a cosmetic problem into an operator waking up to a red release that
+actually shipped.
+
+Four things it refuses to delete: anything not an ancestor of `origin/main`
+(checked per branch against that branch's remote sha, not from one `--merged`
+listing), the head of any open PR (read from `gh`; a missing or unauthenticated
+`gh` returns an empty list indistinguishable from "none open", so it skips
+entirely rather than guess), `main` and the release's own branch, and anything
+merged more recently than `BRANCH_PRUNE_MIN_AGE_DAYS` (default 1).
+
+That last guard exists because of a real case: PR #231 merged while a second
+commit was still being pushed to its branch, so the merge took the first commit
+only and the branch outlived its PR carrying work that had not landed. The
+ancestor check would NOT have saved it, because the branch was merged. It just
+was not finished.
+
+Every deletion is recorded first, one line per branch, to
+`~/tribetails-branch-prune-<date>.txt`. Each line restores that branch with a
+ref push of the recorded sha. Skipped branches are reported with counts, because
+a prune that prints only its deletions reads as "everything mergeable is gone".
+
+`RELEASE_PRUNE_BRANCHES=0` skips the step.
 
 List releases oldest-first with `git tag -l 'release/*' | sort`. To revert:
 hosting rolls back instantly from the Firebase console, as above. Functions
@@ -833,6 +915,72 @@ node scripts/declared-secrets.js
 
 That reads the built `__endpoint`s — the same structure the CLI validates —
 rather than grepping source, which cannot see arrays built from spreads.
+
+**A deploy fails with `Could not create or update Cloud Run service <name>.
+Accessing secret failed: ... Secret <NAME>/versions/1 was not found`.** The
+third secret trap, and unlike the two above the SOURCE is already correct. A
+gcfv2 function's deployed revision keeps the secret bindings it was created
+with, so removing a secret from the code does not remove it from the service.
+Delete the secret itself and every later update of that function fails on a
+binding nothing in the repo declares any more.
+
+Seen on 2026-08-05: `writeDraft`, `getDraft` and `getTrainingDoc` still bound
+`N8N_SHARED_SECRET`, which was deleted when n8n was retired on 2026-07-23. The
+source had moved to Bearer Firebase ID tokens in the same change. Recreating the
+secret to satisfy the revision would resurrect what that change deliberately
+removed, so delete the functions and let the next release recreate them from
+source:
+
+```bash
+cd auntieos-admin/web
+npx firebase functions:delete writeDraft getDraft getTrainingDoc \
+  --region us-central1 --project auntieos-ttpc --force
+```
+
+They come back on the next deploy with a clean spec. Check the source declares
+them with no `secrets:` array first, or you will delete something that cannot
+return.
+
+**A deploy stops with `The following functions are found in your project but do
+not exist in your local source code`.** Firebase will not delete in
+non-interactive mode, so one orphan blocks the whole codebase. It names the
+function. Confirm it is genuinely retired (removed from source deliberately, no
+hosting rewrite pointing at it, no caller) and then delete it by name:
+
+```bash
+npx firebase functions:delete <name> --region us-central1 --project auntieos-ttpc --force
+```
+
+On 2026-08-05 this was `sendMessage`, a proxy to a retired n8n webhook that had
+outlived its source by twelve days. `functions:delete` matches against the
+local source, so if the CLI answers `The specified filters do not match any
+existing functions` it has usually already gone; check the audit log before
+assuming otherwise.
+
+**A PR's preview deploy fails with HTTP 429, `channel quota reached`.** Not
+code, and it blocks every PR at once. Firebase Hosting caps preview channels per
+site and nothing expires them early; on 2026-08-05 there were 50, going back to
+PR #98, every one of them merged or closed. List and delete:
+
+```bash
+npx firebase hosting:channel:list --project auntieos-ttpc
+npx firebase hosting:channel:delete <id> --project auntieos-ttpc --force
+```
+
+**A functions deploy is refused with `Pass the --force option to deploy
+functions that increase the minimum bill`.** Not a quota and not a rate limit,
+so retrying smaller and slower cannot help: every batch is refused identically
+and instantly. Something now asks for more than it used to (memory, cpu,
+minInstances), and the floor it warns about is a real recurring cost. Read the
+diff, then `RELEASE_FUNCTIONS_FORCE=1 npm run deploy`. Step 5 catches this on
+the first batch and names the flag rather than grinding through the rest.
+
+The 2026-08-04 case is worth knowing because the answer was to stop paying it:
+the fleet went to 512MiB to survive a cold-start OOM, which raised the floor on
+12 `minInstances: 1` functions. The real cause was that `googleapis` cost 98 MB
+of the 248 MB import for the sake of five functions. Narrowing it to
+`@googleapis/calendar` (0.9 MB) took the import to 193 MB, the fleet back to
+256MiB, and the standing bill BELOW where it started.
 
 **A functions deploy fails with `Quota exceeded for total allowable CPU per
 project per region`.** It fails the tail of the deploy (18 functions on
