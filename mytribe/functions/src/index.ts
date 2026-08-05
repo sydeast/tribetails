@@ -212,6 +212,10 @@ export { updateInvoice } from './admin/updateInvoice';
 // calls them until Android re-points (W2-2), and rules are revoked after that.
 export { linkInvoiceSessions } from './admin/linkInvoiceSessions';
 export { recordPayment } from './admin/recordPayment';
+// Auto-apply: the on-demand half of "apply any Unapplied amount to future
+// invoices". The trigger below is the automatic half; this is the same pass
+// for an operator whose invoice was already sent when she ticked the box.
+export { runAutoApply } from './admin/runAutoApply';
 export { archiveInvoice } from './admin/archiveInvoice';
 export { unarchiveInvoice } from './admin/unarchiveInvoice';
 // Detection + repair for invoices wrecked by the pre-2026-07-25 partial-payment
@@ -384,6 +388,10 @@ export { onFamilyKinWrite } from './triggers/onFamilyKinWrite';
 export { onFlatKinWrite } from './triggers/onFlatKinWrite';
 export { onFamilyProfileWrite } from './triggers/onFamilyProfileWrite';
 export { onInvoicesWrite } from './triggers/onInvoicesWrite';
+// A SECOND trigger on the same collection, deliberately: onInvoicesWrite
+// decides who to tell about a state change and writes nothing, this one moves
+// a household's unapplied credit onto a bill that has just become collectable.
+export { onInvoiceAutoApply } from './triggers/onInvoiceAutoApply';
 export { onKinTaleCommentCreate } from './triggers/onKinTaleCommentCreate';
 export { onBookingNoteCreate } from './triggers/onBookingNoteCreate';
 export { onRatingCreate } from './triggers/onRatingCreate';

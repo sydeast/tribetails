@@ -228,6 +228,7 @@ export interface GetInvoiceLedgerResultPayment {
   reference: string | null;
   paidAt: string | null;
   recordedBy: string | null;
+  sourcePaymentId: string | null;
 }
 
 /**
@@ -237,6 +238,15 @@ export interface GetInvoiceLedgerResultLedgerPayment {
   paymentId: string;
   amountCents: number;
   tipCents: number;
+  feeCents: number;
+  tipBasis: 'gross' | 'net' | 'unknown';
+  reconciles: boolean;
+  appliedCents: number;
+  unappliedCents: number;
+  proceedsCents: number;
+  autoApply: boolean;
+  appliedInvoiceId: string;
+  appliedInvoiceNumber: string;
   method: string;
   reference: string;
   date: string;
@@ -452,6 +462,16 @@ export interface PostInvoiceEventResult {
 // ---------- recordPayment ----------
 
 /**
+ * Nested in the `recordPayment` contract.
+ */
+export interface RecordPaymentArgsApply {
+  invoiceId: string;
+  /** Optional in the request; the server defaults it to ''. */
+  invoiceNumber?: string;
+  amount: number;
+}
+
+/**
  * Request payload for the `recordPayment` callable.
  */
 export interface RecordPaymentArgs {
@@ -474,12 +494,34 @@ export interface RecordPaymentArgs {
   amount: number;
   /** Optional in the request; the server defaults it to 0. */
   tip?: number;
+  /** Optional in the request; the server defaults it to 0. */
+  fee?: number;
   /** Optional in the request; the server defaults it to ''. */
   notes?: string;
   /** Optional in the request; the server defaults it to ''. */
   invoiceId?: string;
   /** Optional in the request; the server defaults it to ''. */
   invoiceNumber?: string;
+  apply?: RecordPaymentArgsApply;
+  /** Optional in the request; the server defaults it to false. */
+  autoApply?: boolean;
+  /** Optional in the request; the server defaults it to false. */
+  sendConfirmationEmail?: boolean;
+}
+
+/**
+ * Nested in the `recordPayment` contract.
+ */
+export interface RecordPaymentResultApplication {
+  invoiceId: string;
+  invoiceNumber: string;
+  paymentId: string;
+  appliedCents: number;
+  state: 'unpaid' | 'partial' | 'settled' | 'overpaid';
+  totalCents: number;
+  paidCents: number;
+  amountDueCents: number;
+  overpaidCents: number;
 }
 
 /**
@@ -489,6 +531,18 @@ export interface RecordPaymentResult {
   ok: true;
   paymentId: string;
   kinfolkId: string;
+  amountCents: number;
+  tipCents: number;
+  feeCents: number;
+  tipBasis: 'gross' | 'net' | 'unknown';
+  appliedCents: number;
+  unappliedCents: number;
+  proceedsCents: number;
+  tipNetCents: number;
+  autoApply: boolean;
+  application: RecordPaymentResultApplication | null;
+  creditedToAccountCents: number;
+  confirmationEmailSent: boolean;
 }
 
 // ---------- redeemCredit ----------
@@ -552,6 +606,27 @@ export interface RepairInvoicePaymentsResult {
   repaired: number;
   skipped: Record<'no_payments' | 'payments_cover_total' | 'no_total' | 'balance_already_correct' | 'would_lower_balance', number>;
   nextCursor: string | null;
+}
+
+// ---------- runAutoApply ----------
+
+/**
+ * Request payload for the `runAutoApply` callable.
+ */
+export interface RunAutoApplyArgs {
+  invoiceId: string;
+}
+
+/**
+ * Response from the `runAutoApply` callable.
+ */
+export interface RunAutoApplyResult {
+  ok: true;
+  invoiceId: string;
+  skipped: '' | 'invoice_missing' | 'invoice_not_collectable' | 'no_household' | 'no_credit';
+  appliedCents: number;
+  amountDueCents: number;
+  accountBalanceCents: number;
 }
 
 // ---------- reviewAndSendDraftInvoice ----------

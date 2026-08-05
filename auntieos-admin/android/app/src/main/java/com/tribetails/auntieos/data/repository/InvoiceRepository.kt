@@ -465,9 +465,17 @@ internal fun recordPaymentArgs(payment: Payment): RecordPaymentArgs = RecordPaym
     email = payment.email,
     amount = payment.amount,
     tip = payment.tip,
+    fee = payment.fee,
     notes = payment.notes,
     invoiceId = payment.invoiceId,
     invoiceNumber = payment.invoiceNumber,
+    autoApply = payment.autoApply,
+    sendConfirmationEmail = payment.sendConfirmationEmail,
+    // NO `apply`, DELIBERATELY. `InvoiceDetailViewModel.recordPayment` calls
+    // `markInvoicePaid` FIRST, which has already settled the invoice by the time
+    // this row is written; sending an apply here would put the same money
+    // against the same bill a second time. `invoiceId` above stays what it has
+    // always been: the display link the Payments screens join on.
 )
 
 /**

@@ -224,9 +224,21 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   linkInvoiceSessions: { schema: LinkInvoiceSessionsArgs, keys: ['invoiceId', 'sessionIds'] },
   recordPayment: {
     schema: RecordPaymentArgs,
+    // Grown 2026-08-04 by the fee/apply tranche. Every addition is OPTIONAL
+    // with a default, so the thirteen-field payload android and the React admin
+    // already send still validates unchanged: the freeze is the SUPERSET, the
+    // same treatment `submitVetClinic`'s `isEmergency` got.
+    //
+    // `fee` is the field whose absence made invoice #1029 unreconcilable.
+    // `apply` is the "Apply: $" box and it is the ONLY thing that moves an
+    // invoice balance here; `invoiceId` stays a display link, because the React
+    // admin sets it on a row it writes AFTER markInvoicePaid has already
+    // settled the invoice. `apply` is a single object, NOT a list: one payment
+    // applies to one invoice (operator ruling, 2026-08-04).
     keys: [
-      'address', 'amount', 'client', 'date', 'email', 'invoiceId', 'invoiceNumber',
-      'kinfolkId', 'kinfolkName', 'notes', 'paymentMethod', 'referenceNumber', 'tip',
+      'address', 'amount', 'apply', 'autoApply', 'client', 'date', 'email', 'fee',
+      'invoiceId', 'invoiceNumber', 'kinfolkId', 'kinfolkName', 'notes', 'paymentMethod',
+      'referenceNumber', 'sendConfirmationEmail', 'tip',
     ],
   },
   assignTemplate: { schema: AssignTemplateArgs, keys: ['active', 'audience', 'catalogKey', 'templateId', 'triggerKey'] },
@@ -888,9 +900,36 @@ const FROZEN_RESPONSE_SHAPES: Record<
     load: () => import('../src/admin/linkInvoiceSessions'),
     signature: ['added[]', 'editScope', 'invoiceId', 'ok', 'removed[]', 'sessionIds[]', 'status'],
   },
+  // Grown 2026-08-04. The three figures a caller CANNOT compute are the reason:
+  // what the applications actually did to each invoice, what is left unapplied,
+  // and whether the household confirmation really went out.
   recordPayment: {
     load: () => import('../src/admin/recordPayment'),
-    signature: ['kinfolkId', 'ok', 'paymentId'],
+    signature: [
+      'amountCents',
+      'application.amountDueCents',
+      'application.appliedCents',
+      'application.invoiceId',
+      'application.invoiceNumber',
+      'application.overpaidCents',
+      'application.paidCents',
+      'application.paymentId',
+      'application.state',
+      'application.totalCents',
+      'appliedCents',
+      'autoApply',
+      'confirmationEmailSent',
+      'creditedToAccountCents',
+      'feeCents',
+      'kinfolkId',
+      'ok',
+      'paymentId',
+      'proceedsCents',
+      'tipBasis',
+      'tipCents',
+      'tipNetCents',
+      'unappliedCents',
+    ],
   },
   // The operator sweeps. `skipped` is a record, so the walker names the key
   // and not the five reasons; those are pinned by value in
@@ -942,13 +981,22 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'amountDueCents',
       'invoiceId',
       'ledgerPayments[].amountCents',
+      'ledgerPayments[].appliedCents',
+      'ledgerPayments[].appliedInvoiceId',
+      'ledgerPayments[].appliedInvoiceNumber',
+      'ledgerPayments[].autoApply',
       'ledgerPayments[].date',
+      'ledgerPayments[].feeCents',
       'ledgerPayments[].method',
       'ledgerPayments[].notes',
       'ledgerPayments[].paymentId',
+      'ledgerPayments[].proceedsCents',
+      'ledgerPayments[].reconciles',
       'ledgerPayments[].recordedBy',
       'ledgerPayments[].reference',
+      'ledgerPayments[].tipBasis',
       'ledgerPayments[].tipCents',
+      'ledgerPayments[].unappliedCents',
       'missingSessionIds[]',
       'orphanSessionIds[]',
       'paidCents',
@@ -958,6 +1006,7 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'payments[].paymentId',
       'payments[].recordedBy',
       'payments[].reference',
+      'payments[].sourcePaymentId',
       'sessions[].completedAt',
       'sessions[].durationMinutes',
       'sessions[].linkedBack',

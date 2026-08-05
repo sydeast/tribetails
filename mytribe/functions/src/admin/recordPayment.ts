@@ -10,7 +10,17 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveInvoiceWriteActor, scopedKinfolkId } from '../lib/testMode';
 import { validateResponse } from '../lib/callableResponse';
-import { OkSchema } from '../lib/invoiceResponseSchema';
+import {
+  CentsSchema,
+  InvoiceSettlementStateSchema,
+  OkSchema,
+  SignedCentsSchema,
+} from '../lib/invoiceResponseSchema';
+import { TIP_BASES, dollarsToCents, paymentMoneyOf } from '../lib/paymentMoney';
+import { planApply, readInvoiceForApply, stageApply, type ApplyOutcome } from '../lib/paymentApply';
+import { creditAccount } from '../lib/accountCredit';
+import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+import { enqueueNotification } from '../notifications/dispatcher';
 
 /**
  * Creates a row in the ROOT `payments` collection. W2-1 of ADR-0002
@@ -61,7 +71,36 @@ import { OkSchema } from '../lib/invoiceResponseSchema';
  * `recordedBy` + `createdAt`, which the direct write never had: a payment row
  * nobody signed was fine when only admins could write it, and is not fine as
  * an audit-relevant record.
+ *
+ * ── WHAT THE 2026-08-04 FEE TRANCHE ADDED, AND WHY IT IS ALL ADDITIVE ─────
+ *
+ * The operator is paid through Venmo and PayPal, records each payment by hand,
+ * and is charged a processor fee she takes out of the tip. Her previous system
+ * had a Fees field on this exact screen; this one had no fee at any layer, so
+ * the fee was dropped and the rows it was dropped from can no longer be made to
+ * add up. `lib/paymentMoney.ts` carries the full reasoning and the worked
+ * example (invoice #1029).
+ *
+ * Five new request fields, EVERY ONE optional with a default, so the thirteen
+ * -field payload Android and the React admin already send validates unchanged
+ * and behaves identically:
+ *
+ *   `fee`                    the processor's cut. Stored as `fee` + `feeCents`.
+ *   `apply`                  the "Apply: $" box. ONE invoice, never a list.
+ *   `autoApply`              put the leftover into the household's EXISTING
+ *                            account credit, for a FUTURE invoice.
+ *   `sendConfirmationEmail`  enqueue the existing `invoice.payment.applied`
+ *                            notification to the household.
+ *   (`notes` already existed and is STAFF ONLY. Nothing kinfolk-facing reads
+ *    the root `payments` collection: the portal builds from `getMyInvoices`
+ *    and the PDF from the invoice doc.)
+ *
+ * `tip` KEEPS ITS NAME AND CHANGES ITS MEANING, from "whatever the source
+ * recorded" to "the GROSS tip". That is only safe because `tipBasis` is written
+ * beside it saying which convention the row follows; see paymentMoney.ts for
+ * why an unmarked legacy row reads as `unknown` rather than as `net`.
  */
+
 // Exported so the callable-contract drift guard can freeze this request shape.
 export const Args = z.object({
   /** Household the payment belongs to. May be blank (legacy standalone rows). Overridden by the sandbox scope in test mode. */
@@ -76,11 +115,83 @@ export const Args = z.object({
   email: z.string().max(200).default(''),
   /** DOLLARS, floating point: the legacy shape of this collection. */
   amount: z.number().min(0).max(10_000_000),
+  /**
+   * The GROSS tip: what the client actually tipped, before the processor took
+   * its cut. DOLLARS, like `amount`.
+   *
+   * THE MEANING OF THIS FIELD CHANGED HERE, which is why `tipBasis` exists.
+   * The operator's ruling, 2026-08-04: "store both, and display the latter.
+   * itll help with taxes." The gross tip is income and the fee is a deductible
+   * expense, so both have to survive; a net tip alone loses one line of her
+   * return and understates the other. See `lib/paymentMoney.ts` for the full
+   * arithmetic and for why an unmarked legacy tip reads as `unknown` rather
+   * than as `net`.
+   */
   tip: z.number().min(0).max(10_000_000).default(0),
+  /**
+   * The processor's cut, deducted from what the operator receives. DOLLARS.
+   *
+   * NOT part of `amount`. The client paid `amount`; the operator banks
+   * `amount - fee`. It is subtracted on her side of the ledger, never from the
+   * money applied to the household's bill, which is why the reconciliation
+   * identity (`amount = applied + tipGross + unapplied`) does not mention it.
+   */
+  fee: z.number().min(0).max(10_000_000).default(0),
+  /** Staff-only. Never rendered on a kinfolk-facing surface; see the header. */
   notes: z.string().max(4000).default(''),
   /** Confident payment->invoice link; '' for a standalone payment. */
   invoiceId: z.string().max(200).default(''),
   invoiceNumber: z.string().max(200).default(''),
+  /**
+   * THE "Apply: $" BOX: how much of this payment goes onto one invoice.
+   *
+   * ONE PAYMENT, ONE INVOICE. Operator ruling, 2026-08-04, on being offered a
+   * split across several: "this is not something i want." So this is a single
+   * optional object and NOT a list, deliberately: a shape that can express a
+   * three-way split invites one.
+   *
+   * OMITTED (the default) means no invoice balance is touched at all, which is
+   * exactly what this callable did before it could apply anything, so every
+   * existing caller keeps its behaviour to the byte.
+   *
+   * `invoiceId` ABOVE IS NOT AN APPLY and never becomes one. It is the display
+   * link the Payments screens join on, and the React admin already sets it on
+   * the row it writes AFTER `markInvoicePaid` has settled the invoice. If this
+   * callable applied money whenever that field was set, that flow would collect
+   * the same payment twice.
+   */
+  apply: z
+    .object({
+      invoiceId: z.string().min(1).max(200),
+      /** Denormalized for display. Blank is fine; the invoice doc is the authority. */
+      invoiceNumber: z.string().max(200).default(''),
+      /** DOLLARS applied to that invoice. */
+      amount: z.number().min(0).max(10_000_000),
+    })
+    .optional(),
+  /**
+   * "Will automatically apply any Unapplied amount to FUTURE invoices."
+   *
+   * A DECISION RECORDED ON THE PAYMENT, with a real behaviour behind it. When
+   * it is on, the unapplied remainder is added to the household's EXISTING
+   * account credit (`families/{id}.accountBalanceCents`, the balance
+   * `redeemCredit` fills and the portal already shows), and
+   * `triggers/onInvoiceAutoApply.ts` spends it down on the next invoice that
+   * becomes collectable. See `lib/accountCredit.ts`.
+   *
+   * A stored boolean nothing acts on is a switch wired to nothing, which is
+   * exactly what the operator's feature-flag ruling forbids.
+   */
+  autoApply: z.boolean().default(false),
+  /**
+   * "Send Confirmation Email". Enqueues the EXISTING `invoice.payment.applied`
+   * notification to the household, honouring their own channel preferences.
+   *
+   * OFF BY DEFAULT, and deliberately not derived from anything. A confirmation
+   * is a message to a real person, so it is sent because the operator ticked a
+   * box, never because the server inferred she probably meant to.
+   */
+  sendConfirmationEmail: z.boolean().default(false),
 });
 
 /**
@@ -94,6 +205,30 @@ export const Args = z.object({
  * a plain string and MAY BE EMPTY: a standalone payment (the admin Payments
  * tab's no-invoice flow) belongs to no household, and `''` is what is stored.
  */
+/**
+ * What the apply did to THE invoice. Mirrors `paymentApply.ts#ApplyOutcome`.
+ *
+ * Nullable on the response, not an empty array: one payment applies to one
+ * invoice, and "no invoice was touched" is a different fact from "a list of
+ * invoices, which happens to be empty".
+ */
+const PaymentApplicationSchema = z
+  .object({
+    invoiceId: z.string().min(1),
+    /** Denormalized from the invoice doc. `''` when it carries no number. */
+    invoiceNumber: z.string(),
+    /** The `invoices/{id}/payments/{id}` row this apply wrote. THE MONEY AUTHORITY. */
+    paymentId: z.string().min(1),
+    appliedCents: CentsSchema,
+    /** Where the invoice stands AFTER the apply, from every payment on it. */
+    state: InvoiceSettlementStateSchema,
+    totalCents: CentsSchema,
+    paidCents: CentsSchema,
+    amountDueCents: CentsSchema,
+    overpaidCents: CentsSchema,
+  })
+  .strict();
+
 export const Result = z
   .object({
     ok: OkSchema,
@@ -101,6 +236,53 @@ export const Result = z
     paymentId: z.string().min(1),
     /** What was actually stored: the sandbox id for a test admin, `''` for a standalone row. */
     kinfolkId: z.string(),
+    /** The whole sum collected, in integer cents. `amount` above, exactly. */
+    amountCents: CentsSchema,
+    /** The GROSS tip inside it. */
+    tipCents: CentsSchema,
+    /** The processor's cut, off the operator's proceeds. */
+    feeCents: CentsSchema,
+    /** Which convention `tipCents` follows. Always `'gross'` on a row this callable wrote. */
+    tipBasis: z.enum(TIP_BASES),
+    /** Sum of the applications below. Zero when nothing was applied. */
+    appliedCents: CentsSchema,
+    /**
+     * What is left on account: `amount - applied - tipGross`.
+     *
+     * SIGNED, not clamped. The callable refuses an over-application outright,
+     * so a negative can only reach a client through a row written before this
+     * field existed; reporting it as 0 would hide the one condition an operator
+     * has to see.
+     */
+    unappliedCents: SignedCentsSchema,
+    /** What the operator banks: `amount - fee`. */
+    proceedsCents: CentsSchema,
+    /** What she keeps of the tip: `tipGross - fee`. Signed; a fee can exceed a small tip. */
+    tipNetCents: SignedCentsSchema,
+    /** Whether the leftover was moved into the household's account credit. */
+    autoApply: z.boolean(),
+    /** What the apply did, or null when no invoice balance was touched. */
+    application: PaymentApplicationSchema.nullable(),
+    /**
+     * The unapplied remainder actually moved into
+     * `families/{kinfolkId}.accountBalanceCents`, the EXISTING credit ledger
+     * `redeemCredit` fills and the portal already shows, not a new one.
+     *
+     * Zero when auto-apply was off, when there was no remainder, or when the
+     * payment belongs to no household. It is reported separately from
+     * `unappliedCents` because those are two different facts: what is left over,
+     * and what was done with it.
+     */
+    creditedToAccountCents: CentsSchema,
+    /**
+     * Whether the household confirmation actually went out.
+     *
+     * FALSE IS A REAL ANSWER, not an error. The operator may not have asked for
+     * one, and a household with no portal account has no uid to send to. Either
+     * way the payment is recorded; saying "sent" when nothing was is the class
+     * of lie this whole surface is being cleaned of.
+     */
+    confirmationEmailSent: z.boolean(),
   })
   .strict();
 export type RecordPaymentResult = z.infer<typeof Result>;
@@ -124,10 +306,87 @@ export async function recordPaymentHandler(
   }
 
   const kinfolkId = scopedKinfolkId(actor.testMode, args.kinfolkId);
+
+  // EVERY FIGURE IN INTEGER CENTS, ONCE, HERE. The dollar floats the request
+  // carries are the collection's legacy shape and are still stored verbatim
+  // below; nothing downstream re-derives cents from them, so no two readers can
+  // round the same dollar differently.
+  const amountCents = dollarsToCents(args.amount);
+  const tipCents = dollarsToCents(args.tip);
+  const feeCents = dollarsToCents(args.fee);
+  const appliedCents = args.apply ? dollarsToCents(args.apply.amount) : 0;
+  const money = paymentMoneyOf({
+    amountCents,
+    tipCents,
+    feeCents,
+    appliedCents,
+    // Stamped, not inferred: this server writes gross tips and says so, which
+    // is the whole point of the field.
+    tipBasis: 'gross',
+  });
+  // A TIP LARGER THAN THE PAYMENT is refused up front rather than stored as a
+  // negative unapplied balance. It is a keying slip (the tip typed into the
+  // amount box, or dollars mistaken for cents), and every later reader of the
+  // row would have to decide what a payment that is more tip than money means.
+  if (tipCents > amountCents) {
+    throw new HttpsError(
+      'invalid-argument',
+      `A tip of ${dollars(tipCents)} does not fit inside a payment of ${dollars(amountCents)}. ` +
+        `The tip is part of what the client paid, not an addition to it.`,
+      { code: 'tip_exceeds_amount' },
+    );
+  }
   const ref = db().collection('payments').doc();
+  const paidAtIso = new Date().toISOString();
+  const batch = db().batch();
+  let application: ApplyOutcome | null = null;
+  // THE APPLY, PLANNED BEFORE ANYTHING IS WRITTEN. Refusing here means no
+  // payment row either: an operator who mis-keyed the Apply box gets the whole
+  // form back to correct, not a stored payment whose apply silently did not
+  // happen.
+  if (args.apply) {
+    const plan = planApply({
+      invoice: await readInvoiceForApply(db(), args.apply.invoiceId),
+      appliedCents,
+      kinfolkId,
+      // What the payment has to give: everything except the gross tip. The tip
+      // is the operator's, never the household's bill.
+      spendableCents: amountCents - tipCents,
+    });
+    if (!plan.ok) {
+      throw new HttpsError('failed-precondition', plan.refusal.message, {
+        code: plan.refusal.code,
+      });
+    }
+    // THE APPLY AND THE PAYMENT ROW LAND IN ONE BATCH. `markInvoicePaid` and
+    // this callable were two steps on purpose (the money first, the display row
+    // second and best-effort), and that stays true for the flow that calls them
+    // in sequence. But when THIS call is the one doing the applying, a
+    // half-commit would leave an invoice balance moved by a payment with no
+    // record, which is precisely the "marked paid with no payment record" state
+    // `markInvoicePaid` exists to make impossible.
+    application = stageApply(db(), batch, {
+      step: plan.step,
+      sourcePaymentId: ref.id,
+      method: args.paymentMethod || null,
+      reference: args.referenceNumber || null,
+      paidAtIso,
+      uid: actor.uid,
+    });
+  }
+  // THE LEFTOVER BECOMES ACCOUNT CREDIT, in the ledger this repo already has.
+  // Her label says "apply any Unapplied amount to FUTURE invoices", so the
+  // remainder is HELD rather than spread across today's bills, and
+  // `triggers/onInvoiceAutoApply.ts` spends it on the next invoice that becomes
+  // collectable. Staged on the SAME batch as the payment: a credited balance
+  // whose payment row failed to write is money from nowhere.
+  const creditedToAccountCents =
+    args.autoApply && money.unappliedCents > 0 && kinfolkId !== '' ? money.unappliedCents : 0;
+  creditAccount(db(), batch, { kinfolkId, cents: creditedToAccountCents });
+
   // No `id` field inside the doc: Android's `@DocumentId` property is excluded
   // from serialization, so the direct write never stored one either.
-  await ref.set({
+  batch.set(ref, {
     kinfolkId,
     kinfolkName: args.kinfolkName,
     client: args.client,
@@ -141,9 +400,38 @@ export async function recordPaymentHandler(
     notes: args.notes,
     invoiceId: args.invoiceId,
     invoiceNumber: args.invoiceNumber,
+    // ── NEW, AND ALL ADDITIVE ──────────────────────────────────────────────
+    // BOTH DENOMINATIONS, the same rule `markInvoicePaid` writes its
+    // subcollection row by: the cents are the truth every sum reads, and the
+    // dollar float is the projection the legacy PDF and Android joins read.
+    // Written from the one cents figure in one pass, so they cannot disagree.
+    fee: args.fee,
+    feeCents,
+    tipCents,
+    amountCents,
+    // WHICH CONVENTION THE TIP ABOVE FOLLOWS. Absent on every row written
+    // before today, and absent reads as 'unknown', never as 'net'. See
+    // lib/paymentMoney.ts.
+    tipBasis: 'gross',
+    // WHICH INVOICE THIS PAYMENT WAS APPLIED TO, and how much of it. Two flat
+    // fields rather than a list: one payment, one invoice (operator ruling,
+    // 2026-08-04). `''` means no invoice balance was touched.
+    appliedInvoiceId: application?.invoiceId ?? '',
+    appliedInvoiceNumber: application?.invoiceNumber ?? '',
+    // PROJECTIONS of the figures above, written in the same pass from the same
+    // cents, so no reader has to re-derive them and no two readers can round
+    // the same dollar differently.
+    appliedCents: money.appliedCents,
+    unappliedCents: money.unappliedCents,
+    proceedsCents: money.proceedsCents,
+    autoApply: args.autoApply,
+    // What of the leftover actually reached the household's account credit.
+    creditedToAccountCents,
     recordedBy: actor.uid,
     createdAt: FieldValue.serverTimestamp(),
   });
+
+  await batch.commit();
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -163,6 +451,20 @@ export async function recordPaymentHandler(
       invoiceId: args.invoiceId,
       amount: args.amount,
       tip: args.tip,
+      // THE FEE IS IN THE AUDIT TRAIL, not only on the doc. The whole defect
+      // being fixed is a fee that existed and was written down nowhere.
+      fee: args.fee,
+      amountCents,
+      tipCents,
+      feeCents,
+      tipBasis: 'gross',
+      appliedCents: money.appliedCents,
+      unappliedCents: money.unappliedCents,
+      proceedsCents: money.proceedsCents,
+      autoApply: args.autoApply,
+      creditedToAccountCents,
+      appliedInvoiceId: application?.invoiceId ?? null,
+      appliedInvoiceState: application?.state ?? null,
       method: args.paymentMethod,
       reference: args.referenceNumber,
       testMode: actor.testMode.active,
@@ -177,6 +479,23 @@ export async function recordPaymentHandler(
     });
   });
 
+  // THE CONFIRMATION, LAST AND BEST-EFFORT. The money has landed; a mail
+  // provider having a bad minute must not throw away the record of it or offer
+  // a retry that would collect a second time. What actually happened comes back
+  // in `confirmationEmailSent` so the operator can send it another way.
+  let confirmationEmailSent = false;
+  if (args.sendConfirmationEmail) {
+    confirmationEmailSent = await sendPaymentConfirmation({
+      kinfolkId,
+      // The invoice the confirmation is ABOUT: the one this payment was
+      // applied to, or the display link when nothing was applied. The catalog's
+      // `invoice.payment.applied` template needs one.
+      invoiceId: application?.invoiceId ?? args.invoiceId,
+      paymentId: ref.id,
+      uid: actor.uid,
+    });
+  }
+
   logEvent({
     severity: 'info',
     function: 'recordPayment',
@@ -186,11 +505,101 @@ export async function recordPaymentHandler(
       paymentId: ref.id,
       kinfolkId,
       invoiceId: args.invoiceId,
+      appliedCents: money.appliedCents,
+      unappliedCents: money.unappliedCents,
+      feeCents,
+      appliedInvoiceId: application?.invoiceId ?? '',
+      autoApply: args.autoApply,
+      creditedToAccountCents,
+      confirmationEmailSent,
       testMode: actor.testMode.active,
     },
   });
 
-  return validateResponse('recordPayment', Result, { ok: true, paymentId: ref.id, kinfolkId });
+  return validateResponse('recordPayment', Result, {
+    ok: true,
+    paymentId: ref.id,
+    kinfolkId,
+    amountCents,
+    tipCents,
+    feeCents,
+    tipBasis: 'gross',
+    appliedCents: money.appliedCents,
+    unappliedCents: money.unappliedCents,
+    proceedsCents: money.proceedsCents,
+    // Never null on this path: the basis is stamped `'gross'` two lines up, so
+    // `paymentMoneyOf` always derives a net. The `?? 0` is the type narrowing,
+    // not a fallback anything can reach.
+    tipNetCents: money.tipNetCents ?? 0,
+    autoApply: args.autoApply,
+    application,
+    creditedToAccountCents,
+    confirmationEmailSent,
+  });
+}
+
+/** "$36.00" from integer cents, for a refusal an operator has to read. */
+function dollars(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+/**
+ * Sends the household their payment confirmation, through the notification
+ * path this repo already has.
+ *
+ * `invoice.payment.applied` IS THE EXISTING CONFIRMATION and no new catalog key
+ * was minted for this toggle. That key already has an email template, a push
+ * template, a prefs entry and a category, and both `onInvoicesWrite` and
+ * `stripeWebhook.ts` fire it for the same event: money landed on a bill. A
+ * second key saying the same thing would give the household two independent
+ * switches for one message and let them mute one of the two.
+ *
+ * Returns whether it went out. A household that has never installed MyTribe has
+ * no uid to deliver to, which is a fact about them and not a failure here.
+ */
+async function sendPaymentConfirmation(input: {
+  kinfolkId: string;
+  invoiceId: string;
+  paymentId: string;
+  uid: string;
+}): Promise<boolean> {
+  if (input.kinfolkId === '') return false;
+  try {
+    const recipientUid = await resolveKinfolkUid(input.kinfolkId);
+    if (recipientUid === null) {
+      logEvent({
+        severity: 'info',
+        function: 'recordPayment',
+        event: 'payment.confirmation.norecipient',
+        uid: input.uid,
+        extra: { kinfolkId: input.kinfolkId, paymentId: input.paymentId },
+      });
+      return false;
+    }
+    await enqueueNotification({
+      key: 'invoice.payment.applied',
+      recipientUid,
+      data: {
+        kinfolkId: input.kinfolkId,
+        invoiceId: input.invoiceId,
+        paymentId: input.paymentId,
+      },
+    });
+    return true;
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'recordPayment',
+      event: 'payment.confirmation.failed',
+      uid: input.uid,
+      extra: {
+        kinfolkId: input.kinfolkId,
+        paymentId: input.paymentId,
+        err: (err as Error)?.message,
+      },
+    });
+    return false;
+  }
 }
 
 export const recordPayment = onCall(

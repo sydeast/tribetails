@@ -13,7 +13,8 @@ import {
   type PaymentAmount,
 } from '../lib/invoiceMath';
 import { validateResponse } from '../lib/callableResponse';
-import { CentsSchema } from '../lib/invoiceResponseSchema';
+import { CentsSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
+import { TIP_BASES, paymentMoneyOf, paymentReconciles, readTipBasis } from '../lib/paymentMoney';
 
 /**
  * The two halves of an invoice nothing outside the server can currently see:
@@ -106,6 +107,17 @@ const InvoicePaymentSchema = z
     paidAt: z.string().nullable(),
     /** The admin uid that recorded it. Null on a row written before the field existed. */
     recordedBy: z.string().nullable(),
+    /**
+     * The ROOT `payments` row this settlement came in on, when the apply was
+     * done by `recordPayment` (`lib/paymentApply.ts`). Null on a row
+     * `markInvoicePaid` wrote and on every row predating the field.
+     *
+     * One Venmo transfer produces TWO rows: the display record in the root
+     * ledger and the settlement here. Without this link they read as two
+     * payments, and the tip and fee that only the root row carries cannot be
+     * put next to the settlement they belong to.
+     */
+    sourcePaymentId: z.string().nullable(),
   })
   .strict();
 
@@ -122,13 +134,67 @@ const InvoicePaymentSchema = z
 const LedgerPaymentSchema = z
   .object({
     paymentId: z.string().min(1),
+    /** The whole sum collected from the client, the GROSS tip included. */
     amountCents: CentsSchema,
     /** Gratuity, recorded separately by the legacy shape. Integer cents here. */
     tipCents: CentsSchema,
+    /**
+     * THE PROCESSOR'S CUT, and the field whose absence made invoice #1029
+     * unreadable: Amount $137.50, Applied $127.50, Tip $7.29, and $2.71 that
+     * nothing on the record accounted for.
+     *
+     * Zero on every row written before it existed. Zero is NOT evidence there
+     * was no fee, which is what `tipBasis` below exists to say.
+     */
+    feeCents: CentsSchema,
+    /**
+     * Which convention `tipCents` follows: `'gross'` (what the client tipped,
+     * with `feeCents` recorded beside it) or `'unknown'` (a legacy row whose
+     * fee was dropped, so whether its tip is gross or net cannot be known and
+     * must not be guessed). See `lib/paymentMoney.ts`.
+     */
+    tipBasis: z.enum(TIP_BASES),
+    /**
+     * Can `amount = applied + tipGross + unapplied` be CHECKED on this row?
+     * False on a legacy row carrying a tip of unrecorded basis. The panel says
+     * so rather than printing figures that do not add up.
+     */
+    reconciles: z.boolean(),
+    /** Sum of this payment's per-invoice applications. Zero on a display-only row. */
+    appliedCents: CentsSchema,
+    /** Left on account: amount less applied less the gross tip. SIGNED, never clamped. */
+    unappliedCents: SignedCentsSchema,
+    /** What the operator banks: amount less fee. */
+    proceedsCents: CentsSchema,
+    /**
+     * Whether the leftover was moved into the household's account credit
+     * (`families/{id}.accountBalanceCents`) to go against a FUTURE invoice.
+     */
+    autoApply: z.boolean(),
+    /**
+     * WHICH INVOICE this payment was applied to. One payment applies to one
+     * invoice (operator ruling, 2026-08-04), so this is a field and not an
+     * allocation table. `''` on a display-only row that touched no balance.
+     *
+     * It is the "Applied to #n" column on the operator's Payment History, and
+     * usually names the invoice being viewed; it can name a DIFFERENT one when
+     * a payment linked here for display was applied elsewhere, and saying so is
+     * the point.
+     */
+    appliedInvoiceId: z.string(),
+    /** The human-facing number behind `appliedInvoiceId`. `''` when unknown. */
+    appliedInvoiceNumber: z.string(),
     method: z.string(),
     reference: z.string(),
     /** FREE TEXT on this collection, like every legacy billing date. Not parsed. */
     date: z.string(),
+    /**
+     * STAFF ONLY, and it stays that way. This callable is admin-gated
+     * (`resolveInvoiceWriteActor`) and no kinfolk-facing surface reads the root
+     * `payments` collection at all: the portal builds invoices from
+     * `portal/getMyInvoices.ts` and the PDF from the invoice doc. These are the
+     * operator's private notes about a household.
+     */
     notes: z.string(),
     recordedBy: z.string().nullable(),
   })
@@ -208,6 +274,23 @@ function dollarsToCents(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.round(v * 100)) : 0;
 }
 
+/** The stored `tipBasis` key, named once so the reader cannot drift from the writer. */
+const TIP_BASIS_KEY = 'tipBasis';
+
+/**
+ * An integer-cents field, falling back to its dollar twin.
+ *
+ * The cents field is the truth wherever it exists, exactly as
+ * `paidCentsFromPayments` prefers `amountCents` over `amount` on the
+ * subcollection. Every root payment row written before today carries only the
+ * float, and rounding it once here is the same treatment those rows already got.
+ */
+function centsOr(cents: unknown, dollars: unknown): number {
+  if (typeof cents === 'number' && Number.isInteger(cents) && cents >= 0) return cents;
+  return dollarsToCents(dollars);
+}
+
+
 export async function getInvoiceLedgerHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof Result>> {
@@ -256,6 +339,7 @@ export async function getInvoiceLedgerHandler(
         reference: strOrNull(raw['reference']),
         paidAt: strOrNull(raw['paidAt']),
         recordedBy: strOrNull(raw['recordedBy']),
+        sourcePaymentId: strOrNull(raw['sourcePaymentId']),
       };
     })
     // Newest first, by the stored ISO string. A row with no `paidAt` sorts last
@@ -275,10 +359,29 @@ export async function getInvoiceLedgerHandler(
   const ledgerPayments = ledgerSnap.docs
     .map((d) => {
       const raw = d.data() as Record<string, unknown>;
+      // CENTS WIN OVER DOLLARS, per field, the same precedence
+      // `paidCentsFromPayments` uses on the subcollection. A row written since
+      // the fee landed carries both; a row written before it carries only the
+      // float, which is rounded once here.
+      const amountCents = centsOr(raw['amountCents'], raw['amount']);
+      const tipCents = centsOr(raw['tipCents'], raw['tip']);
+      const feeCents = centsOr(raw['feeCents'], raw['fee']);
+      const tipBasis = readTipBasis(raw[TIP_BASIS_KEY]);
+      const appliedCents = centsOr(raw['appliedCents'], raw['applied']);
+      const money = paymentMoneyOf({ amountCents, tipCents, feeCents, appliedCents, tipBasis });
       return {
         paymentId: d.id,
-        amountCents: dollarsToCents(raw['amount']),
-        tipCents: dollarsToCents(raw['tip']),
+        amountCents: money.amountCents,
+        tipCents: money.tipCents,
+        feeCents: money.feeCents,
+        tipBasis,
+        reconciles: paymentReconciles({ tipCents, tipBasis }),
+        appliedCents: money.appliedCents,
+        unappliedCents: money.unappliedCents,
+        proceedsCents: money.proceedsCents,
+        autoApply: raw['autoApply'] === true,
+        appliedInvoiceId: str(raw['appliedInvoiceId']),
+        appliedInvoiceNumber: str(raw['appliedInvoiceNumber']),
         method: str(raw['paymentMethod']),
         reference: str(raw['referenceNumber']),
         date: str(raw['date']),

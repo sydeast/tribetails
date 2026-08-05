@@ -181,7 +181,7 @@ class InvoiceContractsGeneratedTest {
     // ── Encoders: the payload contract ───────────────────────────────────────
 
     @Test
-    fun `recordPayment encodes exactly the 13 zod Args keys`() {
+    fun `recordPayment encodes exactly the 16 zod Args keys`() {
         val payload = RecordPaymentArgs(
             kinfolkId = "kf1",
             kinfolkName = "Rosa Parks",
@@ -198,11 +198,16 @@ class InvoiceContractsGeneratedTest {
             invoiceNumber = "1042",
         ).toPayload()
 
+        // Grown from 13 to 16 by the fee tranche, 2026-08-04: `fee`, `autoApply`
+        // and `sendConfirmationEmail`. `apply` is the seventeenth and is NOT
+        // here, because it has no server default and is omitted when null, and this
+        // client never sends it (`markInvoicePaid` settles the invoice first).
         assertEquals(
             setOf(
                 "kinfolkId", "kinfolkName", "client", "address", "date",
                 "paymentMethod", "referenceNumber", "email", "amount", "tip",
-                "notes", "invoiceId", "invoiceNumber",
+                "fee", "notes", "invoiceId", "invoiceNumber",
+                "autoApply", "sendConfirmationEmail",
             ),
             payload.keys,
         )
@@ -216,9 +221,13 @@ class InvoiceContractsGeneratedTest {
         // one shape whatever the caller does, which is what the hand-written
         // recordPaymentPayload does today.
         val payload = RecordPaymentArgs(amount = 10.0).toPayload()
-        assertEquals(13, payload.size)
+        assertEquals(16, payload.size)
         assertEquals("", payload["kinfolkId"])
         assertEquals(0.0, payload["tip"])
+        assertEquals(0.0, payload["fee"])
+        // OFF unless asked. Each of these does something to a real household.
+        assertEquals(false, payload["autoApply"])
+        assertEquals(false, payload["sendConfirmationEmail"])
     }
 
     @Test

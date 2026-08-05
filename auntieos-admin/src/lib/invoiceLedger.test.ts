@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   ledgerCoversBalance,
+  ledgerRowAppliedLabel,
+  ledgerRowBalanceCents,
+  ledgerRowCaveat,
   ledgerRowTotalCents,
   paymentDayLabel,
   paymentMethodLabel,
@@ -10,7 +13,10 @@ import {
   sessionStatusLabel,
   sessionsWithBrokenBacklink,
 } from './invoiceLedger';
-import type { GetInvoiceLedgerResultSession } from '../contracts/invoiceContracts.generated';
+import type {
+  GetInvoiceLedgerResultLedgerPayment,
+  GetInvoiceLedgerResultSession,
+} from '../contracts/invoiceContracts.generated';
 
 function session(over: Partial<GetInvoiceLedgerResultSession> = {}): GetInvoiceLedgerResultSession {
   return {
@@ -162,5 +168,88 @@ describe('ledgerCoversBalance', () => {
 
   it('stays quiet when there is no ledger row at all', () => {
     expect(ledgerCoversBalance({ amountDueCents: 4000, ledgerPayments: [] })).toBe(false);
+  });
+});
+/**
+ * ── THE PAYMENT HISTORY COLUMNS, 2026-08-04 ───────────────────────────────
+ *
+ * Three columns her production screen has always had were missing here
+ * (Applied to #n, Tip, Balance), plus Fee, which nothing in this system stored.
+ * Invoice #1029 is why it mattered: Amount $137.50, Applied $127.50, Tip $7.29,
+ * Balance $0.00, and $2.71 nobody could account for.
+ */
+function ledgerRow(over: Partial<GetInvoiceLedgerResultLedgerPayment> = {}) {
+  return {
+    paymentId: 'r1',
+    amountCents: 13750,
+    tipCents: 1000,
+    feeCents: 271,
+    tipBasis: 'gross' as const,
+    reconciles: true,
+    appliedCents: 12750,
+    unappliedCents: 0,
+    proceedsCents: 13479,
+    autoApply: false,
+    appliedInvoiceId: 'inv1029',
+    appliedInvoiceNumber: '1029',
+    method: 'venmo',
+    reference: 'VN-1029',
+    date: 'February 17, 2026',
+    notes: '',
+    recordedBy: 'admin1',
+    ...over,
+  };
+}
+describe('ledgerRowBalanceCents', () => {
+  it('is the leftover after the bill and the gross tip, which is #1029 closing at zero', () => {
+    const row = ledgerRow();
+    expect(ledgerRowBalanceCents(row)).toBe(0);
+    // amount = applied + tipGross + balance
+    expect(row.appliedCents + row.tipCents + ledgerRowBalanceCents(row)).toBe(row.amountCents);
+  });
+  it('is the money over on a payment bigger than the bill', () => {
+    expect(
+      ledgerRowBalanceCents(ledgerRow({ amountCents: 30000, appliedCents: 18000, tipCents: 0, unappliedCents: 12000 })),
+    ).toBe(12000);
+  });
+  it('reports a negative leftover rather than flooring it at zero', () => {
+    expect(ledgerRowBalanceCents(ledgerRow({ unappliedCents: -500 }))).toBe(-500);
+  });
+});
+describe('ledgerRowAppliedLabel', () => {
+  it('prefers the human invoice number, prefixed the way the operator writes it', () => {
+    expect(ledgerRowAppliedLabel(ledgerRow())).toBe('#1029');
+  });
+  it('falls back to the id when the invoice carries no number', () => {
+    expect(ledgerRowAppliedLabel(ledgerRow({ appliedInvoiceNumber: '' }))).toBe('inv1029');
+  });
+  it('is EMPTY when the payment touched no balance, so the cell can say so', () => {
+    // Never "$0.00 applied": a payment that applied to nothing is a different
+    // fact from one that applied zero dollars.
+    expect(ledgerRowAppliedLabel(ledgerRow({ appliedInvoiceId: '', appliedInvoiceNumber: '' }))).toBe('');
+  });
+  it('ignores whitespace-only values, which are blanks with a space in them', () => {
+    expect(
+      ledgerRowAppliedLabel(ledgerRow({ appliedInvoiceId: '  ', appliedInvoiceNumber: ' ' })),
+    ).toBe('');
+  });
+});
+describe('ledgerRowCaveat: the rows that cannot be made to add up', () => {
+  it('is silent on a row this system wrote, which reconciles on its own', () => {
+    expect(ledgerRowCaveat(ledgerRow())).toBe('');
+  });
+  it('names the migrated row whose fee was dropped, and does NOT guess a gross tip', () => {
+    // The gross cannot be recovered from a net tip whose deduction is unknown,
+    // and a plausible guess would put a number that was never collected onto a
+    // tax return.
+    const caveat = ledgerRowCaveat(ledgerRow({ reconciles: false, tipCents: 729, feeCents: 0 }));
+    expect(caveat).toMatch(/migrated without its processor fee/i);
+    expect(caveat).toMatch(/no gross tip has been guessed/i);
+  });
+  it('names an over-applied row, which does not balance either', () => {
+    expect(ledgerRowCaveat(ledgerRow({ unappliedCents: -500 }))).toMatch(/does not balance/i);
+  });
+  it('stays silent on a reconcilable row with no tip at all, which is every Stripe row', () => {
+    expect(ledgerRowCaveat(ledgerRow({ tipCents: 0, reconciles: true }))).toBe('');
   });
 });

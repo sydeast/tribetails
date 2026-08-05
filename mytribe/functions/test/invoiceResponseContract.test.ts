@@ -51,6 +51,31 @@ import { Result as GetMyInvoicesResult } from '../src/portal/getMyInvoices';
 import { Result as PayInvoiceResult } from '../src/portal/payInvoice';
 import { Result as RedeemCreditResult } from '../src/portal/redeemCredit';
 
+/**
+ * The money half of a `recordPayment` response, complete and believable.
+ *
+ * Spread into each case so a case can spoil ONE field and still be a real
+ * payment in every other respect. Defaults are a plain $40 collection with no
+ * tip, no fee and nothing applied, which is what the two pre-existing cases
+ * below were before the fee tranche gave the response its money fields.
+ */
+function paymentMoney(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    amountCents: 4000,
+    tipCents: 0,
+    feeCents: 0,
+    tipBasis: 'gross',
+    appliedCents: 0,
+    unappliedCents: 4000,
+    proceedsCents: 4000,
+    tipNetCents: 0,
+    autoApply: false,
+    application: null,
+    creditedToAccountCents: 0,
+    confirmationEmailSent: false,
+    ...over,
+  };
+}
 /** A complete, believable invoice DTO. Cases below clone and spoil one field. */
 function invoiceDto(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -251,15 +276,100 @@ const CASES: Array<{
     name: 'recordPayment',
     schema: RecordPaymentResult,
     accepts: [
-      ['a household payment', { ok: true, paymentId: 'pay1', kinfolkId: 'fam1' }],
+      ['a household payment', { ok: true, paymentId: 'pay1', kinfolkId: 'fam1', ...paymentMoney() }],
       // `''` is the admin Payments tab's standalone row: a real payment that
       // belongs to no household. Refusing it here would report every one of
       // them as a server bug.
-      ['an EMPTY kinfolkId, which is a standalone payment', { ok: true, paymentId: 'pay1', kinfolkId: '' }],
+      [
+        'an EMPTY kinfolkId, which is a standalone payment',
+        { ok: true, paymentId: 'pay1', kinfolkId: '', ...paymentMoney() },
+      ],
+      // The whole point of the fee tranche: a $137.50 collection carrying a
+      // $10.00 gross tip and a $2.71 processor fee, applied $127.50 to one
+      // invoice. `amount = applied + tipGross + unapplied` closes at 137.50.
+      [
+        'invoice #1029, the row the dropped fee made unreadable',
+        {
+          ok: true,
+          paymentId: 'pay1',
+          kinfolkId: 'fam1',
+          ...paymentMoney({
+            amountCents: 13750,
+            tipCents: 1000,
+            feeCents: 271,
+            appliedCents: 12750,
+            unappliedCents: 0,
+            proceedsCents: 13479,
+            tipNetCents: 729,
+            application: {
+              invoiceId: 'inv1029',
+              invoiceNumber: '1029',
+              paymentId: 'sub1',
+              appliedCents: 12750,
+              state: 'settled',
+              totalCents: 12750,
+              paidCents: 12750,
+              amountDueCents: 0,
+              overpaidCents: 0,
+            },
+          }),
+        },
+      ],
+      // The leftover routed into the EXISTING account-credit ledger, which is
+      // what Auto-apply does: $300 collected, $180 applied, $120 held for a
+      // future invoice. `creditedToAccountCents` is what was DONE with the
+      // leftover; `unappliedCents` is what the leftover IS. Two facts.
+      [
+        'an auto-applied leftover held as account credit',
+        {
+          ok: true,
+          paymentId: 'pay1',
+          kinfolkId: 'fam1',
+          ...paymentMoney({
+            amountCents: 30000,
+            appliedCents: 18000,
+            unappliedCents: 12000,
+            proceedsCents: 30000,
+            autoApply: true,
+            creditedToAccountCents: 12000,
+          }),
+        },
+      ],
+      // A NEGATIVE unapplied balance is accepted BY SCHEMA on purpose. The
+      // callable refuses to create one, but a row written before the field
+      // existed can carry it, and clamping it to 0 on the way out would hide
+      // the one condition an operator has to see.
+      [
+        'an over-applied row, which the schema must be able to REPORT',
+        { ok: true, paymentId: 'pay1', kinfolkId: 'fam1', ...paymentMoney({ unappliedCents: -500 }) },
+      ],
     ],
     refuses: [
-      ['a missing kinfolkId, which hides which household the row landed under', { ok: true, paymentId: 'pay1' }],
-      ['an empty paymentId', { ok: true, paymentId: '', kinfolkId: 'fam1' }],
+      [
+        'a missing kinfolkId, which hides which household the row landed under',
+        { ok: true, paymentId: 'pay1', ...paymentMoney() },
+      ],
+      ['an empty paymentId', { ok: true, paymentId: '', kinfolkId: 'fam1', ...paymentMoney() }],
+      // `tipBasis` is the marker that says whether the tip beside it is gross
+      // or net. A response that omits it puts the reader back where invoice
+      // #1029 left them.
+      [
+        'a response with no tipBasis, which is the ambiguity this tranche exists to end',
+        (() => {
+          const { tipBasis: _dropped, ...rest } = paymentMoney();
+          return { ok: true, paymentId: 'pay1', kinfolkId: 'fam1', ...rest };
+        })(),
+      ],
+      [
+        'a tipBasis outside the three-value vocabulary',
+        { ok: true, paymentId: 'pay1', kinfolkId: 'fam1', ...paymentMoney({ tipBasis: 'net-ish' }) },
+      ],
+      // Cents are integers by construction everywhere on this surface. A float
+      // means a re-rounding crept in.
+      [
+        'a fractional feeCents',
+        { ok: true, paymentId: 'pay1', kinfolkId: 'fam1', ...paymentMoney({ feeCents: 271.4 }) },
+      ],
     ],
   },
   {

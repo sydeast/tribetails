@@ -478,8 +478,8 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - Audit `BILLING_INVOICE_SESSIONS_LINKED` with the full added/removed delta.
 
 ### recordPayment
-- req `{ amount: number /* DOLLARS, float, the legacy shape of this collection */, kinfolkId?: string /* <=120, default '' */, kinfolkName?: string, client?: string, address?: string, date?: string /* free text */, paymentMethod?: string, referenceNumber?: string, email?: string, tip?: number /* default 0 */, notes?: string, invoiceId?: string /* '' = standalone payment */, invoiceNumber?: string }` (every `?` defaults to `''`/`0`)
-- res `{ ok: true, paymentId: string, kinfolkId: string /* what was actually stored; the sandbox id for a test admin */ }`
+- req `{ amount: number /* DOLLARS, float, the legacy shape of this collection. THE WHOLE TRANSACTION, gross tip included */, kinfolkId?: string /* <=120, default '' */, kinfolkName?: string, client?: string, address?: string, date?: string /* free text */, paymentMethod?: string, referenceNumber?: string, email?: string, tip?: number /* default 0. GROSS: what the client tipped, BEFORE the processor fee */, fee?: number /* default 0. The processor's cut, off the business's proceeds. NOT part of amount */, notes?: string /* STAFF ONLY */, invoiceId?: string /* '' = standalone payment. A DISPLAY LINK, never an apply */, invoiceNumber?: string, apply?: { invoiceId: string, invoiceNumber?: string, amount: number } /* the "Apply: $" box. ONE invoice; omitted = no balance is touched */, autoApply?: boolean /* default false */, sendConfirmationEmail?: boolean /* default false */ }` (every `?` defaults to `''`/`0`/`false`; `apply` is omitted, not defaulted)
+- res `{ ok: true, paymentId: string, kinfolkId: string /* what was actually stored; the sandbox id for a test admin */, amountCents: number, tipCents: number, feeCents: number, tipBasis: 'gross'|'net'|'unknown', appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, tipNetCents: number /* SIGNED */, autoApply: boolean, application: { invoiceId, invoiceNumber, paymentId, appliedCents, state, totalCents, paidCents, amountDueCents, overpaidCents }|null, creditedToAccountCents: number, confirmationEmailSent: boolean }`
 - W2-1 (ADR-0002): replaces `AuntieRepository.createPayment`, the direct create
   on the ROOT `payments` collection. This is the DISPLAY LEDGER the payment
   screens read (`getPayments`, `getPaymentsForKinfolk`, the invoice detail's
@@ -517,6 +517,59 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   version of the `scopedKinfolkId` copy android does client-side today.
 - Audit `BILLING_PAYMENT_RECORDED` (distinct from `BILLING_INVOICE_PAID`,
   which covers the settling subcollection write).
+- **THE FEE TRANCHE, 2026-08-04.** The operator is paid through Venmo/PayPal and
+  is charged a processor fee she takes out of the tip. Nothing here stored a fee,
+  so invoice #1029 reads Amount $137.50, Applied $127.50, Tip $7.29 and cannot be
+  made to add up: $2.71 is a fee nobody recorded. Operator ruling: *"store both,
+  and display the latter. itll help with taxes"*: the gross tip is income and
+  the fee is a deductible expense.
+  - `tip` KEEPS ITS NAME AND CHANGES ITS MEANING to the GROSS tip. Safe only
+    because the server now stamps `tipBasis: 'gross'` beside it. **ABSENT
+    `tipBasis` READS AS `'unknown'`, NEVER AS `'net'`**: this collection was
+    written by a legacy migration, by `stripeWebhook.ts` and by this callable
+    before today, so absence is not evidence. No gross is ever back-computed
+    from a net tip whose fee was dropped; it cannot be.
+  - The doc stores BOTH denominations (`fee` + `feeCents`, `tipCents`,
+    `amountCents`) the same way `markInvoicePaid`'s subcollection row does.
+  - The identity: `amount = applied + tipGross + unapplied`. The fee is NOT in
+    it. It comes off `proceedsCents`, on the business's side of the ledger.
+  - `apply` IS THE ONLY THING THAT MOVES AN INVOICE BALANCE, and it names ONE
+    invoice (operator ruling, 2026-08-04: *"this is not something i want"*, on
+    being offered a multi-invoice split). It writes the same
+    `invoices/{id}/payments` row `markInvoicePaid` writes, plus
+    `sourcePaymentId`, in the SAME BATCH as the payment row. `invoiceId` is
+    still only a display link: the React admin sets it on a row it writes AFTER
+    `markInvoicePaid` has settled the invoice, and applying there would collect
+    twice.
+  - `autoApply` puts the unapplied remainder into
+    `families/{kinfolkId}.accountBalanceCents`, the EXISTING credit ledger
+    `redeemCredit` fills and the portal already renders, not a new one, and
+    `onInvoiceAutoApply` spends it on the next collectable invoice.
+  - `sendConfirmationEmail` enqueues the EXISTING `invoice.payment.applied`
+    notification. No new catalog key: a second key for the same event would give
+    the household two switches for one message. Best-effort and reported
+    honestly in `confirmationEmailSent`; the money has already landed, so a
+    throw here would offer a retry that collects again.
+  - Refuses `tip_exceeds_amount` (`invalid-argument`) and every `apply_*` code
+    (`failed-precondition`) BEFORE writing anything.
+- req `{ invoiceId: string /* 1..200 */ }` (`.strict()`)
+- res `{ ok: true, invoiceId: string, skipped: ''|'invoice_missing'|'invoice_not_collectable'|'no_household'|'no_credit', appliedCents: number, amountDueCents: number, accountBalanceCents: number }`
+- Spends a household's ACCOUNT CREDIT on one named invoice, now. The on-demand
+  half of *"will automatically apply any Unapplied amount to future invoices"*;
+  `triggers/onInvoiceAutoApply.ts` runs the same pass by itself when an invoice
+  BECOMES collectable.
+- **IT EXTENDS THE EXISTING CREDIT MECHANISM RATHER THAN ADDING ONE.**
+  `families/{id}.accountBalanceCents` was already written by `redeemCredit`, read
+  by `getMyInvoices` and rendered by the portal, and never spent by anything.
+  This is the consumer that closes that loop. See `lib/accountCredit.ts`.
+- `skipped` IS NOT AN ERROR CHANNEL. Every value is a normal outcome ("no credit
+  on file", "already settled"). It throws only `not-found` for an unknown invoice
+  and `permission-denied` for a sandbox admin reaching outside their tribe.
+- IDEMPOTENT: the balance is decremented as it is spent, so a second run finds
+  nothing. NEVER overdraws and never creates an overpayment: the draw is the
+  smaller of what is owed and what is held.
+- Refuses the same invoices `markInvoicePaid` does (draft, quote, cancelled,
+  credit, already settled), by importing its guards rather than restating them.
 
 ### archiveInvoice
 - req `{ invoiceId: string /* 1..200 */, force?: boolean }`
@@ -589,7 +642,7 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### getInvoiceLedger
 - req `{ invoiceId: string /* 1..200 */ }` (`.strict()`)
-- res `{ invoiceId: string, payments: Array<{ paymentId: string, amountCents: number, method: string|null, reference: string|null, paidAt: string|null /* ISO */, recordedBy: string|null }>, paidCents: number, totalCents: number, amountDueCents: number, ledgerPayments: Array<{ paymentId: string, amountCents: number, tipCents: number, method: string, reference: string, date: string /* FREE TEXT */, notes: string, recordedBy: string|null }>, sessions: Array<{ sessionId: string, serviceType: string, status: string, startTime: string /* ISO */, completedAt: string|null, durationMinutes: number|null, linkedBack: boolean }>, missingSessionIds: string[], orphanSessionIds: string[], truncated: boolean }`
+- res `{ invoiceId: string, payments: Array<{ paymentId: string, amountCents: number, method: string|null, reference: string|null, paidAt: string|null /* ISO */, recordedBy: string|null, sourcePaymentId: string|null /* the ROOT payments row an apply came in on */ }>, paidCents: number, totalCents: number, amountDueCents: number, ledgerPayments: Array<{ paymentId: string, amountCents: number /* gross tip INCLUDED */, tipCents: number /* GROSS when tipBasis says so */, feeCents: number, tipBasis: 'gross'|'net'|'unknown', reconciles: boolean /* false = a migrated row whose fee was dropped */, appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, autoApply: boolean, appliedInvoiceId: string, appliedInvoiceNumber: string /* the "Applied to #n" column */, method: string, reference: string, date: string /* FREE TEXT */, notes: string /* STAFF ONLY */, recordedBy: string|null }>, sessions: Array<{ sessionId: string, serviceType: string, status: string, startTime: string /* ISO */, completedAt: string|null, durationMinutes: number|null, linkedBack: boolean }>, missingSessionIds: string[], orphanSessionIds: string[], truncated: boolean }`
 - Read only. Writes nothing, stamps no classifier state, repairs nothing. No `ok`
   field, same as `listUninvoicedSessions`: a pure read answers with data or
   throws, and has no partial success to report.

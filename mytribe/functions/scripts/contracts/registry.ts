@@ -37,6 +37,7 @@ import { Args as MarkInvoicePaidArgs, Result as MarkInvoicePaidResult } from '..
 import { Args as PostInvoiceEventArgs, Result as PostInvoiceEventResult } from '../../src/admin/postInvoiceEvent';
 import { Args as RecordPaymentArgs, Result as RecordPaymentResult } from '../../src/admin/recordPayment';
 import { Args as RepairInvoicePaymentsArgs, Result as RepairInvoicePaymentsResult } from '../../src/admin/repairInvoicePayments';
+import { Args as RunAutoApplyArgs, Result as RunAutoApplyResult } from '../../src/admin/runAutoApply';
 import { Args as ReviewAndSendDraftInvoiceArgs, Result as ReviewAndSendDraftInvoiceResult } from '../../src/admin/reviewAndSendDraftInvoice';
 import { Args as SendInvoiceReminderArgs, Result as SendInvoiceReminderResult } from '../../src/admin/sendInvoiceReminder';
 import { Args as UnarchiveInvoiceArgs, Result as UnarchiveInvoiceResult } from '../../src/admin/unarchiveInvoice';
@@ -110,6 +111,7 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'recordPayment', args: RecordPaymentArgs, result: RecordPaymentResult },
     { name: 'redeemCredit', args: RedeemCreditArgs, result: RedeemCreditResult },
     { name: 'repairInvoicePayments', args: RepairInvoicePaymentsArgs, result: RepairInvoicePaymentsResult },
+    { name: 'runAutoApply', args: RunAutoApplyArgs, result: RunAutoApplyResult },
     { name: 'reviewAndSendDraftInvoice', args: ReviewAndSendDraftInvoiceArgs, result: ReviewAndSendDraftInvoiceResult },
     { name: 'sendInvoiceReminder', args: SendInvoiceReminderArgs, result: SendInvoiceReminderResult },
     { name: 'unarchiveInvoice', args: UnarchiveInvoiceArgs, result: UnarchiveInvoiceResult },

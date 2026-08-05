@@ -54,7 +54,11 @@ class InvoiceRepositoryTest {
             setOf(
                 "kinfolkId", "kinfolkName", "client", "address", "date",
                 "paymentMethod", "referenceNumber", "email", "amount", "tip",
-                "notes", "invoiceId", "invoiceNumber",
+                // Added 2026-08-04. `fee` is the field whose absence made
+                // invoice #1029 unreconcilable; the two booleans are the
+                // Auto-apply and Send Confirmation Email switches.
+                "fee", "notes", "invoiceId", "invoiceNumber",
+                "autoApply", "sendConfirmationEmail",
             ),
             p.keys,
         )

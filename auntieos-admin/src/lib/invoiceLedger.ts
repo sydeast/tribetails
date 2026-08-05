@@ -77,11 +77,82 @@ export function sessionServiceLabel(serviceType: string): string {
   return trimmed === '' ? 'Visit' : trimmed;
 }
 
-/** A payment row's amount including its gratuity. Integer cents, added once. */
+/**
+ * A payment row's amount including its gratuity. Integer cents, added once.
+ *
+ * KEPT, AND NO LONGER WHAT THE TABLE RENDERS. Read the note on
+ * `ledgerRowAppliedCents` below for why: on the operator's real data `amount`
+ * ALREADY CONTAINS the tip, so adding them counts the gratuity twice. This
+ * function survives because `ledgerCoversBalance` has always used it and
+ * changing what that banner fires on is a separate decision from fixing the
+ * table, but nothing new should reach for it.
+ */
 export function ledgerRowTotalCents(
   row: Pick<GetInvoiceLedgerResultLedgerPayment, 'amountCents' | 'tipCents'>,
 ): number {
   return row.amountCents + row.tipCents;
+}
+/**
+ * ── THE OPERATOR'S PAYMENT HISTORY COLUMNS ────────────────────────────────
+ *
+ * Her production screen shows, per row:
+ *
+ *   Transaction Date | Method | Reference # | Amount | Applied to #n | Tip | Balance
+ *
+ * and this tranche adds Fee between Tip and Balance. Invoice #1029 is the row
+ * that made all of it necessary:
+ *
+ *   Amount $137.50 | Applied $127.50 | Tip $7.29 | Balance $0.00
+ *
+ * Those four do not reconcile ($2.71 is missing) because the tip shown was
+ * the NET one and the fee it was net of was dropped during the migration. With
+ * the GROSS tip ($10.00) and the fee ($2.71) both stored, the row closes:
+ *
+ *   amount(137.50) = applied(127.50) + tipGross(10.00) + balance(0.00)
+ *
+ * `amount` INCLUDES the tip. That is the shape of the operator's real data and
+ * it is why `ledgerRowTotalCents` above must not be what a row renders.
+ */
+/** The "Balance" column: what is left of the payment after the bill and the tip. */
+export function ledgerRowBalanceCents(
+  row: Pick<GetInvoiceLedgerResultLedgerPayment, 'unappliedCents'>,
+): number {
+  return row.unappliedCents;
+}
+/** The "Applied to #n" cell: the invoice number, the id, or the honest absence. */
+export function ledgerRowAppliedLabel(
+  row: Pick<GetInvoiceLedgerResultLedgerPayment, 'appliedInvoiceId' | 'appliedInvoiceNumber'>,
+): string {
+  if (row.appliedInvoiceNumber.trim() !== '') return `#${row.appliedInvoiceNumber.trim()}`;
+  if (row.appliedInvoiceId.trim() !== '') return row.appliedInvoiceId.trim();
+  return '';
+}
+/**
+ * The caveat a row has to carry when its figures CANNOT be checked, or `''`
+ * when they can.
+ *
+ * THIS IS THE WHOLE DEFECT, stated on screen. A migrated row carries a tip
+ * whose convention nobody recorded and a fee that was thrown away, so
+ * `amount = applied + tipGross + balance` is not a statement anyone can
+ * evaluate about it. Printing the numbers anyway is what left the operator
+ * staring at $2.71 she could not account for.
+ *
+ * NO BACK-COMPUTED GROSS. The gross tip cannot be recovered from a net tip
+ * whose deduction is unknown, and a plausible guess here would put a number
+ * that was never collected onto a tax return.
+ */
+export function ledgerRowCaveat(
+  row: Pick<GetInvoiceLedgerResultLedgerPayment, 'reconciles' | 'tipCents' | 'unappliedCents'>,
+): string {
+  if (!row.reconciles) {
+    return 'This row was migrated without its processor fee, so whether the tip shown is before or after that fee was never recorded. It cannot be reconciled, and no gross tip has been guessed for it.';
+  }
+  // An over-application cannot be created any more, but a row already carrying
+  // one must not render as though it balanced.
+  if (row.unappliedCents < 0) {
+    return 'More was applied to invoices than this payment covers, so this row does not balance.';
+  }
+  return '';
 }
 
 /**

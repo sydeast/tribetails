@@ -40,6 +40,55 @@ import { PrimaryButton, GhostButton } from './Buttons';
 import { Banner } from './Banner';
 import './InvoiceDetail.css';
 
+/**
+ * A money box that may be left empty. Dollars.
+ *
+ * THREE ANSWERS, and the third is the one that matters: a number, `0` for a
+ * blank box, and `null` for something typed that is not money. A blank box is
+ * genuinely zero (no tip was entered), but "abc" in the tip box is a keystroke
+ * the operator meant, and reading it as zero would silently drop a tip she
+ * believes she recorded. `null` is what makes the panel able to say so.
+ *
+ * Negative is refused for the same reason: a negative fee is not a fee.
+ */
+export function parseOptionalMoney(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed === '') return 0;
+  const parsed = Number(trimmed.replace(/^\$/, ''));
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+/**
+ * The UNAPPLIED BALANCE, live, as she types. Dollars.
+ *
+ * `payment - applied - tipGross`. It is shown BEFORE Save because that is what
+ * it is for: it is how a mis-keyed amount is caught while it is still a typo
+ * rather than a payment. The fee is deliberately absent from it: the fee is a
+ * deduction from what the business receives, not from what the client paid, so
+ * it does not move this number.
+ *
+ * `null` means one of the boxes cannot be read yet, and the panel shows nothing
+ * rather than a figure derived from a half-typed number.
+ */
+export function unappliedPreview(input: {
+  paymentTotal: string;
+  applied: string;
+  tip: string;
+  /** Used when the applied box is blank, which means "settle the rest". */
+  fallbackApplied: number;
+}): number | null {
+  const tip = parseOptionalMoney(input.tip);
+  const total = parseOptionalMoney(input.paymentTotal);
+  if (tip === null || total === null) return null;
+  const typedApplied = input.applied.trim();
+  const applied =
+    typedApplied === '' ? input.fallbackApplied : parseOptionalMoney(typedApplied);
+  if (applied === null) return null;
+  // A blank payment box means "exactly what was applied, plus the tip", which
+  // leaves nothing over. That is the ordinary case and it reads as $0.00.
+  const payment = total > 0 ? total : applied + tip;
+  return Math.round((payment - applied - tip) * 100) / 100;
+}
 type PendingAction = InvoiceAction;
 
 interface ActionMeta {
@@ -179,6 +228,28 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // Free text, not a number input, so a half-typed "2" is never read as $2.
   // Parsed and validated at submit, where the operator can be told what is wrong.
   const [paidAmount, setPaidAmount] = useState('');
+  // ── THE FEE TRANCHE, 2026-08-04 ──────────────────────────────────────────
+  // Her legacy Add New Transaction screen carried all of these beside the
+  // amount, and none of them existed here. Free text for the same reason
+  // `paidAmount` is: a half-typed "2" must not be read as $2.
+  //
+  // `paidTip` is the GROSS tip, what the client actually tipped. `paidFee` is
+  // the processor's cut, which she takes out of that tip. Both are stored, and
+  // the gross is what is displayed. Operator ruling: "store both, and display
+  // the latter. itll help with taxes."
+  const [paidTip, setPaidTip] = useState('');
+  const [paidFee, setPaidFee] = useState('');
+  // THE WHOLE SUM THE CLIENT HANDED OVER, which is not always what this invoice
+  // takes. Blank means "exactly the applied amount plus the tip", the ordinary
+  // case, so the common flow is still one field. Filling it in is how a $300
+  // transfer against a $180 bill gets recorded as what it was.
+  const [paidTotal, setPaidTotal] = useState('');
+  // "Notes (staff only)" on her screen, and staff-only here: nothing
+  // kinfolk-facing reads the root `payments` collection.
+  const [paidNotes, setPaidNotes] = useState('');
+  // "Will automatically apply any Unapplied amount to future invoices."
+  const [paidAutoApply, setPaidAutoApply] = useState(false);
+  const [paidSendConfirmation, setPaidSendConfirmation] = useState(false);
 
   // Edit mode. Seeded from the invoice the moment Edit is pressed rather than
   // held in sync with it: the live listener would otherwise overwrite what the
@@ -262,6 +333,14 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // merges an arbitrary payload, so both bypass every callable that would have
   // kept the total and the lines in step.
   const totalCheck = checkInvoiceTotal(invoice);
+  // Recomputed every render from the boxes themselves, so it can never lag the
+  // number she is looking at. Null while something is half-typed.
+  const unapplied = unappliedPreview({
+    paymentTotal: paidTotal,
+    applied: paidAmount,
+    tip: paidTip,
+    fallbackApplied: invoice.amountDue,
+  });
 
   // The STORED editScope decides only whether to OFFER the control; the server
   // still enforces on the write, and a refusal comes back with a code and is
@@ -306,6 +385,16 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     setNotice(null);
     setPaidMethod('');
     setPaidReference('');
+    // Blank, not zero. An empty tip box is "no tip entered"; a prefilled $0.00
+    // is a claim that there was none, and she would have to clear it to type one.
+    setPaidTip('');
+    setPaidFee('');
+    setPaidTotal('');
+    setPaidNotes('');
+    setPaidAutoApply(false);
+    // OFF by default. A confirmation is a message to a real household, so it
+    // goes out because she ticked the box, never because the panel assumed.
+    setPaidSendConfirmation(false);
     // Prefilled with the outstanding balance so the common case is one click,
     // and editable so a partial is one field away rather than impossible.
     setPaidAmount(key === 'markPaid' && invoice.amountDue > 0 ? String(invoice.amountDue) : '');
@@ -462,6 +551,41 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           }
           amount = parsed;
         }
+        // The tip and the fee, same rule and same reason. A blank box is zero;
+        // a box with something unparseable in it is a refusal, because that is
+        // a keystroke she meant and the panel would otherwise drop it silently.
+        const tip = parseOptionalMoney(paidTip);
+        if (tip === null) {
+          setBusy(false);
+          setActionError(`"${paidTip.trim()}" is not a tip. Enter dollars, for example 10 or 10.50.`);
+          return;
+        }
+        const fee = parseOptionalMoney(paidFee);
+        if (fee === null) {
+          setBusy(false);
+          setActionError(`"${paidFee.trim()}" is not a fee. Enter dollars, for example 2.71.`);
+          return;
+        }
+        const typedTotal = parseOptionalMoney(paidTotal);
+        if (typedTotal === null) {
+          setBusy(false);
+          setActionError(
+            `"${paidTotal.trim()}" is not a payment amount. Enter dollars, for example 300 or 300.50.`,
+          );
+          return;
+        }
+        // THE UNAPPLIED BALANCE, checked before anything is written. It is the
+        // figure the operator watches to catch a mis-keyed amount, so the panel
+        // must refuse the impossible version of it rather than let the server
+        // do it after `markInvoicePaid` has already collected.
+        const appliedForCheck = amount ?? invoice.amountDue;
+        if (typedTotal > 0 && typedTotal < appliedForCheck + tip) {
+          setBusy(false);
+          setActionError(
+            `A payment of ${formatUsd(typedTotal)} does not cover ${formatUsd(appliedForCheck)} applied plus a ${formatUsd(tip)} tip. Raise the payment amount, or lower one of the other two.`,
+          );
+          return;
+        }
 
         // STEP 1 OF 2, AND THE ORDER MATTERS. `markInvoicePaid` is the money
         // authority: it writes the `invoices/{id}/payments` subcollection and
@@ -507,17 +631,37 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             " No row was added to the payment ledger, because this payment's own amount could not be stated exactly: it was left blank and the invoice's recorded payments could not be read. The invoice itself is correct; add the ledger row from the Payments screen.";
         } else {
           try {
-            await recordPayment({
+            const ledgerRow = await recordPayment({
               kinfolkId: invoice.kinfolkId,
               kinfolkName: invoice.kinfolkName,
               client: invoice.client,
               date: localDateIso(new Date()),
               paymentMethod: method,
               referenceNumber: reference,
-              amount: thisPaymentCents / 100,
+              // THE WHOLE SUM THE CLIENT PAID, tip and any leftover included.
+              // `markInvoicePaid` above settled the bill with the applied part;
+              // this row is the TRANSACTION, which is larger whenever there was
+              // a tip or money over.
+              amount: typedTotal > 0 ? typedTotal : thisPaymentCents / 100 + tip,
+              tip,
+              fee,
+              notes: paidNotes.trim(),
+              autoApply: paidAutoApply,
+              sendConfirmationEmail: paidSendConfirmation,
               invoiceId: invoice._id,
               invoiceNumber: invoice.invoiceNumber,
             });
+            // NO `apply` FIELD, deliberately. `markInvoicePaid` has already
+            // settled this invoice two steps up; sending an apply here would put
+            // the same money against the same bill a second time. The Apply
+            // amount for this flow IS what markInvoicePaid collected.
+            if (paidSendConfirmation && !ledgerRow.confirmationEmailSent) {
+              ledgerNote +=
+                ' The confirmation email did not go out (the household may have no portal account). The payment itself is recorded.';
+            }
+            if (ledgerRow.creditedToAccountCents > 0) {
+              ledgerNote += ` ${formatUsd(ledgerRow.creditedToAccountCents / 100)} was left over and has been added to the household's account credit, which goes onto their next invoice automatically.`;
+            }
           } catch (caught) {
             ledgerNote = ` The payment ledger row did not save (${
               caught instanceof Error ? caught.message : 'recordPayment failed'
@@ -795,6 +939,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             <p className="invoice-detail__confirm-copy">{meta.confirmCopy}</p>
             {meta.key === 'markPaid' && (
               <div className="invoice-detail__confirm-fields">
+                {/* UNCHANGED, and still the first field. It is what comes off
+                    this invoice's balance, and leaving it blank still means
+                    "settle the rest". Everything added beside it is optional. */}
                 <label className="invoice-detail__field">
                   <span className="invoice-detail__field-label">Amount collected</span>
                   <input
@@ -805,6 +952,44 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     inputMode="decimal"
                     disabled={busy}
                     aria-label="Amount collected in dollars"
+                  />
+                </label>
+                <label className="invoice-detail__field">
+                  <span className="invoice-detail__field-label">Tip, optional</span>
+                  <input
+                    className="invoice-detail__field-input"
+                    value={paidTip}
+                    onChange={(e) => setPaidTip(e.target.value)}
+                    placeholder="0.00"
+                    inputMode="decimal"
+                    disabled={busy}
+                    aria-label="Tip in dollars, before any processor fee"
+                  />
+                </label>
+                <label className="invoice-detail__field">
+                  <span className="invoice-detail__field-label">Fees, optional</span>
+                  <input
+                    className="invoice-detail__field-input"
+                    value={paidFee}
+                    onChange={(e) => setPaidFee(e.target.value)}
+                    placeholder="0.00"
+                    inputMode="decimal"
+                    disabled={busy}
+                    aria-label="Processor fee in dollars"
+                  />
+                </label>
+                <label className="invoice-detail__field">
+                  <span className="invoice-detail__field-label">
+                    Payment amount, if more than the above
+                  </span>
+                  <input
+                    className="invoice-detail__field-input"
+                    value={paidTotal}
+                    onChange={(e) => setPaidTotal(e.target.value)}
+                    placeholder="same as collected plus tip"
+                    inputMode="decimal"
+                    disabled={busy}
+                    aria-label="Total payment amount in dollars"
                   />
                 </label>
                 <label className="invoice-detail__field">
@@ -828,6 +1013,61 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     disabled={busy}
                     aria-label="Payment reference"
                   />
+                </label>
+                <label className="invoice-detail__field invoice-detail__field--wide">
+                  <span className="invoice-detail__field-label">Notes, staff only</span>
+                  <input
+                    className="invoice-detail__field-input"
+                    value={paidNotes}
+                    onChange={(e) => setPaidNotes(e.target.value)}
+                    placeholder="not shown to the household"
+                    disabled={busy}
+                    aria-label="Staff-only notes on this payment"
+                  />
+                </label>
+                {/* THE UNAPPLIED BALANCE, live. This is what it is for: it is
+                    how a mis-keyed amount is caught while it is still a typo.
+                    The fee is deliberately not in it: a processor fee is a
+                    deduction from what the business receives, not from what the
+                    client paid. */}
+                <p className="invoice-detail__unapplied" role="status">
+                  {unapplied === null ? (
+                    <span className="invoice-detail__unapplied-unknown">
+                      Unapplied balance: not yet, one of the amounts above cannot be read.
+                    </span>
+                  ) : (
+                    <>
+                      <span className="invoice-detail__unapplied-label">Unapplied balance</span>
+                      <span className="invoice-detail__unapplied-value">
+                        {formatUsd(unapplied)}
+                      </span>
+                      {unapplied > 0 && (
+                        <span className="invoice-detail__unapplied-note">
+                          {paidAutoApply
+                            ? "left over, and it will be held as this household's account credit for their next invoice"
+                            : 'left over, and it will not be applied to anything unless you switch on auto-apply'}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </p>
+                <label className="invoice-detail__check">
+                  <input
+                    type="checkbox"
+                    checked={paidAutoApply}
+                    onChange={(e) => setPaidAutoApply(e.target.checked)}
+                    disabled={busy}
+                  />
+                  <span>Automatically apply any unapplied amount to future invoices</span>
+                </label>
+                <label className="invoice-detail__check">
+                  <input
+                    type="checkbox"
+                    checked={paidSendConfirmation}
+                    onChange={(e) => setPaidSendConfirmation(e.target.checked)}
+                    disabled={busy}
+                  />
+                  <span>Send a confirmation email to the household</span>
                 </label>
               </div>
             )}

@@ -119,6 +119,13 @@ const INVOICE_LEDGERS: Readonly<Record<string, GetInvoiceLedgerResult>> = {
         reference: '2041',
         paidAt: isoAt(-3, '15:20:00'),
         recordedBy: 'e2e-admin',
+        // Null is the honest value, not a placeholder. Both of these are
+        // settlement rows with no root `payments` record behind them, which is
+        // exactly what `markInvoicePaid` writes and what every row predating
+        // the field carries. Fabricating an id would photograph a tip-and-fee
+        // link this fixture does not have, and the golden would then assert a
+        // screen that cannot occur.
+        sourcePaymentId: null,
       },
       {
         paymentId: 'vis-payment-002',
@@ -127,6 +134,7 @@ const INVOICE_LEDGERS: Readonly<Record<string, GetInvoiceLedgerResult>> = {
         reference: null,
         paidAt: isoAt(-1, '18:05:00'),
         recordedBy: 'e2e-admin',
+        sourcePaymentId: null,
       },
     ],
     paidCents: 6000,
