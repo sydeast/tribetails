@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Household Data (concept)</title>
+<!--
+  AuntieOS redesign concept · Household Data screen. Standalone HTML/CSS mockup.
+  Same "Den" aesthetic. No em dashes. Palette from AuntieColors.kt.
+
+  MIRRORS the real contract:
+    web/.../screens/directory/HouseholdDataScreen.kt  (the edit form)
+    data class HouseholdData in FirestoreClient.kt     (the ~30 fields)
+  Reproduced EXACTLY from source:
+    - Header title "<Name> Household" + House icon
+    - Subtitle "Shared dossier across all pets in this home - vet, locations,
+      routines"  (source uses an em dash as a pause; rendered as a plain hyphen
+      per the no-em-dash rule)
+    - Five SubsectionLabel sections (rendered .uppercase() in source):
+        Veterinary Information / Household Items & Locations /
+        Routines & Preferences / Emergency & Safety / Service Providers
+    - Every field label and its single/multi-line + row grouping, verbatim:
+        BottomBorderField = bottom-border-only single line input
+        MultilineField    = glass textarea
+      Field labels are uppercased (BottomBorderField/MultilineField do .uppercase())
+    - Fail-loud load error: "Failed to load household data: <message>"
+    - Footer buttons: GhostButton "Back" + PrimaryButton "Save Household Data"
+
+  SUGGESTIONS (NOT in HouseholdDataScreen.kt; clearly tagged .sg in markup):
+    1. Dossier context band at top, reusing the VERBATIM needsMoreSamples banner
+       copy from KinfolkProfileScreen.kt. The dossier/411 + needsMoreSamples
+       fail-loud banners render on the PROFILE screen, not this edit form; shown
+       here read-only as helpful context for the auntie filling the form.
+    2. "Last saved" stamp from HouseholdData.updatedAt (model field exists, not
+       surfaced in the current screen).
+  All sample household values are illustrative placeholder, not real kinfolk
+  data. User authors all real customer-facing copy; gaps left as TODO.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --warning:#E0A431;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.42;mix-blend-mode:screen;filter:blur(74px);
+    animation:drift 30s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--orange),transparent 62%);top:-12vmax;left:-4vmax;}
+  .blob.b{width:38vmax;height:38vmax;background:radial-gradient(circle,var(--purple),transparent 60%);top:8vmax;right:-8vmax;animation-delay:-10s;}
+  .blob.c{width:32vmax;height:32vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-12vmax;left:40vmax;animation-delay:-17s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-9deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:980px;margin:0 auto;padding:24px 30px 60px;}
+
+  .crumbs{display:flex;align-items:center;gap:9px;font-family:"Spline Sans Mono",monospace;font-size:12px;
+    color:var(--cream-dim);margin-bottom:18px;opacity:0;animation:rise .5s var(--ease) forwards;}
+  .crumbs a{color:var(--cream-dim);text-decoration:none}.crumbs a:hover{color:var(--orange)}
+  .crumbs b{color:var(--cream)}
+
+  /* SectionHeader: icon (House, brand-tinted) + title (headlineMedium) + subtitle (bodySmall, dim) */
+  .head{display:flex;align-items:center;gap:11px;margin-bottom:8px;
+    opacity:0;transform:translateY(-8px);animation:rise .55s var(--ease) .04s forwards;}
+  .head .ico{width:22px;height:22px;color:var(--orange);flex:0 0 auto}
+  .head .ico svg{width:22px;height:22px}
+  .head h1{font-family:"Fraunces",serif;font-weight:440;font-size:30px;letter-spacing:-.02em;
+    font-variation-settings:"SOFT" 50,"WONK" 1}
+  .head .sub{color:var(--cream-dim);font-size:13.5px;margin-top:2px}
+
+  /* SUGGESTION marker chip */
+  .sgtag{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+    font-weight:600;color:var(--orange);background:rgba(223,132,49,.14);border:1px solid rgba(223,132,49,.4);
+    border-radius:20px;padding:3px 8px;display:inline-block;vertical-align:middle;margin-left:8px}
+  .sg{position:relative;outline:1px dashed rgba(223,132,49,.4);outline-offset:3px;border-radius:14px}
+
+  /* needsMoreSamples banner: warning-tinted glass, TriangleAlert icon, bodySmall text */
+  .needs{display:flex;align-items:center;gap:9px;margin:16px 0 2px;
+    background:rgba(224,164,49,.12);border:1px solid rgba(224,164,49,.45);border-radius:10px;
+    padding:10px 13px;font-size:13px;opacity:0;animation:rise .55s var(--ease) .1s forwards;}
+  .needs svg{width:15px;height:15px;color:var(--warning);flex:0 0 auto}
+
+  /* fail-loud load error (loadError != null branch in source) */
+  .loaderr{display:none;align-items:center;gap:9px;margin:10px 0 2px;
+    background:rgba(213,83,90,.14);border:1px solid rgba(213,83,90,.5);border-radius:10px;
+    padding:11px 14px;font-size:13.5px;color:#f3a6aa;}
+  .loaderr.show{display:flex}
+  .loaderr svg{width:16px;height:16px;flex:0 0 auto}
+
+  .panel{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);
+    border-radius:20px;padding:22px 22px 24px;margin-top:16px;
+    opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) forwards}
+  .panel.d1{animation-delay:.12s}.panel.d2{animation-delay:.18s}.panel.d3{animation-delay:.24s}
+  .panel.d4{animation-delay:.3s}.panel.d5{animation-delay:.36s}
+
+  /* SubsectionLabel: labelSmall, textDim, UPPERCASE */
+  .seclbl{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--cream-dim);margin-bottom:16px;display:flex;align-items:center;gap:9px}
+  .seclbl::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--orange);flex:0 0 auto}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px}
+  .full{grid-column:1 / -1}
+
+  /* BottomBorderField: uppercase label + single-line input with bottom border only */
+  .bbf{display:flex;flex-direction:column}
+  .bbf label{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--cream-dim);margin-bottom:6px}
+  .bbf .in{font-family:"Hanken Grotesk";font-size:14.5px;color:var(--cream);padding:7px 1px;min-height:34px;
+    border-bottom:1px solid var(--line);transition:.2s var(--ease)}
+  .bbf .in:focus-within,.bbf:hover .in{border-bottom-color:var(--orange);box-shadow:0 4px 6px -5px var(--orange)}
+  .bbf .in[contenteditable]:empty::before{content:attr(data-ph);color:rgba(251,251,249,.32)}
+  .bbf .in:focus{outline:none}
+
+  /* MultilineField: uppercase label + glass textarea (rounded, hairline border) */
+  .mlf{display:flex;flex-direction:column}
+  .mlf label{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--cream-dim);margin-bottom:6px}
+  .mlf .area{font-family:"Hanken Grotesk";font-size:14.5px;line-height:1.55;color:var(--cream);
+    background:rgba(17,19,31,.45);border:1px solid var(--line);border-radius:8px;padding:11px 13px;
+    transition:.2s var(--ease)}
+  .mlf .area:focus-within,.mlf:hover .area{border-color:var(--orange)}
+  .mlf .area:focus{outline:none}
+  .mlf .area[contenteditable]:empty::before{content:attr(data-ph);color:rgba(251,251,249,.32)}
+  .mlf .area.l2{min-height:48px}.mlf .area.l3{min-height:72px}
+
+  /* footer actions: GhostButton + PrimaryButton, each weight(1f) */
+  .actions{display:flex;gap:12px;margin-top:26px;
+    opacity:0;animation:rise .6s var(--ease) .42s forwards}
+  .btn{flex:1;font-family:"Hanken Grotesk";font-weight:700;font-size:14.5px;padding:13px 0;border-radius:13px;
+    cursor:pointer;transition:.18s var(--ease);border:none;text-align:center}
+  .btn.ghost{background:var(--navy-3);color:var(--cream);border:1px solid var(--line)}
+  .btn.ghost:hover{background:var(--navy-2);border-color:rgba(223,132,49,.4)}
+  .btn.primary{background:var(--orange);color:var(--navy)}
+  .btn.primary:hover{transform:translateY(-2px);box-shadow:0 12px 28px -10px rgba(223,132,49,.6)}
+
+  .saved{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);
+    margin-top:10px;text-align:right;opacity:.7}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:30px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45;line-height:1.6}
+  @media(max-width:680px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="crumbs"><a href="#">Directory</a> / <a href="#">Kinfolk</a> / <a href="#">Lorna Wren</a> / <b>Household</b></div>
+
+    <!-- SectionHeader(title = "$resolvedName Household", subtitle = "...", icon = Lucide.House) -->
+    <div class="head">
+      <span class="ico"><!-- Lucide.House -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h14V9.5"/><path d="M10 20v-6h4v6"/></svg>
+      </span>
+      <div>
+        <!-- sample name "Lorna Wren" is placeholder; real value is $resolvedName -->
+        <h1>Lorna Wren Household</h1>
+        <div class="sub">Shared dossier across all pets in this home - vet, locations, routines</div>
+      </div>
+    </div>
+
+    <!-- fail-loud branch: rendered when loadError != null. Hidden by default; toggle .show to preview. -->
+    <div class="loaderr" id="loaderr">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+      <!-- exact source string: "Failed to load household data: $loadError" -->
+      <span>Failed to load household data: <span id="loaderrmsg">TODO</span></span>
+    </div>
+
+    <!-- ===== SUGGESTION 1: dossier context band (read-only; lives on profile screen, not this edit form) ===== -->
+    <div class="sg">
+      <div class="needs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.3 4 2.5 18a1.5 1.5 0 0 0 1.3 2.2h16.4A1.5 1.5 0 0 0 21.5 18L13.7 4a1.5 1.5 0 0 0-2.6 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        <!-- VERBATIM dossier needsMoreSamples copy from KinfolkProfileScreen.kt -->
+        <span>Not enough comms history yet to summarize this kinfolk. Send/receive a few more messages.</span>
+        <span class="sgtag">Suggestion</span>
+      </div>
+    </div>
+
+    <!-- ===== Veterinary Information ===== -->
+    <div class="panel d1">
+      <div class="seclbl">Veterinary Information</div>
+      <div class="grid2">
+        <div class="bbf full"><label>Primary vet name</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf"><label>Phone</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf"><label>Hours</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="mlf full"><label>Primary vet address</label><div class="area l2" contenteditable data-ph=""></div></div>
+        <div class="bbf full"><label>Emergency vet name</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf full"><label>Emergency phone</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="mlf full"><label>Emergency address</label><div class="area l2" contenteditable data-ph=""></div></div>
+      </div>
+    </div>
+
+    <!-- ===== Household Items & Locations ===== -->
+    <div class="panel d2">
+      <div class="seclbl">Household Items &amp; Locations</div>
+      <div class="grid2">
+        <div class="bbf"><label>Food</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf"><label>Treats</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf"><label>Medications</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf"><label>Toys</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf"><label>Bedding</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf"><label>Leashes &amp; bags</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf full"><label>Cleaning supplies location</label><div class="in" contenteditable data-ph=""></div></div>
+      </div>
+    </div>
+
+    <!-- ===== Routines & Preferences ===== -->
+    <div class="panel d3">
+      <div class="seclbl">Routines &amp; Preferences</div>
+      <div class="grid2">
+        <div class="mlf full"><label>Household rules</label><div class="area l3" contenteditable data-ph=""></div></div>
+        <div class="mlf full"><label>Preferred walk routes</label><div class="area l2" contenteditable data-ph=""></div></div>
+        <div class="mlf full"><label>Neighborhood hazards</label><div class="area l2" contenteditable data-ph=""></div></div>
+        <div class="bbf"><label>Security system</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf"><label>Thermostat</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf full"><label>Lighting preferences</label><div class="in" contenteditable data-ph=""></div></div>
+      </div>
+    </div>
+
+    <!-- ===== Emergency & Safety ===== -->
+    <div class="panel d4">
+      <div class="seclbl">Emergency &amp; Safety</div>
+      <div class="grid2">
+        <div class="bbf full"><label>Poison control number</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="mlf full"><label>Emergency contacts priority</label><div class="area l2" contenteditable data-ph=""></div></div>
+        <div class="mlf full"><label>Evacuation plan</label><div class="area l2" contenteditable data-ph=""></div></div>
+        <div class="bbf full"><label>Important documents location</label><div class="in" contenteditable data-ph=""></div></div>
+      </div>
+    </div>
+
+    <!-- ===== Service Providers ===== -->
+    <div class="panel d5">
+      <div class="seclbl">Service Providers</div>
+      <div class="grid2">
+        <div class="bbf"><label>Groomer name</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf"><label>Groomer phone</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf"><label>Trainer name</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf"><label>Trainer phone</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf full"><label>Backup pet sitter</label><div class="in" contenteditable data-ph=""></div></div>
+        <div class="bbf full"><label>Backup dog walker</label><div class="in" contenteditable data-ph=""></div></div>
+      </div>
+    </div>
+
+    <!-- footer: GhostButton "Back" + PrimaryButton "Save Household Data" -->
+    <div class="actions">
+      <button class="btn ghost">Back</button>
+      <button class="btn primary">Save Household Data</button>
+    </div>
+    <!-- SUGGESTION 2: surface HouseholdData.updatedAt (model field, not currently shown) -->
+    <div class="sg" style="outline:none">
+      <div class="saved">Last saved: TODO <span class="sgtag">Suggestion</span></div>
+    </div>
+
+    <p class="note">// concept mockup · Household Data · palette from AuntieColors.kt<br>
+    // mirrors HouseholdDataScreen.kt + data class HouseholdData; orange-dashed = SUGGESTION (not in source)<br>
+    // sample household values are illustrative placeholder, not real kinfolk data</p>
+  </div>
+
+  <script>
+    // mesh parallax, matches the other Den mockups
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+    // preview the fail-loud branch: append ?loaderr=<message> to the URL
+    const p=new URLSearchParams(location.search).get('loaderr');
+    if(p){document.getElementById('loaderrmsg').textContent=p;document.getElementById('loaderr').classList.add('show');}
+  </script>
+</body>
+</html>

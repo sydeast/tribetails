@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Training Documents (concept)</title>
+<!--
+  AuntieOS redesign concept · Training Documents. Standalone HTML/CSS mockup.
+  Same "Den" aesthetic (tokens, mesh, grain, fonts, cards) lifted from
+  auntieos-directory-2026-05-27.html. No em dashes. Palette from AuntieColors.kt.
+
+  MIRRORS the real screen:
+    web/composeApp/src/commonMain/kotlin/com/tribetails/auntieos/web/
+      screens/trainingdocs/TrainingDocumentsScreen.kt   (UI)
+      screens/trainingdocs/TrainingDocumentsViewModel.kt (search/filter)
+      data/FirestoreClient.kt  ->  data class TrainingDocument (the model)
+
+  REAL fields rendered (TrainingDocument): title, content, communicationType,
+  kinfolkRef, uploadedAt, notes. The "_id" field is internal and not shown.
+
+  REAL sections reproduced VERBATIM from TrainingDocumentsScreen.kt:
+    - SectionHeader title    "Training Documents"
+    - SectionHeader subtitle "Guides and educational resources for care delivery"
+    - Search placeholder     "Search documents…"
+    - SummaryRow items       "Total" / "Comm. Types" / "With Content"
+    - Card fallback title    "Untitled Document"
+    - Card expander          "Show More" / "Show Less" (content > 200 chars)
+    - Card prefixes          "Notes: " and "Related to: "
+    - EmptyState             "No Training Documents" +
+                             "Training materials and guides will appear here once uploaded"
+    - EmptySearchState       No results for "<query>"
+
+  SUGGESTIONS (NOT in the shipped screen, each tagged "SUGGESTION" inline):
+    1. "＋ Add document" button + the Add/Edit form panel. The shipped screen
+       is READ-ONLY: FirestoreClient exposes only trainingDocsStream() (read),
+       there is NO create/update/delete callable for TrainingDocument. Per the
+       fail-loud policy the form carries a visible warning banner saying no
+       backend write callable exists yet. Do not treat this form as wired.
+    2. The "Comm. Type" filter pills row (the real screen filters by free-text
+       search only; this is a convenience grouping suggestion).
+  Sample document titles/bodies below are illustrative placeholder, not real data.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.45;mix-blend-mode:screen;filter:blur(74px);
+    animation:drift 29s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--purple),transparent 62%);top:-10vmax;left:-4vmax;}
+  .blob.b{width:40vmax;height:40vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:10vmax;right:-8vmax;animation-delay:-10s;}
+  .blob.c{width:34vmax;height:34vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-12vmax;left:36vmax;animation-delay:-16s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-9deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1100px;margin:0 auto;padding:26px 30px 60px;}
+
+  /* SectionHeader: kicker + Fraunces title + subtitle + BookOpen icon */
+  .head{display:flex;align-items:flex-start;gap:18px;margin-bottom:20px;
+    opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards;}
+  .head .ico{width:46px;height:46px;border-radius:14px;flex:0 0 auto;display:grid;place-items:center;
+    background:conic-gradient(from 200deg,var(--teal),var(--purple));color:var(--cream);margin-top:14px;}
+  .head .ico svg{width:23px;height:23px}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--orange);margin-bottom:5px;}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;
+    font-variation-settings:"SOFT" 50,"WONK" 1;}
+  .head h2 b{color:var(--pink);font-weight:500}
+  .head .sub{color:var(--cream-dim);font-size:14px;margin-top:6px;max-width:560px}
+  .spacer{flex:1}
+  .add{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;
+    font-size:14px;padding:11px 17px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);
+    display:inline-flex;align-items:center;gap:8px;margin-top:14px;white-space:nowrap;}
+  .add:hover{transform:translateY(-2px);box-shadow:0 12px 28px -10px rgba(223,132,49,.6)}
+  .add .sg{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.08em;
+    background:rgba(17,19,31,.22);padding:2px 5px;border-radius:6px;}
+
+  /* search row (OutlinedTextField + leading Search icon) */
+  .controls{display:flex;align-items:center;gap:12px;margin-bottom:14px;
+    opacity:0;animation:rise .6s var(--ease) .08s forwards;}
+  .search{display:flex;align-items:center;gap:9px;background:var(--navy-3);border:1px solid var(--line);
+    border-radius:13px;padding:11px 14px;color:var(--cream-dim);font-size:13.5px;flex:1;min-width:180px;
+    transition:.18s var(--ease);}
+  .search:focus-within{border-color:var(--orange)}
+  .search input{background:none;border:none;outline:none;color:var(--cream);font-family:inherit;font-size:13.5px;width:100%;}
+  .search input::placeholder{color:var(--cream-dim);opacity:.85}
+
+  /* SUGGESTION: Comm. Type filter pills (not in shipped screen) */
+  .filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:20px;
+    opacity:0;animation:rise .6s var(--ease) .12s forwards;}
+  .filters .sgtag{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--orange);border:1px dashed rgba(223,132,49,.5);
+    border-radius:7px;padding:3px 7px;}
+  .pill{background:var(--navy-3);border:1px solid var(--line);color:var(--cream-dim);
+    font-family:"Hanken Grotesk";font-weight:600;font-size:12.5px;padding:7px 14px;border-radius:20px;
+    cursor:pointer;transition:.18s var(--ease);}
+  .pill.on{background:var(--cream);color:var(--navy);border-color:transparent}
+  .pill:hover:not(.on){background:var(--navy-2)}
+
+  /* SummaryRow: GlassSurface with Total / Comm. Types / With Content */
+  .summary{display:flex;justify-content:space-evenly;align-items:center;
+    background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.55));border:1px solid var(--line);
+    border-radius:20px;padding:18px 16px;margin-bottom:14px;
+    opacity:0;transform:translateY(16px);animation:rise .6s var(--ease) .14s forwards;}
+  .summary .item{display:flex;flex-direction:column;align-items:center;gap:3px;}
+  .summary .v{font-family:"Fraunces",serif;font-weight:600;font-size:26px;color:var(--orange);line-height:1}
+  .summary .l{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--cream-dim);}
+
+  /* DocList: stack of DocCard GlassSurfaces */
+  .list{display:flex;flex-direction:column;gap:12px;}
+  .dcard{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.55));border:1px solid var(--line);
+    border-radius:20px;padding:18px;position:relative;overflow:hidden;
+    opacity:0;transform:translateY(16px);animation:rise .65s var(--ease) forwards;}
+  .dcard:hover{border-color:rgba(223,132,49,.4);box-shadow:0 18px 40px -20px rgba(0,0,0,.7)}
+  .dcard:nth-child(1){animation-delay:.16s}.dcard:nth-child(2){animation-delay:.21s}
+  .dcard:nth-child(3){animation-delay:.26s}.dcard:nth-child(4){animation-delay:.31s}
+  .dcard:nth-child(5){animation-delay:.36s}
+  .drow{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;}
+  .dtitle{font-family:"Fraunces",serif;font-weight:500;font-size:18px;color:var(--cream);}
+  .dtitle.untitled{color:var(--cream-dim);font-style:italic}
+  /* communicationType chip: primary at alpha .15, primary text */
+  .ctype{display:inline-block;margin-top:7px;background:rgba(223,132,49,.15);color:var(--orange);
+    font-family:"Spline Sans Mono",monospace;font-weight:500;font-size:10.5px;letter-spacing:.04em;
+    padding:3px 8px;border-radius:6px;}
+  .ddate{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);
+    white-space:nowrap;flex:0 0 auto;text-align:right;opacity:.85}
+  .dbody{margin-top:11px;font-size:13.5px;color:rgba(251,251,249,.82);line-height:1.55;}
+  .more{margin-top:6px;background:none;border:none;color:var(--orange);font-family:"Hanken Grotesk";
+    font-weight:600;font-size:12px;cursor:pointer;padding:0;}
+  .dnotes{margin-top:10px;font-size:12.5px;color:rgba(251,251,249,.6);}
+  .dnotes b{font-weight:600;color:rgba(251,251,249,.75)}
+  .drelated{margin-top:6px;font-size:12.5px;color:rgba(223,132,49,.85);}
+  .drelated b{font-weight:600}
+
+  /* EmptyState + EmptySearchState (hidden by default; shown via JS demo toggle) */
+  .empty{display:none;flex-direction:column;align-items:center;text-align:center;padding:48px 20px;}
+  .empty svg{width:48px;height:48px;color:rgba(251,251,249,.3);margin-bottom:12px}
+  .empty h3{font-family:"Fraunces",serif;font-weight:600;font-size:22px;margin-bottom:4px}
+  .empty p{color:var(--cream-dim);font-size:14px}
+  .emptysearch{display:none;text-align:center;padding:32px 20px;color:var(--cream-dim);font-size:14px}
+
+  /* SUGGESTION: Add/Edit form panel (no backend write callable yet) */
+  .formwrap{display:none;margin-bottom:14px;
+    background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.6));border:1px solid rgba(223,132,49,.45);
+    border-radius:20px;padding:20px 20px 22px;}
+  .formwrap.show{display:block}
+  .formhead{display:flex;align-items:center;gap:10px;margin-bottom:4px;}
+  .formhead h3{font-family:"Fraunces",serif;font-weight:500;font-size:19px;}
+  .formhead .sg{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--orange);border:1px dashed rgba(223,132,49,.5);
+    border-radius:7px;padding:3px 7px;}
+  /* fail-loud banner: no create/update callable exists in FirestoreClient */
+  .warn{display:flex;gap:9px;align-items:flex-start;margin:12px 0 18px;padding:11px 13px;border-radius:12px;
+    background:rgba(213,83,90,.12);border:1px solid rgba(213,83,90,.45);color:#f0a8ac;font-size:12.5px;line-height:1.45;}
+  .warn svg{width:17px;height:17px;flex:0 0 auto;margin-top:1px}
+  .warn code{font-family:"Spline Sans Mono",monospace;font-size:11.5px;color:#ffd4d6}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--cream-dim);margin-bottom:6px;}
+  .field label .req{color:var(--orange)}
+  .field input,.field textarea,.field select{width:100%;background:var(--navy-3);border:1px solid var(--line);
+    border-radius:11px;padding:11px 13px;color:var(--cream);font-family:"Hanken Grotesk";font-size:13.5px;
+    outline:none;transition:.18s var(--ease);resize:vertical;}
+  .field input:focus,.field textarea:focus,.field select:focus{border-color:var(--orange)}
+  .field textarea{min-height:120px;line-height:1.55}
+  .field .hint{margin-top:5px;font-size:11.5px;color:var(--cream-dim);opacity:.7}
+  .field-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .formactions{display:flex;gap:10px;justify-content:flex-end;margin-top:6px}
+  .btn-ghost{background:none;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";
+    font-weight:600;font-size:13.5px;padding:10px 18px;border-radius:12px;cursor:pointer;transition:.18s var(--ease)}
+  .btn-ghost:hover{background:var(--navy-2)}
+  .btn-save{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;
+    font-size:13.5px;padding:10px 20px;border-radius:12px;cursor:not-allowed;opacity:.6;
+    display:inline-flex;align-items:center;gap:8px;}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:32px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45;line-height:1.7}
+
+  @media (max-width:640px){
+    .field-2{grid-template-columns:1fr}
+    .head{flex-wrap:wrap}
+    .head .ico{display:none}
+  }
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <!-- SectionHeader(title, subtitle, icon = Lucide.BookOpen) -->
+    <div class="head">
+      <div class="ico">
+        <!-- Lucide BookOpen -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+      </div>
+      <div>
+        <div class="kick">The Den · Training</div>
+        <h2><b>Training</b> Documents</h2>
+        <div class="sub">Guides and educational resources for care delivery</div>
+      </div>
+      <div class="spacer"></div>
+      <!-- SUGGESTION: Add document trigger. No create callable exists yet (read-only screen). -->
+      <button class="add" id="addBtn">＋ Add document <span class="sg">SUGGESTION</span></button>
+    </div>
+
+    <!-- SUGGESTION: Add/Edit form. Mirrors TrainingDocument fields; not wired to any backend. -->
+    <div class="formwrap" id="formPanel">
+      <div class="formhead">
+        <h3 id="formTitle">New training document</h3>
+        <span class="sg">SUGGESTION</span>
+      </div>
+      <div class="warn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        <div>Not wired. The shipped Training Documents screen is read-only: <code>FirestoreClient</code> exposes <code>trainingDocsStream()</code> only. There is no create, update, or delete callable for <code>TrainingDocument</code> yet, so Save cannot persist. This panel is a design suggestion, shown so the layout can be reviewed before a backend exists.</div>
+      </div>
+
+      <!-- TrainingDocument.title -->
+      <div class="field">
+        <label>Title <span class="req">*</span></label>
+        <input type="text" placeholder="TODO" />
+        <div class="hint">Shows as "Untitled Document" when left blank.</div>
+      </div>
+
+      <div class="field-2">
+        <!-- TrainingDocument.communicationType -->
+        <div class="field">
+          <label>Comm. Type</label>
+          <input type="text" placeholder="TODO" />
+          <div class="hint">Free text. Renders as the chip on the card.</div>
+        </div>
+        <!-- TrainingDocument.kinfolkRef -->
+        <div class="field">
+          <label>Related to (kinfolk)</label>
+          <input type="text" placeholder="TODO" />
+          <div class="hint">Optional. Renders as "Related to: ..." on the card.</div>
+        </div>
+      </div>
+
+      <!-- TrainingDocument.content -->
+      <div class="field">
+        <label>Content</label>
+        <textarea placeholder="TODO"></textarea>
+        <div class="hint">Card preview truncates after 200 characters with Show More.</div>
+      </div>
+
+      <!-- TrainingDocument.notes -->
+      <div class="field">
+        <label>Notes</label>
+        <input type="text" placeholder="TODO" />
+        <div class="hint">Optional. Renders as "Notes: ..." on the card.</div>
+      </div>
+
+      <!--
+        NOTE: TrainingDocument.uploadedAt is a stored string shown on the card,
+        but the form does not expose it as an editable field in the real model
+        intent (server/upload owns it). Left out on purpose, not invented here.
+      -->
+
+      <div class="formactions">
+        <button class="btn-ghost" id="cancelBtn">Cancel</button>
+        <button class="btn-save" title="No write callable exists yet" disabled>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>
+          Save
+        </button>
+      </div>
+    </div>
+
+    <!-- OutlinedTextField placeholder "Search documents…" with leading Search icon -->
+    <div class="controls">
+      <div class="search">
+        <!-- Lucide Search -->
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+        <input id="searchInput" placeholder="Search documents…" />
+      </div>
+    </div>
+
+    <!-- SUGGESTION: Comm. Type quick filters (real screen has free-text search only). -->
+    <div class="filters">
+      <span class="sgtag">SUGGESTION · filter</span>
+      <button class="pill on">All</button>
+      <button class="pill">Onboarding</button>
+      <button class="pill">Care Protocols</button>
+      <button class="pill">Safety</button>
+    </div>
+
+    <!-- SummaryRow(allDocs): Total / Comm. Types / With Content -->
+    <div class="summary" id="summary">
+      <div class="item"><div class="v">4</div><div class="l">Total</div></div>
+      <div class="item"><div class="v">3</div><div class="l">Comm. Types</div></div>
+      <div class="item"><div class="v">4</div><div class="l">With Content</div></div>
+    </div>
+
+    <!-- DocList(displayedDocs). Sample documents below are illustrative placeholder, not real data. -->
+    <div class="list" id="docList">
+
+      <!-- placeholder doc 1: long content -> Show More -->
+      <div class="dcard" data-search="welcome onboarding new auntie care basics">
+        <div class="drow">
+          <div>
+            <div class="dtitle">Welcome &amp; Onboarding Basics</div>
+            <div class="ctype">Onboarding</div>
+          </div>
+          <div class="ddate">2026-05-12</div>
+        </div>
+        <div class="dbody">
+          <span class="preview">This guide walks new aunties through the first week of care delivery: arriving on time, the meet and greet flow, logging KinTales after each visit, and how to reach the office if anything looks off during a…</span>
+          <span class="full" hidden>This guide walks new aunties through the first week of care delivery: arriving on time, the meet and greet flow, logging KinTales after each visit, and how to reach the office if anything looks off during a KinCare. Keep this handy until the routine feels natural.</span>
+        </div>
+        <button class="more">Show More</button>
+        <div class="dnotes"><b>Notes:</b> Reviewed each quarter</div>
+        <div class="drelated"><b>Related to:</b> the Wrens</div>
+      </div>
+
+      <!-- placeholder doc 2: short content, no Show More, no notes/related -->
+      <div class="dcard" data-search="medication administration care protocols pills">
+        <div class="drow">
+          <div>
+            <div class="dtitle">Medication Administration</div>
+            <div class="ctype">Care Protocols</div>
+          </div>
+          <div class="ddate">2026-04-28</div>
+        </div>
+        <div class="dbody">
+          <span class="preview">Always confirm the dose, the time, and the kin against the care plan before giving any medication.</span>
+        </div>
+        <div class="drelated"><b>Related to:</b> the Devlins</div>
+      </div>
+
+      <!-- placeholder doc 3: no communicationType chip, has notes -->
+      <div class="dcard" data-search="emergency contacts safety vet phone numbers">
+        <div class="drow">
+          <div>
+            <div class="dtitle">Emergency &amp; Safety Contacts</div>
+          </div>
+          <div class="ddate">2026-03-09</div>
+        </div>
+        <div class="dbody">
+          <span class="preview">Keep the kinfolk vet office number and the office line saved before the first visit. If a kin seems unwell, call the office first, then the kinfolk.</span>
+        </div>
+        <div class="dnotes"><b>Notes:</b> Updated after the March drill</div>
+      </div>
+
+      <!-- placeholder doc 4: blank title -> Untitled Document fallback -->
+      <div class="dcard" data-search="untitled draft safety">
+        <div class="drow">
+          <div>
+            <div class="dtitle untitled">Untitled Document</div>
+            <div class="ctype">Safety</div>
+          </div>
+          <div class="ddate">-</div>
+        </div>
+        <div class="dbody">
+          <span class="preview">Draft notes on yard and gate checks before letting a kin off leash. Finish before sharing.</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- EmptyState (no docs at all) -->
+    <div class="empty" id="emptyState">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+      <h3>No Training Documents</h3>
+      <p>Training materials and guides will appear here once uploaded</p>
+    </div>
+
+    <!-- EmptySearchState (search yields nothing) -->
+    <div class="emptysearch" id="emptySearch"></div>
+
+    <p class="note">
+      // concept mockup · Training Documents · mirrors TrainingDocumentsScreen.kt + TrainingDocument model · palette from AuntieColors.kt<br/>
+      // SUGGESTION items: Add document button + Add/Edit form (no write callable exists yet, fail-loud banner shown) · Comm. Type filter pills<br/>
+      // sample document titles and bodies are illustrative placeholder, not real data
+    </p>
+  </div>
+
+  <script>
+    // Add document -> reveal the SUGGESTION form (not wired to any backend).
+    const panel = document.getElementById('formPanel');
+    document.getElementById('addBtn').addEventListener('click', () => {
+      panel.classList.add('show');
+      document.getElementById('formTitle').textContent = 'New training document';
+      panel.scrollIntoView({behavior:'smooth', block:'start'});
+    });
+    document.getElementById('cancelBtn').addEventListener('click', () => panel.classList.remove('show'));
+
+    // Comm. Type filter pills (visual only; the real screen filters via search).
+    document.querySelectorAll('.pill').forEach(p => p.addEventListener('click', () => {
+      document.querySelectorAll('.pill').forEach(x => x.classList.remove('on'));
+      p.classList.add('on');
+    }));
+
+    // Show More / Show Less (mirrors the 200-char preview expander).
+    document.querySelectorAll('.more').forEach(btn => {
+      const card = btn.closest('.dcard');
+      const preview = card.querySelector('.preview');
+      const full = card.querySelector('.full');
+      btn.addEventListener('click', () => {
+        const open = !full.hidden;
+        full.hidden = open; preview.hidden = !open;
+        btn.textContent = open ? 'Show More' : 'Show Less';
+      });
+    });
+
+    // Live search mirroring TrainingDocumentsViewModel.filter
+    // (matches title + content + communicationType, case-insensitive).
+    const input = document.getElementById('searchInput');
+    const list = document.getElementById('docList');
+    const cards = Array.from(document.querySelectorAll('.dcard'));
+    const emptySearch = document.getElementById('emptySearch');
+    input.addEventListener('input', () => {
+      const q = input.value.trim().toLowerCase();
+      let shown = 0;
+      cards.forEach(c => {
+        const hit = !q || c.dataset.search.includes(q) ||
+                    c.querySelector('.dtitle').textContent.toLowerCase().includes(q);
+        c.style.display = hit ? '' : 'none';
+        if (hit) shown++;
+      });
+      if (q && shown === 0) {
+        list.style.display = 'none';
+        emptySearch.style.display = 'block';
+        emptySearch.textContent = 'No results for "' + input.value.trim() + '"';
+      } else {
+        list.style.display = '';
+        emptySearch.style.display = 'none';
+      }
+    });
+
+    // parallax mesh, matching the directory mockup
+    const mesh = document.querySelector('.mesh');
+    addEventListener('pointermove', e => {
+      const x = (e.clientX/innerWidth - .5), y = (e.clientY/innerHeight - .5);
+      mesh.style.transform = `translate3d(${x*-15}px,${y*-15}px,0)`;
+    }, {passive:true});
+  </script>
+</body>
+</html>

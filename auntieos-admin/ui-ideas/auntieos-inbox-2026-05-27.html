@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Inbox (concept)</title>
+<!--
+  AuntieOS redesign concept · Inbox (web admin). Standalone HTML/CSS mockup.
+  Same "Den" aesthetic as auntieos-directory-2026-05-27.html. No em dashes. Palette from AuntieColors.kt.
+
+  MIRRORS the real InboxScreen.kt
+  (web/composeApp/src/commonMain/kotlin/com/tribetails/auntieos/web/screens/inbox/InboxScreen.kt):
+    - SectionHeader: title "Inbox", verbatim subtitle, Inbox icon.
+    - ChannelFilterRow: pill filters in source order All / Voicemails / Calls / SMS / Emails,
+      each with its Lucide icon (Inbox / Voicemail / Phone / MessageSquare / Mail). Source labels VERBATIM.
+    - InboxRow (one per aggregated entry, sorted newest first): channel icon tile, kinfolkName
+      then "· counterpart", a preview line, a MetaRow of pips (sent/received/missed/unread/media count),
+      and shortDateTime on the right ("Mon D · HH:MM").
+    - channelAccent: unread voicemail = warning, missed call = error, everything else = primary.
+    - Selecting a row expands ThreadActionsCard inline: "Thread actions · <Channel>", native outreach
+      Call/Text (when phone) + Email (when email), "Play voicemail" (voicemail only), and the SMS reply
+      composer "Reply via SMS" + "Send reply". Email rows are reply-disabled: source shows the verbatim
+      "Reply composer is currently enabled for phone-based threads only." note.
+
+  Entry fields come from the real toEntry() mappers over VoicemailLog / CallLog / SmsMessage / EmailMessage
+  (data/FirestoreClient.kt). No invented fields. Any em-dash empty placeholder from source is rendered as plain "-".
+
+  SUGGESTION (NOT in InboxScreen.kt, tagged inline below):
+    - Unread count chips on the channel filter pills (mirrors the directory tab counts).
+    - "Mark all read" header action.
+    These are design suggestions only; gaps in real copy use TODO.
+
+  Sample message/voicemail/transcript content is illustrative placeholder, not real kinfolk data.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    /* channel accents straight from AuntieColors.kt dark theme */
+    --primary:#DF8431; --warning:#FFB458; --error:#E76E75;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.45;mix-blend-mode:screen;filter:blur(74px);
+    animation:drift 29s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--purple),transparent 62%);top:-10vmax;left:-4vmax;}
+  .blob.b{width:40vmax;height:40vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:10vmax;right:-8vmax;animation-delay:-10s;}
+  .blob.c{width:34vmax;height:34vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-12vmax;left:36vmax;animation-delay:-16s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-9deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1000px;margin:0 auto;padding:26px 30px 60px;}
+
+  /* SectionHeader: kicker + title + subtitle */
+  .head{display:flex;align-items:flex-start;gap:14px;margin-bottom:18px;
+    opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards;}
+  .head .hico{width:46px;height:46px;border-radius:14px;flex:0 0 auto;display:grid;place-items:center;
+    background:rgba(223,132,49,.14);border:1px solid rgba(223,132,49,.4);color:var(--orange);}
+  .head .hico svg{width:22px;height:22px}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--orange);margin-bottom:5px;}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;
+    font-variation-settings:"SOFT" 50,"WONK" 1;line-height:1.05;}
+  .head h2 b{color:var(--pink);font-weight:500}
+  .head .sub{color:var(--cream-dim);font-size:13.5px;margin-top:7px;max-width:560px;}
+  .spacer{flex:1}
+  /* SUGGESTION: "Mark all read" header action (not in InboxScreen.kt) */
+  .markall{background:none;border:1px solid var(--line);color:var(--cream-dim);font-family:"Hanken Grotesk";
+    font-weight:600;font-size:13px;padding:9px 14px;border-radius:12px;cursor:pointer;transition:.18s var(--ease);
+    white-space:nowrap;align-self:center;}
+  .markall:hover{border-color:rgba(223,132,49,.4);color:var(--cream)}
+  .sg{font-family:"Spline Sans Mono",monospace;font-size:8.5px;letter-spacing:.1em;color:var(--teal);
+    border:1px solid rgba(10,133,149,.4);border-radius:5px;padding:1px 4px;vertical-align:middle;margin-left:6px;
+    text-transform:uppercase;opacity:.85;}
+
+  /* ChannelFilterRow: pill filters */
+  .filters{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;
+    opacity:0;animation:rise .6s var(--ease) .08s forwards;}
+  .chip{display:inline-flex;align-items:center;gap:7px;background:var(--navy-3);border:1px solid var(--line);
+    border-radius:999px;padding:7px 13px;font-size:13px;font-weight:600;color:var(--cream-dim);cursor:pointer;
+    transition:.18s var(--ease);white-space:nowrap;}
+  .chip svg{width:14px;height:14px}
+  .chip:hover{background:var(--navy-2)}
+  .chip.on{background:rgba(223,132,49,.12);border-color:var(--orange);color:var(--orange)}
+  /* SUGGESTION: per-channel unread count chip (not in InboxScreen.kt) */
+  .chip .ct{font-family:"Spline Sans Mono",monospace;font-size:10px;font-weight:600;color:var(--cream);
+    background:rgba(223,132,49,.85);border-radius:999px;padding:1px 6px;line-height:1.4;}
+  .chip .ct.warn{background:var(--warning);color:var(--navy)}
+  .chip .ct.err{background:var(--error);color:var(--navy)}
+
+  /* InboxRow list */
+  .list{display:flex;flex-direction:column;gap:8px;}
+  .row{display:flex;align-items:flex-start;gap:12px;background:var(--navy-2);border:1px solid var(--line);
+    border-radius:12px;padding:13px 15px;cursor:pointer;transition:.18s var(--ease);position:relative;
+    opacity:0;transform:translateY(14px);animation:rise .6s var(--ease) forwards;}
+  .row:nth-child(1){animation-delay:.10s}.row:nth-child(2){animation-delay:.15s}
+  .row:nth-child(3){animation-delay:.20s}.row:nth-child(4){animation-delay:.25s}
+  .row:nth-child(5){animation-delay:.30s}.row:nth-child(6){animation-delay:.35s}
+  .row:nth-child(7){animation-delay:.40s}
+  .row:hover{border-color:rgba(223,132,49,.4)}
+  .row.on{border-color:rgba(223,132,49,.55);background:linear-gradient(160deg,rgba(223,132,49,.08),var(--navy-2))}
+  /* accent-colored variants for unread voicemail / missed call */
+  .row.on.warn{border-color:rgba(255,180,88,.55);background:linear-gradient(160deg,rgba(255,180,88,.08),var(--navy-2))}
+  .row.on.err{border-color:rgba(231,110,117,.55);background:linear-gradient(160deg,rgba(231,110,117,.08),var(--navy-2))}
+
+  .ictile{width:36px;height:36px;border-radius:10px;flex:0 0 auto;display:grid;place-items:center;
+    background:rgba(223,132,49,.12);border:1px solid rgba(223,132,49,.45);color:var(--orange);margin-top:2px;}
+  .ictile svg{width:16px;height:16px}
+  .ictile.warn{background:rgba(255,180,88,.12);border-color:rgba(255,180,88,.45);color:var(--warning)}
+  .ictile.err{background:rgba(231,110,117,.12);border-color:rgba(231,110,117,.45);color:var(--error)}
+
+  .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
+  .nm{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .nm b{font-family:"Fraunces",serif;font-weight:500;font-size:16px;color:var(--cream);}
+  .nm .cp{font-size:12.5px;color:var(--cream-dim);opacity:.7;}
+  .pv{font-size:13px;color:var(--cream-dim);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;
+    -webkit-box-orient:vertical;}
+  .meta{display:flex;align-items:center;gap:11px;margin-top:3px;}
+  .meta .pip{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--cream-dim);opacity:.65;}
+  .meta .pip svg{width:11px;height:11px}
+  .ts{font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim);opacity:.7;
+    white-space:nowrap;flex:0 0 auto;margin-top:3px;text-align:right;}
+
+  /* ThreadActionsCard (expanded inline) */
+  .thread{background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:14px;
+    margin:-2px 0 4px;display:flex;flex-direction:column;gap:11px;
+    animation:expand .28s var(--ease);}
+  @keyframes expand{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+  .thread .tlabel{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--cream);font-weight:600;}
+  .acts{display:flex;gap:8px;flex-wrap:wrap;}
+  .ghost{flex:1;min-width:90px;background:none;border:1px solid var(--line);color:var(--cream);
+    font-family:"Hanken Grotesk";font-weight:600;font-size:13px;padding:9px 12px;border-radius:11px;cursor:pointer;
+    transition:.18s var(--ease);display:inline-flex;align-items:center;justify-content:center;gap:7px;}
+  .ghost svg{width:14px;height:14px}
+  .ghost:hover{border-color:rgba(223,132,49,.45);color:var(--orange)}
+  .ghost:disabled{opacity:.4;cursor:not-allowed}
+  .ghost:disabled:hover{border-color:var(--line);color:var(--cream)}
+
+  /* BottomBorderField reply composer */
+  .field{display:flex;flex-direction:column;gap:5px;}
+  .field label{font-size:12px;color:var(--cream-dim);font-weight:600;}
+  .field textarea{background:none;border:none;border-bottom:1px solid var(--line);color:var(--cream);
+    font-family:"Hanken Grotesk";font-size:14px;padding:7px 2px;resize:vertical;min-height:42px;outline:none;
+    transition:.18s var(--ease);}
+  .field textarea::placeholder{color:var(--cream-dim);opacity:.5}
+  .field textarea:focus{border-bottom-color:var(--orange)}
+  .primary{align-self:flex-start;background:var(--orange);color:var(--navy);border:none;
+    font-family:"Hanken Grotesk";font-weight:700;font-size:13.5px;padding:10px 18px;border-radius:11px;
+    cursor:pointer;transition:.2s var(--ease);}
+  .primary:hover{transform:translateY(-2px);box-shadow:0 12px 28px -12px rgba(223,132,49,.6)}
+  .disabled-note{font-size:12.5px;color:var(--cream-dim);opacity:.75;line-height:1.4;}
+
+  .note{margin-top:32px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+
+    <!-- SectionHeader(title="Inbox", subtitle=verbatim, icon=Lucide.Inbox) -->
+    <div class="head">
+      <div class="hico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+      </div>
+      <div>
+        <div class="kick">The Den · Inbox</div>
+        <h2><b>Inbox</b></h2>
+        <!-- subtitle VERBATIM from source (em dash rendered as plain hyphen per house rule) -->
+        <div class="sub">Voicemails, calls, SMS, and emails - everywhere kinfolk reach out</div>
+      </div>
+      <div class="spacer"></div>
+      <!-- SUGGESTION: header action, not in InboxScreen.kt -->
+      <button class="markall">Mark all read <span class="sg">Suggestion</span></button>
+    </div>
+
+    <!-- ChannelFilterRow: All / Voicemails / Calls / SMS / Emails (source order + labels verbatim).
+         Count chips are a SUGGESTION (not in source). -->
+    <div class="filters">
+      <button class="chip on" data-f="all">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+        All
+      </button>
+      <button class="chip" data-f="voicemail">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="4"/><circle cx="18" cy="12" r="4"/><line x1="6" y1="16" x2="18" y2="16"/></svg>
+        Voicemails <span class="ct warn" title="SUGGESTION: unread count">1</span>
+      </button>
+      <button class="chip" data-f="call">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+        Calls <span class="ct err" title="SUGGESTION: missed count">1</span>
+      </button>
+      <button class="chip" data-f="sms">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        SMS <span class="ct">2</span>
+      </button>
+      <button class="chip" data-f="email">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+        Emails <span class="ct">1</span>
+      </button>
+    </div>
+
+    <!-- Aggregated entries, sorted newest first. Sample content is illustrative placeholder. -->
+    <div class="list">
+
+      <!-- Unread voicemail: channelAccent=warning. statusHint="unread" -> Voicemail "unread" pip. -->
+      <!-- Placeholder data: caller, transcript preview. NOT real kinfolk data. -->
+      <div class="row warn" data-row="vm1" data-ch="voicemail">
+        <div class="ictile warn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="4"/><circle cx="18" cy="12" r="4"/><line x1="6" y1="16" x2="18" y2="16"/></svg>
+        </div>
+        <div class="body">
+          <div class="nm"><b>Lorna Wren</b><span class="cp">· (512) 555-0148</span></div>
+          <!-- preview = transcript.take(120) -->
+          <div class="pv">Hi, this is Lorna, just checking if Biscuit and Gravy are still on for the morning walk Thursday. Give me a ring back when you get a sec.</div>
+          <div class="meta">
+            <span class="pip">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="4"/><circle cx="18" cy="12" r="4"/><line x1="6" y1="16" x2="18" y2="16"/></svg>
+              unread
+            </span>
+          </div>
+        </div>
+        <div class="ts">May 27 · 08:42</div>
+      </div>
+      <div class="thread" data-thread="vm1" hidden>
+        <div class="tlabel">Thread actions · Voicemails</div>
+        <div class="acts">
+          <!-- replyTargetPhone present -> Call + Text (tel:/sms:) -->
+          <button class="ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            Call
+          </button>
+          <button class="ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Text
+          </button>
+          <!-- Channel.Voicemail -> Play voicemail (enabled when audioUrl present) -->
+          <button class="ghost">
+            <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg>
+            Play voicemail
+          </button>
+        </div>
+        <!-- canReply (callerNumber not blank) -> SMS reply composer -->
+        <div class="field">
+          <label>Reply via SMS</label>
+          <textarea placeholder="Type reply to (512) 555-0148"></textarea>
+        </div>
+        <button class="primary">Send reply</button>
+      </div>
+
+      <!-- Missed call: channelAccent=error, icon=PhoneMissed, statusHint="missed" -> "missed" pip.
+           preview falls back to "Missed call" when transcript blank. -->
+      <div class="row err" data-row="call1" data-ch="call">
+        <div class="ictile err">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 7"/><path d="m15 2 7 7"/><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+        </div>
+        <div class="body">
+          <div class="nm"><b>Ada Devlin</b><span class="cp">· (737) 555-0192</span></div>
+          <div class="pv">Missed call</div>
+          <div class="meta">
+            <span class="pip">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 10 4 4 8-8"/></svg>
+              received
+            </span>
+            <span class="pip">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 7"/><path d="m15 2 7 7"/><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+              missed
+            </span>
+          </div>
+        </div>
+        <div class="ts">May 27 · 07:55</div>
+      </div>
+      <div class="thread" data-thread="call1" hidden>
+        <div class="tlabel">Thread actions · Calls</div>
+        <div class="acts">
+          <button class="ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            Call
+          </button>
+          <button class="ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Text
+          </button>
+        </div>
+        <div class="field">
+          <label>Reply via SMS</label>
+          <textarea placeholder="Type reply to (737) 555-0192"></textarea>
+        </div>
+        <button class="primary">Send reply</button>
+      </div>
+
+      <!-- Inbound SMS with one media attachment. mediaCount=1 -> Images pip "1". canReply true. -->
+      <div class="row" data-row="sms1" data-ch="sms">
+        <div class="ictile">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </div>
+        <div class="body">
+          <div class="nm"><b>Bess Sparrow</b><span class="cp">· (512) 555-0177</span></div>
+          <!-- preview = body.take(140) -->
+          <div class="pv">Pepper did so great today, thank you! Sending a photo from the backyard, she would not stop smiling.</div>
+          <div class="meta">
+            <span class="pip">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 10 4 4 8-8"/></svg>
+              received
+            </span>
+            <span class="pip">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/></svg>
+              1
+            </span>
+          </div>
+        </div>
+        <div class="ts">May 26 · 17:10</div>
+      </div>
+      <div class="thread" data-thread="sms1" hidden>
+        <div class="tlabel">Thread actions · SMS</div>
+        <div class="acts">
+          <button class="ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            Call
+          </button>
+          <button class="ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Text
+          </button>
+        </div>
+        <div class="field">
+          <label>Reply via SMS</label>
+          <textarea placeholder="Type reply to (512) 555-0177"></textarea>
+        </div>
+        <button class="primary">Send reply</button>
+      </div>
+
+      <!-- Outbound SMS: direction="outbound" -> ArrowUpRight "sent" pip. -->
+      <div class="row" data-row="sms2" data-ch="sms">
+        <div class="ictile">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </div>
+        <div class="body">
+          <div class="nm"><b>Marisol Rowan</b><span class="cp">· (737) 555-0103</span></div>
+          <div class="pv">On my way to Clover and Sage now, see you around 11:30. I will text when I am leaving.</div>
+          <div class="meta">
+            <span class="pip">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+              sent
+            </span>
+          </div>
+        </div>
+        <div class="ts">May 26 · 11:02</div>
+      </div>
+      <div class="thread" data-thread="sms2" hidden>
+        <div class="tlabel">Thread actions · SMS</div>
+        <div class="acts">
+          <button class="ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            Call
+          </button>
+          <button class="ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Text
+          </button>
+        </div>
+        <div class="field">
+          <label>Reply via SMS</label>
+          <textarea placeholder="Type reply to (737) 555-0103"></textarea>
+        </div>
+        <button class="primary">Send reply</button>
+      </div>
+
+      <!-- Inbound email: preview = "subject · body". canReply=false -> disabled note (verbatim).
+           replyTargetEmail present -> only the Email outreach button. mediaCount = attachments. -->
+      <div class="row" data-row="em1" data-ch="email">
+        <div class="ictile">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+        </div>
+        <div class="body">
+          <div class="nm"><b>Sana Mercer</b><span class="cp">· sara.morgan@example.com</span></div>
+          <div class="pv">Updated vet records for Cocoa and Olive · Attaching the new rabies certificate plus a note from Dr. Patel about Olive's diet change.</div>
+          <div class="meta">
+            <span class="pip">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 10 4 4 8-8"/></svg>
+              received
+            </span>
+            <span class="pip">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/></svg>
+              2
+            </span>
+          </div>
+        </div>
+        <div class="ts">May 25 · 14:33</div>
+      </div>
+      <div class="thread" data-thread="em1" hidden>
+        <div class="tlabel">Thread actions · Emails</div>
+        <div class="acts">
+          <!-- replyTargetEmail present, no phone -> only Email (mailto:) outreach button -->
+          <button class="ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+            Email
+          </button>
+        </div>
+        <!-- canReply=false for email -> verbatim disabled note -->
+        <div class="disabled-note">Reply composer is currently enabled for phone-based threads only.</div>
+      </div>
+
+    </div>
+
+    <p class="note">// concept mockup · Inbox (web admin) · mirrors InboxScreen.kt · palette from AuntieColors.kt · sample content is placeholder, not real kinfolk data</p>
+  </div>
+
+  <script>
+    // Click a row to toggle its inline ThreadActionsCard (mirrors selectedEntryId behavior:
+    // selecting another row collapses the prior one).
+    let openRow = null;
+    document.querySelectorAll('.row').forEach(row=>{
+      row.addEventListener('click',()=>{
+        const id = row.dataset.row;
+        const thread = document.querySelector(`.thread[data-thread="${id}"]`);
+        const isOpen = !thread.hidden;
+        // collapse any open thread first
+        document.querySelectorAll('.thread').forEach(t=>t.hidden=true);
+        document.querySelectorAll('.row').forEach(r=>r.classList.remove('on'));
+        if(!isOpen){ thread.hidden=false; row.classList.add('on'); openRow=id; }
+        else { openRow=null; }
+      });
+    });
+
+    // Channel filter pills (visual only; mirrors `filter` state + Channel.All == show everything).
+    document.querySelectorAll('.chip').forEach(chip=>{
+      chip.addEventListener('click',()=>{
+        document.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
+        chip.classList.add('on');
+        const f = chip.dataset.f;
+        // collapse open threads on filter change
+        document.querySelectorAll('.thread').forEach(t=>t.hidden=true);
+        document.querySelectorAll('.row').forEach(r=>{
+          r.classList.remove('on');
+          r.style.display = (f==='all' || r.dataset.ch===f) ? '' : 'none';
+        });
+      });
+    });
+
+    // mesh parallax (matches directory mockup)
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-15}px,${y*-15}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

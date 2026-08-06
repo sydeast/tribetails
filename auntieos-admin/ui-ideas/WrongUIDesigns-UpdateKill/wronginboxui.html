@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Notifications (concept)</title>
+<!--
+  AuntieOS redesign concept · Notifications inbox. Standalone mockup. Den aesthetic.
+  No em dashes. Reads the notifications/ collection (dispatcher fan-out). Kin via
+  profile photo where shown. Palette from AuntieColors.kt. Placeholder content.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);-webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px)}
+  .blob{position:absolute;border-radius:50%;opacity:.4;mix-blend-mode:screen;filter:blur(76px);animation:drift 31s var(--ease) infinite alternate}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--pink),transparent 62%);top:-12vmax;right:-4vmax}
+  .blob.b{width:36vmax;height:36vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-10vmax;left:-8vmax;animation-delay:-11s}
+  .blob.c{width:30vmax;height:30vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:26vmax;left:42vmax;animation-delay:-18s}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+  .wrap{position:relative;z-index:2;max-width:760px;margin:0 auto;padding:26px 30px 60px}
+  .head{display:flex;align-items:center;gap:14px;margin-bottom:16px;opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--orange);margin-bottom:5px}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;font-variation-settings:"SOFT" 50,"WONK" 1}
+  .head h2 .badge{font-family:"Hanken Grotesk";font-size:14px;font-weight:700;vertical-align:middle;margin-left:10px;background:var(--coral);color:var(--cream);border-radius:20px;padding:3px 11px}
+  .spacer{flex:1}
+  .markall{background:none;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";font-weight:600;font-size:13px;padding:9px 14px;border-radius:11px;cursor:pointer;transition:.16s var(--ease)}
+  .markall:hover{background:var(--navy-3)}
+
+  .filters{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;opacity:0;animation:rise .6s var(--ease) .1s forwards}
+  .fchip{font-size:12.5px;font-weight:600;padding:8px 13px;border-radius:30px;cursor:pointer;border:1px solid var(--line);background:var(--navy-3);color:var(--cream-dim);transition:.16s var(--ease)}
+  .fchip.on{background:var(--cream);color:var(--navy);border-color:var(--cream)}
+  .fchip:not(.on):hover{color:var(--cream)}
+
+  .feed{display:flex;flex-direction:column;gap:10px}
+  .daysep{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--cream-dim);opacity:.6;margin:6px 2px 2px}
+  .n{display:grid;grid-template-columns:42px 1fr auto;gap:13px;align-items:start;background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);border-radius:16px;padding:15px;cursor:pointer;transition:.16s var(--ease);opacity:0;transform:translateY(12px);animation:rise .55s var(--ease) forwards}
+  .n:hover{transform:translateY(-2px);border-color:rgba(223,132,49,.35)}
+  .n:nth-child(2){animation-delay:.05s}.n:nth-child(3){animation-delay:.1s}.n:nth-child(4){animation-delay:.15s}.n:nth-child(5){animation-delay:.2s}.n:nth-child(6){animation-delay:.25s}.n:nth-child(7){animation-delay:.3s}
+  .n.unread{border-color:rgba(10,133,149,.4);background:radial-gradient(120% 130% at 0% 0%,rgba(10,133,149,.1),transparent 50%),linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5))}
+  .ic{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:17px;flex:0 0 auto}
+  .ic.photo{border-radius:50%;background-size:cover;border:1.5px solid rgba(251,251,249,.25);box-shadow:inset 0 -5px 9px rgba(0,0,0,.3)}
+  .ic.book{background:rgba(223,132,49,.18);color:#f0b277}
+  .ic.pay{background:rgba(10,133,149,.2);color:#7fdce8}
+  .ic.sys{background:rgba(213,83,90,.18);color:#f3a0a4}
+  .ic.kin{background:rgba(116,83,138,.22);color:#c7a8d8}
+  .body b{font-size:14.5px;font-weight:600}
+  .body p{color:var(--cream-dim);font-size:13px;margin-top:3px;line-height:1.5}
+  .body .key{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.04em;color:var(--cream-dim);opacity:.65;margin-top:6px;display:inline-block}
+  .right{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+  .right .when{font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--teal);box-shadow:0 0 8px rgba(10,133,149,.6)}
+  .n:not(.unread) .dot{visibility:hidden}
+  .qa{margin-top:11px;display:flex;gap:8px}
+  .qa button{font-family:"Hanken Grotesk";font-weight:700;font-size:12px;padding:7px 13px;border-radius:9px;border:none;cursor:pointer;transition:.16s var(--ease)}
+  .qa .go{background:var(--orange);color:var(--navy)}.qa .go:hover{transform:translateY(-1px)}
+  .qa .gh{background:transparent;border:1px solid var(--line);color:var(--cream)}.qa .gh:hover{background:var(--navy-3)}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:26px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="kick">The Den · Notifications</div>
+        <h2>Inbox <span class="badge">3 new</span></h2>
+      </div>
+      <div class="spacer"></div>
+      <button class="markall">Mark all read</button>
+    </div>
+
+    <div class="filters">
+      <span class="fchip on">All</span><span class="fchip">Unread</span><span class="fchip">Bookings</span><span class="fchip">KinTales</span><span class="fchip">Payments</span><span class="fchip">System</span>
+    </div>
+
+    <div class="feed">
+      <div class="daysep">Today</div>
+
+      <div class="n unread">
+        <span class="ic book">＋</span>
+        <div class="body"><b>New booking request</b><p>Ada Devlin requested a drop-in for Marigold on May 31. Needs your reply.</p><span class="key">booking.requested</span>
+          <div class="qa"><button class="go">Accept</button><button class="gh">Open</button></div>
+        </div>
+        <div class="right"><span class="when">2m</span><span class="dot"></span></div>
+      </div>
+
+      <div class="n unread">
+        <span class="ic kin photo" style="background:radial-gradient(circle at 34% 28%,#37c0cf,#08525e)"></span>
+        <div class="body"><b>Lorna commented on a KinTale</b><p>"He looks so happy, thank you! Did he eat the whole bowl?"</p><span class="key">kintale.comment.added</span></div>
+        <div class="right"><span class="when">18m</span><span class="dot"></span></div>
+      </div>
+
+      <div class="n unread">
+        <span class="ic pay">＄</span>
+        <div class="body"><b>Payment received</b><p>The Wrens paid invoice #TT-2048 ($280) via Stripe.</p><span class="key">payment.received</span></div>
+        <div class="right"><span class="when">1h</span><span class="dot"></span></div>
+      </div>
+
+      <div class="n">
+        <span class="ic sys">🛡</span>
+        <div class="body"><b>Sign-in from a new device</b><p>Web · Riverside, US · 8:02a. That was you.</p><span class="key">security.new_device</span></div>
+        <div class="right"><span class="when">6h</span><span class="dot"></span></div>
+      </div>
+
+      <div class="daysep">Earlier</div>
+
+      <div class="n">
+        <span class="ic pay">⚠</span>
+        <div class="body"><b>Invoice overdue</b><p>The Sparrows' invoice #TT-2039 ($160) is 6 days past due.</p><span class="key">invoice.overdue</span>
+          <div class="qa"><button class="go">Send reminder</button></div>
+        </div>
+        <div class="right"><span class="when">May 26</span><span class="dot"></span></div>
+      </div>
+
+      <div class="n">
+        <span class="ic kin photo" style="background:radial-gradient(circle at 34% 28%,#b594c9,#4c3a5c)"></span>
+        <div class="body"><b>New kinfolk onboarded</b><p>Odette Mallory finished sign-up. Meet &amp; greet booked for Thursday.</p><span class="key">kinfolk.welcome</span></div>
+        <div class="right"><span class="when">May 25</span><span class="dot"></span></div>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · Notifications inbox · reads notifications/ (dispatcher fan-out) · palette from AuntieColors.kt · placeholder content</p>
+  </div>
+
+  <script>
+    document.querySelectorAll('.fchip').forEach(c=>c.addEventListener('click',()=>{
+      document.querySelectorAll('.fchip').forEach(x=>x.classList.remove('on')); c.classList.add('on');}));
+    document.querySelector('.markall').addEventListener('click',()=>{
+      document.querySelectorAll('.n.unread').forEach(n=>n.classList.remove('unread'));
+      document.querySelector('.badge').style.display='none';});
+    document.querySelectorAll('.n').forEach(n=>n.addEventListener('click',e=>{ if(e.target.tagName!=='BUTTON') n.classList.remove('unread');}));
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

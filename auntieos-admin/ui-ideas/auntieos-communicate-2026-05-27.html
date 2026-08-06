@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Communicate (concept)</title>
+<!--
+  AuntieOS redesign concept · Communicate. Standalone mockup. Same "Den" aesthetic.
+  Two modes: Personalize (1:1 generator: kinfolk + tone + bullets -> n8n draft ->
+  approveGeneratedDraft) and Broadcast (segment + channels). Both can start from
+  the template bank (emailTemplates/pushTemplates/smsTemplates), prefilling an
+  editable draft. No em dashes. Palette from AuntieColors.kt. Copy is placeholder;
+  Auntie authors all real wording.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.42;mix-blend-mode:screen;filter:blur(74px);animation:drift 29s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--pink),transparent 62%);top:-12vmax;left:-4vmax;}
+  .blob.b{width:38vmax;height:38vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:12vmax;right:-8vmax;animation-delay:-10s;}
+  .blob.c{width:32vmax;height:32vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-12vmax;left:42vmax;animation-delay:-17s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1200px;margin:0 auto;padding:26px 30px 60px;}
+  .head{display:flex;align-items:center;gap:18px;margin-bottom:20px;flex-wrap:wrap;opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--orange);margin-bottom:5px}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:32px;letter-spacing:-.02em;font-variation-settings:"SOFT" 50,"WONK" 1}
+  .head h2 b{color:var(--pink);font-weight:500}
+  .spacer{flex:1}
+  /* mode switch */
+  .modesw{display:flex;background:var(--navy-3);border:1px solid var(--line);border-radius:14px;padding:5px;gap:4px}
+  .modesw button{background:none;border:none;color:var(--cream-dim);font-family:"Hanken Grotesk";font-weight:600;font-size:14px;
+    padding:10px 18px;border-radius:10px;cursor:pointer;transition:.16s var(--ease);display:inline-flex;align-items:center;gap:8px}
+  .modesw button.on{background:var(--cream);color:var(--navy)}
+  .tmpl-open{background:none;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";font-weight:600;font-size:13.5px;
+    padding:11px 16px;border-radius:13px;cursor:pointer;transition:.18s var(--ease);display:inline-flex;align-items:center;gap:8px}
+  .tmpl-open:hover{background:var(--navy-3);border-color:rgba(223,132,49,.4)}
+
+  .cols{display:grid;grid-template-columns:1.35fr 1fr;gap:20px;align-items:start}
+  .panel{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);border-radius:20px;padding:22px;
+    opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) forwards}
+  .panel.l{animation-delay:.1s}.panel.r{animation-delay:.2s}.panel + .panel{margin-top:18px}
+  label.cap{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--cream-dim);opacity:.7;display:block;margin-bottom:11px}
+
+  /* template-source chip when prefilled */
+  .fromtpl{display:none;align-items:center;gap:9px;background:rgba(116,83,138,.18);border:1px solid rgba(116,83,138,.45);
+    border-radius:12px;padding:10px 13px;margin-bottom:16px;font-size:13px}
+  .fromtpl.show{display:flex}
+  .fromtpl b{color:#c7a8d8;font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.04em}
+  .fromtpl .x{margin-left:auto;cursor:pointer;color:var(--cream-dim);font-weight:700}
+
+  .mode{display:none}.mode.on{display:block}
+
+  /* recipient (personalize) */
+  .recip{display:flex;align-items:center;gap:12px;background:var(--navy-3);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:16px}
+  .recip .pic{width:42px;height:42px;border-radius:50%;flex:0 0 auto;background:radial-gradient(circle at 34% 28%,#37c0cf,#08525e);border:2px solid rgba(251,251,249,.25);box-shadow:inset 0 -5px 9px rgba(0,0,0,.3)}
+  .recip .who b{font-size:15px}.recip .who small{display:block;color:var(--cream-dim);font-size:12.5px}
+  .recip .change{margin-left:auto;background:none;border:none;color:var(--teal);font-family:"Hanken Grotesk";font-weight:600;font-size:12.5px;cursor:pointer}
+
+  .chips{display:flex;flex-wrap:wrap;gap:9px;margin-bottom:18px}
+  .chip{font-size:13.5px;font-weight:600;padding:9px 14px;border-radius:30px;cursor:pointer;border:1px solid var(--line);
+    background:var(--navy-3);color:var(--cream-dim);transition:.16s var(--ease);display:inline-flex;align-items:center;gap:7px}
+  .chip:hover{transform:translateY(-2px)}
+  .chip.on{background:rgba(223,132,49,.95);color:var(--navy);border-color:transparent}
+  .chip.ch.on{background:rgba(10,133,149,.9);color:var(--cream)}
+  .chip.dis{opacity:.45;cursor:not-allowed}
+  .chip .mono{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase;opacity:.8}
+
+  .seg{display:flex;background:var(--navy-3);border:1px solid var(--line);border-radius:13px;padding:5px;gap:3px;margin-bottom:14px}
+  .seg button{flex:1;background:none;border:none;color:var(--cream-dim);font-family:"Hanken Grotesk";font-weight:600;font-size:13px;padding:9px;border-radius:9px;cursor:pointer;transition:.16s var(--ease)}
+  .seg button.on{background:var(--cream);color:var(--navy)}
+  .aud{display:flex;align-items:center;gap:12px;background:var(--navy-3);border:1px solid var(--line);border-radius:14px;padding:13px;margin-bottom:16px}
+  .avstack{display:flex}
+  .avstack i{width:30px;height:30px;border-radius:50%;border:2px solid var(--navy-2);margin-left:-9px;background-size:cover;box-shadow:inset 0 -4px 8px rgba(0,0,0,.3)}
+  .avstack i:first-child{margin-left:0}
+  .aud .who b{font-size:15px}.aud .who small{display:block;color:var(--cream-dim);font-size:12.5px}
+  .aud .edit{margin-left:auto;font-family:"Hanken Grotesk";font-weight:600;font-size:12.5px;color:var(--teal);background:none;border:none;cursor:pointer}
+
+  .input{width:100%;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:13px 14px;color:var(--cream);font-family:inherit;font-size:14.5px;outline:none;margin-bottom:14px}
+  .input:focus{border-color:rgba(223,132,49,.5)}
+  .editor{min-height:120px;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:14px;font-size:15px;line-height:1.6;outline:none;color:var(--cream)}
+  .editor:empty:before{content:"Bullets or free-form. The more honest, the warmer the draft.";color:rgba(251,251,249,.4)}
+  .bodyed:empty:before{content:"Write your message, pull a template, or draft one with Auntie AI.";color:rgba(251,251,249,.4)}
+
+  .gen{margin-top:14px;background:conic-gradient(from 200deg,var(--purple),var(--pink));color:var(--cream);border:none;font-family:"Hanken Grotesk";font-weight:700;font-size:14px;padding:12px 18px;border-radius:12px;cursor:pointer;transition:.2s var(--ease);display:inline-flex;align-items:center;gap:8px}
+  .gen:hover{transform:translateY(-2px);box-shadow:0 12px 28px -12px rgba(116,83,138,.7)}
+
+  .draft{margin-top:16px;border-radius:14px;padding:15px;border:1px solid rgba(116,83,138,.45);background:radial-gradient(120% 140% at 0% 0%,rgba(116,83,138,.25),transparent 55%),var(--navy-3)}
+  .draft .dh{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+  .draft .dh .spark{width:24px;height:24px;border-radius:8px;display:grid;place-items:center;background:conic-gradient(from 200deg,var(--purple),var(--pink));font-size:13px}
+  .draft .dh b{font-size:13.5px}
+  .draft .dh .badge{margin-left:auto;font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#c7a8d8;border:1px solid rgba(116,83,138,.5);border-radius:20px;padding:3px 8px}
+  .draft p{font-size:13.5px;color:var(--cream-dim);line-height:1.55}
+  .draft .da{display:flex;gap:9px;margin-top:13px;flex-wrap:wrap}
+  .btn{font-family:"Hanken Grotesk";font-weight:700;font-size:13px;padding:9px 15px;border-radius:11px;cursor:pointer;border:none;transition:.18s var(--ease);display:inline-flex;align-items:center;gap:7px}
+  .btn.go{background:var(--teal);color:var(--cream)}.btn.go:hover{transform:translateY(-2px);filter:brightness(1.08)}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--cream)}.btn.ghost:hover{background:var(--navy-2)}
+
+  .sendbar{display:flex;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap}
+  .send{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;font-size:14.5px;padding:13px 22px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);display:inline-flex;align-items:center;gap:9px}
+  .send:hover{transform:translateY(-2px);box-shadow:0 14px 30px -12px rgba(223,132,49,.6)}
+  .sendbar .hint{font-size:12.5px;color:var(--cream-dim)}
+
+  .pv{background:var(--cream);border-radius:16px;overflow:hidden;border:1px solid var(--line);box-shadow:0 20px 44px -22px rgba(0,0,0,.7)}
+  .pv .top{height:66px;background:radial-gradient(120% 130% at 15% 10%,#DF8431,#D55C87);display:flex;align-items:flex-end;padding:13px}
+  .pv .top b{font-family:"Fraunces",serif;color:#fff;font-size:16px;font-weight:500;font-variation-settings:"SOFT" 60}
+  .pv .pb{padding:15px;color:#2a2a33}
+  .pv .pb h4{font-family:"Fraunces",serif;font-size:16px;margin-bottom:7px;color:#1d1d24}
+  .pv .pb p{font-size:12.5px;line-height:1.6;color:#4a4a55}
+  .pv .pb .cta{margin-top:12px;display:inline-block;background:#0A8595;color:#fff;font-weight:700;font-size:12px;padding:8px 14px;border-radius:9px}
+  .pvlab{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--cream-dim);opacity:.6;text-align:center;margin-top:10px}
+  .br{display:flex;align-items:center;gap:11px;padding:11px 0;border-bottom:1px solid var(--line-2)}
+  .br:last-child{border-bottom:none}
+  .br .ic{width:9px;height:9px;border-radius:50%;background:var(--teal);flex:0 0 auto}
+  .br b{font-size:13.5px;font-weight:600}.br small{display:block;color:var(--cream-dim);font-size:11.5px}
+  .br .rate{margin-left:auto;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);text-align:right}
+  .br .rate b{display:block;color:var(--teal);font-size:13px}
+
+  /* template bank drawer */
+  .scrim{position:fixed;inset:0;background:rgba(8,9,15,.6);backdrop-filter:blur(3px);z-index:40;opacity:0;pointer-events:none;transition:.25s var(--ease)}
+  .scrim.show{opacity:1;pointer-events:auto}
+  .drawer{position:fixed;top:0;right:0;height:100vh;width:420px;max-width:92vw;z-index:50;background:linear-gradient(160deg,var(--navy-2),var(--navy-3));
+    border-left:1px solid var(--line);transform:translateX(100%);transition:.28s var(--ease);display:flex;flex-direction:column;padding:22px}
+  .drawer.show{transform:translateX(0)}
+  .drawer h3{font-family:"Fraunces",serif;font-weight:500;font-size:21px;font-variation-settings:"SOFT" 50;display:flex;align-items:center;gap:9px}
+  .drawer h3 .x{margin-left:auto;cursor:pointer;color:var(--cream-dim);font-size:22px;line-height:1}
+  .drawer .sub{color:var(--cream-dim);font-size:13px;margin:4px 0 14px}
+  .tsearch{display:flex;align-items:center;gap:9px;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:10px 13px;margin-bottom:14px;color:var(--cream-dim)}
+  .tsearch input{background:none;border:none;outline:none;color:var(--cream);font-family:inherit;font-size:13.5px;width:100%}
+  .tgroup{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--cream-dim);opacity:.6;margin:14px 0 8px}
+  .tlist{overflow-y:auto;flex:1;margin:0 -6px;padding:0 6px}
+  .tpl{display:flex;align-items:flex-start;gap:11px;padding:12px;border-radius:13px;border:1px solid var(--line-2);background:rgba(17,19,31,.4);cursor:pointer;transition:.16s var(--ease)}
+  .tpl + .tpl{margin-top:9px}
+  .tpl:hover{border-color:rgba(223,132,49,.45);transform:translateX(2px)}
+  .tpl .ch{font-family:"Spline Sans Mono",monospace;font-size:8.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;padding:3px 7px;border-radius:6px;flex:0 0 auto;margin-top:2px}
+  .tpl .ch.email{background:rgba(10,133,149,.2);color:#7fdce8}
+  .tpl .ch.push{background:rgba(223,132,49,.18);color:#f0b277}
+  .tpl .ch.sms{background:rgba(213,92,135,.18);color:#f0a3bf}
+  .tpl .ti b{font-size:13.5px;font-weight:600}
+  .tpl .ti code{font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim);display:block;margin-top:2px}
+  .tpl .ti p{font-size:11.5px;color:var(--cream-dim);margin-top:5px;line-height:1.4}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:28px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:860px){.cols{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="kick">The Den · Communicate</div>
+        <h2>Talk to your <b>kinfolk</b></h2>
+      </div>
+      <div class="spacer"></div>
+      <button class="tmpl-open" id="openTpl">⊞ Template bank</button>
+      <div class="modesw">
+        <button class="on" data-mode="personalize">✦ Personalize</button>
+        <button data-mode="broadcast">📣 Broadcast</button>
+      </div>
+    </div>
+
+    <div class="cols">
+      <div>
+        <div class="panel l">
+          <div class="fromtpl" id="fromtpl"><span>from template</span> <b id="tplname">booking.confirmed · email</b><span class="x" id="clearTpl">✕</span></div>
+
+          <!-- PERSONALIZE: 1:1 generator (kinfolk + tone + bullets -> n8n draft -> approve) -->
+          <div class="mode on" id="m-personalize">
+            <label class="cap">Recipient</label>
+            <div class="recip">
+              <i class="pic"></i>
+              <div class="who"><b>Lorna Wren</b><small>uses her dossier + Biscuit &amp; Gravy context</small></div>
+              <button class="change">Change</button>
+            </div>
+
+            <label class="cap">Tone</label>
+            <div class="chips">
+              <span class="chip on">Warm</span><span class="chip">Cheerful</span><span class="chip">Professional</span><span class="chip">Playful</span>
+            </div>
+
+            <label class="cap">What is it about?</label>
+            <div class="editor" contenteditable="true">Biscuit had a great walk, ate well. Wanted to flag the limping seemed gone. Suggest booking next week.</div>
+
+            <button class="gen" id="genBtn">✦ Generate draft</button>
+
+            <div class="draft">
+              <div class="dh"><span class="spark">✦</span><b>Auntie AI draft</b><span class="badge">needs approval</span></div>
+              <p>"Hi Lorna! Biscuit was a champ today, ate every bite and that little limp seems all gone. He had a happy loop around the block. Want me to pop a walk on the calendar for next week?"</p>
+              <div class="da">
+                <button class="btn go">✓ Approve &amp; use</button>
+                <button class="btn ghost">Edit</button>
+                <button class="btn ghost">Regenerate</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- BROADCAST: segment + channels -->
+          <div class="mode" id="m-broadcast">
+            <label class="cap">Audience</label>
+            <div class="seg"><button class="on">All kinfolk</button><button>A segment</button><button>Just one</button></div>
+            <div class="aud">
+              <div class="avstack">
+                <i style="background:radial-gradient(circle at 34% 28%,#37c0cf,#08525e)"></i>
+                <i style="background:radial-gradient(circle at 34% 28%,#ef9fbb,#8c3354)"></i>
+                <i style="background:radial-gradient(circle at 34% 28%,#f3b97f,#9a5a1c)"></i>
+                <i style="background:radial-gradient(circle at 34% 28%,#b594c9,#4c3a5c)"></i>
+              </div>
+              <div class="who"><b>8 kinfolk</b><small>everyone with an active subscription</small></div>
+              <button class="edit">Refine</button>
+            </div>
+
+            <label class="cap">Channels</label>
+            <div class="chips">
+              <span class="chip ch on">✉ Email</span><span class="chip ch on">🔔 Push</span><span class="chip ch on">▣ In-app</span><span class="chip dis">✆ SMS <span class="mono">soon</span></span>
+            </div>
+
+            <label class="cap">Subject</label>
+            <input class="input" id="subj" value="Holiday weekend hours" />
+
+            <label class="cap">Message</label>
+            <div class="editor bodyed" id="bodyed" contenteditable="true">Hi friends! A quick note on my hours over the long weekend, plus a couple of openings still left for walks.</div>
+
+            <button class="gen" style="margin-top:14px">✦ Draft with Auntie AI</button>
+          </div>
+
+          <div class="sendbar">
+            <button class="send" id="sendBtn">Approve &amp; send →</button>
+            <span class="hint">approved drafts are logged (Firestore + audit) before sending</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel r">
+          <label class="cap">Live preview · email</label>
+          <div class="pv">
+            <div class="top"><b>TribeTails</b></div>
+            <div class="pb"><h4 id="pvh">A note from Auntie</h4><p id="pvp">Biscuit was a champ today, ate every bite and that little limp seems all gone.</p><span class="cta">Book a visit</span></div>
+          </div>
+          <div class="pvlab">how kinfolk see it</div>
+        </div>
+        <div class="panel r" style="animation-delay:.3s">
+          <label class="cap">Recent</label>
+          <div class="br"><span class="ic"></span><div><b>Spring vaccine reminder</b><small>Broadcast · email + push · May 12</small></div><div class="rate">open<b>74%</b></div></div>
+          <div class="br"><span class="ic" style="background:var(--purple)"></span><div><b>Update for Ada Devlin</b><small>Personalize · 1:1 · May 11</small></div><div class="rate">read<b>yes</b></div></div>
+          <div class="br"><span class="ic" style="background:var(--orange)"></span><div><b>Rainy week schedule</b><small>Broadcast · push · Apr 19</small></div><div class="rate">open<b>81%</b></div></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · Communicate (Personalize + Broadcast, template bank) · palette from AuntieColors.kt · placeholder copy</p>
+  </div>
+
+  <!-- template bank drawer -->
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer">
+    <h3>Template bank <span class="x" id="closeTpl">✕</span></h3>
+    <div class="sub">Pull a saved template to prefill an editable draft. Merge fields resolve to the recipient.</div>
+    <div class="tsearch">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+      <input placeholder="Search templates by key or words…" />
+    </div>
+    <div class="tlist">
+      <div class="tgroup">Bookings</div>
+      <div class="tpl" data-name="booking.confirmed · email" data-h="Your visit is confirmed" data-p="Hi {{kinfolk_name}}, your {{service}} for {{kin_names}} on {{date}} is all set. See you then!"><span class="ch email">Email</span><div class="ti"><b>Booking confirmed</b><code>booking.confirmed</code><p>Sent when a visit is approved.</p></div></div>
+      <div class="tpl" data-name="booking.reminder · push" data-h="Visit tomorrow" data-p="Reminder: {{service}} for {{kin_names}} tomorrow at {{time}}."><span class="ch push">Push</span><div class="ti"><b>Booking reminder</b><code>booking.reminder</code><p>Day-before nudge.</p></div></div>
+      <div class="tgroup">Visits &amp; KinTales</div>
+      <div class="tpl" data-name="visit.on_my_way · push" data-h="On my way" data-p="Auntie is on the way to {{kin_names}} now."><span class="ch push">Push</span><div class="ti"><b>On my way</b><code>visit.on_my_way</code><p>Sent at departure.</p></div></div>
+      <div class="tpl" data-name="kintale.published · email" data-h="A new KinTale" data-p="Hi {{kinfolk_name}}, there's a fresh KinTale waiting for {{kin_names}}. Tap to read all about it."><span class="ch email">Email</span><div class="ti"><b>KinTale published</b><code>kintale.published</code><p>New visit report ready.</p></div></div>
+      <div class="tgroup">Billing</div>
+      <div class="tpl" data-name="invoice.sent · email" data-h="Your invoice" data-p="Hi {{kinfolk_name}}, invoice {{invoice_no}} for {{amount}} is ready. Thank you!"><span class="ch email">Email</span><div class="ti"><b>Invoice sent</b><code>invoice.sent</code><p>New invoice notice.</p></div></div>
+      <div class="tpl" data-name="invoice.overdue · email" data-h="A gentle reminder" data-p="Hi {{kinfolk_name}}, invoice {{invoice_no}} ({{amount}}) is past due. No worries, just a nudge."><span class="ch email">Email</span><div class="ti"><b>Invoice overdue</b><code>invoice.overdue</code><p>Past-due nudge.</p></div></div>
+      <div class="tgroup">Seasonal</div>
+      <div class="tpl" data-name="holiday.hours · email" data-h="Holiday weekend hours" data-p="Hi friends! A quick note on my hours over the long weekend, plus a few walk openings still left."><span class="ch email">Email</span><div class="ti"><b>Holiday hours</b><code>holiday.hours</code><p>Schedule announcement.</p></div></div>
+    </div>
+  </aside>
+
+  <script>
+    // mode switch
+    document.querySelectorAll('.modesw button').forEach(b=>b.addEventListener('click',()=>{
+      document.querySelectorAll('.modesw button').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on');
+      const m=b.dataset.mode;
+      document.getElementById('m-personalize').classList.toggle('on', m==='personalize');
+      document.getElementById('m-broadcast').classList.toggle('on', m==='broadcast');
+    }));
+    // tone + chips
+    document.querySelectorAll('#m-personalize .chip').forEach(c=>c.addEventListener('click',()=>{
+      c.parentElement.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); c.classList.add('on');}));
+    document.querySelectorAll('.chip.ch:not(.dis)').forEach(c=>c.addEventListener('click',()=>c.classList.toggle('on')));
+    document.querySelectorAll('.seg button').forEach(b=>b.addEventListener('click',()=>{
+      b.parentElement.querySelectorAll('button').forEach(x=>x.classList.remove('on')); b.classList.add('on');}));
+
+    // template drawer
+    const scrim=document.getElementById('scrim'),drawer=document.getElementById('drawer');
+    const openD=()=>{scrim.classList.add('show');drawer.classList.add('show');};
+    const closeD=()=>{scrim.classList.remove('show');drawer.classList.remove('show');};
+    document.getElementById('openTpl').onclick=openD;
+    document.getElementById('closeTpl').onclick=closeD;
+    scrim.onclick=closeD;
+
+    // pull template -> prefill editable draft + show source chip + update preview
+    document.querySelectorAll('.tpl').forEach(t=>t.addEventListener('click',()=>{
+      const name=t.dataset.name, h=t.dataset.h, p=t.dataset.p;
+      document.getElementById('tplname').textContent=name;
+      document.getElementById('fromtpl').classList.add('show');
+      const subj=document.getElementById('subj'); if(subj) subj.value=h;
+      const body=document.getElementById('bodyed'); if(body) body.textContent=p;
+      document.getElementById('pvh').textContent=h;
+      document.getElementById('pvp').textContent=p;
+      // template pull lands you in Broadcast compose by default
+      document.querySelector('.modesw button[data-mode="broadcast"]').click();
+      closeD();
+    }));
+    document.getElementById('clearTpl').onclick=()=>document.getElementById('fromtpl').classList.remove('show');
+
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

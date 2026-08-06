@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Invites (concept)</title>
+<!--
+  AuntieOS redesign concept · Invites management. Standalone mockup, Den aesthetic.
+  No em dashes. NEW admin surface (no existing UI today). Mirrors real callable contracts:
+    mintInvite.ts / mintInviteFromPrimary.ts -> args familyId, invitedEmail, secondaryLabel,
+      proposedRole (PRIMARY|SECONDARY), proposedPermissions (billing_full, messaging_direct,
+      messaging_group, kin_edit, kintales_only). Writes inviteRequests doc.
+    revokeInvite.ts -> args inviteId, sets status REVOKED.
+    expireStaleInvites.ts -> nightly, PENDING/EMAIL_SENT past expiresAt become EXPIRED.
+    acceptInvite.ts -> sets status ACCEPTED, acceptedUid.
+  inviteRequests doc: tribeId, primaryUid, invitedEmail, secondaryLabel, proposedPermissions,
+    proposedRole, requiresAuntieAck, status, createdAt, expiresAt, sentToInviteeAt,
+    auntieNotifiedAt, acceptedUid. InviteStatus: PENDING, EMAIL_SENT, ACCEPTED, REVOKED, EXPIRED.
+  INVITE_TTL_DAYS=14. SECONDARY_LABEL_MAX=24. Palette from AuntieColors.kt. Placeholder content.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px)}
+  .blob{position:absolute;border-radius:50%;opacity:.4;mix-blend-mode:screen;filter:blur(76px);
+    animation:drift 31s var(--ease) infinite alternate}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--pink),transparent 62%);top:-12vmax;right:-4vmax}
+  .blob.b{width:36vmax;height:36vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-10vmax;left:-8vmax;animation-delay:-11s}
+  .blob.c{width:30vmax;height:30vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:26vmax;left:44vmax;animation-delay:-18s}
+  @keyframes drift{to{transform:translate3d(4vmax,3vmax,0) scale(1.1) rotate(8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+  .wrap{position:relative;z-index:2;max-width:1020px;margin:0 auto;padding:26px 30px 60px}
+  .head{margin-bottom:18px;opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--orange);margin-bottom:5px}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;font-variation-settings:"SOFT" 50,"WONK" 1}
+  .head .sub{color:var(--cream-dim);font-size:13.5px;margin-top:3px}
+
+  /* new-surface banner */
+  .nb{display:flex;gap:13px;align-items:flex-start;background:linear-gradient(160deg,rgba(116,83,138,.28),rgba(10,133,149,.16));
+    border:1px solid rgba(116,83,138,.45);border-radius:16px;padding:14px 16px;margin-bottom:22px;
+    opacity:0;transform:translateY(12px);animation:rise .62s var(--ease) .04s forwards}
+  .nb .ic{width:30px;height:30px;border-radius:9px;flex:0 0 auto;display:grid;place-items:center;background:rgba(251,251,249,.08)}
+  .nb .ic svg{width:17px;height:17px}
+  .nb .bx b{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#c7a8d8;display:block;margin-bottom:3px}
+  .nb .bx p{font-size:13px;color:var(--cream);line-height:1.5}
+  .nb .bx code{font-family:"Spline Sans Mono",monospace;font-size:11.5px;color:#7fdce8;background:rgba(10,133,149,.18);padding:1px 6px;border-radius:5px}
+
+  .cols{display:grid;grid-template-columns:340px 1fr;gap:22px;align-items:start}
+
+  /* form panel */
+  .panel{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);
+    border-radius:20px;padding:22px;opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) forwards}
+  .panel.d1{animation-delay:.12s}.panel.d2{animation-delay:.22s}
+  .panel.form{position:sticky;top:22px}
+  .panel h3{font-family:"Fraunces",serif;font-weight:500;font-size:20px;font-variation-settings:"SOFT" 50}
+  .panel .ph-sub{color:var(--cream-dim);font-size:12.5px;margin-top:3px;margin-bottom:18px}
+
+  .field{margin-bottom:15px}
+  .field label{display:flex;align-items:center;gap:8px;font-family:"Spline Sans Mono",monospace;font-size:10px;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--cream-dim);margin-bottom:6px}
+  .field label .req{color:var(--orange)}
+  .field input[type=text],.field input[type=email]{width:100%;background:var(--navy-3);border:1px solid var(--line);border-radius:11px;
+    padding:11px 13px;color:var(--cream);font-family:"Hanken Grotesk";font-size:14px;transition:.16s var(--ease)}
+  .field input::placeholder{color:rgba(207,206,198,.5)}
+  .field input:focus{outline:none;border-color:rgba(223,132,49,.6);background:var(--navy-2)}
+  .field .hint{font-size:11px;color:var(--cream-dim);margin-top:5px;line-height:1.4}
+
+  /* role segmented */
+  .seg{display:grid;grid-template-columns:1fr 1fr;gap:7px;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:4px}
+  .seg button{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.06em;font-weight:600;color:var(--cream-dim);
+    background:none;border:none;padding:9px 8px;border-radius:9px;cursor:pointer;transition:.16s var(--ease)}
+  .seg button.on{background:var(--cream);color:var(--navy)}
+
+  /* permission toggle rows */
+  .perm{display:flex;align-items:center;gap:11px;padding:10px 0;border-bottom:1px solid var(--line-2)}
+  .perm:last-of-type{border-bottom:none}
+  .perm .px{flex:1;min-width:0}
+  .perm .px b{font-size:13.5px;font-weight:600}
+  .perm .px code{font-family:"Spline Sans Mono",monospace;font-size:10px;color:var(--cream-dim);display:block;margin-top:2px}
+  .tog{margin-left:auto;width:42px;height:24px;border-radius:30px;background:var(--navy-3);border:1px solid var(--line);
+    position:relative;cursor:pointer;transition:.2s var(--ease);flex:0 0 auto}
+  .tog:after{content:"";position:absolute;top:2px;left:2.5px;width:18px;height:18px;border-radius:50%;
+    background:var(--cream-dim);transition:.2s var(--ease)}
+  .tog.on{background:var(--teal);border-color:transparent}
+  .tog.on:after{left:19px;background:var(--cream)}
+  .tog.locked{opacity:.7;cursor:not-allowed}
+
+  .send{width:100%;margin-top:18px;background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";
+    font-weight:700;font-size:14.5px;padding:13px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);
+    display:inline-flex;align-items:center;justify-content:center;gap:8px}
+  .send:hover{transform:translateY(-2px);box-shadow:0 12px 28px -10px rgba(223,132,49,.6)}
+  .ttlnote{font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim);text-align:center;margin-top:10px;opacity:.7}
+
+  /* invite list */
+  .listcol{display:flex;flex-direction:column;gap:22px}
+  .sec{opacity:0;transform:translateY(14px);animation:rise .65s var(--ease) forwards}
+  .sec.d1{animation-delay:.1s}.sec.d2{animation-delay:.18s}.sec.d3{animation-delay:.26s}.sec.d4{animation-delay:.34s}
+  .sec h3{font-family:"Fraunces",serif;font-weight:500;font-size:19px;margin-bottom:11px;font-variation-settings:"SOFT" 50;display:flex;align-items:center;gap:9px}
+  .sec h3 .ct{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);font-weight:400}
+
+  .iv{display:flex;align-items:center;gap:13px;background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));
+    border:1px solid var(--line);border-radius:18px;padding:14px;transition:.16s var(--ease)}
+  .iv + .iv{margin-top:10px}
+  .iv:hover{border-color:rgba(223,132,49,.3)}
+  .accent{width:4px;align-self:stretch;min-height:54px;border-radius:999px;flex:0 0 auto}
+  /* circular profile-photo thumbnail (never emoji) */
+  .pic{width:42px;height:42px;border-radius:50%;flex:0 0 auto;background-size:cover;background-position:center;
+    border:2px solid var(--line);box-shadow:0 0 0 2px var(--navy-2)}
+  .iv .info{flex:1;min-width:0}
+  .iv .info .em{font-family:"Hanken Grotesk";font-weight:600;font-size:15px;word-break:break-all}
+  .iv .info .meta{color:var(--cream-dim);font-size:12.5px;margin-top:3px}
+  .iv .info .meta code{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim)}
+  .iv .info .row2{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
+  .pill{display:inline-block;font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.07em;
+    text-transform:uppercase;font-weight:600;padding:4px 9px;border-radius:20px}
+  .pill.pending{background:rgba(223,132,49,.16);color:#f0b277;border:1px solid rgba(223,132,49,.4)}
+  .pill.emailsent{background:rgba(223,132,49,.16);color:#f0b277;border:1px solid rgba(223,132,49,.4)}
+  .pill.accepted{background:rgba(10,133,149,.18);color:#7fdce8;border:1px solid rgba(10,133,149,.4)}
+  .pill.revoked{background:rgba(213,83,90,.16);color:#f3a0a4;border:1px solid rgba(213,83,90,.4)}
+  .pill.expired{background:var(--navy-3);color:var(--cream-dim);border:1px solid var(--line)}
+  .pill.role{background:rgba(116,83,138,.2);color:#c7a8d8;border:1px solid rgba(116,83,138,.4)}
+  .pill.label{background:var(--navy-3);color:var(--cream-dim);border:1px solid var(--line)}
+  .pill.ack{background:rgba(213,83,90,.16);color:#f3a0a4;border:1px solid rgba(213,83,90,.4)}
+  .acc-pending{background:var(--orange)}.acc-accepted{background:var(--teal)}
+  .acc-revoked{background:var(--coral)}.acc-expired{background:rgba(251,251,249,.2)}
+  .iv .acts{display:flex;gap:8px;flex:0 0 auto}
+  .btn{font-family:"Hanken Grotesk";font-weight:700;font-size:12.5px;padding:9px 14px;border-radius:10px;border:none;cursor:pointer;transition:.16s var(--ease)}
+  .btn.gh{background:transparent;border:1px solid var(--line);color:var(--cream)}.btn.gh:hover{background:var(--navy-3)}
+  .btn.danger{background:transparent;border:1px solid rgba(213,83,90,.5);color:#f3a0a4}.btn.danger:hover{background:rgba(213,83,90,.14)}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:28px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:860px){.cols{grid-template-columns:1fr}.panel.form{position:static}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <div class="kick">The Den · Invites</div>
+      <h2>Invites</h2>
+      <div class="sub">Send and track kinfolk invitations into a tribe</div>
+    </div>
+
+    <div class="nb">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#c7a8d8" stroke-width="1.8"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></div>
+      <div class="bx">
+        <b>New admin surface</b>
+        <p>There is no existing Invites screen in AuntieOS today. This concept is built directly from the backend callables <code>mintInvite</code>, <code>mintInviteFromPrimary</code> and <code>revokeInvite</code>, plus the <code>inviteRequests</code> document shape and the nightly <code>expireStaleInvites</code> job. Field names below match the callable args exactly.</p>
+      </div>
+    </div>
+
+    <div class="cols">
+
+      <!-- SEND INVITE FORM -->
+      <div class="panel form d1">
+        <h3>Send invite</h3>
+        <div class="ph-sub">Calls <span style="font-family:'Spline Sans Mono',monospace;font-size:11.5px;color:#7fdce8">mintInvite</span> and writes one <span style="font-family:'Spline Sans Mono',monospace;font-size:11.5px;color:#7fdce8">inviteRequests</span> doc.</div>
+
+        <div class="field">
+          <label for="familyId">familyId <span class="req">*</span></label>
+          <input id="familyId" type="text" placeholder="tribe_a1b2c3" value="" />
+          <div class="hint">The tribe (family) this invite joins. Stored on the doc as <code style="font-family:'Spline Sans Mono',monospace;font-size:11px;color:var(--cream-dim)">tribeId</code>.</div>
+        </div>
+
+        <div class="field">
+          <label for="invitedEmail">invitedEmail <span class="req">*</span></label>
+          <input id="invitedEmail" type="email" placeholder="jane@example.com" value="" />
+          <div class="hint">Lowercased and matched against the accepting user at <code style="font-family:'Spline Sans Mono',monospace;font-size:11px;color:var(--cream-dim)">acceptInvite</code>.</div>
+        </div>
+
+        <div class="field">
+          <label for="secondaryLabel">secondaryLabel</label>
+          <input id="secondaryLabel" type="text" maxlength="24" placeholder="Folk" value="" />
+          <div class="hint">Optional, defaults to "Folk". Max 24 chars (SECONDARY_LABEL_MAX).</div>
+        </div>
+
+        <div class="field">
+          <label>proposedRole</label>
+          <div class="seg" id="roleSeg">
+            <button type="button" data-role="SECONDARY" class="on">SECONDARY</button>
+            <button type="button" data-role="PRIMARY">PRIMARY</button>
+          </div>
+          <div class="hint">Defaults to SECONDARY. PRIMARY uses the <code style="font-family:'Spline Sans Mono',monospace;font-size:11px;color:var(--cream-dim)">invite.primary</code> email template.</div>
+        </div>
+
+        <div class="field" style="margin-bottom:6px">
+          <label>proposedPermissions</label>
+        </div>
+        <div class="perm">
+          <div class="px"><b>Full billing</b><code>billing_full</code></div>
+          <div class="tog"></div>
+        </div>
+        <div class="perm">
+          <div class="px"><b>Direct messaging</b><code>messaging_direct</code></div>
+          <div class="tog on"></div>
+        </div>
+        <div class="perm">
+          <div class="px"><b>Group messaging</b><code>messaging_group</code></div>
+          <div class="tog on"></div>
+        </div>
+        <div class="perm">
+          <div class="px"><b>Edit kin profile</b><code>kin_edit</code></div>
+          <div class="tog"></div>
+        </div>
+        <div class="perm">
+          <div class="px"><b>KinTales only</b><code>kintales_only</code></div>
+          <div class="tog on locked" title="Server forces kintales_only=true on every invite"></div>
+        </div>
+
+        <button class="send">Send invite</button>
+        <div class="ttlnote">// invite expires in 14 days (INVITE_TTL_DAYS)</div>
+      </div>
+
+      <!-- INVITE LIST BY STATUS -->
+      <div class="listcol">
+
+        <div class="sec d1">
+          <h3>Pending <span class="ct">status: PENDING / EMAIL_SENT · 2</span></h3>
+
+          <div class="iv">
+            <span class="accent acc-pending"></span>
+            <span class="pic" style="background-image:url('https://i.pravatar.cc/96?img=47')"></span>
+            <div class="info">
+              <div class="em">jane@example.com</div>
+              <div class="meta">Sent 2026-05-26 · expires 2026-06-09 · <code>inviteId rq_8fk29a</code></div>
+              <div class="row2">
+                <span class="pill emailsent">Email sent</span>
+                <span class="pill role">Secondary</span>
+                <span class="pill label">Sister</span>
+              </div>
+            </div>
+            <div class="acts"><button class="btn danger" data-revoke>Revoke</button></div>
+          </div>
+
+          <div class="iv">
+            <span class="accent acc-pending"></span>
+            <span class="pic" style="background-image:url('https://i.pravatar.cc/96?img=12')"></span>
+            <div class="info">
+              <div class="em">marcus@example.com</div>
+              <div class="meta">Created 2026-05-27 · expires 2026-06-10 · <code>inviteId rq_3qd71b</code></div>
+              <div class="row2">
+                <span class="pill pending">Pending</span>
+                <span class="pill role">Primary</span>
+                <span class="pill ack">Auntie ack required</span>
+              </div>
+            </div>
+            <div class="acts"><button class="btn danger" data-revoke>Revoke</button></div>
+          </div>
+        </div>
+
+        <div class="sec d2">
+          <h3>Accepted <span class="ct">status: ACCEPTED · 2</span></h3>
+
+          <div class="iv">
+            <span class="accent acc-accepted"></span>
+            <span class="pic" style="background-image:url('https://i.pravatar.cc/96?img=32')"></span>
+            <div class="info">
+              <div class="em">priya@example.com</div>
+              <div class="meta">Sent 2026-05-20 · accepted 2026-05-21 · <code>acceptedUid uXh2..9a</code></div>
+              <div class="row2">
+                <span class="pill accepted">Accepted</span>
+                <span class="pill role">Secondary</span>
+                <span class="pill label">Folk</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="iv">
+            <span class="accent acc-accepted"></span>
+            <span class="pic" style="background-image:url('https://i.pravatar.cc/96?img=15')"></span>
+            <div class="info">
+              <div class="em">dev@example.com</div>
+              <div class="meta">Sent 2026-05-12 · accepted 2026-05-12 · <code>acceptedUid kP7m..4c</code></div>
+              <div class="row2">
+                <span class="pill accepted">Accepted</span>
+                <span class="pill role">Secondary</span>
+                <span class="pill label">Brother</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec d3">
+          <h3>Expired <span class="ct">status: EXPIRED · 1</span></h3>
+
+          <div class="iv">
+            <span class="accent acc-expired"></span>
+            <span class="pic" style="background-image:url('https://i.pravatar.cc/96?img=5')"></span>
+            <div class="info">
+              <div class="em">lapsed@example.com</div>
+              <div class="meta">Sent 2026-05-01 · expired 2026-05-15 by nightly job · <code>inviteId rq_1ab90z</code></div>
+              <div class="row2">
+                <span class="pill expired">Expired</span>
+                <span class="pill role">Secondary</span>
+                <span class="pill label">Folk</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec d4">
+          <h3>Revoked <span class="ct">status: REVOKED · 1</span></h3>
+
+          <div class="iv">
+            <span class="accent acc-revoked"></span>
+            <span class="pic" style="background-image:url('https://i.pravatar.cc/96?img=24')"></span>
+            <div class="info">
+              <div class="em">duplicate@example.com</div>
+              <div class="meta">Sent 2026-05-18 · revoked 2026-05-19 (sent in error) · <code>inviteId rq_5tz44k</code></div>
+              <div class="row2">
+                <span class="pill revoked">Revoked</span>
+                <span class="pill role">Secondary</span>
+                <span class="pill label">Cousin</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · Invites · palette from AuntieColors.kt · placeholder content</p>
+  </div>
+
+  <script>
+    // permission toggles (kintales_only is server-locked)
+    document.querySelectorAll('.tog').forEach(t=>t.addEventListener('click',()=>{
+      if(t.classList.contains('locked')) return;
+      t.classList.toggle('on');
+    }));
+    // role segmented control
+    document.querySelectorAll('#roleSeg button').forEach(b=>b.addEventListener('click',()=>{
+      document.querySelectorAll('#roleSeg button').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on');
+    }));
+    // revoke (visual only): mirrors revokeInvite -> status REVOKED
+    document.querySelectorAll('[data-revoke]').forEach(btn=>btn.addEventListener('click',()=>{
+      const card=btn.closest('.iv');
+      card.querySelector('.accent').className='accent acc-revoked';
+      const pill=card.querySelector('.pill');
+      pill.className='pill revoked'; pill.textContent='Revoked';
+      btn.remove();
+    }));
+    // mesh parallax
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

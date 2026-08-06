@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Create booking (concept)</title>
+<!--
+  AuntieOS redesign concept · Create booking (request). Standalone mockup, Den aesthetic.
+  No em dashes. Mirrors real BookingCreateScreen flow:
+    kinfolk search/select (NO kin select; KinCare covers whole household),
+    KinCare Type (sourced from Business Settings serviceRates, NOT hardcoded),
+    notes: Additional Information for Auntie (kinfolk-facing, 3h cutoff) + Internal,
+    actions: Cancel / Save Draft (DRAFT) / Submit Request (PENDING).
+  Adds (backend already supports via requestBooking visits[] + pattern):
+    non-consecutive multi-date selection + recurring options.
+  Palette from AuntieColors.kt. Placeholder content.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);-webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px)}
+  .blob{position:absolute;border-radius:50%;opacity:.42;mix-blend-mode:screen;filter:blur(74px);animation:drift 30s var(--ease) infinite alternate}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--orange),transparent 62%);top:-12vmax;left:-4vmax}
+  .blob.b{width:36vmax;height:36vmax;background:radial-gradient(circle,var(--teal),transparent 60%);top:12vmax;right:-8vmax;animation-delay:-10s}
+  .blob.c{width:30vmax;height:30vmax;background:radial-gradient(circle,var(--pink),transparent 60%);bottom:-12vmax;left:42vmax;animation-delay:-17s}
+  @keyframes drift{to{transform:translate3d(4vmax,3vmax,0) scale(1.1) rotate(8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+  .wrap{position:relative;z-index:2;max-width:720px;margin:0 auto;padding:24px 30px 60px}
+  .crumbs{display:flex;align-items:center;gap:9px;font-family:"Spline Sans Mono",monospace;font-size:12px;color:var(--cream-dim);margin-bottom:14px;opacity:0;animation:rise .5s var(--ease) forwards}
+  .crumbs a{color:var(--cream-dim);text-decoration:none}.crumbs a:hover{color:var(--orange)}.crumbs b{color:var(--cream)}
+  .head{margin-bottom:22px;opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--orange);margin-bottom:5px}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:32px;letter-spacing:-.02em;font-variation-settings:"SOFT" 50,"WONK" 1}
+  .head .sub{color:var(--cream-dim);font-size:14px;margin-top:4px}
+
+  .panel{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);border-radius:20px;padding:24px;opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) .08s forwards}
+  .step{margin-bottom:24px}.step:last-child{margin-bottom:0}
+  label.cap{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--cream-dim);opacity:.75;display:flex;align-items:center;gap:8px;margin-bottom:11px}
+  label.cap .mng{margin-left:auto;font-family:"Hanken Grotesk";text-transform:none;letter-spacing:0;font-size:11.5px;font-weight:600;color:var(--teal);opacity:1;cursor:pointer}
+
+  .ksel{display:flex;align-items:center;gap:12px;background:rgba(10,133,149,.1);border:1px solid rgba(10,133,149,.4);border-radius:12px;padding:13px}
+  .ksel .pic{width:42px;height:42px;border-radius:13px;flex:0 0 auto;background:conic-gradient(from 200deg,var(--teal),var(--purple));display:grid;place-items:center;font-family:"Fraunces";font-weight:600;font-size:15px}
+  .ksel .who b{font-size:15px}.ksel .who small{display:block;color:var(--cream-dim);font-size:12.5px}
+  .ksel .change{margin-left:auto;background:none;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";font-weight:600;font-size:12.5px;padding:7px 12px;border-radius:9px;cursor:pointer}
+  .searchnote{font-size:11.5px;color:var(--cream-dim);margin-top:7px}
+
+  /* KinCare type chips (from Business Settings serviceRates) */
+  .types{display:flex;flex-wrap:wrap;gap:9px}
+  .type{display:flex;flex-direction:column;gap:2px;padding:10px 15px;border-radius:13px;cursor:pointer;border:1px solid var(--line);background:var(--navy-3);transition:.16s var(--ease);min-width:96px}
+  .type:hover{transform:translateY(-2px)}
+  .type.on{background:var(--orange);color:var(--navy);border-color:transparent}
+  .type b{font-size:14px;font-weight:700}
+  .type small{font-family:"Spline Sans Mono",monospace;font-size:11px;opacity:.8}
+
+  /* calendar (non-consecutive multi-date) */
+  .calwrap{background:var(--navy-3);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .calhd{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .calhd b{font-family:"Fraunces",serif;font-weight:500;font-size:16px}
+  .calhd button{background:none;border:1px solid var(--line);color:var(--cream);width:28px;height:28px;border-radius:8px;cursor:pointer}
+  .calhd button:hover{background:var(--navy-2)}
+  .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+  .dow{font-family:"Spline Sans Mono",monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--cream-dim);opacity:.6;text-align:center;padding:4px 0}
+  .day{aspect-ratio:1;display:grid;place-items:center;border-radius:9px;font-size:13.5px;cursor:pointer;transition:.12s var(--ease);border:1px solid transparent}
+  .day:hover{background:var(--navy-2)}
+  .day.sel{background:var(--teal);color:var(--cream);font-weight:700}
+  .day.blank{cursor:default}.day.blank:hover{background:none}
+  .seldates{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+  .dchip{display:inline-flex;align-items:center;gap:7px;background:rgba(10,133,149,.16);border:1px solid rgba(10,133,149,.4);border-radius:20px;padding:5px 8px 5px 11px;font-size:12.5px;font-weight:600}
+  .dchip .x{cursor:pointer;color:var(--cream-dim);font-weight:700}
+  .seldates .empty{font-size:12.5px;color:var(--cream-dim);font-style:italic}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .input{width:100%;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:12px 14px;color:var(--cream);font-family:inherit;font-size:14.5px;outline:none}
+  .input:focus{border-color:rgba(223,132,49,.5)}
+
+  /* recurring */
+  .seg{display:flex;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:5px;gap:3px;flex-wrap:wrap}
+  .seg button{flex:1;min-width:88px;background:none;border:none;color:var(--cream-dim);font-family:"Hanken Grotesk";font-weight:600;font-size:12.5px;padding:9px;border-radius:9px;cursor:pointer;transition:.16s var(--ease)}
+  .seg button.on{background:var(--cream);color:var(--navy)}
+  .weekdays{display:flex;gap:6px;margin-top:11px}
+  .wd{flex:1;text-align:center;padding:9px 0;border-radius:10px;border:1px solid var(--line);background:var(--navy-3);font-size:12.5px;font-weight:600;color:var(--cream-dim);cursor:pointer;transition:.14s var(--ease)}
+  .wd.on{background:rgba(223,132,49,.95);color:var(--navy);border-color:transparent}
+  .recur-extra{display:none;margin-top:11px}.recur-extra.show{display:block}
+
+  /* time block + optional specific time */
+  .reqtime{display:flex;align-items:center;gap:9px;margin-top:14px;font-size:13.5px;font-weight:600;cursor:pointer;color:var(--cream)}
+  .reqtime input{width:18px;height:18px;accent-color:var(--orange);cursor:pointer}
+  .spectime{display:none;margin-top:12px}.spectime.show{display:block}
+  .disclaimer{margin-top:11px;background:rgba(223,132,49,.12);border:1px solid rgba(223,132,49,.4);border-radius:12px;padding:13px 15px;font-size:13px;line-height:1.55;color:#f0c79b}
+  .disclaimer b{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:#f0b277;display:block;margin-bottom:6px}
+
+  .ta{width:100%;min-height:74px;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:12px 14px;color:var(--cream);font-family:inherit;font-size:14px;outline:none;resize:vertical}
+  .ta::placeholder{color:rgba(251,251,249,.4)}
+  .hint{font-size:11.5px;color:var(--cream-dim);margin-top:6px}
+  .internalhd{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--cream-dim);opacity:.7;margin-bottom:8px}
+
+  .actions{display:flex;gap:10px;margin-top:26px}
+  .btn{flex:1;font-family:"Hanken Grotesk";font-weight:700;font-size:14px;padding:13px;border-radius:13px;cursor:pointer;border:none;transition:.18s var(--ease)}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--cream)}.btn.ghost:hover{background:var(--navy-3)}
+  .btn.go{background:var(--orange);color:var(--navy)}.btn.go:hover{transform:translateY(-2px);box-shadow:0 12px 28px -12px rgba(223,132,49,.6)}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:26px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="crumbs"><a href="#">Bookings</a> / <b>New booking</b></div>
+    <div class="head">
+      <div class="kick">The Den · New booking</div>
+      <h2>New booking</h2>
+      <div class="sub">Select kinfolk, KinCare type, dates &amp; time</div>
+    </div>
+
+    <div class="panel">
+      <div class="step">
+        <label class="cap">Kinfolk</label>
+        <div class="ksel">
+          <div class="pic">LW</div>
+          <div class="who"><b>Lorna Wren</b><small>(555) 014-2231 · the Wrens (covers all household kin)</small></div>
+          <button class="change">Change</button>
+        </div>
+        <div class="searchnote">Type a name to search. KinCare applies to the whole household, so there is no per-kin selection.</div>
+      </div>
+
+      <div class="step">
+        <label class="cap">KinCare type <span class="mng">Managed in Business Settings ›</span></label>
+        <div class="types" id="types">
+          <div class="type on"><b>30 min</b><small>$28</small></div>
+          <div class="type"><b>45 min</b><small>$38</small></div>
+          <div class="type"><b>60 min</b><small>$48</small></div>
+          <div class="type"><b>Overnight</b><small>$85</small></div>
+          <div class="type"><b>Drop-in</b><small>$22</small></div>
+        </div>
+      </div>
+
+      <div class="step">
+        <label class="cap">Dates · pick one or more (non-consecutive ok)</label>
+        <div class="calwrap">
+          <div class="calhd"><button>‹</button><b id="calLabel">May 2026</b><button>›</button></div>
+          <div class="cal" id="cal"></div>
+        </div>
+        <div class="seldates" id="selDates"></div>
+      </div>
+
+      <div class="step">
+        <label class="cap">Time block <span class="mng">Managed in Business Settings ›</span></label>
+        <div class="types" id="blocks">
+          <div class="type on"><b>Morning</b><small>8:00 to 11:00</small></div>
+          <div class="type"><b>Midday</b><small>11:00 to 2:00</small></div>
+          <div class="type"><b>Afternoon</b><small>2:00 to 5:00</small></div>
+          <div class="type"><b>Evening</b><small>5:00 to 8:00</small></div>
+        </div>
+        <label class="reqtime"><input type="checkbox" id="reqTimeChk"> Request a specific start time within this block</label>
+        <div class="spectime" id="specTime">
+          <input class="input" type="text" placeholder="Preferred start time, e.g. 9:00 AM" style="max-width:260px" />
+          <div class="disclaimer"><b>Shown to the kinfolk</b>I will try to honor that specific time. I cannot guarantee arrival at that exact time. Traffic, scheduling, or unforeseen circumstances could delay me or require that I come earlier than the specified time.</div>
+        </div>
+      </div>
+
+      <div class="step">
+        <label class="cap">Recurring</label>
+        <div class="seg" id="recur">
+          <button class="on" data-r="none">Does not repeat</button>
+          <button data-r="weekly">Weekly</button>
+          <button data-r="biweekly">Every 2 weeks</button>
+          <button data-r="monthly">Monthly</button>
+        </div>
+        <div class="recur-extra" id="recurExtra">
+          <label class="cap" style="opacity:.55">On these days</label>
+          <div class="weekdays">
+            <div class="wd">Su</div><div class="wd on">Mo</div><div class="wd">Tu</div><div class="wd on">We</div><div class="wd">Th</div><div class="wd on">Fr</div><div class="wd">Sa</div>
+          </div>
+          <div class="hint">Ends after a set count or on a date (set on the next step).</div>
+        </div>
+      </div>
+
+      <div class="step">
+        <label class="cap">Additional information for Auntie</label>
+        <textarea class="ta" placeholder="What should Auntie know? Visible to kinfolk; editable until 3h before the visit."></textarea>
+        <div class="hint">Kinfolk-facing.</div>
+      </div>
+
+      <div class="step">
+        <div class="internalhd">Internal · staff only</div>
+        <textarea class="ta" placeholder="Hidden from kinfolk. Visible to staff on all KinCare sessions."></textarea>
+        <div class="hint">Admin-internal note.</div>
+      </div>
+
+      <div class="actions">
+        <button class="btn ghost">Cancel</button>
+        <button class="btn ghost">Save draft</button>
+        <button class="btn go">Submit request</button>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · mirrors real BookingCreateScreen + KinCare-type-from-settings + multi-date/recurring (requestBooking visits[]+pattern) · placeholder</p>
+  </div>
+
+  <script>
+    // KinCare type select
+    document.querySelectorAll('#types .type').forEach(t=>t.addEventListener('click',()=>{
+      document.querySelectorAll('#types .type').forEach(x=>x.classList.remove('on')); t.classList.add('on');}));
+    // time block select
+    document.querySelectorAll('#blocks .type').forEach(t=>t.addEventListener('click',()=>{
+      document.querySelectorAll('#blocks .type').forEach(x=>x.classList.remove('on')); t.classList.add('on');}));
+    // optional specific time toggle (reveals kinfolk-facing disclaimer)
+    document.getElementById('reqTimeChk').addEventListener('change',e=>{
+      document.getElementById('specTime').classList.toggle('show', e.target.checked);});
+
+    // non-consecutive multi-date calendar (May 2026)
+    const cal=document.getElementById('cal'), selWrap=document.getElementById('selDates');
+    const Y=2026,M=4; // May (0-based)
+    const monthName="May 2026";
+    const first=new Date(Y,M,1).getDay(), days=new Date(Y,M+1,0).getDate();
+    const selected=new Set([28,30]);
+    const dows=["S","M","T","W","T","F","S"];
+    function render(){
+      cal.innerHTML="";
+      dows.forEach(d=>{const e=document.createElement("div");e.className="dow";e.textContent=d;cal.appendChild(e);});
+      for(let i=0;i<first;i++){const e=document.createElement("div");e.className="day blank";cal.appendChild(e);}
+      for(let d=1;d<=days;d++){
+        const e=document.createElement("div");e.className="day"+(selected.has(d)?" sel":"");e.textContent=d;
+        e.onclick=()=>{ selected.has(d)?selected.delete(d):selected.add(d); render(); };
+        cal.appendChild(e);
+      }
+      renderChips();
+    }
+    function renderChips(){
+      selWrap.innerHTML="";
+      if(selected.size===0){selWrap.innerHTML='<span class="empty">No dates picked yet.</span>';return;}
+      [...selected].sort((a,b)=>a-b).forEach(d=>{
+        const c=document.createElement("span");c.className="dchip";
+        c.innerHTML=`May ${d} <span class="x">✕</span>`;
+        c.querySelector(".x").onclick=()=>{selected.delete(d);render();};
+        selWrap.appendChild(c);
+      });
+    }
+    render();
+
+    // recurring
+    document.querySelectorAll('#recur button').forEach(b=>b.addEventListener('click',()=>{
+      document.querySelectorAll('#recur button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+      document.getElementById('recurExtra').classList.toggle('show', b.dataset.r==='weekly'||b.dataset.r==='biweekly');
+    }));
+    document.querySelectorAll('.wd').forEach(w=>w.addEventListener('click',()=>w.classList.toggle('on')));
+
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

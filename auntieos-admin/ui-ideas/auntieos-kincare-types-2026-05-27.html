@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · KinCare types (concept)</title>
+<!--
+  AuntieOS redesign concept · KinCare types editor (lives in Business Settings). Standalone mockup, Den aesthetic.
+  Mirrors the real model: BusinessSettings.serviceRates : Map<String,String> (KinCare type name -> rate string),
+  persisted via FirestoreClient.saveBusinessSettings. There is no dedicated rates editor in the settings screens
+  today (serviceRates is referenced only in FirestoreClient.kt), so this screen is net-new UI over that map.
+  This is the list the create-booking KinCare-type selector pulls from. Operator usually goes by TIME
+  (30 min, 45 min, 60 min, Overnight, Drop-in) but the list is freely editable.
+  Anything beyond name->rate (duration minutes, color) is isolated in a labeled Suggestion block.
+  No em dashes. Palette from AuntieColors.kt. Placeholder content.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.4;mix-blend-mode:screen;filter:blur(76px);
+    animation:drift 31s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--orange),transparent 62%);top:-12vmax;right:-4vmax;}
+  .blob.b{width:36vmax;height:36vmax;background:radial-gradient(circle,var(--purple),transparent 60%);bottom:-10vmax;left:-8vmax;animation-delay:-11s;}
+  .blob.c{width:30vmax;height:30vmax;background:radial-gradient(circle,var(--teal),transparent 60%);top:26vmax;left:44vmax;animation-delay:-18s;}
+  @keyframes drift{to{transform:translate3d(4vmax,3vmax,0) scale(1.1) rotate(8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1180px;margin:0 auto;padding:26px 30px 60px;}
+  .crumbs{display:flex;align-items:center;gap:9px;font-family:"Spline Sans Mono",monospace;font-size:12px;color:var(--cream-dim);margin-bottom:14px;opacity:0;animation:rise .5s var(--ease) forwards}
+  .crumbs a{color:var(--cream-dim);text-decoration:none}.crumbs a:hover{color:var(--orange)}.crumbs b{color:var(--cream)}
+  .head{margin-bottom:22px;opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards;}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--orange);margin-bottom:5px}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;font-variation-settings:"SOFT" 50,"WONK" 1}
+  .head .sub{color:var(--cream-dim);font-size:14px;margin-top:4px}
+
+  .cols{display:grid;grid-template-columns:220px 1fr;gap:22px;align-items:start}
+  .secnav{position:sticky;top:22px;background:linear-gradient(160deg,var(--navy-2),var(--navy-3));border:1px solid var(--line);
+    border-radius:18px;padding:10px;opacity:0;transform:translateY(14px);animation:rise .65s var(--ease) .06s forwards}
+  .secnav a{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:11px;color:var(--cream-dim);
+    text-decoration:none;font-size:14px;font-weight:500;transition:.16s var(--ease)}
+  .secnav a svg{width:17px;height:17px;flex:0 0 auto}
+  .secnav a:hover{background:var(--line-2);color:var(--cream)}
+  .secnav a.on{background:var(--cream);color:var(--navy);font-weight:600}
+
+  .content{display:flex;flex-direction:column;gap:18px}
+  .panel{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);
+    border-radius:20px;padding:22px;opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) forwards}
+  .panel.d1{animation-delay:.12s}.panel.d2{animation-delay:.22s}.panel.d3{animation-delay:.3s}
+  .panel h3{font-family:"Fraunces",serif;font-weight:500;font-size:20px;font-variation-settings:"SOFT" 50}
+  .panel .ph-sub{color:var(--cream-dim);font-size:13px;margin-top:3px;margin-bottom:18px}
+
+  /* live preview of the chips exactly as create-booking renders them */
+  label.cap{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--cream-dim);opacity:.75;display:flex;align-items:center;gap:8px;margin-bottom:11px}
+  .types{display:flex;flex-wrap:wrap;gap:9px}
+  .type{display:flex;flex-direction:column;gap:2px;padding:10px 15px;border-radius:13px;cursor:default;border:1px solid var(--line);background:var(--navy-3);min-width:96px}
+  .type.on{background:var(--orange);color:var(--navy);border-color:transparent}
+  .type b{font-size:14px;font-weight:700}
+  .type small{font-family:"Spline Sans Mono",monospace;font-size:11px;opacity:.8}
+  .previewnote{font-size:11.5px;color:var(--cream-dim);margin-top:11px}
+
+  /* editable rows: serviceRates entry = name -> rate */
+  .rows{display:flex;flex-direction:column;gap:10px}
+  .rhead{display:grid;grid-template-columns:1fr 180px 88px;gap:12px;padding:0 4px 2px;
+    font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--cream-dim);opacity:.6}
+  .row{display:grid;grid-template-columns:1fr 180px 88px;gap:12px;align-items:center;padding:12px;
+    border:1px solid var(--line);border-radius:14px;background:var(--navy-3);transition:.16s var(--ease)}
+  .row:hover{border-color:rgba(223,132,49,.32)}
+  .row.gone{opacity:.4}
+  .grip{display:flex;align-items:center;gap:10px;min-width:0}
+  .grip svg{width:15px;height:15px;flex:0 0 auto;color:var(--cream-dim);opacity:.45}
+  .input{width:100%;background:var(--navy-2);border:1px solid var(--line);border-radius:11px;padding:11px 13px;
+    color:var(--cream);font-family:inherit;font-size:14.5px;outline:none;transition:.16s var(--ease)}
+  .input:focus{border-color:rgba(223,132,49,.5)}
+  .input.rate{font-family:"Spline Sans Mono",monospace;font-size:13.5px}
+  .rowacts{display:flex;justify-content:flex-end;gap:7px}
+  .iconbtn{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--navy-2);
+    color:var(--cream-dim);cursor:pointer;display:grid;place-items:center;transition:.16s var(--ease)}
+  .iconbtn svg{width:15px;height:15px}
+  .iconbtn:hover{color:var(--cream);background:var(--navy-3)}
+  .iconbtn.del:hover{color:var(--coral);border-color:rgba(213,83,90,.5)}
+
+  .addrow{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+  .linkbtn{background:none;border:1px dashed var(--line);color:var(--cream);font-family:"Hanken Grotesk";font-weight:600;
+    font-size:13px;padding:11px 16px;border-radius:12px;cursor:pointer;transition:.16s var(--ease);display:inline-flex;align-items:center;gap:8px}
+  .linkbtn svg{width:15px;height:15px}
+  .linkbtn:hover{border-color:rgba(223,132,49,.55);color:var(--orange)}
+
+  /* suggestion block: anything BEYOND the name->rate map */
+  .suggest{background:rgba(116,83,138,.12);border:1px solid rgba(116,83,138,.42);border-radius:16px;padding:18px 20px}
+  .suggest .stag{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+    color:#c5a9da;display:inline-flex;align-items:center;gap:7px;margin-bottom:9px}
+  .suggest .stag .dot{width:7px;height:7px;border-radius:50%;background:var(--purple);box-shadow:0 0 8px var(--purple)}
+  .suggest h4{font-family:"Fraunces",serif;font-weight:500;font-size:16.5px;font-variation-settings:"SOFT" 50;margin-bottom:5px}
+  .suggest p{font-size:13px;color:var(--cream-dim);line-height:1.55;margin-bottom:14px}
+  .suggest p b{color:var(--cream);font-weight:600}
+  .sgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:11px}
+  .scard{background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:13px 14px}
+  .scard .sname{font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .swatch{width:11px;height:11px;border-radius:50%;flex:0 0 auto}
+  .scard .smeta{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);margin-top:6px}
+
+  .savebar{display:flex;align-items:center;gap:14px;margin-top:4px}
+  .savebar .dirty{font-family:"Spline Sans Mono",monospace;font-size:11.5px;color:var(--orange);display:flex;align-items:center;gap:7px}
+  .savebar .dirty .led{width:7px;height:7px;border-radius:50%;background:var(--orange);box-shadow:0 0 8px var(--orange)}
+  .savebar .spacer{flex:1}
+  .btn{font-family:"Hanken Grotesk";font-weight:700;font-size:14px;padding:12px 22px;border-radius:13px;cursor:pointer;border:none;transition:.18s var(--ease)}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--cream)}.btn.ghost:hover{background:var(--navy-3)}
+  .btn.go{background:var(--orange);color:var(--navy)}.btn.go:hover{transform:translateY(-2px);box-shadow:0 12px 28px -12px rgba(223,132,49,.6)}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:28px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:820px){
+    .cols{grid-template-columns:1fr}.secnav{position:static}
+    .rhead,.row{grid-template-columns:1fr 120px 78px}
+  }
+  @media(max-width:560px){
+    .rhead{display:none}
+    .row{grid-template-columns:1fr;gap:9px}
+    .rowacts{justify-content:flex-start}
+  }
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="crumbs"><a href="#">Settings</a> / <a href="#">Business Settings</a> / <b>KinCare types</b></div>
+    <div class="head">
+      <div class="kick">The Den · Business Settings</div>
+      <h2>KinCare types</h2>
+      <div class="sub">The list the booking screen pulls from. Each type has a name and a rate.</div>
+    </div>
+
+    <div class="cols">
+      <nav class="secnav">
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-4 3-6 7-6s7 2 7 6"/></svg>Profile</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>Business hours</a>
+        <a class="on" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="18.5" cy="17" r="2.2"/></svg>KinCare types</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6Z"/></svg>Notifications</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 7h8M8 12h8M8 17h5"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg>Integrations</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v6c0 5-3 8-7 9-4-1-7-4-7-9V6z"/></svg>Security</a>
+      </nav>
+
+      <div class="content">
+        <div class="panel d1">
+          <h3>Your KinCare types</h3>
+          <div class="ph-sub">Add, rename, re-rate, or remove. Most operators go by length of visit (30 min, 60 min, Overnight) but you can name them anything. Saving updates the booking screen for new requests.</div>
+
+          <div class="rows" id="rows">
+            <div class="rhead"><span>Type name</span><span>Rate</span><span></span></div>
+            <!-- rows injected by script from the placeholder serviceRates map -->
+          </div>
+
+          <div class="addrow">
+            <button class="linkbtn" id="addBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Add KinCare type</button>
+          </div>
+        </div>
+
+        <div class="panel d2">
+          <h3>How it looks on the booking screen</h3>
+          <div class="ph-sub">Live preview. This is the exact chip the kinfolk and admin see when picking a KinCare type.</div>
+          <label class="cap">KinCare type</label>
+          <div class="types" id="preview"></div>
+          <div class="previewnote">First entry shows selected for illustration. The order here matches the row order above.</div>
+        </div>
+
+        <div class="panel d3">
+          <div class="suggest">
+            <div class="stag"><span class="dot"></span>Suggestion · not in serviceRates yet</div>
+            <h4>Optional: duration and color per type</h4>
+            <p>
+              Today a KinCare type is just a <b>name</b> and a <b>rate string</b> (the real <span style="font-family:'Spline Sans Mono',monospace">serviceRates</span> map). If you want, a future version could attach a
+              <b>default duration in minutes</b> (auto-blocks the calendar) and a <b>color</b> (so types are easy to scan on the schedule). These would need new fields on BusinessSettings and are shown here only as a preview, they are not saved by this screen.
+            </p>
+            <div class="sgrid">
+              <div class="scard"><div class="sname"><span class="swatch" style="background:var(--orange)"></span>30 min</div><div class="smeta">30 min · $28</div></div>
+              <div class="scard"><div class="sname"><span class="swatch" style="background:var(--teal)"></span>45 min</div><div class="smeta">45 min · $38</div></div>
+              <div class="scard"><div class="sname"><span class="swatch" style="background:var(--pink)"></span>60 min</div><div class="smeta">60 min · $48</div></div>
+              <div class="scard"><div class="sname"><span class="swatch" style="background:var(--purple)"></span>Overnight</div><div class="smeta">~720 min · $85</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="savebar">
+          <span class="dirty" id="dirty" style="visibility:hidden"><span class="led"></span>Unsaved changes</span>
+          <span class="spacer"></span>
+          <button class="btn ghost">Cancel</button>
+          <button class="btn go" id="saveBtn">Save KinCare types</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · KinCare types · palette from AuntieColors.kt · placeholder content</p>
+  </div>
+
+  <script>
+    // Placeholder serviceRates : Map<String,String> (name -> rate string), mirroring BusinessSettings.
+    // Operator usually goes by TIME; freely editable.
+    let serviceRates = [
+      { name: "30 min",    rate: "$28" },
+      { name: "45 min",    rate: "$38" },
+      { name: "60 min",    rate: "$48" },
+      { name: "Overnight", rate: "$85" },
+      { name: "Drop-in",   rate: "$22" },
+    ];
+
+    const rowsEl   = document.getElementById('rows');
+    const previewEl= document.getElementById('preview');
+    const dirtyEl  = document.getElementById('dirty');
+    const headHTML = '<div class="rhead"><span>Type name</span><span>Rate</span><span></span></div>';
+
+    function markDirty(){ dirtyEl.style.visibility = 'visible'; }
+
+    const gripIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/></svg>';
+    const trashIcon= '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13"/></svg>';
+
+    function render(){
+      rowsEl.innerHTML = headHTML;
+      serviceRates.forEach((entry, i)=>{
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = `
+          <div class="grip">${gripIcon}
+            <input class="input name" type="text" value="${entry.name.replace(/"/g,'&quot;')}" placeholder="e.g. 30 min" />
+          </div>
+          <input class="input rate" type="text" value="${entry.rate.replace(/"/g,'&quot;')}" placeholder="e.g. $28" />
+          <div class="rowacts">
+            <button class="iconbtn del" title="Remove">${trashIcon}</button>
+          </div>`;
+        const nameI = row.querySelector('.name');
+        const rateI = row.querySelector('.rate');
+        nameI.addEventListener('input', ()=>{ serviceRates[i].name = nameI.value; markDirty(); renderPreview(); });
+        rateI.addEventListener('input', ()=>{ serviceRates[i].rate = rateI.value; markDirty(); renderPreview(); });
+        row.querySelector('.del').addEventListener('click', ()=>{
+          serviceRates.splice(i,1); markDirty(); render();
+        });
+        rowsEl.appendChild(row);
+      });
+      renderPreview();
+    }
+
+    function renderPreview(){
+      previewEl.innerHTML = '';
+      if(serviceRates.length === 0){
+        previewEl.innerHTML = '<div class="previewnote" style="font-style:italic">No KinCare types yet. Add one above.</div>';
+        return;
+      }
+      serviceRates.forEach((entry, i)=>{
+        const chip = document.createElement('div');
+        chip.className = 'type' + (i===0 ? ' on' : '');
+        chip.innerHTML = `<b>${escapeHtml(entry.name || 'Untitled')}</b><small>${escapeHtml(entry.rate || '--')}</small>`;
+        previewEl.appendChild(chip);
+      });
+    }
+
+    function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+    document.getElementById('addBtn').addEventListener('click', ()=>{
+      serviceRates.push({ name: "", rate: "" });
+      markDirty();
+      render();
+      const inputs = rowsEl.querySelectorAll('.row .name');
+      if(inputs.length) inputs[inputs.length-1].focus();
+    });
+
+    document.getElementById('saveBtn').addEventListener('click', ()=>{
+      // Mockup only: in the real app this maps rows -> Map<String,String> and calls saveBusinessSettings.
+      dirtyEl.style.visibility = 'hidden';
+    });
+
+    render();
+
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

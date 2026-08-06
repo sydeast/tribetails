@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Settings (concept)</title>
+<!--
+  AuntieOS redesign concept · Settings (Integrations + toggles). Standalone mockup.
+  Same "Den" aesthetic. No em dashes. Palette from AuntieColors.kt.
+  Sample content is illustrative placeholder.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.4;mix-blend-mode:screen;filter:blur(76px);
+    animation:drift 31s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--purple),transparent 62%);top:-12vmax;right:-4vmax;}
+  .blob.b{width:36vmax;height:36vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-10vmax;left:-8vmax;animation-delay:-11s;}
+  .blob.c{width:30vmax;height:30vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:26vmax;left:44vmax;animation-delay:-18s;}
+  @keyframes drift{to{transform:translate3d(4vmax,3vmax,0) scale(1.1) rotate(8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1180px;margin:0 auto;padding:26px 30px 60px;}
+  .head{margin-bottom:22px;opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards;}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--orange);margin-bottom:5px}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;font-variation-settings:"SOFT" 50,"WONK" 1}
+
+  .cols{display:grid;grid-template-columns:220px 1fr;gap:22px;align-items:start}
+  .secnav{position:sticky;top:22px;background:linear-gradient(160deg,var(--navy-2),var(--navy-3));border:1px solid var(--line);
+    border-radius:18px;padding:10px;opacity:0;transform:translateY(14px);animation:rise .65s var(--ease) .06s forwards}
+  .secnav a{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:11px;color:var(--cream-dim);
+    text-decoration:none;font-size:14px;font-weight:500;transition:.16s var(--ease)}
+  .secnav a svg{width:17px;height:17px;flex:0 0 auto}
+  .secnav a:hover{background:var(--line-2);color:var(--cream)}
+  .secnav a.on{background:var(--cream);color:var(--navy);font-weight:600}
+
+  .content{display:flex;flex-direction:column;gap:18px}
+  .panel{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);
+    border-radius:20px;padding:22px;opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) forwards}
+  .panel.d1{animation-delay:.12s}.panel.d2{animation-delay:.22s}
+  .panel h3{font-family:"Fraunces",serif;font-weight:500;font-size:20px;font-variation-settings:"SOFT" 50}
+  .panel .ph-sub{color:var(--cream-dim);font-size:13px;margin-top:3px;margin-bottom:18px}
+
+  /* integration cards */
+  .intgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:13px}
+  .int{display:flex;gap:13px;align-items:flex-start;padding:15px;border-radius:15px;border:1px solid var(--line);
+    background:var(--navy-3);transition:.18s var(--ease)}
+  .int:hover{transform:translateY(-2px);border-color:rgba(223,132,49,.35)}
+  .int .logo{width:40px;height:40px;border-radius:11px;flex:0 0 auto;display:grid;place-items:center;
+    font-family:"Fraunces",serif;font-weight:700;font-size:17px;color:var(--cream)}
+  .int .body{flex:1;min-width:0}
+  .int b{font-size:14.5px;font-weight:600;display:flex;align-items:center;gap:7px}
+  .int small{display:block;color:var(--cream-dim);font-size:12px;margin-top:3px;line-height:1.4}
+  .int .foot{display:flex;align-items:center;justify-content:space-between;margin-top:11px}
+  .conn{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;
+    font-weight:600;display:inline-flex;align-items:center;gap:6px}
+  .conn.on{color:#5fd0dc}.conn.off{color:var(--cream-dim)}
+  .conn .led{width:7px;height:7px;border-radius:50%}
+  .conn.on .led{background:#0A8595;box-shadow:0 0 8px #0A8595}
+  .conn.off .led{background:var(--cream-dim);opacity:.5}
+  .linkbtn{background:none;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";font-weight:600;
+    font-size:12px;padding:6px 12px;border-radius:9px;cursor:pointer;transition:.16s var(--ease)}
+  .linkbtn:hover{background:var(--navy-2)}
+  .linkbtn.connect{background:var(--orange);color:var(--navy);border-color:transparent}
+
+  /* toggle rows */
+  .trow{display:flex;align-items:center;gap:14px;padding:13px 0;border-bottom:1px solid var(--line-2)}
+  .trow:last-child{border-bottom:none}
+  .trow .tx b{font-size:14.5px;font-weight:600}
+  .trow .tx small{display:block;color:var(--cream-dim);font-size:12.5px;margin-top:2px}
+  .tog{margin-left:auto;width:46px;height:27px;border-radius:30px;background:var(--navy-3);border:1px solid var(--line);
+    position:relative;cursor:pointer;transition:.2s var(--ease);flex:0 0 auto}
+  .tog:after{content:"";position:absolute;top:2.5px;left:3px;width:20px;height:20px;border-radius:50%;
+    background:var(--cream-dim);transition:.2s var(--ease)}
+  .tog.on{background:var(--teal);border-color:transparent}
+  .tog.on:after{left:21px;background:var(--cream)}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:28px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:820px){.cols{grid-template-columns:1fr}.secnav{position:static}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <div class="kick">The Den · Settings</div>
+      <h2>How the Den runs</h2>
+    </div>
+
+    <div class="cols">
+      <nav class="secnav">
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-4 3-6 7-6s7 2 7 6"/></svg>Profile</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>Business hours</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6Z"/></svg>Notifications</a>
+        <a class="on" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 7h8M8 12h8M8 17h5"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg>Integrations</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v6c0 5-3 8-7 9-4-1-7-4-7-9V6z"/></svg>Security</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h9l3 3v15H6z"/><path d="M9 11h6M9 15h4"/></svg>Billing</a>
+      </nav>
+
+      <div class="content">
+        <div class="panel d1">
+          <h3>Integrations</h3>
+          <div class="ph-sub">Connect the services that power the Den. Connected services sync automatically.</div>
+          <div class="intgrid">
+            <div class="int">
+              <div class="logo" style="background:conic-gradient(from 200deg,var(--teal),var(--purple))">G</div>
+              <div class="body">
+                <b>Google Calendar</b>
+                <small>Pulls your busy events in as read-only blocks so you never get double-booked.</small>
+                <div class="foot"><span class="conn on"><i class="led"></i>Connected</span><button class="linkbtn">Manage</button></div>
+              </div>
+            </div>
+            <div class="int">
+              <div class="logo" style="background:conic-gradient(from 140deg,var(--purple),var(--teal))">S</div>
+              <div class="body">
+                <b>Stripe</b>
+                <small>Card payments and payout for invoices.</small>
+                <div class="foot"><span class="conn on"><i class="led"></i>Connected</span><button class="linkbtn">Manage</button></div>
+              </div>
+            </div>
+            <div class="int">
+              <div class="logo" style="background:conic-gradient(from 90deg,var(--coral),var(--pink))">T</div>
+              <div class="body">
+                <b>Twilio Voice</b>
+                <small>Take and route client calls in-app.</small>
+                <div class="foot"><span class="conn on"><i class="led"></i>Connected</span><button class="linkbtn">Manage</button></div>
+              </div>
+            </div>
+            <div class="int">
+              <div class="logo" style="background:conic-gradient(from 260deg,var(--orange),var(--coral))">M</div>
+              <div class="body">
+                <b>Mapbox</b>
+                <small>GPS walk routes on your KinTales.</small>
+                <div class="foot"><span class="conn on"><i class="led"></i>Connected</span><button class="linkbtn">Manage</button></div>
+              </div>
+            </div>
+            <div class="int">
+              <div class="logo" style="background:conic-gradient(from 180deg,var(--pink),var(--orange))">C</div>
+              <div class="body">
+                <b>Cloudinary</b>
+                <small>Photo and video uploads for visit reports.</small>
+                <div class="foot"><span class="conn on"><i class="led"></i>Connected</span><button class="linkbtn">Manage</button></div>
+              </div>
+            </div>
+            <div class="int">
+              <div class="logo" style="background:conic-gradient(from 300deg,var(--teal),var(--orange))">n</div>
+              <div class="body">
+                <b>n8n automations</b>
+                <small>Draft broadcasts and workflow triggers.</small>
+                <div class="foot"><span class="conn off"><i class="led"></i>Not connected</span><button class="linkbtn connect">Connect</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel d2">
+          <h3>Scheduling</h3>
+          <div class="ph-sub">Behavior for the calendar and Google Calendar sync.</div>
+          <div class="trow"><div class="tx"><b>Sync Google Calendar busy events</b><small>Show external commitments as read-only blocks on the schedule.</small></div><div class="tog on"></div></div>
+          <div class="trow"><div class="tx"><b>Block bookings during busy events</b><small>Stop new visits from landing on top of a Google Calendar block.</small></div><div class="tog on"></div></div>
+          <div class="trow"><div class="tx"><b>Snap drag-to-reschedule to 15 min</b><small>Visits align to quarter-hour slots when dragged.</small></div><div class="tog on"></div></div>
+          <div class="trow"><div class="tx"><b>Auto-confirm repeat clients</b><small>Trusted kinfolk bookings skip manual approval.</small></div><div class="tog"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · Settings (Integrations) · palette from AuntieColors.kt · sample content is placeholder</p>
+  </div>
+
+  <script>
+    document.querySelectorAll('.tog').forEach(t=>t.addEventListener('click',()=>t.classList.toggle('on')));
+    document.querySelectorAll('.secnav a').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();
+      document.querySelectorAll('.secnav a').forEach(x=>x.classList.remove('on')); a.classList.add('on');}));
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

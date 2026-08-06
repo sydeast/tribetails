@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Template Assignment (concept)</title>
+<!--
+  AuntieOS redesign concept · Template Assignment (admin). Standalone HTML/CSS mockup.
+  Same "Den" aesthetic as auntieos-directory + auntieos-template-bank. Desktop web admin.
+
+  MIRRORS the real screen: web/.../screens/admin/TemplateAssignmentScreen.kt
+    SectionHeader  title "Template Assignment" / subtitle "Bind email templates to notification triggers." / Workflow icon
+    BindingCard    = catalogKey (title) + ACTIVE/PAUSED pill, "-> {templateId}", optional "Audience: {a}", [Edit]
+                     (source renders the pointer as a right arrow; reproduced verbatim, NOT an em dash)
+    Empty state    = "No bindings yet. Defaults from the catalog apply until you assign one."
+    Loading        = "Loading bindings…"  (horizontal-ellipsis from source, reproduced verbatim)
+    [Add Binding]  PrimaryButton; opens editor on a blank TemplateBinding (templateId prefilled to first template)
+    Editor overlay (BindingEditorOverlay, GlassSurface cornerRadius=20):
+      heading       = "New Binding" if catalogKey blank, else "Edit: {catalogKey}"
+      Catalog Key   = BottomBorderField, placeholder "e.g. kincare.booking.confirm"  (verbatim)
+      Template      = label "Template"; one selectable row per EmailTemplate (title + optional category);
+                      selected row = primary tint + primary border
+      Audience      = label "Audience"; AUDIENCES = kinfolk, auntie, admin, guest (verbatim, from source list).
+                      Single-select pills; clicking the selected one clears it back to null (audience is nullable).
+      Trigger Key   = BottomBorderField, label "Trigger Key (optional override)"  (verbatim)
+      active Switch  + "Active"/"Paused" text
+      [Cancel] [Save]; Save enabled only when catalogKey AND templateId are both non-blank.
+
+  Model (TemplateService.TemplateBinding): catalogKey, templateId, audience?, triggerKey?, active
+  Model (TemplateService.EmailTemplate):   templateId, subject, body, html?, title, description?, tags[], category?
+  Callables (admin-claim-gated): listTemplateBindings, listTemplates, assignTemplate, saveTemplate.
+  Backend context: bindings map a catalog key (+ optional audience / triggerKey override) onto a Firestore
+  email template; the dispatcher resolves the right template per notification trigger; SendGrid delivers.
+  NOTE: TemplateAssignmentScreen.kt has NO per-channel (email/push/sms) selector. The binding model is
+  catalogKey -> templateId (+ audience? + triggerKey?). No channel field is invented here.
+
+  VERBATIM source strings reproduced as-is. No customer-facing copy is authored here.
+  Sample catalog keys / trigger keys / template titles are ILLUSTRATIVE PLACEHOLDER (see HTML comments),
+  not real Auntie copy. Auntie authors all real customer-facing copy. Gaps stay TODO.
+
+  SUGGESTIONS (not in TemplateAssignmentScreen.kt source, flagged with .sug marker):
+    - search / filter box over the binding list (no search input exists in source)
+    - per-card "catalog key" mono styling + a copyable key (model has catalogKey; card just shows it as a title)
+    - per-card triggerKey echo ("override: {triggerKey}") when a triggerKey is set (source card does not show it)
+    - count summary chips (active vs paused) above the list
+    - "unbound catalog keys" hint panel (source only shows assigned bindings, not the full catalog)
+  These are marked so a human can keep, drop, or send back to the user. Real copy stays TODO.
+
+  No em dashes (U+2014) anywhere. No en-dash-as-pause. Palette from AuntieColors.kt.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --success:#4CAF7D;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.44;mix-blend-mode:screen;filter:blur(74px);
+    animation:drift 29s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--purple),transparent 62%);top:-12vmax;left:-4vmax;}
+  .blob.b{width:40vmax;height:40vmax;background:radial-gradient(circle,var(--teal),transparent 60%);top:10vmax;right:-8vmax;animation-delay:-10s;}
+  .blob.c{width:33vmax;height:33vmax;background:radial-gradient(circle,var(--orange),transparent 60%);bottom:-12vmax;left:40vmax;animation-delay:-16s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-9deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1080px;margin:0 auto;padding:26px 30px 60px;}
+
+  /* SectionHeader: title + subtitle + Workflow icon */
+  .head{display:flex;align-items:flex-end;gap:18px;margin-bottom:20px;flex-wrap:wrap;
+    opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards;}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--orange);margin-bottom:5px;}
+  .head .titrow{display:flex;align-items:center;gap:12px}
+  .head .micon{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;flex:0 0 auto;
+    background:rgba(116,83,138,.2);border:1px solid rgba(116,83,138,.45);color:#c7a8d8}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;
+    font-variation-settings:"SOFT" 50,"WONK" 1;}
+  .head h2 b{color:var(--pink);font-weight:500}
+  .head .sub{color:var(--cream-dim);font-size:13.5px;margin-top:6px}
+  .spacer{flex:1}
+
+  /* SUGGESTION marker */
+  .sug{position:relative}
+  .sug::after{content:"SUGGESTION";position:absolute;top:-9px;right:-6px;font-family:"Spline Sans Mono",monospace;
+    font-size:7.5px;letter-spacing:.1em;background:rgba(116,83,138,.9);color:var(--cream);
+    padding:2px 5px;border-radius:6px;font-weight:600;pointer-events:none;white-space:nowrap;z-index:5}
+
+  /* SUGGESTION: summary + search controls. Neither exists in TemplateAssignmentScreen.kt source. */
+  .controls{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap;
+    opacity:0;animation:rise .6s var(--ease) .08s forwards;}
+  .tally{display:flex;gap:8px;flex-wrap:wrap}
+  .tchip{display:inline-flex;align-items:center;gap:7px;background:var(--navy-3);border:.5px solid var(--line);
+    border-radius:999px;padding:7px 13px;font-size:12.5px;font-weight:600;color:var(--cream)}
+  .tchip .dot{width:8px;height:8px;border-radius:50%}
+  .tchip .dot.on{background:var(--success)}
+  .tchip .dot.off{background:var(--cream-dim)}
+  .tchip .ct{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim)}
+  .search{display:flex;align-items:center;gap:9px;background:var(--navy-3);border:1px solid var(--line);
+    border-radius:13px;padding:10px 14px;color:var(--cream-dim);font-size:13.5px;min-width:240px;margin-left:auto}
+  .search input{background:none;border:none;outline:none;color:var(--cream);font-family:inherit;font-size:13.5px;width:100%;}
+
+  /* binding list: Column spacedBy(10) */
+  .list{display:flex;flex-direction:column;gap:12px}
+  /* GlassSurface(cornerRadius=16) -> BindingCard */
+  .bcard{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.55));border:1px solid var(--line);
+    border-radius:18px;padding:16px 18px;transition:.2s var(--ease);position:relative;overflow:hidden;
+    display:flex;flex-direction:column;gap:7px;
+    opacity:0;transform:translateY(14px);animation:rise .6s var(--ease) forwards;}
+  .bcard:hover{transform:translateY(-2px);border-color:rgba(116,83,138,.45);box-shadow:0 18px 40px -22px rgba(0,0,0,.7)}
+  .bcard:nth-child(1){animation-delay:.10s}.bcard:nth-child(2){animation-delay:.15s}
+  .bcard:nth-child(3){animation-delay:.20s}.bcard:nth-child(4){animation-delay:.25s}
+  .bcard:nth-child(5){animation-delay:.30s}.bcard:nth-child(6){animation-delay:.35s}
+  .brow{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  /* catalogKey shown as the card title (titleMedium); keep the mono feel since these are dotted keys */
+  .bkey{font-family:"Spline Sans Mono",monospace;font-size:15px;font-weight:600;color:var(--cream);letter-spacing:-.01em}
+  /* ACTIVE / PAUSED pill: success tint when active, dim tint when paused */
+  .pill{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.1em;font-weight:600;
+    padding:3px 9px;border-radius:999px}
+  .pill.active{background:rgba(76,175,125,.16);color:var(--success)}
+  .pill.paused{background:rgba(207,206,198,.16);color:var(--cream-dim)}
+  /* "-> {templateId}" (bodySmall, dim). The pointer is a plain right arrow, reproduced verbatim from source. */
+  .barrow{color:var(--cream-dim);font-size:13px}
+  .barrow .tid{font-family:"Spline Sans Mono",monospace;color:#c7a8d8}
+  /* optional "Audience: {a}" (only rendered when binding.audience != null) */
+  .baud{color:var(--cream-dim);font-size:12.5px}
+  .baud b{color:var(--cream);font-weight:600}
+  /* SUGGESTION: triggerKey echo. Source card never displays triggerKey even when set. */
+  .btrig{color:var(--cream-dim);font-size:12.5px}
+  .btrig code{font-family:"Spline Sans Mono",monospace;color:var(--teal)}
+  .bfoot{display:flex;gap:8px;padding-top:8px;margin-top:2px;border-top:1px solid var(--line-2)}
+  /* GhostButton "Edit" */
+  .ghost{background:transparent;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";
+    font-weight:600;font-size:13px;padding:8px 16px;border-radius:11px;cursor:pointer;transition:.18s var(--ease);
+    display:inline-flex;align-items:center;gap:7px}
+  .ghost:hover{background:var(--navy-2);border-color:rgba(223,132,49,.4)}
+
+  /* empty + loading states (verbatim source copy) */
+  .state{font-size:14px;color:var(--cream-dim);padding:14px 2px}
+
+  /* PrimaryButton "Add Binding" */
+  .primary{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";
+    font-weight:700;font-size:14px;padding:12px 18px;border-radius:13px;cursor:pointer;transition:.18s var(--ease);
+    display:inline-flex;align-items:center;gap:8px}
+  .primary:hover{transform:translateY(-2px);box-shadow:0 12px 28px -12px rgba(223,132,49,.6)}
+  .primary:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+  .addrow{margin-top:14px}
+
+  /* ---- Editor overlay (BindingEditorOverlay, GlassSurface cornerRadius=20) ---- */
+  .scrim{position:fixed;inset:0;background:rgba(8,9,15,.55);backdrop-filter:blur(3px);z-index:40;
+    opacity:0;pointer-events:none;transition:.25s var(--ease);display:grid;place-items:start center;padding:34px 20px;overflow-y:auto}
+  .scrim.show{opacity:1;pointer-events:auto}
+  .modal{width:100%;max-width:560px;background:linear-gradient(160deg,var(--navy-2),var(--navy-3));
+    border:1px solid var(--line);border-radius:22px;padding:24px;transform:translateY(14px) scale(.99);
+    transition:.25s var(--ease);box-shadow:0 30px 70px -28px rgba(0,0,0,.8)}
+  .scrim.show .modal{transform:none}
+  .mhead{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .mhead h3{font-family:"Fraunces",serif;font-weight:500;font-size:24px;font-variation-settings:"SOFT" 50;letter-spacing:-.01em}
+  .mhead .x{margin-left:auto;cursor:pointer;color:var(--cream-dim);font-size:22px;line-height:1;background:none;border:none}
+  .mhead .x:hover{color:var(--cream)}
+  .mhint{font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim);opacity:.65;margin-bottom:18px}
+
+  .efield{margin-bottom:16px}
+  /* BottomBorderField labels + the small section labels ("Template", "Audience") use labelSmall */
+  .elab{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--cream-dim);opacity:.7;display:block;margin-bottom:8px}
+  .field{width:100%;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:12px 14px;
+    color:var(--cream);font-family:inherit;font-size:14px;outline:none;transition:.16s var(--ease)}
+  .field.mono{font-family:"Spline Sans Mono",monospace;font-size:13px}
+  .field:focus{border-color:rgba(223,132,49,.5)}
+  .field::placeholder{color:var(--cream-dim);opacity:.5}
+
+  /* Template selector: one row per EmailTemplate; selected = primary tint + primary border */
+  .tlist{display:flex;flex-direction:column;gap:6px}
+  .trow{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    background:var(--navy-3);border:.5px solid var(--line);border-radius:10px;padding:11px 13px;cursor:pointer;
+    transition:.15s var(--ease)}
+  .trow:hover{border-color:rgba(223,132,49,.4)}
+  .trow.sel{background:rgba(223,132,49,.16);border-color:var(--orange)}
+  .trow .tt{font-size:14px;color:var(--cream)}
+  .trow .tcat{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cream-dim)}
+
+  /* Audience pills: single-select; selected = orange fill / navy text; click selected to clear (nullable) */
+  .auds{display:flex;gap:7px;flex-wrap:wrap}
+  .aud{background:var(--navy-3);border:.5px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";
+    font-weight:600;font-size:12.5px;padding:7px 14px;border-radius:999px;cursor:pointer;transition:.15s var(--ease)}
+  .aud:hover{border-color:rgba(223,132,49,.4)}
+  .aud.on{background:var(--orange);color:var(--navy);border-color:transparent}
+
+  /* active Switch + "Active"/"Paused" label */
+  .switchrow{display:flex;align-items:center;gap:12px}
+  .switch{width:46px;height:26px;border-radius:999px;background:var(--navy-3);border:1px solid var(--line);
+    position:relative;cursor:pointer;transition:.18s var(--ease);flex:0 0 auto}
+  .switch::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;
+    background:var(--cream-dim);transition:.18s var(--ease)}
+  .switch.on{background:rgba(223,132,49,.3);border-color:rgba(223,132,49,.5)}
+  .switch.on::after{transform:translateX(20px);background:var(--orange)}
+  .switchlab{font-size:14px;color:var(--cream)}
+
+  .mactions{display:flex;gap:10px;margin-top:22px}
+  .mactions .ghost{flex:1;justify-content:center;padding:12px}
+  .mactions .primary{flex:1;justify-content:center;padding:12px}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:32px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:640px){.search{margin-left:0;width:100%}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="kick">The Den · Admin</div>
+        <div class="titrow">
+          <!-- Lucide "Workflow" icon (mirrors SectionHeader icon = Lucide.Workflow) -->
+          <span class="micon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/>
+              <path d="M6 9v3a3 3 0 0 0 3 3h6"/><path d="M15 6h3a3 3 0 0 1 3 3v0"/>
+            </svg>
+          </span>
+          <h2>Template <b>Assignment</b></h2>
+        </div>
+        <!-- subtitle verbatim -->
+        <div class="sub">Bind email templates to notification triggers.</div>
+      </div>
+      <div class="spacer"></div>
+    </div>
+
+    <!-- SUGGESTION controls: tally chips + search. Neither exists in TemplateAssignmentScreen.kt source. -->
+    <div class="controls">
+      <div class="tally sug">
+        <span class="tchip"><span class="dot on"></span>Active <span class="ct">3</span></span>
+        <span class="tchip"><span class="dot off"></span>Paused <span class="ct">1</span></span>
+      </div>
+      <label class="search sug">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+        <input placeholder="Search by catalog key or template..." />
+      </label>
+    </div>
+
+    <!--
+      Sample bindings below are ILLUSTRATIVE PLACEHOLDER only.
+      Catalog keys, trigger keys, and template titles are placeholder (not real Auntie copy).
+      Real fields shown verbatim from the model: catalogKey, templateId, audience?, active.
+    -->
+    <div class="list" id="list">
+      <!-- active, with audience -->
+      <div class="bcard" data-key="kincare.booking.confirm" data-tid="booking.confirmed" data-aud="kinfolk" data-trig="" data-active="1">
+        <div class="brow">
+          <span class="bkey">kincare.booking.confirm</span>
+          <span class="pill active">ACTIVE</span>
+        </div>
+        <!-- "-> {templateId}" reproduced from source (plain right arrow, not an em dash) -->
+        <div class="barrow">-> <span class="tid">booking.confirmed</span></div>
+        <div class="baud">Audience: <b>kinfolk</b></div>
+        <div class="bfoot"><button class="ghost edit">Edit</button></div>
+      </div>
+
+      <!-- active, no audience (audience? null -> the Audience line is not rendered) -->
+      <div class="bcard" data-key="kincare.booking.reminder" data-tid="booking.reminder" data-aud="" data-trig="" data-active="1">
+        <div class="brow">
+          <span class="bkey">kincare.booking.reminder</span>
+          <span class="pill active">ACTIVE</span>
+        </div>
+        <div class="barrow">-> <span class="tid">booking.reminder</span></div>
+        <div class="bfoot"><button class="ghost edit">Edit</button></div>
+      </div>
+
+      <!-- active, with audience + a triggerKey override (override echo is a SUGGESTION; source card hides it) -->
+      <div class="bcard" data-key="invoice.sent" data-tid="invoice.sent" data-aud="admin" data-trig="invoice.sent.admin" data-active="1">
+        <div class="brow">
+          <span class="bkey">invoice.sent</span>
+          <span class="pill active">ACTIVE</span>
+        </div>
+        <div class="barrow">-> <span class="tid">invoice.sent</span></div>
+        <div class="baud">Audience: <b>admin</b></div>
+        <div class="btrig sug">override: <code>invoice.sent.admin</code></div>
+        <div class="bfoot"><button class="ghost edit">Edit</button></div>
+      </div>
+
+      <!-- paused -->
+      <div class="bcard" data-key="reengage.lapsed" data-tid="reengage.lapsed" data-aud="kinfolk" data-trig="" data-active="0">
+        <div class="brow">
+          <span class="bkey">reengage.lapsed</span>
+          <span class="pill paused">PAUSED</span>
+        </div>
+        <div class="barrow">-> <span class="tid">reengage.lapsed</span></div>
+        <div class="baud">Audience: <b>kinfolk</b></div>
+        <div class="bfoot"><button class="ghost edit">Edit</button></div>
+      </div>
+    </div>
+
+    <!-- empty state copy (verbatim) shown when there are no bindings -->
+    <div class="state" id="empty" style="display:none">No bindings yet. Defaults from the catalog apply until you assign one.</div>
+    <!-- loading state copy (verbatim, not shown in this static mockup): "Loading bindings…" -->
+
+    <!-- PrimaryButton "Add Binding": opens the editor on a blank binding -->
+    <div class="addrow">
+      <button class="primary" id="addBinding">Add Binding</button>
+    </div>
+
+    <p class="note">// concept mockup · Template Assignment (admin) · mirrors TemplateAssignmentScreen.kt · palette from AuntieColors.kt · sample catalog keys + trigger keys are placeholder, Auntie authors real copy</p>
+  </div>
+
+  <!-- ===== Editor overlay (BindingEditorOverlay) ===== -->
+  <div class="scrim" id="scrim">
+    <div class="modal">
+      <div class="mhead">
+        <!-- "New Binding" if catalogKey blank, else "Edit: {catalogKey}" -->
+        <h3 id="etitle">New Binding</h3>
+        <button class="x" id="closeEdit">✕</button>
+      </div>
+      <div class="mhint">// catalog key + optional audience / trigger override -> Firestore email template · dispatcher resolves per trigger</div>
+
+      <div class="efield">
+        <label class="elab">Catalog Key</label>
+        <!-- placeholder verbatim from source -->
+        <input class="field mono" id="fKey" placeholder="e.g. kincare.booking.confirm" />
+      </div>
+
+      <div class="efield">
+        <label class="elab">Template</label>
+        <!--
+          One selectable row per EmailTemplate (from listTemplates): title + optional category.
+          Template titles / categories below are illustrative placeholder.
+        -->
+        <div class="tlist" id="tlist">
+          <div class="trow sel" data-tid="booking.confirmed"><span class="tt">Booking confirmed</span><span class="tcat">Bookings</span></div>
+          <div class="trow" data-tid="booking.reminder"><span class="tt">Visit reminder</span><span class="tcat">Bookings</span></div>
+          <div class="trow" data-tid="invoice.sent"><span class="tt">Invoice sent</span><span class="tcat">Invoicing</span></div>
+          <div class="trow" data-tid="invoice.paid"><span class="tt">Payment received</span><span class="tcat">Invoicing</span></div>
+          <div class="trow" data-tid="welcome.kinfolk"><span class="tt">Welcome to TribeTails</span><span class="tcat">Onboarding</span></div>
+          <div class="trow" data-tid="reengage.lapsed"><span class="tt">We miss your crew</span><span class="tcat">Re-engagement</span></div>
+        </div>
+      </div>
+
+      <div class="efield">
+        <label class="elab">Audience</label>
+        <!-- AUDIENCES = kinfolk, auntie, admin, guest (verbatim). Single-select; click selected to clear (null). -->
+        <div class="auds" id="auds">
+          <span class="aud" data-aud="kinfolk">kinfolk</span>
+          <span class="aud" data-aud="auntie">auntie</span>
+          <span class="aud" data-aud="admin">admin</span>
+          <span class="aud" data-aud="guest">guest</span>
+        </div>
+      </div>
+
+      <div class="efield">
+        <label class="elab">Trigger Key (optional override)</label>
+        <input class="field mono" id="fTrigger" placeholder="" />
+      </div>
+
+      <div class="efield">
+        <div class="switchrow">
+          <div class="switch on" id="fActive"></div>
+          <span class="switchlab" id="activeLab">Active</span>
+        </div>
+      </div>
+
+      <div class="mactions">
+        <button class="ghost" id="cancelEdit" style="justify-content:center">Cancel</button>
+        <!-- Save: enabled only when catalogKey AND templateId are both non-blank -->
+        <button class="primary" id="saveEdit">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // recompute the SUGGESTION tally chips + empty state from the rendered cards
+    function refreshTally(){
+      const cards = [...document.querySelectorAll('#list .bcard')];
+      const active = cards.filter(c => c.dataset.active === '1').length;
+      const paused = cards.length - active;
+      document.querySelector('.tally .ct').textContent = active;
+      document.querySelectorAll('.tally .ct')[1].textContent = paused;
+      document.getElementById('empty').style.display = cards.length === 0 ? '' : 'none';
+    }
+    refreshTally();
+
+    const scrim = document.getElementById('scrim');
+    const fKey = document.getElementById('fKey');
+    const fTrigger = document.getElementById('fTrigger');
+    const fActive = document.getElementById('fActive');
+    const activeLab = document.getElementById('activeLab');
+    const etitle = document.getElementById('etitle');
+    const saveBtn = document.getElementById('saveEdit');
+
+    function setTemplate(tid){
+      document.querySelectorAll('#tlist .trow').forEach(r => r.classList.toggle('sel', r.dataset.tid === tid));
+    }
+    function selectedTemplate(){
+      const r = document.querySelector('#tlist .trow.sel');
+      return r ? r.dataset.tid : '';
+    }
+    function setAudience(aud){
+      document.querySelectorAll('#auds .aud').forEach(a => a.classList.toggle('on', !!aud && a.dataset.aud === aud));
+    }
+    function setActive(on){
+      fActive.classList.toggle('on', on);
+      activeLab.textContent = on ? 'Active' : 'Paused';
+    }
+    // Save gating: catalogKey AND templateId both non-blank
+    function validate(){ saveBtn.disabled = !(fKey.value.trim() && selectedTemplate()); }
+
+    // Template select rows
+    document.querySelectorAll('#tlist .trow').forEach(r => r.addEventListener('click', () => { setTemplate(r.dataset.tid); validate(); }));
+    // Audience pills: single-select; clicking the selected one clears it (audience is nullable)
+    document.querySelectorAll('#auds .aud').forEach(a => a.addEventListener('click', () => {
+      const wasOn = a.classList.contains('on');
+      setAudience(wasOn ? null : a.dataset.aud);
+    }));
+    // active Switch toggle
+    fActive.addEventListener('click', () => setActive(!fActive.classList.contains('on')));
+    fKey.addEventListener('input', validate);
+
+    // open editor on an existing binding -> "Edit: {catalogKey}"
+    document.querySelectorAll('.edit').forEach(btn => btn.addEventListener('click', e => {
+      const card = e.target.closest('.bcard');
+      etitle.textContent = 'Edit: ' + card.dataset.key;
+      fKey.value = card.dataset.key;
+      setTemplate(card.dataset.tid);
+      setAudience(card.dataset.aud || null);
+      fTrigger.value = card.dataset.trig || '';
+      setActive(card.dataset.active === '1');
+      validate();
+      scrim.classList.add('show');
+    }));
+
+    // Add Binding -> blank binding ("New Binding"), templateId prefilled to first template
+    document.getElementById('addBinding').addEventListener('click', () => {
+      etitle.textContent = 'New Binding';
+      fKey.value = '';
+      setTemplate(document.querySelector('#tlist .trow').dataset.tid);
+      setAudience(null);
+      fTrigger.value = '';
+      setActive(true);
+      validate();
+      scrim.classList.add('show');
+    });
+
+    const closeEdit = () => scrim.classList.remove('show');
+    document.getElementById('closeEdit').onclick = closeEdit;
+    document.getElementById('cancelEdit').onclick = closeEdit;
+    scrim.addEventListener('click', e => { if (e.target === scrim) closeEdit(); });
+
+    // parallax on the mesh, matching the other Den mockups
+    const mesh = document.querySelector('.mesh');
+    addEventListener('pointermove', e => {
+      const x = (e.clientX/innerWidth - .5), y = (e.clientY/innerHeight - .5);
+      mesh.style.transform = `translate3d(${x*-15}px,${y*-15}px,0)`;
+    }, {passive:true});
+  </script>
+</body>
+</html>

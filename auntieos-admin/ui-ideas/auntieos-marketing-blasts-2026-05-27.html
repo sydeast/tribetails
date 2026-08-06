@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Marketing blasts (concept)</title>
+<!--
+  AuntieOS redesign concept · Marketing blasts (scheduled campaigns). Standalone mockup, Den aesthetic.
+  NEW admin surface: no existing UI today. Mirrors functions/src/admin/scheduleMarketingBlast.ts.
+  Real callable args: key (enum: newsletter.announcement | survey.event | marketing.optin),
+  fireAtMs (scheduled send time, ms epoch, not in past), audienceUids (1..5000 uids),
+  data (record of merge fields). Returns { ok, key, dispatched, suppressed }. Rows persist to
+  the marketingBlasts collection. Channels are NOT a callable arg: they resolve per recipient
+  via marketingOptIn[<category>] / resolveChannels (opted-out uids suppressed by dispatcher).
+  One-off 1:1 / broadcast sends live on the Communicate screen; THIS screen is scheduled campaigns.
+  No em dashes. Palette from AuntieColors.kt. Copy is placeholder / obviously illustrative.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.42;mix-blend-mode:screen;filter:blur(74px);animation:drift 29s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--pink),transparent 62%);top:-12vmax;left:-4vmax;}
+  .blob.b{width:38vmax;height:38vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:12vmax;right:-8vmax;animation-delay:-10s;}
+  .blob.c{width:32vmax;height:32vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-12vmax;left:42vmax;animation-delay:-17s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1200px;margin:0 auto;padding:26px 30px 60px;}
+  .head{display:flex;align-items:center;gap:18px;margin-bottom:16px;flex-wrap:wrap;opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--orange);margin-bottom:5px}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:32px;letter-spacing:-.02em;font-variation-settings:"SOFT" 50,"WONK" 1}
+  .head h2 b{color:var(--pink);font-weight:500}
+  .head .sub{color:var(--cream-dim);font-size:13.5px;margin-top:3px}
+  .spacer{flex:1}
+
+  /* NEW-surface banner */
+  .newbanner{display:flex;align-items:flex-start;gap:12px;background:radial-gradient(120% 160% at 0% 0%,rgba(116,83,138,.22),transparent 55%),var(--navy-2);
+    border:1px solid rgba(116,83,138,.45);border-radius:16px;padding:14px 16px;margin-bottom:22px;
+    opacity:0;transform:translateY(10px);animation:rise .6s var(--ease) .05s forwards}
+  .newbanner .tag{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;
+    color:#c7a8d8;border:1px solid rgba(116,83,138,.5);border-radius:20px;padding:4px 9px;flex:0 0 auto;margin-top:1px}
+  .newbanner .t b{font-size:14px;font-weight:700}
+  .newbanner .t p{font-size:13px;color:var(--cream-dim);margin-top:3px;line-height:1.5}
+  .newbanner code{font-family:"Spline Sans Mono",monospace;font-size:11.5px;color:#f0b277}
+
+  .cols{display:grid;grid-template-columns:1.35fr 1fr;gap:20px;align-items:start}
+  .panel{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);border-radius:20px;padding:22px;
+    opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) forwards}
+  .panel.l{animation-delay:.12s}.panel.r{animation-delay:.22s}.panel + .panel{margin-top:18px}
+  .panel h3{font-family:"Fraunces",serif;font-weight:500;font-size:21px;font-variation-settings:"SOFT" 50;margin-bottom:4px;display:flex;align-items:center;gap:9px}
+  .panel .psub{color:var(--cream-dim);font-size:12.5px;margin-bottom:18px}
+  label.cap{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--cream-dim);opacity:.7;display:block;margin-bottom:11px}
+  label.cap .arg{color:#7fdce8;text-transform:none;letter-spacing:.02em;opacity:.85}
+
+  /* campaign key (mirrors `key` enum) as chips */
+  .chips{display:flex;flex-wrap:wrap;gap:9px;margin-bottom:18px}
+  .chip{font-size:13.5px;font-weight:600;padding:9px 14px;border-radius:30px;cursor:pointer;border:1px solid var(--line);
+    background:var(--navy-3);color:var(--cream-dim);transition:.16s var(--ease);display:inline-flex;align-items:center;gap:7px}
+  .chip:hover{transform:translateY(-2px)}
+  .chip.on{background:rgba(223,132,49,.95);color:var(--navy);border-color:transparent}
+  .chip .mono{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.04em;opacity:.85}
+
+  /* audience (mirrors audienceUids) */
+  .seg{display:flex;background:var(--navy-3);border:1px solid var(--line);border-radius:13px;padding:5px;gap:3px;margin-bottom:14px}
+  .seg button{flex:1;background:none;border:none;color:var(--cream-dim);font-family:"Hanken Grotesk";font-weight:600;font-size:13px;padding:9px;border-radius:9px;cursor:pointer;transition:.16s var(--ease)}
+  .seg button.on{background:var(--cream);color:var(--navy)}
+  .aud{display:flex;align-items:center;gap:12px;background:var(--navy-3);border:1px solid var(--line);border-radius:14px;padding:13px;margin-bottom:16px}
+  .avstack{display:flex}
+  .avstack i{width:30px;height:30px;border-radius:50%;border:2px solid var(--navy-2);margin-left:-9px;background-size:cover;box-shadow:inset 0 -4px 8px rgba(0,0,0,.3)}
+  .avstack i:first-child{margin-left:0}
+  .aud .who b{font-size:15px}.aud .who small{display:block;color:var(--cream-dim);font-size:12.5px}
+  .aud .edit{margin-left:auto;font-family:"Hanken Grotesk";font-weight:600;font-size:12.5px;color:var(--teal);background:none;border:none;cursor:pointer}
+
+  /* channels note: resolved per recipient, not a callable arg */
+  .chnote{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:rgba(10,133,149,.1);border:1px solid rgba(10,133,149,.3);
+    border-radius:12px;padding:11px 13px;margin-bottom:18px;font-size:12.5px;color:var(--cream-dim)}
+  .chnote .ch{font-family:"Spline Sans Mono",monospace;font-size:8.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;padding:3px 8px;border-radius:6px}
+  .chnote .ch.email{background:rgba(10,133,149,.22);color:#7fdce8}
+  .chnote .ch.push{background:rgba(223,132,49,.18);color:#f0b277}
+  .chnote .ch.inapp{background:rgba(116,83,138,.2);color:#c7a8d8}
+  .chnote span.txt{flex:1;min-width:160px}
+
+  .input{width:100%;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:13px 14px;color:var(--cream);font-family:inherit;font-size:14.5px;outline:none;margin-bottom:14px}
+  .input:focus{border-color:rgba(223,132,49,.5)}
+  .editor{min-height:96px;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:14px;font-size:15px;line-height:1.6;outline:none;color:var(--cream);margin-bottom:14px}
+  .editor:empty:before{content:"Placeholder body. Auntie authors all real wording.";color:rgba(251,251,249,.4)}
+
+  /* merge fields (mirrors `data` record) */
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:6px}
+  .row2 .input{margin-bottom:8px}
+  .fieldlab{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.06em;color:var(--cream-dim);opacity:.65;display:block;margin-bottom:6px}
+
+  /* schedule (mirrors fireAtMs) */
+  .when{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:6px}
+  .when input[type=date],.when input[type=time]{width:100%;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:12px 13px;color:var(--cream);font-family:inherit;font-size:14px;outline:none;color-scheme:dark}
+  .when input:focus{border-color:rgba(223,132,49,.5)}
+  .firehint{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.7;margin:8px 0 16px}
+  .firehint b{color:#7fdce8}
+
+  .sendbar{display:flex;align-items:center;gap:12px;margin-top:4px;flex-wrap:wrap}
+  .send{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;font-size:14.5px;padding:13px 22px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);display:inline-flex;align-items:center;gap:9px}
+  .send:hover{transform:translateY(-2px);box-shadow:0 14px 30px -12px rgba(223,132,49,.6)}
+  .sendbar .hint{font-size:12.5px;color:var(--cream-dim)}
+
+  /* cream live preview card */
+  .pv{background:var(--cream);border-radius:16px;overflow:hidden;border:1px solid var(--line);box-shadow:0 20px 44px -22px rgba(0,0,0,.7)}
+  .pv .top{height:66px;background:radial-gradient(120% 130% at 15% 10%,#DF8431,#D55C87);display:flex;align-items:flex-end;padding:13px}
+  .pv .top b{font-family:"Fraunces",serif;color:#fff;font-size:16px;font-weight:500;font-variation-settings:"SOFT" 60}
+  .pv .pb{padding:15px;color:#2a2a33}
+  .pv .pb h4{font-family:"Fraunces",serif;font-size:16px;margin-bottom:7px;color:#1d1d24}
+  .pv .pb p{font-size:12.5px;line-height:1.6;color:#4a4a55}
+  .pv .pb .cta{margin-top:12px;display:inline-block;background:#0A8595;color:#fff;font-weight:700;font-size:12px;padding:8px 14px;border-radius:9px}
+  .pvlab{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--cream-dim);opacity:.6;text-align:center;margin-top:10px}
+
+  /* campaign list (status sections, list-row + status-pill look) */
+  .listsec{margin-top:4px}
+  .listsec h4{font-family:"Fraunces",serif;font-weight:500;font-size:16px;margin:18px 0 10px;font-variation-settings:"SOFT" 50;display:flex;align-items:center;gap:9px}
+  .listsec h4 .ct{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);font-weight:400}
+  .cmp{display:flex;align-items:center;gap:12px;background:var(--navy-3);border:1px solid var(--line);border-radius:14px;padding:12px 13px;transition:.16s var(--ease)}
+  .cmp + .cmp{margin-top:9px}
+  .cmp:hover{border-color:rgba(223,132,49,.3)}
+  .cmp .accent{width:4px;align-self:stretch;min-height:46px;border-radius:999px;flex:0 0 auto}
+  .acc-scheduled{background:var(--teal)}.acc-sending{background:var(--orange)}.acc-sent{background:var(--purple)}
+  .cmp .info{flex:1;min-width:0}
+  .cmp .info .nm{font-size:14px;font-weight:600}
+  .cmp .info .meta{color:var(--cream-dim);font-size:12px;margin-top:3px}
+  .cmp .info code{font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:#7fdce8}
+  .pill{display:inline-block;font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.07em;text-transform:uppercase;font-weight:600;padding:4px 9px;border-radius:20px;flex:0 0 auto}
+  .pill.scheduled{background:rgba(10,133,149,.18);color:#7fdce8;border:1px solid rgba(10,133,149,.4)}
+  .pill.sending{background:rgba(223,132,49,.16);color:#f0b277;border:1px solid rgba(223,132,49,.4)}
+  .pill.sent{background:rgba(116,83,138,.2);color:#c7a8d8;border:1px solid rgba(116,83,138,.4)}
+  .cmp .right{display:flex;align-items:center;gap:11px;flex:0 0 auto}
+  .cmp .rate{font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim);text-align:right}
+  .cmp .rate b{display:block;color:var(--teal);font-size:13px}
+  .cancel{background:transparent;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";font-weight:700;font-size:12px;padding:8px 13px;border-radius:10px;cursor:pointer;transition:.16s var(--ease)}
+  .cancel:hover{border-color:var(--coral);color:#f3a0a4}
+  .sendprog{position:relative;width:84px;height:6px;border-radius:99px;background:var(--navy-2);overflow:hidden}
+  .sendprog i{position:absolute;inset:0 38% 0 0;background:linear-gradient(90deg,var(--orange),var(--pink));border-radius:99px}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:28px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:860px){.cols{grid-template-columns:1fr}.row2,.when{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="kick">The Den · Marketing</div>
+        <h2>Marketing <b>blasts</b></h2>
+        <div class="sub">Scheduled campaigns to your kinfolk</div>
+      </div>
+      <div class="spacer"></div>
+    </div>
+
+    <div class="newbanner">
+      <span class="tag">new surface</span>
+      <div class="t">
+        <b>No admin UI exists for this yet.</b>
+        <p>This screen is a concept built directly on the <code>scheduleMarketingBlast</code> callable. It schedules a marketing campaign (one notification per audience uid) to fire at a future time. One-off 1:1 and broadcast sends still live on Communicate. Fields below mirror the callable args: <code>key</code>, <code>audienceUids</code>, <code>fireAtMs</code>, <code>data</code>.</p>
+      </div>
+    </div>
+
+    <div class="cols">
+      <!-- (1) COMPOSER -->
+      <div>
+        <div class="panel l">
+          <h3>Schedule a blast</h3>
+          <div class="psub">scheduleMarketingBlast → one scheduled notification per recipient, promoted by the sweep at fire time</div>
+
+          <label class="cap">Campaign <span class="arg">key</span></label>
+          <div class="chips" id="keychips">
+            <span class="chip on" data-key="newsletter.announcement" data-cat="newsletter" data-h="Sample · Monthly newsletter" data-p="Placeholder newsletter body. Two or three lines of obviously illustrative sample text go here while Auntie writes the real note.">Newsletter <span class="mono">newsletter.announcement</span></span>
+            <span class="chip" data-key="survey.event" data-cat="survey" data-h="Sample · Quick survey" data-p="Placeholder survey invite. Sample sentence asking kinfolk to share a thought. Real wording authored by Auntie.">Survey / event <span class="mono">survey.event</span></span>
+            <span class="chip" data-key="marketing.optin" data-cat="marketing" data-h="Sample · Stay in the loop" data-p="Placeholder opt-in nudge. Illustrative sample copy about updates. Final wording authored by Auntie.">Opt-in nudge <span class="mono">marketing.optin</span></span>
+          </div>
+
+          <label class="cap">Audience <span class="arg">audienceUids[ ]</span></label>
+          <div class="seg"><button class="on">All opted-in</button><button>A segment</button><button>Pick uids</button></div>
+          <div class="aud">
+            <div class="avstack">
+              <i style="background:radial-gradient(circle at 34% 28%,#37c0cf,#08525e)"></i>
+              <i style="background:radial-gradient(circle at 34% 28%,#ef9fbb,#8c3354)"></i>
+              <i style="background:radial-gradient(circle at 34% 28%,#f3b97f,#9a5a1c)"></i>
+              <i style="background:radial-gradient(circle at 34% 28%,#b594c9,#4c3a5c)"></i>
+            </div>
+            <div class="who"><b id="audCount">412 uids</b><small>resolves to an audienceUids array (max 5000)</small></div>
+            <button class="edit">Refine</button>
+          </div>
+
+          <div class="chnote">
+            <span class="ch email">Email</span><span class="ch push">Push</span><span class="ch inapp">In-app</span>
+            <span class="txt">Channels resolve per recipient via marketingOptIn[<b id="catName">newsletter</b>]. Opted-out uids are suppressed by the dispatcher, not sent.</span>
+          </div>
+
+          <label class="cap">Content fields <span class="arg">data</span></label>
+          <span class="fieldlab">data.subject</span>
+          <input class="input" id="subj" value="Sample subject line (placeholder)" />
+          <span class="fieldlab">data.body</span>
+          <div class="editor" id="bodyed" contenteditable="true">Placeholder newsletter body. Two or three lines of obviously illustrative sample text go here while Auntie writes the real note.</div>
+          <div class="row2">
+            <div>
+              <span class="fieldlab">data.ctaLabel</span>
+              <input class="input" id="cta" value="Sample button" />
+            </div>
+            <div>
+              <span class="fieldlab">data.ctaUrl</span>
+              <input class="input" value="https://example.test/sample" />
+            </div>
+          </div>
+
+          <label class="cap" style="margin-top:8px">Send time <span class="arg">fireAtMs</span></label>
+          <div class="when">
+            <input type="date" id="sdate" value="2026-06-03" />
+            <input type="time" id="stime" value="09:00" />
+          </div>
+          <div class="firehint">fireAtMs = <b id="fireMs">1780736400000</b> · must be in the future (callable rejects times more than 60s in the past)</div>
+
+          <div class="sendbar">
+            <button class="send" id="schedBtn">📅 Schedule blast →</button>
+            <span class="hint">a marketingBlasts doc is written (key, fireAtMs, audienceCount, dispatched, suppressed)</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- (2) PREVIEW + CAMPAIGN LIST -->
+      <div>
+        <div class="panel r">
+          <label class="cap">Live preview · email</label>
+          <div class="pv">
+            <div class="top"><b>TribeTails</b></div>
+            <div class="pb">
+              <h4 id="pvh">Sample subject line (placeholder)</h4>
+              <p id="pvp">Placeholder newsletter body. Two or three lines of obviously illustrative sample text go here while Auntie writes the real note.</p>
+              <span class="cta" id="pvc">Sample button</span>
+            </div>
+          </div>
+          <div class="pvlab">how opted-in kinfolk see it</div>
+        </div>
+
+        <div class="panel r" style="animation-delay:.3s">
+          <label class="cap">Campaigns</label>
+          <div class="listsec">
+            <h4>Scheduled <span class="ct">2</span></h4>
+            <div class="cmp">
+              <span class="accent acc-scheduled"></span>
+              <div class="info">
+                <div class="nm">Sample · June newsletter</div>
+                <div class="meta"><code>newsletter.announcement</code> · 412 uids · fires Jun 3, 9:00 AM</div>
+              </div>
+              <div class="right">
+                <span class="pill scheduled">Scheduled</span>
+                <button class="cancel">Cancel</button>
+              </div>
+            </div>
+            <div class="cmp">
+              <span class="accent acc-scheduled"></span>
+              <div class="info">
+                <div class="nm">Sample · Event RSVP survey</div>
+                <div class="meta"><code>survey.event</code> · 198 uids · fires Jun 7, 5:30 PM</div>
+              </div>
+              <div class="right">
+                <span class="pill scheduled">Scheduled</span>
+                <button class="cancel">Cancel</button>
+              </div>
+            </div>
+
+            <h4>Sending <span class="ct">1</span></h4>
+            <div class="cmp">
+              <span class="accent acc-sending"></span>
+              <div class="info">
+                <div class="nm">Sample · Opt-in reminder</div>
+                <div class="meta"><code>marketing.optin</code> · 256 of 410 dispatched</div>
+              </div>
+              <div class="right">
+                <div class="sendprog"><i></i></div>
+                <span class="pill sending">Sending</span>
+              </div>
+            </div>
+
+            <h4>Sent <span class="ct">recent</span></h4>
+            <div class="cmp">
+              <span class="accent acc-sent"></span>
+              <div class="info">
+                <div class="nm">Sample · May newsletter</div>
+                <div class="meta"><code>newsletter.announcement</code> · sent May 6 · 388 sent / 24 suppressed</div>
+              </div>
+              <div class="right">
+                <div class="rate">open<b>71%</b></div>
+                <span class="pill sent">Sent</span>
+              </div>
+            </div>
+            <div class="cmp">
+              <span class="accent acc-sent"></span>
+              <div class="info">
+                <div class="nm">Sample · Spring event survey</div>
+                <div class="meta"><code>survey.event</code> · sent Apr 18 · 175 sent / 9 suppressed</div>
+              </div>
+              <div class="right">
+                <div class="rate">open<b>63%</b></div>
+                <span class="pill sent">Sent</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · Marketing blasts · palette from AuntieColors.kt · placeholder content</p>
+  </div>
+
+  <script>
+    // campaign key chips: select one, repoint category + preview text
+    document.querySelectorAll('#keychips .chip').forEach(c=>c.addEventListener('click',()=>{
+      document.querySelectorAll('#keychips .chip').forEach(x=>x.classList.remove('on'));
+      c.classList.add('on');
+      document.getElementById('catName').textContent=c.dataset.cat;
+      document.getElementById('subj').value=c.dataset.h;
+      document.getElementById('bodyed').textContent=c.dataset.p;
+      syncPreview();
+    }));
+
+    // audience seg toggle
+    document.querySelectorAll('.seg button').forEach(b=>b.addEventListener('click',()=>{
+      b.parentElement.querySelectorAll('button').forEach(x=>x.classList.remove('on')); b.classList.add('on');}));
+
+    // live preview wiring
+    function syncPreview(){
+      document.getElementById('pvh').textContent=document.getElementById('subj').value || 'Sample subject';
+      document.getElementById('pvp').textContent=document.getElementById('bodyed').textContent || 'Placeholder body.';
+      document.getElementById('pvc').textContent=document.getElementById('cta').value || 'Sample button';
+    }
+    document.getElementById('subj').addEventListener('input',syncPreview);
+    document.getElementById('bodyed').addEventListener('input',syncPreview);
+    document.getElementById('cta').addEventListener('input',syncPreview);
+
+    // fireAtMs derived from date + time pickers
+    function syncFire(){
+      const d=document.getElementById('sdate').value, t=document.getElementById('stime').value;
+      if(d&&t){ const ms=new Date(d+'T'+t+':00').getTime(); document.getElementById('fireMs').textContent=String(ms); }
+    }
+    document.getElementById('sdate').addEventListener('change',syncFire);
+    document.getElementById('stime').addEventListener('change',syncFire);
+    syncFire();
+
+    // mesh parallax on pointer
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Payments (concept)</title>
+<!--
+  AuntieOS redesign concept · Payments. Standalone HTML/CSS mockup. Desktop web admin.
+  Same "Den" aesthetic as Directory + Invoices mockups. No em dashes. Palette from AuntieColors.kt.
+
+  MIRRORS the real screen: web/composeApp/.../screens/payments/PaymentsScreen.kt
+    - SectionHeader title "Payments", subtitle "Recorded payments from kinfolk", PiggyBank icon.
+    - PrimaryButton "Record Payment" (Plus leading icon).
+    - SummaryStrip: 3 tiles "Total Received" (sum amount+tip), "Tips" (sum tip), "Count".
+    - PaymentRow: kinfolkName (falls back to client, then "Unknown"); subline joins
+      date · paymentMethod · "Ref: {referenceNumber}" with " · "; optional notes line;
+      right side shows amount + "+ {tip} tip" when tip > 0.
+    - PaymentsEmptyState: PiggyBank, "No payments recorded yet", and the tap-to-log copy.
+    - RecordPaymentDialog fields: Kinfolk ID (required), Kinfolk Name, Amount ($),
+      Tip ($) optional, Method (CASH / CHECK / CARD / TRANSFER), Date (YYYY-MM-DD),
+      Reference number optional, Notes optional. Buttons Save / Cancel.
+      Validation strings "Kinfolk ID is required", "Amount must be greater than zero".
+
+  STRINGS reproduced verbatim from PaymentsScreen.kt EXCEPT three dialog labels where the
+  Kotlin source joins "optional" with an em dash (Tip / Reference number / Notes labels);
+  per the project no-em-dash rule the dash is rendered as a comma here ("..., optional").
+  The Kotlin source should be corrected to match (em dash removal is a separate code task).
+
+  SUGGESTIONS (not in PaymentsScreen.kt; tagged data-suggestion / "SUGGESTION" in comments):
+    1. Search box over the payment list.
+    2. Method filter tabs (All / Cash / Check / Card / Transfer).
+    3. Per-row payment-method icon + colored method chip.
+    4. "linked to invoice" line per row (Payment has no invoice field; invoice linkage
+       is referenced elsewhere, not on the payments screen).
+    5. Method <select> in the dialog instead of the free-text method field.
+
+  Payment model fields client/address/email exist on the data class but are NOT shown by
+  PaymentsScreen.kt, so they are deliberately omitted here (no invented fields).
+  Sample amounts and names are illustrative placeholder, not real client data.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.42;mix-blend-mode:screen;filter:blur(74px);
+    animation:drift 31s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--purple),transparent 62%);top:-10vmax;left:-4vmax;}
+  .blob.b{width:40vmax;height:40vmax;background:radial-gradient(circle,var(--teal),transparent 60%);top:8vmax;right:-8vmax;animation-delay:-11s;}
+  .blob.c{width:32vmax;height:32vmax;background:radial-gradient(circle,var(--orange),transparent 60%);bottom:-12vmax;left:38vmax;animation-delay:-18s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1180px;margin:0 auto;padding:26px 30px 60px;}
+
+  /* SectionHeader: PiggyBank icon + "Payments" + "Recorded payments from kinfolk" */
+  .head{display:flex;align-items:flex-end;gap:18px;margin-bottom:22px;
+    opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards;}
+  .head .icon{width:46px;height:46px;border-radius:14px;flex:0 0 auto;display:grid;place-items:center;
+    background:linear-gradient(150deg,rgba(223,132,49,.22),rgba(213,92,135,.16));border:1px solid var(--line);color:var(--orange)}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--orange);margin-bottom:5px;}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;
+    font-variation-settings:"SOFT" 50,"WONK" 1;}
+  .head .sub{color:var(--cream-dim);font-size:13.5px;margin-top:3px}
+  .spacer{flex:1}
+  /* PrimaryButton "Record Payment" + Plus icon */
+  .add{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;
+    font-size:14px;padding:11px 17px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);
+    display:inline-flex;align-items:center;gap:8px;}
+  .add:hover{transform:translateY(-2px);box-shadow:0 12px 28px -10px rgba(223,132,49,.6)}
+  .add svg{width:16px;height:16px}
+
+  /* SummaryStrip: 3 tiles. Matches SummaryTile (label small + titleLarge value in primary/orange) */
+  .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;}
+  .scard{background:linear-gradient(160deg,var(--navy-2),var(--navy-3));border:1px solid var(--line);
+    border-radius:18px;padding:18px 20px;position:relative;overflow:hidden;
+    opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) forwards;}
+  .scard:nth-child(1){animation-delay:.06s}.scard:nth-child(2){animation-delay:.13s}.scard:nth-child(3){animation-delay:.2s}
+  .scard .lab{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--cream-dim);opacity:.7}
+  .scard .num{font-family:"Fraunces",serif;font-weight:540;font-size:38px;line-height:1;margin-top:12px;
+    letter-spacing:-.02em;color:var(--orange)}
+  .scard.count .num{color:var(--cream)}
+
+  /* SUGGESTION: search box + method filter tabs (not in PaymentsScreen.kt) */
+  .controls{display:flex;align-items:center;gap:12px;margin-bottom:16px;
+    opacity:0;animation:rise .6s var(--ease) .1s forwards;}
+  .tabs{display:flex;background:var(--navy-3);border:1px solid var(--line);border-radius:13px;padding:5px;gap:3px;}
+  .tabs button{background:none;border:none;color:var(--cream-dim);font-family:"Hanken Grotesk";font-weight:600;
+    font-size:13px;padding:8px 15px;border-radius:9px;cursor:pointer;transition:.18s var(--ease)}
+  .tabs button.on{background:var(--cream);color:var(--navy)}
+  .tabs button:not(.on):hover{color:var(--cream)}
+  .sg{position:relative}
+  .sg::after{content:"SUGGESTION";position:absolute;top:-9px;right:8px;font-family:"Spline Sans Mono",monospace;
+    font-size:8px;letter-spacing:.1em;color:var(--purple);background:var(--navy);padding:1px 6px;border-radius:10px;
+    border:1px solid rgba(116,83,138,.5)}
+  .search{display:flex;align-items:center;gap:9px;background:var(--navy-3);border:1px solid var(--line);
+    border-radius:13px;padding:10px 14px;color:var(--cream-dim);font-size:13.5px;flex:1;min-width:160px}
+  .search input{background:none;border:none;outline:none;color:var(--cream);font-family:inherit;font-size:13.5px;width:100%}
+
+  /* Payment list. Mirrors PaymentRow: name + subline (date · method · Ref) + notes, right amount + tip */
+  .list{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);
+    border-radius:20px;overflow:hidden;opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) .16s forwards;}
+  .pay{display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:center;
+    padding:16px 20px;border-bottom:1px solid var(--line-2);transition:.16s var(--ease)}
+  .pay:last-child{border-bottom:none}
+  .pay:hover{background:var(--navy-3)}
+  .av{width:42px;height:42px;border-radius:13px;flex:0 0 auto;display:grid;place-items:center;
+    font-family:"Fraunces",serif;font-weight:600;font-size:15px;color:var(--cream)}
+  .av.a{background:conic-gradient(from 200deg,var(--teal),var(--purple))}
+  .av.b{background:conic-gradient(from 140deg,var(--orange),var(--coral))}
+  .av.c{background:conic-gradient(from 260deg,var(--pink),var(--purple))}
+  .av.d{background:conic-gradient(from 180deg,var(--teal),var(--orange))}
+  .av.e{background:conic-gradient(from 300deg,var(--coral),var(--pink))}
+  .who{min-width:0}
+  .who .nm{font-family:"Fraunces",serif;font-weight:500;font-size:16.5px;color:var(--cream)}
+  /* subline = date · method · Ref:xxx joined with " · " (verbatim join from PaymentRow) */
+  .who .meta{font-family:"Spline Sans Mono",monospace;font-size:11.5px;color:var(--cream-dim);margin-top:4px;line-height:1.5}
+  .who .meta .dot{opacity:.5;padding:0 3px}
+  /* SUGGESTION: colored method chip (PaymentRow renders method as plain text in the subline) */
+  .chip{display:inline-flex;align-items:center;gap:5px;font-family:"Spline Sans Mono",monospace;font-size:9.5px;
+    letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:20px;font-weight:600;vertical-align:1px}
+  .chip.cash{background:rgba(10,133,149,.18);color:#7fdce8;border:1px solid rgba(10,133,149,.45)}
+  .chip.check{background:rgba(116,83,138,.2);color:#c2a5d6;border:1px solid rgba(116,83,138,.5)}
+  .chip.card{background:rgba(223,132,49,.16);color:#f0b277;border:1px solid rgba(223,132,49,.45)}
+  .chip.transfer{background:rgba(213,92,135,.18);color:#e9a6c0;border:1px solid rgba(213,92,135,.5)}
+  .who .note{font-size:12.5px;color:var(--cream-dim);margin-top:5px;font-style:italic;opacity:.92}
+  .right{text-align:right;white-space:nowrap}
+  /* amount in titleMedium primary color (orange); tip in labelSmall primary */
+  .right .amt{font-family:"Fraunces",serif;font-weight:540;font-size:22px;color:var(--orange)}
+  .right .tip{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--orange);opacity:.8;margin-top:3px}
+
+  /* PaymentsEmptyState (rendered hidden here; toggle with the demo button) */
+  .empty{display:none;flex-direction:column;align-items:center;gap:10px;text-align:center;
+    background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);
+    border-radius:20px;padding:48px 28px;}
+  .empty.show{display:flex}
+  .empty .pig{color:var(--cream-dim);opacity:.5}
+  .empty h3{font-family:"Fraunces",serif;font-weight:500;font-size:21px}
+  .empty p{color:var(--cream-dim);font-size:13.5px;max-width:420px}
+
+  /* RecordPaymentDialog (AlertDialog) */
+  .scrim{position:fixed;inset:0;z-index:5;background:rgba(8,9,16,.62);backdrop-filter:blur(3px);
+    display:none;align-items:center;justify-content:center;padding:24px;}
+  .scrim.show{display:flex}
+  .dialog{width:min(440px,100%);max-height:86vh;overflow-y:auto;background:linear-gradient(165deg,var(--navy-2),var(--navy-3));
+    border:1px solid var(--line);border-radius:22px;padding:24px;box-shadow:0 30px 80px -30px rgba(0,0,0,.8)}
+  .dialog h3{font-family:"Fraunces",serif;font-weight:500;font-size:22px;margin-bottom:16px}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:12px;color:var(--cream-dim);margin-bottom:5px;font-weight:600}
+  .field label .req{color:var(--coral)}
+  .field input,.field select,.field textarea{width:100%;background:var(--navy);border:1px solid var(--line);
+    border-radius:11px;padding:11px 13px;color:var(--cream);font-family:inherit;font-size:13.5px;outline:none;
+    transition:.16s var(--ease)}
+  .field input:focus,.field select:focus,.field textarea:focus{border-color:rgba(223,132,49,.55)}
+  .field textarea{resize:vertical;min-height:62px}
+  .field .hint{font-family:"Spline Sans Mono",monospace;font-size:10px;color:var(--cream-dim);opacity:.6;margin-top:4px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .verr{background:rgba(213,83,90,.14);border:1px solid rgba(213,83,90,.45);color:#f3a0a4;
+    font-size:12.5px;border-radius:11px;padding:9px 12px;margin-bottom:12px}
+  .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+  .btn{font-family:"Hanken Grotesk";font-weight:700;font-size:13.5px;padding:10px 18px;border-radius:11px;
+    cursor:pointer;border:none;transition:.18s var(--ease)}
+  .btn.save{background:var(--orange);color:var(--navy)}
+  .btn.save:hover{transform:translateY(-2px);box-shadow:0 12px 24px -10px rgba(223,132,49,.6)}
+  .btn.cancel{background:transparent;border:1px solid var(--line);color:var(--cream-dim)}
+  .btn.cancel:hover{color:var(--cream);background:var(--navy-2)}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .demobar{display:flex;gap:9px;margin-top:18px}
+  .demobar button{background:var(--navy-3);border:1px solid var(--line);color:var(--cream-dim);
+    font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.06em;padding:7px 12px;
+    border-radius:9px;cursor:pointer}
+  .demobar button:hover{color:var(--cream)}
+  .note{margin-top:18px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:780px){.summary{grid-template-columns:1fr}.pay{grid-template-columns:auto 1fr}.right{grid-column:1/-1;text-align:left}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <!-- SectionHeader(title="Payments", subtitle="Recorded payments from kinfolk", icon=PiggyBank) -->
+    <div class="head">
+      <div class="icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 5c-1.5 0-2.8 1.4-3 2-3.5-1.5-11-.3-11 5 0 1.8 0 3 2 4.5V20h4v-2h3v2h4v-4c1-.5 1.4-1.5 2-2h2v-4h-2c0-1-.5-1.5-1-2V5z"/>
+          <path d="M2 9v1c0 1.1.9 2 2 2h1"/><path d="M16 11h0"/>
+        </svg>
+      </div>
+      <div>
+        <div class="kick">The Den · Payments</div>
+        <h2>Payments</h2>
+        <div class="sub">Recorded payments from kinfolk</div>
+      </div>
+      <div class="spacer"></div>
+      <!-- PrimaryButton "Record Payment" with Plus leading icon -->
+      <button class="add" onclick="openDialog()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        Record Payment
+      </button>
+    </div>
+
+    <!-- SummaryStrip: Total Received = sum(amount+tip), Tips = sum(tip), Count = list size -->
+    <!-- placeholder figures: derived from the 5 illustrative rows below, not real client data -->
+    <div class="summary">
+      <div class="scard"><div class="lab">Total Received</div><div class="num">$1,247.50</div></div>
+      <div class="scard"><div class="lab">Tips</div><div class="num">$92.50</div></div>
+      <div class="scard count"><div class="lab">Count</div><div class="num">5</div></div>
+    </div>
+
+    <!-- SUGGESTION: search + method filter tabs are not present in PaymentsScreen.kt -->
+    <div class="controls sg">
+      <div class="tabs">
+        <button class="on">All</button><button>Cash</button><button>Check</button><button>Card</button><button>Transfer</button>
+      </div>
+      <div class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+        <input placeholder="Search kinfolk, method, or reference…" />
+      </div>
+    </div>
+
+    <!-- Payment list (PaymentsList, sortedByDescending date). All rows illustrative placeholder. -->
+    <div class="list" id="list">
+      <!-- Row: name, subline "date · method · Ref:xxx", notes, amount + tip -->
+      <div class="pay">
+        <div class="av a">LW</div>
+        <div class="who">
+          <div class="nm">Lorna Wren</div>
+          <div class="meta">2026-05-27 <span class="dot">·</span> <span class="chip cash">Cash</span> <!-- SUGGESTION: method chip; source shows method as plain text --></div>
+          <div class="note">Spring cleaning week, thank you!</div>
+        </div>
+        <div class="right"><div class="amt">$280.00</div><div class="tip">+ $20.00 tip</div></div>
+      </div>
+
+      <div class="pay">
+        <div class="av b">AD</div>
+        <div class="who">
+          <div class="nm">Ada Devlin</div>
+          <div class="meta">2026-05-26 <span class="dot">·</span> <span class="chip check">Check</span> <span class="dot">·</span> Ref: 1042</div>
+        </div>
+        <div class="right"><div class="amt">$320.00</div></div>
+      </div>
+
+      <div class="pay">
+        <div class="av c">BS</div>
+        <div class="who">
+          <div class="nm">Bess Sparrow</div>
+          <div class="meta">2026-05-24 <span class="dot">·</span> <span class="chip card">Card</span> <span class="dot">·</span> Ref: ch_8f21a</div>
+        </div>
+        <div class="right"><div class="amt">$160.00</div><div class="tip">+ $15.00 tip</div></div>
+      </div>
+
+      <div class="pay">
+        <div class="av d">MR</div>
+        <div class="who">
+          <div class="nm">Marisol Rowan</div>
+          <div class="meta">2026-05-22 <span class="dot">·</span> <span class="chip transfer">Transfer</span> <span class="dot">·</span> Ref: ZL-3390</div>
+          <div class="note">Venmo, May visits</div>
+        </div>
+        <div class="right"><div class="amt">$425.00</div><div class="tip">+ $35.00 tip</div></div>
+      </div>
+
+      <div class="pay">
+        <div class="av e">SM</div>
+        <div class="who">
+          <div class="nm">Sana Mercer</div>
+          <div class="meta">2026-05-20 <span class="dot">·</span> <span class="chip cash">Cash</span></div>
+          <div class="note">Left on the kitchen counter</div>
+        </div>
+        <div class="right"><div class="amt">$62.50</div><div class="tip">+ $22.50 tip</div></div>
+      </div>
+    </div>
+
+    <!-- PaymentsEmptyState (hidden by default; toggle to preview the no-data state) -->
+    <div class="empty" id="empty">
+      <div class="pig">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 5c-1.5 0-2.8 1.4-3 2-3.5-1.5-11-.3-11 5 0 1.8 0 3 2 4.5V20h4v-2h3v2h4v-4c1-.5 1.4-1.5 2-2h2v-4h-2c0-1-.5-1.5-1-2V5z"/>
+          <path d="M2 9v1c0 1.1.9 2 2 2h1"/>
+        </svg>
+      </div>
+      <h3>No payments recorded yet</h3>
+      <p>Tap "Record Payment" to log cash, check, card, or transfer payments from kinfolk.</p>
+    </div>
+
+    <div class="demobar">
+      <button onclick="openDialog()">// open Record Payment dialog</button>
+      <button onclick="toggleEmpty()">// toggle empty state</button>
+    </div>
+
+    <p class="note">// concept mockup · Payments · mirrors PaymentsScreen.kt · palette from AuntieColors.kt · sample content is placeholder, not real client data</p>
+  </div>
+
+  <!-- RecordPaymentDialog -->
+  <div class="scrim" id="scrim">
+    <div class="dialog">
+      <h3>Record Payment</h3>
+      <!-- validationError region: "Kinfolk ID is required" / "Amount must be greater than zero" -->
+      <div class="verr" id="verr" style="display:none">Kinfolk ID is required</div>
+
+      <div class="field">
+        <label>Kinfolk ID <span class="req">*</span></label>
+        <input id="kid" placeholder="" />
+      </div>
+      <div class="field">
+        <label>Kinfolk Name</label>
+        <input placeholder="" />
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label>Amount ($) <span class="req">*</span></label>
+          <input placeholder="" />
+        </div>
+        <div class="field">
+          <!-- source label joins "Tip ($)" + "optional" with em dash; rendered as comma per no-em-dash rule -->
+          <label>Tip ($), optional</label>
+          <input placeholder="" />
+        </div>
+      </div>
+      <!-- SUGGESTION: source uses a free-text Method field labeled
+           "Method (CASH / CHECK / CARD / TRANSFER)"; a select is offered as an improvement -->
+      <div class="field sg" style="overflow:visible">
+        <label>Method (CASH / CHECK / CARD / TRANSFER)</label>
+        <select>
+          <option>CASH</option><option>CHECK</option><option>CARD</option><option>TRANSFER</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Date (YYYY-MM-DD)</label>
+        <input placeholder="" />
+        <div class="hint">YYYY-MM-DD</div>
+      </div>
+      <div class="field">
+        <!-- source label joins "Reference number" + "optional" with em dash; rendered as comma -->
+        <label>Reference number, optional</label>
+        <input placeholder="" />
+      </div>
+      <div class="field">
+        <!-- source label joins "Notes" + "optional" with em dash; rendered as comma -->
+        <label>Notes, optional</label>
+        <textarea placeholder=""></textarea>
+      </div>
+
+      <div class="actions">
+        <button class="btn cancel" onclick="closeDialog()">Cancel</button>
+        <button class="btn save" onclick="closeDialog()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // visual-only interactions, mirrors the shipped screen flow
+    function openDialog(){document.getElementById('scrim').classList.add('show')}
+    function closeDialog(){document.getElementById('scrim').classList.remove('show')}
+    function toggleEmpty(){
+      document.getElementById('list').style.display =
+        document.getElementById('list').style.display==='none' ? '' : 'none';
+      document.getElementById('empty').classList.toggle('show');
+    }
+    document.querySelectorAll('.tabs button').forEach(b=>b.addEventListener('click',()=>{
+      document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on');
+    }));
+    document.getElementById('scrim').addEventListener('click',e=>{ if(e.target.id==='scrim') closeDialog(); });
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-15}px,${y*-15}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

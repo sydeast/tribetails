@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Business hours (concept)</title>
+<!--
+  AuntieOS redesign concept · Business hours (availability + time off). Standalone mockup.
+  Same "Den" aesthetic. No em dashes. Palette from AuntieColors.kt.
+  Mirrors BusinessSettings (businessHours, observedUsHolidays, companyHolidays,
+  specialHours) + Android SchedulingOptionsScreen Google Calendar Sync toggle.
+  Time Blocks are a NEW planned addition, shown in a labeled Suggestion section.
+  Sample content is illustrative placeholder.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.4;mix-blend-mode:screen;filter:blur(76px);
+    animation:drift 31s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--teal),transparent 62%);top:-12vmax;left:-4vmax;}
+  .blob.b{width:36vmax;height:36vmax;background:radial-gradient(circle,var(--purple),transparent 60%);bottom:-10vmax;right:-8vmax;animation-delay:-11s;}
+  .blob.c{width:30vmax;height:30vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:24vmax;left:46vmax;animation-delay:-18s;}
+  @keyframes drift{to{transform:translate3d(4vmax,3vmax,0) scale(1.1) rotate(8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1180px;margin:0 auto;padding:26px 30px 60px;}
+  .head{margin-bottom:22px;opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards;}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--orange);margin-bottom:5px}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;font-variation-settings:"SOFT" 50,"WONK" 1}
+  .head .lede{color:var(--cream-dim);font-size:14px;margin-top:6px;max-width:640px}
+
+  .cols{display:grid;grid-template-columns:220px 1fr;gap:22px;align-items:start}
+  .secnav{position:sticky;top:22px;background:linear-gradient(160deg,var(--navy-2),var(--navy-3));border:1px solid var(--line);
+    border-radius:18px;padding:10px;opacity:0;transform:translateY(14px);animation:rise .65s var(--ease) .06s forwards}
+  .secnav a{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:11px;color:var(--cream-dim);
+    text-decoration:none;font-size:14px;font-weight:500;transition:.16s var(--ease)}
+  .secnav a svg{width:17px;height:17px;flex:0 0 auto}
+  .secnav a:hover{background:var(--line-2);color:var(--cream)}
+  .secnav a.on{background:var(--cream);color:var(--navy);font-weight:600}
+
+  .content{display:flex;flex-direction:column;gap:18px}
+  .panel{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);
+    border-radius:20px;padding:22px;opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) forwards}
+  .panel.d1{animation-delay:.12s}.panel.d2{animation-delay:.2s}.panel.d3{animation-delay:.28s}.panel.d4{animation-delay:.36s}.panel.d5{animation-delay:.44s}
+  .panel h3{font-family:"Fraunces",serif;font-weight:500;font-size:20px;font-variation-settings:"SOFT" 50;display:flex;align-items:center;gap:9px}
+  .panel h3 svg{width:18px;height:18px;color:var(--orange)}
+  .panel .ph-sub{color:var(--cream-dim);font-size:13px;margin-top:3px;margin-bottom:18px}
+
+  /* weekly hours editor */
+  .hours{display:flex;flex-direction:column;gap:2px}
+  .hrow{display:grid;grid-template-columns:54px 1fr 1fr 96px;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line-2)}
+  .hrow:last-child{border-bottom:none}
+  .hrow.closed{opacity:.62}
+  .day{font-family:"Spline Sans Mono",monospace;font-size:12px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;color:var(--cream-dim)}
+  .day b{color:var(--cream)}
+  .tfield{display:flex;align-items:center;gap:8px;background:var(--navy-3);border:1px solid var(--line);border-radius:11px;padding:9px 12px;font-family:"Spline Sans Mono",monospace;font-size:13px}
+  .tfield svg{width:14px;height:14px;color:var(--cream-dim);flex:0 0 auto}
+  .tfield span{color:var(--cream)}
+  .tfield.muted span{color:var(--cream-dim);font-style:italic}
+  .ranglabel{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--cream-dim);text-align:center}
+  .closedpill{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#c7a8d8;background:rgba(116,83,138,.18);border:1px solid rgba(116,83,138,.4);padding:5px 10px;border-radius:20px;text-align:center;justify-self:end}
+  .daytog{justify-self:end}
+
+  /* small toggle */
+  .tog{width:44px;height:26px;border-radius:30px;background:var(--navy-3);border:1px solid var(--line);
+    position:relative;cursor:pointer;transition:.2s var(--ease);flex:0 0 auto}
+  .tog:after{content:"";position:absolute;top:2.5px;left:3px;width:19px;height:19px;border-radius:50%;
+    background:var(--cream-dim);transition:.2s var(--ease)}
+  .tog.on{background:var(--teal);border-color:transparent}
+  .tog.on:after{left:20px;background:var(--cream)}
+
+  /* holiday toggles (segmented On/Off mirrors SegmentedPicker) */
+  .hol{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line-2)}
+  .hol:last-child{border-bottom:none}
+  .hol .nm{font-size:14px}
+  .seg{display:inline-flex;background:var(--navy-3);border:1px solid var(--line);border-radius:10px;padding:3px;font-family:"Spline Sans Mono",monospace;font-size:11px;font-weight:600}
+  .seg button{border:none;background:none;color:var(--cream-dim);padding:5px 13px;border-radius:7px;cursor:pointer;transition:.15s var(--ease);font-family:inherit;font-size:inherit;font-weight:inherit}
+  .seg button.sel{background:var(--cream);color:var(--navy)}
+
+  .sublabel{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--cream-dim);margin:20px 0 10px}
+  .sublabel:first-child{margin-top:0}
+
+  /* date|name list rows */
+  .listrow{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:13px;border:1px solid var(--line);background:var(--navy-3);margin-bottom:9px}
+  .listrow .dt{font-family:"Spline Sans Mono",monospace;font-size:12px;color:var(--cream-dim);min-width:96px}
+  .listrow .nm{font-weight:600;font-size:14px;flex:1;min-width:0}
+  .listrow .hrs{font-family:"Spline Sans Mono",monospace;font-size:11.5px;color:#7fdce8;background:rgba(10,133,149,.16);border:1px solid rgba(10,133,149,.35);padding:4px 9px;border-radius:18px}
+  .linkbtn{background:none;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";font-weight:600;
+    font-size:12px;padding:6px 12px;border-radius:9px;cursor:pointer;transition:.16s var(--ease)}
+  .linkbtn:hover{background:var(--navy-2)}
+  .addrow{display:grid;grid-template-columns:130px 1fr auto;gap:10px;margin-top:13px;align-items:center}
+  .addrow.sp{grid-template-columns:130px 140px 1fr auto}
+  .inp{background:var(--navy-3);border:1px solid var(--line);border-radius:11px;padding:10px 12px;color:var(--cream);font-family:"Spline Sans Mono",monospace;font-size:12.5px;width:100%}
+  .inp::placeholder{color:var(--cream-dim);opacity:.7}
+  .inp.body{font-family:"Hanken Grotesk";font-size:13.5px}
+  .addbtn{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;font-size:13px;padding:10px 18px;border-radius:11px;cursor:pointer;transition:.18s var(--ease)}
+  .addbtn:hover{transform:translateY(-1px)}
+
+  /* integration / sync row */
+  .trow{display:flex;align-items:center;gap:14px;padding:13px 0;border-bottom:1px solid var(--line-2)}
+  .trow:last-child{border-bottom:none}
+  .trow .tx b{font-size:14.5px;font-weight:600}
+  .trow .tx small{display:block;color:var(--cream-dim);font-size:12.5px;margin-top:3px;max-width:560px}
+  .trow .tog{margin-left:auto}
+  .synced{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);margin-top:12px;display:flex;align-items:center;gap:8px}
+  .synced .led{width:7px;height:7px;border-radius:50%;background:#0A8595;box-shadow:0 0 8px #0A8595}
+
+  /* save bar */
+  .savebar{display:flex;align-items:center;gap:12px;margin-top:4px}
+  .bigbtn{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;font-size:15px;padding:13px 24px;border-radius:13px;cursor:pointer;transition:.2s var(--ease)}
+  .bigbtn:hover{transform:translateY(-2px);box-shadow:0 14px 30px -12px rgba(223,132,49,.6)}
+  .savebar small{color:var(--cream-dim);font-size:12.5px}
+
+  /* suggestion panel (NEW, not in model) */
+  .panel.sugg{border-style:dashed;border-color:rgba(213,92,135,.5);
+    background:radial-gradient(120% 160% at 100% 0%,rgba(213,92,135,.16),transparent 55%),linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5))}
+  .sugg-tag{display:inline-flex;align-items:center;gap:7px;font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:#f0a3bf;background:rgba(213,92,135,.16);border:1px solid rgba(213,92,135,.45);padding:5px 11px;border-radius:20px;margin-bottom:14px}
+  .sugg-tag .dot{width:7px;height:7px;border-radius:50%;background:var(--pink);box-shadow:0 0 8px var(--pink)}
+  .blocks{display:flex;flex-direction:column;gap:10px}
+  .block{display:grid;grid-template-columns:14px 1fr auto auto;gap:13px;align-items:center;padding:13px 15px;border-radius:14px;border:1px solid rgba(213,92,135,.3);background:var(--navy-3)}
+  .block .swatch{width:11px;height:11px;border-radius:50%}
+  .block .bn{font-weight:600;font-size:14.5px}
+  .block .bt{font-family:"Spline Sans Mono",monospace;font-size:12px;color:#f0a3bf}
+  .ghostpink{background:none;border:1px solid rgba(213,92,135,.4);color:#f0a3bf;font-family:"Hanken Grotesk";font-weight:600;font-size:12px;padding:6px 12px;border-radius:9px;cursor:pointer;transition:.16s var(--ease)}
+  .ghostpink:hover{background:rgba(213,92,135,.12)}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:28px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:880px){.cols{grid-template-columns:1fr}.secnav{position:static}
+    .hrow{grid-template-columns:50px 1fr 1fr 70px}.addrow,.addrow.sp{grid-template-columns:1fr}.block{grid-template-columns:14px 1fr}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <div class="kick">The Den · Business hours</div>
+      <h2>When the Den is open</h2>
+      <div class="lede">Your weekly availability, the days you take off, and how outside calendars feed in. Kinfolk only ever see open and unavailable time, never the reason.</div>
+    </div>
+
+    <div class="cols">
+      <nav class="secnav">
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-4 3-6 7-6s7 2 7 6"/></svg>Profile</a>
+        <a class="on" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>Business hours</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6Z"/></svg>Notifications</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 7h8M8 12h8M8 17h5"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg>Integrations</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v6c0 5-3 8-7 9-4-1-7-4-7-9V6z"/></svg>Security</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h9l3 3v15H6z"/><path d="M9 11h6M9 15h4"/></svg>Billing</a>
+      </nav>
+
+      <div class="content">
+
+        <!-- WEEKLY BUSINESS HOURS -->
+        <div class="panel d1">
+          <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Business hours</h3>
+          <div class="ph-sub">Set an open and close time for each day, or mark it closed. Stored per day as a single range (leave blank to close).</div>
+          <div class="hours">
+            <div class="hrow">
+              <span class="day"><b>Mon</b></span>
+              <div class="tfield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 1.5"/></svg><span>08:00</span></div>
+              <div class="tfield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 1.5"/></svg><span>17:00</span></div>
+              <div class="daytog"><div class="tog on"></div></div>
+            </div>
+            <div class="hrow">
+              <span class="day"><b>Tue</b></span>
+              <div class="tfield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 1.5"/></svg><span>08:00</span></div>
+              <div class="tfield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 1.5"/></svg><span>17:00</span></div>
+              <div class="daytog"><div class="tog on"></div></div>
+            </div>
+            <div class="hrow">
+              <span class="day"><b>Wed</b></span>
+              <div class="tfield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 1.5"/></svg><span>08:00</span></div>
+              <div class="tfield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 1.5"/></svg><span>17:00</span></div>
+              <div class="daytog"><div class="tog on"></div></div>
+            </div>
+            <div class="hrow">
+              <span class="day"><b>Thu</b></span>
+              <div class="tfield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 1.5"/></svg><span>08:00</span></div>
+              <div class="tfield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 1.5"/></svg><span>19:00</span></div>
+              <div class="daytog"><div class="tog on"></div></div>
+            </div>
+            <div class="hrow">
+              <span class="day"><b>Fri</b></span>
+              <div class="tfield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 1.5"/></svg><span>09:00</span></div>
+              <div class="tfield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 1.5"/></svg><span>15:00</span></div>
+              <div class="daytog"><div class="tog on"></div></div>
+            </div>
+            <div class="hrow closed">
+              <span class="day"><b>Sat</b></span>
+              <div class="tfield muted" style="grid-column:span 2"><span>Closed (no open hours set)</span></div>
+              <span class="closedpill">Closed</span>
+            </div>
+            <div class="hrow closed">
+              <span class="day"><b>Sun</b></span>
+              <div class="tfield muted" style="grid-column:span 2"><span>Closed (no open hours set)</span></div>
+              <span class="closedpill">Closed</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- GOOGLE CALENDAR SYNC -->
+        <div class="panel d2">
+          <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11.5A8.5 8.5 0 1 1 11.5 3"/><path d="M20 4v4h-4"/></svg>Google Calendar Sync</h3>
+          <div class="ph-sub">Busy events from outside the app import as private blocking slots on the booking calendar. You can edit or remove blocks. Kinfolk only see the time as unavailable.</div>
+          <div class="trow"><div class="tx"><b>Sync Google busy events</b><small>Pull outside commitments in as read-only blocks so a visit never lands on top of one.</small></div><div class="tog on"></div></div>
+          <div class="trow"><div class="tx"><b>Block bookings during busy events</b><small>New visit requests cannot be placed over an imported busy block.</small></div><div class="tog on"></div></div>
+          <div class="synced"><i class="led"></i>Last sync 7:42a today. 4 booking(s) ready to sync. <button class="linkbtn" style="margin-left:8px">Run sync</button></div>
+        </div>
+
+        <!-- TIME OFF: US HOLIDAYS -->
+        <div class="panel d3">
+          <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4l16 0M4 4v16M4 4l9 4-9 4"/></svg>Time off · US holidays observed</h3>
+          <div class="ph-sub">Toggle the federal holidays the Den closes for. Observed days fall back to closed unless special hours override them.</div>
+          <div class="hol"><span class="nm">New Year's Day</span><div class="seg"><button class="sel">On</button><button>Off</button></div></div>
+          <div class="hol"><span class="nm">Martin Luther King Jr. Day</span><div class="seg"><button>On</button><button class="sel">Off</button></div></div>
+          <div class="hol"><span class="nm">Presidents' Day</span><div class="seg"><button>On</button><button class="sel">Off</button></div></div>
+          <div class="hol"><span class="nm">Memorial Day</span><div class="seg"><button class="sel">On</button><button>Off</button></div></div>
+          <div class="hol"><span class="nm">Juneteenth</span><div class="seg"><button class="sel">On</button><button>Off</button></div></div>
+          <div class="hol"><span class="nm">Independence Day</span><div class="seg"><button class="sel">On</button><button>Off</button></div></div>
+          <div class="hol"><span class="nm">Labor Day</span><div class="seg"><button class="sel">On</button><button>Off</button></div></div>
+          <div class="hol"><span class="nm">Columbus Day</span><div class="seg"><button>On</button><button class="sel">Off</button></div></div>
+          <div class="hol"><span class="nm">Veterans Day</span><div class="seg"><button>On</button><button class="sel">Off</button></div></div>
+          <div class="hol"><span class="nm">Thanksgiving</span><div class="seg"><button class="sel">On</button><button>Off</button></div></div>
+          <div class="hol"><span class="nm">Christmas Day</span><div class="seg"><button class="sel">On</button><button>Off</button></div></div>
+        </div>
+
+        <!-- TIME OFF: COMPANY HOLIDAYS + SPECIAL HOURS -->
+        <div class="panel d4">
+          <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>Company holidays &amp; special hours</h3>
+          <div class="ph-sub">Custom closures (a full day off) and one-off custom hours (open for a partial day). Stored as date plus name, or date plus range plus name.</div>
+
+          <div class="sublabel">Company holidays · date | name</div>
+          <div class="listrow"><span class="dt">2026-07-03</span><span class="nm">Long weekend, Den closed</span><button class="linkbtn">Remove</button></div>
+          <div class="listrow"><span class="dt">2026-11-27</span><span class="nm">Day after Thanksgiving</span><button class="linkbtn">Remove</button></div>
+          <div class="listrow"><span class="dt">2026-12-24</span><span class="nm">Christmas Eve</span><button class="linkbtn">Remove</button></div>
+          <div class="addrow">
+            <input class="inp" placeholder="YYYY-MM-DD" aria-label="Holiday date" />
+            <input class="inp body" placeholder="Holiday name (placeholder TODO)" aria-label="Holiday name" />
+            <button class="addbtn">Add holiday</button>
+          </div>
+
+          <div class="sublabel">Special hours · date | range | name</div>
+          <div class="listrow"><span class="dt">2026-06-19</span><span class="nm">Half day for Juneteenth</span><span class="hrs">09:00 to 13:00</span><button class="linkbtn">Remove</button></div>
+          <div class="listrow"><span class="dt">2026-12-31</span><span class="nm">Early close, New Year's Eve</span><span class="hrs">08:00 to 12:00</span><button class="linkbtn">Remove</button></div>
+          <div class="addrow sp">
+            <input class="inp" placeholder="YYYY-MM-DD" aria-label="Special date" />
+            <input class="inp" placeholder="08:00 to 12:00" aria-label="Special range" />
+            <input class="inp body" placeholder="Label (placeholder TODO)" aria-label="Special label" />
+            <button class="addbtn">Add hours</button>
+          </div>
+        </div>
+
+        <!-- SUGGESTION: TIME BLOCKS (NEW, not in model) -->
+        <div class="panel sugg d5">
+          <span class="sugg-tag"><i class="dot"></i>Suggestion · not built yet</span>
+          <h3 style="color:var(--cream)"><svg viewBox="0 0 24 24" fill="none" stroke="#D55C87" stroke-width="1.8" style="color:#D55C87"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10"/></svg>Time blocks</h3>
+          <div class="ph-sub">A planned addition: name recurring windows inside open hours so kinfolk pick a block instead of an exact minute. This is not part of the saved settings yet, shown here for design review only.</div>
+          <div class="blocks">
+            <div class="block">
+              <span class="swatch" style="background:var(--orange)"></span>
+              <div><div class="bn">Morning</div></div>
+              <span class="bt">08:00 to 11:00</span>
+              <button class="ghostpink">Edit</button>
+            </div>
+            <div class="block">
+              <span class="swatch" style="background:var(--teal)"></span>
+              <div><div class="bn">Midday</div></div>
+              <span class="bt">11:00 to 14:00</span>
+              <button class="ghostpink">Edit</button>
+            </div>
+            <div class="block">
+              <span class="swatch" style="background:var(--purple)"></span>
+              <div><div class="bn">Afternoon</div></div>
+              <span class="bt">14:00 to 17:00</span>
+              <button class="ghostpink">Edit</button>
+            </div>
+          </div>
+          <div class="addrow" style="grid-template-columns:1fr 120px 120px auto;margin-top:14px">
+            <input class="inp body" placeholder="Block name (placeholder TODO)" aria-label="Block name" />
+            <input class="inp" placeholder="Start" aria-label="Block start" />
+            <input class="inp" placeholder="End" aria-label="Block end" />
+            <button class="addbtn" style="background:var(--pink)">Add block</button>
+          </div>
+        </div>
+
+        <!-- SAVE -->
+        <div class="panel d5">
+          <div class="savebar">
+            <button class="bigbtn">Save Business hours</button>
+            <small>Writes business hours, observed holidays, company holidays, and special hours to your settings.</small>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · Business hours · palette from AuntieColors.kt · placeholder content</p>
+  </div>
+
+  <script>
+    // toggles
+    document.querySelectorAll('.tog').forEach(t=>t.addEventListener('click',()=>t.classList.toggle('on')));
+    // segmented On/Off
+    document.querySelectorAll('.seg').forEach(seg=>{
+      seg.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+        seg.querySelectorAll('button').forEach(x=>x.classList.remove('sel')); b.classList.add('sel');
+      }));
+    });
+    // sidebar active state
+    document.querySelectorAll('.secnav a').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();
+      document.querySelectorAll('.secnav a').forEach(x=>x.classList.remove('on')); a.classList.add('on');}));
+    // mesh parallax
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

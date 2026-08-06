@@ -51,13 +51,25 @@ When you need to know what a screen should look like, read these, in this order:
 
 1. `page-specs/*.md`, 31 numbered specs, each with an archived/live banner.
    Start at `00-INDEX.md` (spec to screen) and `00-DEPENDENCIES.md`. These are
-   gitignored, so they exist in the main checkout only and are invisible inside a
-   git worktree; use the absolute path rather than concluding they are missing.
+   TRACKED as of 2026-08-06 and are present in every clone and worktree. They
+   were gitignored until then, which is why older notes tell you to reach for an
+   absolute path; you no longer need to.
 2. `ui-ideas/*.html`, the operator's mockups. Two rules that are not optional:
    anything under `ui-ideas/WrongUIDesigns-UpdateKill/` is a REJECTED design and
    must never be built from, and a filename carrying a directive
    (`...-cardsShouldOpenDisplayingFullerDetails.html`) means that directive is
    part of the spec.
+
+   TRACKED as of 2026-08-06, and therefore PUBLIC. The HTML was scrubbed of six
+   real client identities before being committed, so **a new mock must not carry
+   a real client name, address, or phone number.** Use the fictional households
+   already in the set (the Wrens, Devlins, Sparrows, Mercers, Rowans, Mallorys)
+   and a 555 phone number.
+
+   The IMAGES are still gitignored: `ui-ideas/**/*.png` cannot be scrubbed by
+   find-and-replace, and one of them is a third-party product screenshot. They
+   exist on the operator's disk only. If a task depends on one, say so rather
+   than assuming the folder is empty.
 
 Both paths are this tree's only. The Kinfolk portal keeps its own mockups in
 `mytribe/ui-ideas/` and has no page-specs; see `mytribe/CLAUDE.md`. A portal

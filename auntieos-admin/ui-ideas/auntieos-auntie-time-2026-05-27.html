@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Auntie Time (concept)</title>
+<!--
+  AuntieOS redesign concept · Auntie Time. Standalone mockup, Den aesthetic. No em dashes.
+  Mirrors the real AuntieTimeListScreen (KinCareSessionsScreen.kt): day-of view to run +
+  complete KinCares. Phases Active / Upcoming / Recent. Status lifecycle SCHEDULED ->
+  ON_MY_WAY -> ARRIVED (GPS starts) -> DEPARTED -> COMPLETED. State-aware actions:
+  SCHEDULED [OMW][Arrived], ON_MY_WAY [Arrived], ARRIVED [Departed][Undo Arrived],
+  DEPARTED [Complete KinTale]. Kin shown via profile photo. Palette from AuntieColors.kt.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);-webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px)}
+  .blob{position:absolute;border-radius:50%;opacity:.42;mix-blend-mode:screen;filter:blur(74px);animation:drift 30s var(--ease) infinite alternate}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--teal),transparent 62%);top:-12vmax;left:-4vmax}
+  .blob.b{width:36vmax;height:36vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:12vmax;right:-8vmax;animation-delay:-10s}
+  .blob.c{width:30vmax;height:30vmax;background:radial-gradient(circle,var(--pink),transparent 60%);bottom:-12vmax;left:42vmax;animation-delay:-17s}
+  @keyframes drift{to{transform:translate3d(4vmax,3vmax,0) scale(1.1) rotate(8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+  .wrap{position:relative;z-index:2;max-width:760px;margin:0 auto;padding:26px 30px 60px}
+  .head{margin-bottom:20px;opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--orange);margin-bottom:5px}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;font-variation-settings:"SOFT" 50,"WONK" 1;display:flex;align-items:center;gap:10px}
+  .head h2 .paw{font-size:26px}
+  .head .sub{color:var(--cream-dim);font-size:13.5px;margin-top:3px}
+
+  .phase{margin-bottom:24px;opacity:0;transform:translateY(14px);animation:rise .65s var(--ease) forwards}
+  .phase.p1{animation-delay:.1s}.phase.p2{animation-delay:.2s}.phase.p3{animation-delay:.3s}
+  .phlab{display:flex;align-items:center;gap:9px;margin-bottom:11px}
+  .phlab b{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--cream)}
+  .phlab .ct{font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim);background:var(--navy-3);border:1px solid var(--line);border-radius:20px;padding:2px 8px}
+
+  .card{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);border-radius:16px;padding:15px;transition:.16s var(--ease)}
+  .card + .card{margin-top:9px}
+  .card.live{border-color:rgba(10,133,149,.5);background:radial-gradient(120% 130% at 0% 0%,rgba(10,133,149,.1),transparent 50%),linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5))}
+  .top{display:flex;align-items:center;gap:12px}
+  .sicon{width:42px;height:42px;border-radius:13px;flex:0 0 auto;display:grid;place-items:center;font-size:17px}
+  .photos{display:flex;flex:0 0 auto}
+  .photos i{width:34px;height:34px;border-radius:50%;border:2px solid var(--navy-2);margin-left:-10px;background-size:cover;box-shadow:inset 0 -5px 9px rgba(0,0,0,.3)}
+  .photos i:first-child{margin-left:0}
+  .id{flex:1;min-width:0}
+  .id b{font-family:"Fraunces",serif;font-weight:500;font-size:16px}
+  .id .svc{color:var(--cream-dim);font-size:12.5px;margin-top:1px}
+  .pill{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;font-weight:600;padding:5px 10px;border-radius:20px;white-space:nowrap}
+  .pill.scheduled{background:var(--navy-3);color:var(--cream-dim);border:1px solid var(--line)}
+  .pill.omw{background:rgba(223,132,49,.16);color:#f0b277;border:1px solid rgba(223,132,49,.4)}
+  .pill.arrived{background:rgba(10,133,149,.18);color:#7fdce8;border:1px solid rgba(10,133,149,.45)}
+  .pill.departed{background:rgba(116,83,138,.2);color:#c7a8d8;border:1px solid rgba(116,83,138,.4)}
+  .pill.completed{background:rgba(10,133,149,.14);color:#5fd0dc;border:1px solid rgba(10,133,149,.35)}
+  .pill.cancelled{background:var(--navy-3);color:var(--cream-dim);border:1px solid var(--line)}
+  .gpslive{display:inline-flex;align-items:center;gap:6px;font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:#7fdce8;margin-top:8px}
+  .gpslive .dot{width:7px;height:7px;border-radius:50%;background:#0A8595;box-shadow:0 0 8px #0A8595;animation:pulse 1.6s var(--ease) infinite}
+  @keyframes pulse{50%{opacity:.35}}
+  .addr{display:inline-flex;align-items:center;gap:7px;margin-top:9px;background:var(--navy-3);border:1px solid var(--line);border-radius:10px;padding:6px 11px;font-size:12.5px;color:var(--cream-dim);cursor:pointer}
+  .addr:hover{border-color:rgba(223,132,49,.4);color:var(--cream)}
+  .nt{color:var(--cream-dim);font-size:12.5px;margin-top:9px}
+  .invchip{display:inline-block;margin-top:9px;font-family:"Spline Sans Mono",monospace;font-size:9.5px;color:#7fdce8;background:rgba(10,133,149,.1);border:1px solid rgba(10,133,149,.4);border-radius:20px;padding:3px 9px}
+  .acts{display:flex;gap:8px;margin-top:13px}
+  .btn{flex:1;font-family:"Hanken Grotesk";font-weight:700;font-size:13.5px;padding:11px;border-radius:11px;border:none;cursor:pointer;transition:.16s var(--ease);display:inline-flex;align-items:center;justify-content:center;gap:7px}
+  .btn.go{background:var(--orange);color:var(--navy)}.btn.go:hover{transform:translateY(-2px);box-shadow:0 12px 26px -12px rgba(223,132,49,.6)}
+  .btn.gh{background:transparent;border:1px solid var(--line);color:var(--cream)}.btn.gh:hover{background:var(--navy-3)}
+  .btn.teal{background:var(--teal);color:var(--cream)}.btn.teal:hover{transform:translateY(-2px);filter:brightness(1.08)}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:26px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <div class="kick">The Den · Auntie Time</div>
+      <h2><span class="paw">🐾</span> Auntie Time</h2>
+      <div class="sub">Day-of view. Clock in, clock out, every Kin Care in flight.</div>
+    </div>
+
+    <!-- ACTIVE: in flight (ON_MY_WAY / ARRIVED / DEPARTED) -->
+    <div class="phase p1">
+      <div class="phlab"><b>Active</b><span class="ct">3</span></div>
+
+      <div class="card live">
+        <div class="top">
+          <div class="photos">
+            <i style="background:radial-gradient(circle at 34% 28%,#37c0cf,#08525e)"></i>
+            <i style="background:radial-gradient(circle at 34% 28%,#5fd0dc,#0a5662)"></i>
+          </div>
+          <div class="id"><b>Lorna Wren</b><div class="svc">30 min · Biscuit &amp; Gravy · 9:00 to 9:30a</div></div>
+          <span class="pill arrived">Arrived</span>
+        </div>
+        <div class="gpslive"><span class="dot"></span> GPS tracking · live route</div>
+        <div class="addr">📍 82 Creekside Ln</div>
+        <div class="nt">Side gate, harness on the hook.</div>
+        <div class="acts">
+          <button class="btn go">Departed</button>
+          <button class="btn gh">↶ Undo arrived</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="top">
+          <div class="sicon" style="background:rgba(223,132,49,.18)">↗</div>
+          <div class="id"><b>Bess Sparrow</b><div class="svc">45 min · Pepper · 10:30a</div></div>
+          <span class="pill omw">On my way</span>
+        </div>
+        <div class="addr">📍 14 Maple Grove Ct</div>
+        <div class="acts"><button class="btn go">Arrived</button><button class="btn gh">Complete</button></div>
+      </div>
+
+      <div class="card">
+        <div class="top">
+          <div class="photos"><i style="background:radial-gradient(circle at 34% 28%,#ef9fbb,#8c3354)"></i></div>
+          <div class="id"><b>Ada Devlin</b><div class="svc">Drop-in · Marigold · 8:15a</div></div>
+          <span class="pill departed">Departed</span>
+        </div>
+        <div class="invchip">Invoice linked</div>
+        <div class="acts"><button class="btn teal">✈ Complete KinTale</button></div>
+      </div>
+    </div>
+
+    <!-- UPCOMING: SCHEDULED today..+14 -->
+    <div class="phase p2">
+      <div class="phlab"><b>Upcoming</b><span class="ct">2</span></div>
+
+      <div class="card">
+        <div class="top">
+          <div class="sicon" style="background:var(--navy-3);color:var(--cream-dim)">◷</div>
+          <div class="id"><b>Marisol Rowan</b><div class="svc">Overnight · Clover &amp; Sage · today, Evening block</div></div>
+          <span class="pill scheduled">Scheduled</span>
+        </div>
+        <div class="addr">📍 9 Cedar Park Way</div>
+        <div class="acts"><button class="btn go">OMW</button><button class="btn gh">Arrived</button><button class="btn gh">Complete</button></div>
+      </div>
+
+      <div class="card">
+        <div class="top">
+          <div class="sicon" style="background:var(--navy-3);color:var(--cream-dim)">◷</div>
+          <div class="id"><b>Sana Mercer</b><div class="svc">Drop-in · Cocoa &amp; Olive · tomorrow, Midday block</div></div>
+          <span class="pill scheduled">Scheduled</span>
+        </div>
+        <div class="acts"><button class="btn go">OMW</button><button class="btn gh">Arrived</button><button class="btn gh">Complete</button></div>
+      </div>
+    </div>
+
+    <!-- RECENT: COMPLETED / CANCELLED today or yesterday -->
+    <div class="phase p3">
+      <div class="phlab"><b>Recent</b><span class="ct">2</span></div>
+
+      <div class="card">
+        <div class="top">
+          <div class="sicon" style="background:rgba(10,133,149,.14);color:#5fd0dc">✓</div>
+          <div class="id"><b>Lorna Wren</b><div class="svc">30 min · Biscuit &amp; Gravy · yesterday 9:00a</div></div>
+          <span class="pill completed">Completed</span>
+        </div>
+        <div class="acts"><button class="btn gh">View KinTale</button></div>
+      </div>
+
+      <div class="card">
+        <div class="top">
+          <div class="sicon" style="background:var(--navy-3);color:var(--cream-dim)">✕</div>
+          <div class="id"><b>Sana Mercer</b><div class="svc">Drop-in · yesterday, Midday block</div></div>
+          <span class="pill cancelled">Cancelled</span>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · Auntie Time (mirrors AuntieTimeListScreen) · Active/Upcoming/Recent + lifecycle actions + GPS · palette from AuntieColors.kt</p>
+  </div>
+
+  <script>
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>
