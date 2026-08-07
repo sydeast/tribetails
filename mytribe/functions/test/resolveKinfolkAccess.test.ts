@@ -26,12 +26,21 @@ describe('resolveKinfolkAccess', () => {
     });
   });
 
-  it('non-operator picks first own id when no requested', async () => {
-    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3', '5'] } } });
+  it('non-operator with a single linked id and no requested resolves it (the normal path, unchanged)', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { resolveKinfolkAccess } = await import('../src/lib/resolveKinfolkAccess');
     const res = await resolveKinfolkAccess('u1', undefined, false, 'test');
     expect(res).toEqual({ kinfolkId: '3', isOperator: false });
+  });
+
+  it('non-operator with MULTIPLE linked ids and no requested refuses to guess (defect account, PR28a)', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3', '5'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveKinfolkAccess } = await import('../src/lib/resolveKinfolkAccess');
+    await expect(resolveKinfolkAccess('u1', undefined, false, 'test')).rejects.toMatchObject({
+      code: 'failed-precondition',
+    });
   });
 
   it('non-operator allows own id', async () => {
