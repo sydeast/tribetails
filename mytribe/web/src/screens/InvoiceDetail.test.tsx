@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -42,9 +42,29 @@ vi.mock('../api/invoicesApi', async () => {
   };
 });
 
+const getMyHome = vi.fn();
+
 vi.mock('../api/portal', () => ({
   getBusinessContact: vi.fn().mockResolvedValue({ name: 'Tribe Tails', address: '123 Main St', email: 'hi@tribetails.com' }),
+  getMyHome: (...args: unknown[]) => getMyHome(...args),
 }));
+
+// Stripe-only default: most tests here are about the mutation/status
+// machinery, not the payment-method registry (that's PayOptions.test.tsx and
+// getMyHome.test.ts). Individual tests below override this to cover the
+// multi-method render.
+beforeEach(() => {
+  getMyHome.mockReset();
+  getMyHome.mockResolvedValue({
+    kinfolkId: 'kin-fam-1',
+    displayName: 'The Test Family',
+    businessLogoUrl: '',
+    businessName: 'Tribe Tails',
+    portal: { logoUrl: '', themeId: 'default', banner: { enabled: false, message: '', tone: 'info', dismissMode: 'none', id: '' }, home: [], chat: { enabled: true, awayMessage: '', hoursEnabled: false, hours: {}, maxMessageLength: 2000, rateLimitPerHour: 0 } },
+    bannerDismissedByUser: false,
+    payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null }],
+  });
+});
 
 const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   id: 'inv-open-1',
@@ -94,7 +114,7 @@ describe('InvoiceDetail — mutation error surfacing', () => {
       </QueryClientProvider>,
     );
 
-    const payButton = await screen.findByRole('button', { name: /Pay \$50\.00/ });
+    const payButton = await screen.findByRole('button', { name: 'Pay with Credit Card' });
     await userEvent.click(payButton);
 
     await waitFor(() => expect(screen.getByText('Card declined by Stripe.')).toBeInTheDocument());
@@ -167,8 +187,24 @@ describe('InvoiceDetail — a part-paid invoice reads honestly', () => {
     expect(screen.queryByText('PAID')).toBeNull();
   });
   it('offers to pay the REMAINING balance, not the total', async () => {
+    // The checkout CTA's own label no longer carries the amount (PR30 —
+    // PayOptions renders "Pay with Credit Card" for every invoice), so the
+    // REMAINING-not-total claim is pinned on a link method's "Send $X"
+    // caption instead, which does carry the amount.
+    getMyHome.mockResolvedValue({
+      kinfolkId: 'kin-fam-1',
+      displayName: 'The Test Family',
+      businessLogoUrl: '',
+      businessName: 'Tribe Tails',
+      portal: { logoUrl: '', themeId: 'default', banner: { enabled: false, message: '', tone: 'info', dismissMode: 'none', id: '' }, home: [], chat: { enabled: true, awayMessage: '', hoursEnabled: false, hours: {}, maxMessageLength: 2000, rateLimitPerHour: 0 } },
+      bannerDismissedByUser: false,
+      payMethods: [
+        { id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null },
+        { id: 'venmo', label: 'Pay with Venmo', kind: 'link', url: 'https://venmo.com/u/auntie' },
+      ],
+    });
     await renderWith(PART_PAID);
-    expect(await screen.findByRole('button', { name: /Pay remaining \$30\.00/ })).toBeInTheDocument();
+    expect(await screen.findByText(/Send \$30\.00/)).toBeInTheDocument();
   });
   it('shows what was collected from paidCents rather than inferring it', async () => {
     await renderWith(PART_PAID);
@@ -180,7 +216,7 @@ describe('InvoiceDetail — a part-paid invoice reads honestly', () => {
   });
   it('leaves an ordinary open invoice exactly as it was', async () => {
     await renderWith(OPEN_INVOICE);
-    expect(await screen.findByRole('button', { name: /Pay \$50\.00/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Pay with Credit Card' })).toBeInTheDocument();
     expect(screen.queryByText('PART PAID')).toBeNull();
   });
 });

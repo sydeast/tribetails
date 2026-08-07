@@ -51,7 +51,34 @@ class PortalApi(private val fns: FunctionsClient) {
             businessName = raw["businessName"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             portal = decodePortalConfig(raw["portal"] as? JsonObject),
             bannerDismissedByUser = raw["bannerDismissedByUser"]?.jsonPrimitive?.booleanOrNull ?: false,
+            payMethods = decodePayMethods(raw["payMethods"] as? JsonArray),
         )
+    }
+
+    /**
+     * PR30. Lenient like [decodeInvoice]'s `lineItems`: an entry missing `id`
+     * or carrying an unrecognized `kind` is dropped rather than throwing, so
+     * a server ahead of this client (a new processor row in `METHOD_SPECS`)
+     * degrades to "one fewer button" instead of a decode failure that would
+     * take the whole Home/Invoice screen down with it.
+     */
+    private fun decodePayMethods(arr: JsonArray?): List<PayMethod> {
+        return arr.orEmpty()
+            .mapNotNull { it as? JsonObject }
+            .mapNotNull { o ->
+                val id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                val kind = when (o["kind"]?.jsonPrimitive?.contentOrNull) {
+                    "checkout" -> PayMethodKind.Checkout
+                    "link" -> PayMethodKind.Link
+                    else -> return@mapNotNull null
+                }
+                PayMethod(
+                    id = id,
+                    label = o["label"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    kind = kind,
+                    url = o["url"]?.jsonPrimitive?.contentOrNull,
+                )
+            }
     }
 
     /**
@@ -1344,6 +1371,16 @@ data class MyHomeResult(
     /** True when the signed-in user has dismissed the current banner id
      *  (`dismissMode == perUser`); the client hides the banner accordingly. */
     val bannerDismissedByUser: Boolean = false,
+    /**
+     * PR30: every payment processor the operator has configured, business-
+     * level (not filtered to a specific invoice — see `getMyHome.ts`).
+     * Defaults empty like [lineItems][InvoiceLineItem] elsewhere in this
+     * file: decode is lenient, so an old server or a malformed entry simply
+     * yields no methods rather than a decode failure, and callers fall back
+     * to a Stripe-only list (`InvoicesController`) so a household can still
+     * pay.
+     */
+    val payMethods: List<PayMethod> = emptyList(),
 )
 
 data class MyAccessResult(

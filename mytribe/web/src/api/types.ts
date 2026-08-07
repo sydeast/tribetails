@@ -54,6 +54,20 @@ export interface PortalConfig {
   chat: PortalChat;
 }
 
+/**
+ * PR30: one configured payment processor, resolved (URL + label), never a
+ * raw operator handle. `kind: 'checkout'` is the existing `payInvoice` flow
+ * (Stripe); `kind: 'link'` is a plain anchor to `url`. NEVER carries a
+ * processor fee — kinfolk never see fees (standing ruling); see
+ * `functions/src/lib/paymentMethods.ts`.
+ */
+export interface PayMethod {
+  id: 'stripe' | 'venmo' | 'paypal' | 'cashapp';
+  label: string;
+  kind: 'checkout' | 'link';
+  url: string | null;
+}
+
 export interface GetMyHomeResult {
   kinfolkId: string;
   displayName: string;
@@ -63,6 +77,12 @@ export interface GetMyHomeResult {
   portal: PortalConfig;
   /** True when the signed-in user already dismissed the current banner. */
   bannerDismissedByUser: boolean;
+  /**
+   * PR30: every payment processor the operator has configured, business-level
+   * (not filtered to a specific invoice's amount due — see
+   * `functions/src/portal/getMyHome.ts`).
+   */
+  payMethods: PayMethod[];
 }
 
 // ── getMyBookings (functions/src/portal/getMyBookings.ts) ───────────────────

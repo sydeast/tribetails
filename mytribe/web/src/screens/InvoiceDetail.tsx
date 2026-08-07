@@ -1,7 +1,8 @@
 import { Link, useParams } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyInvoicePdf, getMyInvoices, payInvoice, redeemCredit } from '../api/invoicesApi';
-import { getBusinessContact } from '../api/portal';
+import { getBusinessContact, getMyHome } from '../api/portal';
+import type { PayMethod } from '../api/types';
 import {
   creditTargetLabel,
   formatCentsUsd,
@@ -14,8 +15,18 @@ import {
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
+import { PayOptions } from '../components/PayOptions';
 import { LaunchError } from './LaunchError';
 import '../styles/invoices.css';
+
+/**
+ * Deploy skew fallback (web and functions don't deploy atomically): if
+ * `payMethods` is missing from the response — an old server, or the
+ * `getMyHome` query itself failing — a household must still be able to pay.
+ * `PayOptions` stays the single rendering path either way; this is the one
+ * method it's ever asked to render on its own.
+ */
+const STRIPE_ONLY_FALLBACK: PayMethod[] = [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null }];
 
 /**
  * Invoice document view, ported from
@@ -31,6 +42,12 @@ export function InvoiceDetail() {
 
   const invoices = useQuery({ queryKey: ['myInvoices', kinfolkId], queryFn: () => getMyInvoices(kinfolkId) });
   const business = useQuery({ queryKey: ['businessContact'], queryFn: () => getBusinessContact() });
+  // PR30: `payMethods` (the resolved processor list) rides the same
+  // `['myHome', kinfolkId]` cache PortalNav already keeps warm on every
+  // screen for branding, so this is free on the common path where the nav
+  // already fetched it. Same `staleTime` for the same reason PortalNav uses
+  // one: which processors are configured changes rarely.
+  const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId), staleTime: 5 * 60_000 });
 
   const pay = useMutation({
     mutationFn: () =>
@@ -124,6 +141,14 @@ export function InvoiceDetail() {
   // stamped states — would have offered a Pay button on a quote (not yet a
   // bill) and on a draft (never sent).
   const payable = inv.status === 'open' && inv.amountDue > 0;
+  // Deploy skew: an old server, or a failed `getMyHome` fetch, means
+  // `payMethods` never arrives — fall back to Stripe alone rather than
+  // leaving `payable` true with no way to act on it.
+  const payMethods = home.data?.payMethods?.length ? home.data.payMethods : STRIPE_ONLY_FALLBACK;
+  // `inv.amountDue` is dollars (the legacy shape of this collection, see
+  // `invoiceFormat.ts`); PayOptions and the rest of this codebase's money
+  // fields are cents. Rounded, not truncated, so $127.505 doesn't clip.
+  const amountDueCents = Math.round(inv.amountDue * 100);
 
   return (
     <>
@@ -274,14 +299,12 @@ export function InvoiceDetail() {
 
                 <div className="doc-actions">
                   {payable && (
-                    <button className="btn grad" onClick={() => pay.mutate()} disabled={pay.isPending}>
-                      {'\u{1F4B3}'}{' '}
-                      {pay.isPending
-                        ? 'Opening checkout…'
-                        : inv.partiallyPaid
-                          ? `Pay remaining ${formatUsd(inv.amountDue)}`
-                          : `Pay ${formatUsd(inv.amountDue)}`}
-                    </button>
+                    <PayOptions
+                      methods={payMethods}
+                      amountDue={amountDueCents}
+                      onCheckout={() => pay.mutate()}
+                      checkingOut={pay.isPending}
+                    />
                   )}
                   <button className="btn ghost" onClick={() => downloadPdf.mutate()} disabled={downloadPdf.isPending}>
                     {'⬇'} {downloadPdf.isPending ? 'Preparing PDF…' : 'Download PDF'}

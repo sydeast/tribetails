@@ -43,6 +43,77 @@ class PortalApiTest {
     }
 
     @Test
+    fun `getMyHome decodes payMethods, resolved never raw handles`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyHome", buildJsonObject {
+            put("kinfolkId", "demo-family-001")
+            put("displayName", "The Foster")
+            put("payMethods", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "stripe")
+                    put("label", "Pay with Credit Card")
+                    put("kind", "checkout")
+                    put("url", JsonNull)
+                })
+                add(buildJsonObject {
+                    put("id", "venmo")
+                    put("label", "Pay with Venmo")
+                    put("kind", "link")
+                    put("url", "https://venmo.com/u/auntie")
+                })
+            })
+        })
+        val api = PortalApi(fake)
+        val res = api.getMyHome("demo-family-001")
+        assertEquals(2, res.payMethods.size)
+        assertEquals(PayMethodKind.Checkout, res.payMethods[0].kind)
+        assertNull(res.payMethods[0].url)
+        assertEquals(
+            PayMethod(id = "venmo", label = "Pay with Venmo", kind = PayMethodKind.Link, url = "https://venmo.com/u/auntie"),
+            res.payMethods[1],
+        )
+    }
+
+    @Test
+    fun `getMyHome defaults payMethods to empty when the server omits it`() = runTest {
+        // An old server ahead of a client rollback, or a deploy in progress —
+        // not a decode failure, just no methods; callers (InvoicesController)
+        // fall back to Stripe alone.
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyHome", buildJsonObject {
+            put("kinfolkId", "x")
+            put("displayName", "The Foster")
+        })
+        val api = PortalApi(fake)
+        assertEquals(emptyList(), api.getMyHome("x").payMethods)
+    }
+
+    @Test
+    fun `getMyHome drops a payMethods entry with an unrecognized kind rather than throwing`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyHome", buildJsonObject {
+            put("kinfolkId", "x")
+            put("displayName", "The Foster")
+            put("payMethods", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "zelle")
+                    put("label", "Pay with Zelle")
+                    put("kind", "not-a-kind-this-client-knows-yet")
+                })
+                add(buildJsonObject {
+                    put("id", "stripe")
+                    put("label", "Pay with Credit Card")
+                    put("kind", "checkout")
+                })
+            })
+        })
+        val api = PortalApi(fake)
+        val res = api.getMyHome("x")
+        assertEquals(1, res.payMethods.size)
+        assertEquals("stripe", res.payMethods[0].id)
+    }
+
+    @Test
     fun `getMyInvoices splits open paid credits and exposes account balance`() = runTest {
         val fake = FakeFunctionsClient()
         fake.stub("getMyInvoices", buildJsonObject {

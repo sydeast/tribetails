@@ -25,7 +25,9 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['test/**/*.test.ts', '../scripts/test/**/*.test.ts'],
+    // src/**/*.test.ts: colocated unit tests for pure lib modules (PR30:
+    // paymentMethods.ts) — see vitest.config.ts for the full rationale.
+    include: ['test/**/*.test.ts', 'src/**/*.test.ts', '../scripts/test/**/*.test.ts'],
     exclude: ['node_modules/**', 'test/rules/**'],
     server: { deps: { external: [/firebase-admin/] } },
     testTimeout: 10000,

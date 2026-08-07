@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { type BusinessSettings, type MyTribePortalConfig } from '../../api/settings';
+import { formatFeeSchedule, PAYMENT_METHOD_FEE_SCHEDULE, type BusinessSettings, type MyTribePortalConfig } from '../../api/settings';
 import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
@@ -54,6 +54,8 @@ export interface TextFieldSpec {
   label: string;
   placeholder?: string;
   type?: 'text' | 'email' | 'tel';
+  /** Small caption under the input. PR30: the Payments fields use it for the processor's fee schedule. */
+  hint?: string;
 }
 
 export const BUSINESS_PROFILE_FIELDS: readonly TextFieldSpec[] = [
@@ -67,10 +69,18 @@ export const WEATHER_AREA_FIELDS: readonly TextFieldSpec[] = [
   { key: 'weatherLocation', label: 'City, metro, or ZIP', placeholder: 'Austin, TX' },
 ];
 
+// PR30: each hint is the processor's fee schedule (PAYMENT_METHOD_FEE_SCHEDULE
+// — display only, never the charged fee; see that constant's header). The
+// portal now offers each handle here as a "Pay with ___" button, which is
+// also why the PayPal placeholder no longer suggests an email address: the
+// portal's registry (paymentMethods.ts) can't turn an email into a working
+// paypal.me link and omits the button rather than shipping a dead one, so a
+// placeholder inviting that exact input would set the operator up to type a
+// handle that quietly never appears to a kinfolk.
 export const PAYMENT_FIELDS: readonly TextFieldSpec[] = [
-  { key: 'venmoHandle', label: 'Venmo handle', placeholder: '@tribetails' },
-  { key: 'paypalHandle', label: 'PayPal', placeholder: 'you@email.com or paypal.me/tribetails' },
-  { key: 'cashappHandle', label: 'Cash App', placeholder: '$tribetails' },
+  { key: 'venmoHandle', label: 'Venmo handle', placeholder: '@tribetails', hint: `Venmo charges about ${formatFeeSchedule(PAYMENT_METHOD_FEE_SCHEDULE.venmo)} per payment.` },
+  { key: 'paypalHandle', label: 'PayPal', placeholder: 'paypal.me/tribetails', hint: `PayPal charges about ${formatFeeSchedule(PAYMENT_METHOD_FEE_SCHEDULE.paypal)} per payment.` },
+  { key: 'cashappHandle', label: 'Cash App', placeholder: '$tribetails', hint: `Cash App charges about ${formatFeeSchedule(PAYMENT_METHOD_FEE_SCHEDULE.cashapp)} per payment.` },
 ];
 
 /**
@@ -152,17 +162,30 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
       ) : null}
       <div className="settingsEdit__fields">
         {fields.map((f) => (
-          <label key={f.key} className="settingsEdit__field">
-            <span className="settingsEdit__fieldLabel">{f.label}</span>
-            <input
-              type={f.type ?? 'text'}
-              className="settingsEdit__input"
-              value={values[f.key] ?? ''}
-              {...(f.placeholder !== undefined ? { placeholder: f.placeholder } : {})}
-              disabled={busy}
-              onChange={(e) => update(f.key, e.target.value)}
-            />
-          </label>
+          <div key={f.key} className="settingsEdit__fieldGroup">
+            <label className="settingsEdit__field">
+              <span className="settingsEdit__fieldLabel">{f.label}</span>
+              <input
+                type={f.type ?? 'text'}
+                className="settingsEdit__input"
+                value={values[f.key] ?? ''}
+                {...(f.placeholder !== undefined ? { placeholder: f.placeholder } : {})}
+                disabled={busy}
+                onChange={(e) => update(f.key, e.target.value)}
+                {...(f.hint ? { 'aria-describedby': `${f.key}-hint` } : {})}
+              />
+            </label>
+            {f.hint ? (
+              // OUTSIDE the <label>, deliberately: text nested inside a <label>
+              // is folded into the wrapped input's accessible NAME, which would
+              // turn "Venmo handle" into "Venmo handle Venmo charges about
+              // 1.9% + $0.10 per payment." `aria-describedby` (above) is the
+              // correct role for this text — a description, not the name.
+              <span id={`${f.key}-hint`} className="settingsEdit__hint">
+                {f.hint}
+              </span>
+            ) : null}
+          </div>
         ))}
       </div>
       <div className="settingsEdit__saveRow">

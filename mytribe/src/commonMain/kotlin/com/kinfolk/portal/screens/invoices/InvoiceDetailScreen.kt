@@ -30,6 +30,8 @@ import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.portal.CreditTarget
 import com.kinfolk.portal.portal.Invoice
 import com.kinfolk.portal.portal.InvoiceStatus
+import com.kinfolk.portal.portal.PayMethod
+import com.kinfolk.portal.portal.PayMethodKind
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
@@ -42,7 +44,14 @@ fun InvoiceDetailScreen(
     paying: Boolean = false,
     redeeming: Boolean = false,
     downloadingPdf: Boolean = false,
-    onPay: () -> Unit = {},
+    /**
+     * PR30: one CTA per configured processor, resolved off `getMyHome`'s
+     * `payMethods`. Empty renders no payment row at all — same contract as
+     * the web `PayOptions` component — so a caller with nothing configured
+     * (or that hasn't loaded yet) never shows a broken action.
+     */
+    payMethods: List<PayMethod> = emptyList(),
+    onPayMethod: (PayMethod) -> Unit = {},
     onRedeem: (CreditTarget) -> Unit = {},
     onDownloadPdf: () -> Unit = {},
     onBack: () -> Unit,
@@ -149,11 +158,12 @@ fun InvoiceDetailScreen(
                 modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
             )
         } else if (!invoice.isPaid && invoice.amountDue > 0.0) {
-            KinButton(
-                label = if (paying) "Opening checkout…" else "Pay ${formatUsd(invoice.amountDue)}",
-                onClick = onPay,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.s),
-                enabled = !paying,
+            PayOptions(
+                methods = payMethods,
+                amountDue = invoice.amountDue,
+                paying = paying,
+                onPayMethod = onPayMethod,
+                modifier = Modifier.padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.s),
             )
         }
 
@@ -206,6 +216,50 @@ private fun CreditRedeemPanel(
                     "Original card not on file. Only Account Balance is available.",
                     style = type.sansMeta,
                 )
+            }
+        }
+    }
+}
+
+/**
+ * PR30: one CTA per configured payment processor. `Checkout` (Stripe) is the
+ * existing pay flow, styled the same [KinButton] the old single Pay button
+ * used; `Link` (Venmo/PayPal/Cash App) is [KinGhostButton] plus a caption
+ * stating the amount to send — a link method cannot be handed an amount, so
+ * without the caption a household guesses and the operator reconciles the
+ * mismatch by hand. Mirrors the web `PayOptions` component's contract:
+ * renders nothing for an empty `methods` list rather than a broken row.
+ */
+@Composable
+private fun PayOptions(
+    methods: List<PayMethod>,
+    amountDue: Double,
+    paying: Boolean,
+    onPayMethod: (PayMethod) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (methods.isEmpty()) return
+    val type = LocalKinfolkTypography.current
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+        for (method in methods) {
+            when (method.kind) {
+                PayMethodKind.Checkout -> KinButton(
+                    label = if (paying) "Opening checkout…" else method.label,
+                    onClick = { onPayMethod(method) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !paying,
+                )
+                PayMethodKind.Link -> {
+                    KinGhostButton(
+                        label = method.label,
+                        onClick = { onPayMethod(method) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "Send ${formatUsd(amountDue)}, then let your Auntie know it’s on its way.",
+                        style = type.sansMeta,
+                    )
+                }
             }
         }
     }

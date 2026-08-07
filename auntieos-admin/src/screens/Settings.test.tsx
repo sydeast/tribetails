@@ -226,6 +226,28 @@ describe('Settings — section nav shell', () => {
     expect(within(panel).queryByLabelText('Business name')).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Payments' })).toHaveAttribute('aria-selected', 'true');
   });
+
+  /**
+   * PR30: the fee schedule is a caption on this admin-only panel — it never
+   * reaches the portal (see `payMethods` on `getMyHome`, and `PayOptions`,
+   * neither of which carries `feeBps`/`feeFixedCents`). This also pins that
+   * the caption stays a DESCRIPTION, not part of the field's accessible NAME:
+   * `getByLabelText('Venmo handle')` above only keeps working because the
+   * hint sits outside the wrapping <label>.
+   */
+  it('shows each processor’s fee schedule as a caption, exact figures', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+
+    const panel = await openSection('Payments');
+    expect(within(panel).getByText('Venmo charges about 1.9% + $0.10 per payment.')).toBeInTheDocument();
+    expect(within(panel).getByText('PayPal charges about 3.49% + $0.49 per payment.')).toBeInTheDocument();
+    expect(within(panel).getByText('Cash App charges about 2.6% + $0.15 per payment.')).toBeInTheDocument();
+    // The Venmo input's accessible name is still exactly its label, not the
+    // label plus the hint text that follows it in the DOM.
+    expect(within(panel).getByLabelText('Venmo handle')).toHaveAccessibleName('Venmo handle');
+  });
 });
 
 describe('Settings, Calendar is one section holding both capabilities', () => {

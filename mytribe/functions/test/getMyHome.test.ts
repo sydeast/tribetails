@@ -149,9 +149,54 @@ describe('getMyHomeHandler', () => {
     expect(res).not.toHaveProperty('currentVisit');
     expect(res).not.toHaveProperty('upcomingBookings');
     expect(res).not.toHaveProperty('recentBookings');
-    // The fields legacy DOES decode must survive untouched.
+    // The fields legacy DOES decode must survive untouched. `payMethods`
+    // (PR30) is the one addition since O-19 was pinned.
     expect(Object.keys(res).sort()).toEqual(
-      ['bannerDismissedByUser', 'businessLogoUrl', 'businessName', 'displayName', 'kinfolkId', 'portal'].sort(),
+      ['bannerDismissedByUser', 'businessLogoUrl', 'businessName', 'displayName', 'kinfolkId', 'payMethods', 'portal'].sort(),
     );
+  });
+
+  /**
+   * PR30: `payMethods` carries the operator's configured processors — resolved
+   * URL + label off `resolvePayMethods`, never the raw `venmoHandle` off the
+   * settings doc. This is the field the portal was blind to before this task
+   * (`invoicePdf.ts`'s "How to pay" line was the only place these handles ever
+   * reached a household).
+   */
+  it('PR30: resolves configured payment methods off business_settings, never raw handles', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['demo-1'] },
+        'families/demo-1': { displayName: 'The Foster' },
+        'business_settings/business_settings': { venmoHandle: '@auntie', paypalHandle: '' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyHomeHandler } = await import('../src/portal/getMyHome');
+    const res = await getMyHomeHandler({ data: { kinfolkId: 'demo-1' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.payMethods.map((m) => m.id)).toEqual(['stripe', 'venmo']);
+    expect(res.payMethods.find((m) => m.id === 'venmo')).toEqual({
+      id: 'venmo',
+      label: 'Pay with Venmo',
+      kind: 'link',
+      url: 'https://venmo.com/u/auntie',
+    });
+    expect(JSON.stringify(res.payMethods)).not.toMatch(/venmoHandle|@auntie/);
+  });
+
+  it('PR30: offers Stripe alone when no processor is configured', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['demo-1'] },
+        'families/demo-1': { displayName: 'The Foster' },
+        'business_settings/business_settings': null,
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyHomeHandler } = await import('../src/portal/getMyHome');
+    const res = await getMyHomeHandler({ data: { kinfolkId: 'demo-1' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.payMethods).toEqual([{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null }]);
   });
 });

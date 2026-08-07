@@ -126,6 +126,48 @@ export interface MyTribePortalConfig {
  * Element shapes the merge does not descend into (`TimeBlockDefinition`,
  * `HomeSectionCfg`) stay optional, because for those it IS still a cast.
  */
+/**
+ * PR30: each processor's fee schedule — a percentage plus a fixed base,
+ * stored as INTEGER basis points and INTEGER cents (`feeBps: 290` = 2.9%,
+ * `feeFixedCents: 30` = $0.30). Never a float percentage: that is how
+ * rounding errors get into money (see `mytribe/functions/src/lib/
+ * paymentMoney.ts`).
+ *
+ * Mirrored from `mytribe/functions/src/lib/paymentMethods.ts`'s
+ * `METHOD_SPECS`, not imported from it: this app and `mytribe/functions` are
+ * not workspace members of each other (repo root `package.json` — Cloud
+ * Functions deploy as a self-contained artifact), so the numbers are copied
+ * here rather than shared.
+ *
+ * THIS IS A SCHEDULE, NOT A CHARGED FEE. It exists so a future recording
+ * form can pre-fill an expected fee the operator can correct, and so this
+ * settings panel can say what a rail costs. It must never be stored as
+ * though it were the charged fee — the standing ruling (`paymentMoney.ts`)
+ * is that the real fee is known at record time, read off the processor's own
+ * site by the operator. A computed figure may SEED that field; it may never
+ * silently become the recorded value, and it must never overwrite a figure
+ * she typed.
+ *
+ * KINFOLK NEVER SEE FEES (standing ruling; `getMyInvoices.ts` correctly does
+ * not select the field). This schedule is admin-only: it renders as a
+ * caption on THIS settings panel, never anywhere the portal reads.
+ */
+export const PAYMENT_METHOD_FEE_SCHEDULE: Readonly<
+  Record<'stripe' | 'venmo' | 'paypal' | 'cashapp', { feeBps: number; feeFixedCents: number }>
+> = {
+  stripe: { feeBps: 290, feeFixedCents: 30 },
+  venmo: { feeBps: 190, feeFixedCents: 10 },
+  paypal: { feeBps: 349, feeFixedCents: 49 },
+  cashapp: { feeBps: 260, feeFixedCents: 15 },
+};
+
+/** "2.9% + $0.30" from a `PAYMENT_METHOD_FEE_SCHEDULE` entry. Display only — see the constant's own header. */
+export function formatFeeSchedule(entry: { feeBps: number; feeFixedCents: number }): string {
+  const pct = (entry.feeBps / 100).toFixed(2).replace(/\.?0+$/, '');
+  const cents = (entry.feeFixedCents / 100).toFixed(2);
+  return `${pct}% + $${cents}`;
+}
+
 export interface BusinessSettings {
   _id: string;
   businessName: string;

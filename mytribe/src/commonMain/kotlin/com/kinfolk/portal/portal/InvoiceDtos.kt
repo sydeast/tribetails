@@ -1,5 +1,25 @@
 package com.kinfolk.portal.portal
 
+/**
+ * PR30: one configured payment processor, resolved (url + label) off
+ * `getMyHome`'s `payMethods` — never a raw operator handle (the server
+ * already stripped those in `resolvePayMethods`). [Checkout] is the existing
+ * Stripe `payInvoice` flow; [Link] is opened via `openExternalUrl`,
+ * mirroring how `InvoicesController.startDownloadPdf` already opens an
+ * external URL.
+ *
+ * NEVER carries a processor fee — kinfolk never see fees (standing ruling);
+ * see `mytribe/functions/src/lib/paymentMethods.ts`.
+ */
+enum class PayMethodKind { Checkout, Link }
+
+data class PayMethod(
+    val id: String,
+    val label: String,
+    val kind: PayMethodKind,
+    val url: String?,
+)
+
 enum class InvoiceStatus { Draft, Open, Paid, Credit, Cancelled }
 
 enum class CreditTarget { AccountBalance, OriginalPaymentMethod }
