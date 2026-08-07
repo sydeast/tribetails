@@ -162,6 +162,36 @@ else
   ylw "gradlew" "missing"
 fi
 
+# local.properties, per Gradle build that needs an SDK.
+#
+# It is gitignored (machine-specific path, and on a real machine also signing
+# passwords), so a git worktree NEVER inherits one from the main tree and Gradle
+# refuses to configure without it:
+#
+#   SDK location not found. Define a valid SDK location with an ANDROID_HOME
+#   environment variable or by setting the sdk.dir path in your project's local
+#   properties file
+#
+# bootstrap.sh has written these all along, and its own header already names
+# this case. What was missing is anyone running it in a worktree: three separate
+# agents hit that error on 2026-08-07 and each worked around it by exporting
+# ANDROID_HOME for one command, which fixes that command and leaves the next one
+# broken. Reporting it here turns a step someone has to remember into one the
+# machine check names.
+#
+# TWO builds, not three. auntieos-admin/web is a Gradle build with NO android
+# target (no androidTarget(), no com.android plugin), so it needs no sdk.dir and
+# a local.properties there is vestigial. Listing it would invent a requirement
+# that does not exist.
+for ANDROID_LOCAL in auntieos-admin/android/local.properties mytribe/local.properties; do
+  if [ -f "$ANDROID_LOCAL" ]; then
+    grn "localprops" "$ANDROID_LOCAL present"
+  else
+    ylw "localprops" "$ANDROID_LOCAL missing. Gradle cannot configure without it."
+    NOTES+=("$ANDROID_LOCAL is missing, so Android builds and unit tests fail with 'SDK location not found'. Run: scripts/bootstrap.sh (safe to re-run, never overwrites an existing file).")
+  fi
+done
+
 # THE PYTHON CODEBASE, which nothing else in this repo sets up.
 #
 # `auntieos-admin/web/firebase.json` declares a second functions codebase,

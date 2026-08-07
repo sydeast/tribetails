@@ -99,6 +99,14 @@ which also holds signing keys), installs all three JS projects one at a time,
 and then **proves it worked** by typechecking. If any step fails it says which
 step, rather than exiting quietly.
 
+**Run it in a new `git worktree` too, not only in a fresh clone.**
+`local.properties` is gitignored, so a worktree never inherits one from the main
+tree and the first Android command there dies with `SDK location not found`.
+Exporting `ANDROID_HOME` for that one command is not the fix: it unblocks that
+command and leaves the next one just as broken. `scripts/preflight.sh` names any
+missing `local.properties` and points back here, so this is one less thing to
+remember.
+
 Optional, for Sentry and an App Check debug token. Both apps run fine without
 them:
 
