@@ -14,7 +14,11 @@ import { auth } from './firebase';
  *   - 0 kinfolkIds             -> 'noTribes'
  *   - operator                -> 'pick' (always, even with 1 id — they see the directory)
  *   - exactly 1, non-operator -> 'home'
- *   - 2+, non-operator         -> 'pick'
+ *   - 2+, non-operator         -> 'error'
+ *
+ * Operator ruling 2026-08-06, "one kinfolk, one tribe": a non-operator can
+ * only ever belong to exactly one household. The picker used to also serve a
+ * non-operator with 2+ ids; that case is withdrawn — see the branch below.
  */
 export type LaunchDestination = 'loading' | 'signIn' | 'noTribes' | 'pick' | 'home' | 'error';
 
@@ -37,7 +41,17 @@ export function resolveLaunchDestination(
   if (access.kinfolkIds.length === 0) return 'noTribes';
   if (access.isOperator) return 'pick';
   if (access.kinfolkIds.length === 1) return 'home';
-  return access.activeKinfolkId !== null ? 'home' : 'pick';
+  // Operator ruling 2026-08-06, "one kinfolk, one tribe": under the ruling
+  // this cannot happen, so it's a data defect, not a routing case. Do NOT
+  // auto-pick (that would show someone else's household — pet medical
+  // records included — to whichever id happened to sort first) and do NOT
+  // fall back to the picker (its existence for non-operators is exactly what
+  // the ruling withdrew, so routing here would silently resurrect it).
+  // Fail loud instead: surface it as an error, activeKinfolkId or not, so a
+  // broken invite/migration gets fixed rather than "working" by accident.
+  // (ensureAccess below is what actually runs in the app and logs this —
+  // this function has no consumers wired up yet, see its own comment.)
+  return 'error';
 }
 
 let state: AccessState | null = null;
@@ -102,6 +116,18 @@ async function reconcileClaim(activeKinfolkId: string): Promise<void> {
  * Resolves getMyAccess for the current uid (cached; call is idempotent per
  * sign-in). Restores a previously-picked tribe from sessionStorage if it's
  * still in the allowed set, and auto-picks the sole tribe for non-operators.
+ *
+ * Operator ruling 2026-08-06, "one kinfolk, one tribe": a non-operator with
+ * 2+ ids is a data defect the ruling says can't happen. This is the one
+ * place that MUST refuse to hand out an activeKinfolkId for it — every
+ * kinfolkId-scoped callable (getMyHome included) falls back server-side to
+ * the caller's first linked id when kinfolkId is omitted
+ * (resolveKinfolkAccess.ts), so restoring a session pick or auto-reconciling
+ * a token here would let a defective account reach real household data
+ * through the very query a screen fires next. router.tsx's guards send this
+ * state straight to the dead-end /error screen; nothing downstream may ever
+ * fire a kinfolkId query for it, which is why this function must not resolve
+ * one either.
  */
 export async function ensureAccess(): Promise<AccessState> {
   const auth = getAuthState();
@@ -115,6 +141,16 @@ export async function ensureAccess(): Promise<AccessState> {
   resolvedForUid = uid;
   inFlight = getMyAccess()
     .then(async (result) => {
+      if (!result.isOperator && result.kinfolkIds.length >= 2) {
+        console.error(
+          `[activeTribe] non-operator account has ${result.kinfolkIds.length} tribes; ` +
+            'expected exactly 1 under the "one kinfolk, one tribe" ruling. Account needs attention.',
+        );
+        const next: AccessState = { kinfolkIds: result.kinfolkIds, isOperator: false, activeKinfolkId: null, error: null };
+        state = next;
+        notify();
+        return next;
+      }
       const saved = sessionStorage.getItem(sessionKeyFor(uid));
       const restored = saved !== null && result.kinfolkIds.includes(saved) ? saved : null;
       const autoPicked = !result.isOperator && result.kinfolkIds.length === 1 ? result.kinfolkIds[0]! : null;
