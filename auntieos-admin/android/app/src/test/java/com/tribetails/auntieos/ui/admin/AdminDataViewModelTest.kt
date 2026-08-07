@@ -94,29 +94,115 @@ class AdminDataViewModelTest {
     }
 
     // ─── loadPayments ─────────────────────────────────────────────────────────
+    //
+    // These read through the `listPayments` CALLABLE, not the raw root-collection
+    // read this screen used to do. The distinction is the whole point of the
+    // change: `stripeWebhook.ts` stores a card payment's `amount` in cents and a
+    // fallback payment's in dollars, and the Kotlin `Payment` model carries no
+    // field that can tell them apart, so anything rendering money out of it was
+    // 100x wrong on every Stripe row. The server resolves the units and sends
+    // integer cents; the assertions below are on VALUES for that reason.
 
     @Test
-    fun `loadPayments populates payments on success`() = runTest(testDispatcher) {
-        coEvery { mockInvoiceRepo.getPayments() } returns Result.success(listOf(TestFixtures.payment1))
+    fun `loadPayments populates payments on success, in the cents the server resolved`() =
+        runTest(testDispatcher) {
+            coEvery { mockInvoiceRepo.listPayments() } returns
+                Result.success(TestFixtures.paymentsPage(TestFixtures.paymentRow("p1", 13750L)))
 
-        val vm = buildViewModel()
-        vm.loadPayments()
-        advanceUntilIdle()
+            val vm = buildViewModel()
+            vm.loadPayments()
+            advanceUntilIdle()
 
-        assertFalse(vm.isLoading.value)
-        assertNull(vm.error.value)
-        assertEquals(1, vm.payments.value.size)
-    }
+            assertFalse(vm.isLoading.value)
+            assertNull(vm.error.value)
+            assertEquals(1, vm.payments.value.rows.size)
+            // $137.50, not $13,750.00.
+            assertEquals(13750L, vm.payments.value.rows.single().amountCents)
+        }
+
+    @Test
+    fun `loadPayments carries the truncation signal, so a bounded page cannot read as complete`() =
+        runTest(testDispatcher) {
+            coEvery { mockInvoiceRepo.listPayments() } returns
+                Result.success(
+                    TestFixtures.paymentsPage(
+                        TestFixtures.paymentRow("p1", 100L),
+                        truncated = true,
+                        nextCursor = "p1",
+                    ),
+                )
+
+            val vm = buildViewModel()
+            vm.loadPayments()
+            advanceUntilIdle()
+
+            assertTrue(vm.payments.value.truncated)
+            assertEquals("p1", vm.payments.value.nextCursor)
+        }
+
+    @Test
+    fun `loadPayments carries the unresolved count rather than letting a zero read as a fact`() =
+        runTest(testDispatcher) {
+            coEvery { mockInvoiceRepo.listPayments() } returns
+                Result.success(
+                    TestFixtures.paymentsPage(
+                        TestFixtures.paymentRow("p1", 0L, amountResolved = false),
+                        unresolvedAmountCount = 1L,
+                    ),
+                )
+
+            val vm = buildViewModel()
+            vm.loadPayments()
+            advanceUntilIdle()
+
+            assertEquals(1L, vm.payments.value.unresolvedAmountCount)
+            assertFalse(vm.payments.value.rows.single().amountResolved)
+        }
 
     @Test
     fun `loadPayments sets error on failure`() = runTest(testDispatcher) {
-        coEvery { mockInvoiceRepo.getPayments() } returns Result.failure(RuntimeException("Timeout"))
+        coEvery { mockInvoiceRepo.listPayments() } returns Result.failure(RuntimeException("Timeout"))
 
         val vm = buildViewModel()
         vm.loadPayments()
         advanceUntilIdle()
 
         assertNotNull(vm.error.value)
+    }
+
+    @Test
+    fun `loadPayments leaves the previous page alone on failure rather than emptying it`() =
+        runTest(testDispatcher) {
+            // Fail-loud, not fail-soft: an emptied list reads on screen as "no
+            // payments have ever been recorded", which is a false statement about
+            // money rather than a missing one.
+            coEvery { mockInvoiceRepo.listPayments() } returns
+                Result.success(TestFixtures.paymentsPage(TestFixtures.paymentRow("p1", 13750L)))
+            val vm = buildViewModel()
+            vm.loadPayments()
+            advanceUntilIdle()
+
+            coEvery { mockInvoiceRepo.listPayments() } returns Result.failure(RuntimeException("Timeout"))
+            vm.loadPayments()
+            advanceUntilIdle()
+
+            assertNotNull(vm.error.value)
+            assertEquals(1, vm.payments.value.rows.size)
+        }
+
+    @Test
+    fun `loadPayments never touches the raw root-collection read`() = runTest(testDispatcher) {
+        // `getPayments()` is retained under the repo's payment-code rule, but it
+        // returns ambiguous units and nothing on a screen may call it. `mockk()`
+        // here is strict, so a call to it would fail this test outright; the
+        // explicit verify says so on purpose rather than by accident.
+        coEvery { mockInvoiceRepo.listPayments() } returns Result.success(TestFixtures.paymentsPage())
+
+        val vm = buildViewModel()
+        vm.loadPayments()
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { mockInvoiceRepo.getPayments() }
     }
 
     // ─── loadVisitLogs ────────────────────────────────────────────────────────
@@ -584,14 +670,15 @@ class AdminDataViewModelTest {
     @Test
     fun `createPayment refreshes payments list on success`() = runTest(testDispatcher) {
         coEvery { mockInvoiceRepo.createPayment(any()) } returns Result.success("pay-new")
-        coEvery { mockInvoiceRepo.getPayments() } returns Result.success(listOf(TestFixtures.payment1))
+        coEvery { mockInvoiceRepo.listPayments() } returns
+            Result.success(TestFixtures.paymentsPage(TestFixtures.paymentRow("p1", 13750L)))
 
         val vm = buildViewModel()
         vm.createPayment(TestFixtures.payment1)
         advanceUntilIdle()
 
         assertFalse(vm.isLoading.value)
-        assertEquals(1, vm.payments.value.size)
+        assertEquals(1, vm.payments.value.rows.size)
     }
 
     @Test
