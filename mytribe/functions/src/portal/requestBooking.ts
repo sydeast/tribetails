@@ -6,6 +6,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
+import { resolveNonStaffKinfolkId } from '../lib/resolveNonStaffKinfolkId';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { approveBookingSeriesCore } from '../admin/approveBookingSeriesCore';
@@ -433,17 +434,22 @@ export async function requestBookingHandler(
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
   const firestore = db();
-  const clientSnap = await firestore.collection('clients').doc(uid).get();
-  const allowedIds: string[] = (clientSnap.data()?.kinfolkIds ?? []) as string[];
-  if (allowedIds.length === 0) throw new HttpsError('failed-precondition', 'No tribes linked.');
 
   const data = (req.data ?? {}) as Record<string, unknown>;
   const isMulti = Array.isArray((data as { visits?: unknown }).visits);
 
+  // PR28b: both branches below resolve the household AFTER parsing their args.
+  // This used to be split: the clients/{uid} lookup and the zero-households
+  // check ran here, above the dispatch and before either parse, while the
+  // actual id matching already ran after it. Now the whole resolution is one
+  // call, after parsing. The reorder has one narrow deliberate consequence: a
+  // caller with zero linked households who also sends a malformed payload now
+  // gets the zod 'invalid-argument' where they used to get
+  // 'failed-precondition'. Both refuse the request; every other ordering is
+  // unchanged.
   if (isMulti) {
     const args = MultiArgs.parse(req.data);
-    const kinfolkId = args.kinfolkId ?? allowedIds[0];
-    if (!allowedIds.includes(kinfolkId)) throw new HttpsError('permission-denied', 'No access.');
+    const kinfolkId = await resolveNonStaffKinfolkId(uid, args.kinfolkId);
 
     const now = Date.now();
     args.visits.forEach((v) => {
@@ -519,8 +525,8 @@ export async function requestBookingHandler(
 
   // Legacy single-visit path, stored as a 1-visit envelope.
   const args = LegacyArgs.parse(req.data);
-  const kinfolkId = args.kinfolkId ?? allowedIds[0];
-  if (!allowedIds.includes(kinfolkId)) throw new HttpsError('permission-denied', 'No access.');
+  // Household resolution: see the PR28b note above the isMulti dispatch.
+  const kinfolkId = await resolveNonStaffKinfolkId(uid, args.kinfolkId);
 
   if (args.endTimeMs && args.endTimeMs <= args.startTimeMs) {
     throw new HttpsError('invalid-argument', 'endTime must be after startTime.');
