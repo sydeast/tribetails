@@ -2,7 +2,9 @@
 
 package com.kinfolk.portal.screens.kintales
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
@@ -52,8 +54,10 @@ class KinTalesScreenTest {
         waitForIdle()
         onNodeWithText("Auntie Avery").assertIsDisplayed()
         onNodeWithText("Kai played fetch today.").assertIsDisplayed()
-        // The badge renders "2 photos · view" (count plus an expand affordance).
-        onNodeWithText("2 photos", substring = true).assertIsDisplayed()
+        // The full-gallery control reads "View Gallery (2)" (task-24 follow-up:
+        // "N photos" misdescribed a tale whose media includes video, so it no
+        // longer says "photos" — matches web's "View Gallery" naming).
+        onNodeWithText("View Gallery (2)").assertIsDisplayed()
     }
 
     @Test
@@ -86,5 +90,118 @@ class KinTalesScreenTest {
         setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
         waitForIdle()
         onNodeWithText("Couldn't load KinTales").assertIsDisplayed()
+    }
+
+    // task-24 (P3): the feed card shows its media up front instead of hiding
+    // it one click deep. Tiles are asserted via their testTag rather than by
+    // inspecting the async image itself — KinfolkRemoteImage's load state is
+    // Coil-network-dependent and out of scope here; the tile container
+    // renders synchronously regardless of whether the image ever resolves.
+
+    @Test
+    fun thumbStrip_rendersUpToEightTilesInMediaOrder() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t-many")
+                    put("body", "Twelve photos today.")
+                    put("authorDisplayName", "Auntie Avery")
+                    put("mediaIds", buildJsonArray { (1..12).forEach { add("m$it") } })
+                    put("shared", false)
+                    put("thumbs", buildJsonArray {
+                        (1..12).forEach { i ->
+                            add(buildJsonObject {
+                                put("id", "m$i")
+                                put("url", "https://cdn.example/m$i.jpg")
+                                put("contentType", "image/jpeg")
+                            })
+                        }
+                    })
+                })
+            })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onAllNodesWithTag("kinTaleThumbTile").assertCountEquals(8)
+    }
+
+    @Test
+    fun thumbStrip_onePhotoRendersOneTile() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t-one")
+                    put("body", "One photo today.")
+                    put("authorDisplayName", "Auntie Avery")
+                    put("mediaIds", buildJsonArray { add("only") })
+                    put("shared", false)
+                    put("thumbs", buildJsonArray {
+                        add(buildJsonObject {
+                            put("id", "only")
+                            put("url", "https://cdn.example/only.jpg")
+                            put("contentType", "image/jpeg")
+                        })
+                    })
+                })
+            })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onAllNodesWithTag("kinTaleThumbTile").assertCountEquals(1)
+    }
+
+    @Test
+    fun thumbStrip_videoTileShowsPlayGlyphNotAnImage() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t-video")
+                    put("body", "A video today.")
+                    put("authorDisplayName", "Auntie Avery")
+                    put("mediaIds", buildJsonArray { add("clip") })
+                    put("shared", false)
+                    put("thumbs", buildJsonArray {
+                        add(buildJsonObject {
+                            put("id", "clip")
+                            put("url", "https://cdn.example/clip.mp4")
+                            put("contentType", "video/mp4")
+                        })
+                    })
+                })
+            })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onAllNodesWithTag("kinTaleThumbTile").assertCountEquals(1)
+        onNodeWithText("▶️").assertIsDisplayed()
+    }
+
+    @Test
+    fun thumbStrip_noMediaRendersNoTilesAtAll() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t-none")
+                    put("body", "Just a story, no photos.")
+                    put("authorDisplayName", "Auntie Avery")
+                    put("mediaIds", buildJsonArray {})
+                    put("shared", false)
+                    // `thumbs` omitted entirely, same as an older deployed
+                    // function that doesn't send it yet — must not crash.
+                })
+            })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Just a story, no photos.").assertIsDisplayed()
+        onAllNodesWithTag("kinTaleThumbTile").assertCountEquals(0)
     }
 }

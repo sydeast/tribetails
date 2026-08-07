@@ -30,6 +30,14 @@ import { RouteMap } from '../components/RouteMap';
 
 const PAGE_SIZE = 20;
 const GALLERY_VARIANTS = ['g1', 'g2', 'g3', 'g4'] as const;
+const STRIP_VARIANTS = ['s1', 's2', 's3'] as const;
+const STRIP_MAX_TILES = 8;
+/** Distinguishes a video tile from a failed-to-load photo tile — never the gallery's camera glyph. */
+const PLAY_GLYPH = '\u{25B6}\u{FE0F}';
+
+function isImageThumb(contentType: string | null): boolean {
+  return contentType === null || contentType.startsWith('image/');
+}
 
 const FILTER_TABS: { id: KinTalesFilter; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -189,6 +197,9 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
   const meta = taleMetaLabel(tale);
   const paragraphs = tale.body.split(/\n+/).filter((p) => p.length > 0);
 
+  // "View N photos" (the mockup's control) is the one full-gallery button —
+  // relabeled to "View Gallery" because a tale can carry video too, and
+  // "photos" would misdescribe it (operator directive 2026-08-06).
   const galleryBlock = tale.mediaIds.length > 0 && (
     <div className="gallery">
       <div className="glabel">
@@ -199,7 +210,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
           style={{ marginLeft: 'auto', padding: '5px 12px', fontSize: 12 }}
           onClick={() => setGalleryOpen((v) => !v)}
         >
-          {galleryOpen ? 'Hide' : `View ${tale.mediaIds.length === 1 ? 'photo' : `${tale.mediaIds.length} photos`}`}
+          {galleryOpen ? 'Hide' : 'View Gallery'}
         </button>
       </div>
       {galleryOpen &&
@@ -213,7 +224,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
           <div className="grid">
             {media.data!.media.map((m, i) => (
               <div className={`shot ${GALLERY_VARIANTS[i % GALLERY_VARIANTS.length]}`} key={m.id}>
-                {m.contentType === null || m.contentType.startsWith('image/') ? (
+                {isImageThumb(m.contentType) ? (
                   <img src={m.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 ) : (
                   '\u{1F4F7}'
@@ -225,6 +236,27 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
     </div>
   );
 
+  // Photo-first preview strip (task-24, P3): up to 8 tiles from the list
+  // response's `thumbs`, so the card shows media at feed-render time without
+  // a getMyKinTaleMedia round trip per card. Non-featured cards only — the
+  // featured card's photo-first treatment is its banner avatar, below.
+  // `thumbs` is optional (an older deployed function may omit it) — treated
+  // as "no thumbnails", not a crash.
+  const thumbs = tale.thumbs ?? [];
+  const stripBlock = !featured && thumbs.length > 0 && (
+    <div className="tcstrip">
+      {thumbs.slice(0, STRIP_MAX_TILES).map((thumb, i) => (
+        <div className={`sm ${STRIP_VARIANTS[i % STRIP_VARIANTS.length]}`} key={thumb.id}>
+          {isImageThumb(thumb.contentType) ? (
+            <img src={thumb.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : (
+            PLAY_GLYPH
+          )}
+        </div>
+      ))}
+    </div>
+  );
+
   const gpsBlock = tale.gpsRoute && tale.gpsRoute.length > 0 && (
     <div style={{ marginTop: 22 }}>
       <RouteMap route={tale.gpsRoute} distanceMeters={tale.gpsSummary?.distanceMeters} durationSeconds={tale.gpsSummary?.durationSeconds} />
@@ -232,13 +264,23 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
   );
 
   if (featured) {
+    // Photo-first treatment for the banner's byline avatar: the first
+    // *image* thumbnail (a video can't stand in for a poster we don't
+    // have), or unchanged (today's paw glyph) when the tale has no photo.
+    const featuredPhoto = thumbs.find((t) => isImageThumb(t.contentType));
     return (
       <section className="glass feature">
         <div className="banner">
           <div className="kick">Featured KinTale</div>
           <h2>{headline}</h2>
           <div className="byline">
-            <div className="bav">{'\u{1F43E}'}</div>
+            <div className="bav">
+              {featuredPhoto ? (
+                <img src={featuredPhoto.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                '\u{1F43E}'
+              )}
+            </div>
             <div>
               <b>From Auntie {tale.authorDisplayName}</b>
               {meta && <small>{meta}</small>}
@@ -277,6 +319,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
         </div>
       </div>
       <div className="tcbody">{tale.body}</div>
+      {stripBlock}
       {galleryBlock}
       {gpsBlock}
       <div className="tcfoot">

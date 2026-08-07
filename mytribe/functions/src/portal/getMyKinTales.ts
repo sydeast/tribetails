@@ -27,6 +27,13 @@ interface GpsSummaryDto {
   durationSeconds?: number;
 }
 
+/** Same shape getMyKinTaleMedia's MediaItem already returns. */
+interface TaleThumb {
+  id: string;
+  url: string;
+  contentType: string | null;
+}
+
 interface KinTaleDto {
   id: string;
   /** Auntie-authored cover headline. Empty string when none was set. */
@@ -40,6 +47,16 @@ interface KinTaleDto {
   gpsSummary?: GpsSummaryDto;
   /** Per-kin mood selections (kinId -> moodKey). Omitted when none recorded. */
   petMoods?: Record<string, string>;
+  /**
+   * Preview media for the feed card's thumbnail strip: at most the first 8
+   * of `mediaIds`, resolved and returned inline so the card doesn't need a
+   * getMyKinTaleMedia round trip just to show a photo. Videos are included
+   * (not filtered to images) — the client decides how to draw a tile from
+   * `contentType`. A media doc that's missing or has no `storageUrl` is
+   * simply absent here, never a placeholder. `mediaIds` stays the true
+   * count; `thumbs` is only ever a preview of it.
+   */
+  thumbs: TaleThumb[];
 }
 
 interface GetMyKinTalesResult {
@@ -107,6 +124,7 @@ export async function getMyKinTalesHandler(
       mediaIds: Array.isArray(data['mediaFileIds']) ? (data['mediaFileIds'] as string[]) : [],
       sentAtMs,
       shared: Array.isArray(sharedIds) && sharedIds.length > 0,
+      thumbs: [], // filled in below, after every tale's candidate ids are known.
     };
 
     // Pet mood: only surface a string->string map. Omit when absent or malformed,
@@ -143,6 +161,8 @@ export async function getMyKinTalesHandler(
     return dto;
   });
 
+  await resolveThumbs(firestore, tales);
+
   logEvent({
     severity: 'info',
     function: 'getMyKinTales',
@@ -152,6 +172,44 @@ export async function getMyKinTalesHandler(
   });
 
   return { tales, hasMore };
+}
+
+const MAX_THUMBS_PER_TALE = 8;
+
+/**
+ * Fills each tale's `thumbs` in place from its first `MAX_THUMBS_PER_TALE`
+ * `mediaIds`, resolved in one batched `getAll` across the whole page instead
+ * of a `getMyKinTaleMedia` round trip per card. A media doc that doesn't
+ * exist, or has no `storageUrl`, is dropped — never a placeholder — so a
+ * tale's `thumbs` can end up shorter than its candidate slice.
+ *
+ * Read cost: this is `min(mediaIds.length, 8)` extra `media_files` reads per
+ * tale, on top of the page's own `kin_care_reports` reads. Worst case (every
+ * tale has >= 8 media) on a full default page is 20 tales x 8 = 160 extra
+ * reads; on the max page size (50) it's 400. See task-24-report.md for the
+ * call this makes given that number.
+ */
+async function resolveThumbs(firestore: FirebaseFirestore.Firestore, tales: KinTaleDto[]): Promise<void> {
+  const refs: { taleIndex: number; ref: FirebaseFirestore.DocumentReference }[] = [];
+  tales.forEach((t, taleIndex) => {
+    t.mediaIds.slice(0, MAX_THUMBS_PER_TALE).forEach((id) => {
+      refs.push({ taleIndex, ref: firestore.doc(`media_files/${id}`) });
+    });
+  });
+  if (refs.length === 0) return;
+
+  const snaps = await firestore.getAll(...refs.map((r) => r.ref));
+  snaps.forEach((snap, i) => {
+    if (!snap.exists) return;
+    const d = snap.data() as Record<string, unknown>;
+    const url = typeof d['storageUrl'] === 'string' ? (d['storageUrl'] as string) : '';
+    if (!url) return;
+    tales[refs[i]!.taleIndex]!.thumbs.push({
+      id: snap.id,
+      url,
+      contentType: typeof d['mimeType'] === 'string' ? (d['mimeType'] as string) : null,
+    });
+  });
 }
 
 function clamp(n: number, min: number, max: number): number {

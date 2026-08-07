@@ -212,6 +212,13 @@ export interface GetMyKinTalesRequest {
   limit?: number;
 }
 
+/** Same shape KinTaleMediaItemDto (kinTalesApi.ts) already has. */
+export interface TaleThumbDto {
+  id: string;
+  url: string;
+  contentType: string | null;
+}
+
 export interface KinTaleDto {
   id: string;
   title: string;
@@ -223,6 +230,12 @@ export interface KinTaleDto {
   gpsRoute?: RoutePointDto[];
   gpsSummary?: GpsSummaryDto;
   petMoods?: Record<string, string>;
+  /**
+   * Preview media for the feed card's thumbnail strip: at most the first 8
+   * of `mediaIds`. Optional so an older deployed function that doesn't send
+   * it renders as "no thumbnails" instead of crashing.
+   */
+  thumbs?: TaleThumbDto[];
 }
 
 export interface GetMyKinTalesResult {
