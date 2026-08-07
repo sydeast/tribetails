@@ -33,15 +33,17 @@ export async function createShareLinkHandler(req: CallableRequest<unknown>): Pro
   // at a host that may not serve them, which is the silent degradation
   // the repo's fail-loud rule forbids. A misconfigured deploy is not the
   // caller's fault, hence failed-precondition rather than invalid-argument.
-  const rawBaseUrl = process.env.SHARE_LINK_BASE_URL;
-  if (!rawBaseUrl) {
-    throw new HttpsError('failed-precondition', 'SHARE_LINK_BASE_URL is not configured');
-  }
   // A trailing slash is an operator typo in an env var, not a caller
   // input, and stripping it still produces a correct URL — so this
   // normalizes rather than rejects, per the fail-loud priority order
-  // (works correctly > fails visibly > silent degradation).
-  const shareBaseUrl = rawBaseUrl.replace(/\/+$/, '');
+  // (works correctly > fails visibly > silent degradation). Normalize
+  // BEFORE the emptiness check: a value of "/" or "///" is truthy but
+  // strips down to "", and must be treated the same as unset rather than
+  // slipping through to build a broken relative URL.
+  const shareBaseUrl = (process.env.SHARE_LINK_BASE_URL ?? '').replace(/\/+$/, '');
+  if (!shareBaseUrl) {
+    throw new HttpsError('failed-precondition', 'SHARE_LINK_BASE_URL is not configured');
+  }
 
   // The AuntieOS operator (auntie) authors KinTales and shares them; she is not a
   // tribe member, so she bypasses the family PRIMARY gate. Family PRIMARY members

@@ -125,6 +125,20 @@ describe('createShareLinkHandler', () => {
       expect(auditMock).not.toHaveBeenCalled();
     });
 
+    it('throws failed-precondition, and writes nothing, when only slashes', async () => {
+      // Normalization strips a trailing slash before the emptiness check
+      // runs, so a value of just "/" (or "///") must not slip through as
+      // "configured" — it strips down to "", same as unset.
+      process.env.SHARE_LINK_BASE_URL = '/';
+      await expect(call()).rejects.toMatchObject({
+        code: 'failed-precondition',
+        message: expect.stringContaining('SHARE_LINK_BASE_URL'),
+      });
+      expect(sharedAdd).not.toHaveBeenCalled();
+      expect(taleUpdate).not.toHaveBeenCalled();
+      expect(auditMock).not.toHaveBeenCalled();
+    });
+
     it('is not invalid-argument: a misconfigured server is not the caller’s fault', async () => {
       delete process.env.SHARE_LINK_BASE_URL;
       await expect(call()).rejects.not.toMatchObject({ code: 'invalid-argument' });
