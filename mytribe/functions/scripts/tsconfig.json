@@ -6,10 +6,11 @@
     "rootDir": ".."
   },
   "include": ["./**/*.ts"],
+  "//ts-node": "The module override has to track the base. ts-node merges this block over the inherited compilerOptions, so leaving 'commonjs' here against the base's 'nodenext' moduleResolution is the TS5110 pairing error and the generator would fail to start. 'nodenext' still emits CommonJS for these files (no `type: module` above them), which is what ts-node needs.",
   "ts-node": {
     "transpileOnly": true,
     "compilerOptions": {
-      "module": "commonjs"
+      "module": "nodenext"
     }
   }
 }

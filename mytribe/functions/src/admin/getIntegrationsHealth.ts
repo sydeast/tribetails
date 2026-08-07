@@ -157,7 +157,22 @@ export const defaultDeps: IntegrationsHealthDeps = {
   // Imported at CALL time, never at module load. `../index` re-exports this very
   // file, so a top-level import would be a cycle; by the time a request lands,
   // Firebase has fully evaluated that module and this is a cache hit.
-  loadFunctionModule: () => import('../index'),
+  //
+  // Deferred `require`, not `import()`. Under `module: nodenext` tsc preserves
+  // `import('../index')` as a real ESM import, and Node's ESM resolver rejects
+  // an extensionless relative specifier — this exact call throws
+  // ERR_MODULE_NOT_FOUND at run time, which is a cold-start failure no type
+  // check would have caught. The require is what the commonjs emit already
+  // produced, and it keeps the module-cache hit this comment relies on.
+  //
+  // The other deferred loads in src/ stay `await import()` because a bare
+  // require escapes Vitest's module graph and walks past their `vi.mock`
+  // (see src/lib/googleOAuth.ts). This one is exempt: it is a dependency-
+  // injection seam, replaced wholesale by test/getIntegrationsHealth.ts rather
+  // than mocked by specifier, so nothing here relies on Vitest intercepting it.
+  //
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- a real ESM import() of this extensionless relative path throws ERR_MODULE_NOT_FOUND; see above.
+  loadFunctionModule: async () => require('../index') as unknown,
   env: process.env,
   now: () => new Date(),
 };

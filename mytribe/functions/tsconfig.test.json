@@ -1,9 +1,12 @@
 {
   "//": "Type-checks the test suite. It is a SEPARATE config on purpose: tsconfig.json drives the deploy build (rootDir 'src' -> outDir 'lib'), so folding 'test' into its `include` would either be refused by rootDir or start emitting test files into the shipped bundle. This config emits nothing (`noEmit`) and only reads. The src/ modules the tests import are pulled in transitively, so they are not listed in `include` again. `npm run typecheck` runs it alongside the build config and the scripts config.",
   "extends": "./tsconfig.json",
+  "//module": "These files are NEVER emitted by tsc and never resolved by Node: vitest hands them to Vite, which resolves extensionless relative specifiers and mixes CJS with ESM freely. 'bundler' + 'preserve' is what that runtime actually does, so it is the honest model here. Inheriting the base's 'nodenext' would instead measure the test suite against Node's ESM resolver, which it never meets, and demand a '.js' suffix on ~694 `await import('../src/...')` calls that Vite resolves fine today. 'preserve' is set explicitly because 'bundler' resolution is refused under the inherited 'nodenext' module setting.",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": "."
+    "rootDir": ".",
+    "module": "preserve",
+    "moduleResolution": "bundler"
   },
   "include": ["test/**/*.ts", "vitest.config.ts", "vitest.ci.config.ts", "vitest.rules.config.ts"],
   "//exclude": "`exclude` is NOT inherited usefully here: the base config excludes 'test', and exclude is applied AFTER include, so without this override the base's entry would filter out every file this config exists to check — silently, with a green 0-error run.",

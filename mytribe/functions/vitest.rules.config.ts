@@ -17,6 +17,12 @@ export default defineConfig({
     testTimeout: 30000,
     fileParallelism: false,
     pool: 'forks',
-    poolOptions: { forks: { singleFork: true } },
+    // Was `poolOptions: { forks: { singleFork: true } }`. Vitest 4 removed
+    // `poolOptions` and promoted its contents to top level, `singleFork` landing
+    // as `maxWorkers: 1`. The old key had been dead here since the Vitest 4 bump:
+    // node10 module resolution never reached the real `InlineConfig`, so the type
+    // check waved it through while Vitest logged a deprecation and ignored it.
+    // The rules suite has therefore been running WITHOUT single-process pinning.
+    maxWorkers: 1,
   },
 });

@@ -32,7 +32,23 @@ export async function anthropicClient(): Promise<Anthropic> {
     if (!apiKey) {
       throw new Error('ANTHROPIC_API_KEY is not bound; add it to this function\'s secrets array.');
     }
-    const { default: AnthropicSdk } = await import('@anthropic-ai/sdk');
+    // Stays `await import`, NOT an in-function `require`: a bare require escapes
+    // Vitest's module graph and loads the real SDK straight past the
+    // `vi.mock('@anthropic-ai/sdk')` in three suites (generate, aiBatchPollCron,
+    // aiBackfillTaleTitles). Same trap documented in src/lib/googleOAuth.ts.
+    //
+    // Under `module: nodenext` this is emitted as a real ESM import instead of
+    // being downlevelled to require, so Node resolves the package's non-require
+    // condition and loads index.mjs where it used to load index.js. Verified:
+    // that build constructs and still exposes `messages.create`.
+    //
+    // The cast reconciles the `import type` above, which resolves
+    // require-mode under nodenext and import-mode under the tests' bundler
+    // config; TS holds those two declarations apart on the class's `#private`
+    // brand even though they describe the same SDK.
+    const { default: AnthropicSdk } = (await import('@anthropic-ai/sdk')) as unknown as {
+      default: new (opts: { apiKey: string }) => Anthropic;
+    };
     cachedClient = new AnthropicSdk({ apiKey });
   }
   return cachedClient;
