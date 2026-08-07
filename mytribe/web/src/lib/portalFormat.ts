@@ -132,13 +132,14 @@ export function bookingStatusChip(status: BookingStatus): BookingStatusChip {
   }
 }
 
-export type BookingTimelineStepId = 'requested' | 'confirmed' | 'inProgress' | 'completed';
+export type BookingTimelineStepId = 'requested' | 'confirmed' | 'enRoute' | 'active' | 'completed';
 
-/** The 4 real backend states with a timeline position. Cancelled has none — see bookingTimelineIndex. */
+/** The 5 real non-cancelled backend states, in order. Cancelled has no position — see bookingTimelineIndex. */
 export const BOOKING_TIMELINE_STEPS: { id: BookingTimelineStepId; label: string }[] = [
   { id: 'requested', label: 'Requested' },
   { id: 'confirmed', label: 'Confirmed' },
-  { id: 'inProgress', label: 'In progress' },
+  { id: 'enRoute', label: 'En route' },
+  { id: 'active', label: 'In progress' },
   { id: 'completed', label: 'Completed' },
 ];
 
@@ -146,9 +147,9 @@ export const BOOKING_TIMELINE_STEPS: { id: BookingTimelineStepId; label: string 
  * Index into BOOKING_TIMELINE_STEPS for a booking's current status, or `null`
  * for cancelled (a cancelled visit has no position on a forward progress
  * bar — BookingDetail shows the CANCELLED chip instead of the timeline).
- * `enRoute` and `active` both map to "In progress": BookingStatus distinguishes
- * them for the live-visit gate elsewhere, but the timeline only has one step
- * for "the Auntie is working the visit right now".
+ * Every other status gets its own forward step, including `enRoute`, which
+ * is distinct from `active`: the Auntie being on her way is not the same as
+ * the Auntie being in the house.
  */
 export function bookingTimelineIndex(status: BookingStatus): number | null {
   switch (status) {
@@ -157,10 +158,11 @@ export function bookingTimelineIndex(status: BookingStatus): number | null {
     case 'confirmed':
       return 1;
     case 'enRoute':
-    case 'active':
       return 2;
-    case 'completed':
+    case 'active':
       return 3;
+    case 'completed':
+      return 4;
     case 'cancelled':
       return null;
   }
