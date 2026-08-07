@@ -87,9 +87,13 @@ fun ShareKinTaleModal(
     var error by remember { mutableStateOf<String?>(null) }
     var created by remember { mutableStateOf<ShareLinkCreated?>(null) }
     var copied by remember { mutableStateOf(false) }
+    var confirmingRevoke by remember { mutableStateOf(false) }
+    var revoking by remember { mutableStateOf(false) }
+    var revokeError by remember { mutableStateOf<String?>(null) }
+    var revoked by remember { mutableStateOf(false) }
 
     Dialog(
-        onDismissRequest = { if (!submitting) onDismiss() },
+        onDismissRequest = { if (!submitting && !revoking) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Column(
@@ -147,6 +151,30 @@ fun ShareKinTaleModal(
                             copied = true
                         },
                         onDone = onDismiss,
+                        revoked = revoked,
+                        confirmingRevoke = confirmingRevoke,
+                        revoking = revoking,
+                        revokeError = revokeError,
+                        onRevokeLinkClick = { confirmingRevoke = true },
+                        onCancelRevoke = {
+                            confirmingRevoke = false
+                            revokeError = null
+                        },
+                        onConfirmRevoke = {
+                            scope.launch {
+                                revoking = true
+                                revokeError = null
+                                try {
+                                    portalApi.revokeShareLink(created!!.shareId)
+                                    revoked = true
+                                    confirmingRevoke = false
+                                } catch (t: Throwable) {
+                                    revokeError = t.message ?: "Could not revoke the link."
+                                } finally {
+                                    revoking = false
+                                }
+                            }
+                        },
                     )
                 }
             }
@@ -290,6 +318,13 @@ private fun ShareResultBody(
     copied: Boolean,
     onCopy: () -> Unit,
     onDone: () -> Unit,
+    revoked: Boolean,
+    confirmingRevoke: Boolean,
+    revoking: Boolean,
+    revokeError: String?,
+    onRevokeLinkClick: () -> Unit,
+    onConfirmRevoke: () -> Unit,
+    onCancelRevoke: () -> Unit,
 ) {
     val c = KinfolkTheme.colors
     val type = KinfolkTheme.typography
@@ -313,66 +348,134 @@ private fun ShareResultBody(
             Text("Link Ready!", style = type.heritageTitle)
         }
 
-        // URL pill + Copy Link
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(KinfolkShapes.pill)
-                .background(Color.White)
-                .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        if (revoked) {
+            // Revoked: never show the dead URL or a Copy button that would
+            // hand out a link `resolveShareLink` now refuses server-side.
             Text(
-                text = link.shareUrl,
-                style = type.sansMeta.copy(color = c.navy),
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
+                text = "This link no longer works.",
+                style = type.sansBody.copy(color = c.navyMuted),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
             )
-            Box(
-                modifier = Modifier
-                    .clip(KinfolkShapes.pill)
-                    .background(KinfolkGradients.orangeToPink)
-                    .clickable(onClick = onCopy)
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-            ) {
-                Text(
-                    text = if (copied) "Copied" else "Copy Link",
-                    style = type.sansButton.copy(color = Color.White),
-                )
-            }
-        }
-
-        // Passcode warning banner (only if a passcode was set)
-        if (passcodeSet) {
+        } else {
+            // URL pill + Copy Link
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(KinfolkShapes.card)
-                    .background(c.accent.copy(alpha = 0.85f))
-                    .padding(KinfolkSpacing.m),
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    .clip(KinfolkShapes.pill)
+                    .background(Color.White)
+                    .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                Text(
+                    text = link.shareUrl,
+                    style = type.sansMeta.copy(color = c.navy),
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                )
                 Box(
                     modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.18f)),
-                    contentAlignment = Alignment.Center,
+                        .clip(KinfolkShapes.pill)
+                        .background(KinfolkGradients.orangeToPink)
+                        .clickable(onClick = onCopy)
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.Shield,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp),
+                    Text(
+                        text = if (copied) "Copied" else "Copy Link",
+                        style = type.sansButton.copy(color = Color.White),
                     )
                 }
+            }
+
+            // Passcode warning banner (only if a passcode was set)
+            if (passcodeSet) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(KinfolkShapes.card)
+                        .background(c.accent.copy(alpha = 0.85f))
+                        .padding(KinfolkSpacing.m),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Shield,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Text(
+                        text = "Send the passcode separately. We don't store it, so keep a copy.",
+                        style = type.sansBody.copy(color = Color.White, fontWeight = FontWeight.SemiBold),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+
+            // Revoke: destructive + irreversible from the kinfolk's side, so
+            // it confirms before it fires (same shape as KinCareDetailScreen's
+            // cancellation ask).
+            if (!confirmingRevoke) {
                 Text(
-                    text = "Send the passcode separately. We don't store it, so keep a copy.",
-                    style = type.sansBody.copy(color = Color.White, fontWeight = FontWeight.SemiBold),
-                    modifier = Modifier.weight(1f),
+                    text = "Revoke link",
+                    style = type.sansMeta.copy(color = c.coral, fontWeight = FontWeight.SemiBold),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !revoking, onClick = onRevokeLinkClick),
                 )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(KinfolkShapes.card)
+                        .background(c.coral.copy(alpha = 0.10f))
+                        .border(1.dp, c.coral.copy(alpha = 0.3f), KinfolkShapes.card)
+                        .padding(KinfolkSpacing.m),
+                    verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+                ) {
+                    Text(
+                        text = "Revoking makes this link stop working right away. This can't be undone.",
+                        style = type.sansBody.copy(color = c.navySoft),
+                    )
+                    if (revokeError != null) {
+                        Text(text = revokeError, style = type.sansMeta.copy(color = c.coral))
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(KinfolkShapes.pill)
+                            .background(c.coral)
+                            .clickable(enabled = !revoking, onClick = onConfirmRevoke)
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = if (revoking) "Revoking…" else "Yes, revoke",
+                            style = type.sansButton.copy(color = Color.White),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(KinfolkShapes.pill)
+                            .border(1.dp, c.navyHairline, KinfolkShapes.pill)
+                            .clickable(enabled = !revoking, onClick = onCancelRevoke)
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(text = "Keep link", style = type.sansButton.copy(color = c.navy))
+                    }
+                }
             }
         }
 
