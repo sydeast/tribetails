@@ -394,6 +394,33 @@ const CATALOG_LIST: NotificationDef[] = [
     description: 'Payment or credit applied to an invoice.',
   },
   {
+    // A chargeback: the cardholder's bank pulled a settled card payment back.
+    // BUSINESS-ONLY, and that is the deliberate part. The household is not
+    // told, for two reasons: they already know (their own bank did it on their
+    // instruction), and every honest thing this system could say to them
+    // depends on a decision the operator has not made yet — the invoice keeps
+    // reading paid on purpose (see `billing/stripeDispute.ts`), so a household
+    // message would either contradict their own invoice or imply a debt the
+    // operator may never assert. One key covers open AND close, because the
+    // operator wants both halves of the same money event and would not
+    // sensibly silence one while keeping the other.
+    key: 'invoice.payment.disputed',
+    label: 'Card payment disputed (chargeback)',
+    audience: 'business',
+    audiences: { business: true },
+    category: 'invoice',
+    allowedChannels: ['email', 'push'],
+    required: { email: true },
+    // Not silenceable: this is the only push notification the operator gets for
+    // money leaving the account, and disputes carry a response deadline.
+    alwaysEnabled: true,
+    kinfolkFacing: false,
+    deliveryMode: 'trigger',
+    recipientResolver: 'businessAdmins',
+    templates: { email: 'invoice.payment.disputed', push: 'invoice.payment.disputed' },
+    description: 'A card payment was disputed with the cardholder’s bank, or that dispute closed.',
+  },
+  {
     key: 'quote.accepted',
     label: 'Kinfolk accepted a quote',
     audience: 'both',

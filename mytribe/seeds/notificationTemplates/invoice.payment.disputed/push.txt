@@ -1,0 +1,1 @@
+Card dispute update. {{disputeAmount}} on invoice {{invoiceNumber}} is {{disputeStatus}} with the cardholder's bank. Tap to review.

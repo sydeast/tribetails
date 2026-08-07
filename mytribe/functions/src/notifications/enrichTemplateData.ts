@@ -55,6 +55,12 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'invoice.new': ['amount', 'dueDate', 'invoiceNumber', 'kinfolkName', 'kinName'],
   'invoice.overdue': ['bookingDate', 'kinfolkName', 'kinName'],
   'invoice.payment.applied': ['invoiceNumber'],
+  // `disputeAmount` / `disputeReason` / `disputeStatus` are emitter-supplied by
+  // `billing/stripeDispute.ts`, like `link` / `score` / `incidentId`: they come
+  // off the Stripe Dispute object and there is no local entity to hydrate them
+  // from. `invoiceNumber` is the one the enricher fills, and it renders blank
+  // on an unattributed dispute — which is the honest output, not a defect.
+  'invoice.payment.disputed': ['disputeAmount', 'disputeReason', 'disputeStatus', 'invoiceNumber'],
   'invoice.receipt': ['amount', 'invoiceNumber', 'kinfolkName'],
   'invoice.reminder': ['amount', 'invoiceNumber', 'kinName'],
   'invoice.updated': ['invoiceNumber', 'kinName'],

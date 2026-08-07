@@ -152,6 +152,10 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
     'invoice.overdue': { kinfolk: true },
     'invoice.charge.failed': { kinfolk: true, business: true },
     'invoice.payment.applied': { kinfolk: true, business: true },
+    // Business ONLY. A chargeback is the household's own bank acting on their
+    // instruction, and the operator has not yet decided what the money does, so
+    // there is nothing true to tell the household.
+    'invoice.payment.disputed': { business: true },
     'quote.accepted': { kinfolk: true, business: true },
     'quote.denied': { business: true },
     'kincare.upcoming.reminder': { kinfolk: true },

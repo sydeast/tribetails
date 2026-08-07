@@ -975,13 +975,42 @@ working. The handler recognises exactly these:
 | `checkout.session.completed` | **The canonical one.** `payInvoice` creates a `mode: 'payment'` Checkout Session, and this is what a completed one emits. |
 | `payment_intent.succeeded` | The same payment seen from the PaymentIntent. Both are handled, and a per-PaymentIntent claim at `stripePayments/{id}` makes sure one payment applies **once**. |
 | `payment_intent.payment_failed` | Writes the critical audit entry and the `invoice.charge.failed` notification. Without it a declined card is silent. |
+| `charge.dispute.created` | A chargeback. Records `stripeDisputes/{id}`, flags the invoice, writes a `critical` audit entry and sends the operator-only `invoice.payment.disputed` notification. Without it the money leaves the balance and the invoice still reads paid, with nothing anywhere saying otherwise. |
+| `charge.dispute.closed` | How the operator learns the dispute was won or lost. Updates the same record and flag. |
+| `checkout.session.expired` | An abandoned checkout. Clears `pendingCheckoutSessionId` / `pendingAt` off the invoice, and only when the stored id is the one that expired. |
 
 `invoice.paid` and `invoice.payment_failed` are also recognised but **unreachable**:
 they need a Stripe Invoice object, and `mode: 'payment'` creates none. Do not
 subscribe them expecting anything.
 
+**Do not subscribe `charge.refunded`, `refund.created` or `refund.updated`.** They
+are ignored on purpose, per the standing ruling that there are no refunds and an
+account balance credit is the only destination for money owed back. The webhook
+answers them 202 through a named branch that logs `stripe.refund.ignored`, so a
+subscription would buy a log line and nothing else. A dispute is **not** a refund
+and is handled: the cardholder's bank imposes it, the operator does not grant it.
+
 Anything else you subscribe is answered 202 and ignored. That is deliberate, but
 it means an over-broad subscription buys nothing and hides nothing.
+
+**A chargeback does not un-pay the invoice.** That was decided, deliberately, in
+`billing/stripeDispute.ts`, and here is the reasoning so nobody "fixes" it.
+The invoice keeps its `paid` status and `amountDue: 0`, and gains
+`disputeStatus` / `disputeId` / `disputeAmountCents` alongside them. Flipping it
+back to outstanding would restart the reminder cron against a household over
+their own bank's action, and writing a reversing payment row would invent a
+repayment nobody made. Where contested money ends up is the operator's call, and
+`stripeDisputes/{disputeId}` plus the `critical` activity-log entries are the
+record it is contested. If the dispute is later **won**, nothing needs undoing.
+
+The `invoice.payment.disputed` notification needs its templates seeded before the
+email and push copies can render (the in-app copy lands regardless):
+
+```bash
+# from mytribe/functions
+npm run seed:notif-templates -- --dry-run --key invoice.payment.disputed
+npm run seed:notif-templates -- --key invoice.payment.disputed --allow-prod
+```
 
 ### 5. Prove it is connected
 
@@ -990,6 +1019,10 @@ connection. Two collections are written *only* by the webhook and *only* after i
 has resolved a real payment:
 
 - `stripeEvents/{eventId}` — one doc per event that got past the metadata gate.
+  Dispute events reserve an id here too (`appliedOutcome: DISPUTE_OPENED` /
+  `DISPUTE_CLOSED`), and they resolve the household through the PaymentIntent
+  rather than the gate, so read `appliedOutcome` before treating a document here
+  as proof a payment landed.
 - root `payments/{eventId}` — carries a `stripeEventId` field.
 
 Make one real payment through the portal, then check in the Firebase console for
