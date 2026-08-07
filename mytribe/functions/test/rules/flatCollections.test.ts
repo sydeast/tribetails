@@ -332,16 +332,24 @@ describe('rules: flat top-level collections', () => {
       await db.doc('securityRateLimits/k1').set({ hits: 1 });
       await db.doc('stripeEvents/evt_1').set({ seen: true });
       await db.doc('stripePayments/pi_1').set({ appliedEventId: 'evt_1' });
+      await db.doc('stripeDisputes/dp_1').set({ disputeId: 'dp_1', status: 'needs_response' });
     });
     const fs = asAuntie(env).firestore();
     await assertSucceeds(fs.doc('ipRateLimits/k1').get());
     await assertSucceeds(fs.doc('securityRateLimits/k1').get());
     await assertSucceeds(fs.doc('stripeEvents/evt_1').get());
     await assertSucceeds(fs.doc('stripePayments/pi_1').get());
+    await assertSucceeds(fs.doc('stripeDisputes/dp_1').get());
     await assertFails(fs.doc('ipRateLimits/k1').set({ hits: 0 }));
     // The per-PaymentIntent claim is server-written like its siblings: a client
     // that could forge one would suppress a real payment's ledger write.
     await assertFails(fs.doc('stripePayments/pi_2').set({ appliedEventId: 'x' }));
+    // Same reasoning for the chargeback record, one step further: the invoice
+    // deliberately keeps reading paid through a dispute, so this document is
+    // the ONLY stored evidence that the money is contested. A client that could
+    // write here could erase or fabricate that evidence.
+    await assertFails(fs.doc('stripeDisputes/dp_2').set({ status: 'won' }));
+    await assertFails(fs.doc('stripeDisputes/dp_1').update({ status: 'won' }));
   });
 
   // ── notifications: dead third branch dropped from both read gates ─────────

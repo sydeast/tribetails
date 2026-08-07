@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { FieldValue } from 'firebase-admin/firestore';
 
 // The Stripe client's `paymentIntents.retrieve` — the ONE call the fee
 // resolution makes, mocked per-test via `.mockResolvedValue` /
@@ -155,6 +156,118 @@ vi.mock('../src/lib/stripe', () => ({
         type: 'payment_intent.succeeded',
         created: 1000,
         data: { object: { id: 'pi_11', amount_received: 13750, metadata: { familyId: 'f11', invoiceId: 'i11' } } },
+      };
+    }
+    // ── chargebacks ──────────────────────────────────────────────────────
+    // A Dispute object, shaped from the pinned SDK
+    // (node_modules/stripe/cjs/resources/Disputes.d.ts, `interface Dispute`).
+    // NOTE WHAT IS ABSENT: `metadata`. Stripe does not copy the PaymentIntent's
+    // metadata onto a Dispute, so `familyId`/`invoiceId` are NOT on this
+    // payload and a handler sitting behind the webhook's metadata gate would
+    // 202 every chargeback.
+    if (sig === 'dispute-created') {
+      return {
+        id: 'evt_20',
+        type: 'charge.dispute.created',
+        created: 2000,
+        data: {
+          object: {
+            id: 'dp_20',
+            amount: 13750,
+            currency: 'usd',
+            charge: 'ch_20',
+            payment_intent: 'pi_20',
+            reason: 'fraudulent',
+            status: 'needs_response',
+            is_charge_refundable: true,
+          },
+        },
+      };
+    }
+    // Same dispute, closed in the operator's favour.
+    if (sig === 'dispute-won') {
+      return {
+        id: 'evt_21',
+        type: 'charge.dispute.closed',
+        created: 3000,
+        data: {
+          object: {
+            id: 'dp_20',
+            amount: 13750,
+            currency: 'usd',
+            charge: 'ch_20',
+            payment_intent: 'pi_20',
+            reason: 'fraudulent',
+            status: 'won',
+            is_charge_refundable: false,
+          },
+        },
+      };
+    }
+    // A dispute on a PaymentIntent with NO claim doc: the payment predates the
+    // per-PaymentIntent claim. Attribution has to come from Stripe.
+    if (sig === 'dispute-no-claim') {
+      return {
+        id: 'evt_22',
+        type: 'charge.dispute.created',
+        created: 2000,
+        data: {
+          object: {
+            id: 'dp_22',
+            amount: 5000,
+            currency: 'usd',
+            charge: 'ch_22',
+            payment_intent: 'pi_22',
+            reason: 'product_not_received',
+            status: 'needs_response',
+          },
+        },
+      };
+    }
+    // `payment_intent` is `string | PaymentIntent | null` in the SDK. Null is
+    // the shape with no route to a household at all.
+    if (sig === 'dispute-orphan') {
+      return {
+        id: 'evt_23',
+        type: 'charge.dispute.created',
+        created: 2000,
+        data: {
+          object: {
+            id: 'dp_23',
+            amount: 900,
+            currency: 'usd',
+            charge: 'ch_23',
+            payment_intent: null,
+            reason: 'general',
+            status: 'needs_response',
+          },
+        },
+      };
+    }
+    // ── refunds, ignored by policy ───────────────────────────────────────
+    if (sig === 'refunded') {
+      return {
+        id: 'evt_30',
+        type: 'charge.refunded',
+        created: 4000,
+        data: { object: { id: 'ch_30', payment_intent: 'pi_30' } },
+      };
+    }
+    // ── abandoned checkout ───────────────────────────────────────────────
+    // A Session expiry carries the SESSION metadata payInvoice stamps, so it
+    // resolves the invoice through the ordinary gate.
+    if (sig === 'session-expired') {
+      return {
+        id: 'evt_40',
+        type: 'checkout.session.expired',
+        created: 5000,
+        data: {
+          object: {
+            id: 'cs_40',
+            payment_status: 'unpaid',
+            metadata: { familyId: 'f40', invoiceId: 'i40' },
+          },
+        },
       };
     }
     throw new Error('bad-sig');
@@ -612,4 +725,254 @@ describe('stripeWebhook', () => {
       expect(notifyMock.enqueueNotification).toHaveBeenCalledTimes(1);
     });
   }
+
+  // ── chargebacks ──────────────────────────────────────────────────────────
+
+  /** Runs one delivery and returns the status codes it produced. */
+  async function deliver(sig: string): Promise<number[]> {
+    const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
+    const codes: number[] = [];
+    const tail = { json: vi.fn(), end: vi.fn() };
+    await (stripeWebhookHandler as any)(
+      { method: 'POST', headers: { 'stripe-signature': sig }, rawBody: Buffer.from('{}') },
+      { status: vi.fn((c: number) => { codes.push(c); return tail; }), json: vi.fn(), end: vi.fn() },
+    );
+    return codes;
+  }
+
+  it('records a dispute and leaves the invoice READING PAID', async () => {
+    docState['invoices/i20'] = {
+      exists: true,
+      data: { kinfolkId: 'f20', status: 'paid', amountDue: 0, total: 137.5 },
+    };
+    // The claim the paid path wrote. This is the attribution route.
+    docState['stripePayments/pi_20'] = {
+      exists: true,
+      data: { appliedEventId: 'evt_9', familyId: 'f20', invoiceId: 'i20' },
+    };
+
+    expect(await deliver('dispute-created')).toEqual([200]);
+
+    const disputeWrite = writes.find((w) => w.path === 'stripeDisputes/dp_20');
+    expect(disputeWrite!.data).toMatchObject({
+      disputeId: 'dp_20',
+      paymentIntentId: 'pi_20',
+      chargeId: 'ch_20',
+      familyId: 'f20',
+      invoiceId: 'i20',
+      subjectSource: 'payment-claim',
+      amountCents: 13750,
+      amountResolved: true,
+      reason: 'fraudulent',
+      status: 'needs_response',
+    });
+
+    // THE DECISION UNDER TEST. The invoice is flagged and nothing else: no
+    // `status`, no `amountDue`, no state stamp, no reversing payment row. A
+    // flip to unpaid would restart `invoiceRemindersCron` against a household
+    // over their own bank's action, and a negative payments row would invent a
+    // reversal the operator never made.
+    const invoiceWrite = writes.find((w) => w.path === 'invoices/i20');
+    expect(invoiceWrite!.data).toMatchObject({
+      disputeStatus: 'needs_response',
+      disputeId: 'dp_20',
+      disputeAmountCents: 13750,
+    });
+    expect(invoiceWrite!.data.status).toBeUndefined();
+    expect(invoiceWrite!.data.amountDue).toBeUndefined();
+    expect(invoiceWrite!.data.editScope).toBeUndefined();
+    expect(writes.some((w) => w.path.startsWith('payments/'))).toBe(false);
+    // The stored doc still reads paid after the merge.
+    expect(docState['invoices/i20'].data!.status).toBe('paid');
+    expect(docState['invoices/i20'].data!.amountDue).toBe(0);
+
+    // Critical audit + the business-stream ping, and an error-stream log so it
+    // is not only discoverable by opening a collection.
+    expect(auditMock.writeAuditEntry).toHaveBeenCalledTimes(1);
+    expect(auditMock.writeAuditEntry.mock.calls[0][0]).toMatchObject({
+      event: 'BILLING_PAYMENT_DISPUTED',
+      severity: 'critical',
+      status: 'PENDING',
+      familyId: 'f20',
+    });
+    expect(notifyMock.enqueueNotification).toHaveBeenCalledTimes(1);
+    expect(notifyMock.enqueueNotification.mock.calls[0][0].key).toBe('invoice.payment.disputed');
+    expect(notifyMock.enqueueNotification.mock.calls[0][0].data.disputeAmount).toBe('$137.50');
+    const loud = logMock.logEvent.mock.calls.find((c) => c[0]?.event === 'stripe.dispute.created');
+    expect(loud?.[0]?.severity).toBe('error');
+  });
+
+  it('is idempotent under a redelivered dispute: one audit, one notification', async () => {
+    docState['invoices/i20'] = { exists: true, data: { kinfolkId: 'f20', status: 'paid', amountDue: 0 } };
+    docState['stripePayments/pi_20'] = { exists: true, data: { familyId: 'f20', invoiceId: 'i20' } };
+
+    expect(await deliver('dispute-created')).toEqual([200]);
+    expect(await deliver('dispute-created')).toEqual([200]);
+
+    expect(writes.filter((w) => w.path === 'stripeDisputes/dp_20')).toHaveLength(1);
+    expect(writes.filter((w) => w.path === 'invoices/i20')).toHaveLength(1);
+    expect(auditMock.writeAuditEntry).toHaveBeenCalledTimes(1);
+    expect(notifyMock.enqueueNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes a won dispute at info severity and still never touches the paid state', async () => {
+    docState['invoices/i20'] = { exists: true, data: { kinfolkId: 'f20', status: 'paid', amountDue: 0 } };
+    docState['stripePayments/pi_20'] = { exists: true, data: { familyId: 'f20', invoiceId: 'i20' } };
+
+    expect(await deliver('dispute-created')).toEqual([200]);
+    expect(await deliver('dispute-won')).toEqual([200]);
+
+    // Two events, two ledger reservations, two audit entries — the created and
+    // closed halves dedupe independently because they carry different ids.
+    expect(writes.filter((w) => w.path === 'stripeEvents/evt_20')).toHaveLength(1);
+    expect(writes.filter((w) => w.path === 'stripeEvents/evt_21')).toHaveLength(1);
+    expect(auditMock.writeAuditEntry).toHaveBeenCalledTimes(2);
+    expect(auditMock.writeAuditEntry.mock.calls[1][0]).toMatchObject({
+      event: 'BILLING_PAYMENT_DISPUTE_CLOSED',
+      severity: 'info',
+      status: 'SUCCESS',
+    });
+    expect(docState['stripeDisputes/dp_20'].data!.status).toBe('won');
+    expect(docState['invoices/i20'].data!.disputeStatus).toBe('won');
+    expect(docState['invoices/i20'].data!.status).toBe('paid');
+  });
+
+  it('refuses to un-close a dispute when the created event arrives after the closed one', async () => {
+    docState['invoices/i20'] = { exists: true, data: { kinfolkId: 'f20', status: 'paid', amountDue: 0 } };
+    docState['stripePayments/pi_20'] = { exists: true, data: { familyId: 'f20', invoiceId: 'i20' } };
+
+    // Stripe guarantees no ordering between the two. `won` (created: 3000)
+    // lands first, then the opening event (created: 2000) shows up late.
+    expect(await deliver('dispute-won')).toEqual([200]);
+    expect(await deliver('dispute-created')).toEqual([200]);
+
+    // The record still says won. Reverting it to `needs_response` would send
+    // the operator to fight a dispute that is already settled.
+    expect(docState['stripeDisputes/dp_20'].data!.status).toBe('won');
+    expect(writes.find((w) => w.path === 'stripeEvents/evt_20')!.data.appliedOutcome).toBe(
+      'SKIPPED_OUT_OF_ORDER',
+    );
+    // The skipped event fires neither of the two side effects.
+    expect(auditMock.writeAuditEntry).toHaveBeenCalledTimes(1);
+    expect(notifyMock.enqueueNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('attributes a dispute from the PaymentIntent metadata when no claim doc exists', async () => {
+    docState['invoices/i22'] = { exists: true, data: { kinfolkId: 'f22', status: 'paid', amountDue: 0 } };
+    // No `stripePayments/pi_22`: this payment predates the claim.
+    stripeMock.paymentIntentsRetrieve.mockResolvedValue({
+      metadata: { familyId: 'f22', invoiceId: 'i22' },
+    });
+
+    expect(await deliver('dispute-no-claim')).toEqual([200]);
+
+    expect(stripeMock.paymentIntentsRetrieve).toHaveBeenCalledWith('pi_22');
+    expect(writes.find((w) => w.path === 'stripeDisputes/dp_22')!.data).toMatchObject({
+      familyId: 'f22',
+      invoiceId: 'i22',
+      subjectSource: 'payment-intent-metadata',
+    });
+    expect(writes.some((w) => w.path === 'invoices/i22')).toBe(true);
+  });
+
+  it('records an unattributable dispute rather than dropping it, and says it is unattributed', async () => {
+    // `payment_intent: null`, so there is no route to a household at all.
+    expect(await deliver('dispute-orphan')).toEqual([200]);
+
+    // The money is still gone, so the record still lands — keyed by dispute id,
+    // carrying the charge id, with the attribution explicitly absent rather
+    // than guessed at.
+    const disputeWrite = writes.find((w) => w.path === 'stripeDisputes/dp_23');
+    expect(disputeWrite!.data).toMatchObject({
+      chargeId: 'ch_23',
+      paymentIntentId: null,
+      familyId: null,
+      invoiceId: null,
+      subjectSource: 'unresolved',
+      amountCents: 900,
+    });
+    // No invoice to flag, and no Stripe call to make without an id.
+    expect(writes.some((w) => w.path.startsWith('invoices/'))).toBe(false);
+    expect(stripeMock.paymentIntentsRetrieve).not.toHaveBeenCalled();
+    // The operator still hears about it: the audit entry lands with no familyId.
+    expect(auditMock.writeAuditEntry).toHaveBeenCalledTimes(1);
+    expect(auditMock.writeAuditEntry.mock.calls[0][0].familyId).toBeUndefined();
+    expect(auditMock.writeAuditEntry.mock.calls[0][0].payload.subjectSource).toBe('unresolved');
+  });
+
+  // ── refunds: ignored by policy, and visibly so ───────────────────────────
+
+  it('202-ignores a refund event under the no-refunds ruling, WITHOUT a metadata warning', async () => {
+    expect(await deliver('refunded')).toEqual([202]);
+    expect(writes).toHaveLength(0);
+    expect(auditMock.writeAuditEntry).not.toHaveBeenCalled();
+    // The point of the named branch. A refund object carries no payInvoice
+    // metadata, so behind the gate this logged `stripe.metadata.missing` — a
+    // warning naming a defect that is not there, on an event ignored on
+    // purpose. The deliberate ignore now logs as itself.
+    expect(
+      logMock.logEvent.mock.calls.some((c) => c[0]?.event === 'stripe.metadata.missing'),
+    ).toBe(false);
+    const ignored = logMock.logEvent.mock.calls.find((c) => c[0]?.event === 'stripe.refund.ignored');
+    expect(ignored?.[0]?.severity).toBe('info');
+  });
+
+  // ── abandoned checkout ───────────────────────────────────────────────────
+
+  it('clears the pending checkout fields when the session expires', async () => {
+    docState['invoices/i40'] = {
+      exists: true,
+      data: { kinfolkId: 'f40', amountDue: 137.5, pendingCheckoutSessionId: 'cs_40', pendingAt: new Date(0) },
+    };
+    expect(await deliver('session-expired')).toEqual([200]);
+
+    const invoiceWrite = writes.find((w) => w.path === 'invoices/i40');
+    expect(invoiceWrite!.data.pendingCheckoutSessionId).toEqual(FieldValue.delete());
+    expect(invoiceWrite!.data.pendingAt).toEqual(FieldValue.delete());
+    // Money fields untouched: an abandoned checkout says nothing about what is owed.
+    expect(invoiceWrite!.data.status).toBeUndefined();
+    expect(invoiceWrite!.data.amountDue).toBeUndefined();
+    expect(auditMock.writeAuditEntry).not.toHaveBeenCalled();
+    expect(notifyMock.enqueueNotification).not.toHaveBeenCalled();
+  });
+
+  it('leaves a NEWER pending session alone when an older one expires', async () => {
+    // The household abandoned cs_40, started cs_41, and cs_40's expiry arrives
+    // afterwards. An unconditional clear would wipe the live checkout.
+    docState['invoices/i40'] = {
+      exists: true,
+      data: { kinfolkId: 'f40', amountDue: 137.5, pendingCheckoutSessionId: 'cs_41' },
+    };
+    expect(await deliver('session-expired')).toEqual([200]);
+    expect(writes).toHaveLength(0);
+    expect(docState['invoices/i40'].data!.pendingCheckoutSessionId).toBe('cs_41');
+  });
+
+  it('re-delivery of an expiry it already handled writes nothing', async () => {
+    docState['invoices/i40'] = {
+      exists: true,
+      data: { kinfolkId: 'f40', amountDue: 137.5, pendingCheckoutSessionId: 'cs_40' },
+    };
+    expect(await deliver('session-expired')).toEqual([200]);
+    const after = writes.length;
+    expect(await deliver('session-expired')).toEqual([200]);
+    // Idempotent by construction: the second pass finds no matching id to clear,
+    // so this branch needs no ledger entry of its own.
+    expect(writes).toHaveLength(after);
+  });
+
+  it('a completed session clears the pending fields too', async () => {
+    docState['invoices/i9'] = {
+      exists: true,
+      data: { kinfolkId: 'f9', amountDue: 137.5, total: 137.5, pendingCheckoutSessionId: 'cs_9' },
+    };
+    stripeMock.paymentIntentsRetrieve.mockResolvedValue({
+      latest_charge: { balance_transaction: { fee: 429 } },
+    });
+    expect(await deliver('session-completed')).toEqual([200]);
+    const invoiceWrite = writes.find((w) => w.path === 'invoices/i9');
+    expect(invoiceWrite!.data.status).toBe('paid');
+    expect(invoiceWrite!.data.pendingCheckoutSessionId).toEqual(FieldValue.delete());
+    expect(invoiceWrite!.data.pendingAt).toEqual(FieldValue.delete());
+  });
 });

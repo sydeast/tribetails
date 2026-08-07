@@ -89,3 +89,34 @@ describe('parsePushTxt', () => {
     expect(() => parsePushTxt('Title.   ')).toThrow(/body/i);
   });
 });
+// ─────────────────────────────────────────────────────────────────────────────
+// The on-disk seed corpus, run through the very parsers the seeder uses.
+//
+// `scripts/seedNotificationTemplates.ts` is the only thing that reads these
+// files, and it reads them at SEED time — so a malformed template (a missing
+// "Subject: " line, a push body with no leading period, an empty sms.txt) is
+// discovered by an operator mid-deploy rather than in CI. Every failure mode
+// asserted individually above is a real shape one of these files can take.
+// ─────────────────────────────────────────────────────────────────────────────
+import { readdirSync, readFileSync, statSync } from 'fs';
+import { join } from 'path';
+describe('seeds/notificationTemplates parse with the seeder’s own parsers', () => {
+  const seedsDir = join(__dirname, '..', '..', '..', 'seeds', 'notificationTemplates');
+  const keys = readdirSync(seedsDir).filter((n) => statSync(join(seedsDir, n)).isDirectory());
+  it('finds a non-empty corpus (a wrong path here would make this suite vacuous)', () => {
+    expect(keys.length).toBeGreaterThan(30);
+  });
+  for (const key of keys.sort()) {
+    it(`${key}: email.txt, push.txt and sms.txt are seedable`, () => {
+      const read = (f: string) => readFileSync(join(seedsDir, key, f), 'utf8');
+      const email = parseEmailTxt(read('email.txt'));
+      expect(email.subject.length).toBeGreaterThan(0);
+      expect(email.body.trim().length).toBeGreaterThan(0);
+      const push = parsePushTxt(read('push.txt'));
+      expect(push.title.length).toBeGreaterThan(0);
+      expect(push.body.length).toBeGreaterThan(0);
+      expect(read('sms.txt').trim().length).toBeGreaterThan(0);
+      expect(read('email.html').trim().length).toBeGreaterThan(0);
+    });
+  }
+});

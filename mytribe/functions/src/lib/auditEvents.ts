@@ -93,6 +93,19 @@ export const AUDIT_EVENTS = {
   // distinct from BILLING_INVOICE_PAID which covers the invoice-settling
   // subcollection write in markInvoicePaid.
   BILLING_PAYMENT_RECORDED: 'BILLING_PAYMENT_RECORDED',
+  // A cardholder's bank pulled a settled card payment back (`stripeWebhook`,
+  // `charge.dispute.created` / `charge.dispute.closed`). Audited at `critical`
+  // because it is the one place money leaves the account without anybody here
+  // deciding it should, and because the invoice DELIBERATELY keeps reading
+  // paid: this entry plus the invoice's `disputeStatus` flag ARE the record
+  // that the money is contested. See `billing/stripeDispute.ts` for why
+  // un-paying the invoice would be the dishonest answer, not the safe one.
+  BILLING_PAYMENT_DISPUTED: 'BILLING_PAYMENT_DISPUTED',
+  // The resolution (won / lost / warning_closed). Its own key rather than a
+  // flag inside the payload for the same reason NOTIFICATIONS_UNARCHIVE is
+  // separate: the trail is queried by `event`, so "which disputes have closed,
+  // and how" must be answerable without reading every payload.
+  BILLING_PAYMENT_DISPUTE_CLOSED: 'BILLING_PAYMENT_DISPUTE_CLOSED',
 
   THEME_BRAND_TOKENS_UPDATED: 'THEME_BRAND_TOKENS_UPDATED',
   THEME_KINFOLK_OVERRIDES_UPDATED: 'THEME_KINFOLK_OVERRIDES_UPDATED',

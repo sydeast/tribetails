@@ -13,6 +13,17 @@ import { enqueueNotification } from '../notifications/dispatcher';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { FULL_CPU } from '../lib/runtimeOptions';
+import { handleStripeDisputeEvent, isDisputeEvent } from './stripeDispute';
+
+/**
+ * Refund events, ignored BY POLICY rather than by omission. See the branch
+ * that reads this set for the ruling and why the branch exists at all.
+ */
+const IGNORED_REFUND_EVENTS: ReadonlySet<string> = new Set([
+  'charge.refunded',
+  'refund.created',
+  'refund.updated',
+]);
 
 export async function stripeWebhookHandler(req: Request, res: Response): Promise<void> {
   if (req.method !== 'POST') { res.status(405).end(); return; }
@@ -26,6 +37,42 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     res.status(400).json({ error: 'bad-signature' });
     return;
   }
+  // ── Branches that must sit AHEAD of the metadata gate ────────────────────
+  // The gate below resolves the household from `event.data.object.metadata`,
+  // which `payInvoice` stamps on the Checkout Session and the PaymentIntent.
+  // The two event families here carry a DIFFERENT object whose `metadata` is
+  // its own and is always empty, so behind the gate they would 202 with a
+  // `stripe.metadata.missing` warn — a signal naming the wrong problem.
+
+  if (isDisputeEvent(event.type)) {
+    // A chargeback. Not a refund, and not covered by the no-refunds ruling:
+    // the cardholder's bank imposes it. See `billing/stripeDispute.ts`.
+    const code = await handleStripeDisputeEvent(event);
+    res.status(code).json({ ok: true, dispute: true });
+    return;
+  }
+
+  if (IGNORED_REFUND_EVENTS.has(event.type)) {
+    // DELIBERATE, not missing. Standing operator ruling: no refunds, ever —
+    // an account balance credit is the only destination for money owed back
+    // (`portal/redeemCredit.ts` records the removal of the Stripe refund leg,
+    // and the mockup carrying the ruling is
+    // `mytribe/ui-ideas/mytribe-invoice-detail-2026-05-31-NoRefundtoOP-onlyAccountCredit.html`).
+    // These types are therefore never subscribed and would never arrive; this
+    // branch exists so that if one ever does, the ignore is legibly a decision
+    // rather than the unhandled-type fall-through it is otherwise
+    // indistinguishable from. "Refund handling is missing" has been filed as a
+    // bug three times.
+    logEvent({
+      severity: 'info',
+      function: 'stripeWebhook',
+      event: 'stripe.refund.ignored',
+      extra: { type: event.type, eventId: event.id },
+    });
+    res.status(202).json({ ok: true, ignored: true, reason: 'no-refunds-policy' });
+    return;
+  }
+
   const eventObject = event.data.object as {
     id?: string;
     payment_intent?: string;
@@ -60,6 +107,44 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // Canonical store is the FLAT top-level `invoices` collection.
   const ref = db().collection('invoices').doc(invoiceId);
   const dedupeRef = db().doc(`stripeEvents/${event.id}`);
+
+  // A Checkout Session the household abandoned. Stripe expires one ~24h after
+  // creation, and until now nothing cleared the `pendingCheckoutSessionId` /
+  // `pendingAt` pair `payInvoice` writes (`payInvoice.ts`, the set after the
+  // session create). Nothing reads them yet either, so today this is tidying —
+  // but the first screen to render "payment in progress" off that field would
+  // otherwise render it forever, for a session Stripe closed a year ago.
+  //
+  // CONDITIONAL on the stored id matching this session, which is the whole
+  // correctness argument and the idempotency argument at once. A household that
+  // abandons one checkout and starts another has a NEWER pending id on the
+  // invoice by the time the older session expires; an unconditional clear would
+  // wipe the live one. Comparing first makes a duplicate delivery a no-op for
+  // free, so this branch needs no ledger entry of its own: it moves no money
+  // and fires no audit or notification that a retry could double.
+  if (event.type === 'checkout.session.expired') {
+    const sessionId = typeof eventObject.id === 'string' ? eventObject.id : null;
+    const cleared = await db().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const pending = (snap.data() as { pendingCheckoutSessionId?: unknown } | undefined)
+        ?.pendingCheckoutSessionId;
+      if (!sessionId || pending !== sessionId) return false;
+      tx.set(
+        ref,
+        { pendingCheckoutSessionId: FieldValue.delete(), pendingAt: FieldValue.delete() },
+        { merge: true },
+      );
+      return true;
+    });
+    logEvent({
+      severity: 'info',
+      function: 'stripeWebhook',
+      event: 'stripe.session.expired',
+      extra: { invoiceId, familyId, sessionId, eventId: event.id, cleared },
+    });
+    res.status(200).json({ ok: true, cleared });
+    return;
+  }
 
   // Idempotency: Stripe retries failed deliveries. Without a dedupe ledger
   // the same event re-fires audits + notifications and can silently undo a
@@ -282,6 +367,17 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         (subPaymentsSnap?.docs ?? []).map((d) => d.data() as PaymentAmount),
       );
       Object.assign(patch, invoiceStateStampOf({ ...(invoiceSnap.data() ?? {}), ...patch }, paidCents));
+      // The other end of the `checkout.session.expired` branch above: a session
+      // that PAID is just as finished as one that expired, so the pending pair
+      // goes here too, in the same transactional write as the flip it belongs
+      // to. Applied after the stamp is computed only for tidiness — the
+      // classifier reads `status`/`amountDue`/`total`/`creditRedeemedAt` and
+      // never these, so the sentinels could not reach it either way.
+      //
+      // Deliberately NOT on the failure branch: a declined card does not close
+      // the Checkout Session, and the household may still complete it.
+      patch.pendingCheckoutSessionId = FieldValue.delete();
+      patch.pendingAt = FieldValue.delete();
     }
     tx.set(ref, patch, { merge: true });
     if (isPaidEvent) {
@@ -436,7 +532,16 @@ export const stripeWebhook = onRequest(
   // delivery of payment events. A full vCPU keeps 80-way concurrency.
   {
     region: 'us-central1',
-    secrets: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'SENTRY_DSN'],
+    // AUNTIE_OPERATOR_UIDS is the self-heal fallback in `lib/businessAdmins.ts`
+    // when `businessSettings/admins.uids` is empty. It is a Secret Manager
+    // value, so a function that does not BIND it sees `undefined` and the
+    // roster read throws instead. Every business-stream notification this
+    // function emits depends on that roster: the new `invoice.payment.disputed`
+    // (whose only resolver is `businessAdmins` — no roster, no operator ping at
+    // all) and the business copies of `invoice.payment.applied` and
+    // `invoice.charge.failed`, which have quietly been resolving to nobody on
+    // this function for want of this one line.
+    secrets: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'],
     ...FULL_CPU,
   },
   wrapHttp('stripeWebhook', stripeWebhookHandler),

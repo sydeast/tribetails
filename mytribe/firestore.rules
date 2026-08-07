@@ -908,6 +908,11 @@ service cloud.firestore {
  // the two events a single card payment delivers apply exactly once between
  // them. See `billing/stripeWebhook.ts`.
     match /stripePayments/{paymentIntentId}     { allow read: if isAuntie(); allow write: if false; }
+ // Chargebacks, keyed per DISPUTE. Server-written like its two siblings: a
+ // client that could forge or edit one of these could clear the only record
+ // that a settled payment is contested, on an invoice that deliberately keeps
+ // reading paid. See `billing/stripeDispute.ts`.
+    match /stripeDisputes/{disputeId}           { allow read: if isAuntie(); allow write: if false; }
  // `n8nIpRateLimits` had a rule here. Deleted 2026-07-23 with the n8n
  // retirement: its only writer is the Admin SDK inside
  // auntieos-admin/web/functions/index.js (which bypasses these rules either
