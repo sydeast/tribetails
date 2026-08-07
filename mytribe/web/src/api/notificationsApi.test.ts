@@ -5,6 +5,9 @@ import {
   categoryMasterChecked,
   categoryToggleableChannels,
   channelChecked,
+  keyChannelChecked,
+  keyChannelOverridden,
+  keyLockedChannels,
   marketingMasterChecked,
   type CategoryDto,
   type NotificationKeyDto,
@@ -124,5 +127,51 @@ describe('marketingMasterChecked', () => {
 
   it('is off for a category with no keys', () => {
     expect(marketingMasterChecked(cat('empty', []), { marketing: true })).toBe(false);
+  });
+});
+
+// P7: per-key notification toggles. These back the expanded-card rows in
+// NotificationSettings.tsx; see that file's tests for the rendering side.
+describe('keyLockedChannels', () => {
+  it('is the key’s own lockedChannels, unaffected by other keys in the category', () => {
+    const k = key({ allowedChannels: ['email', 'sms'], lockedChannels: ['sms'] });
+    expect(keyLockedChannels(k)).toEqual(['sms']);
+  });
+
+  it('is empty when the key locks nothing', () => {
+    expect(keyLockedChannels(key({ lockedChannels: [] }))).toEqual([]);
+  });
+});
+
+describe('keyChannelChecked', () => {
+  it('always reads true for a channel in the key’s own lockedChannels, ignoring saved prefs', () => {
+    const k = key({ allowedChannels: ['sms'], lockedChannels: ['sms'] });
+    expect(keyChannelChecked(k, 'sms', { sms: false }, { sms: false })).toBe(true);
+  });
+
+  it('prefers the key’s own byKey override over the category default', () => {
+    const k = key({ allowedChannels: ['sms'], lockedChannels: [] });
+    expect(keyChannelChecked(k, 'sms', { sms: true }, { sms: false })).toBe(true);
+    expect(keyChannelChecked(k, 'sms', { sms: false }, { sms: true })).toBe(false);
+  });
+
+  it('inherits the category default when the key has no byKey entry', () => {
+    const k = key({ allowedChannels: ['sms'], lockedChannels: [] });
+    expect(keyChannelChecked(k, 'sms', undefined, { sms: true })).toBe(true);
+    expect(keyChannelChecked(k, 'sms', undefined, { sms: false })).toBe(false);
+  });
+
+  it('defaults email on and other channels off when neither byKey nor byCategory says anything', () => {
+    const k = key({ allowedChannels: ['email', 'push'], lockedChannels: [] });
+    expect(keyChannelChecked(k, 'email', undefined, undefined)).toBe(true);
+    expect(keyChannelChecked(k, 'push', undefined, undefined)).toBe(false);
+  });
+});
+
+describe('keyChannelOverridden', () => {
+  it('is true only when the key’s own byKey map has an explicit value for that channel', () => {
+    expect(keyChannelOverridden({ sms: false }, 'sms')).toBe(true);
+    expect(keyChannelOverridden({ email: true }, 'sms')).toBe(false);
+    expect(keyChannelOverridden(undefined, 'sms')).toBe(false);
   });
 });

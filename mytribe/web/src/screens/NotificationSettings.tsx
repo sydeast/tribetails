@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  CHANNEL_ORDER,
   categoryChannels,
   categoryMarketingCategories,
   categoryMasterChecked,
@@ -8,11 +9,15 @@ import {
   channelChecked,
   getMyNotificationPrefs,
   getNotificationCatalog,
+  keyChannelChecked,
+  keyChannelOverridden,
+  keyLockedChannels,
   marketingMasterChecked,
   saveMyNotificationPrefs,
   type CategoryDto,
   type Channel,
   type MarketingCategory,
+  type NotificationKeyDto,
   type UserNotificationPrefs,
 } from '../api/notificationsApi';
 import { useSignOut } from '../lib/auth';
@@ -33,19 +38,25 @@ import '../styles/notifications.css';
  * notificationPrefs.ts) read/write the byCategory/byKey/marketingOptIn
  * shape at clients/{uid}.notificationPrefs — uid-scoped, no kinfolkId.
  *
- * UI simplification vs. the Compose reference (NotificationSettingsScreen.kt):
- * the mockup renders one row per CHANNEL within a category card (Push /
- * Email / SMS), not one row per notification key the way Compose's expand
- * panel does. This screen writes byCategory only and never byKey, matching
- * the mockup's control surface exactly — it has no per-key UI at all. A
- * category's key-level `required`/lockedChannels are still respected: when
- * every key that offers a channel also locks it, that channel's row renders
- * always-on/read-only (categoryToggleableChannels in notificationsApi.ts).
- * When only SOME keys in a category lock a channel, the row stays
- * toggleable here — the dispatcher still force-enables that channel for the
- * always-on keys regardless of this screen's write, so the toggle's meaning
- * is "the category default", not "every key in it". See notificationsApi.ts
- * for the exact projection logic and its own tests.
+ * Category row vs. per-key rows: the mockup renders one row per CHANNEL
+ * within a category card (Push / Email / SMS), and that row writes
+ * byCategory and is "the category default", not "every key in it": the
+ * dispatcher still force-enables an always-on key's locked channel
+ * regardless of this screen's write (categoryToggleableChannels in
+ * notificationsApi.ts covers the cross-key aggregation for that row).
+ *
+ * P7 (per-key notification toggles): the mockup's own filename,
+ * "justNeedsExpansionForEachSectionForGranularModification", is the spec
+ * for the second layer this screen now renders inside each expanded card:
+ * one row per notification key per channel, matching Compose's expand panel
+ * (NotificationSettingsScreen.kt). A key channel row writes byKey[key][ch]
+ * only when the kinfolk touches it; an untouched key has no byKey entry at
+ * all and inherits the category row's value, so byKey never gets
+ * materialized for keys nobody chose to override (see keyChannelChecked /
+ * keyChannelOverridden in notificationsApi.ts, and their tests, for the
+ * exact inheritance rule). A channel in a key's own lockedChannels renders
+ * read-only regardless of any byKey/byCategory write, showing the catalog's
+ * lockReason when there is one.
  *
  * Marketing category: the mockup's two channel rows ("Marketing email" /
  * "Marketing SMS") are permanently disabled decorative rows in the static
@@ -241,6 +252,22 @@ export function NotificationSettings() {
     setEdited({ ...edited, byCategory: { ...edited.byCategory, [cat.id]: updated } });
   }
 
+  // Writes byKey[key.key][ch] only; the category's byCategory entry (and
+  // every other key's byKey entry) is left untouched. A key nobody has
+  // toggled never gets a byKey entry at all: this is the only place byKey
+  // gets written, and it only fires from a deliberate click here.
+  function toggleKeyChannel(cat: CategoryDto, key: NotificationKeyDto, ch: Channel) {
+    if (!edited || keyLockedChannels(key).includes(ch)) return;
+    const current = keyChannelChecked(key, ch, edited.byKey?.[key.key], edited.byCategory[cat.id]);
+    setEdited({
+      ...edited,
+      byKey: {
+        ...(edited.byKey ?? {}),
+        [key.key]: { ...(edited.byKey?.[key.key] ?? {}), [ch]: !current },
+      },
+    });
+  }
+
   function renderCard(cat: CategoryDto, index: number) {
     const isExpanded = expanded[cat.id] ?? true;
     const isMarketing = cat.id === 'marketing';
@@ -322,6 +349,54 @@ export function NotificationSettings() {
                     </div>
                   );
                 })}
+            {!isMarketing && cat.keys.length > 0 && (
+              <div className="nf-keys">
+                {cat.keys.map((k) => (
+                  <div className="nf-key" key={k.key}>
+                    <div className="nf-key-head">
+                      <b>{k.title}</b>
+                      <small>{k.description}</small>
+                    </div>
+                    <div className="nf-key-chans">
+                      {k.allowedChannels
+                        .filter((ch) => CHANNEL_ORDER.includes(ch))
+                        .sort((a, b) => CHANNEL_ORDER.indexOf(a) - CHANNEL_ORDER.indexOf(b))
+                        .map((ch) => {
+                          const copy = channelCopy(cat.id, ch);
+                          const locked = keyLockedChannels(k).includes(ch);
+                          const checked = keyChannelChecked(k, ch, edited?.byKey?.[k.key], edited?.byCategory[cat.id]);
+                          const overridden = keyChannelOverridden(edited?.byKey?.[k.key], ch);
+                          return (
+                            <div className="nf-key-crow" key={ch}>
+                              <label className={`sw ${locked ? 'dis' : ''}`}>
+                                <input
+                                  type="checkbox"
+                                  aria-label={`${copy.label} for ${k.title}`}
+                                  checked={checked}
+                                  disabled={locked}
+                                  onChange={() => toggleKeyChannel(cat, k, ch)}
+                                />
+                                <span className="slot" />
+                                <span className="knob" />
+                              </label>
+                              <div className="nf-key-chinfo">
+                                <b>{copy.label}</b>
+                                {locked ? (
+                                  <small>{k.lockReason?.trim() || 'Set by Tribe Tails Pet Care. Can’t be changed here.'}</small>
+                                ) : (
+                                  <span className={`nf-key-badge ${overridden ? 'overridden' : 'following'}`}>
+                                    {overridden ? 'Overridden' : 'Following category'}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
