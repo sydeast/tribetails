@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinChip
@@ -88,6 +89,16 @@ fun NotificationSettingsScreen(
     var saving by remember { mutableStateOf(false) }
 
     val byCategory: SnapshotStateMap<String, MutableMap<String, Boolean>> = remember { mutableStateMapOf() }
+    // Task 27a model: byKey is an override, absence means inherit — a key
+    // channel is on, off, or inheriting, and a kinfolk must be able to get
+    // back to inheriting. PerKeyRow's chip toggle does double duty: setting a
+    // channel to the value it would already inherit clears the entry instead
+    // of pinning an explicit duplicate of it (see channelInheritedChecked in
+    // NotificationLockDisplay.kt). CategoryChannelRow's "All in category"
+    // chips never touch this map: byKey always wins over byCategory, both
+    // server-side (prefs.ts explicitUserChoice) and in channelChipState, so a
+    // category change only changes what UNoverridden keys inherit. Web's
+    // NotificationSettings.tsx implements the identical model.
     val byKey: SnapshotStateMap<String, MutableMap<String, Boolean>> = remember { mutableStateMapOf() }
     val marketingOptIn: SnapshotStateMap<String, Boolean> = remember { mutableStateMapOf() }
     val expanded: SnapshotStateMap<String, Boolean> = remember { mutableStateMapOf() }
@@ -304,7 +315,7 @@ private fun CategoryCard(
             }
 
             if (!isMarketingCategory) {
-                CategoryChannelRow(cat = cat, byCategory = byCategory, byKey = byKey)
+                CategoryChannelRow(cat = cat, byCategory = byCategory)
             }
 
             if (isExpanded) {
@@ -326,7 +337,6 @@ private fun CategoryCard(
 private fun CategoryChannelRow(
     cat: CategoryDef,
     byCategory: SnapshotStateMap<String, MutableMap<String, Boolean>>,
-    byKey: SnapshotStateMap<String, MutableMap<String, Boolean>>,
 ) {
     val type = LocalKinfolkTypography.current
     // Notification revamp: only offer "select all" chips for channels at least
@@ -363,12 +373,27 @@ private fun CategoryChannelRow(
                         val map = byCategory[cat.id]?.toMutableMap() ?: mutableMapOf()
                         map[ch.id] = !current
                         byCategory[cat.id] = map
-                        cat.keys.forEach { k -> byKey.remove(k.key) }
                     },
+                    modifier = Modifier.testTag("catchip-${cat.id}-${ch.id}"),
                 )
             }
         }
     }
+    // Task 27a defect #2: this row used to wipe every key's byKey entry
+    // in the category on every click — reviewer called that over-broad.
+    // byKey always wins over byCategory, so this control only changes
+    // what UNoverridden keys inherit; said here, before the control
+    // acts, per "fail loud, never fake" (a control that COULD destroy
+    // deliberate choices must say so — this one doesn't destroy them,
+    // but leaving that unsaid was the other half of the complaint). A
+    // sibling of the Row above, not a child of it — it must stack as its
+    // own line under "All in category: <chips>", not get squeezed onto
+    // that SpaceBetween row.
+    Text(
+        "Keys below with their own channel choice won't change when you flip this.",
+        style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
+        modifier = Modifier.padding(top = KinfolkSpacing.xs),
+    )
 }
 
 @Composable
@@ -430,15 +455,36 @@ private fun PerKeyRow(
                     selected = chip.checked,
                     onClick = {
                         if (chip.locked) return@KinChip
-                        val map = byKey[key.key]?.toMutableMap() ?: mutableMapOf()
-                        map[ch.id] = !chip.checked
-                        byKey[key.key] = map
+                        // Task 27a: if this click recreates the value the
+                        // channel would inherit anyway, clear the override
+                        // (see channelInheritedChecked) instead of pinning
+                        // an explicit duplicate of it — otherwise the key
+                        // would silently stop following future category
+                        // changes with no way back.
+                        val next = !chip.checked
+                        val inherited = channelInheritedChecked(
+                            key = key,
+                            ch = ch,
+                            perCat = byCategory[catId]?.get(ch.id),
+                        )
+                        if (next == inherited) {
+                            val map = byKey[key.key]?.toMutableMap()
+                            if (map != null) {
+                                map.remove(ch.id)
+                                if (map.isEmpty()) byKey.remove(key.key) else byKey[key.key] = map
+                            }
+                        } else {
+                            val map = byKey[key.key]?.toMutableMap() ?: mutableMapOf()
+                            map[ch.id] = next
+                            byKey[key.key] = map
+                        }
                     },
                     trailingIcon = when (chip.marker) {
                         ChipMarker.RequiredCheck -> Icons.Filled.Check
                         ChipMarker.AdminLock -> Icons.Filled.Lock
                         null -> null
                     },
+                    modifier = Modifier.testTag("perkey-chip-${key.key}-${ch.id}"),
                 )
             }
         }
