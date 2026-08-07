@@ -12,8 +12,11 @@ import { syncKinfolkClaim } from '../lib/kinfolkClaim';
  * claim to land immediately rather than waiting on this trigger).
  *
  * Multi-kinfolk-id users: `clients/{uid}.activeKinfolkId` names which one is
- * exposed via claims (falls back to `kinfolkIds[0]`) — set by the portal's
- * TribePicker via the `setActiveTribe` callable (O-5).
+ * exposed via claims — set by the portal's TribePicker via the `setActiveTribe`
+ * callable (O-5). It no longer falls back to `kinfolkIds[0]`: with 2+ ids and no
+ * valid selection, `syncKinfolkClaim` mints NO kinfolk claim and this logs
+ * `kinfolkId: null`. That is the designed outcome for a data defect, not a
+ * failure — see the contract on `syncKinfolkClaim`.
  */
 export const onClientsWrite = onDocumentWritten(
   { document: 'clients/{uid}', region: 'us-central1', secrets: ['SENTRY_DSN'] },

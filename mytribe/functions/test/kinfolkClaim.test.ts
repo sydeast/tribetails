@@ -22,8 +22,16 @@ beforeEach(() => {
 import { syncKinfolkClaim } from '../src/lib/kinfolkClaim';
 
 describe('syncKinfolkClaim', () => {
-  it('sets role+kinfolkId from kinfolkIds[0] when no activeKinfolkId is set', async () => {
-    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['a', 'b'] } } });
+  it('mints the sole id when there is exactly one, with no activeKinfolkId set', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['a'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const result = await syncKinfolkClaim('u1');
+    expect(result).toEqual({ kinfolkId: 'a' });
+    expect(mocks.setCustomUserClaims).toHaveBeenCalledWith('u1', { role: 'kinfolk', kinfolkId: 'a' });
+  });
+
+  it('mints the sole id even when activeKinfolkId is stale (one id is not a choice)', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['a'], activeKinfolkId: 'revoked' } } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const result = await syncKinfolkClaim('u1');
     expect(result).toEqual({ kinfolkId: 'a' });
@@ -38,11 +46,38 @@ describe('syncKinfolkClaim', () => {
     expect(mocks.setCustomUserClaims).toHaveBeenCalledWith('u1', { role: 'kinfolk', kinfolkId: 'b' });
   });
 
-  it('falls back to kinfolkIds[0] when activeKinfolkId names an id the client no longer has', async () => {
+  it('mints NO kinfolk claim for 2+ ids with no activeKinfolkId, instead of designating kinfolkIds[0]', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['a', 'b'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const result = await syncKinfolkClaim('u1');
+    expect(result).toEqual({ kinfolkId: null });
+    expect(mocks.setCustomUserClaims).toHaveBeenCalledWith('u1', {});
+  });
+
+  it('mints NO kinfolk claim when activeKinfolkId names an id the client does not have', async () => {
     const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['a', 'b'], activeKinfolkId: 'revoked' } } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const result = await syncKinfolkClaim('u1');
-    expect(result).toEqual({ kinfolkId: 'a' });
+    expect(result).toEqual({ kinfolkId: null });
+    expect(mocks.setCustomUserClaims).toHaveBeenCalledWith('u1', {});
+  });
+
+  it('CLEARS a previously minted claim when it refuses, rather than leaving the old one standing', async () => {
+    // The revocation case: 'b' was the active household and has been taken away.
+    // Leaving the stale claim in place would keep the revoked household readable.
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['a', 'c'], activeKinfolkId: 'b' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.getUser.mockResolvedValue({ customClaims: { role: 'kinfolk', kinfolkId: 'b', admin: true } });
+    const result = await syncKinfolkClaim('u1');
+    expect(result).toEqual({ kinfolkId: null });
+    expect(mocks.setCustomUserClaims).toHaveBeenCalledWith('u1', { admin: true });
+  });
+
+  it('does not backwrite a uid onto any kinfolk doc when it refuses', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['a', 'b'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await syncKinfolkClaim('u1');
+    expect(ctx.writes.filter((w) => w.path.startsWith('kinfolk/'))).toEqual([]);
   });
 
   it('preserves an unrelated existing claim (e.g. admin) instead of replacing wholesale', async () => {
