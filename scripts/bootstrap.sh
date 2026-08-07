@@ -137,9 +137,15 @@ done
 # ---------------------------------------------------------------------------
 # 3. Dependencies.
 # ---------------------------------------------------------------------------
-# Each project keeps its own lockfile and toolchain; there is no shared root
-# install. Installs run ONE AT A TIME on purpose: parallel npm processes race on
-# the shared cache and fail with EACCES renaming into ~/.npm/_cacache.
+# Since PR25a, mytribe/web, auntieos-admin, and packages/* are real npm
+# workspaces: ONE install at the repo root covers all three, and it's how
+# both apps get packages/geo. mytribe/functions is deliberately NOT a
+# workspace member — Cloud Functions deploy as a self-contained artifact with
+# their own lockfile, and hoisting its deps into the root tree would ship a
+# broken deploy — so it keeps its own standalone prefix install.
+#
+# Installs run ONE AT A TIME on purpose: parallel npm processes race on the
+# shared cache and fail with EACCES renaming into ~/.npm/_cacache.
 #
 # Not --silent: when an install fails, the reason is the only useful output.
 #
@@ -155,31 +161,42 @@ done
 # correct. `npm run setup` was run and cheerfully reported the project already
 # installed, because it only checked that a directory existed.
 STEP="installing dependencies"
-for p in mytribe/functions mytribe/web auntieos-admin; do
-  INSTALLED_MARKER="$p/node_modules/.package-lock.json"
-  STALE=0
-  if [ -d "$p/node_modules" ]; then
-    if [ ! -f "$INSTALLED_MARKER" ]; then
-      STALE=1   # no marker: npm never finished, or an ancient layout
-    elif [ "$p/package-lock.json" -nt "$INSTALLED_MARKER" ]; then
-      STALE=1   # lockfile moved after the last install
+
+install_if_stale() {
+  local label="$1" dir="$2"
+  local marker="$dir/node_modules/.package-lock.json"
+  local lockfile="$dir/package-lock.json"
+  local stale=0
+  if [ -d "$dir/node_modules" ]; then
+    if [ ! -f "$marker" ]; then
+      stale=1   # no marker: npm never finished, or an ancient layout
+    elif [ "$lockfile" -nt "$marker" ]; then
+      stale=1   # lockfile moved after the last install
     fi
   fi
 
-  if [ "$STALE" -eq 1 ] && [ -z "${FORCE_INSTALL:-}" ]; then
-    ylw "deps: $p is STALE (package-lock.json is newer than the install)"
+  if [ "$stale" -eq 1 ] && [ -z "${FORCE_INSTALL:-}" ]; then
+    ylw "deps: $label is STALE (package-lock.json is newer than the install)"
     ylw "      reinstalling; this is the drift that makes correct code fail to build"
   fi
 
-  if [ -d "$p/node_modules" ] && [ "$STALE" -eq 0 ] && [ -z "${FORCE_INSTALL:-}" ]; then
-    grn "deps: $p already installed and current (FORCE_INSTALL=1 to reinstall)"
+  if [ -d "$dir/node_modules" ] && [ "$stale" -eq 0 ] && [ -z "${FORCE_INSTALL:-}" ]; then
+    grn "deps: $label already installed and current (FORCE_INSTALL=1 to reinstall)"
   else
-    STEP="installing dependencies in $p"
-    printf 'deps: installing %s ...\n' "$p"
-    npm --prefix "$p" ci --no-audit --no-fund
-    grn "deps: $p done"
+    STEP="installing dependencies in $label"
+    printf 'deps: installing %s ...\n' "$label"
+    ( cd "$dir" && npm ci --no-audit --no-fund )
+    grn "deps: $label done"
   fi
-done
+}
+
+# mytribe/functions: standalone, own lockfile, own node_modules.
+install_if_stale "mytribe/functions" "mytribe/functions"
+
+# Workspace root: covers mytribe/web, auntieos-admin, and packages/geo in one
+# install. `.` so install_if_stale's "$dir/package-lock.json" resolves to the
+# root lockfile.
+install_if_stale "workspace root (mytribe/web, auntieos-admin, packages/geo)" "."
 
 # ---------------------------------------------------------------------------
 # 4. Prove it.

@@ -8,8 +8,15 @@
 # the class of update actually worth looking at individually.
 version: 2
 updates:
+  # auntieos-admin, mytribe/web, and packages/* are npm workspace members as
+  # of PR25a: ONE package-lock.json at the repo root covers all three, so
+  # they get ONE dependabot entry pointed at the workspace root, not one per
+  # app. Dependabot detects the "workspaces" field in the root package.json
+  # and opens PRs against each member's manifest from here; separate entries
+  # per member would each look for a lockfile in a directory that no longer
+  # has one.
   - package-ecosystem: 'npm'
-    directory: '/auntieos-admin'
+    directory: '/'
     schedule:
       interval: 'weekly'
     groups:
@@ -19,7 +26,9 @@ updates:
           - 'patch'
 
   # AuntieOS-owned Cloud Functions (web/functions/, Firebase codebase
-  # `default`). Its own manifest and lockfile, so its own entry.
+  # `default`). NOT a workspace member — Cloud Functions deploy as a
+  # self-contained artifact — so it keeps its own manifest, lockfile, and
+  # entry.
   - package-ecosystem: 'npm'
     directory: '/auntieos-admin/web/functions'
     schedule:
@@ -30,18 +39,10 @@ updates:
           - 'minor'
           - 'patch'
 
+  # Same reasoning: mytribe/functions is deliberately NOT a workspace
+  # member, keeps its own lockfile, and keeps its own entry.
   - package-ecosystem: 'npm'
     directory: '/mytribe/functions'
-    schedule:
-      interval: 'weekly'
-    groups:
-      minor-patch:
-        update-types:
-          - 'minor'
-          - 'patch'
-
-  - package-ecosystem: 'npm'
-    directory: '/mytribe/web'
     schedule:
       interval: 'weekly'
     groups:

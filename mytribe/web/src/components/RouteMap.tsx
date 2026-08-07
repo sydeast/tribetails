@@ -1,11 +1,12 @@
-import { durationFromPoints, formatDistance, formatDuration, projectRoute, totalDistanceMeters, type RoutePoint } from '../lib/routeMap';
+import { durationFromPoints, formatDistance, formatDuration, projectRoute, totalDistanceMeters, type RoutePoint } from '@tribetails/geo';
 
 const WIDTH = 400;
 const HEIGHT = 180;
 
 /**
- * GPS route replay: SVG polyline fit to a bounding box (see lib/routeMap.ts),
- * ported from RouteMap.kt's plain Canvas renderer — no map SDK, no token.
+ * GPS route replay: SVG polyline fit to a bounding box (see
+ * @tribetails/geo's routeMap.ts), ported from RouteMap.kt's plain Canvas
+ * renderer — no map SDK, no token.
  */
 export function RouteMap(props: { route: RoutePoint[]; distanceMeters?: number | undefined; durationSeconds?: number | undefined }) {
   const { route } = props;

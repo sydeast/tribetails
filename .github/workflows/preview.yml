@@ -21,9 +21,15 @@ on:
       - 'auntieos-admin/src/**'
       - 'auntieos-admin/index.html'
       - 'auntieos-admin/package.json'
-      - 'auntieos-admin/package-lock.json'
       - 'auntieos-admin/vite.config.ts'
       - 'auntieos-admin/firebase.json'
+      # auntieos-admin is an npm workspace member (PR25a): it resolves
+      # against the ROOT package.json/package-lock.json, not one of its own,
+      # and packages/geo is a workspace dependency it declares (unused until
+      # PR18, but present now). Same reasoning as ci.yml's `admin` job.
+      - 'packages/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/preview.yml'
 
 concurrency:
@@ -51,9 +57,16 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: auntieos-admin/package-lock.json
+          # Root lockfile: auntieos-admin is an npm workspace member as of
+          # PR25a (see root package.json's "workspaces"), so its deps
+          # resolve at the repo root, not from a lockfile of its own.
+          cache-dependency-path: package-lock.json
 
+      # Overrides the job default so the install runs where the workspace
+      # root (and its lockfile) actually is. Every later step keeps the job
+      # default of auntieos-admin.
       - run: npm ci
+        working-directory: .
 
       # Do not preview something that does not compile or whose tests fail.
       - name: Typecheck
