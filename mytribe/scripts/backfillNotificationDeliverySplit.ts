@@ -56,8 +56,13 @@
  *   --allow-prod   applies, batched under Firestore's 500-op batch limit.
  *
  * Safety:
- *   - Dry-run by default; refuses to write unless --allow-prod is passed OR
- *     FIRESTORE_EMULATOR_HOST is set (same contract as the other backfills).
+ *   - Dry-run by default; refuses to write unless --allow-prod is passed. An
+ *     explicit --dry-run beats --allow-prod in either flag order, and an
+ *     argument this parser does not recognise stops the run rather than being
+ *     dropped in silence — see the note on parseArgs for what those two used to
+ *     do instead. FIRESTORE_EMULATOR_HOST does not turn a dry run into a
+ *     writing one — it is reported in the startup line and otherwise decides
+ *     nothing here, since this script has no credentials precheck of its own.
  *   - IDEMPOTENT. A notification carrying none of the workflow fields is
  *     skipped (`already_split`), so a second run reports zero planned writes.
  *     The dispatch doc is written with merge:true, so a re-run over a partially
@@ -102,22 +107,85 @@ const ORIGIN_FIELDS = [
   'scheduledFireAtMs',
 ] as const;
 
+/**
+ * ── WHY THIS PARSER WAS REBUILT RATHER THAN PATCHED ────────────────────────
+ *
+ * It had three defects that compounded into one failure mode: an operator
+ * types a flag, it does nothing, and NOTHING SAYS SO.
+ *
+ *   1. There was no `--dry-run` branch at all. Typing it was a no-op, and
+ *      `--allow-prod --dry-run` — the exact command an operator writes when
+ *      they want to see the plan before committing — ran a real production
+ *      migration that DELETES channel subdocuments and FieldValue.delete()s
+ *      fields off live notifications. The silence read as compliance.
+ *   2. There was no `else` clause, so every unrecognised token was dropped
+ *      without a word. `--dry-runn`, `--dryrun`, `-n` all vanished, leaving
+ *      `--allow-prod` standing alone. Adding (1) without this would have
+ *      fixed one spelling of the hazard and left the rest of the class.
+ *   3. `--project` / `--page-size` matched only when SOMETHING followed, so a
+ *      valueless `--project` was silently ignored while `--project --dry-run`
+ *      took the literal string '--dry-run' as a project id, and a garbage
+ *      `--page-size` silently kept 300.
+ *
+ * The rebuild is the same shape every other backfill in this directory now
+ * uses: `--allow-prod` records intent, `explicitDryRun` is remembered past the
+ * loop, and the post-loop flip honours both. The DEFAULT was already safe
+ * ('dry-run', with no unconditional post-loop inversion), and it stays that
+ * way; what changed is that the flags an operator actually types now mean
+ * something, and a flag this parser does not understand stops the run.
+ */
 export function parseArgs(argv: string[]): Args {
   const args: Args = { mode: 'dry-run', allowProd: false, projectId: null, pageSize: 300 };
+  // AN EXPLICIT --dry-run ALWAYS WINS, in either flag order — tracked
+  // separately from `args.mode` so the post-loop flip below cannot undo it.
+  let explicitDryRun = false;
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--allow-prod') {
-      args.allowProd = true;
-      args.mode = 'apply';
-    } else if (a === '--project' && argv[i + 1]) {
-      args.projectId = argv[i + 1] as string;
+    if (a === '--allow-prod') args.allowProd = true;
+    else if (a === '--dry-run') explicitDryRun = true;
+    else if (a === '--project') {
+      const v = argv[i + 1];
+      // Reject a flag as the value, not just a missing one: the token most
+      // likely to follow a forgotten project id is `--dry-run`, and swallowing
+      // it would take the safety flag off the table while `--allow-prod`
+      // stayed on.
+      if (!v || v.startsWith('--')) throw new Error('--project requires a value');
+      args.projectId = v;
       i += 1;
-    } else if (a === '--page-size' && argv[i + 1]) {
-      const n = Number.parseInt(argv[i + 1] as string, 10);
-      if (Number.isFinite(n) && n > 0) args.pageSize = n;
+    } else if (a === '--page-size') {
+      const v = Number(argv[i + 1]);
+      if (!Number.isInteger(v) || v < 1 || v > 1000) throw new Error('--page-size must be 1..1000');
+      args.pageSize = v;
       i += 1;
+    } else if (a === '--help' || a === '-h') {
+      console.log(
+        [
+          'backfillNotificationDeliverySplit.ts — relocate legacy delivery state to notificationDispatch (R5)',
+          '',
+          '  npm run backfill:notif-split                     # DRY RUN (default)',
+          '  npm run backfill:notif-split -- --allow-prod     # apply',
+          '  npm run backfill:notif-split -- --dry-run        # force dry-run, ALWAYS wins',
+          '  npm run backfill:notif-split -- --project <id>   # override project',
+          '  npm run backfill:notif-split -- --page-size <n>  # rows read per page, 1..1000 (default 300)',
+          '',
+          '--dry-run overrides --allow-prod regardless of which comes first on the',
+          'command line (e.g. "--allow-prod --dry-run" still does not write).',
+          '',
+          'Env:',
+          '  GOOGLE_APPLICATION_CREDENTIALS  service account JSON path (or ADC)',
+          '  GCLOUD_PROJECT                  Firebase project id',
+        ].join('\n'),
+      );
+      process.exit(0);
+    } else {
+      throw new Error(`unknown arg: ${a}`);
     }
   }
+  // `args.allowProd` still reports `true` when `--allow-prod` was passed, even
+  // though `mode` stays 'dry-run': the startup log line prints both, so an
+  // operator who typed `--allow-prod --dry-run` sees exactly what happened
+  // rather than a flag that silently vanished.
+  if (args.allowProd && !explicitDryRun) args.mode = 'apply';
   return args;
 }
 
@@ -161,7 +229,13 @@ interface RunResult {
   planned: SplitPlan[];
 }
 
-async function run(db: Firestore, mode: Mode, pageSize: number): Promise<RunResult> {
+/**
+ * Exported for the dry-run tripwire in
+ * `mytribe/scripts/test/backfillNotificationDeliverySplit.test.ts`, which runs
+ * this loop against a fake Firestore where every write path throws. `db` was
+ * already a parameter, so nothing about the I/O structure changed to allow it.
+ */
+export async function run(db: Firestore, mode: Mode, pageSize: number): Promise<RunResult> {
   const result: RunResult = {
     scanned: 0,
     split: 0,
@@ -255,6 +329,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     typeof process.env.FIRESTORE_EMULATOR_HOST === 'string' &&
     process.env.FIRESTORE_EMULATOR_HOST.length > 0;
 
+  // The `!args.allowProd` clause is UNREACHABLE, and was unreachable before this
+  // script was fixed too: parseArgs only ever sets mode to 'apply' under
+  // --allow-prod. Kept deliberately rather than simplified away. It is the guard
+  // that would catch a future edit introducing some other route to 'apply', and
+  // the cost of an unreachable condition here is nothing next to the cost of
+  // this script running unguarded.
   if (args.mode === 'apply' && !args.allowProd && !usingEmulator) {
     throw new Error('refusing to write: pass --allow-prod, or point at the emulator.');
   }

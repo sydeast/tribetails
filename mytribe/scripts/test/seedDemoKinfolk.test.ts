@@ -20,7 +20,68 @@ import {
   planLinkUidWrite,
   planAllWrites,
   assertNoUserFacingCopy,
+  parseArgs,
 } from '../seedDemoKinfolk';
+
+describe('seedDemoKinfolk parseArgs', () => {
+  it('defaults to a dry run', () => {
+    const a = parseArgs([]);
+    expect(a.dryRun).toBe(true);
+    expect(a.allowProd).toBe(false);
+  });
+
+  it('--allow-prod is what turns the dry run off', () => {
+    const a = parseArgs(['--allow-prod']);
+    expect(a.dryRun).toBe(false);
+    expect(a.allowProd).toBe(true);
+  });
+
+  it('an explicit --dry-run always wins over --allow-prod, in EITHER flag order', () => {
+    // The same inversion the backfills carried, wearing a boolean instead of a
+    // Mode union: `--dry-run` set `args.dryRun = true` inline, and the
+    // unconditional post-loop `if (args.allowProd) args.dryRun = false` then
+    // ran once with no memory of it. main() returns before touching Firestore
+    // only while `dryRun` is true, so this boolean is the whole guard.
+    const allowThenDry = parseArgs(['--allow-prod', '--dry-run']);
+    expect(allowThenDry.dryRun).toBe(true);
+    // allowProd still reports the flag was seen, even though it lost.
+    expect(allowThenDry.allowProd).toBe(true);
+
+    const dryThenAllow = parseArgs(['--dry-run', '--allow-prod']);
+    expect(dryThenAllow.dryRun).toBe(true);
+    expect(dryThenAllow.allowProd).toBe(true);
+  });
+
+  it('one --dry-run beats any number of repeated --allow-prod', () => {
+    expect(parseArgs(['--allow-prod', '--dry-run', '--allow-prod']).dryRun).toBe(true);
+    // Repetition does not weaken the one intended write path either.
+    expect(parseArgs(['--allow-prod', '--allow-prod']).dryRun).toBe(false);
+  });
+
+  it('takes a project override and a --link-uid', () => {
+    const a = parseArgs(['--project', 'mytribe-test', '--link-uid=uid-1']);
+    expect(a.projectId).toBe('mytribe-test');
+    expect(a.linkUid).toBe('uid-1');
+  });
+
+  it('a valueless --project cannot swallow the --dry-run that follows it', () => {
+    // `--project` rejected a MISSING value but happily took the next token, so
+    // one forgotten project id turned `--allow-prod --project --dry-run` back
+    // into a real seeding run with the safety flag eaten.
+    expect(() => parseArgs(['--allow-prod', '--project', '--dry-run'])).toThrow(
+      /--project requires a value/,
+    );
+    expect(() => parseArgs(['--project'])).toThrow(/--project requires a value/);
+    // A real project id still passes through untouched, --dry-run intact.
+    const ok = parseArgs(['--allow-prod', '--project', 'mytribe-test', '--dry-run']);
+    expect(ok.projectId).toBe('mytribe-test');
+    expect(ok.dryRun).toBe(true);
+  });
+
+  it('refuses an unknown flag rather than ignoring it', () => {
+    expect(() => parseArgs(['--nope'])).toThrow(/unknown arg/);
+  });
+});
 
 describe('seedDemoKinfolk — payload builder', () => {
   it('produces a kinfolk doc with the demo family id', () => {
