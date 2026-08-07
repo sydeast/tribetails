@@ -85,8 +85,9 @@ export async function resolveKinfolkAccess(
 
   // Non-staff. This used to be a hand-copy of the discriminator that PR28b
   // extracted into `resolveNonStaffKinfolkId` for the four staff-blind write
-  // callables; the two copies were byte-identical apart from two message
-  // strings, so they are now one. The delegation runs in this direction only:
+  // callables; the two were the same discriminator apart from two message
+  // strings and the return shape (this one carries `isOperator`), so they are
+  // now one. The delegation runs in this direction only:
   // the helper still has no staff branch, which is exactly why those four
   // callables must NOT be routed back through this function: under RULING O-6
   // that would hand them a cross-tenant operator bypass.
