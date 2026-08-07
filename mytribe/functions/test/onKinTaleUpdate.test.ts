@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { buildDbMock } from './_helpers/mockDb';
 
 const mocks = vi.hoisted(() => ({
+  dbFn: vi.fn(),
   enqueue: vi.fn().mockResolvedValue(undefined),
   resolveUid: vi.fn(),
   writeAuditEntryFn: vi.fn().mockResolvedValue(undefined),
-  trackerGet: vi.fn().mockResolvedValue({ data: () => undefined }),
-  trackerSet: vi.fn().mockResolvedValue(undefined),
   claim: vi.fn().mockResolvedValue(true),
 }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
@@ -22,21 +22,19 @@ vi.mock('../src/lib/kinTalePublishClaim', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/lib/kinTalePublishClaim')>()),
   claimKinTalePublish: mocks.claim,
 }));
-// HWM tracker reads/writes kinTaleNotifications/{reportId} via db().
-// Default mock returns "no prior notification" → trigger fires normally.
-vi.mock('../src/lib/firestoreAdmin', () => ({
-  db: () => ({
-    doc: () => ({ get: mocks.trackerGet, set: mocks.trackerSet }),
-  }),
-}));
+// db() backs BOTH the HWM tracker (kinTaleNotifications/{reportId}) and the
+// task-24a thumbs write-back (kin_care_reports/{reportId} + media_files
+// getAll). Default fixture has no tracker doc ("no prior notification" -> the
+// note-added path fires normally) and no media docs. Tests that care about
+// the thumbs write build their own `buildDbMock` fixture.
+vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn }));
 
 beforeEach(() => {
   mocks.enqueue.mockReset().mockResolvedValue(undefined);
   mocks.resolveUid.mockReset().mockResolvedValue('uid_kinfolk');
   mocks.writeAuditEntryFn.mockReset().mockResolvedValue(undefined);
-  mocks.trackerGet.mockReset().mockResolvedValue({ data: () => undefined });
-  mocks.trackerSet.mockReset().mockResolvedValue(undefined);
   mocks.claim.mockReset().mockResolvedValue(true);
+  mocks.dbFn.mockReset().mockReturnValue(buildDbMock({}).db);
 });
 
 import { onKinTaleUpdateHandler } from '../src/triggers/onKinTaleUpdate';
@@ -195,5 +193,182 @@ describe('onKinTaleUpdate trigger — post-publish notes', () => {
       { bodyCopy: 'b', status: 'SENT', mediaFileIds: [] },
     ));
     expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Denormalized feed thumbnails (task-24a): `onKinTaleUpdate` keeps
+ * `kin_care_reports.thumbs` in sync with `mediaFileIds` on every update, not
+ * just the SENT moment — media routinely changes while a tale is still a
+ * DRAFT, and thumbs has to track that. This is the read-cost fix's actual
+ * write path.
+ */
+describe('onKinTaleUpdate trigger — thumbs denormalization (task-24a)', () => {
+  function mediaFixture(entries: Record<string, { url: string; contentType: string }>) {
+    const docs: Record<string, Record<string, unknown>> = {};
+    for (const [id, { url, contentType }] of Object.entries(entries)) {
+      docs[`media_files/${id}`] = { storageUrl: url, mimeType: contentType };
+    }
+    return docs;
+  }
+
+  function thumbsWrite(ctx: ReturnType<typeof buildDbMock>, reportId = 'r1') {
+    return ctx.writes.find((w) => w.path === `kin_care_reports/${reportId}`);
+  }
+
+  it('adding a photo to an existing tale updates thumbs', async () => {
+    const ctx = buildDbMock({
+      docs: mediaFixture({
+        m1: { url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' },
+        m2: { url: 'https://cdn/m2.jpg', contentType: 'image/jpeg' },
+      }),
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await onKinTaleUpdateHandler(makeEvent(
+      { kinfolkId: 'fam1', status: 'DRAFT', mediaFileIds: ['m1'], thumbs: [{ id: 'm1', url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' }] },
+      { kinfolkId: 'fam1', status: 'DRAFT', mediaFileIds: ['m1', 'm2'] },
+    ));
+
+    expect(thumbsWrite(ctx)?.data['thumbs']).toEqual([
+      { id: 'm1', url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' },
+      { id: 'm2', url: 'https://cdn/m2.jpg', contentType: 'image/jpeg' },
+    ]);
+  });
+
+  it('removing a photo removes it from thumbs — the stale-URL case', async () => {
+    const ctx = buildDbMock({
+      docs: mediaFixture({
+        m1: { url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' },
+        m3: { url: 'https://cdn/m3.jpg', contentType: 'image/jpeg' },
+      }),
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const before = {
+      kinfolkId: 'fam1',
+      status: 'SENT',
+      mediaFileIds: ['m1', 'm2', 'm3'],
+      thumbs: [
+        { id: 'm1', url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' },
+        { id: 'm2', url: 'https://cdn/m2.jpg', contentType: 'image/jpeg' },
+        { id: 'm3', url: 'https://cdn/m3.jpg', contentType: 'image/jpeg' },
+      ],
+    };
+    const after = { kinfolkId: 'fam1', status: 'SENT', mediaFileIds: ['m1', 'm3'] };
+
+    await onKinTaleUpdateHandler(makeEvent(before, after));
+
+    expect(thumbsWrite(ctx)?.data['thumbs']).toEqual([
+      { id: 'm1', url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' },
+      { id: 'm3', url: 'https://cdn/m3.jpg', contentType: 'image/jpeg' },
+    ]);
+  });
+
+  it('reordering media without adding or removing any recomputes thumbs in the new order', async () => {
+    const ctx = buildDbMock({
+      docs: mediaFixture({
+        m1: { url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' },
+        m2: { url: 'https://cdn/m2.jpg', contentType: 'image/jpeg' },
+      }),
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const before = {
+      kinfolkId: 'fam1',
+      status: 'DRAFT',
+      mediaFileIds: ['m1', 'm2'],
+      thumbs: [
+        { id: 'm1', url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' },
+        { id: 'm2', url: 'https://cdn/m2.jpg', contentType: 'image/jpeg' },
+      ],
+    };
+    const after = { kinfolkId: 'fam1', status: 'DRAFT', mediaFileIds: ['m2', 'm1'] };
+
+    await onKinTaleUpdateHandler(makeEvent(before, after));
+
+    expect(thumbsWrite(ctx)?.data['thumbs']).toEqual([
+      { id: 'm2', url: 'https://cdn/m2.jpg', contentType: 'image/jpeg' },
+      { id: 'm1', url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' },
+    ]);
+  });
+
+  it('media changing during a DRAFT (before any send) still stamps thumbs, not just the SENT moment', async () => {
+    const ctx = buildDbMock({
+      docs: mediaFixture({ m1: { url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' } }),
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await onKinTaleUpdateHandler(makeEvent(
+      { kinfolkId: 'fam1', status: 'DRAFT', mediaFileIds: [] },
+      { kinfolkId: 'fam1', status: 'DRAFT', mediaFileIds: ['m1'] },
+    ));
+
+    expect(thumbsWrite(ctx)?.data['thumbs']).toEqual([
+      { id: 'm1', url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' },
+    ]);
+    // Still a DRAFT throughout: the kinfolk-facing notification path stays silent.
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('writing thumbs back does NOT re-trigger the update trigger: unchanged media + already-stamped thumbs is a zero-Firestore-call no-op', async () => {
+    const ctx = buildDbMock({
+      docs: mediaFixture({ m1: { url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' } }),
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    // This is exactly the before/after pair the trigger's own thumbs write
+    // produces on re-entry: mediaFileIds unchanged, thumbs now present.
+    const stamped = {
+      kinfolkId: 'fam1',
+      status: 'DRAFT',
+      mediaFileIds: ['m1'],
+      thumbs: [{ id: 'm1', url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' }],
+    };
+
+    await onKinTaleUpdateHandler(makeEvent(stamped, stamped));
+
+    expect(thumbsWrite(ctx)).toBeUndefined();
+    expect(ctx.db.getAll).not.toHaveBeenCalled();
+  });
+
+  it('the loop terminates end to end: the write from a real media change does not itself cause a second write', async () => {
+    const ctx = buildDbMock({
+      docs: mediaFixture({ m1: { url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' } }),
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    // Invocation 1: a real media change.
+    await onKinTaleUpdateHandler(makeEvent(
+      { kinfolkId: 'fam1', status: 'DRAFT', mediaFileIds: [] },
+      { kinfolkId: 'fam1', status: 'DRAFT', mediaFileIds: ['m1'] },
+    ));
+    const firstWrite = thumbsWrite(ctx);
+    expect(firstWrite).toBeDefined();
+    expect(ctx.writes.filter((w) => w.path === 'kin_care_reports/r1')).toHaveLength(1);
+
+    // Invocation 2: the re-entrant call Firestore fires from that write —
+    // mediaFileIds unchanged, thumbs now carries what invocation 1 wrote.
+    const selfTriggered = { kinfolkId: 'fam1', status: 'DRAFT', mediaFileIds: ['m1'], thumbs: firstWrite!.data['thumbs'] };
+    await onKinTaleUpdateHandler(makeEvent(selfTriggered, selfTriggered));
+
+    expect(ctx.writes.filter((w) => w.path === 'kin_care_reports/r1')).toHaveLength(1);
+  });
+
+  it('a thumbs-stamp failure is logged and does not block the post-publish note notification', async () => {
+    const ctx = buildDbMock({
+      docs: mediaFixture({ m2: { url: 'https://cdn/m2.jpg', contentType: 'image/jpeg' } }),
+    });
+    const originalDoc = ctx.db.doc.bind(ctx.db);
+    ctx.db.doc = (path: string) => {
+      const ref = originalDoc(path);
+      if (path.startsWith('kin_care_reports/')) ref.set = vi.fn().mockRejectedValue(new Error('boom'));
+      return ref;
+    };
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await onKinTaleUpdateHandler(makeEvent(
+      { kinfolkId: 'fam1', bodyCopy: 'same', status: 'SENT', mediaFileIds: ['m1'] },
+      { kinfolkId: 'fam1', bodyCopy: 'same', status: 'SENT', mediaFileIds: ['m1', 'm2'] },
+    ));
+
+    expect(enqueuedKeys()).toEqual(['kintale.note.added']);
   });
 });

@@ -8,6 +8,7 @@ import { enqueueNotification } from '../notifications/dispatcher';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { claimKinTalePublish, clientAlreadyAnnouncedSend } from '../lib/kinTalePublishClaim';
+import { maintainThumbs, TaleThumb } from '../lib/kinTaleThumbs';
 
 /**
  * Debounce window. Multiple rapid writes inside this window (e.g. backfill,
@@ -30,6 +31,7 @@ type KinCareReportDoc = {
   mediaFileIds?: string[];
   status?: string;
   sentVia?: string;
+  thumbs?: TaleThumb[];
 };
 
 /**
@@ -55,6 +57,25 @@ export async function onKinTaleUpdateHandler(event: any): Promise<void> {
   const before = event.data?.before?.data() as KinCareReportDoc | undefined;
   const after = event.data?.after?.data() as KinCareReportDoc | undefined;
   if (!before || !after) return;
+
+  // Denormalized feed thumbnails (task-24a): keep `thumbs` in sync with
+  // `mediaFileIds` on EVERY update, not just the SENT moment — media
+  // routinely gets added, removed, or reordered while a tale is still a
+  // DRAFT, and thumbs has to track that. Runs before the status gates below,
+  // which are notification concerns, not thumbs concerns. Best-effort: a
+  // stamping failure is worth a log, not a broken send/note notification.
+  // See `maintainThumbs` for why writing this field back onto this same
+  // document (which re-enters this trigger) does not loop.
+  try {
+    await maintainThumbs(db(), db().doc(`kin_care_reports/${reportId}`), before, after);
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'onKinTaleUpdate',
+      event: 'trigger.thumbs.stamp_failed',
+      extra: { reportId, err: (err as Error)?.message },
+    });
+  }
 
   // Nothing the household can see. Covers DRAFT → DRAFT and any unsend.
   if (after.status !== 'SENT') return;
