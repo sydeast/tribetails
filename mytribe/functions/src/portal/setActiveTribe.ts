@@ -46,8 +46,10 @@ export async function setActiveTribeHandler(
     //
     // It returns WITHOUT writing activeKinfolkId or re-minting, deliberately.
     // syncKinfolkClaim re-validates activeKinfolkId against this caller's own
-    // kinfolkIds and would fall back to kinfolkIds[0] regardless, so the write
-    // buys nothing. Forcing it through would be actively harmful: the claim
+    // kinfolkIds and refuses to mint a claim for a household that is not in
+    // them, so the write buys nothing — and for an operator who is themselves a
+    // 2+-household account it would COST something, clearing the claim they do
+    // legitimately hold. Forcing it through would be actively harmful: the claim
     // sync back-writes `kinfolk/{activeId}.uid = uid`, which would overwrite
     // the real kinfolk's uid on their own doc and break push targeting for that
     // household.
