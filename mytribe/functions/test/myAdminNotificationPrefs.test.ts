@@ -62,7 +62,7 @@ describe('saveMyAdminNotificationPrefsHandler', () => {
     ).rejects.toMatchObject({ code: 'unauthenticated' });
   });
 
-  it('writes prefs to staff/{uid} (merge)', async () => {
+  it('writes prefs to staff/{uid}', async () => {
     const ctx = buildDbMock();
     mocks.dbFn.mockReturnValue(ctx.db);
     const { saveMyAdminNotificationPrefsHandler } = await import('../src/admin/myAdminNotificationPrefs');
@@ -76,6 +76,30 @@ describe('saveMyAdminNotificationPrefsHandler', () => {
     expect(
       (write?.data?.notificationPrefs as UserNotificationPrefs | undefined)?.byKey?.['invoice.new']?.sms,
     ).toBe(true);
+  });
+
+  // I2. The staff write is the portal write against a different collection, and
+  // prefsSchema.ts's PrefsShape exists so the two cannot drift. Both admin
+  // clients read the whole prefs object and save it back whole
+  // (auntieos-admin/src/screens/MyNotificationsEdit.tsx seeds `draft` from the
+  // load; the two Compose screens bail on `prefs ?: return` when the load
+  // failed), so the same mergeFields write is safe here. Nothing in the admin UI
+  // deletes a byKey entry today, so this is the latent half of C1 — fixing only
+  // the portal side would recreate the divergence PrefsShape prevents.
+  it('replaces the whole notificationPrefs subtree on staff/{uid} too (same write as the portal)', async () => {
+    const ctx = buildDbMock();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveMyAdminNotificationPrefsHandler } = await import('../src/admin/myAdminNotificationPrefs');
+    await saveMyAdminNotificationPrefsHandler({
+      data: { prefs: { byKey: {}, byCategory: {}, marketingOptIn: {} } },
+      auth: { uid: 'admin1' },
+    } as any);
+    const write = ctx.writes.find((w) => w.path === 'staff/admin1');
+    expect(write).toBeDefined();
+    expect(write!.options).toEqual({
+      mergeFields: ['notificationPrefs', 'notificationPrefsUpdatedAt'],
+    });
+    expect(write!.merge).toBe(false);
   });
 
   it('rejects unknown channel keys', async () => {

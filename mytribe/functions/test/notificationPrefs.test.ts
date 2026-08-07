@@ -85,7 +85,7 @@ describe('saveMyNotificationPrefsHandler', () => {
     expect((w!.data.notificationPrefs as any).byCategory.security.email).toBe(true);
   });
 
-  it('writes hybrid prefs map merged into clients/{uid}', async () => {
+  it('writes the hybrid prefs map to clients/{uid}', async () => {
     const ctx = buildDbMock();
     mocks.dbFn.mockReturnValue(ctx.db);
     const { saveMyNotificationPrefsHandler } = await import('../src/portal/notificationPrefs');
@@ -101,10 +101,36 @@ describe('saveMyNotificationPrefsHandler', () => {
     } as any);
     const w = ctx.writes.find((w) => w.path === 'clients/u1');
     expect(w).toBeDefined();
-    expect(w!.merge).toBe(true);
     const np = w!.data.notificationPrefs as any;
     expect(np.byCategory.visit.email).toBe(true);
     expect(np.byKey['kintale.published'].push).toBe(true);
     expect(np.marketingOptIn.newsletter).toBe(true);
+  });
+
+  // C1. Clearing an override has to REMOVE a byKey entry, and `{ merge: true }`
+  // cannot express that. DocumentMask.fromObject (the shipped SDK,
+  // @google-cloud/firestore/build/src/document.js:607-643) walks the payload and
+  // pushes only LEAF paths into the update mask, so a key the client left out is
+  // simply not in the mask and the server keeps whatever it already had. The
+  // clients both send the whole prefs object (web seeds `edited` from
+  // prefs.data.prefs, Compose seeds all three maps from getMyNotificationPrefs),
+  // so naming the parent path in `mergeFields` is what makes the write mean
+  // "this subtree is now exactly this" — write-batch.js:271-291 builds the mask
+  // from the field list instead of the payload, and `set` still creates the doc
+  // when it is missing, which `update()` would not.
+  it('replaces the whole notificationPrefs subtree, so a cleared override is really gone', async () => {
+    const ctx = buildDbMock();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveMyNotificationPrefsHandler } = await import('../src/portal/notificationPrefs');
+    await saveMyNotificationPrefsHandler({
+      data: { prefs: { byCategory: {}, byKey: {}, marketingOptIn: {} } },
+      auth: { uid: 'u1' },
+    } as any);
+    const w = ctx.writes.find((w) => w.path === 'clients/u1');
+    expect(w).toBeDefined();
+    expect(w!.options).toEqual({
+      mergeFields: ['notificationPrefs', 'notificationPrefsUpdatedAt'],
+    });
+    expect(w!.merge).toBe(false);
   });
 });

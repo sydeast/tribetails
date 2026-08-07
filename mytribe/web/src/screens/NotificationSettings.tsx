@@ -158,7 +158,11 @@ type MarketingOptInState = Partial<Record<MarketingCategory, boolean>>;
 
 interface EditedPrefs {
   byCategory: ByCategoryState;
-  byKey: UserNotificationPrefs['byKey'] | undefined;
+  // Always an object, never undefined. In memory an empty map and an absent
+  // one meant the same thing, but on the wire they did not: web omitted
+  // `byKey` where Compose sent `{}`, the one place the two clients disagreed.
+  // The state now carries the shape the payload has.
+  byKey: NonNullable<UserNotificationPrefs['byKey']>;
   marketingOptIn: MarketingOptInState;
 }
 
@@ -184,7 +188,7 @@ export function NotificationSettings() {
     }
     setEdited({
       byCategory,
-      byKey: source.byKey,
+      byKey: { ...(source.byKey ?? {}) },
       marketingOptIn: { ...(source.marketingOptIn ?? {}) },
     });
   }, [edited, prefs.data]);
@@ -192,10 +196,14 @@ export function NotificationSettings() {
   const save = useMutation({
     mutationFn: () => {
       if (!edited) return Promise.reject(new Error('Preferences not loaded yet.'));
+      // All three maps, always, byte-for-byte what Compose sends. The handler
+      // writes this subtree with mergeFields, so what is absent HERE is what
+      // gets removed from the stored document — which is how clearing an
+      // override reaches the database at all.
       const toSave: UserNotificationPrefs = {
         byCategory: edited.byCategory,
+        byKey: edited.byKey,
         marketingOptIn: edited.marketingOptIn,
-        ...(edited.byKey !== undefined ? { byKey: edited.byKey } : {}),
       };
       return saveMyNotificationPrefs(toSave);
     },
@@ -252,20 +260,40 @@ export function NotificationSettings() {
     setEdited({ ...edited, byCategory: { ...edited.byCategory, [cat.id]: updated } });
   }
 
-  // Writes byKey[key.key][ch] only; the category's byCategory entry (and
-  // every other key's byKey entry) is left untouched. A key nobody has
-  // toggled never gets a byKey entry at all: this is the only place byKey
+  // Task 27a model: byKey is an override, absence means inherit. So a
+  // key-channel has three honest states — on, off, or inheriting — and a
+  // kinfolk must be able to get back to inheriting. Rather than add a
+  // separate "follow the category" control, the existing toggle does double
+  // duty: if the value the kinfolk just chose is the SAME value the key
+  // would have inherited anyway, the override is cleared instead of pinned.
+  // That's less UI than a dedicated revert control and matches what a user
+  // means by "undo" — click it off and back on and you're back to
+  // following the category, not silently stuck on an explicit duplicate of
+  // it. Writes/clears byKey[key.key][ch] only; the category's byCategory
+  // entry (and every other key's byKey entry) is left untouched. A key
+  // nobody has touched — or one whose last touch matched the inherited
+  // value — never gets a byKey entry at all: this is the only place byKey
   // gets written, and it only fires from a deliberate click here.
   function toggleKeyChannel(cat: CategoryDto, key: NotificationKeyDto, ch: Channel) {
     if (!edited || keyLockedChannels(key).includes(ch)) return;
-    const current = keyChannelChecked(key, ch, edited.byKey?.[key.key], edited.byCategory[cat.id]);
-    setEdited({
-      ...edited,
-      byKey: {
-        ...(edited.byKey ?? {}),
-        [key.key]: { ...(edited.byKey?.[key.key] ?? {}), [ch]: !current },
-      },
-    });
+    const current = keyChannelChecked(key, ch, edited.byKey[key.key], edited.byCategory[cat.id]);
+    const next = !current;
+    const inherited = keyChannelChecked(key, ch, undefined, edited.byCategory[cat.id]);
+
+    const nextByKey = { ...edited.byKey };
+    if (next === inherited) {
+      const forKey = { ...(nextByKey[key.key] ?? {}) };
+      delete forKey[ch];
+      if (Object.keys(forKey).length > 0) {
+        nextByKey[key.key] = forKey;
+      } else {
+        delete nextByKey[key.key];
+      }
+    } else {
+      nextByKey[key.key] = { ...(nextByKey[key.key] ?? {}), [ch]: next };
+    }
+
+    setEdited({ ...edited, byKey: nextByKey });
   }
 
   function renderCard(cat: CategoryDto, index: number) {
@@ -293,7 +321,12 @@ export function NotificationSettings() {
           <div className="master">
             <span className="lbl">All in category:</span>
             <label className="sw">
-              <input type="checkbox" checked={masterChecked} onChange={() => toggleCategoryMaster(cat)} />
+              <input
+                type="checkbox"
+                aria-label={`All in category: ${displayTitle(cat)}`}
+                checked={masterChecked}
+                onChange={() => toggleCategoryMaster(cat)}
+              />
               <span className="slot" />
               <span className="knob" />
             </label>
@@ -307,6 +340,17 @@ export function NotificationSettings() {
             </button>
           </div>
         </div>
+
+        {/* Task 27a defect #2: byKey always wins over byCategory (server-side
+            and in keyChannelChecked), so this category control only changes
+            what UNoverridden keys inherit — a deliberate per-key choice below
+            is never touched by it. Said here, before the control acts, per
+            "fail loud, never fake": a control that could destroy deliberate
+            choices must say so; this one doesn't destroy them, but the
+            silence around that fact was PR27's reviewer's other complaint. */}
+        {!isMarketing && cat.keys.length > 0 && (
+          <p className="nf-helper">Keys below with their own channel choice won&rsquo;t change when you flip this.</p>
+        )}
 
         <div className={`chans ${isExpanded ? '' : 'collapsed'}`}>
           <div className="inner">

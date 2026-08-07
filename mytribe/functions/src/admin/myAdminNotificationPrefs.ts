@@ -5,7 +5,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { SaveArgs } from '../notifications/prefsSchema';
+import { prefsSetOptions, SaveArgs } from '../notifications/prefsSchema';
 import type { UserNotificationPrefs } from '../notifications/types';
 
 /**
@@ -53,12 +53,15 @@ export async function saveMyAdminNotificationPrefsHandler(
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
   const args = SaveArgs.parse(req.data);
+  // The same write as the portal handler, on staff/{uid} instead of
+  // clients/{uid} — they share PrefsShape precisely so they cannot drift, and a
+  // merge set on either one silently keeps a pref the caller removed.
   await db().collection('staff').doc(uid).set(
     {
       notificationPrefs: args.prefs,
       notificationPrefsUpdatedAt: FieldValue.serverTimestamp(),
     },
-    { merge: true },
+    prefsSetOptions(),
   );
 
   logEvent({ severity: 'info', function: 'saveMyAdminNotificationPrefs', event: 'admin.prefs.saved', uid });

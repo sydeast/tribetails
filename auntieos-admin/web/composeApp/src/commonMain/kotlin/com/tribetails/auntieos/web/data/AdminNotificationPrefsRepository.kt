@@ -161,12 +161,15 @@ class CloudAdminNotificationPrefsRepository(
         push = o["push"]?.jsonPrimitive?.booleanOrNull,
     )
 
+    // All three top-level maps, always, empty ones as {}. The handler writes this
+    // subtree with mergeFields (functions/src/notifications/prefsSchema.ts), so a
+    // top-level map left OUT here is DELETED on the server rather than left alone the
+    // way it was under merge. Omitting an empty byCategory would wipe whatever another
+    // device had put there. The maps NESTED inside stay partial on purpose (below).
     private fun encodePrefs(p: AdminNotificationPrefs): JsonObject = buildJsonObject {
-        if (p.byKey.isNotEmpty()) put("byKey", encodeChannelMap(p.byKey))
-        if (p.byCategory.isNotEmpty()) put("byCategory", encodeChannelMap(p.byCategory))
-        if (p.marketingOptIn.isNotEmpty()) {
-            put("marketingOptIn", buildJsonObject { p.marketingOptIn.forEach { (k, v) -> put(k, JsonPrimitive(v)) } })
-        }
+        put("byKey", encodeChannelMap(p.byKey))
+        put("byCategory", encodeChannelMap(p.byCategory))
+        put("marketingOptIn", buildJsonObject { p.marketingOptIn.forEach { (k, v) -> put(k, JsonPrimitive(v)) } })
     }
 
     private fun encodeChannelMap(m: Map<String, ChannelPrefs>): JsonObject = buildJsonObject {

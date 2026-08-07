@@ -5,7 +5,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import type { UserNotificationPrefs } from '../notifications/types';
-import { SaveArgs } from '../notifications/prefsSchema';
+import { prefsSetOptions, SaveArgs } from '../notifications/prefsSchema';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
 /**
@@ -53,12 +53,15 @@ export async function saveMyNotificationPrefsHandler(
 
   const args = SaveArgs.parse(req.data);
   const firestore = db();
+  // prefsSetOptions(), not { merge: true }: the client sends the whole prefs
+  // object, and clearing a per-key override means the entry is ABSENT from it.
+  // A merge set would leave the stale entry on the server. See prefsSchema.ts.
   await firestore.collection('clients').doc(uid).set(
     {
       notificationPrefs: args.prefs,
       notificationPrefsUpdatedAt: FieldValue.serverTimestamp(),
     },
-    { merge: true },
+    prefsSetOptions(),
   );
 
   logEvent({ severity: 'info', function: 'saveMyNotificationPrefs', event: 'portal.prefs.saved', uid });

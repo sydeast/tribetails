@@ -1,5 +1,11 @@
 import { vi } from 'vitest';
 
+/** The subset of Firestore's SetOptions this mock records verbatim. */
+export interface SetOptionsLike {
+  merge?: boolean;
+  mergeFields?: ReadonlyArray<string>;
+}
+
 /**
  * In-memory Firestore query semantics.
  *
@@ -303,7 +309,19 @@ export function buildDbMock(opts: {
   const docs = opts.docs ?? {};
   const queryDocs = opts.queryDocs ?? {};
   const collectionGroupDocs = opts.collectionGroupDocs ?? {};
-  const writes: Array<{ path: string; data: Record<string, unknown>; merge: boolean }> = [];
+  // `merge` stays a plain boolean for the many suites that assert it. `options`
+  // carries the whole SetOptions object, because `{ merge: true }` and
+  // `{ mergeFields: [...] }` are different writes on the server (a merge derives
+  // its update mask from the payload's LEAF paths, so an absent field is left
+  // untouched; a mergeFields parent path replaces its whole subtree) and a
+  // boolean cannot tell them apart. NOTE: this mock still does not MODEL either
+  // semantics — it records what was asked for, nothing more.
+  const writes: Array<{
+    path: string;
+    data: Record<string, unknown>;
+    merge: boolean;
+    options?: SetOptionsLike;
+  }> = [];
   const adds: Array<{ collection: string; data: Record<string, unknown>; id: string }> = [];
   const deletes: string[] = [];
   let autoCounter = 0;
@@ -338,8 +356,8 @@ export function buildDbMock(opts: {
           ref,
         };
       }),
-      set: vi.fn(async (data: Record<string, unknown>, options?: { merge?: boolean }) => {
-        writes.push({ path, data, merge: !!options?.merge });
+      set: vi.fn(async (data: Record<string, unknown>, options?: SetOptionsLike) => {
+        writes.push({ path, data, merge: !!options?.merge, options });
       }),
       update: vi.fn(async (data: Record<string, unknown>) => {
         writes.push({ path, data, merge: true });
@@ -449,8 +467,8 @@ export function buildDbMock(opts: {
   // `writes`/`deletes` arrays so batch effects are assertable like direct writes.
   function makeBatch(): any {
     return {
-      set: (ref: any, data: any, options?: { merge?: boolean }) => {
-        writes.push({ path: ref.path, data, merge: !!options?.merge });
+      set: (ref: any, data: any, options?: SetOptionsLike) => {
+        writes.push({ path: ref.path, data, merge: !!options?.merge, options });
       },
       update: (ref: any, data: any) => {
         writes.push({ path: ref.path, data, merge: true });
@@ -478,7 +496,7 @@ export function buildDbMock(opts: {
     runTransaction: vi.fn(async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
       const tx = {
         get: (ref: any) => ref.get(),
-        set: (ref: any, data: any, options?: { merge?: boolean }) =>
+        set: (ref: any, data: any, options?: SetOptionsLike) =>
           ref.set(data, options),
         update: (ref: any, data: any) => ref.update(data),
         delete: (ref: any) => ref.delete(),

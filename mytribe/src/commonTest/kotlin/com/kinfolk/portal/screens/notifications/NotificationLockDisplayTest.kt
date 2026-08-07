@@ -275,4 +275,23 @@ class NotificationLockDisplayTest {
         assertFalse(chip.checked)
         assertTrue(chip.locked)
     }
+
+    // ---- channelInheritedChecked (task 27a: revert-to-inherited) ----
+
+    @Test
+    fun inheritedChecked_ignoresOwnOverride_fallsBackToPerCatThenEmailDefault() {
+        val k = key(allowed = setOf(EMAIL, SMS))
+        assertTrue(channelInheritedChecked(k, EMAIL, perCat = true))
+        assertFalse(channelInheritedChecked(k, SMS, perCat = false))
+        assertTrue(channelInheritedChecked(k, EMAIL, perCat = null)) // email-on default
+        assertFalse(channelInheritedChecked(k, SMS, perCat = null))
+    }
+
+    @Test
+    fun inheritedChecked_stillReadsRequiredAndAdminLockedChannelsAsOn() {
+        val required = key(allowed = setOf(EMAIL), required = setOf(EMAIL))
+        assertTrue(channelInheritedChecked(required, EMAIL, perCat = false))
+        val locked = key(allowed = setOf(SMS), locked = setOf(SMS))
+        assertTrue(channelInheritedChecked(locked, SMS, perCat = false))
+    }
 }

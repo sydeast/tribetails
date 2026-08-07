@@ -135,3 +135,21 @@ internal fun channelChipState(
         },
     )
 }
+
+/**
+ * Effective checked state for a channel ignoring this key's OWN override —
+ * what it would read if the kinfolk had never diverged from the category
+ * default (task 27a). PerKeyRow compares a fresh toggle against this value:
+ * when they match, the toggle is undoing a prior override rather than
+ * creating a new one, and the client clears the entry instead of pinning an
+ * explicit duplicate of the value it would have inherited anyway. Delegates
+ * to [channelChipState] with `perKey = null` so the required/admin-locked/
+ * perCat/email-default precedence stays in exactly one place;
+ * `marketingGate` doesn't affect `.checked`, so it's always passed `false`
+ * here regardless of the caller's actual gate state.
+ */
+internal fun channelInheritedChecked(
+    key: NotificationKey,
+    ch: NotificationChannel,
+    perCat: Boolean?,
+): Boolean = channelChipState(key = key, ch = ch, marketingGate = false, perKey = null, perCat = perCat).checked

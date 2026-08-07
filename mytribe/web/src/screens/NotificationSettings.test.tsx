@@ -183,14 +183,19 @@ describe('saving byKey', () => {
     expect(saved.byKey?.['kincare.checkin.push_only']).toBeUndefined();
   });
 
-  it('an untouched session omits byKey from the save payload entirely', async () => {
+  // Task 27b: web used to OMIT `byKey` when there was nothing in it, while
+  // Compose sent `{}`. That was the one cell where the two clients put
+  // different bytes on the wire, and it sat on exactly the path this work is
+  // about. Both send an empty map now, so a reader does not have to re-derive
+  // that the two are equivalent under the handler's mergeFields write.
+  it('an untouched session still sends byKey, as an empty map', async () => {
     await renderLoaded();
     mocks.saveMyNotificationPrefs.mockResolvedValue({ ok: true });
     await userEvent.click(screen.getByRole('button', { name: /Save Notification Preferences/ }));
 
     await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
     const saved = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
-    expect(saved.byKey).toBeUndefined();
+    expect(saved.byKey).toEqual({});
   });
 
   it('sends byCategory, byKey and marketingOptIn together in one call', async () => {
@@ -205,6 +210,79 @@ describe('saving byKey', () => {
     expect(saved).toHaveProperty('byCategory');
     expect(saved).toHaveProperty('byKey');
     expect(saved).toHaveProperty('marketingOptIn');
+  });
+});
+
+describe('reverting an override', () => {
+  // Task 27a: byKey is an override, absence means inherit. Toggling a key
+  // channel back to the value it would have inherited anyway must clear the
+  // override, not pin an explicit duplicate of it — otherwise the key
+  // silently stops following future category changes forever.
+  it('toggling a key channel back to its inherited value clears the override entirely', async () => {
+    await renderLoaded();
+    const smsBox = screen.getByRole('checkbox', { name: 'SMS for Auntie On The Way' }) as HTMLInputElement;
+    expect(smsBox.checked).toBe(false); // inherits category default (sms: false)
+
+    await userEvent.click(smsBox); // create an override: sms true
+    expect(smsBox.checked).toBe(true);
+    await userEvent.click(smsBox); // undo: back to the inherited value (false)
+    expect(smsBox.checked).toBe(false);
+
+    const row = smsBox.closest('.nf-key-crow');
+    expect(row?.textContent).toContain('Following category');
+    expect(row?.textContent).not.toContain('Overridden');
+
+    mocks.saveMyNotificationPrefs.mockResolvedValue({ ok: true });
+    await userEvent.click(screen.getByRole('button', { name: /Save Notification Preferences/ }));
+
+    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
+    const saved = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
+    expect(saved.byKey).toEqual({});
+  });
+
+  it('leaves other overridden channels on the same key alone when one channel reverts', async () => {
+    await renderLoaded();
+    const smsBox = screen.getByRole('checkbox', { name: 'SMS for Auntie On The Way' }) as HTMLInputElement;
+    const pushBox = screen.getByRole('checkbox', { name: 'Push for Auntie On The Way' }) as HTMLInputElement;
+
+    await userEvent.click(smsBox); // override sms: true
+    await userEvent.click(pushBox); // override push: false
+    await userEvent.click(smsBox); // undo sms back to inherited (false)
+
+    mocks.saveMyNotificationPrefs.mockResolvedValue({ ok: true });
+    await userEvent.click(screen.getByRole('button', { name: /Save Notification Preferences/ }));
+
+    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
+    const saved = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
+    expect(saved.byKey).toEqual({ 'kincare.auntie.on_my_way': { push: false } });
+  });
+});
+
+describe('category control and existing overrides', () => {
+  // Task 27a defect #2 (Compose side): a category control must not silently
+  // destroy deliberate per-key choices. The model this task adopts is that
+  // byKey always wins over byCategory (already true both server-side and in
+  // keyChannelChecked), so the category control simply changes what
+  // unoverridden keys inherit — it must never touch byKey itself.
+  it('does not clear an existing per-key override when the category master switch is flipped', async () => {
+    await renderLoaded();
+    const smsBox = screen.getByRole('checkbox', { name: 'SMS for Auntie On The Way' }) as HTMLInputElement;
+    await userEvent.click(smsBox); // create an override: sms true
+
+    const masterBox = screen.getByRole('checkbox', { name: 'All in category: Visit Updates' });
+    await userEvent.click(masterBox);
+
+    mocks.saveMyNotificationPrefs.mockResolvedValue({ ok: true });
+    await userEvent.click(screen.getByRole('button', { name: /Save Notification Preferences/ }));
+
+    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
+    const saved = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
+    expect(saved.byKey).toEqual({ 'kincare.auntie.on_my_way': { sms: true } });
+  });
+
+  it('explains that per-key overrides survive the category control', async () => {
+    await renderLoaded();
+    expect(screen.getByText(/won.t change when you flip this/i)).toBeTruthy();
   });
 });
 
