@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  AMOUNT_SOURCES,
   TIP_BASES,
   TIP_BASIS_FIELD,
   centsToDollars,
@@ -7,7 +8,9 @@ import {
   paymentMoneyOf,
   paymentOverApplied,
   paymentReconciles,
+  readAmountSource,
   readTipBasis,
+  resolveLedgerAmountCents,
 } from '../src/lib/paymentMoney';
 
 /**
@@ -257,6 +260,84 @@ describe('paymentReconciles: which rows can be checked, and which must be marked
 
   it('treats a broken tip as no tip rather than as an unreconcilable one', () => {
     expect(paymentReconciles({ tipCents: Number.NaN, tipBasis: 'unknown' })).toBe(true);
+  });
+});
+
+describe('readAmountSource: absence and garbage both read as null', () => {
+  it('reads the three values stripeWebhook.ts writes', () => {
+    expect(readAmountSource('stripe-event')).toBe('stripe-event');
+    expect(readAmountSource('local-invoice')).toBe('local-invoice');
+    expect(readAmountSource('unresolved')).toBe('unresolved');
+    expect(AMOUNT_SOURCES).toEqual(['stripe-event', 'local-invoice', 'unresolved']);
+  });
+
+  it('reads an absent or unrecognized marker as null, not as a guess', () => {
+    expect(readAmountSource(undefined)).toBeNull();
+    expect(readAmountSource(null)).toBeNull();
+    expect(readAmountSource('')).toBeNull();
+    expect(readAmountSource('STRIPE-EVENT')).toBeNull();
+    expect(readAmountSource(42)).toBeNull();
+  });
+});
+
+describe('resolveLedgerAmountCents: the 100x defect, fixed in one place', () => {
+  it('reads invoice #1029 correctly: a stripe-event row stores CENTS, not dollars', () => {
+    // The live case from the bug report: $137.50 collected, stored as
+    // `amount: 13750` (already cents) because Stripe's own event supplied it.
+    // The old reader ran this through dollarsToCents and produced $13,750.00.
+    const r = resolveLedgerAmountCents({ amount: 13750, amountSource: 'stripe-event' });
+    expect(r).toEqual({ amountCents: 13750, resolved: true });
+  });
+
+  it('reads a local-invoice row as DOLLARS, the other branch stripeWebhook can take', () => {
+    const r = resolveLedgerAmountCents({ amount: 30, amountSource: 'local-invoice' });
+    expect(r).toEqual({ amountCents: 3000, resolved: true });
+  });
+
+  it('reads a row with NO amountSource as dollars too — every recordPayment.ts row, the only writer that never sets this marker', () => {
+    const r = resolveLedgerAmountCents({ amount: 45.5 });
+    expect(r).toEqual({ amountCents: 4550, resolved: true });
+  });
+
+  it('prefers a present, valid amountCents over BOTH branches — the modern-row case', () => {
+    // Even a stripe-event row with a (wrong-looking) dollar-shaped `amount`
+    // must not override a real, already-correct amountCents.
+    const r = resolveLedgerAmountCents({ amount: 1, amountCents: 13750, amountSource: 'stripe-event' });
+    expect(r).toEqual({ amountCents: 13750, resolved: true });
+  });
+
+  it('does NOT guess a number for an unresolved row: amountResolved false, not a plausible zero', () => {
+    // amountSource: 'unresolved' rows carry amount: null on the doc. The old
+    // reader ran null through dollarsToCents and silently produced $0.00 —
+    // indistinguishable from a $0 payment. This must be reported as unresolved.
+    const r = resolveLedgerAmountCents({ amount: null, amountSource: 'unresolved' });
+    expect(r.resolved).toBe(false);
+    expect(r.amountCents).toBe(0);
+  });
+
+  it('reports unresolved for a stripe-event row whose amount is not a usable number', () => {
+    // A shape nothing in this codebase writes, but a reader that assumed a
+    // number here and multiplied garbage by 1 would be trusting the same kind
+    // of unchecked input that caused the original bug.
+    expect(resolveLedgerAmountCents({ amountSource: 'stripe-event' }).resolved).toBe(false);
+    expect(resolveLedgerAmountCents({ amount: 'oops', amountSource: 'stripe-event' }).resolved).toBe(
+      false,
+    );
+  });
+
+  it('reports unresolved for a dollars-branch row with no numeric amount at all', () => {
+    expect(resolveLedgerAmountCents({}).resolved).toBe(false);
+    expect(resolveLedgerAmountCents({ amountSource: 'local-invoice' }).resolved).toBe(false);
+  });
+
+  it('rejects a negative or non-integer amountCents rather than trusting a corrupt row', () => {
+    // Falls through to the amountSource-driven read, same as if amountCents
+    // were absent — a negative or fractional cents value is not "the truth
+    // the writer computed", it's a shape nothing here ever wrote.
+    const negative = resolveLedgerAmountCents({ amountCents: -5, amount: 30, amountSource: 'local-invoice' });
+    expect(negative).toEqual({ amountCents: 3000, resolved: true });
+    const fractional = resolveLedgerAmountCents({ amountCents: 12.5, amount: 30, amountSource: 'local-invoice' });
+    expect(fractional).toEqual({ amountCents: 3000, resolved: true });
   });
 });
 

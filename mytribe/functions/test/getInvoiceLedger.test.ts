@@ -2,14 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), logEventFn: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
-vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEventFn }));
 
 import { getInvoiceLedgerHandler } from '../src/admin/getInvoiceLedger';
 
-beforeEach(() => mocks.dbFn.mockReset());
+beforeEach(() => {
+  mocks.dbFn.mockReset();
+  mocks.logEventFn.mockReset();
+});
 
 /** A staff caller. `admin: true` is what `isStaff` reads. */
 function req(data: unknown, token: Record<string, unknown> = { admin: true }, uid: string | null = 'admin1') {
@@ -288,6 +291,95 @@ describe('getInvoiceLedger ledgerPayments (the display ledger)', () => {
     expect(row.amountCents).toBe(13750);
     expect(row.feeCents).toBe(271);
   });
+
+  describe('the 100x unit bug: amount means two different things depending on amountSource', () => {
+    it('reads a stripe-event row correctly: amount 13750 is ALREADY CENTS, not $13,750.00', async () => {
+      // Invoice #1029 in miniature, minus amountCents: stripeWebhook.ts wrote
+      // this row before PR29 added amountCents, from Stripe's own
+      // amount_paid/amount_received (integer cents). The old reader ran
+      // `amount` through dollarsToCents and produced 1,375,000 ($13,750.00)
+      // for a $137.50 payment.
+      mocks.dbFn.mockReturnValue(
+        seed({
+          rootPayments: [
+            { id: 'r1', data: { invoiceId: 'inv1', amount: 13750, amountSource: 'stripe-event' } },
+          ],
+        }).db,
+      );
+      const row = (await run()).ledgerPayments[0]!;
+      expect(row.amountCents).toBe(13750);
+    });
+
+    it('reads a local-invoice row as dollars, the other branch stripeWebhook can take', async () => {
+      mocks.dbFn.mockReturnValue(
+        seed({
+          rootPayments: [
+            { id: 'r1', data: { invoiceId: 'inv1', amount: 30, amountSource: 'local-invoice' } },
+          ],
+        }).db,
+      );
+      const row = (await run()).ledgerPayments[0]!;
+      expect(row.amountCents).toBe(3000);
+    });
+
+    it('reads a row with no amountSource at all as dollars — every recordPayment.ts row', async () => {
+      mocks.dbFn.mockReturnValue(
+        seed({ rootPayments: [{ id: 'r1', data: { invoiceId: 'inv1', amount: 45.5 } }] }).db,
+      );
+      const row = (await run()).ledgerPayments[0]!;
+      expect(row.amountCents).toBe(4550);
+    });
+
+    it('still prefers a present amountCents over both branches — the modern-row case (PR29)', async () => {
+      mocks.dbFn.mockReturnValue(
+        seed({
+          rootPayments: [
+            {
+              id: 'r1',
+              data: { invoiceId: 'inv1', amount: 1, amountCents: 13750, amountSource: 'stripe-event' },
+            },
+          ],
+        }).db,
+      );
+      const row = (await run()).ledgerPayments[0]!;
+      expect(row.amountCents).toBe(13750);
+    });
+
+    it('does NOT guess a number for an unresolved row, and warns loudly instead of showing a plausible zero', async () => {
+      // amountSource: 'unresolved' rows carry amount: null. The old reader
+      // silently produced $0.00 (dollarsToCents(null) => 0), indistinguishable
+      // from a genuine $0 payment. This must be surfaced, not guessed.
+      mocks.dbFn.mockReturnValue(
+        seed({
+          rootPayments: [
+            { id: 'r1', data: { invoiceId: 'inv1', amount: null, amountSource: 'unresolved' } },
+          ],
+        }).db,
+      );
+      const row = (await run()).ledgerPayments[0]!;
+      expect(row.amountCents).toBe(0);
+      const warnCalls = mocks.logEventFn.mock.calls.filter(
+        ([entry]) => entry.event === 'ledger.amount.unresolved',
+      );
+      expect(warnCalls).toHaveLength(1);
+      expect(warnCalls[0]![0]).toMatchObject({
+        severity: 'warn',
+        extra: { invoiceId: 'inv1', unresolvedLedgerAmounts: 1 },
+      });
+    });
+
+    it('does not warn when every row resolves cleanly', async () => {
+      mocks.dbFn.mockReturnValue(
+        seed({ rootPayments: [{ id: 'r1', data: { invoiceId: 'inv1', amount: 30 } }] }).db,
+      );
+      await run();
+      const warnCalls = mocks.logEventFn.mock.calls.filter(
+        ([entry]) => entry.event === 'ledger.amount.unresolved',
+      );
+      expect(warnCalls).toHaveLength(0);
+    });
+  });
+
   it('reconciles a row with no tip at all, whatever its basis says', async () => {
     // A Stripe row, and every payment nobody tipped on. There is no convention
     // to be wrong about when the number is zero, and a caveat on all of them is

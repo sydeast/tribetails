@@ -121,6 +121,116 @@ export function readTipBasis(raw: unknown): TipBasis {
     : 'unknown';
 }
 
+/**
+ * WHERE `stripeWebhook.ts` GOT A ROOT `payments/{eventId}` ROW'S `amount`
+ * FIELD FROM — and therefore what UNIT it is in. Stamped by the webhook
+ * itself (`billing/stripeWebhook.ts`), alongside the historical `amount`.
+ *
+ *   stripe-event    Stripe's own event carried the paid amount
+ *                    (`amount_paid` / `amount_received`). Those fields are
+ *                    ALREADY INTEGER CENTS, Stripe's native unit, and pass
+ *                    through unscaled. `amount` on this row is CENTS.
+ *   local-invoice    Stripe's event carried nothing usable, so the webhook
+ *                    fell back to this app's own `amountDue`/`total` on the
+ *                    invoice doc, which are DOLLAR floats. `amount` on this
+ *                    row is DOLLARS, converted once on read like every other
+ *                    legacy money field.
+ *   unresolved       Neither source yielded a positive number. `amount` is
+ *                    `null`; there is no unit because there is no value. The
+ *                    row already carries `amountResolved: false`.
+ *
+ * `stripeWebhook.ts` has stamped `amountSource` (and `amountResolved`) on
+ * EVERY row it has ever written — that pair is not new. What PR29
+ * (2026-08-06) added was `amountCents` alongside them. So a Stripe row
+ * missing `amountCents` still reliably carries `amountSource`; only a row
+ * this webhook never wrote at all — every `recordPayment.ts` row, which has
+ * always written its own correct `amountCents` directly and never sets this
+ * marker — carries no `amountSource`. `readAmountSource` returns `null` for
+ * that case, and `resolveLedgerAmountCents` treats it the same as
+ * `local-invoice`: dollars, the only convention a marker-less row can mean.
+ */
+export type AmountSource = 'stripe-event' | 'local-invoice' | 'unresolved';
+
+/** The three recognized values, for the marker reader and for tests. */
+export const AMOUNT_SOURCES = ['stripe-event', 'local-invoice', 'unresolved'] as const;
+
+/** Reads a stored `amountSource`. Absent or unrecognized both read as `null` — see the type doc. */
+export function readAmountSource(raw: unknown): AmountSource | null {
+  return typeof raw === 'string' && (AMOUNT_SOURCES as readonly string[]).includes(raw)
+    ? (raw as AmountSource)
+    : null;
+}
+
+/** What `resolveLedgerAmountCents` decided about one row's `amount`/`amountCents` pair. */
+export interface ResolvedLedgerAmount {
+  amountCents: number;
+  /**
+   * False when the row could not be honestly interpreted — an `unresolved`
+   * Stripe event, or a `stripe-event`/legacy row whose `amount` isn't even a
+   * usable number. `amountCents` is 0 in that case, but 0 is NOT a claim that
+   * nothing was collected: it is the floor `CentsSchema` allows, and the
+   * caller is expected to count `resolved: false` rows and say so out loud
+   * (a warn log, a backfill's "could not interpret" tally) rather than let
+   * the 0 read as a fact.
+   */
+  resolved: boolean;
+}
+
+/**
+ * The ONE place a historical ROOT `payments` row's `amount` is converted to
+ * cents. Both `getInvoiceLedger.ts` (display) and the `amountCents` backfill
+ * script call this, so the reading rule cannot drift between "what an
+ * operator sees today" and "what gets permanently stamped onto the row."
+ *
+ * `amountCents` wins whenever it is present and a valid non-negative
+ * integer: it is the number the writer actually computed — `recordPayment.ts`
+ * has always written it, and `stripeWebhook.ts` has written it since PR29
+ * (2026-08-06) — not a re-derivation that could disagree with it.
+ *
+ * Failing that, `amountSource` says the unit `amount` is in (see the type
+ * doc above). THE 100X DEFECT this function exists to fix: treating a
+ * `stripe-event` row's already-cents `amount` (13750) as dollars produced
+ * $13,750.00 for a $137.50 payment. `stripe-event` now passes `amount`
+ * through unscaled; everything else is dollars, exactly as this reader
+ * always treated the field.
+ */
+export function resolveLedgerAmountCents(raw: {
+  amount?: unknown;
+  amountCents?: unknown;
+  amountSource?: unknown;
+}): ResolvedLedgerAmount {
+  const cents = raw.amountCents;
+  if (typeof cents === 'number' && Number.isInteger(cents) && cents >= 0) {
+    return { amountCents: cents, resolved: true };
+  }
+
+  const source = readAmountSource(raw.amountSource);
+  if (source === 'unresolved') {
+    // The webhook already flagged this row: a paid event it could not
+    // resolve a real figure for. Guessing a number here — even zero via the
+    // dollars path below — would state a fact nobody verified.
+    return { amountCents: 0, resolved: false };
+  }
+
+  const amount = raw.amount;
+  if (source === 'stripe-event') {
+    if (typeof amount === 'number' && Number.isFinite(amount) && amount >= 0) {
+      // Already cents. Rounded defensively (Stripe's own field is always an
+      // integer), never multiplied by 100.
+      return { amountCents: Math.round(amount), resolved: true };
+    }
+    return { amountCents: 0, resolved: false };
+  }
+
+  // 'local-invoice', or no marker at all (every recordPayment.ts row — the
+  // only writer of this collection that has never set amountSource):
+  // dollars, the legacy convention.
+  if (typeof amount === 'number' && Number.isFinite(amount)) {
+    return { amountCents: dollarsToCents(amount), resolved: true };
+  }
+  return { amountCents: 0, resolved: false };
+}
+
 /** Everything the arithmetic below needs, in integer cents. */
 export interface PaymentMoneyInput {
   /** The whole sum collected from the client, tip included. */
