@@ -15,7 +15,8 @@ the same change.
 payment or a quote exports a `Result` zod schema beside its `Args`, parses its
 outbound value through it (`src/lib/callableResponse.ts`), and has that shape
 frozen by the same recursive walker the deep request shapes use. That set is
-20 on the invoice side (19 at W3-1, plus `getInvoiceLedger` added in A1). **The
+21 on the invoice side (19 at W3-1, plus `getInvoiceLedger` in A1 and
+`listPayments` beside it). **The
 BOOKING family joined it on 2026-08-01 (ADR-0003's follow-up, once the
 precondition ADR-0003 named was met):** `getMyBookings`, `requestBooking`,
 `requestBookingCancellation`, `addBookingNote`, `addInternalBookingNote`,
@@ -23,8 +24,8 @@ precondition ADR-0003 named was met):** `getMyBookings`, `requestBooking`,
 `batchUpdateBookings` each export a `Result` (and, all but `getMyBookings`,
 an `Args`), validate outbound the same way, and are generated into the
 Contracts module through `scripts/contracts/registry.ts`'s
-`BOOKING_CONTRACT_REGISTRY`, exactly as the 20 invoice callables are through
-`INVOICE_CONTRACT_REGISTRY`. For those 29, this doc is documentation and the
+`BOOKING_CONTRACT_REGISTRY`, exactly as the 21 invoice callables are through
+`INVOICE_CONTRACT_REGISTRY`. For those 30, this doc is documentation and the
 schema is the authority. Every OTHER callable's response is still doc-only
 and this file remains its review anchor; closing that gap is a later PR.
 
@@ -717,6 +718,63 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - Mirrors: `auntieos-admin/src/api/invoicesWrite.ts#getInvoiceLedger` and
   `src/components/InvoiceLedger.tsx`. Types come from the generated contracts
   module (ADR-0001), not from a hand transcription.
+
+### listPayments
+- req `{ limit?: number /* int 1..500, default 100 */, startAfterId?: string /* 1..200, the previous page's nextCursor */ }` (`.strict()`)
+- res `{ payments: Array<{ paymentId: string, kinfolkId: string, kinfolkName: string, amountCents: number /* gross tip INCLUDED, units RESOLVED server-side */, amountResolved: boolean /* false = the units could not be read; the 0 is a floor, not a figure */, tipCents: number, feeCents: number, tipBasis: 'gross'|'net'|'unknown', reconciles: boolean, appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, autoApply: boolean, invoiceId: string, invoiceNumber: string, appliedInvoiceId: string, appliedInvoiceNumber: string, method: string, reference: string, date: string /* FREE TEXT, '' on a Stripe row */, notes: string /* STAFF ONLY */, recordedBy: string|null }>, truncated: boolean, nextCursor: string|null, unresolvedAmountCount: number }`
+- Read only. No `ok` field, same as `getInvoiceLedger` and
+  `listUninvoicedSessions`.
+- **THE ROOT `payments` COLLECTION, ACROSS HOUSEHOLDS.** `getInvoiceLedger`
+  answers "what was paid against THIS invoice" and is per-invoice by
+  construction — its request is `{ invoiceId }` and its handler opens by reading
+  that invoice — so an id-less mode would be exactly the unfiltered scan it
+  declines for a household-less invoice. This is a different question and it is
+  a different callable; the two share the unit rule
+  (`lib/paymentMoney.ts#resolveLedgerAmountCents`), which is the part that must
+  not be duplicated.
+- **IT EXISTS SO THE STAFF ANDROID PAYMENT LIST CAN STOP READING THE COLLECTION
+  DIRECTLY.** `AdminDataViewModel.loadPayments` called
+  `InvoiceRepository.getPayments()`, a raw `scopedQuery("payments")`, into a
+  `Payment` model with neither `amountCents` nor `amountSource` — so a
+  `stripe-event` row's already-cents `amount` was unreadable there in principle
+  and any screen rendering it would have been 100x out. No composable collected
+  that flow, so nothing shipped wrong; the trap was that the first one to
+  collect it would inherit the defect silently.
+- **ORDERED AND CURSORED BY DOCUMENT ID, never by a date, and that is forced.**
+  `date` is `FieldValue.serverTimestamp()` on `stripeWebhook.ts` rows and the
+  operator's free text on `recordPayment.ts` rows, and Firestore orders by TYPE
+  first, so `orderBy('date')` sorts by writer rather than by when the money
+  arrived. `createdAt` exists only on `recordPayment.ts` rows and `orderBy`
+  drops documents missing the field, so it would silently omit every Stripe and
+  legacy row. Document id is on every document by construction — the same
+  reasoning `repairInvoicePayments` states for its sweep.
+- **`truncated` IS A FACT, NOT AN INFERENCE.** The handler reads `limit + 1`
+  documents and returns `limit`; the extra one is never projected. `nextCursor`
+  is non-null exactly when `truncated` is true. This is deliberately unlike
+  `getInvoiceLedger.unlinkedKinfolkPayments`, which bounds its read and has no
+  field that can say so.
+- **AN UNREADABLE ROW IS FLAGGED, NEVER GUESSED.** `resolveLedgerAmountCents`
+  returns `{ amountCents: 0, resolved: false }` for an `unresolved` Stripe event
+  or an `amount` that is not a usable number; the row ships `amountResolved:
+  false`, the page ships `unresolvedAmountCount`, and the handler emits one
+  `payments.amount.unresolved` warn per call. A client rendering `$0.00` without
+  reading the flag is stating something nobody checked.
+- **NO `client`, `address` OR `email`**, though the collection stores all three.
+  They are household PII, nothing renders them off this list, and
+  `kinfolkId`/`kinfolkName` already identify whose money a row is. Adding a
+  field later is additive; un-publishing one is not.
+- GATE: `resolveInvoiceWriteActor`, the ADR-0002 invoice-surface gate, same as
+  `getInvoiceLedger` and `recordPayment`. Staff pass unscoped; a TEST ADMIN
+  passes and the query is constrained to `kinfolkId == testTribeId` server-side.
+  `wrapAdminCallable` would refuse a token `firestore.rules` already grants a
+  direct read of these documents, making the callable narrower than the client
+  read it replaces. An equality filter plus `orderBy(documentId())` needs no
+  composite index.
+- Errors: `invalid-argument` on a malformed request (the schema is `.strict()`,
+  so an extra key is refused rather than dropped, and a blank `startAfterId` is
+  refused rather than silently restarting the page loop).
+- Mirrors: `InvoiceRepository.listPayments` on Android. No React mirror: no web
+  surface renders this list. Types come from the generated contracts module.
 
 ## Household members and invites (admin-gated; B1)
 

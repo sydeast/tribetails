@@ -32,6 +32,7 @@ import { Args as GenerateInvoicePdfArgs, Result as GenerateInvoicePdfResult } fr
 import { Args as GenerateReceiptArgs, Result as GenerateReceiptResult } from '../../src/admin/generateReceipt';
 import { Args as GetInvoiceLedgerArgs, Result as GetInvoiceLedgerResult } from '../../src/admin/getInvoiceLedger';
 import { Args as LinkInvoiceSessionsArgs, Result as LinkInvoiceSessionsResult } from '../../src/admin/linkInvoiceSessions';
+import { Args as ListPaymentsArgs, Result as ListPaymentsResult } from '../../src/admin/listPayments';
 import { Args as ListUninvoicedSessionsArgs, Result as ListUninvoicedSessionsResult } from '../../src/admin/listUninvoicedSessions';
 import { Args as MarkInvoicePaidArgs, Result as MarkInvoicePaidResult } from '../../src/admin/markInvoicePaid';
 import { Args as PostInvoiceEventArgs, Result as PostInvoiceEventResult } from '../../src/admin/postInvoiceEvent';
@@ -104,6 +105,7 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     // No zod request schema; see the module header.
     { name: 'getMyInvoices', args: null, result: GetMyInvoicesResult },
     { name: 'linkInvoiceSessions', args: LinkInvoiceSessionsArgs, result: LinkInvoiceSessionsResult },
+    { name: 'listPayments', args: ListPaymentsArgs, result: ListPaymentsResult },
     { name: 'listUninvoicedSessions', args: ListUninvoicedSessionsArgs, result: ListUninvoicedSessionsResult },
     { name: 'markInvoicePaid', args: MarkInvoicePaidArgs, result: MarkInvoicePaidResult },
     { name: 'payInvoice', args: PayInvoiceArgs, result: PayInvoiceResult },

@@ -11,6 +11,8 @@ import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerArgs
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResult
 import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsArgs
 import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsResult
+import com.tribetails.auntieos.data.contracts.ListPaymentsArgs
+import com.tribetails.auntieos.data.contracts.ListPaymentsResult
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidArgs
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.PostInvoiceEventArgs
@@ -22,6 +24,7 @@ import com.tribetails.auntieos.data.contracts.decodeCreateQuoteResult
 import com.tribetails.auntieos.data.contracts.decodeGenerateInvoicePdfResult
 import com.tribetails.auntieos.data.contracts.decodeGetInvoiceLedgerResult
 import com.tribetails.auntieos.data.contracts.decodeLinkInvoiceSessionsResult
+import com.tribetails.auntieos.data.contracts.decodeListPaymentsResult
 import com.tribetails.auntieos.data.contracts.decodeMarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult
 import com.tribetails.auntieos.data.contracts.decodeSendInvoiceReminderResult
@@ -368,21 +371,66 @@ class InvoiceRepository(
     }.onFailure { AuntieLog.e("getInvoiceLedger failed for $invoiceId", it) }
 
     /**
-     * The RAW root `payments` read. Still here, still called by
-     * `AdminDataViewModel.loadPayments`.
+     * EVERY PAYMENT, ACROSS HOUSEHOLDS, IN CENTS THE SERVER RESOLVED. The staff
+     * payment browser's read, and the replacement for [getPayments] below.
+     *
+     * [getInvoiceLedger] above cannot answer this question and refuses to try:
+     * its request is `{ invoiceId }` and its handler opens by reading that
+     * invoice, so an id-less mode would be the unfiltered scan it explicitly
+     * declines. Different question, different callable — but the SAME unit rule
+     * (`resolveLedgerAmountCents`, server-side), which is the point.
+     *
+     * BOUNDED, AND IT SAYS SO. The server pages by document id — `date` is a
+     * Timestamp on Stripe rows and free text on hand-recorded ones, and
+     * `createdAt` is absent on both Stripe and legacy rows, so neither can order
+     * this collection without silently dropping or mis-ranking rows. The
+     * response carries `truncated` and `nextCursor`; pass the latter back as
+     * [startAfterId] for the next page. A caller that ignores them is showing a
+     * partial list as if it were the whole one.
+     *
+     * Fail-loud: a failure surfaces and there is NO fallback to [getPayments].
+     * The fallback would restore the 100x defect on exactly the days the
+     * callable is unhealthy. Per row, `amountResolved: false` means the server
+     * could not read that row's units and its `amountCents` is a floor, not a
+     * figure — do not render it as $0.00 without saying so.
+     */
+    suspend fun listPayments(
+        limit: Int? = null,
+        startAfterId: String? = null,
+    ): Result<ListPaymentsResult> = runCatching {
+        authGate.ensureAuthenticated()
+        require(limit == null || limit > 0) { "listPayments limit must be positive" }
+        require(startAfterId == null || startAfterId.isNotBlank()) {
+            "listPayments startAfterId must not be blank"
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listPayments")
+            .call(
+                ListPaymentsArgs(
+                    limit = limit?.toLong(),
+                    startAfterId = startAfterId,
+                ).toPayload(),
+            )
+            .await().data as? Map<String, Any?>
+        decodeListPaymentsResult(raw)
+    }.onFailure { AuntieLog.e("listPayments failed", it) }
+
+    /**
+     * The RAW root `payments` read. NO CALLERS as of the `listPayments` change
+     * above; `AdminDataViewModel.loadPayments`, its last one, now calls that
+     * callable instead.
      *
      * IT RETURNS AMBIGUOUS UNITS and always has: see [getInvoiceLedger] above.
      * `Payment.amount` is a dollar Double on a `local-invoice` or legacy row and
      * an already-cents integer on a `stripe-event` one, and this model carries
      * neither `amountCents` nor `amountSource` to tell them apart. Anything that
-     * renders money out of this list is wrong by 100x on Stripe-paid rows.
+     * renders money out of this list is wrong by 100x on Stripe-paid rows, and
+     * no client-side change can fix that — the information is not on the wire.
      *
      * NOT DELETED, deliberately: payment code in this repo is reported, never
-     * cleaned up on a call-graph argument. Its one caller populates a
-     * `StateFlow` no composable currently collects, so nothing renders the bad
-     * figure today — but "nothing renders it today" is a fact about the UI, not
-     * a property of this function, and the next screen to collect that flow
-     * inherits the defect. Route new work through [getInvoiceLedger].
+     * cleaned up on a call-graph argument. Having no caller is not a licence to
+     * remove it and is not the reason it is safe; it is safe because nothing
+     * renders it. Anything that needs this list calls [listPayments].
      */
     suspend fun getPayments(): Result<List<Payment>> = runCatching {
         authGate.ensureAuthenticated()

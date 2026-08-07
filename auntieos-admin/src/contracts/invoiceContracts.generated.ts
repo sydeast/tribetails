@@ -341,6 +341,54 @@ export interface LinkInvoiceSessionsResult {
   editScope: 'all' | 'metadataOnly' | 'none';
 }
 
+// ---------- listPayments ----------
+
+/**
+ * Request payload for the `listPayments` callable.
+ */
+export interface ListPaymentsArgs {
+  limit?: number;
+  startAfterId?: string;
+}
+
+/**
+ * Nested in the `listPayments` contract.
+ */
+export interface ListPaymentsResultPayment {
+  paymentId: string;
+  kinfolkId: string;
+  kinfolkName: string;
+  amountCents: number;
+  amountResolved: boolean;
+  tipCents: number;
+  feeCents: number;
+  tipBasis: 'gross' | 'net' | 'unknown';
+  reconciles: boolean;
+  appliedCents: number;
+  unappliedCents: number;
+  proceedsCents: number;
+  autoApply: boolean;
+  invoiceId: string;
+  invoiceNumber: string;
+  appliedInvoiceId: string;
+  appliedInvoiceNumber: string;
+  method: string;
+  reference: string;
+  date: string;
+  notes: string;
+  recordedBy: string | null;
+}
+
+/**
+ * Response from the `listPayments` callable.
+ */
+export interface ListPaymentsResult {
+  payments: ListPaymentsResultPayment[];
+  truncated: boolean;
+  nextCursor: string | null;
+  unresolvedAmountCount: number;
+}
+
 // ---------- listUninvoicedSessions ----------
 
 /**

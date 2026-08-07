@@ -1040,6 +1040,46 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'unlinkedKinfolkPayments[].unappliedCents',
     ],
   },
+  // The staff payment browser's read, FROZEN FROM BIRTH — the same reason
+  // `linkInvoiceSessions`, `recordPayment` and `transitionBookingStatus` were:
+  // it replaces a direct client read of the root `payments` collection, so a
+  // hand-built mirror is aimed at this shape the day it lands.
+  //
+  // `amountResolved` and `truncated`/`nextCursor` are the two fields whose
+  // disappearance would be silent rather than loud. Without the first, an
+  // unreadable row's `amountCents: 0` reads as a payment of nothing; without the
+  // second, a bounded page reads as the whole collection. Both are the point of
+  // the callable, so both are frozen.
+  listPayments: {
+    load: () => import('../src/admin/listPayments'),
+    signature: [
+      'nextCursor',
+      'payments[].amountCents',
+      'payments[].amountResolved',
+      'payments[].appliedCents',
+      'payments[].appliedInvoiceId',
+      'payments[].appliedInvoiceNumber',
+      'payments[].autoApply',
+      'payments[].date',
+      'payments[].feeCents',
+      'payments[].invoiceId',
+      'payments[].invoiceNumber',
+      'payments[].kinfolkId',
+      'payments[].kinfolkName',
+      'payments[].method',
+      'payments[].notes',
+      'payments[].paymentId',
+      'payments[].proceedsCents',
+      'payments[].reconciles',
+      'payments[].recordedBy',
+      'payments[].reference',
+      'payments[].tipBasis',
+      'payments[].tipCents',
+      'payments[].unappliedCents',
+      'truncated',
+      'unresolvedAmountCount',
+    ],
+  },
   // The household-facing three. `payInvoice` is the only response on this
   // surface with no `ok`, no `invoiceId` and a live third-party URL in it.
   payInvoice: {

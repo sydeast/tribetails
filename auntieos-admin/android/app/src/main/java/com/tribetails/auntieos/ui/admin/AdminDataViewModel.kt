@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.admin
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
+import com.tribetails.auntieos.data.contracts.ListPaymentsResultPayment
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingTransitionAction
@@ -19,6 +20,37 @@ sealed interface ChainVerifyUiState {
     data object Loading : ChainVerifyUiState
     data class Done(val result: com.tribetails.auntieos.data.admin.ChainVerifyResult) : ChainVerifyUiState
     data class Error(val message: String) : ChainVerifyUiState
+}
+
+/**
+ * ONE PAGE of the root `payments` collection, with everything a screen needs in
+ * order to be honest about it.
+ *
+ * [rows] arrive from the `listPayments` callable already in INTEGER CENTS, with
+ * the storage-convention ambiguity resolved server-side. Nothing here converts
+ * a figure; the moment it does, the duplicated money rule this design exists to
+ * avoid is back.
+ *
+ * [truncated] and [nextCursor] are why this is a data class rather than a bare
+ * list. The list is bounded by the server, and a bounded list that cannot say
+ * so reads as a complete one — which is the defect
+ * `getInvoiceLedger.unlinkedKinfolkPayments` still carries. A screen rendering
+ * [rows] must render [truncated] too, or it is stating something it does not
+ * know.
+ *
+ * [unresolvedAmountCount] is how many [rows] carry `amountResolved = false`.
+ * Those rows' `amountCents` is the schema floor, NOT a payment of nothing.
+ */
+data class PaymentsPage(
+    val rows: List<ListPaymentsResultPayment>,
+    val truncated: Boolean,
+    val nextCursor: String?,
+    val unresolvedAmountCount: Long,
+) {
+    companion object {
+        /** Before any load. Empty AND complete — nothing has been hidden yet. */
+        val EMPTY = PaymentsPage(rows = emptyList(), truncated = false, nextCursor = null, unresolvedAmountCount = 0L)
+    }
 }
 
 /**
@@ -44,9 +76,10 @@ class AdminDataViewModel(
     private val _invoices = MutableStateFlow<List<Invoice>>(emptyList())
     val invoices: StateFlow<List<Invoice>> = _invoices.asStateFlow()
 
-    // Payment Management
-    private val _payments = MutableStateFlow<List<Payment>>(emptyList())
-    val payments: StateFlow<List<Payment>> = _payments.asStateFlow()
+    // Payment Management. ONE flow, not three, so a page and the statement that
+    // it is only a page cannot be read at two different instants and disagree.
+    private val _payments = MutableStateFlow(PaymentsPage.EMPTY)
+    val payments: StateFlow<PaymentsPage> = _payments.asStateFlow()
 
     // Visit Log Management
     private val _visitLogs = MutableStateFlow<List<VisitLog>>(emptyList())
@@ -252,16 +285,48 @@ class AdminDataViewModel(
         }
     }
 
-    fun loadPayments() {
+    /**
+     * The payment list, THROUGH THE SERVER, in resolved integer cents.
+     *
+     * This used to call `InvoiceRepository.getPayments()`, a raw read of the
+     * root `payments` collection. `stripeWebhook.ts` stores a card payment's
+     * `amount` in cents and a fallback payment's in dollars, distinguishable
+     * only by a sibling `amountSource`, and the `Payment` model carries neither
+     * that field nor `amountCents` — so any screen that rendered money out of
+     * this flow was 100x wrong on every Stripe row, and could not have been
+     * fixed client-side. Nothing collected the flow, which is the only reason
+     * it was latent rather than live; the trap was that the first screen to
+     * collect it would inherit the defect silently.
+     *
+     * NOT SORTED HERE. The page arrives in the server's document-id cursor
+     * order, and re-sorting it client-side would be wrong twice over: it would
+     * scramble the page boundaries the cursor depends on, and the only field to
+     * sort by is `date`, which this collection stores as free text on
+     * hand-recorded rows and as a Timestamp on Stripe ones. A raw string sort on
+     * that field is the exact defect `invoicesByDateDesc` was introduced to fix
+     * on the invoice flow above ("Feb 12, 2026" outranking every real date).
+     *
+     * Fail-loud: a failure sets the error and LEAVES THE PREVIOUS PAGE ALONE.
+     * Emptying it would say "no payments have ever been recorded", which is a
+     * false statement about money rather than a missing one, and there is no
+     * fallback to the raw read for the same reason.
+     */
+    fun loadPayments(limit: Int? = null, startAfterId: String? = null) {
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
 
-            invoiceRepository.getPayments().onSuccess { paymentList ->
-                _payments.value = paymentList.sortedByDescending { it.date }
-            }.onFailure { throwable ->
-                _error.value = throwable.message ?: "Failed to load payments"
-            }
+            invoiceRepository.listPayments(limit = limit, startAfterId = startAfterId)
+                .onSuccess { page ->
+                    _payments.value = PaymentsPage(
+                        rows = page.payments,
+                        truncated = page.truncated,
+                        nextCursor = page.nextCursor,
+                        unresolvedAmountCount = page.unresolvedAmountCount,
+                    )
+                }.onFailure { throwable ->
+                    _error.value = throwable.message ?: "Failed to load payments"
+                }
 
             _isLoading.value = false
         }
@@ -507,7 +572,16 @@ class AdminDataViewModel(
         viewModelScope.launch {
             _isLoading.value = true
             invoiceRepository.createPayment(payment).onSuccess {
-                loadPayments() // Refresh the list
+                // Refreshes page 1, which is NOT a recency query and may not
+                // contain the row just written. listPayments orders by document
+                // id because the collection has no field that can order it
+                // honestly: `date` is mixed Timestamp/free-text so it sorts by
+                // writer, and `createdAt` exists only on recordPayment rows so
+                // ordering by it would silently drop every Stripe row. Once the
+                // collection exceeds one page this refresh is an arbitrary
+                // sample. A staff browser that needs "most recent" needs a
+                // normalized date field on the collection first.
+                loadPayments()
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to create payment"
                 _isLoading.value = false

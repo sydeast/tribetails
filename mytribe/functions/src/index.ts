@@ -227,6 +227,11 @@ export { listUninvoicedSessions } from './admin/listUninvoicedSessions';
 // settlement authority and `firestore.rules` grants no client any access to it,
 // so this callable is the only way a detail screen can show what was paid.
 export { getInvoiceLedger } from './admin/getInvoiceLedger';
+// The staff payment browser's read. `getInvoiceLedger` above answers "what was
+// paid against THIS invoice"; this answers "what has been paid, across
+// households", which that callable refuses to degenerate into. Cursored by
+// document id, and it reports its own truncation.
+export { listPayments } from './admin/listPayments';
 // Settings > Integrations. The one source both clients render for Stripe,
 // Twilio, SMTP2GO, Cloudinary, Mapbox, Google Calendar and Sentry. It binds
 // every secret it reports on (that binding is why its answer is trustworthy;

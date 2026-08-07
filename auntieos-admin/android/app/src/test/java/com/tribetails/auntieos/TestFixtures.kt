@@ -1,6 +1,8 @@
 package com.tribetails.auntieos
 
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResult
+import com.tribetails.auntieos.data.contracts.ListPaymentsResult
+import com.tribetails.auntieos.data.contracts.ListPaymentsResultPayment
 import com.tribetails.auntieos.data.model.BookingStatus
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.Draft
@@ -75,6 +77,59 @@ object TestFixtures {
         kinfolkName = "Rosa Parks",
         amount = 80.0,
         date = "2026-05-01"
+    )
+
+    /**
+     * One row of the `listPayments` callable's response — the SERVER-RESOLVED
+     * shape, in integer cents.
+     *
+     * Deliberately NOT derived from [payment1]. That model carries a dollar
+     * `amount` whose units depend on a sibling field the model does not have,
+     * which is the defect this contract exists to close; building a cents
+     * fixture out of it would put the ambiguity back into the tests.
+     */
+    fun paymentRow(
+        paymentId: String,
+        amountCents: Long,
+        amountResolved: Boolean = true,
+        kinfolkId: String = "kf1",
+        date: String = "2026-05-01",
+    ) = ListPaymentsResultPayment(
+        paymentId = paymentId,
+        kinfolkId = kinfolkId,
+        kinfolkName = "Rosa Parks",
+        amountCents = amountCents,
+        amountResolved = amountResolved,
+        tipCents = 0L,
+        feeCents = 0L,
+        tipBasis = "gross",
+        reconciles = true,
+        appliedCents = 0L,
+        unappliedCents = amountCents,
+        proceedsCents = amountCents,
+        autoApply = false,
+        invoiceId = "",
+        invoiceNumber = "",
+        appliedInvoiceId = "",
+        appliedInvoiceNumber = "",
+        method = "Venmo",
+        reference = "",
+        date = date,
+        notes = "",
+        recordedBy = null,
+    )
+
+    /** One page of the `listPayments` response. Complete unless told otherwise. */
+    fun paymentsPage(
+        vararg rows: ListPaymentsResultPayment,
+        truncated: Boolean = false,
+        nextCursor: String? = null,
+        unresolvedAmountCount: Long = 0L,
+    ) = ListPaymentsResult(
+        payments = rows.toList(),
+        truncated = truncated,
+        nextCursor = nextCursor,
+        unresolvedAmountCount = unresolvedAmountCount,
     )
 
     val visitLog1 = VisitLog(

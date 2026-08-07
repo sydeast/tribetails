@@ -283,7 +283,7 @@ describe('the committed Contracts module', () => {
 
   it('covers every callable in the registry, both directions where a schema exists', () => {
     const model = readModel(INVOICE_CONTRACT_REGISTRY);
-    expect(model.callables).toHaveLength(21);
+    expect(model.callables).toHaveLength(22);
     // getMyInvoices is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);
