@@ -19,6 +19,12 @@ describe('resolveNonStaffKinfolkId', () => {
     const { resolveNonStaffKinfolkId } = await import('../src/lib/resolveNonStaffKinfolkId');
     await expect(resolveNonStaffKinfolkId('u1', undefined)).rejects.toMatchObject({
       code: 'failed-precondition',
+      // Pinned, not incidental. This wording is the substance of the
+      // delegation: it differed between the two copies of this discriminator,
+      // and the web renders callable rejections verbatim (BookingWizard.tsx).
+      // Nothing else in either suite asserted it, so a "tidy these strings"
+      // pass would silently reword the rejection for ~24 callables.
+      message: 'No tribes linked to this account.',
     });
   });
 
@@ -70,6 +76,9 @@ describe('resolveNonStaffKinfolkId', () => {
     const { resolveNonStaffKinfolkId } = await import('../src/lib/resolveNonStaffKinfolkId');
     await expect(resolveNonStaffKinfolkId('u1', '999')).rejects.toMatchObject({
       code: 'permission-denied',
+      // The other reconciled string, and the likelier of the two for a client
+      // to have keyed off, since it is the deny path.
+      message: 'You do not have access to this tribe.',
     });
   });
 });

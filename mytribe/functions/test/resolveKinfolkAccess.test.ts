@@ -43,6 +43,23 @@ describe('resolveKinfolkAccess', () => {
     });
   });
 
+  it("non-operator with a single linked id and '' resolves it ('' is omitted, not a wrong id)", async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveKinfolkAccess } = await import('../src/lib/resolveKinfolkAccess');
+    const res = await resolveKinfolkAccess('u1', '', false, 'test');
+    expect(res).toEqual({ kinfolkId: '3', isOperator: false });
+  });
+
+  it("non-operator with MULTIPLE linked ids and '' refuses to guess ('' omitted here too)", async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3', '5'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveKinfolkAccess } = await import('../src/lib/resolveKinfolkAccess');
+    await expect(resolveKinfolkAccess('u1', '', false, 'test')).rejects.toMatchObject({
+      code: 'failed-precondition',
+    });
+  });
+
   it('non-operator allows own id', async () => {
     const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3', '5'] } } });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -128,6 +145,14 @@ describe('resolveKinfolkAccess', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { resolveKinfolkAccess } = await import('../src/lib/resolveKinfolkAccess');
     const res = await resolveKinfolkAccess('op', undefined, false, 'test');
+    expect(res).toEqual({ kinfolkId: '42', isOperator: true });
+  });
+
+  it("staff with '' falls back to their own ids, same as omitted (staff branch still reads clients/{uid})", async () => {
+    const ctx = buildDbMock({ docs: { 'clients/op': { kinfolkIds: ['42'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveKinfolkAccess } = await import('../src/lib/resolveKinfolkAccess');
+    const res = await resolveKinfolkAccess('op', '', true, 'test');
     expect(res).toEqual({ kinfolkId: '42', isOperator: true });
   });
 });
