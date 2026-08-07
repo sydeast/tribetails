@@ -10,6 +10,13 @@ import { buildDbMock } from './_helpers/mockDb';
 interface CheckoutSessionParams {
   line_items: Array<{ price_data: { unit_amount: number } }>;
   metadata: Record<string, string>;
+  /**
+   * The parameter the webhook actually depends on. Session-level `metadata`
+   * stays on the Session — Stripe copies nothing down to the PaymentIntent,
+   * which is exactly why the SDK exposes this as a separate parameter
+   * (`SessionCreateParams.PaymentIntentData.metadata`).
+   */
+  payment_intent_data?: { metadata?: Record<string, string> };
   [key: string]: unknown;
 }
 
@@ -223,5 +230,41 @@ describe('payInvoiceHandler', () => {
 
     const w = ctx.writes.find((w) => w.path === 'invoices/inv-1');
     expect(w!.data.pendingCheckoutSessionId).toBe('cs_test_1');
+  });
+
+  /**
+   * The seam the whole card rail turns on. `stripeWebhook` resolves the
+   * household and the invoice from `payment_intent.succeeded`'s
+   * `data.object.metadata` — PAYMENTINTENT metadata. Stripe does not copy
+   * Session metadata onto the PaymentIntent, so the assertion above (on
+   * `metadata`) is an assertion on the object the webhook never reads.
+   *
+   * This one asserts the object it does read. Without
+   * `payment_intent_data.metadata` the webhook sees `{}`, 202-ignores the
+   * event, and the invoice stays outstanding after a real charge.
+   */
+  it('stamps the SAME ids on payment_intent_data.metadata, the copy the webhook reads', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, client: 'Buddy (Nora)' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({
+      data: { invoiceId: 'inv-1', successUrl: 'https://x/ok', cancelUrl: 'https://x/cancel' },
+      auth: { uid: 'u1' },
+    } as any);
+
+    const callArg = mocks.stripeMock.checkout.sessions.create.mock.calls[0][0];
+    const piMeta = callArg.payment_intent_data?.metadata;
+    expect(piMeta).toBeDefined();
+    expect(piMeta!.familyId).toBe('3');
+    expect(piMeta!.invoiceId).toBe('inv-1');
+    expect(piMeta!.kinfolkId).toBe('3');
+    // Identical, not merely similar: one drifting from the other resolves a
+    // different household depending on which event Stripe delivers.
+    expect(piMeta).toEqual(callArg.metadata);
   });
 });

@@ -76,6 +76,87 @@ vi.mock('../src/lib/stripe', () => ({
         data: { object: { id: 'pi_7', amount_received: 13750, metadata: { familyId: 'f7', invoiceId: 'i7' } } },
       };
     }
+    // ─────────────────────────────────────────────────────────────────────
+    // The shapes Stripe really delivers. Every fixture ABOVE hand-injects
+    // metadata onto a PaymentIntent event, which is what let the card-rail
+    // defect survive: Stripe does not copy Checkout Session metadata onto the
+    // PaymentIntent, so before `payment_intent_data.metadata` shipped, the
+    // real payload was `no-metadata` below.
+    // ─────────────────────────────────────────────────────────────────────
+
+    // What production actually produced. No `metadata` key at all.
+    if (sig === 'no-metadata') {
+      return {
+        id: 'evt_8',
+        type: 'payment_intent.succeeded',
+        created: 1000,
+        data: { object: { id: 'pi_8', amount_received: 5000 } },
+      };
+    }
+    // The canonical Checkout event. Carries the SESSION metadata, and the
+    // PaymentIntent id in `payment_intent` (SDK: Sessions.d.ts:215), not as
+    // its own id — a different place than a payment_intent.succeeded event.
+    if (sig === 'session-completed') {
+      return {
+        id: 'evt_9',
+        type: 'checkout.session.completed',
+        created: 1000,
+        data: {
+          object: {
+            id: 'cs_9',
+            payment_intent: 'pi_9',
+            payment_status: 'paid',
+            amount_total: 13750,
+            metadata: { familyId: 'f9', invoiceId: 'i9' },
+          },
+        },
+      };
+    }
+    // A session that completed without the money arriving.
+    if (sig === 'session-unpaid') {
+      return {
+        id: 'evt_10',
+        type: 'checkout.session.completed',
+        created: 1000,
+        data: {
+          object: {
+            id: 'cs_10',
+            payment_intent: 'pi_10',
+            payment_status: 'unpaid',
+            amount_total: 13750,
+            metadata: { familyId: 'f10', invoiceId: 'i10' },
+          },
+        },
+      };
+    }
+    // ONE card payment, both events it delivers. Same PaymentIntent (pi_11),
+    // two different event ids, and the SAME `created` second — Stripe's
+    // `created` is seconds-granular, so the out-of-order guard's strict `<`
+    // does not separate them.
+    if (sig === 'dual-session') {
+      return {
+        id: 'evt_11a',
+        type: 'checkout.session.completed',
+        created: 1000,
+        data: {
+          object: {
+            id: 'cs_11',
+            payment_intent: 'pi_11',
+            payment_status: 'paid',
+            amount_total: 13750,
+            metadata: { familyId: 'f11', invoiceId: 'i11' },
+          },
+        },
+      };
+    }
+    if (sig === 'dual-pi') {
+      return {
+        id: 'evt_11b',
+        type: 'payment_intent.succeeded',
+        created: 1000,
+        data: { object: { id: 'pi_11', amount_received: 13750, metadata: { familyId: 'f11', invoiceId: 'i11' } } },
+      };
+    }
     throw new Error('bad-sig');
   },
 }));
@@ -88,6 +169,11 @@ const docState: Record<string, { exists: boolean; data: Record<string, unknown> 
 // (e.g. 'invoices/i1/payments'). The state stamp reads this inside the txn.
 const subDocs: Record<string, Array<{ id: string; data: Record<string, unknown> }>> = {};
 
+// A write LANDS in `docState`, so a second delivery inside one test reads what
+// the first one wrote. Without this the mock forgets everything between
+// handler calls and a dedupe assertion would only be re-testing hand-set
+// fixture state — which is the exact class of false assurance this suite is
+// being fixed for.
 function makeDocRef(path: string) {
   return {
     path,
@@ -95,8 +181,22 @@ function makeDocRef(path: string) {
       const s = docState[path] ?? { exists: false, data: undefined };
       return { exists: s.exists, data: () => s.data };
     }),
-    set: vi.fn(async (data: Record<string, unknown>) => {
+    set: vi.fn(async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
       writes.push({ path, data });
+      // Real merge semantics: a blind overwrite would drop `kinfolkId`/`total`
+      // off the invoice doc after the first delivery and change what the
+      // second one reads.
+      docState[path] = {
+        exists: true,
+        data: opts?.merge ? { ...(docState[path]?.data ?? {}), ...data } : data,
+      };
+    }),
+    // `create` refuses an existing doc, as Firestore's does. This is what makes
+    // the idempotency ledgers honest here rather than aliases for `set`.
+    create: vi.fn(async (data: Record<string, unknown>) => {
+      if (docState[path]?.exists) throw new Error(`ALREADY_EXISTS: ${path}`);
+      writes.push({ path, data });
+      docState[path] = { exists: true, data };
     }),
     collection: (sub: string) => ({
       get: vi.fn(async () => ({
@@ -113,16 +213,23 @@ vi.mock('../src/lib/firestoreAdmin', () => ({
     runTransaction: async (cb: (tx: any) => Promise<unknown>) => {
       const tx = {
         get: (ref: any) => ref.get(),
-        create: (ref: any, data: Record<string, unknown>) => ref.set(data),
-        set: (ref: any, data: Record<string, unknown>) => ref.set(data),
+        create: (ref: any, data: Record<string, unknown>) => ref.create(data),
+        // The third argument is `{ merge: true }` on the invoice patch, and
+        // dropping it here silently turned a merge into an overwrite.
+        set: (ref: any, data: Record<string, unknown>, opts?: { merge?: boolean }) => ref.set(data, opts),
       };
       return cb(tx);
     },
   }),
 }));
-vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn() }));
+// Held on hoisted handles so the double-delivery tests can assert CALL COUNTS.
+// `vi.mock`'s inline `vi.fn()` is unreachable from the suite and, being
+// unreachable, was never cleared between tests either.
+const auditMock = vi.hoisted(() => ({ writeAuditEntry: vi.fn() }));
+vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: auditMock.writeAuditEntry }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: vi.fn().mockResolvedValue('recipient-uid') }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: vi.fn().mockResolvedValue([]) }));
+const notifyMock = vi.hoisted(() => ({ enqueueNotification: vi.fn() }));
+vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: notifyMock.enqueueNotification }));
 const logMock = vi.hoisted(() => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: logMock.logEvent }));
 
@@ -131,6 +238,8 @@ beforeEach(() => {
   for (const k of Object.keys(docState)) delete docState[k];
   for (const k of Object.keys(subDocs)) delete subDocs[k];
   logMock.logEvent.mockClear();
+  auditMock.writeAuditEntry.mockClear();
+  notifyMock.enqueueNotification.mockReset().mockResolvedValue([]);
   stripeMock.paymentIntentsRetrieve.mockReset();
 });
 
@@ -354,4 +463,153 @@ describe('stripeWebhook', () => {
     expect(paymentWrite).toBeDefined();
     expect(paymentWrite!.data).toMatchObject({ feeCents: 271, feeResolved: true });
   });
+
+  // ── the card rail ────────────────────────────────────────────────────────
+
+  /**
+   * The test whose absence let the defect ship. It pins the GUARD, not the
+   * fix: it was green before `payment_intent_data.metadata` existed and is
+   * green after. What it proves is that the metadata gate is the thing that
+   * swallowed every real payment — silently, with a 202 Stripe records as a
+   * successful delivery, so no retry and no dashboard red mark.
+   */
+  it('202-ignores a payment_intent.succeeded carrying no metadata, and warns', async () => {
+    docState['invoices/i8'] = { exists: true, data: { kinfolkId: 'f8', amountDue: 50 } };
+    const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
+    const status = vi.fn().mockReturnThis();
+    await (stripeWebhookHandler as any)(
+      { method: 'POST', headers: { 'stripe-signature': 'no-metadata' }, rawBody: Buffer.from('{}') },
+      { status, json: vi.fn(), end: vi.fn() },
+    );
+    expect(status).toHaveBeenCalledWith(202);
+    // Nothing at all was written: not the invoice, not a payment, and not the
+    // dedupe ledger. The gate precedes the reservation, which is what makes a
+    // swallowed event replayable once metadata starts arriving.
+    expect(writes).toHaveLength(0);
+    expect(auditMock.writeAuditEntry).not.toHaveBeenCalled();
+    expect(notifyMock.enqueueNotification).not.toHaveBeenCalled();
+    const warn = logMock.logEvent.mock.calls.find((c) => c[0]?.event === 'stripe.metadata.missing');
+    expect(warn).toBeDefined();
+    expect(warn?.[0]?.severity).toBe('warn');
+  });
+
+  it('marks the invoice paid from checkout.session.completed, end to end', async () => {
+    docState['invoices/i9'] = { exists: true, data: { kinfolkId: 'f9', amountDue: 137.5, total: 137.5 } };
+    stripeMock.paymentIntentsRetrieve.mockResolvedValue({
+      latest_charge: { balance_transaction: { fee: 429 } },
+    });
+    const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
+    const status = vi.fn().mockReturnThis();
+    await (stripeWebhookHandler as any)(
+      { method: 'POST', headers: { 'stripe-signature': 'session-completed' }, rawBody: Buffer.from('{}') },
+      { status, json: vi.fn(), end: vi.fn() },
+    );
+    expect(status).toHaveBeenCalledWith(200);
+
+    const invoiceWrite = writes.find((w) => w.path === 'invoices/i9');
+    expect(invoiceWrite!.data.status).toBe('paid');
+    expect(invoiceWrite!.data.amountDue).toBe(0);
+
+    // The fee hop still works on this event shape: a Session carries the
+    // PaymentIntent id in `payment_intent`, NOT as its own id (which is a
+    // `cs_...`). Retrieving `cs_9` would 404 and lose the fee silently.
+    expect(stripeMock.paymentIntentsRetrieve).toHaveBeenCalledWith('pi_9', {
+      expand: ['latest_charge.balance_transaction'],
+    });
+
+    const paymentWrite = writes.find((w) => w.path === 'payments/evt_9');
+    expect(paymentWrite!.data).toMatchObject({
+      kinfolkId: 'f9',
+      invoiceId: 'i9',
+      // `amount_total` — the Session's authoritative figure, integer cents. NOT
+      // 13750 re-derived from the local invoice's 137.5 dollars.
+      amountCents: 13750,
+      amountSource: 'stripe-event',
+      referenceNumber: 'pi_9',
+      feeCents: 429,
+      feeResolved: true,
+    });
+    // The household is told, and the operator gets an audit trail — the two
+    // things that never fired once on this rail.
+    expect(auditMock.writeAuditEntry).toHaveBeenCalledTimes(1);
+    expect(notifyMock.enqueueNotification).toHaveBeenCalledTimes(1);
+    expect(notifyMock.enqueueNotification.mock.calls[0][0].key).toBe('invoice.payment.applied');
+  });
+
+  it('refuses to mark paid when the session completed but the money did not arrive', async () => {
+    docState['invoices/i10'] = { exists: true, data: { kinfolkId: 'f10', amountDue: 137.5 } };
+    const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
+    const status = vi.fn().mockReturnThis();
+    await (stripeWebhookHandler as any)(
+      { method: 'POST', headers: { 'stripe-signature': 'session-unpaid' }, rawBody: Buffer.from('{}') },
+      { status, json: vi.fn(), end: vi.fn() },
+    );
+    expect(status).toHaveBeenCalledWith(202);
+    expect(writes).toHaveLength(0);
+    expect(auditMock.writeAuditEntry).not.toHaveBeenCalled();
+    const warn = logMock.logEvent.mock.calls.find((c) => c[0]?.event === 'stripe.session.unpaid');
+    expect(warn?.[0]?.severity).toBe('warn');
+  });
+
+  /**
+   * The interaction the two fixes create. `checkout.session.completed` and
+   * `payment_intent.succeeded` now BOTH classify as paid, and they carry
+   * different `event.id`s — so `stripeEvents/{event.id}` cannot dedupe them
+   * against each other, and their `created` stamps are the same second, so the
+   * out-of-order guard's strict `<` does not either. The per-PaymentIntent
+   * claim is what makes one payment apply once.
+   *
+   * Delivered in both orders because Stripe guarantees no ordering between them.
+   */
+  for (const [first, second, winner] of [
+    ['dual-session', 'dual-pi', 'evt_11a'],
+    ['dual-pi', 'dual-session', 'evt_11b'],
+  ] as const) {
+    it(`applies ONE payment when one card charge delivers both events (${first} first)`, async () => {
+      docState['invoices/i11'] = { exists: true, data: { kinfolkId: 'f11', amountDue: 137.5, total: 137.5 } };
+      stripeMock.paymentIntentsRetrieve.mockResolvedValue({
+        latest_charge: { balance_transaction: { fee: 429 } },
+      });
+      const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
+      const statuses: number[] = [];
+      const res = () => ({
+        status: vi.fn((c: number) => { statuses.push(c); return res2; }),
+        json: vi.fn(),
+        end: vi.fn(),
+      });
+      const res2 = { json: vi.fn(), end: vi.fn() };
+      for (const sig of [first, second]) {
+        await (stripeWebhookHandler as any)(
+          { method: 'POST', headers: { 'stripe-signature': sig }, rawBody: Buffer.from('{}') },
+          res(),
+        );
+      }
+      // Both deliveries are acknowledged 2xx, so Stripe stops retrying either.
+      expect(statuses).toEqual([200, 200]);
+
+      // ONE mirror payment doc. Two would double-count real money in the root
+      // `payments` collection that the ledger reads.
+      const paymentWrites = writes.filter((w) => w.path.startsWith('payments/'));
+      expect(paymentWrites).toHaveLength(1);
+      expect(paymentWrites[0].path).toBe(`payments/${winner}`);
+      // Same amount whichever event won the race: `amount_total` and
+      // `amount_received` are the same authoritative integer cents.
+      expect(paymentWrites[0].data.amountCents).toBe(13750);
+      expect(paymentWrites[0].data.amountSource).toBe('stripe-event');
+
+      // ONE invoice mutation, and exactly one claim on the shared PaymentIntent.
+      expect(writes.filter((w) => w.path === 'invoices/i11')).toHaveLength(1);
+      expect(writes.filter((w) => w.path === 'stripePayments/pi_11')).toHaveLength(1);
+
+      // The loser reserved its own event id — so ITS retries short-circuit as
+      // a replay — and recorded why it changed nothing.
+      const loserId = winner === 'evt_11a' ? 'evt_11b' : 'evt_11a';
+      const loserLedger = writes.find((w) => w.path === `stripeEvents/${loserId}`);
+      expect(loserLedger!.data.appliedOutcome).toBe('SKIPPED_DUPLICATE_PAYMENT');
+
+      // The household is notified once and audited once, not twice.
+      expect(auditMock.writeAuditEntry).toHaveBeenCalledTimes(1);
+      expect(notifyMock.enqueueNotification).toHaveBeenCalledTimes(1);
+    });
+  }
 });

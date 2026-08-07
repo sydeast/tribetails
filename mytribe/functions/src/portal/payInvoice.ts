@@ -51,8 +51,13 @@ export const Result = z
  * (web: window.location, JVM: Desktop.browse, android: ACTION_VIEW intent).
  *
  * Auth: caller must be a kinfolk whose `clients/{uid}.kinfolkIds` includes
- * the invoice's kinfolkId. The webhook (`stripeWebhook`) marks the invoice
- * paid via `payment_intent.succeeded` event with metadata.
+ * the invoice's kinfolkId.
+ *
+ * `stripeWebhook` marks the invoice paid off whichever of the two events a
+ * successful card payment delivers first — `checkout.session.completed` or
+ * `payment_intent.succeeded` — and dedupes the other against it. Both need the
+ * metadata below, and they read it from DIFFERENT objects, which is why it is
+ * stamped twice.
  */
 export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<z.infer<typeof Result>> {
   initSentry();
@@ -82,6 +87,18 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     integerCentsOrNull(inv['amountDueCents']) ?? Math.round(numericFrom(inv['amountDue']) * 100);
   if (amountCents <= 0) throw new HttpsError('failed-precondition', 'Invoice is fully paid.');
 
+  // The identifiers the webhook resolves the household and invoice from.
+  // Declared ONCE and passed to both places below, because the two copies
+  // drifting apart is the same defect in a subtler form.
+  const checkoutMetadata = {
+    invoiceId: args.invoiceId,
+    // familyId is what the webhook resolves on; kinfolkId kept for back-compat.
+    familyId: kinfolkId,
+    kinfolkId,
+    uid,
+    source: 'mytribe-portal',
+  };
+
   const stripe = await getStripe();
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
@@ -101,14 +118,16 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     ],
     success_url: args.successUrl,
     cancel_url: args.cancelUrl,
-    metadata: {
-      invoiceId: args.invoiceId,
-      // familyId is what the webhook resolves on; kinfolkId kept for back-compat.
-      familyId: kinfolkId,
-      kinfolkId,
-      uid,
-      source: 'mytribe-portal',
-    },
+    // Rides `checkout.session.completed`.
+    metadata: checkoutMetadata,
+    // Rides `payment_intent.succeeded`, and IS THE ONE THAT MATTERS. Stripe
+    // does not copy Session metadata onto the PaymentIntent it creates — that
+    // is precisely why the SDK exposes this as a separate parameter
+    // (`SessionCreateParams.PaymentIntentData.metadata`). Without it the
+    // PaymentIntent event arrives with `metadata: {}`, `stripeWebhook` cannot
+    // resolve the household, and a household that really was charged keeps an
+    // invoice reading outstanding and keeps getting reminder emails.
+    payment_intent_data: { metadata: checkoutMetadata },
   });
 
   await firestore.collection('invoices').doc(args.invoiceId).set({
