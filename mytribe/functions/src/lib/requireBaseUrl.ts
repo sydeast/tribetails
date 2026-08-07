@@ -26,9 +26,16 @@ import { HttpsError } from 'firebase-functions/v2/https';
  * Callers must use the returned value, not re-read `process.env` — the
  * normalization only takes effect if the caller interpolates what this
  * function returns.
+ *
+ * Trimmed BEFORE the trailing-slash strip: a value of `" "` (whitespace
+ * only, e.g. a stray space pasted into the deploy config) is truthy and
+ * survives the trailing-slash regex untouched, so without the trim it would
+ * pass the emptiness check and mint a link starting with a literal space.
+ * Inherited from PR26's inline guard, which had the same gap; closed here
+ * since this is now the one place every one of these vars gets read.
  */
 export function requireBaseUrl(varName: string): string {
-  const value = (process.env[varName] ?? '').replace(/\/+$/, '');
+  const value = (process.env[varName] ?? '').trim().replace(/\/+$/, '');
   if (!value) {
     throw new HttpsError('failed-precondition', `${varName} is not configured`);
   }

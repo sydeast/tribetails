@@ -53,4 +53,16 @@ describe('requireBaseUrl', () => {
     process.env[VAR] = 'https://example.com/claim';
     expect(requireBaseUrl(VAR)).toBe('https://example.com/claim');
   });
+
+  it('throws failed-precondition when whitespace-only (a stray space is not a configured value)', () => {
+    process.env[VAR] = '   ';
+    expect(() => requireBaseUrl(VAR)).toThrow(
+      expect.objectContaining({ code: 'failed-precondition', message: expect.stringContaining(VAR) }),
+    );
+  });
+
+  it('trims surrounding whitespace from an otherwise valid value', () => {
+    process.env[VAR] = '  https://example.com/claim  ';
+    expect(requireBaseUrl(VAR)).toBe('https://example.com/claim');
+  });
 });

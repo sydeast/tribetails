@@ -65,8 +65,14 @@ async function sendInviteVerificationEmail(
       extra: { inviteId },
     });
   } catch (err) {
+    // 'error', not 'warn': acceptInviteHandler still tells the caller "We
+    // just emailed a verification link to that address" regardless of what
+    // happens in here (the never-throw contract above). A dead SMTP key or a
+    // rate limit is a transient version of that lie; an unset
+    // CLAIM_LINK_BASE_URL is a standing one that fires on every unverified
+    // accept until someone notices — 'warn' is too easy to let sit unread.
     logEvent({
-      severity: 'warn',
+      severity: 'error',
       function: 'acceptInvite',
       event: 'invite.verification.send.failed',
       uid,
