@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Den (concept)</title>
+<!--
+  AuntieOS redesign concept. Home/"Den" dashboard.
+  Standalone HTML/CSS mockup (design reference; not wired into the Compose app).
+  Brand palette pulled from AuntieColors.kt. Sample content is illustrative placeholder.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1;1,9..144,400..700,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F;        --navy-2:#171A2A;       --navy-3:#1E2235;
+    --cream:#FBFBF9;        --cream-dim:#CFCEC6;
+    --orange:#DF8431;       --pink:#D55C87;         --teal:#0A8595;
+    --purple:#74538A;       --coral:#D5535A;
+    --line:rgba(251,251,249,.10);
+    --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+    --shadow:0 24px 60px -20px rgba(0,0,0,.6);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:"Hanken Grotesk",sans-serif;
+    background:var(--navy); color:var(--cream);
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh; overflow-x:hidden;
+    line-height:1.45;
+  }
+  /* ---- atmosphere: drifting gradient mesh + grain ---- */
+  .mesh{position:fixed; inset:-20vmax; z-index:0; pointer-events:none; filter:blur(8px);}
+  .blob{position:absolute; border-radius:50%; opacity:.55; mix-blend-mode:screen;
+    filter:blur(70px); animation:drift 26s var(--ease) infinite alternate;}
+  .blob.a{width:46vmax;height:46vmax;background:radial-gradient(circle at 30% 30%,var(--orange),transparent 62%);top:-8vmax;left:-6vmax;}
+  .blob.b{width:40vmax;height:40vmax;background:radial-gradient(circle at 60% 40%,var(--pink),transparent 60%);top:18vmax;right:-8vmax;animation-delay:-8s;}
+  .blob.c{width:38vmax;height:38vmax;background:radial-gradient(circle at 50% 50%,var(--teal),transparent 60%);bottom:-12vmax;left:24vmax;animation-delay:-15s;}
+  @keyframes drift{to{transform:translate3d(4vmax,3vmax,0) scale(1.12) rotate(12deg)}}
+  .grain{position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .app{position:relative; z-index:2; display:grid; grid-template-columns:248px 1fr; min-height:100vh;}
+
+  /* ---------- sidebar ---------- */
+  .rail{
+    padding:26px 18px; border-right:1px solid var(--line);
+    background:linear-gradient(180deg,rgba(23,26,42,.7),rgba(17,19,31,.4));
+    backdrop-filter:blur(6px); position:sticky; top:0; height:100vh;
+    display:flex; flex-direction:column; gap:8px;
+  }
+  .brand{display:flex; align-items:center; gap:11px; padding:6px 8px 22px;}
+  .brand .paw{width:34px;height:34px;flex:0 0 auto;}
+  .brand h1{font-family:"Fraunces",serif; font-optical-sizing:auto;
+    font-weight:600; font-size:24px; letter-spacing:-.02em; line-height:1;
+    font-variation-settings:"SOFT" 60,"WONK" 1;}
+  .brand h1 b{color:var(--orange); font-weight:600;}
+  .navgroup{margin-top:14px;}
+  .navgroup span{font-family:"Spline Sans Mono",monospace; font-size:10px;
+    letter-spacing:.18em; text-transform:uppercase; color:var(--cream-dim);
+    opacity:.5; padding:0 10px; display:block; margin-bottom:6px;}
+  .nav a{display:flex; align-items:center; gap:12px; padding:9px 11px; border-radius:12px;
+    color:var(--cream-dim); text-decoration:none; font-weight:500; font-size:14.5px;
+    transition:all .2s var(--ease); position:relative;}
+  .nav a svg{width:18px;height:18px;opacity:.85;flex:0 0 auto;}
+  .nav a:hover{color:var(--cream); background:var(--line-2); transform:translateX(2px);}
+  .nav a.active{color:var(--navy); background:var(--cream); font-weight:600;}
+  .nav a.active svg{opacity:1;}
+  .nav a .dot{margin-left:auto; font-family:"Spline Sans Mono",monospace; font-size:11px;
+    background:var(--coral); color:var(--cream); border-radius:20px; padding:1px 8px; font-weight:600;}
+  .nav a.active .dot{background:var(--coral);}
+  .rail .me{margin-top:auto; display:flex; align-items:center; gap:11px; padding:10px;
+    border-top:1px solid var(--line); }
+  .rail .me .av{width:34px;height:34px;border-radius:11px;
+    background:conic-gradient(from 220deg,var(--teal),var(--purple),var(--pink),var(--orange));
+    display:grid;place-items:center;font-family:"Fraunces",serif;font-weight:600;color:var(--navy);}
+  .rail .me small{display:block;color:var(--cream-dim);font-size:11.5px;}
+
+  /* ---------- main ---------- */
+  .main{padding:30px 38px 60px; max-width:1180px;}
+  .topbar{display:flex; align-items:center; gap:18px; margin-bottom:34px;}
+  .hello{flex:1;}
+  .hello .kicker{font-family:"Spline Sans Mono",monospace; font-size:11px; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--orange); margin-bottom:6px;}
+  .hello h2{font-family:"Fraunces",serif; font-weight:340; font-size:38px; letter-spacing:-.02em;
+    line-height:1.05; font-variation-settings:"SOFT" 50,"WONK" 1;}
+  .hello h2 em{font-style:italic; font-weight:500; color:var(--pink);}
+  .search{display:flex;align-items:center;gap:9px;background:var(--navy-3);border:1px solid var(--line);
+    border-radius:13px;padding:10px 14px;color:var(--cream-dim);font-size:13.5px;min-width:230px;}
+  .search input{background:none;border:none;outline:none;color:var(--cream);font-family:inherit;font-size:13.5px;width:100%;}
+  .iconbtn{width:42px;height:42px;border-radius:13px;border:1px solid var(--line);background:var(--navy-3);
+    display:grid;place-items:center;cursor:pointer;position:relative;transition:.2s var(--ease);color:var(--cream);}
+  .iconbtn:hover{background:var(--navy-2);transform:translateY(-2px);}
+  .iconbtn .ping{position:absolute;top:9px;right:10px;width:8px;height:8px;border-radius:50%;
+    background:var(--coral);box-shadow:0 0 0 3px var(--navy-3);}
+
+  /* stat row: asymmetric, one feature card + three compact */
+  .stats{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:16px;margin-bottom:24px;}
+  .stat{background:linear-gradient(160deg,var(--navy-2),var(--navy-3));border:1px solid var(--line);
+    border-radius:20px;padding:20px;position:relative;overflow:hidden;
+    opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) forwards;}
+  .stat .lab{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--cream-dim);opacity:.7;}
+  .stat .num{font-family:"Fraunces",serif;font-weight:540;font-size:46px;line-height:1;margin:14px 0 4px;
+    letter-spacing:-.02em;font-variation-settings:"SOFT" 40;}
+  .stat .trend{font-size:12.5px;color:var(--cream-dim);}
+  .stat .trend b{color:var(--teal);}
+  .stat.feature{background:
+     radial-gradient(120% 140% at 100% 0%,rgba(223,132,49,.32),transparent 55%),
+     linear-gradient(160deg,var(--navy-2),var(--navy-3));}
+  .stat.feature .num{font-size:58px;color:var(--orange);}
+  .stat .corner{position:absolute;right:-6px;bottom:-10px;width:78px;height:78px;opacity:.16;}
+  .stat:nth-child(1){animation-delay:.05s} .stat:nth-child(2){animation-delay:.12s}
+  .stat:nth-child(3){animation-delay:.19s} .stat:nth-child(4){animation-delay:.26s}
+
+  .grid2{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;}
+  .card{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.6));border:1px solid var(--line);
+    border-radius:22px;padding:22px;opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) forwards;}
+  .card.late{animation-delay:.34s}.card.later{animation-delay:.42s}
+  .card h3{font-family:"Fraunces",serif;font-weight:500;font-size:21px;letter-spacing:-.01em;
+    display:flex;align-items:center;gap:9px;font-variation-settings:"SOFT" 50;}
+  .card h3 .tail{display:inline-block;transform-origin:80% 80%;animation:wag 2.6s var(--ease) infinite;}
+  @keyframes wag{0%,100%{transform:rotate(-8deg)}50%{transform:rotate(12deg)}}
+  .card .sub{color:var(--cream-dim);font-size:13px;margin-top:3px;margin-bottom:18px;}
+
+  /* timeline */
+  .visit{display:grid;grid-template-columns:58px 1fr auto;gap:14px;align-items:center;
+    padding:13px;border-radius:15px;transition:.2s var(--ease);cursor:pointer;border:1px solid transparent;}
+  .visit:hover{background:var(--navy-3);border-color:var(--line);transform:translateX(3px);}
+  .visit + .visit{margin-top:4px;}
+  .visit .when{font-family:"Spline Sans Mono",monospace;font-size:12.5px;color:var(--cream-dim);
+    text-align:right;line-height:1.25;}
+  .visit .when b{display:block;color:var(--cream);font-size:15px;}
+  .visit .who{display:flex;align-items:center;gap:12px;}
+  .visit .pet{width:40px;height:40px;border-radius:13px;display:grid;place-items:center;
+    font-size:19px;flex:0 0 auto;border:1px solid var(--line);}
+  .visit .who b{font-weight:600;font-size:15px;}
+  .visit .who small{display:block;color:var(--cream-dim);font-size:12.5px;}
+  .pill{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.06em;
+    text-transform:uppercase;padding:5px 10px;border-radius:20px;font-weight:600;white-space:nowrap;}
+  .pill.walk{background:rgba(10,133,149,.18);color:#5fd0dc;border:1px solid rgba(10,133,149,.4);}
+  .pill.sit{background:rgba(213,92,135,.16);color:#f0a3bf;border:1px solid rgba(213,92,135,.4);}
+  .pill.drop{background:rgba(223,132,49,.16);color:#f0b277;border:1px solid rgba(223,132,49,.4);}
+  .pill.done{background:rgba(116,83,138,.18);color:#bda3d0;border:1px solid rgba(116,83,138,.4);}
+
+  /* kintales feed */
+  .tale{display:flex;gap:13px;padding:14px;border-radius:15px;border:1px solid var(--line-2);
+    background:rgba(17,19,31,.4);transition:.2s var(--ease);cursor:pointer;}
+  .tale:hover{border-color:rgba(223,132,49,.4);transform:translateY(-2px);}
+  .tale + .tale{margin-top:11px;}
+  .tale .mark{width:4px;border-radius:4px;background:var(--orange);flex:0 0 auto;}
+  .tale.t2 .mark{background:var(--pink)} .tale.t3 .mark{background:var(--teal)}
+  .tale b{font-weight:600;font-size:14.5px;}
+  .tale p{color:var(--cream-dim);font-size:13px;margin-top:3px;}
+  .tale .meta{font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim);
+    opacity:.7;margin-top:7px;letter-spacing:.04em;}
+  .qbtn{width:100%;margin-top:6px;background:var(--orange);color:var(--navy);border:none;
+    font-family:"Hanken Grotesk";font-weight:700;font-size:14px;padding:13px;border-radius:14px;
+    cursor:pointer;transition:.2s var(--ease);display:flex;align-items:center;justify-content:center;gap:8px;}
+  .qbtn:hover{transform:translateY(-2px);box-shadow:0 12px 28px -10px rgba(223,132,49,.6);}
+  .qbtn.ghost{background:transparent;color:var(--cream);border:1px solid var(--line);margin-top:11px;}
+  .qbtn.ghost:hover{background:var(--navy-3);box-shadow:none;}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:40px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45;}
+  @media(max-width:980px){.app{grid-template-columns:1fr}.rail{display:none}.stats,.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="app">
+    <!-- ░░ rail ░░ -->
+    <aside class="rail">
+      <div class="brand">
+        <svg class="paw" viewBox="0 0 48 48" fill="none">
+          <circle cx="14" cy="16" r="5.4" fill="#DF8431"/><circle cx="26" cy="11" r="5" fill="#D55C87"/>
+          <circle cx="37" cy="17" r="4.6" fill="#0A8595"/>
+          <path d="M24 24c-7 0-12 5-12 11 0 4 4 6 12 6s12-2 12-6c0-6-5-11-12-11Z" fill="#FBFBF9"/>
+        </svg>
+        <h1>Auntie<b>OS</b></h1>
+      </div>
+
+      <div class="navgroup"><span>The Den</span>
+        <nav class="nav">
+          <a class="active" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>Home</a>
+          <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6M16 6.5a3 3 0 010 6"/></svg>Directory</a>
+          <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h11l3 3v13H5z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>KinTales<span class="dot">7</span></a>
+        </nav>
+      </div>
+
+      <div class="navgroup"><span>Care Ops</span>
+        <nav class="nav">
+          <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M3.5 9h17M8 3v4M16 3v4"/></svg>Schedule</a>
+          <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h9l3 3v15H6z"/><path d="M9 12h6M9 16h6M9 8h3"/></svg>Invoices</a>
+          <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H8l-4 4z"/></svg>Communicate</a>
+        </nav>
+      </div>
+
+      <div class="me">
+        <div class="av">S</div>
+        <div><b style="font-size:14px">Auntie Syd</b><small>Sole operator · admin</small></div>
+      </div>
+    </aside>
+
+    <!-- ░░ main ░░ -->
+    <main class="main">
+      <div class="topbar">
+        <div class="hello">
+          <div class="kicker">Tuesday · May 27 · 6 visits on the books</div>
+          <h2>Good morning, <em>Auntie</em>.</h2>
+        </div>
+        <div class="search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+          <input placeholder="Find a kinfolk, kin, or KinTale…" />
+        </div>
+        <button class="iconbtn"><span class="ping"></span><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6Z"/><path d="M10 20a2 2 0 004 0"/></svg></button>
+      </div>
+
+      <!-- stat row -->
+      <section class="stats">
+        <div class="stat feature">
+          <div class="lab">Today's pack</div>
+          <div class="num">6</div>
+          <div class="trend">visits · <b>2 done</b>, 1 on the way</div>
+          <svg class="corner" viewBox="0 0 48 48" fill="#DF8431"><circle cx="14" cy="16" r="5.4"/><circle cx="26" cy="11" r="5"/><circle cx="37" cy="17" r="4.6"/><path d="M24 24c-7 0-12 5-12 11 0 4 4 6 12 6s12-2 12-6c0-6-5-11-12-11Z"/></svg>
+        </div>
+        <div class="stat"><div class="lab">KinTales to review</div><div class="num">7</div><div class="trend"><b>3</b> drafts waiting</div></div>
+        <div class="stat"><div class="lab">Open bookings</div><div class="num">4</div><div class="trend">2 need a reply</div></div>
+        <div class="stat"><div class="lab">This week</div><div class="num">$1.9k</div><div class="trend"><b>+12%</b> vs last</div></div>
+      </section>
+
+      <!-- two column -->
+      <section class="grid2">
+        <div class="card late">
+          <h3>Today's Pack <span class="tail">🐕</span></h3>
+          <div class="sub">Your visit run for the day. Tap a card to open the booking.</div>
+
+          <div class="visit">
+            <div class="pet" style="background:rgba(10,133,149,.16)">🐕</div>
+            <div class="who"><div><b>Biscuit &amp; Gravy</b><small>Labradors · the Wrens</small></div></div>
+            <div style="display:flex;gap:12px;align-items:center"><span class="pill walk">30m walk</span><div class="when"><b>9:00</b>done</div></div>
+          </div>
+          <div class="visit">
+            <div class="pet" style="background:rgba(213,92,135,.16)">🐈</div>
+            <div class="who"><div><b>Marigold</b><small>Ragdoll · the Devlins</small></div></div>
+            <div style="display:flex;gap:12px;align-items:center"><span class="pill drop">drop-in</span><div class="when"><b>11:30</b>on the way</div></div>
+          </div>
+          <div class="visit">
+            <div class="pet" style="background:rgba(223,132,49,.16)">🐕‍🦺</div>
+            <div class="who"><div><b>Pepper</b><small>Aussie · the Sparrows</small></div></div>
+            <div style="display:flex;gap:12px;align-items:center"><span class="pill walk">45m walk</span><div class="when"><b>1:15</b>next</div></div>
+          </div>
+          <div class="visit">
+            <div class="pet" style="background:rgba(116,83,138,.16)">🐇</div>
+            <div class="who"><div><b>Clover &amp; Sage</b><small>Lops · the Rowans</small></div></div>
+            <div style="display:flex;gap:12px;align-items:center"><span class="pill sit">house sit</span><div class="when"><b>4:00</b>scheduled</div></div>
+          </div>
+          <button class="qbtn ghost">Open full schedule →</button>
+        </div>
+
+        <div class="card later">
+          <h3>KinTales pending</h3>
+          <div class="sub">Visit reports waiting for your sign-off.</div>
+
+          <div class="tale">
+            <div class="mark"></div>
+            <div><b>Marigold's lazy afternoon</b><p>Draft from your 11:30 drop-in. 3 photos, GPS route attached.</p><div class="meta">DRAFT · DUTTON · 4 MIN AGO</div></div>
+          </div>
+          <div class="tale t2">
+            <div class="mark"></div>
+            <div><b>Biscuit &amp; Gravy hit the trail</b><p>Ready to send to the Wrens.</p><div class="meta">READY · WALL · 9:42 AM</div></div>
+          </div>
+          <div class="tale t3">
+            <div class="mark"></div>
+            <div><b>Pepper's zoomies report</b><p>Auto-drafted, needs a note.</p><div class="meta">DRAFT · SEEDS · YESTERDAY</div></div>
+          </div>
+
+          <button class="qbtn">✎ &nbsp;Review &amp; send tales</button>
+        </div>
+      </section>
+
+      <p class="note">// concept mockup · brand palette from AuntieColors.kt · sample content is placeholder, not real kinfolk data</p>
+    </main>
+  </div>
+
+  <script>
+    // gentle parallax on the gradient mesh: one quiet, high-impact touch
+    const mesh = document.querySelector('.mesh');
+    addEventListener('pointermove', e => {
+      const x = (e.clientX / innerWidth - .5), y = (e.clientY / innerHeight - .5);
+      mesh.style.transform = `translate3d(${x*-18}px, ${y*-18}px, 0)`;
+    }, {passive:true});
+  </script>
+</body>
+</html>

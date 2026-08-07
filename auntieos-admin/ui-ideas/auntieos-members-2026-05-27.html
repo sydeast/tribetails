@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Household members (concept)</title>
+<!--
+  AuntieOS redesign concept · Household members. Standalone HTML/CSS mockup.
+  Same "Den" aesthetic. No em dashes. People shown via circular profile photo.
+  Palette from AuntieColors.kt. Sample content is illustrative placeholder.
+
+  NEW admin surface: there is no existing UI for household members today.
+  This screen mirrors the member callable contracts in
+  MyTribe/functions/src (no UI was copied):
+    families/{familyId}/members/{targetUid}  (lib/schema.ts MemberDoc)
+    setMemberPermissions, removeMember, addSecondaryContact,
+    swapPrimaryContact, updateMemberLabel, updateSecondaryPermissions.
+  Permissions vocabulary: billing_full, messaging_direct, messaging_group,
+  kin_edit, kintales_only (server-locked-on). Roles: PRIMARY, SECONDARY.
+  secondaryLabel default "Folk", max 24 chars (SECONDARY_LABEL_MAX).
+  Note: billing_full is admin-only (setMemberPermissions, severity warn);
+  updateSecondaryPermissions covers only messaging_direct/messaging_group/kin_edit.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.4;mix-blend-mode:screen;filter:blur(76px);
+    animation:drift 31s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--purple),transparent 62%);top:-12vmax;right:-4vmax;}
+  .blob.b{width:36vmax;height:36vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-10vmax;left:-8vmax;animation-delay:-11s;}
+  .blob.c{width:30vmax;height:30vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:26vmax;left:44vmax;animation-delay:-18s;}
+  @keyframes drift{to{transform:translate3d(4vmax,3vmax,0) scale(1.1) rotate(8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1180px;margin:0 auto;padding:24px 30px 60px;}
+
+  .crumbs{display:flex;align-items:center;gap:9px;font-family:"Spline Sans Mono",monospace;font-size:12px;
+    color:var(--cream-dim);margin-bottom:16px;opacity:0;animation:rise .5s var(--ease) forwards;}
+  .crumbs a{color:var(--cream-dim);text-decoration:none}.crumbs a:hover{color:var(--orange)}
+  .crumbs b{color:var(--cream)}
+
+  /* new-surface banner */
+  .banner{display:flex;gap:13px;align-items:flex-start;background:
+      radial-gradient(120% 200% at 0% 0%,rgba(223,132,49,.18),transparent 60%),
+      linear-gradient(160deg,var(--navy-2),var(--navy-3));
+    border:1px solid rgba(223,132,49,.4);border-radius:16px;padding:14px 16px;margin-bottom:18px;
+    opacity:0;transform:translateY(10px);animation:rise .55s var(--ease) .04s forwards;}
+  .banner .bicon{width:34px;height:34px;border-radius:10px;flex:0 0 auto;display:grid;place-items:center;
+    background:rgba(223,132,49,.16);color:#f0b277}
+  .banner .bicon svg{width:18px;height:18px}
+  .banner .btx b{font-size:14px;font-weight:700;display:block}
+  .banner .btx small{display:block;color:var(--cream-dim);font-size:12.5px;margin-top:3px;line-height:1.5}
+  .banner code{font-family:"Spline Sans Mono",monospace;font-size:11.5px;color:#f0b277;
+    background:rgba(223,132,49,.12);padding:1px 6px;border-radius:6px}
+
+  /* hero */
+  .hero{display:flex;align-items:center;gap:18px;background:
+      radial-gradient(120% 160% at 0% 0%,rgba(116,83,138,.26),transparent 55%),
+      linear-gradient(160deg,var(--navy-2),var(--navy-3));
+    border:1px solid var(--line);border-radius:24px;padding:22px;margin-bottom:18px;
+    opacity:0;transform:translateY(14px);animation:rise .65s var(--ease) .08s forwards;}
+  .hero .crest{width:72px;height:72px;border-radius:22px;flex:0 0 auto;display:grid;place-items:center;
+    font-family:"Fraunces",serif;font-weight:600;font-size:28px;color:var(--cream);
+    background:conic-gradient(from 200deg,var(--purple),var(--teal),var(--orange))}
+  .hero .meta h1{font-family:"Fraunces",serif;font-weight:440;font-size:30px;letter-spacing:-.02em;
+    font-variation-settings:"SOFT" 50,"WONK" 1}
+  .hero .meta .where{color:var(--cream-dim);font-size:13.5px;margin-top:3px;
+    font-family:"Spline Sans Mono",monospace;letter-spacing:.02em}
+  .hero .actions{margin-left:auto;display:flex;gap:9px}
+  .act{height:44px;border-radius:13px;border:1px solid var(--line);background:var(--navy-3);
+    display:inline-flex;align-items:center;gap:8px;padding:0 15px;cursor:pointer;color:var(--cream);
+    font-family:"Hanken Grotesk";font-weight:600;font-size:13px;transition:.18s var(--ease)}
+  .act:hover{transform:translateY(-2px);background:var(--navy-2);border-color:rgba(223,132,49,.4)}
+  .act svg{width:17px;height:17px}
+  .act.primary{background:var(--orange);color:var(--navy);border-color:transparent;font-weight:700}
+  .act.primary:hover{box-shadow:0 12px 26px -10px rgba(223,132,49,.6)}
+
+  .panel{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);
+    border-radius:20px;padding:22px;margin-bottom:18px;opacity:0;transform:translateY(16px);
+    animation:rise .7s var(--ease) forwards}
+  .panel.d1{animation-delay:.14s}.panel.d2{animation-delay:.24s}.panel.d3{animation-delay:.34s}
+  .panel h3{font-family:"Fraunces",serif;font-weight:500;font-size:20px;display:flex;align-items:center;gap:10px;
+    font-variation-settings:"SOFT" 50}
+  .panel h3 .ct{margin-left:auto;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);font-weight:400}
+  .panel .ph-sub{color:var(--cream-dim);font-size:13px;margin-top:4px;margin-bottom:16px}
+
+  /* role chip */
+  .role{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+    padding:4px 10px;border-radius:20px;font-weight:600}
+  .role.primary{background:rgba(116,83,138,.22);color:#c7a8d8;border:1px solid rgba(116,83,138,.45)}
+  .role.secondary{background:rgba(10,133,149,.18);color:#7fdce8;border:1px solid rgba(10,133,149,.4)}
+  .status{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+    font-weight:600;display:inline-flex;align-items:center;gap:6px;color:var(--cream-dim)}
+  .status .led{width:7px;height:7px;border-radius:50%}
+  .status.active .led{background:#0A8595;box-shadow:0 0 8px #0A8595}
+  .status.active{color:#7fdce8}
+  .status.invited .led{background:var(--orange);box-shadow:0 0 8px var(--orange)}
+  .status.invited{color:#f0b277}
+
+  /* member identity row */
+  .who{display:flex;align-items:center;gap:14px}
+  .who .photo{width:58px;height:58px;border-radius:50%;flex:0 0 auto;background-size:cover;background-position:center;
+    border:2px solid rgba(251,251,249,.25);box-shadow:inset 0 -6px 12px rgba(0,0,0,.3)}
+  .who .name{font-family:"Fraunces",serif;font-weight:500;font-size:19px;font-variation-settings:"SOFT" 50}
+  .who .contact{color:var(--cream-dim);font-size:12.5px;margin-top:2px;
+    font-family:"Spline Sans Mono",monospace;letter-spacing:.01em}
+
+  /* primary card */
+  .primecard{display:flex;align-items:center;gap:14px}
+  .primecard .who{flex:1}
+  .primecard .pright{display:flex;flex-direction:column;align-items:flex-end;gap:9px}
+  .linkbtn{background:none;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";font-weight:600;
+    font-size:12px;padding:7px 13px;border-radius:9px;cursor:pointer;transition:.16s var(--ease);
+    display:inline-flex;align-items:center;gap:7px}
+  .linkbtn:hover{background:var(--navy-3);border-color:rgba(223,132,49,.4)}
+  .linkbtn svg{width:14px;height:14px}
+  .linkbtn.danger:hover{border-color:rgba(213,83,90,.6);color:#ec8e93}
+
+  /* secondary member block */
+  .member{border:1px solid var(--line);border-radius:18px;background:var(--navy-3);padding:18px;
+    transition:.18s var(--ease)}
+  .member + .member{margin-top:14px}
+  .member:hover{border-color:rgba(116,83,138,.35)}
+  .member .top{display:flex;align-items:center;gap:14px}
+  .member .top .who{flex:1}
+
+  /* editable label */
+  .labelwrap{display:flex;align-items:center;gap:8px;margin-top:4px}
+  .labeled{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--cream-dim)}
+  .labelin{background:var(--navy-2);border:1px solid var(--line);color:var(--cream);border-radius:8px;
+    padding:4px 9px;font-family:"Hanken Grotesk";font-weight:600;font-size:13px;width:148px;transition:.16s var(--ease)}
+  .labelin:focus{outline:none;border-color:var(--orange)}
+  .labelmax{font-family:"Spline Sans Mono",monospace;font-size:10px;color:var(--cream-dim);opacity:.7}
+
+  .mactions{display:flex;gap:8px;margin-left:auto}
+
+  /* permission grid */
+  .perms{margin-top:16px;padding-top:14px;border-top:1px solid var(--line-2)}
+  .permhdr{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--cream-dim);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+  .trow{display:flex;align-items:center;gap:14px;padding:11px 0;border-bottom:1px solid var(--line-2)}
+  .trow:last-child{border-bottom:none}
+  .trow .tx b{font-size:14px;font-weight:600;font-family:"Spline Sans Mono",monospace;letter-spacing:.01em}
+  .trow .tx small{display:block;color:var(--cream-dim);font-size:12px;margin-top:2px;line-height:1.4}
+  .adminflag{font-family:"Spline Sans Mono",monospace;font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;
+    font-weight:600;color:#f0b277;background:rgba(223,132,49,.14);padding:2px 7px;border-radius:20px;margin-left:7px}
+  .tog{margin-left:auto;width:46px;height:27px;border-radius:30px;background:var(--navy-2);border:1px solid var(--line);
+    position:relative;cursor:pointer;transition:.2s var(--ease);flex:0 0 auto}
+  .tog:after{content:"";position:absolute;top:2.5px;left:3px;width:20px;height:20px;border-radius:50%;
+    background:var(--cream-dim);transition:.2s var(--ease)}
+  .tog.on{background:var(--teal);border-color:transparent}
+  .tog.on:after{left:21px;background:var(--cream)}
+  /* locked-on toggle for kintales_only */
+  .tog.locked{cursor:not-allowed;background:rgba(10,133,149,.45);border-color:transparent;opacity:.85}
+  .tog.locked:after{left:21px;background:var(--cream)}
+  .lockchip{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-family:"Spline Sans Mono",monospace;
+    font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;font-weight:600;color:#7fdce8}
+  .lockchip svg{width:12px;height:12px}
+
+  /* add row */
+  .addrow{display:flex;justify-content:center;margin-top:6px}
+  .addbtn{background:var(--navy-3);border:1px dashed var(--line);color:var(--cream);font-family:"Hanken Grotesk";
+    font-weight:600;font-size:13.5px;padding:13px 20px;border-radius:14px;cursor:pointer;width:100%;
+    display:inline-flex;align-items:center;justify-content:center;gap:9px;transition:.18s var(--ease)}
+  .addbtn:hover{border-color:rgba(223,132,49,.5);background:var(--navy-2);color:#f0b277}
+  .addbtn svg{width:17px;height:17px}
+
+  /* callable footnote chips */
+  .cbar{display:flex;flex-wrap:wrap;gap:7px;margin-top:14px}
+  .cchip{font-family:"Spline Sans Mono",monospace;font-size:10px;color:var(--cream-dim);
+    border:1px solid var(--line-2);border-radius:20px;padding:4px 10px;background:rgba(17,19,31,.4)}
+  .cchip b{color:#7fdce8;font-weight:600}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:28px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:760px){.hero{flex-wrap:wrap}.hero .actions{margin-left:0;width:100%}
+    .member .top{flex-wrap:wrap}.mactions{margin-left:0;width:100%;margin-top:8px}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="crumbs"><a href="#">Directory</a> / <a href="#">Households</a> / <b>the Wrens</b> / <b>Members</b></div>
+
+    <div class="banner">
+      <div class="bicon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4"/><path d="M12 16h.01"/><path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></div>
+      <div class="btx">
+        <b>New admin surface · no existing UI today</b>
+        <small>There is no household-members screen in production yet. This concept is built directly from the member callable contracts in <code>functions/src</code> (<code>families/{familyId}/members/{targetUid}</code>), not copied from any current view. Field and permission names are kept faithful to the backend.</small>
+      </div>
+    </div>
+
+    <div class="hero">
+      <div class="crest">W</div>
+      <div class="meta">
+        <h1>the Wrens</h1>
+        <div class="where">familyId: fam_7Qk2 · 3 members · 1 PRIMARY, 2 SECONDARY</div>
+      </div>
+      <div class="actions">
+        <button class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 3l5 5-5 5"/><path d="M21 8H9a4 4 0 0 0-4 4v0"/><path d="M8 21l-5-5 5-5"/><path d="M3 16h12a4 4 0 0 0 4-4v0"/></svg> Swap primary</button>
+        <button class="act primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.5 2.7-5.5 6-5.5"/><path d="M18 9v6M21 12h-6"/></svg> Add secondary contact</button>
+      </div>
+    </div>
+
+    <!-- PRIMARY -->
+    <div class="panel d1">
+      <h3>Primary contact <span class="ct">role: PRIMARY</span></h3>
+      <div class="ph-sub">The household account owner. Holds full permissions and is the only member who can swap themselves out.</div>
+      <div class="primecard">
+        <div class="who">
+          <i class="photo" style="background:radial-gradient(circle at 34% 28%,#c7a8d8,#3d2a4a)"></i>
+          <div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="name">Lorna Wren</span>
+              <span class="role primary">Primary</span>
+            </div>
+            <div class="contact">loretta.w@example.com · (555) 014-2231</div>
+          </div>
+        </div>
+        <div class="pright">
+          <span class="status active"><i class="led"></i>Active</span>
+          <button class="linkbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 3l5 5-5 5"/><path d="M21 8H6a3 3 0 0 0-3 3v1"/></svg> Swap contact info</button>
+        </div>
+      </div>
+      <div class="cbar">
+        <span class="cchip">all permissions <b>granted</b> by role</span>
+        <span class="cchip"><b>swapPrimaryContact</b>(newEmail?, newPhone?)</span>
+        <span class="cchip">1 swap / 24h</span>
+      </div>
+    </div>
+
+    <!-- SECONDARY list -->
+    <div class="panel d2">
+      <h3>Secondary contacts <span class="ct">2 of role: SECONDARY</span></h3>
+      <div class="ph-sub">Invited household members. Each carries an editable label and a permission set. <b>kintales_only</b> is server-locked-on and cannot be turned off.</div>
+
+      <!-- secondary 1 -->
+      <div class="member">
+        <div class="top">
+          <div class="who">
+            <i class="photo" style="background:radial-gradient(circle at 34% 28%,#37c0cf,#08525e)"></i>
+            <div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="name">Marcus Wren</span>
+                <span class="role secondary">Secondary</span>
+                <span class="status active"><i class="led"></i>Active</span>
+              </div>
+              <div class="contact">marcus.w@example.com</div>
+              <div class="labelwrap">
+                <span class="labeled">secondaryLabel</span>
+                <input class="labelin" type="text" maxlength="24" value="Spouse" aria-label="Secondary label" />
+                <span class="labelmax">6 / 24</span>
+              </div>
+            </div>
+          </div>
+          <div class="mactions">
+            <button class="linkbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg> Save label</button>
+            <button class="linkbtn danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg> Remove</button>
+          </div>
+        </div>
+
+        <div class="perms">
+          <div class="permhdr">permissions · MemberPermissions</div>
+          <div class="trow"><div class="tx"><b>billing_full<span class="adminflag">admin only</span></b><small>Full access to invoices and payment methods. Granted via setMemberPermissions (logged with severity warn).</small></div><div class="tog on"></div></div>
+          <div class="trow"><div class="tx"><b>messaging_direct</b><small>One to one messages with the Auntie.</small></div><div class="tog on"></div></div>
+          <div class="trow"><div class="tx"><b>messaging_group</b><small>Participate in the household group thread.</small></div><div class="tog on"></div></div>
+          <div class="trow"><div class="tx"><b>kin_edit</b><small>Add or edit pet (kin) records for the household.</small></div><div class="tog on"></div></div>
+          <div class="trow"><div class="tx"><b>kintales_only</b><small>Always able to read the household KinTales feed. Locked on by the server.</small></div><span class="lockchip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Locked on</span><div class="tog locked" title="Server-locked: kintales_only cannot be disabled"></div></div>
+        </div>
+        <div class="cbar">
+          <span class="cchip"><b>setMemberPermissions</b> for billing_full</span>
+          <span class="cchip"><b>updateSecondaryPermissions</b> for messaging/kin_edit</span>
+          <span class="cchip"><b>updateMemberLabel</b>(secondaryLabel)</span>
+          <span class="cchip"><b>removeMember</b> -> status SUSPENDED</span>
+        </div>
+      </div>
+
+      <!-- secondary 2 -->
+      <div class="member">
+        <div class="top">
+          <div class="who">
+            <i class="photo" style="background:radial-gradient(circle at 34% 28%,#f0b277,#7a4514)"></i>
+            <div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="name">Devon Pruitt</span>
+                <span class="role secondary">Secondary</span>
+                <span class="status invited"><i class="led"></i>Invited</span>
+              </div>
+              <div class="contact">devon.p@example.com</div>
+              <div class="labelwrap">
+                <span class="labeled">secondaryLabel</span>
+                <input class="labelin" type="text" maxlength="24" value="Folk" aria-label="Secondary label" />
+                <span class="labelmax">4 / 24</span>
+              </div>
+            </div>
+          </div>
+          <div class="mactions">
+            <button class="linkbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg> Save label</button>
+            <button class="linkbtn danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg> Remove</button>
+          </div>
+        </div>
+
+        <div class="perms">
+          <div class="permhdr">permissions · MemberPermissions</div>
+          <div class="trow"><div class="tx"><b>billing_full<span class="adminflag">admin only</span></b><small>Full access to invoices and payment methods. Granted via setMemberPermissions (logged with severity warn).</small></div><div class="tog"></div></div>
+          <div class="trow"><div class="tx"><b>messaging_direct</b><small>One to one messages with the Auntie.</small></div><div class="tog on"></div></div>
+          <div class="trow"><div class="tx"><b>messaging_group</b><small>Participate in the household group thread.</small></div><div class="tog on"></div></div>
+          <div class="trow"><div class="tx"><b>kin_edit</b><small>Add or edit pet (kin) records for the household.</small></div><div class="tog"></div></div>
+          <div class="trow"><div class="tx"><b>kintales_only</b><small>Always able to read the household KinTales feed. Locked on by the server.</small></div><span class="lockchip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Locked on</span><div class="tog locked" title="Server-locked: kintales_only cannot be disabled"></div></div>
+        </div>
+        <div class="cbar">
+          <span class="cchip"><b>setMemberPermissions</b> for billing_full</span>
+          <span class="cchip"><b>updateSecondaryPermissions</b> for messaging/kin_edit</span>
+          <span class="cchip"><b>updateMemberLabel</b>(secondaryLabel)</span>
+          <span class="cchip"><b>removeMember</b> -> status SUSPENDED</span>
+        </div>
+      </div>
+
+      <div class="addrow" style="margin-top:16px">
+        <button class="addbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.5 2.7-5.5 6-5.5"/><path d="M18 9v6M21 12h-6"/></svg> Add secondary contact (invitedEmail, secondaryLabel, permissions)</button>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · Household members · palette from AuntieColors.kt · placeholder content</p>
+  </div>
+
+  <script>
+    // toggles (kintales_only locked toggles are excluded)
+    document.querySelectorAll('.tog:not(.locked)').forEach(t=>t.addEventListener('click',()=>t.classList.toggle('on')));
+    // live char counter on editable labels (secondaryLabel, max 24 = SECONDARY_LABEL_MAX)
+    document.querySelectorAll('.labelin').forEach(inp=>{
+      const counter=inp.parentElement.querySelector('.labelmax');
+      inp.addEventListener('input',()=>{counter.textContent=`${inp.value.length} / 24`;});
+    });
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Activity log (concept)</title>
+<!--
+  AuntieOS redesign concept · Activity log (hash-chain audit). Standalone mockup.
+  Same "Den" aesthetic. No em dashes. Reflects writeAuditEntry seq/prevHash/entryHash
+  chain + verifyActivityLogChain integrity check. Palette from AuntieColors.kt.
+  Sample content is illustrative placeholder.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);-webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px)}
+  .blob{position:absolute;border-radius:50%;opacity:.4;mix-blend-mode:screen;filter:blur(76px);animation:drift 31s var(--ease) infinite alternate}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--teal),transparent 62%);top:-12vmax;left:-4vmax}
+  .blob.b{width:36vmax;height:36vmax;background:radial-gradient(circle,var(--purple),transparent 60%);top:14vmax;right:-8vmax;animation-delay:-11s}
+  .blob.c{width:30vmax;height:30vmax;background:radial-gradient(circle,var(--orange),transparent 60%);bottom:-12vmax;left:44vmax;animation-delay:-18s}
+  @keyframes drift{to{transform:translate3d(4vmax,3vmax,0) scale(1.1) rotate(8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+  .wrap{position:relative;z-index:2;max-width:1080px;margin:0 auto;padding:26px 30px 60px}
+  .head{display:flex;align-items:center;gap:18px;margin-bottom:18px;flex-wrap:wrap;opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--orange);margin-bottom:5px}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;font-variation-settings:"SOFT" 50,"WONK" 1}
+  .spacer{flex:1}
+  /* chain integrity badge */
+  .chain{display:flex;align-items:center;gap:11px;background:linear-gradient(160deg,var(--navy-2),var(--navy-3));border:1px solid rgba(10,133,149,.45);border-radius:15px;padding:11px 15px}
+  .chain .led{width:10px;height:10px;border-radius:50%;background:#0A8595;box-shadow:0 0 10px #0A8595;flex:0 0 auto}
+  .chain b{font-size:13.5px}.chain small{display:block;font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim)}
+  .chain .verify{margin-left:6px;background:none;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";font-weight:600;font-size:12px;padding:7px 12px;border-radius:9px;cursor:pointer;transition:.16s var(--ease)}
+  .chain .verify:hover{background:var(--navy-3)}
+
+  .filters{display:flex;align-items:center;gap:10px;margin:8px 0 16px;flex-wrap:wrap;opacity:0;animation:rise .6s var(--ease) .1s forwards}
+  .fchip{font-size:12.5px;font-weight:600;padding:8px 13px;border-radius:30px;cursor:pointer;border:1px solid var(--line);background:var(--navy-3);color:var(--cream-dim);transition:.16s var(--ease)}
+  .fchip.on{background:var(--cream);color:var(--navy);border-color:var(--cream)}
+  .fchip:not(.on):hover{color:var(--cream)}
+  .search{display:flex;align-items:center;gap:9px;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:9px 13px;color:var(--cream-dim);font-size:13px;margin-left:auto;min-width:200px}
+  .search input{background:none;border:none;outline:none;color:var(--cream);font-family:inherit;font-size:13px;width:100%}
+
+  .log{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);border-radius:20px;overflow:hidden;opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) .16s forwards}
+  .daysep{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--cream-dim);opacity:.6;padding:14px 20px 8px}
+  .row{display:grid;grid-template-columns:62px 26px 1fr auto;gap:14px;align-items:center;padding:13px 20px;border-top:1px solid var(--line-2);transition:.14s var(--ease)}
+  .row:hover{background:var(--navy-3)}
+  .row .t{font-family:"Spline Sans Mono",monospace;font-size:11.5px;color:var(--cream-dim)}
+  .ico{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:12px;flex:0 0 auto}
+  .ico.auth{background:rgba(116,83,138,.22);color:#c7a8d8}
+  .ico.book{background:rgba(223,132,49,.18);color:#f0b277}
+  .ico.tale{background:rgba(213,92,135,.18);color:#f0a3bf}
+  .ico.notif{background:rgba(10,133,149,.2);color:#7fdce8}
+  .ico.admin{background:rgba(213,83,90,.18);color:#f3a0a4}
+  .row .meta b{font-size:14px;font-weight:600}
+  .row .meta .ac{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.04em;color:var(--cream-dim);opacity:.8}
+  .row .meta small{color:var(--cream-dim);font-size:12.5px}
+  .seq{text-align:right;font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim)}
+  .seq .n{color:var(--cream);font-size:12px}
+  .seq .hash{display:inline-flex;align-items:center;gap:5px;margin-top:3px;color:var(--teal);opacity:.85}
+  .seq .hash .lk{width:8px;height:8px;border-radius:50%;background:var(--teal);box-shadow:0 0 6px rgba(10,133,149,.6)}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:26px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:720px){.row{grid-template-columns:54px 24px 1fr}.seq{display:none}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="kick">The Den · Activity log</div>
+        <h2>Every move, sealed</h2>
+      </div>
+      <div class="spacer"></div>
+      <div class="chain">
+        <span class="led"></span>
+        <div><b>Chain verified</b><small>1,482 entries · seq 1..1482 · 0 anomalies</small></div>
+        <button class="verify">Re-verify</button>
+      </div>
+    </div>
+
+    <div class="filters">
+      <span class="fchip on">All</span>
+      <span class="fchip">Auth</span>
+      <span class="fchip">Bookings</span>
+      <span class="fchip">KinTales</span>
+      <span class="fchip">Notifications</span>
+      <span class="fchip">Admin</span>
+      <div class="search">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+        <input placeholder="Search actor, action, target…" />
+      </div>
+    </div>
+
+    <div class="log">
+      <div class="daysep">Today · May 27</div>
+
+      <div class="row">
+        <span class="t">2:14p</span>
+        <span class="ico tale">✎</span>
+        <div class="meta"><b>KinTale draft approved</b> <span class="ac">DRAFT_APPROVED</span><small>Auntie Syd · generated_drafts/dr_8841</small></div>
+        <div class="seq"><span class="n">#1482</span><span class="hash"><i class="lk"></i>a3f1e9</span></div>
+      </div>
+      <div class="row">
+        <span class="t">11:32a</span>
+        <span class="ico notif">▣</span>
+        <div class="meta"><b>Notification viewed</b> <span class="ac">NOTIFICATION_VIEWED</span><small>Lorna Wren · kintale.published</small></div>
+        <div class="seq"><span class="n">#1481</span><span class="hash"><i class="lk"></i>77c0b2</span></div>
+      </div>
+      <div class="row">
+        <span class="t">9:01a</span>
+        <span class="ico book">◷</span>
+        <div class="meta"><b>Visit marked arrived</b> <span class="ac">KINCARE_ARRIVED</span><small>Auntie Syd · the Wrens · Biscuit &amp; Gravy</small></div>
+        <div class="seq"><span class="n">#1480</span><span class="hash"><i class="lk"></i>10de4c</span></div>
+      </div>
+      <div class="row">
+        <span class="t">8:48a</span>
+        <span class="ico book">↗</span>
+        <div class="meta"><b>On my way</b> <span class="ac">KINCARE_ON_MY_WAY</span><small>Auntie Syd · the Wrens</small></div>
+        <div class="seq"><span class="n">#1479</span><span class="hash"><i class="lk"></i>e2aa91</span></div>
+      </div>
+      <div class="row">
+        <span class="t">8:02a</span>
+        <span class="ico auth">⚿</span>
+        <div class="meta"><b>Admin sign-in</b> <span class="ac">AUTH_LOGIN_SUCCESS</span><small>Auntie Syd · web · Riverside, US</small></div>
+        <div class="seq"><span class="n">#1478</span><span class="hash"><i class="lk"></i>5b9f30</span></div>
+      </div>
+
+      <div class="daysep">Yesterday · May 26</div>
+
+      <div class="row">
+        <span class="t">6:20p</span>
+        <span class="ico book">＋</span>
+        <div class="meta"><b>Booking requested</b> <span class="ac">BOOKING_SUBMITTED</span><small>Ada Devlin · drop-in · May 31</small></div>
+        <div class="seq"><span class="n">#1477</span><span class="hash"><i class="lk"></i>c4170a</span></div>
+      </div>
+      <div class="row">
+        <span class="t">3:55p</span>
+        <span class="ico tale">✎</span>
+        <div class="meta"><b>KinTale note added</b> <span class="ac">CONTENT_KINTALE_NOTE_ADDED</span><small>Auntie Syd · report rp_2291</small></div>
+        <div class="seq"><span class="n">#1476</span><span class="hash"><i class="lk"></i>9912ef</span></div>
+      </div>
+      <div class="row">
+        <span class="t">1:10p</span>
+        <span class="ico admin">⚑</span>
+        <div class="meta"><b>Orphan report triaged</b> <span class="ac">ADMIN_TRIAGE_ORPHAN_REPORT</span><small>Auntie Syd · legacy_82 · assigned</small></div>
+        <div class="seq"><span class="n">#1475</span><span class="hash"><i class="lk"></i>3de8b7</span></div>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · Activity log · seq + entryHash chain (writeAuditEntry) · verifyActivityLogChain · placeholder content</p>
+  </div>
+
+  <script>
+    document.querySelectorAll('.fchip').forEach(c=>c.addEventListener('click',()=>{
+      document.querySelectorAll('.fchip').forEach(x=>x.classList.remove('on')); c.classList.add('on');}));
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

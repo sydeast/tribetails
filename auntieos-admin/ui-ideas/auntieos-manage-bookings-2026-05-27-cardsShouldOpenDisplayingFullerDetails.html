@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Bookings (concept)</title>
+<!--
+  AuntieOS redesign concept · Bookings / manage bookings. Standalone mockup, Den aesthetic.
+  No em dashes. Mirrors real BookingListScreen: sections Pending Approval (DRAFT/PENDING) ->
+  Approve/Reject, Scheduled (SCHEDULED) -> Cancel, History (other). Card shows kinfolkName,
+  "<KinCare type> · <date>", status pill, note preview. New Booking button. Palette from AuntieColors.kt.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);-webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px)}
+  .blob{position:absolute;border-radius:50%;opacity:.42;mix-blend-mode:screen;filter:blur(74px);animation:drift 30s var(--ease) infinite alternate}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--orange),transparent 62%);top:-12vmax;right:-4vmax}
+  .blob.b{width:36vmax;height:36vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-10vmax;left:-8vmax;animation-delay:-10s}
+  .blob.c{width:30vmax;height:30vmax;background:radial-gradient(circle,var(--pink),transparent 60%);top:26vmax;left:42vmax;animation-delay:-17s}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+  .wrap{position:relative;z-index:2;max-width:860px;margin:0 auto;padding:26px 30px 60px}
+  .head{display:flex;align-items:center;gap:16px;margin-bottom:20px;opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--orange);margin-bottom:5px}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;font-variation-settings:"SOFT" 50,"WONK" 1}
+  .head .sub{color:var(--cream-dim);font-size:13.5px;margin-top:3px}
+  .spacer{flex:1}
+  .add{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;font-size:14px;padding:11px 17px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);display:inline-flex;align-items:center;gap:8px}
+  .add:hover{transform:translateY(-2px);box-shadow:0 12px 28px -10px rgba(223,132,49,.6)}
+
+  .sec{margin-bottom:24px;opacity:0;transform:translateY(14px);animation:rise .65s var(--ease) forwards}
+  .sec.d1{animation-delay:.1s}.sec.d2{animation-delay:.2s}.sec.d3{animation-delay:.3s}
+  .sec h3{font-family:"Fraunces",serif;font-weight:500;font-size:20px;margin-bottom:11px;font-variation-settings:"SOFT" 50;display:flex;align-items:center;gap:9px}
+  .sec h3 .ct{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);font-weight:400}
+
+  .bk{display:flex;align-items:center;gap:13px;background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);border-radius:18px;padding:14px;transition:.16s var(--ease)}
+  .bk + .bk{margin-top:10px}
+  .bk:hover{border-color:rgba(223,132,49,.3)}
+  .accent{width:4px;align-self:stretch;min-height:60px;border-radius:999px;flex:0 0 auto}
+  .av{width:44px;height:44px;border-radius:13px;flex:0 0 auto;display:grid;place-items:center;font-family:"Fraunces";font-weight:600;font-size:16px;color:var(--cream);background:conic-gradient(from 200deg,var(--teal),var(--purple))}
+  .bk .info{flex:1;min-width:0}
+  .bk .info .nm{font-family:"Fraunces",serif;font-weight:500;font-size:17px}
+  .bk .info .svc{color:var(--cream-dim);font-size:13px;margin-top:2px}
+  .bk .info .pill{display:inline-block;margin-top:7px;font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;font-weight:600;padding:4px 9px;border-radius:20px}
+  .bk .info .nt{color:var(--cream-dim);font-size:12.5px;margin-top:7px}
+  .pill.pending{background:rgba(223,132,49,.16);color:#f0b277;border:1px solid rgba(223,132,49,.4)}
+  .pill.draft{background:rgba(213,83,90,.16);color:#f3a0a4;border:1px solid rgba(213,83,90,.4)}
+  .pill.scheduled{background:rgba(10,133,149,.18);color:#7fdce8;border:1px solid rgba(10,133,149,.4)}
+  .pill.completed{background:rgba(116,83,138,.2);color:#c7a8d8;border:1px solid rgba(116,83,138,.4)}
+  .pill.cancelled{background:var(--navy-3);color:var(--cream-dim);border:1px solid var(--line)}
+  .acc-pending{background:var(--orange)}.acc-scheduled{background:var(--teal)}.acc-completed{background:var(--purple)}.acc-cancelled{background:rgba(251,251,249,.2)}
+  .bk .acts{display:flex;gap:8px;flex:0 0 auto}
+  .btn{font-family:"Hanken Grotesk";font-weight:700;font-size:12.5px;padding:9px 14px;border-radius:10px;border:none;cursor:pointer;transition:.16s var(--ease)}
+  .btn.go{background:var(--orange);color:var(--navy)}.btn.go:hover{transform:translateY(-1px)}
+  .btn.gh{background:transparent;border:1px solid var(--line);color:var(--cream)}.btn.gh:hover{background:var(--navy-3)}
+
+  /* multi-select for mass editing (off until Select toggled) */
+  .seltoggle{background:transparent;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";font-weight:600;font-size:13.5px;padding:11px 15px;border-radius:13px;cursor:pointer;transition:.16s var(--ease)}
+  .seltoggle:hover{background:var(--navy-3)}
+  .seltoggle.on{background:var(--cream);color:var(--navy);border-color:var(--cream)}
+  .selbox{flex:0 0 auto;display:none;place-items:center}
+  body.selecting .selbox{display:grid}
+  .selbox input{width:20px;height:20px;accent-color:var(--orange);cursor:pointer}
+  .bk.picked{border-color:var(--orange);background:radial-gradient(120% 130% at 0% 0%,rgba(223,132,49,.1),transparent 50%),linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5))}
+  .bulkbar{position:fixed;left:50%;bottom:24px;transform:translate(-50%,140%);z-index:30;display:flex;align-items:center;gap:14px;
+    background:linear-gradient(160deg,var(--navy-2),var(--navy-3));border:1px solid var(--orange);border-radius:16px;padding:12px 16px;
+    box-shadow:0 22px 50px -18px rgba(0,0,0,.8);transition:.26s var(--ease)}
+  .bulkbar.show{transform:translate(-50%,0)}
+  .bulkbar .cnt{font-family:"Spline Sans Mono",monospace;font-size:12px;color:var(--cream)}
+  .bulkbar .cnt b{color:var(--orange);font-size:15px}
+  .bulkbar .sep{width:1px;height:24px;background:var(--line)}
+  .bulkbar .clear{background:none;border:none;color:var(--cream-dim);font-family:"Hanken Grotesk";font-weight:600;font-size:12.5px;cursor:pointer}
+  .bulkbar .clear:hover{color:var(--cream)}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:26px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:680px){.bk{flex-wrap:wrap}.bk .acts{width:100%;justify-content:flex-end}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="kick">The Den · Bookings</div>
+        <h2>Bookings</h2>
+        <div class="sub">Pending requests and scheduled visits</div>
+      </div>
+      <div class="spacer"></div>
+      <button class="seltoggle" id="selToggle">☑ Select</button>
+      <button class="add">＋ New booking</button>
+    </div>
+
+    <div class="sec d1">
+      <h3>Pending approval <span class="ct">2</span></h3>
+      <div class="bk">
+        <label class="selbox"><input type="checkbox" class="bsel"></label>
+        <span class="accent acc-pending"></span>
+        <div class="av">AD</div>
+        <div class="info">
+          <div class="nm">Ada Devlin</div>
+          <div class="svc">Drop-in · 2026-05-31 · Midday block</div>
+          <span class="pill pending">Pending</span>
+          <div class="nt">Note: Marigold is shy with new folks, give her a minute.</div>
+        </div>
+        <div class="acts"><button class="btn go">Approve</button><button class="btn gh">Reject</button></div>
+      </div>
+      <div class="bk">
+        <label class="selbox"><input type="checkbox" class="bsel"></label>
+        <span class="accent acc-pending"></span>
+        <div class="av">OM</div>
+        <div class="info">
+          <div class="nm">Odette Mallory</div>
+          <div class="svc">Meet &amp; greet · 2026-05-29 · Morning block</div>
+          <span class="pill draft">Draft</span>
+          <div class="nt">Note: new puppy intro, wants to meet before booking walks.</div>
+        </div>
+        <div class="acts"><button class="btn go">Approve</button><button class="btn gh">Reject</button></div>
+      </div>
+    </div>
+
+    <div class="sec d2">
+      <h3>Scheduled <span class="ct">2</span></h3>
+      <div class="bk">
+        <label class="selbox"><input type="checkbox" class="bsel"></label>
+        <span class="accent acc-scheduled"></span>
+        <div class="av">LW</div>
+        <div class="info">
+          <div class="nm">Lorna Wren</div>
+          <div class="svc">30 min · 2026-05-28 · Morning block</div>
+          <span class="pill scheduled">Scheduled</span>
+          <div class="nt">Note: side gate, harness on the hook.</div>
+        </div>
+        <div class="acts"><button class="btn gh">Cancel</button></div>
+      </div>
+      <div class="bk">
+        <label class="selbox"><input type="checkbox" class="bsel"></label>
+        <span class="accent acc-scheduled"></span>
+        <div class="av">MR</div>
+        <div class="info">
+          <div class="nm">Marisol Rowan</div>
+          <div class="svc">Overnight · 2026-05-30 · Evening block</div>
+          <span class="pill scheduled">Scheduled</span>
+        </div>
+        <div class="acts"><button class="btn gh">Cancel</button></div>
+      </div>
+    </div>
+
+    <div class="sec d3">
+      <h3>History <span class="ct">recent</span></h3>
+      <div class="bk">
+        <label class="selbox"><input type="checkbox" class="bsel"></label>
+        <span class="accent acc-completed"></span>
+        <div class="av">BS</div>
+        <div class="info">
+          <div class="nm">Bess Sparrow</div>
+          <div class="svc">45 min · 2026-05-25 · Afternoon block</div>
+          <span class="pill completed">Completed</span>
+        </div>
+      </div>
+      <div class="bk">
+        <label class="selbox"><input type="checkbox" class="bsel"></label>
+        <span class="accent acc-cancelled"></span>
+        <div class="av">SM</div>
+        <div class="info">
+          <div class="nm">Sana Mercer</div>
+          <div class="svc">Drop-in · 2026-05-22 · Midday block</div>
+          <span class="pill cancelled">Cancelled</span>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · Bookings (mirrors BookingListScreen) · status sections + Approve/Reject/Cancel + multi-select mass edit · palette from AuntieColors.kt</p>
+  </div>
+
+  <div class="bulkbar" id="bulkbar">
+    <span class="cnt"><b id="cnt">0</b> selected</span>
+    <span class="sep"></span>
+    <button class="btn go">Approve</button>
+    <button class="btn gh">Reject</button>
+    <button class="btn gh">Cancel</button>
+    <button class="btn gh">Reschedule</button>
+    <span class="sep"></span>
+    <button class="clear" id="clearSel">Clear</button>
+  </div>
+
+  <script>
+    const boxes=[...document.querySelectorAll('.bsel')], bar=document.getElementById('bulkbar'), cntEl=document.getElementById('cnt');
+    function sync(){
+      const picked=boxes.filter(b=>b.checked);
+      cntEl.textContent=picked.length;
+      bar.classList.toggle('show', picked.length>0);
+      boxes.forEach(b=>b.closest('.bk').classList.toggle('picked', b.checked));
+    }
+    boxes.forEach(b=>b.addEventListener('change',sync));
+    document.getElementById('clearSel').addEventListener('click',()=>{boxes.forEach(b=>b.checked=false);sync();});
+    const selToggle=document.getElementById('selToggle');
+    selToggle.addEventListener('click',()=>{
+      const on=document.body.classList.toggle('selecting');
+      selToggle.classList.toggle('on',on);
+      if(!on){boxes.forEach(b=>b.checked=false);sync();}
+    });
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

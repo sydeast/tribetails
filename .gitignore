@@ -16,5 +16,17 @@
 __pycache__/
 node_modules/
 node_modules
-ui-ideas/
+# ui-ideas holds design authority source 2 (auntieos-admin/CLAUDE.md). It was
+# ignored wholesale, so a clone and every git worktree contained none of it,
+# while the plans cite it as the spec. The HTML is now tracked, scrubbed of the
+# real client names that were the original reason for the exclusion.
+# The IMAGES stay out: they cannot be scrubbed by find-and-replace, one of them
+# is a third-party product screenshot carrying someone's booking data, and they
+# are 26 MB against 1.8 MB of text.
+# Leading `**/` is required. A pattern containing a slash is anchored to the
+# directory holding this .gitignore, so a bare `ui-ideas/**/*.png` would only
+# match a top-level ui-ideas, which does not exist.
+**/ui-ideas/**/*.png
+**/ui-ideas/**/*.jpg
+**/ui-ideas/**/*.jpeg
 visual-WRONGKILL/

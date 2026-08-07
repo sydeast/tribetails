@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · KinTale Report (concept)</title>
+<!--
+  AuntieOS redesign concept · KinTale Report (the published visit-recap artifact).
+  Standalone HTML/CSS mockup. Same "Den" aesthetic as the Directory + Composer.
+  No em dashes. Palette + tokens from AuntieColors.kt / auntieos-directory-2026-05-27.html.
+
+  MIRRORS the real contract in:
+    web/composeApp/src/commonMain/kotlin/com/tribetails/auntieos/web/screens/kintales/
+      KinTaleReportScreen.kt        (auntie-side editor: title, Visit Notes, send/sent banner)
+      KinTaleReportViewModel.kt     (DRAFT / SENT lifecycle, send copy)
+      KinTaleComposeScreen.kt       (full template-driven sections + labels)
+    web/.../data/FirestoreClient.kt        (data class KinCareReport)
+    web/.../data/KinTaleModels.kt          (FieldResponse, ChecklistItem, MoodOption, DefaultKinTaleTemplate)
+    web/.../data/MediaModels.kt            (MediaFile, KinTaleMediaConfig: MAX_FILES_PER_TALE=75, VIDEO_CLIP_SECONDS=15)
+
+  Real KinCareReport fields surfaced here (no invented fields):
+    kinfolkName, authorDisplayName, kinIds, serviceType, visitDate,
+    arrivedAt, departedAt, visitRouteId, bodyCopy, fieldResponses (checklist),
+    petMoodSelections, mediaFileIds, status (DRAFT|SENT), sentAt, sentVia.
+
+  Verbatim strings reproduced from the Kotlin source (NOT authored here):
+    "KinTale Update", "Visit Notes", "This KinTale has been sent.",
+    "GPS Route", "KinTale Narrative", "Overall visit checklist",
+    "Things that apply to the whole visit",
+    default checklist labels (Peed / Pooed / Fed / Fresh water provided /
+    Medications given / Playtime provided / House / yard secure / All doors
+    locked / Alarm system set / Mail / packages collected / Plants watered /
+    Trash taken out).
+
+  Things marked SUGGESTION are NOT in the shipped contract yet:
+    1. Read-only "published artifact" framing of the SENT report (the shipped
+       KinTaleReportScreen is the auntie's editor; this lays out the same data
+       as a finished read view).
+    2. Kinfolk comment thread (KinTale comment = kinfolk response). No Comment
+       model exists in code yet; see MEMORY "KinTale comments threading".
+    3. Delivery receipt line (sentVia + deliveryReceiptId rendered as a status row).
+    4. Per-pet mood pills rendered from petMoodSelections (the shipped composer
+       has petMoodEnabled=false on the default template).
+    5. "View as kinfolk" / copy-share-link affordances.
+
+  Sample report body, pet names, kinfolk name and times below are illustrative
+  PLACEHOLDER, not real kinfolk data. User authors all kinfolk-facing copy;
+  real copy gaps are marked TODO.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1;1,9..144,400..700,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --success:#3FB27F;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.45;mix-blend-mode:screen;filter:blur(74px);
+    animation:drift 29s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--pink),transparent 62%);top:-10vmax;right:-4vmax;}
+  .blob.b{width:40vmax;height:40vmax;background:radial-gradient(circle,var(--orange),transparent 60%);bottom:-12vmax;left:-8vmax;animation-delay:-10s;}
+  .blob.c{width:34vmax;height:34vmax;background:radial-gradient(circle,var(--teal),transparent 60%);top:34vmax;left:38vmax;animation-delay:-16s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-9deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1180px;margin:0 auto;padding:26px 30px 70px;}
+
+  /* top bar: Back + screen title (KinTaleReportScreen header) */
+  .bar{display:flex;align-items:center;gap:16px;margin-bottom:22px;
+    opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards;}
+  .back{display:inline-flex;align-items:center;gap:7px;background:transparent;border:1px solid var(--line);
+    color:var(--cream);font-family:"Hanken Grotesk";font-weight:600;font-size:13.5px;padding:9px 14px;
+    border-radius:12px;cursor:pointer;transition:.18s var(--ease);}
+  .back:hover{background:var(--navy-3);transform:translateY(-2px)}
+  .back svg{width:15px;height:15px}
+  .bar .title{font-family:"Fraunces",serif;font-weight:420;font-size:25px;letter-spacing:-.01em;
+    font-variation-settings:"SOFT" 50,"WONK" 1;}
+  .spacer{flex:1}
+  .statuspill{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.1em;
+    text-transform:uppercase;padding:6px 12px;border-radius:20px;font-weight:600;
+    background:rgba(63,178,127,.16);color:#73d6a7;border:1px solid rgba(63,178,127,.4);
+    display:inline-flex;align-items:center;gap:7px;}
+  .statuspill .dot{width:6px;height:6px;border-radius:50%;background:var(--success);}
+  .btn{font-family:"Hanken Grotesk";font-weight:700;font-size:13.5px;padding:10px 16px;border-radius:12px;
+    cursor:pointer;border:none;transition:.2s var(--ease);display:inline-flex;align-items:center;gap:8px;}
+  .btn.ghost{background:transparent;color:var(--cream);border:1px solid var(--line);}
+  .btn.ghost:hover{background:var(--navy-3);transform:translateY(-2px);}
+
+  /* sent banner: mirrors SentBanner() success-tinted card */
+  .sentbanner{display:flex;align-items:center;gap:10px;background:rgba(63,178,127,.12);
+    border:1px solid rgba(63,178,127,.4);border-radius:12px;padding:13px 16px;color:#8ee0b6;
+    font-size:14px;margin-bottom:20px;opacity:0;animation:rise .6s var(--ease) .04s forwards;}
+  .sentbanner svg{width:17px;height:17px;flex:0 0 auto}
+  .sentbanner b{color:#a9eccb;font-weight:600}
+
+  .report{display:grid;grid-template-columns:1.5fr .9fr;gap:22px;align-items:start;}
+  .pane{opacity:0;transform:translateY(18px);animation:rise .7s var(--ease) forwards;}
+  .pane.l{animation-delay:.08s}.pane.r{animation-delay:.18s}
+
+  /* cover: gradient hero, echoes ComposerHeader orangeToPink + Den cover */
+  .cover{position:relative;border-radius:22px;overflow:hidden;min-height:210px;
+    background:
+      radial-gradient(120% 120% at 18% 12%,rgba(213,92,135,.55),transparent 55%),
+      radial-gradient(120% 120% at 90% 88%,rgba(10,133,149,.5),transparent 55%),
+      linear-gradient(160deg,var(--orange),var(--pink));
+    border:1px solid var(--line);display:flex;flex-direction:column;justify-content:flex-end;padding:24px;}
+  .cover .eyebrow{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.14em;
+    text-transform:uppercase;color:#fff;opacity:.9;margin-bottom:9px;}
+  .cover h1{font-family:"Fraunces",serif;font-weight:500;font-size:38px;letter-spacing:-.02em;line-height:1.05;
+    color:#fff;font-variation-settings:"SOFT" 60,"WONK" 1;text-shadow:0 1px 12px rgba(0,0,0,.28);}
+  .cover .from{margin-top:12px;font-size:13.5px;color:#fff;opacity:.92;}
+  .cover .from b{font-weight:600}
+
+  .block{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.55));border:1px solid var(--line);
+    border-radius:20px;padding:22px;margin-top:18px;}
+  .block > .lab{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--cream-dim);opacity:.72;display:flex;align-items:center;gap:8px;margin-bottom:14px;}
+  .block > .lab .ct{color:var(--orange);opacity:.9}
+  .body-copy{font-size:16px;line-height:1.7;color:var(--cream);}
+  .body-copy.placeholder{color:rgba(251,251,249,.5);font-style:italic}
+
+  /* photo showcase grid (mediaFileIds) */
+  .photos{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+  .ph{aspect-ratio:1;border-radius:14px;border:1px solid var(--line);overflow:hidden;position:relative;
+    display:grid;place-items:center;font-size:30px;}
+  .ph.p1{background:radial-gradient(circle at 40% 35%,rgba(223,132,49,.42),transparent 60%),var(--navy-3)}
+  .ph.p2{background:radial-gradient(circle at 60% 40%,rgba(213,92,135,.42),transparent 60%),var(--navy-3)}
+  .ph.p3{background:radial-gradient(circle at 50% 60%,rgba(10,133,149,.42),transparent 60%),var(--navy-3)}
+  .ph.p4{background:radial-gradient(circle at 35% 55%,rgba(116,83,138,.42),transparent 60%),var(--navy-3)}
+  .ph.p5{background:radial-gradient(circle at 55% 30%,rgba(213,83,90,.42),transparent 60%),var(--navy-3)}
+  .ph .vidtag{position:absolute;bottom:8px;right:8px;font-family:"Spline Sans Mono",monospace;font-size:9px;
+    background:rgba(17,19,31,.78);padding:3px 7px;border-radius:14px;color:var(--cream);letter-spacing:.04em;}
+
+  /* checklist: per-pet + per-visit FieldResponse (boolValue) */
+  .petblock + .petblock{margin-top:16px}
+  .pethead{display:flex;align-items:center;gap:10px;margin-bottom:11px;}
+  .pethead .pic{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;font-size:17px;flex:0 0 auto;
+    border:1px solid var(--line);}
+  .pethead b{font-family:"Fraunces",serif;font-weight:500;font-size:17px}
+  .pethead small{display:block;color:var(--cream-dim);font-size:12px;font-family:"Spline Sans Mono",monospace;
+    letter-spacing:.03em}
+  .checks{display:flex;flex-wrap:wrap;gap:8px;}
+  .ck{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;padding:7px 13px;border-radius:24px;
+    border:1px solid var(--line);background:var(--navy-3);color:var(--cream-dim);}
+  .ck.done{background:rgba(63,178,127,.14);border-color:rgba(63,178,127,.42);color:#8ee0b6;}
+  .ck svg{width:13px;height:13px;flex:0 0 auto}
+  /* unchecked items are hidden in a sent KinTale (Precise semantics: showWhenUnchecked=false).
+     We render only completed items, plus one disclosed placeholder. */
+  .ck.note{background:transparent;border-style:dashed;color:var(--cream-dim);font-weight:500;font-style:italic}
+
+  /* route: read-only GPS Route (visitRouteId breadcrumbs) */
+  .route{position:relative;border-radius:16px;overflow:hidden;height:160px;border:1px solid var(--line);
+    background:linear-gradient(160deg,#0f1828,#11131F);}
+  .route .stat{position:absolute;bottom:12px;left:14px;display:flex;gap:18px;font-family:"Spline Sans Mono",monospace;font-size:12px;}
+  .route .stat b{color:var(--teal)}
+  .route svg{width:100%;height:100%}
+  .dash{stroke-dasharray:6 8;animation:flow 3s linear infinite}
+  @keyframes flow{to{stroke-dashoffset:-28}}
+
+  /* right rail */
+  .side{position:sticky;top:24px;display:flex;flex-direction:column;gap:18px;}
+  .card{background:linear-gradient(160deg,var(--navy-2),var(--navy-3));border:1px solid var(--line);
+    border-radius:20px;padding:20px;}
+  .card h4{font-family:"Fraunces",serif;font-weight:500;font-size:18px;margin-bottom:14px;
+    display:flex;align-items:center;gap:8px;font-variation-settings:"SOFT" 50;}
+  .card h4 .tail{display:inline-block;transform-origin:80% 80%;animation:wag 2.6s var(--ease) infinite}
+  @keyframes wag{0%,100%{transform:rotate(-8deg)}50%{transform:rotate(12deg)}}
+  .row{display:flex;align-items:center;gap:12px;padding:11px 0;}
+  .row + .row{border-top:1px solid var(--line-2)}
+  .av{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:19px;flex:0 0 auto;
+    border:1px solid var(--line);}
+  .av.k{background:conic-gradient(from 200deg,var(--teal),var(--purple));font-family:"Fraunces";color:var(--cream);font-weight:600;font-size:16px;}
+  .av.a{background:conic-gradient(from 140deg,var(--orange),var(--coral));font-family:"Fraunces";color:var(--cream);font-weight:600;font-size:16px;}
+  .row b{font-weight:600;font-size:15px}.row small{display:block;color:var(--cream-dim);font-size:12.5px}
+  .meta-line{display:flex;justify-content:space-between;font-size:13.5px;padding:8px 0;color:var(--cream-dim);gap:14px;}
+  .meta-line + .meta-line{border-top:1px solid var(--line-2)}
+  .meta-line b{color:var(--cream);font-weight:600;text-align:right}
+  .meta-line .mono{font-family:"Spline Sans Mono",monospace;font-size:12.5px}
+
+  /* delivery receipt (sentVia + deliveryReceiptId): SUGGESTION */
+  .receipt .lab{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--cream-dim);opacity:.7;margin-bottom:10px;display:block}
+  .sug{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;
+    color:#f0b277;background:rgba(223,132,49,.16);border:1px solid rgba(223,132,49,.4);
+    padding:2px 7px;border-radius:14px;font-weight:600;margin-left:8px;vertical-align:middle}
+
+  /* mood pills (petMoodSelections): SUGGESTION (default template petMoodEnabled=false) */
+  .moods{display:flex;flex-wrap:wrap;gap:9px}
+  .mood{display:inline-flex;align-items:center;gap:7px;font-size:13.5px;font-weight:600;padding:8px 14px;
+    border-radius:26px;border:1px solid var(--line);background:var(--navy-3);}
+  .mood .nm{color:var(--cream-dim);font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.04em}
+
+  /* kinfolk comment thread: SUGGESTION (no Comment model in code yet) */
+  .thread{display:flex;flex-direction:column;gap:14px}
+  .cmt{display:flex;gap:11px}
+  .cmt .ca{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;flex:0 0 auto;
+    font-family:"Fraunces";font-weight:600;font-size:14px;color:var(--cream);
+    background:conic-gradient(from 200deg,var(--teal),var(--purple))}
+  .cmt .ca.au{background:conic-gradient(from 140deg,var(--orange),var(--coral))}
+  .cmt .cb{flex:1}
+  .cmt .ch{display:flex;align-items:baseline;gap:9px;margin-bottom:3px}
+  .cmt .ch b{font-weight:600;font-size:14px}
+  .cmt .ch .when{font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim);opacity:.7}
+  .cmt .ctxt{font-size:14px;line-height:1.55;color:var(--cream)}
+  .cmt.placeholder .ctxt{color:rgba(251,251,249,.5);font-style:italic}
+  .reply{margin-top:4px;display:flex;gap:9px;align-items:center;background:var(--navy-3);border:1px solid var(--line);
+    border-radius:13px;padding:11px 14px;color:var(--cream-dim);font-size:13.5px}
+  .reply .send{margin-left:auto;background:var(--orange);color:var(--navy);border:none;border-radius:10px;
+    padding:7px 12px;font-family:"Hanken Grotesk";font-weight:700;font-size:12.5px;cursor:pointer}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  @keyframes flow{to{stroke-dashoffset:-28}}
+  .note{margin-top:42px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:920px){.report{grid-template-columns:1fr}.side{position:static}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <!-- top bar: Back + "KinTale Update" (verbatim screen title) -->
+    <div class="bar">
+      <button class="back">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+        Back
+      </button>
+      <span class="title">KinTale Update</span>
+      <div class="spacer"></div>
+      <!-- SUGGESTION: View as kinfolk + copy share link -->
+      <button class="btn ghost">View as kinfolk <span class="sug">SUGGESTION</span></button>
+      <!-- status reflects KinCareReport.status == "SENT" -->
+      <span class="statuspill"><span class="dot"></span>Sent</span>
+    </div>
+
+    <!-- SentBanner(): "This KinTale has been sent." (verbatim) -->
+    <div class="sentbanner">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>
+      <span>This KinTale has been sent.</span>
+    </div>
+
+    <div class="report">
+      <!-- LEFT: the published recap body -->
+      <div class="pane l">
+        <!-- COVER. Title/headline below is illustrative PLACEHOLDER, not real kinfolk data. -->
+        <div class="cover">
+          <div class="eyebrow">KinTale · Visit Recap</div>
+          <!-- TODO: real headline is auntie-authored; reports carry no title field today.
+               Sample placeholder only. -->
+          <h1>A good morning on the trail</h1>
+          <!-- authorDisplayName + kinfolkName -->
+          <div class="from">From <b>Auntie Dee</b> for <b>the Wrens</b></div>
+        </div>
+
+        <!-- KinTale Narrative: label verbatim from KinTaleComposeScreen ComposerSection.
+             bodyCopy field. Sample text is PLACEHOLDER, not real kinfolk data. -->
+        <div class="block">
+          <div class="lab">KinTale Narrative</div>
+          <!-- PLACEHOLDER body copy. Empty-state placeholder string in code is
+               "Tell the story of today's visit..." -->
+          <p class="body-copy">
+            Both pups met me at the door this morning, tails going a mile a minute. We did the long
+            loop past the creek and back. One found a very important stick and carried it the whole
+            way home. Topped up fresh water and locked everything behind us before heading out.
+          </p>
+        </div>
+
+        <!-- Photo showcase: mediaFileIds. KinTaleMediaConfig caps at 75 files; videos clip to 15s. -->
+        <div class="block">
+          <div class="lab">Photos <span class="ct">· 5 attached</span></div>
+          <div class="photos">
+            <div class="ph p1">🐕</div>
+            <div class="ph p2">🦴</div>
+            <div class="ph p3">🌳</div>
+            <div class="ph p4">🐾</div>
+            <div class="ph p5">🎾<span class="vidtag">VIDEO · 0:15</span></div>
+          </div>
+        </div>
+
+        <!-- Per-pet checklist. FieldResponse boolValue per kin. Labels are the
+             DefaultKinTaleTemplate items (verbatim). Unchecked items are omitted
+             from a sent KinTale (showWhenUnchecked=false, Precise semantics). -->
+        <div class="block">
+          <div class="lab">How was Biscuit today?</div>
+          <div class="petblock">
+            <div class="pethead">
+              <div class="pic" style="background:rgba(10,133,149,.18)">🐕</div>
+              <!-- kin name + species/breed line. Placeholder values. -->
+              <div><b>Biscuit</b><small>Dog · Labrador</small></div>
+            </div>
+            <div class="checks">
+              <span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> Peed</span>
+              <span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> Pooed</span>
+              <span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> Fed</span>
+              <span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> Fresh water provided</span>
+              <span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> Playtime provided</span>
+            </div>
+          </div>
+
+          <div class="petblock">
+            <div class="pethead">
+              <div class="pic" style="background:rgba(213,92,135,.18)">🐕</div>
+              <div><b>Gravy</b><small>Dog · Labrador</small></div>
+            </div>
+            <div class="checks">
+              <span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> Peed</span>
+              <span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> Pooed</span>
+              <span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> Fed</span>
+              <span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> Fresh water provided</span>
+              <span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> Medications given</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Per-pet mood pills: petMoodSelections. SUGGESTION: the default
+             template ships petMoodEnabled=false, so this renders only when a
+             template turns it on. MoodOption.emoji + label, kept per kin. -->
+        <div class="block">
+          <div class="lab">Pet mood <span class="sug">SUGGESTION</span></div>
+          <div class="moods">
+            <!-- emoji + label are MoodOption fields; values here are placeholder -->
+            <span class="mood">😋 Happy <span class="nm">Biscuit</span></span>
+            <span class="mood">😴 Sleepy <span class="nm">Gravy</span></span>
+          </div>
+        </div>
+
+        <!-- Overall visit checklist: label verbatim from KinTaleComposeScreen
+             ("Overall visit checklist" / "Things that apply to the whole visit").
+             PER_VISIT items from DefaultKinTaleTemplate (verbatim labels). -->
+        <div class="block">
+          <div class="lab">Overall visit checklist</div>
+          <div class="checks">
+            <span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> House / yard secure</span>
+            <span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> All doors locked</span>
+            <span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> Mail / packages collected</span>
+            <span class="ck note">Things that apply to the whole visit</span>
+          </div>
+        </div>
+
+        <!-- GPS Route: label verbatim. Read-only render of the visitRouteId
+             breadcrumb trail. Route stats below are placeholder. -->
+        <div class="block">
+          <div class="lab">GPS Route</div>
+          <div class="route">
+            <svg viewBox="0 0 600 160" preserveAspectRatio="none">
+              <path d="M30 130 C 120 50, 200 150, 300 90 S 470 40, 570 80" fill="none" stroke="#0A8595" stroke-width="3" class="dash" stroke-linecap="round"/>
+              <circle cx="30" cy="130" r="6" fill="#DF8431"/>
+              <circle cx="570" cy="80" r="6" fill="#D55C87"/>
+              <circle cx="300" cy="90" r="4" fill="#FBFBF9" opacity=".7"/>
+            </svg>
+            <div class="stat"><span>dist <b>1.4 mi</b></span><span>time <b>32 min</b></span></div>
+          </div>
+        </div>
+
+        <!-- Kinfolk comment thread. SUGGESTION: no Comment model exists in code
+             yet (MEMORY: "KinTale comments threading" is a planned forum-style
+             feature; KinTale note = report body by auntie, comment = kinfolk
+             response). All names + comment text below are PLACEHOLDER. -->
+        <div class="block">
+          <div class="lab">Replies <span class="sug">SUGGESTION</span></div>
+          <div class="thread">
+            <div class="cmt">
+              <div class="ca">LW</div>
+              <div class="cb">
+                <div class="ch"><b>Lorna Wren</b><span class="when">2h ago</span></div>
+                <!-- PLACEHOLDER kinfolk comment, not real data -->
+                <div class="ctxt">Thank you for the stick update, that is so him. The boys look thrilled.</div>
+              </div>
+            </div>
+            <div class="cmt">
+              <div class="ca au">AD</div>
+              <div class="cb">
+                <div class="ch"><b>Auntie Dee</b><span class="when">1h ago</span></div>
+                <!-- PLACEHOLDER auntie reply, not real data -->
+                <div class="ctxt">Anytime. We will save the trail loop for next visit too.</div>
+              </div>
+            </div>
+            <!-- admin reply composer (auntie responding to a kinfolk comment) -->
+            <div class="reply">
+              <span style="opacity:.7">TODO: reply placeholder</span>
+              <button class="send">Reply</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: recipients + visit meta + delivery receipt -->
+      <div class="pane r">
+        <div class="side">
+          <!-- Recipients: kinfolkName + kin (kinIds). "Tribe" = client, "kinfolk"
+               = household, "kin" = pets (per house terminology). -->
+          <div class="card">
+            <h4>Goes to <span class="tail">🐾</span></h4>
+            <!-- kinfolkName. Placeholder. -->
+            <div class="row">
+              <div class="av k">LW</div>
+              <div><b>Lorna Wren</b><small>Kinfolk · the Wrens</small></div>
+            </div>
+            <!-- kinIds rendered as kin chips. Placeholder pet names. -->
+            <div class="row">
+              <div class="av" style="background:rgba(223,132,49,.16)">🐕</div>
+              <div><b>Biscuit &amp; Gravy</b><small>2 kin · Labradors</small></div>
+            </div>
+            <!-- authorDisplayName -->
+            <div class="row">
+              <div class="av a">AD</div>
+              <div><b>Auntie Dee</b><small>Author</small></div>
+            </div>
+          </div>
+
+          <!-- Visit meta: serviceType, visitDate, arrivedAt, departedAt. Placeholder values. -->
+          <div class="card">
+            <div class="meta-line"><span>Service</span><b>TODO: serviceType</b></div>
+            <div class="meta-line"><span>Visit date</span><b class="mono">Tue May 27</b></div>
+            <div class="meta-line"><span>Arrived</span><b class="mono">9:00 AM</b></div>
+            <div class="meta-line"><span>Departed</span><b class="mono">9:32 AM</b></div>
+          </div>
+
+          <!-- Delivery receipt: sentAt + sentVia + deliveryReceiptId.
+               sentVia values in code: sms / email / fcm. SUGGESTION to surface
+               deliveryReceiptId as a read row. Placeholder values. -->
+          <div class="card receipt">
+            <span class="lab">Delivery <span class="sug">SUGGESTION</span></span>
+            <div class="meta-line"><span>Sent at</span><b class="mono">May 27, 9:41 AM</b></div>
+            <div class="meta-line"><span>Sent via</span><b class="mono">email</b></div>
+            <div class="meta-line"><span>Receipt</span><b class="mono">TODO: deliveryReceiptId</b></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · KinTale Report (published artifact) · palette from AuntieColors.kt · sample content is placeholder, not real kinfolk data</p>
+  </div>
+
+  <script>
+    // quiet mesh parallax, consistent with the Directory + Composer screens
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-15}px,${y*-15}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

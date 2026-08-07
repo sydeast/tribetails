@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Form Schema Editor (concept)</title>
+<!--
+  AuntieOS redesign concept · Form Schema Editor (admin). Standalone HTML/CSS mockup.
+  Same "Den" aesthetic as auntieos-directory-2026-05-27.html. No em dashes. Palette from AuntieColors.kt.
+
+  MIRRORS: web/composeApp/src/commonMain/kotlin/com/tribetails/auntieos/web/screens/admin/formschemas/FormSchemaEditorScreen.kt
+    - SectionHeader: "New form schema" / "Edit form schema", subtitle "{id} • v{version}", ClipboardList icon, trailing Back GhostButton.
+    - Header inputs: "Schema ID *" (placeholder tribeProfile, immutable once persisted), "Name *" (placeholder Tribe Profile),
+      "Description" (placeholder "Optional admin-facing description", multiline minLines=2).
+    - "Sections" + "Add section" GhostButton; empty state "No sections yet. Use Add section to create one."
+    - SectionCard: "Section {n}", up/down reorder + delete, "Section title *", "Section description", "Fields ({count})",
+      "Add field"; empty "No fields in this section yet."
+    - FieldCard: "Field {n}", reorder/delete, "Field key *" + "Label *", "Type" + 9-type chip row (FormSchema.SUPPORTED_TYPES:
+      text, textarea, select, multiselect, date, number, checkbox, phone, email), conditional "Options (comma-separated) *"
+      (placeholder "Small, Medium, Large") shown only for select/multiselect (FormSchema.typeRequiresOptions),
+      "Helper text", "Placeholder", "Default value", "Group", "Required" with Yes/No SegmentedPicker.
+    - Footer: "Delete schema" / "Tap to confirm delete", "Cancel", "Save" / "Saving…" (canSave gating).
+    - ValidationBanner (error tinted) + StatusToast (Success/Error, fail-loud).
+    Validation copy reproduced verbatim from FormSchemaHelpers.kt (validateFormSchema).
+
+  SUGGESTION items (additions NOT in source, tagged inline with data-suggestion + // SUGGESTION comments):
+    1. Live preview pane (right column) rendering the schema as kinfolk would see it.
+    2. "Dirty / unsaved changes" pill in header (isDirty exists in EditorState but the screen does not surface it).
+    3. Collapse / expand affordance on section cards.
+    These are exploration only; everything else mirrors the shipped Compose screen.
+
+  Where Kotlin uses a placeholder em dash for empty values, this renders a plain hyphen "-".
+  Sample field labels / values are illustrative placeholder, NOT real data (see HTML comments).
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6; --cream-faint:#8A8A82;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --error:#E06666;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.45;mix-blend-mode:screen;filter:blur(74px);
+    animation:drift 29s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--purple),transparent 62%);top:-10vmax;left:-4vmax;}
+  .blob.b{width:40vmax;height:40vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:10vmax;right:-8vmax;animation-delay:-10s;}
+  .blob.c{width:34vmax;height:34vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-12vmax;left:36vmax;animation-delay:-16s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-9deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1080px;margin:0 auto;padding:26px 30px 60px;}
+
+  /* ---- SectionHeader ---- */
+  .head{display:flex;align-items:flex-start;gap:16px;margin-bottom:20px;
+    opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards;}
+  .head .hicon{width:44px;height:44px;flex:0 0 auto;border-radius:14px;display:grid;place-items:center;
+    background:linear-gradient(150deg,rgba(116,83,138,.55),rgba(10,133,149,.4));border:1px solid var(--line);color:var(--cream);}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--orange);margin-bottom:5px;}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:32px;letter-spacing:-.02em;
+    font-variation-settings:"SOFT" 50,"WONK" 1;}
+  .head h2 b{color:var(--pink);font-weight:500}
+  .head .sub{font-family:"Spline Sans Mono",monospace;font-size:11.5px;color:var(--cream-dim);margin-top:6px;}
+  .spacer{flex:1}
+  .ghost{background:var(--navy-3);color:var(--cream);border:1px solid var(--line);font-family:"Hanken Grotesk";
+    font-weight:600;font-size:13px;padding:9px 15px;border-radius:11px;cursor:pointer;transition:.18s var(--ease);
+    display:inline-flex;align-items:center;gap:7px;white-space:nowrap;}
+  .ghost:hover{background:var(--navy-2);border-color:rgba(223,132,49,.4)}
+  .ghost svg{width:14px;height:14px}
+  .ghost.danger{color:var(--error)}
+  .ghost.danger svg{color:var(--error)}
+  /* SUGGESTION: dirty pill (isDirty in EditorState, not surfaced by the screen) */
+  .dirtypill{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+    padding:4px 9px;border-radius:20px;font-weight:600;background:rgba(223,132,49,.16);color:#f0b277;
+    border:1px solid rgba(223,132,49,.4);align-self:center;}
+
+  /* ---- StatusToast (fail-loud) ---- */
+  .toast{display:flex;align-items:center;gap:10px;border-radius:12px;padding:11px 14px;margin-bottom:14px;font-size:13.5px;
+    opacity:0;animation:rise .5s var(--ease) .05s forwards;}
+  .toast.success{background:rgba(10,133,149,.14);border:1px solid rgba(10,133,149,.5);color:#7fdce8;}
+  .toast.error{background:rgba(224,102,102,.12);border:1px solid var(--error);color:#f2a3a3;}
+  .toast svg{width:17px;height:17px;flex:0 0 auto}
+  .toast .x{margin-left:auto;cursor:pointer;opacity:.7;font-family:"Spline Sans Mono",monospace}
+  .toast .x:hover{opacity:1}
+
+  /* ---- meta inputs (BottomBorderField / MultilineField) ---- */
+  .meta{display:flex;flex-direction:column;gap:14px;margin-bottom:20px;
+    opacity:0;animation:rise .6s var(--ease) .08s forwards;}
+  .fld{display:flex;flex-direction:column;gap:5px;}
+  .fld label{font-family:"Hanken Grotesk";font-size:11.5px;letter-spacing:.04em;color:var(--cream-dim);font-weight:600;}
+  .fld .bb{background:none;border:none;border-bottom:1px solid var(--line);color:var(--cream);font-family:inherit;
+    font-size:14.5px;padding:7px 2px;outline:none;transition:.18s var(--ease);width:100%;}
+  .fld .bb:focus{border-bottom-color:var(--orange)}
+  .fld .bb::placeholder{color:var(--cream-faint)}
+  .fld .bb[disabled]{color:var(--cream-dim);cursor:not-allowed;border-bottom-style:dashed}
+  .fld textarea.bb{resize:vertical;min-height:46px;line-height:1.5}
+  .fld.err .bb{border-bottom-color:var(--error)}
+  .fld .immut{font-family:"Spline Sans Mono",monospace;font-size:10px;color:var(--cream-faint);}
+
+  /* ---- Sections row header ---- */
+  .secbar{display:flex;align-items:center;justify-content:space-between;margin:24px 0 10px;
+    opacity:0;animation:rise .6s var(--ease) .12s forwards;}
+  .secbar h3{font-family:"Fraunces",serif;font-weight:420;font-size:23px;letter-spacing:-.01em;}
+  .empty{color:var(--cream-faint);font-size:13px;padding:12px 0;}
+
+  /* ---- SectionCard ---- */
+  .seccard{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.55));border:1px solid var(--line);
+    border-radius:18px;padding:18px;margin-bottom:14px;position:relative;
+    opacity:0;transform:translateY(14px);animation:rise .6s var(--ease) forwards;}
+  .seccard:nth-of-type(1){animation-delay:.16s}.seccard:nth-of-type(2){animation-delay:.22s}
+  .cardhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+  .cardhead .tag{font-family:"Hanken Grotesk";font-weight:600;font-size:12.5px;color:var(--cream-dim);letter-spacing:.02em;}
+  .tools{display:flex;align-items:center;gap:6px;}
+  .rbtn{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:none;color:var(--cream);
+    display:grid;place-items:center;cursor:pointer;transition:.15s var(--ease)}
+  .rbtn:hover:not([disabled]){border-color:rgba(223,132,49,.5);background:var(--navy-3)}
+  .rbtn[disabled]{color:var(--cream-faint);opacity:.4;cursor:not-allowed}
+  .rbtn svg{width:14px;height:14px}
+  .del{cursor:pointer;color:var(--error);display:grid;place-items:center;width:26px;height:26px;transition:.15s var(--ease)}
+  .del:hover{transform:scale(1.12)}
+  .del svg{width:15px;height:15px}
+
+  .fldsbar{display:flex;align-items:center;justify-content:space-between;margin:16px 0 10px;}
+  .fldsbar .ft{font-family:"Hanken Grotesk";font-weight:600;font-size:14.5px;color:var(--cream);}
+
+  /* ---- FieldCard ---- */
+  .fieldcard{background:var(--navy-3);border:1px solid var(--line-2);border-radius:12px;padding:13px 14px;margin-bottom:10px;}
+  .fieldcard.err{border-color:var(--error)}
+  .fchead{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;}
+  .fchead .tag{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--cream-dim);}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px;}
+
+  /* type chip row (FormSchema.SUPPORTED_TYPES, chunked 5) */
+  .typelbl{font-family:"Hanken Grotesk";font-size:11.5px;color:var(--cream-dim);font-weight:600;margin-bottom:7px;letter-spacing:.04em;}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
+  .chip{font-family:"Spline Sans Mono",monospace;font-size:11px;padding:5px 11px;border-radius:999px;cursor:pointer;
+    background:var(--navy-2);color:var(--cream);border:1px solid var(--line);transition:.15s var(--ease);}
+  .chip:hover{border-color:rgba(223,132,49,.5)}
+  .chip.on{background:var(--orange);color:var(--navy);border-color:var(--orange);font-weight:600;}
+
+  .stack{display:flex;flex-direction:column;gap:12px;}
+  .reqrow{display:flex;align-items:center;justify-content:space-between;padding-top:4px;}
+  .reqrow .rl{font-size:14px;color:var(--cream);}
+  .seg{display:inline-flex;background:var(--navy-2);border:1px solid var(--line);border-radius:9px;padding:3px;gap:2px;}
+  .seg button{background:none;border:none;color:var(--cream-dim);font-family:"Hanken Grotesk";font-weight:600;
+    font-size:12.5px;padding:5px 16px;border-radius:7px;cursor:pointer;transition:.15s var(--ease);}
+  .seg button.on{background:var(--cream);color:var(--navy)}
+
+  /* ValidationBanner (error tint, hairline) */
+  .vbanner{margin-top:11px;border:1px solid var(--error);background:rgba(224,102,102,.10);border-radius:8px;
+    padding:9px 11px;display:flex;flex-direction:column;gap:3px;}
+  .vbanner p{color:#f2a3a3;font-size:12.5px;line-height:1.4;}
+
+  .opts-hidden{display:none}
+
+  /* ---- footer actions ---- */
+  .footer{display:flex;align-items:center;gap:10px;margin-top:24px;
+    opacity:0;animation:rise .6s var(--ease) .3s forwards;}
+  .primary{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;
+    font-size:14px;padding:11px 22px;border-radius:12px;cursor:pointer;transition:.2s var(--ease);}
+  .primary:hover:not([disabled]){transform:translateY(-2px);box-shadow:0 12px 28px -10px rgba(223,132,49,.6)}
+  .primary[disabled]{opacity:.4;cursor:not-allowed;background:var(--navy-3);color:var(--cream-faint)}
+
+  /* SUGGESTION: live preview pane */
+  .suggest-wrap{margin-top:30px;border:1px dashed rgba(223,132,49,.45);border-radius:16px;padding:18px;background:rgba(223,132,49,.04);}
+  .suggest-wrap .sg{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:#f0b277;margin-bottom:12px;}
+  .preview-fld{margin-bottom:13px;}
+  .preview-fld .pl{font-size:12.5px;color:var(--cream-dim);margin-bottom:5px;font-weight:600;}
+  .preview-fld .pl .req{color:var(--coral)}
+  .preview-fld .pi{width:100%;background:var(--navy);border:1px solid var(--line);border-radius:9px;padding:9px 12px;
+    color:var(--cream-faint);font-size:13px;font-family:inherit;}
+  .preview-fld .hint{font-size:11px;color:var(--cream-faint);margin-top:4px;}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:32px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+
+    <!-- SectionHeader: title "Edit form schema", subtitle "{id} • v{version}", ClipboardList icon, trailing Back GhostButton -->
+    <div class="head">
+      <div class="hicon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3"/><path d="M9 12h6M9 16h6M9 8h.01"/></svg>
+      </div>
+      <div>
+        <div class="kick">The Den · Form Schemas</div>
+        <h2>Edit <b>form schema</b></h2>
+        <!-- subtitle "${state.schema.id} • v${state.schema.version}". Sample id/version illustrative placeholder, not real data. -->
+        <div class="sub">tribeProfile • v3</div>
+      </div>
+      <span class="dirtypill" data-suggestion>Unsaved</span><!-- SUGGESTION -->
+      <div class="spacer"></div>
+      <button class="ghost">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+        Back
+      </button>
+    </div>
+
+    <!-- StatusToast · Success path (one of Success / Error renders when saveStatus set). Message format: "Saved {name} (v{version})." -->
+    <!-- Sample message uses illustrative placeholder name/version, not real data. -->
+    <div class="toast success">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+      Saved Tribe Profile (v3).
+      <span class="x">✕</span>
+    </div>
+
+    <!-- header inputs: BottomBorderField + MultilineField -->
+    <div class="meta">
+      <div class="fld">
+        <label>Schema ID * <span class="immut">(immutable once persisted)</span></label>
+        <!-- enabled only when schemaId.isBlank(); on edit it is disabled. placeholder "tribeProfile". Sample value illustrative placeholder. -->
+        <input class="bb" value="tribeProfile" placeholder="tribeProfile" disabled />
+      </div>
+      <div class="fld">
+        <label>Name *</label>
+        <!-- placeholder "Tribe Profile". Sample value illustrative placeholder, not real data. -->
+        <input class="bb" value="Tribe Profile" placeholder="Tribe Profile" />
+      </div>
+      <div class="fld">
+        <label>Description</label>
+        <textarea class="bb" rows="2" placeholder="Optional admin-facing description">Captured at onboarding and shown on the Tribe profile.</textarea>
+      </div>
+    </div>
+
+    <!-- Sections row header -->
+    <div class="secbar">
+      <h3>Sections</h3>
+      <button class="ghost">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"/></svg>
+        Add section
+      </button>
+    </div>
+    <!-- Empty-state copy (verbatim) when no sections: "No sections yet. Use Add section to create one." -->
+
+    <!-- ============ SECTION 1 (illustrative placeholder content) ============ -->
+    <div class="seccard">
+      <div class="cardhead">
+        <span class="tag">Section 1</span>
+        <div class="tools">
+          <button class="rbtn" disabled title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg></button>
+          <button class="rbtn" title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg></button>
+          <span class="del" title="Delete section"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg></span>
+        </div>
+      </div>
+
+      <div class="fld" style="margin-bottom:12px">
+        <label>Section title *</label>
+        <input class="bb" value="Household basics" placeholder="" />
+      </div>
+      <div class="fld">
+        <label>Section description</label>
+        <input class="bb" value="" placeholder="" />
+      </div>
+
+      <div class="fldsbar">
+        <!-- "Fields ({section.fields.size})" -->
+        <span class="ft">Fields (2)</span>
+        <button class="ghost">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"/></svg>
+          Add field
+        </button>
+      </div>
+      <!-- Empty-state copy (verbatim) when no fields: "No fields in this section yet." -->
+
+      <!-- ---- FIELD 1: text (no options) ---- -->
+      <div class="fieldcard">
+        <div class="fchead">
+          <span class="tag">Field 1</span>
+          <div class="tools">
+            <button class="rbtn" disabled title="Move field up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg></button>
+            <button class="rbtn" title="Move field down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg></button>
+            <span class="del" title="Delete field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg></span>
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="fld"><label>Field key *</label><input class="bb" value="householdName" /></div>
+          <div class="fld"><label>Label *</label><input class="bb" value="Household name" /></div>
+        </div>
+        <div class="typelbl">Type</div>
+        <!-- FormSchema.SUPPORTED_TYPES, chunked(5). "text" selected here. typeRequiresOptions(text)=false so no Options field. -->
+        <div class="chips" data-field="1">
+          <span class="chip on">text</span><span class="chip">textarea</span><span class="chip">select</span><span class="chip">multiselect</span><span class="chip">date</span>
+          <span class="chip">number</span><span class="chip">checkbox</span><span class="chip">phone</span><span class="chip">email</span>
+        </div>
+        <div class="opts opts-hidden">
+          <div class="fld"><label>Options (comma-separated) *</label><input class="bb" placeholder="Small, Medium, Large" /></div>
+        </div>
+        <div class="stack">
+          <div class="fld"><label>Helper text</label><input class="bb" value="" placeholder="" /></div>
+          <div class="fld"><label>Placeholder</label><input class="bb" value="" placeholder="" /></div>
+          <div class="fld"><label>Default value</label><input class="bb" value="" placeholder="" /></div>
+          <div class="fld"><label>Group</label><input class="bb" value="" placeholder="" /></div>
+          <div class="reqrow">
+            <span class="rl">Required</span>
+            <div class="seg"><button class="on">Yes</button><button>No</button></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ---- FIELD 2: select (options shown) ---- -->
+      <div class="fieldcard">
+        <div class="fchead">
+          <span class="tag">Field 2</span>
+          <div class="tools">
+            <button class="rbtn" title="Move field up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg></button>
+            <button class="rbtn" disabled title="Move field down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg></button>
+            <span class="del" title="Delete field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg></span>
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="fld"><label>Field key *</label><input class="bb" value="homeType" /></div>
+          <div class="fld"><label>Label *</label><input class="bb" value="Home type" /></div>
+        </div>
+        <div class="typelbl">Type</div>
+        <!-- "select" selected. typeRequiresOptions(select)=true so the Options field renders. -->
+        <div class="chips" data-field="2">
+          <span class="chip">text</span><span class="chip">textarea</span><span class="chip on">select</span><span class="chip">multiselect</span><span class="chip">date</span>
+          <span class="chip">number</span><span class="chip">checkbox</span><span class="chip">phone</span><span class="chip">email</span>
+        </div>
+        <div class="opts">
+          <!-- options joined by ", "; placeholder "Small, Medium, Large". Sample values illustrative placeholder. -->
+          <div class="fld"><label>Options (comma-separated) *</label><input class="bb" value="House, Apartment, Condo" placeholder="Small, Medium, Large" /></div>
+        </div>
+        <div class="stack">
+          <div class="fld"><label>Helper text</label><input class="bb" value="" placeholder="" /></div>
+          <div class="fld"><label>Placeholder</label><input class="bb" value="" placeholder="" /></div>
+          <div class="fld"><label>Default value</label><input class="bb" value="" placeholder="" /></div>
+          <div class="fld"><label>Group</label><input class="bb" value="" placeholder="" /></div>
+          <div class="reqrow">
+            <span class="rl">Required</span>
+            <div class="seg"><button>Yes</button><button class="on">No</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ SECTION 2: shows a validation-error field + section/field banners ============ -->
+    <div class="seccard">
+      <div class="cardhead">
+        <span class="tag">Section 2</span>
+        <div class="tools">
+          <button class="rbtn" title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg></button>
+          <button class="rbtn" disabled title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg></button>
+          <span class="del" title="Delete section"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg></span>
+        </div>
+      </div>
+
+      <div class="fld err" style="margin-bottom:12px">
+        <label>Section title *</label>
+        <input class="bb" value="" placeholder="" />
+      </div>
+      <div class="fld">
+        <label>Section description</label>
+        <input class="bb" value="" placeholder="" />
+      </div>
+      <!-- ValidationBanner (section). Message verbatim from validateFormSchema: "Section title is required." -->
+      <div class="vbanner"><p>Section title is required.</p></div>
+
+      <div class="fldsbar">
+        <span class="ft">Fields (1)</span>
+        <button class="ghost">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"/></svg>
+          Add field
+        </button>
+      </div>
+
+      <!-- ---- FIELD 1: error state (multiselect missing options) ---- -->
+      <div class="fieldcard err">
+        <div class="fchead">
+          <span class="tag">Field 1</span>
+          <div class="tools">
+            <button class="rbtn" disabled title="Move field up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg></button>
+            <button class="rbtn" disabled title="Move field down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg></button>
+            <span class="del" title="Delete field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg></span>
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="fld err"><label>Field key *</label><input class="bb" value="" /></div>
+          <div class="fld err"><label>Label *</label><input class="bb" value="Allergies" /></div>
+        </div>
+        <div class="typelbl">Type</div>
+        <div class="chips" data-field="3">
+          <span class="chip">text</span><span class="chip">textarea</span><span class="chip">select</span><span class="chip on">multiselect</span><span class="chip">date</span>
+          <span class="chip">number</span><span class="chip">checkbox</span><span class="chip">phone</span><span class="chip">email</span>
+        </div>
+        <div class="opts">
+          <div class="fld err"><label>Options (comma-separated) *</label><input class="bb" value="" placeholder="Small, Medium, Large" /></div>
+        </div>
+        <div class="stack">
+          <div class="fld"><label>Helper text</label><input class="bb" value="" placeholder="" /></div>
+          <div class="fld"><label>Placeholder</label><input class="bb" value="" placeholder="" /></div>
+          <div class="fld"><label>Default value</label><input class="bb" value="" placeholder="" /></div>
+          <div class="fld"><label>Group</label><input class="bb" value="" placeholder="" /></div>
+          <div class="reqrow">
+            <span class="rl">Required</span>
+            <div class="seg"><button class="on">Yes</button><button>No</button></div>
+          </div>
+        </div>
+        <!-- ValidationBanner (field). Messages verbatim from validateFormSchema. -->
+        <div class="vbanner">
+          <p>Field key is required.</p>
+          <p>Options required for multiselect fields.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- footer actions. Save disabled here because validation has errors (canSave=false). -->
+    <div class="footer">
+      <button class="ghost danger" id="delbtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg>
+        Delete schema
+      </button>
+      <div class="spacer"></div>
+      <button class="ghost">Cancel</button>
+      <button class="primary" disabled>Save</button>
+    </div>
+
+    <!-- ====================== SUGGESTION: live preview pane ====================== -->
+    <div class="suggest-wrap" data-suggestion>
+      <div class="sg">// SUGGESTION · live preview (not in FormSchemaEditorScreen.kt)</div>
+      <div class="preview-fld">
+        <div class="pl">Household name <span class="req">*</span></div>
+        <input class="pi" placeholder="" readonly />
+      </div>
+      <div class="preview-fld">
+        <div class="pl">Home type</div>
+        <input class="pi" value="House  ▾" readonly />
+        <div class="hint">House, Apartment, Condo</div>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · Form Schema Editor (admin) · mirrors FormSchemaEditorScreen.kt · palette from AuntieColors.kt · sample field content is placeholder, not real data</p>
+  </div>
+
+  <script>
+    // type chip selection (visual only; mirrors FieldTypeChipRow + typeRequiresOptions for select/multiselect)
+    document.querySelectorAll('.chips').forEach(row=>{
+      row.querySelectorAll('.chip').forEach(chip=>{
+        chip.addEventListener('click',()=>{
+          row.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
+          chip.classList.add('on');
+          const opts=row.parentElement.querySelector('.opts');
+          if(opts){
+            const needs=(chip.textContent==='select'||chip.textContent==='multiselect');
+            opts.classList.toggle('opts-hidden',!needs);
+          }
+        });
+      });
+    });
+    // Required Yes/No segmented (SegmentedPicker)
+    document.querySelectorAll('.seg').forEach(seg=>{
+      seg.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+        seg.querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+        b.classList.add('on');
+      }));
+    });
+    // delete schema confirm: "Delete schema" -> "Tap to confirm delete"
+    const del=document.getElementById('delbtn'); let armed=false;
+    del.addEventListener('click',()=>{ if(!armed){armed=true; del.lastChild.textContent=' Tap to confirm delete';}});
+    // toast dismiss
+    document.querySelectorAll('.toast .x').forEach(x=>x.addEventListener('click',()=>x.closest('.toast').remove()));
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-15}px,${y*-15}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

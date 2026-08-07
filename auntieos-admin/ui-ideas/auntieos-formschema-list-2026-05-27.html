@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Form Schemas (concept)</title>
+<!--
+  AuntieOS redesign concept · Form Schemas list (admin authoring of dynamic form schemas).
+  Standalone HTML/CSS mockup. Same "Den" aesthetic. No em dashes.
+  Palette + tokens lifted from auntieos-directory-2026-05-27.html (AuntieColors.kt).
+  Fonts: Fraunces + Hanken Grotesk + Spline Sans Mono.
+
+  Mirrors FormSchemaListScreen.kt VERBATIM where copy exists:
+    - SectionHeader title "Form Schemas", subtitle "Author the dynamic forms kinfolk fill out."
+    - PrimaryButton "New schema" (opens editor with blank id)
+    - Loading text "Loading schemas…"
+    - Empty state "No schemas yet. Click New schema to create one."
+    - Sortable columns: NAME (weight 3) / VERSION (1) / UPDATED (2) / UPDATED BY (2)
+    - Default sort UpdatedAt descending (matches Android UPDATED_AT, blanks last)
+    - Each row: name.ifBlank{id} + id subtext, "v{version}", updatedAt.ifBlank{"-"}, updatedBy.ifBlank{"-"}
+      (Kotlin uses an em dash glyph as the blank placeholder; rendered here as plain hyphen "-" per no-em-dash rule.)
+    - Row click opens editor (onOpenEditor(row.id)); editor owns New/Edit/Delete + Save/Cancel.
+    - GhostButton "Reload"
+  Model fields (FormSchemaRepository.kt FormSchemaSummary): id, name, version, updatedAt, updatedBy.
+
+  SUGGESTION items (NOT in FormSchemaListScreen.kt, tagged in markup with data-suggestion):
+    1. Search box to filter the list.
+    2. Per-row hover delete affordance (real delete lives only inside the editor).
+    3. Row count chip in the header.
+    4. Field-count column derived from the full schema (summary payload does not carry it).
+  None of these are wired into the shipped contract; they are exploration only.
+
+  Sample schema names are illustrative placeholder, NOT real data.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.45;mix-blend-mode:screen;filter:blur(74px);
+    animation:drift 29s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--purple),transparent 62%);top:-10vmax;left:-4vmax;}
+  .blob.b{width:40vmax;height:40vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:10vmax;right:-8vmax;animation-delay:-10s;}
+  .blob.c{width:34vmax;height:34vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-12vmax;left:36vmax;animation-delay:-16s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-9deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1100px;margin:0 auto;padding:26px 30px 60px;}
+
+  /* SectionHeader: icon + title + subtitle + trailing PrimaryButton */
+  .head{display:flex;align-items:flex-end;gap:16px;margin-bottom:22px;
+    opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards;}
+  .head .hicon{width:46px;height:46px;border-radius:14px;flex:0 0 auto;display:grid;place-items:center;
+    background:linear-gradient(150deg,rgba(116,83,138,.5),rgba(10,133,149,.35));border:1px solid var(--line);}
+  .head .hicon svg{width:23px;height:23px;color:var(--cream)}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--orange);margin-bottom:5px;}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:33px;letter-spacing:-.02em;
+    font-variation-settings:"SOFT" 50,"WONK" 1;line-height:1.05;}
+  .head h2 b{color:var(--pink);font-weight:500}
+  .head .sub{color:var(--cream-dim);font-size:13.5px;margin-top:5px;}
+  .spacer{flex:1}
+  /* PrimaryButton "New schema" */
+  .add{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;
+    font-size:14px;padding:11px 17px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);
+    display:inline-flex;align-items:center;gap:8px;white-space:nowrap;}
+  .add:hover{transform:translateY(-2px);box-shadow:0 12px 28px -10px rgba(223,132,49,.6)}
+  .add svg{width:16px;height:16px}
+
+  /* SUGGESTION controls row (search + count chip) */
+  .controls{display:flex;align-items:center;gap:12px;margin-bottom:16px;
+    opacity:0;animation:rise .6s var(--ease) .06s forwards;}
+  .search{display:flex;align-items:center;gap:9px;background:var(--navy-3);border:1px solid var(--line);
+    border-radius:13px;padding:10px 14px;color:var(--cream-dim);font-size:13.5px;flex:1;min-width:200px;}
+  .search input{background:none;border:none;outline:none;color:var(--cream);font-family:inherit;font-size:13.5px;width:100%;}
+  .sug-tag{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--teal);border:1px dashed rgba(10,133,149,.55);border-radius:6px;padding:2px 6px;flex:0 0 auto;}
+  .countchip{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.06em;color:var(--cream-dim);
+    background:var(--navy-3);border:1px solid var(--line);border-radius:13px;padding:10px 13px;white-space:nowrap;
+    display:flex;align-items:center;gap:7px;}
+
+  /* table: header row + striped data rows */
+  .table{border:1px solid var(--line);border-radius:9px;overflow:hidden;
+    opacity:0;transform:translateY(14px);animation:rise .6s var(--ease) .12s forwards;}
+  .thead{display:flex;align-items:center;background:var(--navy-3);padding:11px 14px;}
+  .th{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none;
+    font-family:"Spline Sans Mono",monospace;font-size:10.5px;font-weight:600;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--cream-dim);transition:.15s var(--ease);}
+  .th:hover{color:var(--cream)}
+  .th.on{color:var(--orange)}
+  .th svg{width:12px;height:12px;opacity:.55;transition:transform .18s var(--ease)}
+  .th.on svg{opacity:1}
+  .th.on.asc svg{transform:rotate(180deg)}
+  /* weights mirror Kotlin: Name 3 / Version 1 / Updated 2 / Updated by 2 */
+  .c-name{flex:3}.c-ver{flex:1}.c-upd{flex:2}.c-by{flex:2}.c-act{flex:0 0 44px;text-align:right}
+
+  .trow{display:flex;align-items:center;padding:13px 14px;cursor:pointer;position:relative;
+    border-top:1px solid var(--line-2);transition:.15s var(--ease);}
+  .trow:nth-child(odd){background:var(--navy-2)}
+  .trow:nth-child(even){background:rgba(30,34,53,.5)}
+  .trow:hover{background:var(--navy-3)}
+  .trow .nm{font-family:"Fraunces",serif;font-weight:500;font-size:16px;color:var(--cream);}
+  .trow .id{font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:rgba(251,251,249,.42);margin-top:2px;display:block;}
+  .ver{font-family:"Spline Sans Mono",monospace;font-size:13px;color:var(--cream-dim);}
+  .upd{font-size:12.5px;color:var(--cream-dim);}
+  .by{font-size:12.5px;color:var(--cream-dim);}
+  .dim{color:rgba(251,251,249,.35)}
+  /* SUGGESTION: per-row delete affordance, hover-revealed; real delete lives in the editor */
+  .rowdel{opacity:0;background:none;border:none;color:var(--coral);cursor:pointer;padding:6px;border-radius:8px;
+    transition:.15s var(--ease);}
+  .trow:hover .rowdel{opacity:.85}
+  .rowdel:hover{background:rgba(213,83,90,.15)}
+  .rowdel svg{width:16px;height:16px;display:block}
+
+  /* empty + loading states */
+  .panel{background:var(--navy-2);border:1px solid var(--line);border-radius:12px;padding:26px;text-align:center;
+    color:var(--cream-dim);font-size:14px;opacity:0;animation:rise .6s var(--ease) .12s forwards;}
+  #empty,#loading{display:none}
+
+  /* GhostButton "Reload" */
+  .footer{margin-top:14px;display:flex;gap:8px;opacity:0;animation:rise .6s var(--ease) .2s forwards;}
+  .ghost{background:none;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";
+    font-weight:600;font-size:13.5px;padding:9px 16px;border-radius:11px;cursor:pointer;transition:.18s var(--ease);}
+  .ghost:hover{background:var(--navy-3);border-color:rgba(223,132,49,.4)}
+
+  /* StatusToast (error) placeholder, hidden by default; matches Load failed copy shape */
+  .toast{display:none;align-items:center;gap:10px;background:rgba(213,83,90,.14);border:1px solid rgba(213,83,90,.45);
+    color:#f0a3a8;border-radius:11px;padding:11px 14px;margin-bottom:14px;font-size:13.5px;}
+  .toast svg{width:17px;height:17px;flex:0 0 auto}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:30px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  .legend{margin-top:8px;font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--teal);opacity:.65}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <!-- SectionHeader(title, subtitle, icon = Lucide.ClipboardList, trailing = PrimaryButton "New schema") -->
+    <div class="head">
+      <div class="hicon">
+        <!-- Lucide ClipboardList -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+          <path d="M12 11h4M12 16h4M8 11h.01M8 16h.01"/>
+        </svg>
+      </div>
+      <div>
+        <div class="kick">The Den · Admin</div>
+        <h2>Form <b>Schemas</b></h2>
+        <div class="sub">Author the dynamic forms kinfolk fill out.</div>
+      </div>
+      <div class="spacer"></div>
+      <button class="add">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        New schema
+      </button>
+    </div>
+
+    <!-- StatusToast(kind = Error): shown only when listSchemas() returns WriteResult.Err -->
+    <div class="toast" id="toast">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg>
+      <span id="toastmsg">Load failed: TODO</span>
+    </div>
+
+    <!-- SUGGESTION: search + row count. Not in FormSchemaListScreen.kt. -->
+    <div class="controls" data-suggestion="search-and-count">
+      <div class="search">
+        <span class="sug-tag">Suggestion</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+        <input placeholder="Filter schemas by name or id…" />
+      </div>
+      <div class="countchip"><span class="sug-tag">Suggestion</span> 4 schemas</div>
+    </div>
+
+    <!--
+      ===== Default state: populated list =====
+      Sorted UpdatedAt descending by default (sortCol = UpdatedAt, sortAsc = false), blanks last.
+    -->
+    <div class="table" id="table">
+      <div class="thead">
+        <div class="th c-name" data-col="name">Name
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+        <div class="th c-ver" data-col="version">Version
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+        <div class="th c-upd on" data-col="updatedAt">Updated
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+        <div class="th c-by" data-col="updatedBy">Updated by
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+        <!-- SUGGESTION: actions column header (blank) -->
+        <div class="c-act" data-suggestion="actions-col"></div>
+      </div>
+
+      <!-- Each .trow click => onOpenEditor(row.id). name.ifBlank{id} shown bold, id as mono subtext. -->
+      <!-- Sample schema names below are ILLUSTRATIVE PLACEHOLDER, not real schema data. -->
+      <div class="trow">
+        <div class="c-name"><span class="nm">New Kinfolk Intake</span><span class="id">intake_kinfolk</span></div>
+        <div class="c-ver"><span class="ver">v4</span></div>
+        <div class="c-upd"><span class="upd">2026-05-26 14:08</span></div>
+        <div class="c-by"><span class="by">auntie@tribetails.example</span></div>
+        <div class="c-act"><button class="rowdel" data-suggestion="row-delete" title="Delete (suggestion)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button></div>
+      </div>
+
+      <div class="trow">
+        <div class="c-name"><span class="nm">Pet Health Profile</span><span class="id">pet_health_profile</span></div>
+        <div class="c-ver"><span class="ver">v2</span></div>
+        <div class="c-upd"><span class="upd">2026-05-21 09:42</span></div>
+        <div class="c-by"><span class="by">auntie@tribetails.example</span></div>
+        <div class="c-act"><button class="rowdel" data-suggestion="row-delete" title="Delete (suggestion)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button></div>
+      </div>
+
+      <div class="trow">
+        <div class="c-name"><span class="nm">Meet &amp; Greet Questionnaire</span><span class="id">meet_greet_v1</span></div>
+        <div class="c-ver"><span class="ver">v1</span></div>
+        <div class="c-upd"><span class="upd">2026-05-12 16:30</span></div>
+        <div class="c-by"><span class="by">auntie@tribetails.example</span></div>
+        <div class="c-act"><button class="rowdel" data-suggestion="row-delete" title="Delete (suggestion)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button></div>
+      </div>
+
+      <!-- Row with blank updatedAt / updatedBy: Kotlin renders an em dash glyph, shown here as plain hyphen "-" (no em dash). Sorts last. -->
+      <div class="trow">
+        <div class="c-name"><span class="nm dim">draft_boarding_v0</span><span class="id">draft_boarding_v0</span></div>
+        <div class="c-ver"><span class="ver">v0</span></div>
+        <div class="c-upd"><span class="upd dim">-</span></div>
+        <div class="c-by"><span class="by dim">-</span></div>
+        <div class="c-act"><button class="rowdel" data-suggestion="row-delete" title="Delete (suggestion)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button></div>
+      </div>
+    </div>
+
+    <!-- ===== Empty state ===== (sorted.isEmpty()) -->
+    <div class="panel" id="empty">No schemas yet. Click New schema to create one.</div>
+
+    <!-- ===== Loading state ===== (loading == true) -->
+    <div class="panel" id="loading">Loading schemas…</div>
+
+    <!-- GhostButton "Reload" -->
+    <div class="footer">
+      <button class="ghost" id="reload">Reload</button>
+    </div>
+
+    <p class="legend">// state toggles (visual only): press E = empty · L = loading · D = default · T = error toast</p>
+    <p class="note">// concept mockup · Form Schemas list · mirrors FormSchemaListScreen.kt · tokens from AuntieColors.kt · sample schema names are placeholder, not real data</p>
+  </div>
+
+  <script>
+    // Sort header toggling: mirrors HeaderCell behavior (click same col flips asc/desc,
+    // click new col sets that col ascending). Default col = updatedAt, desc. Visual only.
+    const ths = document.querySelectorAll('.th');
+    ths.forEach(th => th.addEventListener('click', () => {
+      const wasOn = th.classList.contains('on');
+      if (wasOn) {
+        th.classList.toggle('asc');
+      } else {
+        ths.forEach(x => x.classList.remove('on','asc'));
+        th.classList.add('on','asc');
+      }
+    }));
+
+    // Row click opens the editor (onOpenEditor(row.id)). Editor owns Edit + Delete + Save.
+    document.querySelectorAll('.trow').forEach(r => r.addEventListener('click', e => {
+      if (e.target.closest('.rowdel')) return; // suggestion-only affordance
+    }));
+
+    // State switcher for reviewing each named state.
+    const table = document.getElementById('table');
+    const controls = document.querySelector('.controls');
+    const empty = document.getElementById('empty');
+    const loading = document.getElementById('loading');
+    const toast = document.getElementById('toast');
+    function show(state){
+      table.style.display = state==='default' ? '' : 'none';
+      controls.style.display = state==='default' ? '' : 'none';
+      empty.style.display = state==='empty' ? 'block' : 'none';
+      loading.style.display = state==='loading' ? 'block' : 'none';
+    }
+    addEventListener('keydown', e => {
+      const k = e.key.toLowerCase();
+      if (k==='e') show('empty');
+      if (k==='l') show('loading');
+      if (k==='d') { show('default'); toast.style.display='none'; }
+      if (k==='t') toast.style.display='flex';
+    });
+    document.getElementById('reload').addEventListener('click', () => {
+      show('loading'); setTimeout(() => show('default'), 650);
+    });
+
+    // Den ambient parallax on the mesh.
+    const mesh = document.querySelector('.mesh');
+    addEventListener('pointermove', e => {
+      const x=(e.clientX/innerWidth-.5), y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-15}px,${y*-15}px,0)`;
+    }, {passive:true});
+  </script>
+</body>
+</html>

@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Email creation (concept)</title>
+<!--
+  AuntieOS redesign concept · Email creation (template bank). Standalone mockup.
+  Same "Den" aesthetic. Mirrors the real coded model:
+    TemplateService.EmailTemplate { templateId, title, subject, body (Handlebars),
+    html?, description?, tags[], category? } persisted via the saveTemplate callable.
+    TemplateBankScreen.TemplateEditorOverlay edits Subject + Body (Handlebars
+    supported) + HTML (optional) + Description; saves when subject & body non-blank.
+    Categories come from FILTER_OPTIONS (Onboarding/Bookings/Invoicing/Re-engagement).
+  Merge tokens are illustrative ({{kinfolk_name}}, {{kin_names}}, {{date}}, {{service}},
+  {{invoice_no}}, {{link}} etc). No em dashes. Palette from AuntieColors.kt.
+  All copy is placeholder; Auntie authors all real wording.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.42;mix-blend-mode:screen;filter:blur(74px);animation:drift 30s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--orange),transparent 62%);top:-12vmax;left:-4vmax;}
+  .blob.b{width:38vmax;height:38vmax;background:radial-gradient(circle,var(--pink),transparent 60%);top:14vmax;right:-8vmax;animation-delay:-9s;}
+  .blob.c{width:32vmax;height:32vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-12vmax;left:40vmax;animation-delay:-16s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1220px;margin:0 auto;padding:26px 30px 60px;}
+  .head{display:flex;align-items:flex-start;gap:18px;margin-bottom:20px;flex-wrap:wrap;opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--orange);margin-bottom:5px}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:32px;letter-spacing:-.02em;font-variation-settings:"SOFT" 50,"WONK" 1}
+  .head h2 b{color:var(--pink);font-weight:500}
+  .head .sub{color:var(--cream-dim);font-size:13.5px;margin-top:5px}
+  .spacer{flex:1}
+  .crumb{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.08em;color:var(--cream-dim);opacity:.7;margin-bottom:4px}
+  .crumb b{color:var(--cream);opacity:.9}
+
+  .topbtns{display:flex;gap:10px;align-items:center}
+  .ghost{background:transparent;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";font-weight:600;font-size:13.5px;
+    padding:11px 16px;border-radius:13px;cursor:pointer;transition:.18s var(--ease);display:inline-flex;align-items:center;gap:8px}
+  .ghost:hover{background:var(--navy-3);border-color:rgba(223,132,49,.4)}
+  .save{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;font-size:14px;
+    padding:12px 20px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);display:inline-flex;align-items:center;gap:8px}
+  .save:hover{transform:translateY(-2px);box-shadow:0 14px 30px -12px rgba(223,132,49,.6)}
+  .save:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+
+  .cols{display:grid;grid-template-columns:1.32fr 1fr;gap:20px;align-items:start}
+  .panel{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);border-radius:20px;padding:22px;
+    opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) forwards}
+  .panel.l{animation-delay:.1s}.panel.r{animation-delay:.2s}.panel + .panel{margin-top:18px}
+  label.cap{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--cream-dim);opacity:.7;display:block;margin-bottom:11px}
+  label.cap .req{color:var(--coral);margin-left:3px}
+  label.cap .opt{opacity:.55;font-size:9px;margin-left:6px}
+
+  /* identity row: template key + name + category */
+  .idrow{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
+  .field{display:flex;flex-direction:column}
+  .input{width:100%;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:13px 14px;color:var(--cream);font-family:inherit;font-size:14.5px;outline:none;transition:.16s var(--ease)}
+  .input:focus{border-color:rgba(223,132,49,.5)}
+  .input.mono{font-family:"Spline Sans Mono",monospace;font-size:13px;letter-spacing:.01em;color:#7fdce8}
+  .input.mono::placeholder{color:rgba(127,220,232,.4)}
+
+  /* channel + status strip */
+  .strip{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--navy-3);border:1px solid var(--line);border-radius:14px;padding:13px 15px;margin-bottom:16px}
+  .chanpill{display:inline-flex;align-items:center;gap:8px;background:rgba(10,133,149,.18);border:1px solid rgba(10,133,149,.45);color:#7fdce8;
+    font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;padding:7px 12px;border-radius:10px}
+  .chanpill svg{width:13px;height:13px}
+  .chanswitch{display:flex;background:var(--navy-2);border:1px solid var(--line-2);border-radius:11px;padding:3px;gap:3px}
+  .chanswitch button{background:none;border:none;color:var(--cream-dim);font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.06em;
+    text-transform:uppercase;font-weight:600;padding:6px 11px;border-radius:8px;cursor:pointer;transition:.16s var(--ease)}
+  .chanswitch button.on{background:var(--cream);color:var(--navy)}
+  .chanswitch button.dis{opacity:.4;cursor:not-allowed}
+  .strip .sp{flex:1}
+  /* enable toggle */
+  .togwrap{display:inline-flex;align-items:center;gap:9px}
+  .togwrap small{font-size:11.5px;color:var(--cream-dim)}
+  .tog{width:46px;height:27px;border-radius:30px;background:var(--navy-2);border:1px solid var(--line);position:relative;cursor:pointer;transition:.2s var(--ease);flex:0 0 auto}
+  .tog:after{content:"";position:absolute;top:2.5px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--cream-dim);transition:.2s var(--ease)}
+  .tog.on{background:var(--teal);border-color:transparent}
+  .tog.on:after{left:21px;background:var(--cream)}
+
+  /* merge field chips */
+  .mfhead{display:flex;align-items:baseline;gap:8px;margin-bottom:11px}
+  .mfhead label.cap{margin-bottom:0}
+  .mfhint{font-size:11px;color:var(--cream-dim);opacity:.6}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+  .chip{font-family:"Spline Sans Mono",monospace;font-size:11.5px;font-weight:500;padding:7px 11px;border-radius:9px;cursor:pointer;border:1px solid var(--line);
+    background:var(--navy-3);color:#7fdce8;transition:.14s var(--ease);display:inline-flex;align-items:center;gap:6px}
+  .chip:hover{transform:translateY(-2px);border-color:rgba(10,133,149,.5);background:rgba(10,133,149,.14)}
+  .chip .plus{color:var(--cream-dim);font-weight:700;opacity:.7}
+
+  /* subject + body editors */
+  .subwrap{position:relative;margin-bottom:18px}
+  .editor{width:100%;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:14px;font-size:15px;line-height:1.65;outline:none;color:var(--cream);min-height:188px;font-family:"Spline Sans Mono",monospace;white-space:pre-wrap}
+  .editor:focus{border-color:rgba(223,132,49,.5)}
+  .editor .mf{color:#f0b277;background:rgba(223,132,49,.13);border-radius:5px;padding:1px 3px}
+  .edmeta{display:flex;align-items:center;gap:8px;margin-top:8px;font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.06em;color:var(--cream-dim);opacity:.6}
+  .edmeta .hbsdge{color:var(--purple);border:1px solid rgba(116,83,138,.5);border-radius:20px;padding:2px 8px;text-transform:uppercase}
+
+  .descbox{width:100%;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:13px 14px;color:var(--cream);font-family:inherit;font-size:13.5px;line-height:1.55;outline:none;min-height:62px;resize:vertical;margin-bottom:18px}
+  .descbox:focus{border-color:rgba(223,132,49,.5)}
+
+  /* tags */
+  .tagrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .tag{font-family:"Spline Sans Mono",monospace;font-size:11px;font-weight:500;padding:6px 10px;border-radius:20px;background:rgba(223,132,49,.16);color:#f0b277;display:inline-flex;align-items:center;gap:7px}
+  .tag .x{cursor:pointer;opacity:.7}
+  .tagadd{font-family:"Spline Sans Mono",monospace;font-size:11px;background:none;border:1px dashed var(--line);color:var(--cream-dim);padding:6px 10px;border-radius:20px;cursor:pointer;transition:.16s var(--ease)}
+  .tagadd:hover{border-color:rgba(223,132,49,.5);color:var(--cream)}
+
+  /* hr */
+  .hr{height:1px;background:var(--line-2);margin:18px 0}
+
+  /* preview card (cream) */
+  .pvtoggle{display:flex;background:var(--navy-3);border:1px solid var(--line);border-radius:11px;padding:4px;gap:3px;margin-bottom:14px}
+  .pvtoggle button{flex:1;background:none;border:none;color:var(--cream-dim);font-family:"Hanken Grotesk";font-weight:600;font-size:12.5px;padding:8px;border-radius:8px;cursor:pointer;transition:.16s var(--ease)}
+  .pvtoggle button.on{background:var(--cream);color:var(--navy)}
+
+  .pv{background:var(--cream);border-radius:16px;overflow:hidden;border:1px solid var(--line);box-shadow:0 20px 44px -22px rgba(0,0,0,.7)}
+  .pv .top{height:70px;background:radial-gradient(120% 130% at 15% 10%,#DF8431,#D55C87);display:flex;align-items:flex-end;padding:13px 16px}
+  .pv .top b{font-family:"Fraunces",serif;color:#fff;font-size:17px;font-weight:500;font-variation-settings:"SOFT" 60}
+  .pv .subjline{padding:13px 16px 0;color:#1d1d24}
+  .pv .subjline .lbl{font-family:"Spline Sans Mono",monospace;font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;color:#9a9aa3}
+  .pv .subjline h4{font-family:"Fraunces",serif;font-size:17px;margin-top:3px;color:#1d1d24;font-variation-settings:"SOFT" 50}
+  .pv .pb{padding:13px 16px 18px;color:#2a2a33}
+  .pv .pb p{font-size:13px;line-height:1.62;color:#3a3a45;margin-bottom:10px}
+  .pv .pb .res{color:#b35a16;font-weight:600}
+  .pv .pets{display:flex;gap:9px;margin:13px 0}
+  .pv .pets .pet{display:flex;flex-direction:column;align-items:center;gap:5px}
+  .pv .pets .thumb{width:46px;height:46px;border-radius:50%;background-size:cover;background-position:center;border:2px solid #fff;box-shadow:0 3px 8px rgba(0,0,0,.18)}
+  .pv .pets .pn{font-size:10.5px;color:#5a5a64;font-weight:600}
+  .pv .pb .cta{margin-top:6px;display:inline-block;background:#0A8595;color:#fff;font-weight:700;font-size:12px;padding:9px 16px;border-radius:9px;text-decoration:none}
+  .pv .foot{border-top:1px solid #ece9e2;padding:11px 16px;font-size:10px;color:#9a9aa3;line-height:1.5}
+  .pvlab{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--cream-dim);opacity:.6;text-align:center;margin-top:10px}
+
+  /* resolved sample values legend */
+  .legend{margin-top:4px}
+  .lrow{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line-2)}
+  .lrow:last-child{border-bottom:none}
+  .lrow code{font-family:"Spline Sans Mono",monospace;font-size:11px;color:#7fdce8;flex:0 0 auto;min-width:118px}
+  .lrow .arrow{color:var(--cream-dim);opacity:.5}
+  .lrow b{font-size:13px;font-weight:600}
+
+  /* suggestion block */
+  .sugg{margin-top:18px;border:1px dashed rgba(116,83,138,.55);background:radial-gradient(120% 140% at 0% 0%,rgba(116,83,138,.16),transparent 60%),var(--navy-3);border-radius:16px;padding:16px}
+  .sugg .sh{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+  .sugg .sh .badge{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#c7a8d8;border:1px solid rgba(116,83,138,.6);border-radius:20px;padding:3px 9px}
+  .sugg .sh b{font-family:"Fraunces",serif;font-weight:500;font-size:15.5px;font-variation-settings:"SOFT" 50}
+  .sugg p{font-size:12.5px;color:var(--cream-dim);line-height:1.55}
+  .sugg ul{margin:8px 0 0 18px;font-size:12.5px;color:var(--cream-dim);line-height:1.6}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:28px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:880px){.cols{grid-template-columns:1fr}.idrow{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="crumb">Template bank <span>/</span> <b>Edit template</b></div>
+        <div class="kick">The Den · Template bank</div>
+        <h2>Email <b>template</b></h2>
+        <div class="sub">Subject and body render with Handlebars. Merge fields resolve to each recipient at send time.</div>
+      </div>
+      <div class="spacer"></div>
+      <div class="topbtns">
+        <button class="ghost" id="cancelBtn">Cancel</button>
+        <button class="save" id="saveBtn">⤓ Save template</button>
+      </div>
+    </div>
+
+    <div class="cols">
+      <!-- EDIT COLUMN -->
+      <div>
+        <div class="panel l">
+
+          <div class="idrow">
+            <div class="field">
+              <label class="cap">Template key <span class="req">*</span></label>
+              <input class="input mono" id="keyInput" value="kintale.published" placeholder="invoice.sent" />
+            </div>
+            <div class="field">
+              <label class="cap">Display name <span class="req">*</span></label>
+              <input class="input" id="nameInput" value="KinTale published" placeholder="Invoice sent" />
+            </div>
+          </div>
+
+          <!-- channel + enable strip -->
+          <div class="strip">
+            <span class="chanpill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+              Channel · Email
+            </span>
+            <div class="chanswitch" title="Channel collection: emailTemplates / pushTemplates / smsTemplates">
+              <button class="on">Email</button>
+              <button class="dis" title="Push template bank">Push</button>
+              <button class="dis" title="SMS template bank">SMS</button>
+            </div>
+            <span class="sp"></span>
+            <div class="togwrap">
+              <small>Active binding</small>
+              <div class="tog on" id="enableTog"></div>
+            </div>
+          </div>
+
+          <!-- subject -->
+          <label class="cap">Subject <span class="req">*</span></label>
+          <div class="subwrap">
+            <input class="input mono" id="subjInput" value="A new KinTale for {{kin_names}}" />
+          </div>
+
+          <!-- merge field chips -->
+          <div class="mfhead">
+            <label class="cap">Insert merge field</label>
+            <span class="mfhint">click to drop the token at the cursor</span>
+          </div>
+          <div class="chips" id="mfChips">
+            <span class="chip" data-mf="{{kinfolk_name}}"><span class="plus">+</span>{{kinfolk_name}}</span>
+            <span class="chip" data-mf="{{kin_names}}"><span class="plus">+</span>{{kin_names}}</span>
+            <span class="chip" data-mf="{{date}}"><span class="plus">+</span>{{date}}</span>
+            <span class="chip" data-mf="{{time}}"><span class="plus">+</span>{{time}}</span>
+            <span class="chip" data-mf="{{service}}"><span class="plus">+</span>{{service}}</span>
+            <span class="chip" data-mf="{{invoice_no}}"><span class="plus">+</span>{{invoice_no}}</span>
+            <span class="chip" data-mf="{{amount}}"><span class="plus">+</span>{{amount}}</span>
+            <span class="chip" data-mf="{{link}}"><span class="plus">+</span>{{link}}</span>
+          </div>
+
+          <!-- body -->
+          <label class="cap">Body <span class="req">*</span> <span style="font-family:'Spline Sans Mono';font-size:9px;letter-spacing:.06em;color:var(--purple);text-transform:none;opacity:.85">Handlebars supported</span></label>
+          <div class="editor" id="bodyEd" contenteditable="true" spellcheck="false">Hi {{kinfolk_name}}, there is a fresh KinTale waiting for {{kin_names}}. We had a lovely {{service}} on {{date}}. Tap below to read all about it and see the photos.
+
+Read the KinTale: {{link}}</div>
+          <div class="edmeta"><span class="hbsdge">{{ }} handlebars</span><span id="charCount">0 chars</span><span>· tokens left as-is, never sent literally</span></div>
+
+          <div class="hr"></div>
+
+          <!-- description -->
+          <label class="cap">Internal description <span class="opt">admin-only note</span></label>
+          <textarea class="descbox" id="descBox" placeholder="What is this template for? Who receives it?">Sent to the kinfolk when a new visit report (KinTale) is published for their pets.</textarea>
+
+          <!-- category + tags -->
+          <div class="idrow">
+            <div class="field">
+              <label class="cap">Category</label>
+              <select class="input" id="catSel" style="appearance:none;cursor:pointer">
+                <option>Onboarding</option>
+                <option>Bookings</option>
+                <option>Invoicing</option>
+                <option selected>Re-engagement</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="cap">Tags</label>
+              <div class="tagrow">
+                <span class="tag">kintale <span class="x">✕</span></span>
+                <span class="tag">visit-report <span class="x">✕</span></span>
+                <button class="tagadd">+ tag</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Suggestion block: anything beyond the real EmailTemplate model -->
+          <div class="sugg">
+            <div class="sh"><span class="badge">Suggestion</span><b>Beyond the current model</b></div>
+            <p>The coded <code style="font-family:'Spline Sans Mono';font-size:11px;color:#7fdce8">EmailTemplate</code> has no per-template enable flag. Today the "active" state lives on the binding (<code style="font-family:'Spline Sans Mono';font-size:11px;color:#7fdce8">TemplateBinding.active</code>), which the toggle above maps to. Two ideas that would need new fields or callables:</p>
+            <ul>
+              <li>A true per-template <b>enabled</b> boolean on the template doc, so a draft can exist without an assignment.</li>
+              <li>An inline merge-field <b>validator</b> that flags tokens not in the known catalog before save.</li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- PREVIEW COLUMN -->
+      <div>
+        <div class="panel r">
+          <div class="pvtoggle">
+            <button class="on" data-pv="resolved">Sample preview</button>
+            <button data-pv="raw">Raw {{ tokens }}</button>
+          </div>
+
+          <div class="pv">
+            <div class="top"><b>TribeTails</b></div>
+            <div class="subjline">
+              <div class="lbl">Subject</div>
+              <h4 id="pvSubject"></h4>
+            </div>
+            <div class="pb">
+              <p id="pvBody"></p>
+              <div class="pets">
+                <div class="pet"><span class="thumb" style="background-image:url('https://images.unsplash.com/photo-1543466835-00a7907e9de1?w=120&q=80')"></span><span class="pn">Biscuit</span></div>
+                <div class="pet"><span class="thumb" style="background-image:url('https://images.unsplash.com/photo-1574144611937-0df059b5ef3e?w=120&q=80')"></span><span class="pn">Gravy</span></div>
+              </div>
+              <a class="cta" id="pvCta">Read the KinTale</a>
+            </div>
+            <div class="foot">// placeholder footer · TribeTails Pet Care · you receive this because you have an active subscription</div>
+          </div>
+          <div class="pvlab">how kinfolk see it</div>
+        </div>
+
+        <div class="panel r" style="animation-delay:.3s">
+          <label class="cap">Resolved with sample values</label>
+          <div class="legend">
+            <div class="lrow"><code>{{kinfolk_name}}</code><span class="arrow">→</span><b>Lorna Wren</b></div>
+            <div class="lrow"><code>{{kin_names}}</code><span class="arrow">→</span><b>Biscuit &amp; Gravy</b></div>
+            <div class="lrow"><code>{{date}}</code><span class="arrow">→</span><b>May 27, 2026</b></div>
+            <div class="lrow"><code>{{time}}</code><span class="arrow">→</span><b>2:30 PM</b></div>
+            <div class="lrow"><code>{{service}}</code><span class="arrow">→</span><b>afternoon walk</b></div>
+            <div class="lrow"><code>{{invoice_no}}</code><span class="arrow">→</span><b>INV-2048</b></div>
+            <div class="lrow"><code>{{amount}}</code><span class="arrow">→</span><b>$42.00</b></div>
+            <div class="lrow"><code>{{link}}</code><span class="arrow">→</span><b style="color:#7fdce8">a one-time link</b></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · Email creation · palette from AuntieColors.kt · placeholder content</p>
+  </div>
+
+  <script>
+    // sample merge values used for the resolved preview
+    const SAMPLE = {
+      "{{kinfolk_name}}": "Lorna Wren",
+      "{{kin_names}}": "Biscuit & Gravy",
+      "{{date}}": "May 27, 2026",
+      "{{time}}": "2:30 PM",
+      "{{service}}": "afternoon walk",
+      "{{invoice_no}}": "INV-2048",
+      "{{amount}}": "$42.00",
+      "{{link}}": "tribetails.com/k/abc123",
+    };
+
+    const subjInput = document.getElementById('subjInput');
+    const bodyEd    = document.getElementById('bodyEd');
+    const pvSubject = document.getElementById('pvSubject');
+    const pvBody    = document.getElementById('pvBody');
+    const pvCta     = document.getElementById('pvCta');
+    const charCount = document.getElementById('charCount');
+    let pvMode = 'resolved';
+
+    function escapeHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+    // resolve {{tokens}} with sample values; unknown tokens left visible
+    function resolve(text){
+      return escapeHtml(text).replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (m)=>{
+        const key = '{{'+m.replace(/[{}\s]/g,'')+'}}';
+        if (SAMPLE[key] !== undefined) return '<span class="res">'+escapeHtml(SAMPLE[key])+'</span>';
+        return '<span class="res">'+escapeHtml(m)+'</span>';
+      });
+    }
+    // raw view: highlight the tokens but keep them literal
+    function highlightRaw(text){
+      return escapeHtml(text).replace(/\{\{\s*[a-zA-Z0-9_.]+\s*\}\}/g, (m)=>'<span class="res">'+m+'</span>');
+    }
+
+    function render(){
+      const subj = subjInput.value;
+      const body = bodyEd.innerText;
+      const fn = pvMode === 'resolved' ? resolve : highlightRaw;
+      pvSubject.innerHTML = fn(subj);
+      // body: keep paragraph breaks, drop the trailing link line into the CTA visual
+      const lines = body.split('\n').filter(l=>l.trim().length);
+      const linkLineIdx = lines.findIndex(l=>/\{\{\s*link\s*\}\}/.test(l));
+      let bodyLines = lines;
+      if (linkLineIdx >= 0){ bodyLines = lines.filter((_,i)=>i!==linkLineIdx); }
+      pvBody.innerHTML = bodyLines.map(l=>fn(l)).join('<br><br>');
+      pvCta.textContent = subj && /kintale/i.test(subj) ? 'Read the KinTale' : 'Open in TribeTails';
+      charCount.textContent = body.length + ' chars';
+    }
+
+    subjInput.addEventListener('input', render);
+    bodyEd.addEventListener('input', render);
+
+    // merge-field chips: insert token into the body at caret (or append)
+    document.querySelectorAll('#mfChips .chip').forEach(chip=>{
+      chip.addEventListener('mousedown', e=>{ e.preventDefault(); });
+      chip.addEventListener('click', ()=>{
+        const token = chip.dataset.mf;
+        bodyEd.focus();
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount && bodyEd.contains(sel.anchorNode)){
+          const range = sel.getRangeAt(0);
+          range.deleteContents();
+          range.insertNode(document.createTextNode(token));
+          range.collapse(false);
+        } else {
+          bodyEd.appendChild(document.createTextNode(token));
+        }
+        render();
+      });
+    });
+
+    // preview mode toggle
+    document.querySelectorAll('.pvtoggle button').forEach(b=>b.addEventListener('click',()=>{
+      document.querySelectorAll('.pvtoggle button').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on'); pvMode = b.dataset.pv; render();
+    }));
+
+    // enable toggle + tag remove
+    document.getElementById('enableTog').addEventListener('click', e=>e.currentTarget.classList.toggle('on'));
+    document.querySelectorAll('.tag .x').forEach(x=>x.addEventListener('click', ()=>x.closest('.tag').remove()));
+
+    // save enabled only when key + name + subject + body present (mirrors real validation)
+    function syncSave(){
+      const ok = document.getElementById('keyInput').value.trim()
+        && document.getElementById('nameInput').value.trim()
+        && subjInput.value.trim()
+        && bodyEd.innerText.trim();
+      document.getElementById('saveBtn').disabled = !ok;
+    }
+    ['keyInput','nameInput'].forEach(id=>document.getElementById(id).addEventListener('input', syncSave));
+    subjInput.addEventListener('input', syncSave);
+    bodyEd.addEventListener('input', syncSave);
+
+    render(); syncSave();
+
+    // mesh parallax
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Schedule (concept)</title>
+<!--
+  AuntieOS redesign concept · Schedule (week view).
+  Standalone HTML/CSS mockup. Same "Den" aesthetic. No em dashes.
+  Brand palette from AuntieColors.kt. Sample content is illustrative placeholder.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.055);
+    --ease:cubic-bezier(.2,.8,.2,1);
+    --hour:54px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.42;mix-blend-mode:screen;filter:blur(74px);
+    animation:drift 30s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--teal),transparent 62%);top:-10vmax;left:-6vmax;}
+  .blob.b{width:38vmax;height:38vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:14vmax;right:-8vmax;animation-delay:-9s;}
+  .blob.c{width:34vmax;height:34vmax;background:radial-gradient(circle,var(--pink),transparent 60%);bottom:-12vmax;left:38vmax;animation-delay:-17s;}
+  @keyframes drift{to{transform:translate3d(4vmax,3vmax,0) scale(1.1) rotate(9deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1280px;margin:0 auto;padding:26px 30px 60px;}
+
+  /* header */
+  .head{display:flex;align-items:center;gap:18px;margin-bottom:22px;
+    opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards;}
+  .head .title h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;
+    font-variation-settings:"SOFT" 50,"WONK" 1;}
+  .head .title .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--orange);margin-bottom:5px;}
+  .spacer{flex:1}
+  .nav{display:flex;align-items:center;gap:6px;background:var(--navy-3);border:1px solid var(--line);
+    border-radius:13px;padding:5px;}
+  .nav button{background:none;border:none;color:var(--cream-dim);cursor:pointer;width:32px;height:32px;
+    border-radius:9px;display:grid;place-items:center;transition:.18s var(--ease);}
+  .nav button:hover{background:var(--navy-2);color:var(--cream)}
+  .nav .lbl{font-family:"Spline Sans Mono",monospace;font-size:12.5px;color:var(--cream);padding:0 10px;min-width:128px;text-align:center}
+  .seg{display:flex;background:var(--navy-3);border:1px solid var(--line);border-radius:13px;padding:5px;gap:3px;}
+  .seg button{background:none;border:none;color:var(--cream-dim);font-family:"Hanken Grotesk";font-weight:600;
+    font-size:13px;padding:7px 15px;border-radius:9px;cursor:pointer;transition:.18s var(--ease);}
+  .seg button.on{background:var(--cream);color:var(--navy)}
+  .seg button:not(.on):hover{color:var(--cream)}
+  .add{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;
+    font-size:14px;padding:11px 17px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);
+    display:inline-flex;align-items:center;gap:8px;}
+  .add:hover{transform:translateY(-2px);box-shadow:0 12px 28px -10px rgba(223,132,49,.6)}
+
+  /* legend */
+  .legend{display:flex;gap:18px;margin-bottom:14px;font-size:12.5px;color:var(--cream-dim);
+    opacity:0;animation:rise .6s var(--ease) .1s forwards;}
+  .legend span{display:inline-flex;align-items:center;gap:7px}
+  .swatch{width:11px;height:11px;border-radius:4px}
+  .sw-walk{background:var(--teal)} .sw-drop{background:var(--orange)} .sw-sit{background:var(--pink)} .sw-meet{background:var(--purple)}
+  .sw-busy{background:repeating-linear-gradient(45deg,#6a6e7e 0 3px,#3a3e4e 3px 6px)}
+
+  /* calendar */
+  .cal{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);
+    border-radius:22px;overflow:hidden;opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) .16s forwards;}
+  .dayrow{display:grid;grid-template-columns:56px repeat(7,1fr);border-bottom:1px solid var(--line);}
+  .dayrow .gutter{border-right:1px solid var(--line-2)}
+  .dcol{padding:13px 10px;text-align:center;border-right:1px solid var(--line-2);}
+  .dcol:last-child{border-right:none}
+  .dcol .dow{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--cream-dim);opacity:.7}
+  .dcol .dnum{font-family:"Fraunces",serif;font-size:21px;font-weight:500;margin-top:3px}
+  .dcol.today .dnum{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:11px;
+    background:var(--coral);color:var(--cream);margin-top:1px}
+  .dcol.today .dow{color:var(--coral);opacity:1}
+
+  .body{display:grid;grid-template-columns:56px repeat(7,1fr);position:relative}
+  .times{border-right:1px solid var(--line-2)}
+  .times .t{height:var(--hour);font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim);
+    opacity:.6;text-align:right;padding:2px 8px 0 0;transform:translateY(-7px)}
+  .day{position:relative;border-right:1px solid var(--line-2);
+    background:repeating-linear-gradient(to bottom,transparent 0,transparent calc(var(--hour) - 1px),var(--line-2) var(--hour));}
+  .day:last-child{border-right:none}
+  .day.is-today{background:
+     repeating-linear-gradient(to bottom,transparent 0,transparent calc(var(--hour) - 1px),var(--line-2) var(--hour)),
+     linear-gradient(180deg,rgba(213,83,90,.05),transparent);}
+
+  .ev{position:absolute;left:5px;right:5px;border-radius:11px;padding:7px 9px;cursor:pointer;overflow:hidden;
+    border:1px solid transparent;transition:.16s var(--ease);}
+  .ev:hover{transform:scale(1.02);z-index:5;box-shadow:0 12px 26px -12px rgba(0,0,0,.7)}
+  .ev .tt{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.04em;opacity:.85}
+  .ev b{display:block;font-size:13px;font-weight:700;margin-top:2px;line-height:1.15}
+  .ev small{font-size:11px;opacity:.85}
+  .ev.walk{background:rgba(10,133,149,.18);border-color:rgba(10,133,149,.5);color:#bfeef4}
+  .ev.drop{background:rgba(223,132,49,.16);border-color:rgba(223,132,49,.5);color:#f4cfa3}
+  .ev.sit{background:rgba(213,92,135,.16);border-color:rgba(213,92,135,.5);color:#f6c2d4}
+  .ev.meet{background:rgba(116,83,138,.2);border-color:rgba(116,83,138,.55);color:#d6c2e6}
+  .ev .pawtag{position:absolute;right:7px;bottom:5px;font-size:13px;opacity:.5}
+  .ev:not(.blocked){cursor:grab;touch-action:none}
+  .ev.dragging{cursor:grabbing;opacity:.95;z-index:20;box-shadow:0 22px 44px -12px rgba(0,0,0,.85);transform:scale(1.03)}
+  /* read-only Google Calendar busy blocks (synced, not draggable) */
+  .ev.blocked{cursor:not-allowed;color:var(--cream-dim);
+    background:repeating-linear-gradient(45deg,rgba(207,206,198,.12) 0 6px,rgba(207,206,198,.03) 6px 12px),var(--navy-3);
+    border:1px dashed rgba(207,206,198,.4)}
+  .ev.blocked b{color:var(--cream);opacity:.9}
+  .ev.blocked .lock{position:absolute;right:7px;top:7px;font-size:11px;opacity:.6}
+  .ev.blocked small{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.05em;opacity:.7}
+
+  /* now line */
+  .now{position:absolute;left:56px;right:0;height:2px;background:var(--coral);z-index:6;}
+  .now:before{content:"";position:absolute;left:-5px;top:-4px;width:10px;height:10px;border-radius:50%;background:var(--coral)}
+  .now .lab{position:absolute;left:6px;top:-19px;font-family:"Spline Sans Mono",monospace;font-size:9.5px;
+    color:var(--coral);background:var(--navy);padding:1px 6px;border-radius:6px}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:30px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:900px){.body,.dayrow{grid-template-columns:44px repeat(7,minmax(90px,1fr));overflow-x:auto}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <div class="title">
+        <div class="kick">The Den · Schedule</div>
+        <h2>This week's runs</h2>
+      </div>
+      <div class="spacer"></div>
+      <div class="nav">
+        <button>‹</button>
+        <span class="lbl">May 25 to 31</span>
+        <button>›</button>
+      </div>
+      <div class="seg">
+        <button>Day</button><button class="on">Week</button><button>Month</button>
+      </div>
+      <button class="add">＋ New visit</button>
+    </div>
+
+    <div class="legend">
+      <span><i class="swatch sw-walk"></i> Walk</span>
+      <span><i class="swatch sw-drop"></i> Drop-in</span>
+      <span><i class="swatch sw-sit"></i> House sit</span>
+      <span><i class="swatch sw-meet"></i> Meet &amp; greet</span>
+      <span><i class="swatch sw-busy"></i> Busy · from Google Calendar</span>
+      <span style="margin-left:auto;opacity:.6">drag a visit to reschedule · snaps to 15 min</span>
+    </div>
+
+    <div class="cal">
+      <!-- day header -->
+      <div class="dayrow">
+        <div class="gutter"></div>
+        <div class="dcol"><div class="dow">Mon</div><div class="dnum">25</div></div>
+        <div class="dcol"><div class="dow">Tue</div><div class="dnum">26</div></div>
+        <div class="dcol today"><div class="dow">Wed</div><div class="dnum">27</div></div>
+        <div class="dcol"><div class="dow">Thu</div><div class="dnum">28</div></div>
+        <div class="dcol"><div class="dow">Fri</div><div class="dnum">29</div></div>
+        <div class="dcol"><div class="dow">Sat</div><div class="dnum">30</div></div>
+        <div class="dcol"><div class="dow">Sun</div><div class="dnum">31</div></div>
+      </div>
+
+      <!-- body grid: 8a to 6p (10 hours) -->
+      <div class="body" style="--hour:54px">
+        <div class="times">
+          <div class="t">8a</div><div class="t">9a</div><div class="t">10a</div><div class="t">11a</div>
+          <div class="t">12p</div><div class="t">1p</div><div class="t">2p</div><div class="t">3p</div>
+          <div class="t">4p</div><div class="t">5p</div>
+        </div>
+
+        <!-- Mon -->
+        <div class="day">
+          <div class="ev walk" style="top:54px;height:40px"><span class="tt">9:00</span><b>Biscuit &amp; Gravy</b><span class="pawtag">🐕</span></div>
+          <div class="ev blocked" style="top:189px;height:54px"><span class="lock">🔒</span><span class="tt">11:30</span><b>Busy</b><small>Google Calendar</small></div>
+          <div class="ev drop" style="top:270px;height:34px"><span class="tt">1:00</span><b>Marigold</b><span class="pawtag">🐈</span></div>
+        </div>
+        <!-- Tue -->
+        <div class="day">
+          <div class="ev sit" style="top:27px;height:70px"><span class="tt">8:30</span><b>Clover &amp; Sage</b><small>house sit</small><span class="pawtag">🐇</span></div>
+          <div class="ev walk" style="top:324px;height:46px"><span class="tt">2:00</span><b>Pepper</b><span class="pawtag">🐕‍🦺</span></div>
+        </div>
+        <!-- Wed (today) -->
+        <div class="day is-today">
+          <div class="ev walk" style="top:54px;height:40px"><span class="tt">9:00</span><b>Biscuit &amp; Gravy</b><span class="pawtag">🐕</span></div>
+          <div class="ev drop" style="top:135px;height:34px"><span class="tt">10:30</span><b>Marigold</b><span class="pawtag">🐈</span></div>
+          <div class="ev blocked" style="top:216px;height:60px"><span class="lock">🔒</span><span class="tt">12:00</span><b>Vet (Marigold)</b><small>Google Calendar</small></div>
+          <div class="ev walk" style="top:351px;height:48px"><span class="tt">1:15</span><b>Pepper</b><span class="pawtag">🐕‍🦺</span></div>
+          <div class="ev sit" style="top:486px;height:60px"><span class="tt">4:00</span><b>Clover &amp; Sage</b><span class="pawtag">🐇</span></div>
+        </div>
+        <!-- Thu -->
+        <div class="day">
+          <div class="ev meet" style="top:108px;height:40px"><span class="tt">10:00</span><b>New: the Mallorys</b><small>meet &amp; greet</small><span class="pawtag">🐶</span></div>
+          <div class="ev walk" style="top:297px;height:40px"><span class="tt">1:30</span><b>Biscuit &amp; Gravy</b><span class="pawtag">🐕</span></div>
+        </div>
+        <!-- Fri -->
+        <div class="day">
+          <div class="ev drop" style="top:54px;height:34px"><span class="tt">9:00</span><b>Marigold</b><span class="pawtag">🐈</span></div>
+          <div class="ev blocked" style="top:135px;height:50px"><span class="lock">🔒</span><span class="tt">10:30</span><b>Busy</b><small>Google Calendar</small></div>
+          <div class="ev walk" style="top:243px;height:46px"><span class="tt">12:30</span><b>Pepper</b><span class="pawtag">🐕‍🦺</span></div>
+          <div class="ev drop" style="top:432px;height:34px"><span class="tt">3:00</span><b>Marigold</b><span class="pawtag">🐈</span></div>
+        </div>
+        <!-- Sat -->
+        <div class="day">
+          <div class="ev sit" style="top:54px;height:150px"><span class="tt">9:00</span><b>Clover &amp; Sage</b><small>weekend sit</small><span class="pawtag">🐇</span></div>
+        </div>
+        <!-- Sun -->
+        <div class="day">
+          <div class="ev sit" style="top:0;height:120px"><span class="tt">cont.</span><b>Clover &amp; Sage</b><small>weekend sit</small><span class="pawtag">🐇</span></div>
+        </div>
+
+        <!-- now line at ~11:18a -> top within body. 8a=0; 11:18 = 3.3h*54 + header? body starts at 8a row top. 3.3*54=178 -->
+        <div class="now" style="top:178px"><span class="lab">now 11:18</span></div>
+      </div>
+    </div>
+
+    <p class="note">// concept mockup · Schedule week view · palette from AuntieColors.kt · sample content is placeholder, not real bookings</p>
+  </div>
+
+  <script>
+    // view segment toggle (visual only in this mockup)
+    document.querySelectorAll('.seg button').forEach(b=>b.addEventListener('click',()=>{
+      document.querySelectorAll('.seg button').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on');
+    }));
+
+    // Drag to reschedule. Snaps to 15 min (matches real DRAG_MINUTE_SNAP=15) and
+    // can move across days. Google Calendar busy blocks are read-only (not draggable).
+    const HOURPX=54, PXMIN=HOURPX/60, SNAP=15, DAY_START=8*60;
+    let drag=null;
+    const fmt=mins=>{let h=Math.floor(mins/60),m=mins%60,ap=h<12?'a':'p',hh=h%12||12;return hh+':'+String(m).padStart(2,'0')+ap;};
+    document.querySelectorAll('.ev:not(.blocked)').forEach(ev=>{
+      ev.addEventListener('pointerdown',e=>{
+        const r=ev.getBoundingClientRect();
+        drag={ev, offY:e.clientY-r.top, h:ev.offsetHeight};
+        ev.classList.add('dragging');
+        try{ev.setPointerCapture(e.pointerId)}catch(_){}
+        e.preventDefault();
+      });
+    });
+    addEventListener('pointermove',e=>{
+      if(!drag)return;
+      e.preventDefault();
+      const under=document.elementsFromPoint(e.clientX,e.clientY).find(el=>el.classList&&el.classList.contains('day'));
+      const host=under||drag.ev.parentElement;
+      if(host!==drag.ev.parentElement) host.appendChild(drag.ev);
+      const hr=host.getBoundingClientRect();
+      const snapPx=SNAP*PXMIN;
+      let top=Math.round((e.clientY-hr.top-drag.offY)/snapPx)*snapPx;
+      top=Math.max(0, Math.min(host.clientHeight-drag.h, top));
+      drag.ev.style.top=top+'px';
+      const tt=drag.ev.querySelector('.tt');
+      if(tt) tt.textContent=fmt(DAY_START+Math.round(top/PXMIN));
+    },{passive:false});
+    const endDrag=()=>{ if(drag){drag.ev.classList.remove('dragging'); drag=null;} };
+    addEventListener('pointerup',endDrag);
+    addEventListener('pointercancel',endDrag);
+
+    // quiet mesh parallax, paused while dragging
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{ if(drag)return;
+      const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-15}px,${y*-15}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

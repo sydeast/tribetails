@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Sign in (concept)</title>
+<!--
+  AuntieOS redesign concept · Sign in. Standalone HTML/CSS mockup.
+  Same "Den" aesthetic. No em dashes. Palette from AuntieColors.kt.
+  Mirrors real web SignInScreen.kt contract:
+    - paw brand mark + "AuntieOS"
+    - card: "Welcome home, Auntie" / "Sign in to keep the Kinfolk taken care of."
+    - Email + Password fields (placeholders you@auntieos.com / dots)
+    - Primary "Jump back in!" (loading "Signing in...")
+    - Ghost "Forgot password?" -> sendPasswordReset
+    - admin-only gate: non-admin -> signed out + "This account does not have admin access."
+    - reset success -> "Reset link sent. Check your inbox."
+  All visible copy reproduced verbatim from SignInScreen.kt. Nothing authored.
+  Items tagged SUGGESTION are not in current code.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;
+    display:flex;align-items:center;justify-content:center;padding:40px 20px;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.5;mix-blend-mode:screen;filter:blur(74px);
+    animation:drift 29s var(--ease) infinite alternate;}
+  .blob.a{width:46vmax;height:46vmax;background:radial-gradient(circle,var(--purple),transparent 62%);top:-14vmax;left:-6vmax;}
+  .blob.b{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:8vmax;right:-10vmax;animation-delay:-10s;}
+  .blob.c{width:38vmax;height:38vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-16vmax;left:30vmax;animation-delay:-16s;}
+  .blob.d{width:30vmax;height:30vmax;background:radial-gradient(circle,var(--pink),transparent 60%);bottom:-4vmax;right:16vmax;animation-delay:-22s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-9deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .stage{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;
+    width:100%;max-width:420px;gap:18px;
+    opacity:0;transform:translateY(14px);animation:rise .7s var(--ease) forwards;}
+  @keyframes rise{to{opacity:1;transform:none}}
+
+  /* brand mark */
+  .mark{width:96px;height:96px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    background:rgba(255,255,255,.16);border:2px solid rgba(255,255,255,.42);
+    box-shadow:0 18px 50px -18px rgba(0,0,0,.6);}
+  .mark svg{width:42px;height:42px;stroke:#fff;}
+  .brand{font-family:"Fraunces",serif;font-weight:420;font-size:30px;letter-spacing:-.01em;color:#fff;
+    font-variation-settings:"SOFT" 50,"WONK" 1;}
+
+  /* glass card */
+  .card{width:100%;background:linear-gradient(160deg,rgba(23,26,42,.82),rgba(30,34,53,.5));
+    border:1px solid var(--line);border-radius:20px;padding:26px 26px 22px;
+    backdrop-filter:blur(14px);box-shadow:0 30px 70px -30px rgba(0,0,0,.8);}
+  .card h1{font-family:"Fraunces",serif;font-weight:440;font-size:24px;letter-spacing:-.01em;
+    font-variation-settings:"SOFT" 50,"WONK" 1;margin-bottom:5px;}
+  .card .sub{color:var(--cream-dim);font-size:14px;margin-bottom:20px;}
+
+  /* fields */
+  .field{margin-bottom:18px;}
+  .field label{display:block;font-family:"Spline Sans Mono",monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--cream-dim);margin-bottom:7px;}
+  .field .inp{display:flex;align-items:center;gap:10px;border-bottom:1.5px solid var(--line);
+    padding:8px 2px;transition:border-color .18s var(--ease);}
+  .field .inp:focus-within{border-color:var(--orange)}
+  .field .inp input{flex:1;background:none;border:none;outline:none;color:var(--cream);
+    font-family:inherit;font-size:15px;}
+  .field .inp input::placeholder{color:var(--cream-dim);opacity:.55}
+  .field .eye{background:none;border:none;color:var(--cream-dim);cursor:pointer;font-size:11px;
+    font-family:"Spline Sans Mono",monospace;letter-spacing:.06em;padding:3px 6px;border-radius:7px;}
+  .field .eye:hover{color:var(--cream);background:var(--navy-3)}
+
+  /* toast */
+  .toast{display:flex;align-items:center;gap:9px;border-radius:11px;padding:10px 13px;font-size:13px;
+    margin-bottom:16px;border:1px solid;}
+  .toast.err{background:rgba(213,83,90,.12);border-color:rgba(213,83,90,.45);color:#f1a9ad}
+  .toast.ok{background:rgba(10,133,149,.12);border-color:rgba(10,133,149,.45);color:#7fdce8}
+  .toast .dot{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+
+  /* buttons */
+  .primary{width:100%;background:var(--orange);color:var(--navy);border:none;border-radius:13px;
+    font-family:"Hanken Grotesk";font-weight:800;font-size:15px;padding:14px;cursor:pointer;
+    transition:.2s var(--ease);display:flex;align-items:center;justify-content:center;gap:9px;}
+  .primary:hover{transform:translateY(-2px);box-shadow:0 14px 30px -10px rgba(223,132,49,.6)}
+  .ghostrow{display:flex;justify-content:flex-end;margin-top:12px;}
+  .ghost{background:none;border:none;color:var(--cream-dim);font-family:"Hanken Grotesk";font-weight:600;
+    font-size:13px;cursor:pointer;padding:6px 4px;transition:.16s var(--ease);}
+  .ghost:hover{color:var(--orange)}
+
+  /* state strip (annotated extra states, not all on screen at once in real app) */
+  .states{position:relative;z-index:2;max-width:420px;width:100%;margin-top:6px;}
+  .states .lab{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--cream-dim);opacity:.5;margin:18px 0 8px;}
+  .footnote{position:relative;z-index:2;max-width:420px;width:100%;margin-top:22px;
+    font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.5;line-height:1.7;}
+  .tag{display:inline-block;font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--teal);border:1px solid rgba(10,133,149,.4);border-radius:6px;
+    padding:1px 6px;margin-right:6px;}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div><div class="blob d"></div></div>
+  <div class="grain"></div>
+
+  <div class="stage">
+    <div class="mark">
+      <!-- Lucide PawPrint (mirrors SignInScreen brand mark) -->
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="4" r="2"/><circle cx="18" cy="8" r="2"/><circle cx="20" cy="16" r="2"/>
+        <path d="M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"/>
+      </svg>
+    </div>
+    <div class="brand">AuntieOS</div>
+
+    <div class="card">
+      <h1>Welcome home, Auntie</h1>
+      <div class="sub">Sign in to keep the Kinfolk taken care of.</div>
+
+      <div class="field">
+        <label>Email</label>
+        <div class="inp"><input type="email" placeholder="you@auntieos.com" /></div>
+      </div>
+
+      <div class="field">
+        <label>Password</label>
+        <div class="inp">
+          <input type="password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" />
+          <button class="eye" title="SUGGESTION: not in current code">show</button>
+        </div>
+      </div>
+
+      <button class="primary">Jump back in!</button>
+
+      <div class="ghostrow"><button class="ghost">Forgot password?</button></div>
+    </div>
+
+    <!-- annotated alternate states (one toast shows at a time in the real card) -->
+    <div class="states">
+      <div class="lab">State · admin gate (non-admin signs in then gets bounced)</div>
+      <div class="toast err"><span class="dot"></span>This account does not have admin access.</div>
+
+      <div class="lab">State · missing fields</div>
+      <div class="toast err"><span class="dot"></span>Email and password are required.</div>
+
+      <div class="lab">State · forgot password sent</div>
+      <div class="toast ok"><span class="dot"></span>Reset link sent. Check your inbox.</div>
+    </div>
+
+    <div class="footnote">
+      <span class="tag">mirrored</span> all copy verbatim from SignInScreen.kt<br/>
+      <span class="tag">flow</span> signIn -&gt; isCurrentUserAdmin(forceRefresh) gate -&gt; onSignedIn, else signOut<br/>
+      <span class="tag">suggestion</span> show / hide password toggle (no equivalent in current code)
+    </div>
+  </div>
+</body>
+</html>

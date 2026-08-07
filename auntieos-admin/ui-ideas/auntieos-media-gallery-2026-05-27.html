@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Media Gallery (concept)</title>
+<!--
+  AuntieOS redesign concept · Media Gallery. Standalone HTML/CSS mockup.
+  Mirrors web/.../screens/media/MediaGalleryScreen.kt + data/MediaModels.kt#MediaFile.
+
+  REAL (verbatim from MediaGalleryScreen.kt / MediaGalleryViewModel.kt):
+   - Title is "$entityName Media" (here a placeholder kinfolk name).
+   - Top bar: Back arrow + a single Plus action labelled "Upload Media".
+   - Upload shows a full-width LinearProgressIndicator (isUploading).
+   - Error banner with a dismiss X (errorContainer / error colors).
+   - States: Loading (spinner) / Empty / Grid.
+   - Empty copy verbatim: "No media files found" and
+     "Upload photos and videos to see them here".
+   - Grid is GridCells.Adaptive(minSize = 120.dp), square thumbnails.
+   - fileType branches IMAGE / VIDEO / DOCUMENT / AUDIO.
+       VIDEO  -> thumbnail + center Play badge.
+       DOCUMENT/AUDIO -> FileText/Music glyph + originalFileName (maxLines 2).
+   - Each thumbnail has a top-end delete X.
+   - Delete dialog verbatim: title "Delete Media",
+     body "Are you sure you want to delete this {fileType lowercased}?",
+     buttons "Delete" / "Cancel".
+   - MediaFile carries: originalFileName, fileType, description, uploadedAt,
+     uploadedBy, tags, fileSizeBytes, durationSeconds, isProfilePhoto, etc.,
+     but the SHIPPED grid only renders the thumbnail + (doc/audio) filename.
+
+  SUGGESTION (NOT in shipped screen, clearly tagged inline, additive only):
+   - "data-suggestion" type-filter pills (All / Images / Videos / Docs / Audio).
+   - Count chip next to title.
+   - Hover caption strip surfacing description + uploadedAt (model has the data;
+     the shipped grid does not display it yet).
+   - Lightbox preview on click.
+   None of these are wired; they show how existing MediaFile fields COULD surface.
+
+  Den aesthetic + palette from AuntieColors.kt. Fonts Fraunces + Hanken Grotesk
+  + Spline Sans Mono. No em dashes. Image placeholders are CSS gradient blocks
+  with a paw/photo glyph, never external URLs. Sample content is illustrative
+  placeholder, not real data. User authors all customer-facing copy; gaps = TODO.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.45;mix-blend-mode:screen;filter:blur(74px);
+    animation:drift 29s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--purple),transparent 62%);top:-10vmax;left:-4vmax;}
+  .blob.b{width:40vmax;height:40vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:10vmax;right:-8vmax;animation-delay:-10s;}
+  .blob.c{width:34vmax;height:34vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-12vmax;left:36vmax;animation-delay:-16s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-9deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1240px;margin:0 auto;padding:26px 30px 60px;}
+
+  /* top bar mirrors MediaGalleryTopBar: back arrow + title + upload action */
+  .head{display:flex;align-items:flex-end;gap:18px;margin-bottom:18px;
+    opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards;}
+  .back{width:40px;height:40px;border-radius:13px;border:1px solid var(--line);background:var(--navy-3);
+    color:var(--cream);display:grid;place-items:center;cursor:pointer;flex:0 0 auto;transition:.18s var(--ease);
+    margin-bottom:2px;}
+  .back:hover{background:var(--navy-2);transform:translateY(-1px)}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--orange);margin-bottom:5px;}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;
+    font-variation-settings:"SOFT" 50,"WONK" 1;display:inline-flex;align-items:baseline;gap:12px;}
+  .head h2 b{color:var(--pink);font-weight:500}
+  /* SUGGESTION: count chip, not in shipped top bar */
+  .count{font-family:"Spline Sans Mono",monospace;font-size:12px;letter-spacing:.04em;color:var(--cream-dim);
+    background:var(--navy-3);border:1px solid var(--line);border-radius:20px;padding:3px 10px;
+    font-weight:500;align-self:center;}
+  .count em{font-style:normal;color:var(--teal)}
+  .spacer{flex:1}
+  /* upload action == the Plus IconButton (contentDescription "Upload Media") */
+  .add{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;
+    font-size:14px;padding:11px 17px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);
+    display:inline-flex;align-items:center;gap:8px;}
+  .add:hover{transform:translateY(-2px);box-shadow:0 12px 28px -10px rgba(223,132,49,.6)}
+
+  /* full-width upload progress == LinearProgressIndicator(isUploading) */
+  .uploadbar{height:3px;border-radius:3px;overflow:hidden;background:var(--navy-3);margin-bottom:16px;
+    opacity:0;animation:rise .4s var(--ease) .04s forwards;}
+  .uploadbar i{display:block;height:100%;width:42%;border-radius:3px;
+    background:linear-gradient(90deg,var(--orange),var(--pink));animation:indet 1.2s var(--ease) infinite;}
+  @keyframes indet{0%{margin-left:-42%}100%{margin-left:100%}}
+
+  /* error banner == ErrorBanner(errorContainer / error) */
+  .err{display:flex;align-items:center;gap:12px;background:rgba(213,83,90,.16);
+    border:1px solid rgba(213,83,90,.42);border-radius:13px;padding:11px 14px;margin-bottom:16px;
+    color:#f0a0a5;font-size:13.5px;opacity:0;animation:rise .4s var(--ease) .06s forwards;}
+  .err .msg{flex:1}
+  .err .x{cursor:pointer;color:#f0a0a5;display:grid;place-items:center;width:20px;height:20px;flex:0 0 auto;
+    border-radius:50%;transition:.15s var(--ease)}
+  .err .x:hover{background:rgba(213,83,90,.22)}
+
+  /* SUGGESTION: type filter pills. Shipped screen has NO filters. */
+  .controls{display:flex;align-items:center;gap:10px;margin-bottom:22px;flex-wrap:wrap;
+    opacity:0;animation:rise .6s var(--ease) .08s forwards;}
+  .sug-tag{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--purple);border:1px dashed rgba(116,83,138,.55);border-radius:7px;padding:4px 8px;font-weight:600;}
+  .pills{display:flex;background:var(--navy-3);border:1px solid var(--line);border-radius:13px;padding:5px;gap:3px;}
+  .pills button{background:none;border:none;color:var(--cream-dim);font-family:"Hanken Grotesk";font-weight:600;
+    font-size:13px;padding:7px 15px;border-radius:9px;cursor:pointer;transition:.18s var(--ease);
+    display:inline-flex;align-items:center;gap:7px;}
+  .pills button.on{background:var(--cream);color:var(--navy)}
+  .pills button .ct{font-family:"Spline Sans Mono",monospace;font-size:10.5px;opacity:.6}
+  .pills button.on .ct{opacity:.8}
+
+  /* grid mirrors GridCells.Adaptive(minSize = 120.dp), square cells */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;}
+  .cell{position:relative;aspect-ratio:1/1;border-radius:14px;overflow:hidden;
+    border:1px solid var(--line);background:var(--navy-2);cursor:pointer;transition:.2s var(--ease);
+    opacity:0;transform:translateY(14px);animation:rise .6s var(--ease) forwards;}
+  .cell:hover{transform:translateY(-3px);border-color:rgba(223,132,49,.4);box-shadow:0 16px 36px -20px rgba(0,0,0,.7)}
+  .cell:nth-child(1){animation-delay:.10s}.cell:nth-child(2){animation-delay:.14s}
+  .cell:nth-child(3){animation-delay:.18s}.cell:nth-child(4){animation-delay:.22s}
+  .cell:nth-child(5){animation-delay:.26s}.cell:nth-child(6){animation-delay:.30s}
+  .cell:nth-child(7){animation-delay:.34s}.cell:nth-child(8){animation-delay:.38s}
+  .cell:nth-child(9){animation-delay:.42s}.cell:nth-child(10){animation-delay:.46s}
+
+  /* IMAGE / VIDEO fill the cell (Cloudinary thumbnailUrl placeholder via gradient) */
+  .thumb{position:absolute;inset:0;display:grid;place-items:center;}
+  .thumb.g1{background:radial-gradient(120% 120% at 30% 25%,#37c0cf,#0a5460 70%)}
+  .thumb.g2{background:radial-gradient(120% 120% at 70% 30%,#ef9fbb,#8c3354 72%)}
+  .thumb.g3{background:radial-gradient(120% 120% at 35% 70%,#f3b97f,#9a5a1c 72%)}
+  .thumb.g4{background:radial-gradient(120% 120% at 65% 65%,#b594c9,#4c3a5c 72%)}
+  .thumb.g5{background:radial-gradient(120% 120% at 30% 30%,#ec9aa0,#8e2f34 72%)}
+  .thumb.g6{background:radial-gradient(120% 120% at 70% 60%,#7fd0a0,#1f5b40 72%)}
+  /* faint photo glyph sits on image placeholders */
+  .thumb .glyph{opacity:.32}
+  .thumb .glyph svg{width:38px;height:38px;color:#fff}
+
+  /* VIDEO center play badge == Surface + Play icon (primary) */
+  .play{position:absolute;inset:0;display:grid;place-items:center;}
+  .play span{width:46px;height:46px;border-radius:50%;background:rgba(17,19,31,.7);
+    display:grid;place-items:center;backdrop-filter:blur(2px)}
+  .play svg{width:22px;height:22px;color:var(--orange);margin-left:2px}
+  /* duration badge (durationSeconds exists on MediaFile) */
+  .dur{position:absolute;bottom:9px;left:9px;font-family:"Spline Sans Mono",monospace;font-size:10px;
+    background:rgba(17,19,31,.74);color:var(--cream);padding:3px 7px;border-radius:7px;letter-spacing:.03em;}
+
+  /* DOCUMENT / AUDIO == glyph + originalFileName (maxLines 2) */
+  .filecell{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:9px;padding:14px;background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));}
+  .filecell svg{width:34px;height:34px;color:var(--orange)}
+  .filecell .fn{font-size:11.5px;font-weight:600;text-align:center;color:var(--cream);
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.3;}
+
+  /* per-cell delete X, top-end == IconButton(Lucide.X, tint error) */
+  .del{position:absolute;top:8px;right:8px;width:26px;height:26px;border-radius:50%;
+    background:rgba(17,19,31,.8);display:grid;place-items:center;cursor:pointer;z-index:3;
+    opacity:0;transform:scale(.85);transition:.15s var(--ease);border:1px solid var(--line);}
+  .cell:hover .del{opacity:1;transform:scale(1)}
+  .del svg{width:13px;height:13px;color:#f0a0a5}
+  .del:hover{background:rgba(213,83,90,.3)}
+
+  /* profile-photo marker (MediaFile.isProfilePhoto) */
+  .pf{position:absolute;top:8px;left:8px;font-family:"Spline Sans Mono",monospace;font-size:8.5px;
+    letter-spacing:.08em;text-transform:uppercase;font-weight:600;padding:3px 7px;border-radius:20px;z-index:3;
+    background:rgba(10,133,149,.28);color:#7fdce8;border:1px solid rgba(10,133,149,.5)}
+
+  /* SUGGESTION: hover caption strip surfacing description + uploadedAt + uploadedBy.
+     MediaFile holds these, the shipped grid does NOT render them. */
+  .cap{position:absolute;left:0;right:0;bottom:0;padding:24px 11px 10px;z-index:2;pointer-events:none;
+    background:linear-gradient(to top,rgba(17,19,31,.92),transparent);
+    opacity:0;transition:.2s var(--ease);}
+  .cell:hover .cap{opacity:1}
+  .cap .desc{font-size:12px;font-weight:600;line-height:1.3;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .cap .meta{font-family:"Spline Sans Mono",monospace;font-size:9.5px;color:var(--cream-dim);margin-top:4px;
+    display:flex;gap:8px;align-items:center;letter-spacing:.02em;}
+  .cap .meta .dot{width:2px;height:2px;border-radius:50%;background:var(--cream-dim);opacity:.6}
+
+  /* empty state == EmptyMediaState (Images glyph + two copy lines) */
+  .empty{display:none;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;padding:90px 20px;color:var(--cream-dim);
+    border:1px dashed var(--line);border-radius:20px;background:rgba(30,34,53,.3)}
+  .empty svg{width:64px;height:64px;opacity:.5;margin-bottom:16px}
+  .empty .t{font-family:"Fraunces",serif;font-size:21px;font-weight:420;color:var(--cream);
+    font-variation-settings:"SOFT" 50}
+  .empty .s{font-size:13.5px;margin-top:7px}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:32px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+
+  /* delete dialog == AlertDialog("Delete Media" / body / Delete + Cancel) */
+  .scrim{position:fixed;inset:0;z-index:30;background:rgba(8,9,15,.62);backdrop-filter:blur(3px);
+    display:none;align-items:center;justify-content:center;padding:24px;}
+  .scrim.show{display:flex}
+  .dialog{width:100%;max-width:380px;background:linear-gradient(160deg,var(--navy-2),var(--navy-3));
+    border:1px solid var(--line);border-radius:20px;padding:24px;box-shadow:0 30px 70px -30px rgba(0,0,0,.8);}
+  .dialog h3{font-family:"Fraunces",serif;font-weight:460;font-size:21px;margin-bottom:9px;
+    font-variation-settings:"SOFT" 50}
+  .dialog p{font-size:13.5px;color:var(--cream-dim);line-height:1.5;margin-bottom:20px}
+  .dialog .row{display:flex;justify-content:flex-end;gap:10px}
+  .dialog .cancel{background:none;border:1px solid var(--line);color:var(--cream);
+    font-family:"Hanken Grotesk";font-weight:600;font-size:13.5px;padding:9px 16px;border-radius:11px;cursor:pointer}
+  .dialog .cancel:hover{background:var(--navy-2)}
+  .dialog .delete{background:var(--coral);border:none;color:#fff;font-family:"Hanken Grotesk";font-weight:700;
+    font-size:13.5px;padding:9px 18px;border-radius:11px;cursor:pointer;transition:.18s var(--ease)}
+  .dialog .delete:hover{filter:brightness(1.08)}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <!-- back arrow == navigationIcon ArrowLeft -->
+      <div class="back" title="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+      </div>
+      <div>
+        <div class="kick">The Den · Media</div>
+        <!-- title == "$entityName Media"; sample name is placeholder -->
+        <!-- SAMPLE PLACEHOLDER name, not real kinfolk data -->
+        <h2>Lorna Wren <b>Media</b>
+          <!-- SUGGESTION: count chip, not in shipped top bar -->
+          <span class="count" data-suggestion><em>10</em> files</span>
+        </h2>
+      </div>
+      <div class="spacer"></div>
+      <!-- upload action == Plus IconButton, contentDescription "Upload Media" -->
+      <button class="add" id="uploadBtn">＋ Upload Media</button>
+    </div>
+
+    <!-- full-width upload progress; shown only while isUploading -->
+    <div class="uploadbar" id="uploadbar" style="display:none"><i></i></div>
+
+    <!-- error banner; rendered only when state.error != null. Hidden by default. -->
+    <div class="err" id="errbanner" style="display:none">
+      <span class="msg" id="errmsg">TODO error message (surfaced verbatim from FirestoreResult.Error)</span>
+      <span class="x" id="errx" title="Dismiss">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </span>
+    </div>
+
+    <!-- SUGGESTION: type filter pills. Shipped MediaGalleryScreen has NO filters. -->
+    <div class="controls" data-suggestion>
+      <span class="sug-tag">Suggestion</span>
+      <div class="pills">
+        <button class="on">All <span class="ct">10</span></button>
+        <button>Images <span class="ct">5</span></button>
+        <button>Videos <span class="ct">2</span></button>
+        <button>Documents <span class="ct">2</span></button>
+        <button>Audio <span class="ct">1</span></button>
+      </div>
+    </div>
+
+    <!-- GRID == MediaGrid. Cells map to fileType branches. -->
+    <!-- Sample captions/filenames below are ILLUSTRATIVE PLACEHOLDER, not real data. -->
+    <div class="grid" id="grid">
+
+      <!-- IMAGE + isProfilePhoto -->
+      <div class="cell">
+        <div class="thumb g1"><span class="glyph">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-5-5L5 21"/></svg>
+        </span></div>
+        <span class="pf">Profile</span>
+        <div class="del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
+        <!-- SUGGESTION caption: description + uploadedAt + uploadedBy from MediaFile -->
+        <div class="cap" data-suggestion>
+          <div class="desc">Biscuit on the porch</div>
+          <div class="meta">May 27<span class="dot"></span>Auntie Jo</div>
+        </div>
+      </div>
+
+      <!-- IMAGE -->
+      <div class="cell">
+        <div class="thumb g3"><span class="glyph">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-5-5L5 21"/></svg>
+        </span></div>
+        <div class="del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
+        <div class="cap" data-suggestion>
+          <div class="desc">Gravy mid-nap</div>
+          <div class="meta">May 27<span class="dot"></span>Auntie Jo</div>
+        </div>
+      </div>
+
+      <!-- VIDEO == thumbnail + center Play badge + duration -->
+      <div class="cell">
+        <div class="thumb g4"></div>
+        <div class="play"><span><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span></div>
+        <div class="dur">0:12</div>
+        <div class="del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
+        <div class="cap" data-suggestion>
+          <div class="desc">Fetch in the backyard</div>
+          <div class="meta">May 27<span class="dot"></span>Auntie Jo</div>
+        </div>
+      </div>
+
+      <!-- DOCUMENT == FileText glyph + originalFileName (maxLines 2) -->
+      <div class="cell">
+        <div class="filecell">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>
+          <!-- originalFileName placeholder -->
+          <div class="fn">vet-summary-biscuit.pdf</div>
+        </div>
+        <div class="del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
+      </div>
+
+      <!-- IMAGE -->
+      <div class="cell">
+        <div class="thumb g2"><span class="glyph">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-5-5L5 21"/></svg>
+        </span></div>
+        <div class="del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
+        <div class="cap" data-suggestion>
+          <div class="desc">Both pups, sunset walk</div>
+          <div class="meta">May 25<span class="dot"></span>Auntie Jo</div>
+        </div>
+      </div>
+
+      <!-- AUDIO == Music glyph + originalFileName (maxLines 2) -->
+      <div class="cell">
+        <div class="filecell">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+          <div class="fn">happy-bark-clip.m4a</div>
+        </div>
+        <div class="dur">0:08</div>
+        <div class="del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
+      </div>
+
+      <!-- VIDEO -->
+      <div class="cell">
+        <div class="thumb g6"></div>
+        <div class="play"><span><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span></div>
+        <div class="dur">0:15</div>
+        <div class="del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
+        <div class="cap" data-suggestion>
+          <div class="desc">Treat time</div>
+          <div class="meta">May 24<span class="dot"></span>Auntie Jo</div>
+        </div>
+      </div>
+
+      <!-- IMAGE -->
+      <div class="cell">
+        <div class="thumb g5"><span class="glyph">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-5-5L5 21"/></svg>
+        </span></div>
+        <div class="del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
+        <div class="cap" data-suggestion>
+          <div class="desc">TODO caption</div>
+          <div class="meta">May 24<span class="dot"></span>Auntie Jo</div>
+        </div>
+      </div>
+
+      <!-- DOCUMENT -->
+      <div class="cell">
+        <div class="filecell">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>
+          <div class="fn">feeding-schedule.pdf</div>
+        </div>
+        <div class="del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
+      </div>
+
+      <!-- IMAGE -->
+      <div class="cell">
+        <div class="thumb g1"><span class="glyph">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-5-5L5 21"/></svg>
+        </span></div>
+        <div class="del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
+        <div class="cap" data-suggestion>
+          <div class="desc">Window watch</div>
+          <div class="meta">May 23<span class="dot"></span>Auntie Jo</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- EMPTY state == EmptyMediaState. Toggle via the demo button to preview. -->
+    <div class="empty" id="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-5-5L5 21"/></svg>
+      <div class="t">No media files found</div>
+      <div class="s">Upload photos and videos to see them here</div>
+    </div>
+
+    <p class="note">// concept mockup · Media Gallery · mirrors MediaGalleryScreen.kt + MediaFile · dashed-purple "Suggestion" items are additive, not shipped · sample content is placeholder, not real data</p>
+  </div>
+
+  <!-- delete dialog == AlertDialog. fileType lowercased fills the body. -->
+  <div class="scrim" id="scrim">
+    <div class="dialog">
+      <h3>Delete Media</h3>
+      <p id="dlgbody">Are you sure you want to delete this image?</p>
+      <div class="row">
+        <button class="cancel" id="dlgcancel">Cancel</button>
+        <button class="delete" id="dlgdelete">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Visual-only wiring to demo the shipped states. No real data, no network.
+    const scrim = document.getElementById('scrim');
+    const dlgbody = document.getElementById('dlgbody');
+    let pendingCell = null;
+
+    // each per-cell delete X opens the confirm dialog (mirrors showDeleteDialog)
+    document.querySelectorAll('.cell').forEach(cell=>{
+      const del = cell.querySelector('.del');
+      // derive the fileType word the dialog uses (lowercased, like Kotlin)
+      let type = 'image';
+      if(cell.querySelector('.play')) type = 'video';
+      else if(cell.querySelector('.filecell svg path[d*="M14 2H6"]')) type = 'document';
+      else if(cell.querySelector('.filecell')) type = 'audio';
+      del.addEventListener('click', e=>{
+        e.stopPropagation();
+        pendingCell = cell;
+        dlgbody.textContent = 'Are you sure you want to delete this ' + type + '?';
+        scrim.classList.add('show');
+      });
+    });
+    document.getElementById('dlgcancel').addEventListener('click', ()=>scrim.classList.remove('show'));
+    document.getElementById('dlgdelete').addEventListener('click', ()=>{
+      if(pendingCell) pendingCell.remove();
+      scrim.classList.remove('show');
+    });
+    scrim.addEventListener('click', e=>{ if(e.target===scrim) scrim.classList.remove('show'); });
+
+    // upload button flashes the indeterminate progress bar (isUploading preview)
+    const ub = document.getElementById('uploadbar');
+    document.getElementById('uploadBtn').addEventListener('click', ()=>{
+      ub.style.display='block';
+      setTimeout(()=>{ ub.style.display='none'; }, 2200);
+    });
+
+    // error banner dismiss (clearError)
+    document.getElementById('errx').addEventListener('click', ()=>{
+      document.getElementById('errbanner').style.display='none';
+    });
+
+    // SUGGESTION filter pills toggle on (visual only)
+    document.querySelectorAll('.pills button').forEach(b=>b.addEventListener('click',()=>{
+      document.querySelectorAll('.pills button').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on');
+    }));
+
+    // gentle parallax on the mesh, matching the directory concept
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-15}px,${y*-15}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

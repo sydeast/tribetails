@@ -140,9 +140,30 @@ backups/
 # as examples. Reverted to original content and excluded here (kept on disk,
 # out of the hosted repo). Owner ruling 2026-07-16. Clean docs stay tracked;
 # only these PII-bearing ones are ignored.
+#
+# UPDATE, owner ruling 2026-08-06. `ui-ideas/` and `page-specs/` are now
+# TRACKED, because the 2026-07-16 exclusion had a cost nobody had priced: they
+# are design authority source 1 and 2, agents work in git worktrees, and a
+# worktree contained neither. Plans cite them as the spec in 97 places.
+#
+# The reason for the original exclusion was removed rather than overridden. Six
+# real client identities (Lorna Wren, Ada Devlin, Bess Sparrow, Sana Mercer,
+# Marisol Rowan, Odette Mallory are the REPLACEMENTS) and one real email were
+# scrubbed out of 49 files, 170 substitutions, verified to zero residue.
+# Replacement initials match the originals so the mocks' hardcoded avatar
+# monograms still agree with the names beside them.
+#
+# Phone numbers were already fictional: every one is in a reserved 555 range.
+# Street names were already placeholders.
+#
+# IMAGES STAY IGNORED (see the root .gitignore). A PNG cannot be scrubbed by
+# find-and-replace, `WrongUIDesigns-UpdateKill/kinfolk-booking-mobile-*.png`
+# are screenshots of a third-party product carrying someone else's booking
+# data, and the set is 26 MB against 1.8 MB of text.
+#
+# BEFORE ADDING A NEW MOCK: it is now public. No real client names.
 # ---------------------------------------------------------------------------
-ui-ideas/
-page-specs/
+# (ui-ideas and page-specs deliberately absent; see above)
 # Brand-voice corpus. ANCHORED paths, not a bare `voice/`.
 /voice/
 web/functions/voice/

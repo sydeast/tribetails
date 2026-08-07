@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · KinTale template editor (concept)</title>
+<!--
+  AuntieOS redesign concept · KinTale Template Editor (admin). Standalone HTML/CSS mockup.
+  Same "Den" aesthetic as auntieos-directory-2026-05-27.html. No em dashes. Palette from AuntieColors.kt.
+
+  MIRRORS the real web screen:
+    web/composeApp/src/commonMain/kotlin/com/tribetails/auntieos/web/screens/kintales/KinTaleTemplateEditorScreen.kt
+    web/composeApp/src/commonMain/kotlin/com/tribetails/auntieos/web/data/KinTaleModels.kt (DefaultKinTaleTemplate)
+    android/.../data/model/KinTaleTemplate.kt + ui/kintales/KinTaleTemplateEngine.kt (default mood options)
+
+  Real sections reproduced verbatim from the Kotlin:
+    - Header: "KinTale templates" / "Editing · <name> · unsaved changes", Save button, close (X).
+    - Templates picker (Default / Inactive tags, "New template").
+    - Basic settings: Template name, Description, Default message to kinfolk,
+      "Make default template", "Active".
+    - Display sections toggles: "Photo & video showcase", "Checklist", "Visit notes",
+      "Next appointment".
+    - Per-pet items (n) / Per-visit items (n) checklist editor with reorder + delete,
+      "Required" toggle, "Show even when unchecked" toggle.
+    - Default checklist labels reproduced VERBATIM from DefaultKinTaleTemplate:
+      Peed, Pooed, Fed, Fresh water provided, Medications given, Playtime provided /
+      House / yard secure, All doors locked, Alarm system set, Mail / packages collected,
+      Plants watered, Trash taken out.
+
+  SUGGESTION (additions NOT in the live web KinTaleTemplateEditorScreen.kt; flagged inline
+  with the "SUGGESTION" pill). All exist on the shared model, just not yet exposed in the
+  web editor:
+    1. "Pet Mood" display toggle + Mood Options editor (petMoodEnabled / moodOptions exist on
+       the model; web editor defers per the screen header comment; Android exposes it).
+       Default moods reproduced verbatim from KinTaleTemplateEngine.kt: Happy, Playful, Calm,
+       Cuddly, Anxious, Shy, Energetic, Sleepy.
+    2. "Review Booster" display toggle (reviewBoosterEnabled exists on the model; Android-only).
+    3. "Conditions / dynamic fields" affordance on a checklist item (FieldCondition exists on
+       the model; the editor is explicitly TBD / a follow-up in both code comments).
+
+  User authors ALL customer-facing copy. Strings here are only those already in source.
+  Any gap is marked TODO. Sample template/checklist content is illustrative placeholder.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.45;mix-blend-mode:screen;filter:blur(74px);
+    animation:drift 29s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--purple),transparent 62%);top:-10vmax;left:-4vmax;}
+  .blob.b{width:40vmax;height:40vmax;background:radial-gradient(circle,var(--orange),transparent 60%);top:10vmax;right:-8vmax;animation-delay:-10s;}
+  .blob.c{width:34vmax;height:34vmax;background:radial-gradient(circle,var(--teal),transparent 60%);bottom:-12vmax;left:36vmax;animation-delay:-16s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-9deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:880px;margin:0 auto;padding:26px 30px 70px;}
+  .crumbs{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.08em;color:var(--cream-dim);
+    margin-bottom:14px;opacity:0;animation:rise .5s var(--ease) forwards;}
+  .crumbs a{color:var(--cream-dim);text-decoration:none}
+  .crumbs a:hover{color:var(--orange)}
+  .crumbs b{color:var(--cream);font-family:inherit;font-weight:600}
+
+  /* header */
+  .head{display:flex;align-items:flex-start;gap:14px;margin-bottom:22px;
+    opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) .04s forwards;}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--orange);margin-bottom:5px;display:flex;align-items:center;gap:9px;}
+  .head .kick .ico{width:13px;height:13px}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:32px;letter-spacing:-.02em;
+    font-variation-settings:"SOFT" 50,"WONK" 1;}
+  .head h2 b{color:var(--pink);font-weight:500}
+  .head .sub{font-size:13px;color:var(--cream-dim);margin-top:6px;display:flex;align-items:center;gap:9px;}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--orange);box-shadow:0 0 9px var(--orange)}
+  .unsaved{font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.06em;color:var(--orange);
+    text-transform:uppercase;}
+  .spacer{flex:1}
+  .save{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;
+    font-size:14px;padding:11px 18px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);
+    display:inline-flex;align-items:center;gap:8px;white-space:nowrap;}
+  .save:hover{transform:translateY(-2px);box-shadow:0 12px 28px -10px rgba(223,132,49,.6)}
+  .close{width:36px;height:36px;border-radius:999px;display:grid;place-items:center;flex:0 0 auto;
+    background:rgba(251,251,249,.05);border:1px solid var(--line);color:var(--cream-dim);cursor:pointer;
+    transition:.18s var(--ease);}
+  .close:hover{border-color:var(--coral);color:var(--coral)}
+
+  /* sections (EditorSection) */
+  .sec{background:linear-gradient(160deg,rgba(23,26,42,.92),rgba(30,34,53,.5));border:1px solid var(--line);
+    border-radius:16px;padding:18px 20px;margin-bottom:18px;
+    opacity:0;transform:translateY(16px);animation:rise .6s var(--ease) forwards;}
+  .sec:nth-of-type(1){animation-delay:.08s}.sec:nth-of-type(2){animation-delay:.13s}
+  .sec:nth-of-type(3){animation-delay:.18s}.sec:nth-of-type(4){animation-delay:.23s}
+  .sec:nth-of-type(5){animation-delay:.28s}.sec:nth-of-type(6){animation-delay:.33s}
+  .sec:nth-of-type(7){animation-delay:.38s}.sec:nth-of-type(8){animation-delay:.43s}
+  .sechd{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .sechd .ic{width:17px;height:17px;color:var(--orange);flex:0 0 auto}
+  .sechd .tt{flex:1}
+  .sechd h3{font-family:"Fraunces",serif;font-weight:480;font-size:18.5px;letter-spacing:-.01em}
+  .sechd .cnt{font-family:"Spline Sans Mono",monospace;font-size:12px;color:var(--teal);font-weight:500}
+  .sechd p{font-size:12.5px;color:var(--cream-dim);margin-top:2px}
+
+  .sug{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+    font-weight:600;padding:3px 8px;border-radius:20px;background:rgba(116,83,138,.22);color:#c4a6da;
+    border:1px solid rgba(116,83,138,.5);white-space:nowrap;}
+
+  /* fields (BottomBorderField / MultilineField) */
+  .field{margin-bottom:16px}
+  .field:last-child{margin-bottom:0}
+  .field label{display:block;font-family:"Spline Sans Mono",monospace;font-size:10.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--cream-dim);margin-bottom:7px;}
+  .field input,.field textarea{width:100%;background:none;border:none;border-bottom:1px solid var(--line);
+    color:var(--cream);font-family:"Hanken Grotesk";font-size:15px;padding:6px 2px;outline:none;
+    transition:.2s var(--ease);resize:vertical;}
+  .field input::placeholder,.field textarea::placeholder{color:rgba(207,206,198,.4)}
+  .field input:focus,.field textarea:focus{border-bottom-color:var(--orange)}
+  .field textarea{line-height:1.5}
+
+  /* toggle rows (ToggleRow) */
+  .trow{display:flex;align-items:center;gap:14px;padding:11px 0;border-top:1px solid var(--line-2);}
+  .trow:first-of-type{border-top:none}
+  .trow .tx{flex:1}
+  .trow .tx b{font-weight:600;font-size:14.5px;display:block}
+  .trow .tx small{display:block;color:var(--cream-dim);font-size:12px;margin-top:2px;line-height:1.35}
+  .sw{width:42px;height:24px;border-radius:999px;background:var(--navy-3);border:1px solid var(--line);
+    position:relative;cursor:pointer;flex:0 0 auto;transition:.22s var(--ease);}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;
+    background:var(--cream-dim);transition:.22s var(--ease);}
+  .sw.on{background:rgba(223,132,49,.4);border-color:rgba(223,132,49,.5)}
+  .sw.on::after{transform:translateX(18px);background:var(--orange)}
+
+  /* template picker rows */
+  .tpl{display:flex;align-items:center;gap:10px;padding:11px 13px;border-radius:11px;cursor:pointer;
+    background:var(--navy-3);border:1px solid var(--line);margin-bottom:8px;transition:.18s var(--ease);}
+  .tpl:hover{border-color:rgba(223,132,49,.35)}
+  .tpl.on{background:rgba(223,132,49,.10);border-color:rgba(223,132,49,.5)}
+  .tpl .nm{flex:1;font-weight:600;font-size:14.5px}
+  .tag{font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;
+    padding:3px 9px;border-radius:20px;font-weight:600;border:1px solid;}
+  .tag.def{color:var(--orange);border-color:rgba(223,132,49,.5);background:rgba(223,132,49,.12)}
+  .tag.ina{color:var(--cream-dim);border-color:var(--line);background:rgba(251,251,249,.04)}
+
+  /* ghost button (GhostButton) */
+  .ghost{margin-top:6px;background:none;border:1px dashed var(--line);color:var(--cream-dim);
+    font-family:"Hanken Grotesk";font-weight:600;font-size:13.5px;padding:9px 15px;border-radius:11px;
+    cursor:pointer;transition:.18s var(--ease);display:inline-flex;align-items:center;gap:7px;}
+  .ghost:hover{border-color:var(--orange);color:var(--orange)}
+
+  /* checklist item card (ChecklistItemRow) */
+  .item{background:var(--navy-3);border:1px solid var(--line);border-radius:11px;padding:13px;margin-bottom:10px;}
+  .itemtop{display:flex;align-items:flex-end;gap:9px;margin-bottom:11px}
+  .itemtop .field{flex:1;margin-bottom:0}
+  .ib{width:30px;height:30px;border-radius:999px;display:grid;place-items:center;flex:0 0 auto;
+    background:rgba(251,251,249,.05);border:1px solid var(--line);color:var(--cream-dim);cursor:pointer;
+    transition:.16s var(--ease);}
+  .ib:hover{border-color:var(--orange);color:var(--orange)}
+  .ib.del:hover{border-color:var(--coral);color:var(--coral)}
+  .ib svg{width:14px;height:14px}
+  .itemtop .field input{font-size:14.5px}
+  .mini .trow{padding:8px 0}
+  .mini .trow .tx b{font-size:13.5px}
+  .mini .trow .tx small{font-size:11.5px}
+  .mini .sw{width:38px;height:22px}
+  .mini .sw::after{width:16px;height:16px}
+  .mini .sw.on::after{transform:translateX(16px)}
+
+  /* mood chips (Mood Options editor, SUGGESTION) */
+  .mood{display:flex;align-items:center;gap:10px;background:var(--navy-3);border:1px solid var(--line);
+    border-radius:11px;padding:9px 11px;margin-bottom:8px;}
+  .mood .emoji{width:46px;text-align:center;background:none;border:1px solid var(--line);border-radius:9px;
+    padding:7px 0;font-size:18px;color:var(--cream);outline:none;}
+  .mood .lbl{flex:1;background:none;border:none;border-bottom:1px solid var(--line);color:var(--cream);
+    font-family:"Hanken Grotesk";font-size:14.5px;padding:6px 2px;outline:none;}
+  .mood .lbl:focus{border-bottom-color:var(--orange)}
+
+  /* condition chip on a checklist item (SUGGESTION) */
+  .cond{display:inline-flex;align-items:center;gap:7px;margin-top:10px;font-family:"Spline Sans Mono",monospace;
+    font-size:11px;color:var(--cream-dim);background:rgba(10,133,149,.10);border:1px solid rgba(10,133,149,.35);
+    border-radius:9px;padding:6px 11px;cursor:pointer;transition:.16s var(--ease);}
+  .cond:hover{border-color:var(--teal);color:#7fdce8}
+  .cond .pin{font-family:"Spline Sans Mono",monospace;font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:#c4a6da;background:rgba(116,83,138,.22);border:1px solid rgba(116,83,138,.5);border-radius:14px;padding:2px 6px;}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:30px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45;line-height:1.6}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="crumbs"><a href="#">KinTales</a> / <a href="#">Templates</a> / <b>Default KinTale</b></div>
+
+    <!-- EditorHeader: "KinTale templates" + subtitle "Editing · <name> · unsaved changes" + Save + close -->
+    <div class="head">
+      <div>
+        <div class="kick">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M4.2 4.2l2.1 2.1m11.4 11.4 2.1 2.1M2 12h3m14 0h3M4.2 19.8l2.1-2.1m11.4-11.4 2.1-2.1"/></svg>
+          The Den · KinTale templates
+        </div>
+        <h2>Editing <b>Default KinTale</b></h2>
+        <!-- subtitle mirrors: "Editing · <name> · unsaved changes" -->
+        <div class="sub"><span class="dot"></span> Editing · Default KinTale · <span class="unsaved">unsaved changes</span></div>
+      </div>
+      <div class="spacer"></div>
+      <button class="save">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+        Save
+      </button>
+      <button class="close" aria-label="Close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <!-- TemplatePicker: EditorSection title "Templates" + Default/Inactive tags + "New template" -->
+    <div class="sec">
+      <div class="sechd"><div class="tt"><h3>Templates</h3></div></div>
+      <!-- Sample template list is illustrative placeholder, not real workspace data. -->
+      <div class="tpl on">
+        <span class="nm">Default KinTale</span>
+        <span class="tag def">Default</span>
+      </div>
+      <div class="tpl">
+        <span class="nm">Overnight stay recap</span>
+      </div>
+      <div class="tpl">
+        <span class="nm">Cat sit drop-in</span>
+        <span class="tag ina">Inactive</span>
+      </div>
+      <button class="ghost">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+        New template
+      </button>
+    </div>
+
+    <!-- EditorSection "Basic settings": Template name, Description, Default message to kinfolk, two toggles -->
+    <div class="sec">
+      <div class="sechd"><div class="tt"><h3>Basic settings</h3></div></div>
+
+      <div class="field">
+        <label>Template name</label>
+        <!-- placeholder verbatim: "Default Pet Care Report" -->
+        <input value="Default KinTale" placeholder="Default Pet Care Report" />
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <!-- placeholder verbatim: "What kind of visits is this template for?" -->
+        <textarea rows="2" placeholder="What kind of visits is this template for?">Catch-all template for any service type that doesn't have its own.</textarea>
+      </div>
+      <div class="field">
+        <label>Default message to kinfolk</label>
+        <!-- placeholder verbatim. User authors the real copy; default model string shown as illustrative value. -->
+        <textarea rows="3" placeholder="We had a wonderful time caring for your furry friends!">We had a wonderful time caring for your furry friends! Here's how they did today.</textarea>
+      </div>
+
+      <div class="trow">
+        <div class="tx">
+          <b>Make default template</b>
+          <small>Default templates are auto-selected when no service-specific template matches.</small>
+        </div>
+        <div class="sw on" role="switch" aria-checked="true"></div>
+      </div>
+      <div class="trow">
+        <div class="tx">
+          <b>Active</b>
+          <small>Inactive templates won't be selected by the composer.</small>
+        </div>
+        <div class="sw on" role="switch" aria-checked="true"></div>
+      </div>
+    </div>
+
+    <!-- EditorSection "Display sections": four real web toggles + 2 SUGGESTION toggles from the shared model -->
+    <div class="sec">
+      <div class="sechd"><div class="tt"><h3>Display sections</h3></div></div>
+
+      <div class="trow">
+        <div class="tx">
+          <b>Photo &amp; video showcase</b>
+          <small>Allow attaching photos and videos to the KinTale.</small>
+        </div>
+        <div class="sw on" role="switch" aria-checked="true"></div>
+      </div>
+      <div class="trow">
+        <div class="tx">
+          <b>Checklist</b>
+          <small>Per-pet and per-visit checklist items.</small>
+        </div>
+        <div class="sw on" role="switch" aria-checked="true"></div>
+      </div>
+      <div class="trow">
+        <div class="tx">
+          <b>Visit notes</b>
+          <small>Free-text notes from Auntie to the kinfolk.</small>
+        </div>
+        <div class="sw on" role="switch" aria-checked="true"></div>
+      </div>
+      <div class="trow">
+        <div class="tx">
+          <b>Next appointment</b>
+          <small>Show the kinfolk's next booking with a Book Now nudge.</small>
+        </div>
+        <div class="sw on" role="switch" aria-checked="true"></div>
+      </div>
+
+      <!-- SUGGESTION: Pet Mood toggle. petMoodEnabled exists on the model; web editor defers it. -->
+      <div class="trow">
+        <div class="tx">
+          <b>Pet mood <span class="sug">Suggestion</span></b>
+          <small>Configure mood options that can be selected for each pet during visits. (Deferred in the live web editor; on the shared model + Android.)</small>
+        </div>
+        <div class="sw on" role="switch" aria-checked="true"></div>
+      </div>
+      <!-- SUGGESTION: Review Booster toggle. reviewBoosterEnabled exists on the model; Android-only. -->
+      <div class="trow">
+        <div class="tx">
+          <b>Review booster <span class="sug">Suggestion</span></b>
+          <small>Embeds a review request section to encourage kinfolk to leave reviews. (On the shared model + Android; not in the live web editor.)</small>
+        </div>
+        <div class="sw" role="switch" aria-checked="false"></div>
+      </div>
+    </div>
+
+    <!-- ChecklistEditor: EditorSection "Per-pet items (n)" with PawPrint icon + subtitle -->
+    <div class="sec">
+      <div class="sechd">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="4" r="2"/><circle cx="18" cy="8" r="2"/><circle cx="20" cy="16" r="2"/><path d="M9 10a5 5 0 0 0-2 4c0 2 1.5 3 4 3s4-1 4-3a5 5 0 0 0-2-4 3 3 0 0 0-4 0z"/></svg>
+        <div class="tt">
+          <h3>Per-pet items <span class="cnt">6</span></h3>
+          <p>These appear once for each kin in the visit.</p>
+        </div>
+      </div>
+
+      <!-- Item labels reproduced VERBATIM from DefaultKinTaleTemplate per-pet items. -->
+      <!-- "Peed" (required) -->
+      <div class="item">
+        <div class="itemtop">
+          <div class="field"><label>Item text</label><input value="Peed" placeholder="e.g. Peed" /></div>
+          <div class="ib" title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg></div>
+          <div class="ib" title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+          <div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div>
+        </div>
+        <div class="mini">
+          <div class="trow"><div class="tx"><b>Required</b><small>Show a red * next to this item in the composer.</small></div><div class="sw on" role="switch" aria-checked="true"></div></div>
+          <div class="trow"><div class="tx"><b>Show even when unchecked</b><small>Off (default): unchecked items are hidden in the kinfolk's KinTale. On: shown with a 'no' marker.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+        </div>
+      </div>
+
+      <!-- "Pooed" (required) -->
+      <div class="item">
+        <div class="itemtop">
+          <div class="field"><label>Item text</label><input value="Pooed" placeholder="e.g. Peed" /></div>
+          <div class="ib" title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg></div>
+          <div class="ib" title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+          <div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div>
+        </div>
+        <div class="mini">
+          <div class="trow"><div class="tx"><b>Required</b><small>Show a red * next to this item in the composer.</small></div><div class="sw on" role="switch" aria-checked="true"></div></div>
+          <div class="trow"><div class="tx"><b>Show even when unchecked</b><small>Off (default): unchecked items are hidden in the kinfolk's KinTale. On: shown with a 'no' marker.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+        </div>
+      </div>
+
+      <!-- "Fed" -->
+      <div class="item">
+        <div class="itemtop">
+          <div class="field"><label>Item text</label><input value="Fed" placeholder="e.g. Peed" /></div>
+          <div class="ib" title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg></div>
+          <div class="ib" title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+          <div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div>
+        </div>
+        <div class="mini">
+          <div class="trow"><div class="tx"><b>Required</b><small>Show a red * next to this item in the composer.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+          <div class="trow"><div class="tx"><b>Show even when unchecked</b><small>Off (default): unchecked items are hidden in the kinfolk's KinTale. On: shown with a 'no' marker.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+        </div>
+        <!-- SUGGESTION: conditions / dynamic fields. FieldCondition exists on the model; editor is TBD per code comments. -->
+        <div class="cond"><span class="pin">Suggestion</span> ＋ Add condition (e.g. only show for kin with meds) · editor TBD</div>
+      </div>
+
+      <!-- "Fresh water provided" -->
+      <div class="item">
+        <div class="itemtop">
+          <div class="field"><label>Item text</label><input value="Fresh water provided" placeholder="e.g. Peed" /></div>
+          <div class="ib" title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg></div>
+          <div class="ib" title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+          <div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div>
+        </div>
+        <div class="mini">
+          <div class="trow"><div class="tx"><b>Required</b><small>Show a red * next to this item in the composer.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+          <div class="trow"><div class="tx"><b>Show even when unchecked</b><small>Off (default): unchecked items are hidden in the kinfolk's KinTale. On: shown with a 'no' marker.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+        </div>
+      </div>
+
+      <!-- "Medications given" -->
+      <div class="item">
+        <div class="itemtop">
+          <div class="field"><label>Item text</label><input value="Medications given" placeholder="e.g. Peed" /></div>
+          <div class="ib" title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg></div>
+          <div class="ib" title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+          <div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div>
+        </div>
+        <div class="mini">
+          <div class="trow"><div class="tx"><b>Required</b><small>Show a red * next to this item in the composer.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+          <div class="trow"><div class="tx"><b>Show even when unchecked</b><small>Off (default): unchecked items are hidden in the kinfolk's KinTale. On: shown with a 'no' marker.</small></div><div class="sw on" role="switch" aria-checked="true"></div></div>
+        </div>
+      </div>
+
+      <!-- "Playtime provided" -->
+      <div class="item">
+        <div class="itemtop">
+          <div class="field"><label>Item text</label><input value="Playtime provided" placeholder="e.g. Peed" /></div>
+          <div class="ib" title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg></div>
+          <div class="ib" title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+          <div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div>
+        </div>
+        <div class="mini">
+          <div class="trow"><div class="tx"><b>Required</b><small>Show a red * next to this item in the composer.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+          <div class="trow"><div class="tx"><b>Show even when unchecked</b><small>Off (default): unchecked items are hidden in the kinfolk's KinTale. On: shown with a 'no' marker.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+        </div>
+      </div>
+
+      <button class="ghost">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+        Add per-pet item
+      </button>
+    </div>
+
+    <!-- ChecklistEditor: EditorSection "Per-visit items (n)" with House icon + subtitle -->
+    <div class="sec">
+      <div class="sechd">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9.5 21v-6h5v6"/></svg>
+        <div class="tt">
+          <h3>Per-visit items <span class="cnt">6</span></h3>
+          <p>These appear once for the whole visit.</p>
+        </div>
+      </div>
+
+      <!-- Item labels reproduced VERBATIM from DefaultKinTaleTemplate per-visit items. -->
+      <!-- "House / yard secure" -->
+      <div class="item">
+        <div class="itemtop">
+          <div class="field"><label>Item text</label><input value="House / yard secure" placeholder="e.g. Peed" /></div>
+          <div class="ib" title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg></div>
+          <div class="ib" title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+          <div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div>
+        </div>
+        <div class="mini">
+          <div class="trow"><div class="tx"><b>Required</b><small>Show a red * next to this item in the composer.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+          <div class="trow"><div class="tx"><b>Show even when unchecked</b><small>Off (default): unchecked items are hidden in the kinfolk's KinTale. On: shown with a 'no' marker.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+        </div>
+      </div>
+
+      <!-- "All doors locked" -->
+      <div class="item">
+        <div class="itemtop">
+          <div class="field"><label>Item text</label><input value="All doors locked" placeholder="e.g. Peed" /></div>
+          <div class="ib" title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg></div>
+          <div class="ib" title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+          <div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div>
+        </div>
+        <div class="mini">
+          <div class="trow"><div class="tx"><b>Required</b><small>Show a red * next to this item in the composer.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+          <div class="trow"><div class="tx"><b>Show even when unchecked</b><small>Off (default): unchecked items are hidden in the kinfolk's KinTale. On: shown with a 'no' marker.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+        </div>
+      </div>
+
+      <!-- "Alarm system set" -->
+      <div class="item">
+        <div class="itemtop">
+          <div class="field"><label>Item text</label><input value="Alarm system set" placeholder="e.g. Peed" /></div>
+          <div class="ib" title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg></div>
+          <div class="ib" title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+          <div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div>
+        </div>
+        <div class="mini">
+          <div class="trow"><div class="tx"><b>Required</b><small>Show a red * next to this item in the composer.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+          <div class="trow"><div class="tx"><b>Show even when unchecked</b><small>Off (default): unchecked items are hidden in the kinfolk's KinTale. On: shown with a 'no' marker.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+        </div>
+      </div>
+
+      <!-- "Mail / packages collected" -->
+      <div class="item">
+        <div class="itemtop">
+          <div class="field"><label>Item text</label><input value="Mail / packages collected" placeholder="e.g. Peed" /></div>
+          <div class="ib" title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg></div>
+          <div class="ib" title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+          <div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div>
+        </div>
+        <div class="mini">
+          <div class="trow"><div class="tx"><b>Required</b><small>Show a red * next to this item in the composer.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+          <div class="trow"><div class="tx"><b>Show even when unchecked</b><small>Off (default): unchecked items are hidden in the kinfolk's KinTale. On: shown with a 'no' marker.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+        </div>
+      </div>
+
+      <!-- "Plants watered" -->
+      <div class="item">
+        <div class="itemtop">
+          <div class="field"><label>Item text</label><input value="Plants watered" placeholder="e.g. Peed" /></div>
+          <div class="ib" title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg></div>
+          <div class="ib" title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+          <div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div>
+        </div>
+        <div class="mini">
+          <div class="trow"><div class="tx"><b>Required</b><small>Show a red * next to this item in the composer.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+          <div class="trow"><div class="tx"><b>Show even when unchecked</b><small>Off (default): unchecked items are hidden in the kinfolk's KinTale. On: shown with a 'no' marker.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+        </div>
+      </div>
+
+      <!-- "Trash taken out" -->
+      <div class="item">
+        <div class="itemtop">
+          <div class="field"><label>Item text</label><input value="Trash taken out" placeholder="e.g. Peed" /></div>
+          <div class="ib" title="Move up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg></div>
+          <div class="ib" title="Move down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+          <div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div>
+        </div>
+        <div class="mini">
+          <div class="trow"><div class="tx"><b>Required</b><small>Show a red * next to this item in the composer.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
+          <div class="trow"><div class="tx"><b>Show even when unchecked</b><small>Off (default): unchecked items are hidden in the kinfolk's KinTale. On: shown with a 'no' marker.</small></div><div class="sw on" role="switch" aria-checked="true"></div></div>
+        </div>
+      </div>
+
+      <button class="ghost">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+        Add per-visit item
+      </button>
+    </div>
+
+    <!-- SUGGESTION SECTION: Mood Options editor. moodOptions exists on the model; web editor defers it. -->
+    <!-- Default mood labels + emoji reproduced VERBATIM from KinTaleTemplateEngine.kt DefaultKinTaleTemplate. -->
+    <div class="sec">
+      <div class="sechd">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4 4 0 0 0 7 0"/><path d="M9 9h.01M15 9h.01"/></svg>
+        <div class="tt">
+          <h3>Mood options <span class="cnt">8</span> <span class="sug">Suggestion</span></h3>
+          <p>Mirrors "Configure Mood Options" from Android. Not yet in the live web editor.</p>
+        </div>
+      </div>
+
+      <div class="mood"><input class="emoji" value="😊" placeholder="😊" /><input class="lbl" value="Happy" placeholder="Mood label" /><div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div></div>
+      <div class="mood"><input class="emoji" value="🐾" placeholder="😊" /><input class="lbl" value="Playful" placeholder="Mood label" /><div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div></div>
+      <div class="mood"><input class="emoji" value="😌" placeholder="😊" /><input class="lbl" value="Calm" placeholder="Mood label" /><div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div></div>
+      <div class="mood"><input class="emoji" value="🤗" placeholder="😊" /><input class="lbl" value="Cuddly" placeholder="Mood label" /><div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div></div>
+      <div class="mood"><input class="emoji" value="😟" placeholder="😊" /><input class="lbl" value="Anxious" placeholder="Mood label" /><div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div></div>
+      <div class="mood"><input class="emoji" value="🙈" placeholder="😊" /><input class="lbl" value="Shy" placeholder="Mood label" /><div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div></div>
+      <div class="mood"><input class="emoji" value="⚡" placeholder="😊" /><input class="lbl" value="Energetic" placeholder="Mood label" /><div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div></div>
+      <div class="mood"><input class="emoji" value="😴" placeholder="😊" /><input class="lbl" value="Sleepy" placeholder="Mood label" /><div class="ib del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6"/></svg></div></div>
+
+      <button class="ghost">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+        Add mood
+      </button>
+    </div>
+
+    <p class="note">// concept mockup · KinTale template editor (admin) · mirrors KinTaleTemplateEditorScreen.kt + KinTaleModels.kt · palette from AuntieColors.kt<br>
+    // SUGGESTION pills mark fields on the shared model not yet exposed in the live web editor (Pet mood, Review booster, conditions / dynamic fields)<br>
+    // sample template + checklist content is placeholder, not real workspace data · user authors all kinfolk-facing copy</p>
+  </div>
+
+  <script>
+    // visual-only toggles + tabs, mirrors interaction not data
+    document.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{
+      const on=s.classList.toggle('on'); s.setAttribute('aria-checked', on?'true':'false');
+    }));
+    document.querySelectorAll('.tpl').forEach(t=>t.addEventListener('click',()=>{
+      document.querySelectorAll('.tpl').forEach(x=>x.classList.remove('on'));
+      t.classList.add('on');
+    }));
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-15}px,${y*-15}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>

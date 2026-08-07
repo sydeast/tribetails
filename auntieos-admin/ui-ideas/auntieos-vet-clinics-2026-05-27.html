@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AuntieOS · Vet clinics (concept)</title>
+<!--
+  AuntieOS redesign concept · Vet clinics manager. Standalone HTML/CSS mockup.
+  Same "Den" aesthetic. No em dashes. Palette from AuntieColors.kt.
+  Mirrors VetClinic data model (name, phone, address, notes) from FirestoreClient.kt.
+  Sample content is illustrative placeholder, not real clinic data.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1&family=Hanken+Grotesk:wght@300..800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#11131F; --navy-2:#171A2A; --navy-3:#1E2235;
+    --cream:#FBFBF9; --cream-dim:#CFCEC6;
+    --orange:#DF8431; --pink:#D55C87; --teal:#0A8595; --purple:#74538A; --coral:#D5535A;
+    --line:rgba(251,251,249,.10); --line-2:rgba(251,251,249,.06);
+    --ease:cubic-bezier(.2,.8,.2,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--navy);color:var(--cream);
+    -webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;line-height:1.45;}
+  .mesh{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(8px);}
+  .blob{position:absolute;border-radius:50%;opacity:.42;mix-blend-mode:screen;filter:blur(76px);
+    animation:drift 30s var(--ease) infinite alternate;}
+  .blob.a{width:42vmax;height:42vmax;background:radial-gradient(circle,var(--teal),transparent 62%);top:-12vmax;left:-4vmax;}
+  .blob.b{width:38vmax;height:38vmax;background:radial-gradient(circle,var(--purple),transparent 60%);top:8vmax;right:-8vmax;animation-delay:-10s;}
+  .blob.c{width:32vmax;height:32vmax;background:radial-gradient(circle,var(--orange),transparent 60%);bottom:-12vmax;left:40vmax;animation-delay:-17s;}
+  @keyframes drift{to{transform:translate3d(-4vmax,3vmax,0) scale(1.1) rotate(-8deg)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .wrap{position:relative;z-index:2;max-width:1240px;margin:0 auto;padding:26px 30px 60px;}
+
+  .head{display:flex;align-items:flex-end;gap:18px;margin-bottom:18px;
+    opacity:0;transform:translateY(-10px);animation:rise .6s var(--ease) forwards;}
+  .head .kick{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--orange);margin-bottom:5px;}
+  .head h2{font-family:"Fraunces",serif;font-weight:380;font-size:34px;letter-spacing:-.02em;
+    font-variation-settings:"SOFT" 50,"WONK" 1;}
+  .head h2 b{color:var(--teal);font-weight:500}
+  .spacer{flex:1}
+  .add{background:var(--orange);color:var(--navy);border:none;font-family:"Hanken Grotesk";font-weight:700;
+    font-size:14px;padding:11px 17px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);
+    display:inline-flex;align-items:center;gap:8px;}
+  .add:hover{transform:translateY(-2px);box-shadow:0 12px 28px -10px rgba(223,132,49,.6)}
+
+  /* NEW surface banner */
+  .banner{display:flex;gap:13px;align-items:flex-start;background:linear-gradient(140deg,rgba(223,132,49,.16),rgba(213,92,135,.10));
+    border:1px solid rgba(223,132,49,.4);border-radius:16px;padding:14px 16px;margin-bottom:22px;
+    opacity:0;transform:translateY(10px);animation:rise .6s var(--ease) .05s forwards;}
+  .banner svg{width:20px;height:20px;flex:0 0 auto;color:var(--orange);margin-top:1px}
+  .banner .bx b{font-size:14px;font-weight:700;display:flex;align-items:center;gap:9px}
+  .banner .pill{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+    font-weight:600;padding:3px 8px;border-radius:20px;background:var(--orange);color:var(--navy)}
+  .banner .bx small{display:block;color:var(--cream-dim);font-size:12.5px;margin-top:4px;line-height:1.45;max-width:80ch}
+  .banner code{font-family:"Spline Sans Mono",monospace;font-size:11.5px;color:#f0b277;background:rgba(0,0,0,.25);
+    padding:1px 6px;border-radius:6px}
+
+  /* controls row */
+  .controls{display:flex;align-items:center;gap:12px;margin-bottom:22px;
+    opacity:0;animation:rise .6s var(--ease) .1s forwards;}
+  .search{display:flex;align-items:center;gap:9px;background:var(--navy-3);border:1px solid var(--line);
+    border-radius:13px;padding:10px 14px;color:var(--cream-dim);font-size:13.5px;flex:1;min-width:180px;}
+  .search input{background:none;border:none;outline:none;color:var(--cream);font-family:inherit;font-size:13.5px;width:100%;}
+  .countpill{display:flex;align-items:center;gap:8px;background:var(--navy-3);border:1px solid var(--line);
+    border-radius:13px;padding:10px 14px;font-size:13.5px;font-weight:600;color:var(--cream);white-space:nowrap;}
+  .countpill .mono{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);text-transform:uppercase;letter-spacing:.08em}
+
+  /* card grid */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;}
+  .vcard{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.55));border:1px solid var(--line);
+    border-radius:20px;padding:18px;transition:.2s var(--ease);position:relative;overflow:hidden;
+    opacity:0;transform:translateY(16px);animation:rise .65s var(--ease) forwards;}
+  .vcard:hover{transform:translateY(-3px);border-color:rgba(10,133,149,.45);box-shadow:0 18px 40px -20px rgba(0,0,0,.7)}
+  .vcard:nth-child(1){animation-delay:.12s}.vcard:nth-child(2){animation-delay:.17s}
+  .vcard:nth-child(3){animation-delay:.22s}.vcard:nth-child(4){animation-delay:.27s}
+  .vcard:nth-child(5){animation-delay:.32s}.vcard:nth-child(6){animation-delay:.37s}
+
+  .vtop{display:flex;align-items:center;gap:13px;margin-bottom:15px;}
+  .logo{width:50px;height:50px;border-radius:15px;display:grid;place-items:center;flex:0 0 auto;color:var(--cream);}
+  .logo svg{width:24px;height:24px}
+  .logo.a{background:conic-gradient(from 200deg,var(--teal),var(--purple))}
+  .logo.b{background:conic-gradient(from 140deg,var(--orange),var(--coral))}
+  .logo.c{background:conic-gradient(from 260deg,var(--pink),var(--purple))}
+  .logo.d{background:conic-gradient(from 180deg,var(--teal),var(--orange))}
+  .logo.e{background:conic-gradient(from 300deg,var(--coral),var(--pink))}
+  .logo.f{background:conic-gradient(from 90deg,var(--purple),var(--teal))}
+  .vtop .nm b{font-family:"Fraunces",serif;font-weight:500;font-size:18.5px;line-height:1.15;display:block}
+  .vtop .nm .id{font-family:"Spline Sans Mono",monospace;font-size:10px;color:var(--cream-dim);margin-top:3px;display:block}
+
+  .vmeta{display:flex;flex-direction:column;gap:9px;margin-bottom:14px;}
+  .vmeta .row{display:flex;align-items:flex-start;gap:10px;font-size:13px;color:var(--cream-dim)}
+  .vmeta .row svg{width:15px;height:15px;flex:0 0 auto;margin-top:2px;color:var(--teal)}
+  .vmeta .row span{color:var(--cream)}
+
+  .vbase{display:flex;justify-content:space-between;align-items:center;padding-top:13px;border-top:1px solid var(--line-2);}
+  .linked{display:inline-flex;align-items:center;gap:7px;font-family:"Spline Sans Mono",monospace;font-size:10.5px;
+    letter-spacing:.05em;text-transform:uppercase;color:var(--cream-dim)}
+  .linked b{font-family:"Hanken Grotesk";font-size:13px;color:var(--teal);font-weight:700}
+  .linked svg{width:14px;height:14px;color:var(--teal)}
+  .vact{display:flex;gap:7px}
+  .iconbtn{background:none;border:1px solid var(--line);color:var(--cream-dim);border-radius:9px;
+    width:32px;height:32px;display:grid;place-items:center;cursor:pointer;transition:.16s var(--ease)}
+  .iconbtn svg{width:15px;height:15px}
+  .iconbtn:hover{background:var(--navy-2);color:var(--cream);border-color:rgba(251,251,249,.22)}
+  .iconbtn.danger:hover{color:var(--coral);border-color:rgba(213,83,90,.5)}
+
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .note{margin-top:32px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
+  @media(max-width:560px){.controls{flex-wrap:wrap}}
+</style>
+</head>
+<body>
+  <div class="mesh"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="kick">The Den · Directory</div>
+        <h2>Vet <b>clinics</b></h2>
+      </div>
+      <div class="spacer"></div>
+      <button class="add">＋ Add clinic</button>
+    </div>
+
+    <div class="banner">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>
+      <div class="bx">
+        <b>New admin surface <span class="pill">New</span></b>
+        <small>There is no central clinic manager today. Clinics are only chosen inside a household on the Kinfolk edit screen, and a new name typed there quietly gets saved to the shared catalog. This page is the one place to view, edit, and tidy every clinic in <code>vet_clinics</code>. Vet info belongs to the kinfolk household, not the individual kin, so clinics are referenced by households here.</small>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+        <input placeholder="Search clinics by name, phone, or address…" />
+      </div>
+      <div class="countpill"><span class="mono">Catalog</span> 6 clinics</div>
+    </div>
+
+    <div class="grid">
+
+      <div class="vcard">
+        <div class="vtop">
+          <div class="logo a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/><circle cx="12" cy="12" r="9"/></svg></div>
+          <div class="nm"><b>Riverside Animal Hospital</b><span class="id">vet_clinics/clinic_a1</span></div>
+        </div>
+        <div class="vmeta">
+          <div class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5c0 9 6 15 15 15l2-3-4-2-2 2c-3-1-6-4-7-7l2-2-2-4z"/></svg><span>(555) 012-3344</span></div>
+          <div class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s7-6 7-12a7 7 0 0 0-14 0c0 6 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg><span>418 Mill St, Riverside</span></div>
+        </div>
+        <div class="vbase">
+          <span class="linked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11V7a3 3 0 0 1 6 0v4"/><rect x="5" y="11" width="14" height="9" rx="2"/></svg> <b>5</b> households</span>
+          <div class="vact">
+            <button class="iconbtn" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 5l4 4"/></svg></button>
+            <button class="iconbtn danger" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="vcard">
+        <div class="vtop">
+          <div class="logo b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/><circle cx="12" cy="12" r="9"/></svg></div>
+          <div class="nm"><b>Oak Hill Veterinary Care</b><span class="id">vet_clinics/clinic_b2</span></div>
+        </div>
+        <div class="vmeta">
+          <div class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5c0 9 6 15 15 15l2-3-4-2-2 2c-3-1-6-4-7-7l2-2-2-4z"/></svg><span>(555) 088-7711</span></div>
+          <div class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s7-6 7-12a7 7 0 0 0-14 0c0 6 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg><span>27 Acorn Ave, Oak Hill</span></div>
+        </div>
+        <div class="vbase">
+          <span class="linked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11V7a3 3 0 0 1 6 0v4"/><rect x="5" y="11" width="14" height="9" rx="2"/></svg> <b>3</b> households</span>
+          <div class="vact">
+            <button class="iconbtn" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 5l4 4"/></svg></button>
+            <button class="iconbtn danger" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="vcard">
+        <div class="vtop">
+          <div class="logo c"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/><circle cx="12" cy="12" r="9"/></svg></div>
+          <div class="nm"><b>Maple Grove Pet Clinic</b><span class="id">vet_clinics/clinic_c3</span></div>
+        </div>
+        <div class="vmeta">
+          <div class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5c0 9 6 15 15 15l2-3-4-2-2 2c-3-1-6-4-7-7l2-2-2-4z"/></svg><span>(555) 245-9080</span></div>
+          <div class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s7-6 7-12a7 7 0 0 0-14 0c0 6 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg><span>902 Sycamore Rd, Maple Grove</span></div>
+        </div>
+        <div class="vbase">
+          <span class="linked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11V7a3 3 0 0 1 6 0v4"/><rect x="5" y="11" width="14" height="9" rx="2"/></svg> <b>2</b> households</span>
+          <div class="vact">
+            <button class="iconbtn" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 5l4 4"/></svg></button>
+            <button class="iconbtn danger" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="vcard">
+        <div class="vtop">
+          <div class="logo d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/><circle cx="12" cy="12" r="9"/></svg></div>
+          <div class="nm"><b>Cedar Park Emergency Vet</b><span class="id">vet_clinics/clinic_d4</span></div>
+        </div>
+        <div class="vmeta">
+          <div class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5c0 9 6 15 15 15l2-3-4-2-2 2c-3-1-6-4-7-7l2-2-2-4z"/></svg><span>(555) 670-1212</span></div>
+          <div class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s7-6 7-12a7 7 0 0 0-14 0c0 6 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg><span>1500 Park Blvd, Cedar Park</span></div>
+        </div>
+        <div class="vbase">
+          <span class="linked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11V7a3 3 0 0 1 6 0v4"/><rect x="5" y="11" width="14" height="9" rx="2"/></svg> <b>4</b> households</span>
+          <div class="vact">
+            <button class="iconbtn" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 5l4 4"/></svg></button>
+            <button class="iconbtn danger" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="vcard">
+        <div class="vtop">
+          <div class="logo e"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/><circle cx="12" cy="12" r="9"/></svg></div>
+          <div class="nm"><b>Willowbrook Animal Wellness</b><span class="id">vet_clinics/clinic_e5</span></div>
+        </div>
+        <div class="vmeta">
+          <div class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5c0 9 6 15 15 15l2-3-4-2-2 2c-3-1-6-4-7-7l2-2-2-4z"/></svg><span>(555) 334-5566</span></div>
+          <div class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s7-6 7-12a7 7 0 0 0-14 0c0 6 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg><span>76 Willow Ln, Brookside</span></div>
+        </div>
+        <div class="vbase">
+          <span class="linked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11V7a3 3 0 0 1 6 0v4"/><rect x="5" y="11" width="14" height="9" rx="2"/></svg> <b>1</b> household</span>
+          <div class="vact">
+            <button class="iconbtn" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 5l4 4"/></svg></button>
+            <button class="iconbtn danger" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="vcard">
+        <div class="vtop">
+          <div class="logo f"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/><circle cx="12" cy="12" r="9"/></svg></div>
+          <div class="nm"><b>Stonebridge Mobile Vet</b><span class="id">vet_clinics/clinic_f6</span></div>
+        </div>
+        <div class="vmeta">
+          <div class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5c0 9 6 15 15 15l2-3-4-2-2 2c-3-1-6-4-7-7l2-2-2-4z"/></svg><span>(555) 901-2233</span></div>
+          <div class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s7-6 7-12a7 7 0 0 0-14 0c0 6 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg><span>House-call service (no fixed address)</span></div>
+        </div>
+        <div class="vbase">
+          <span class="linked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11V7a3 3 0 0 1 6 0v4"/><rect x="5" y="11" width="14" height="9" rx="2"/></svg> <b>0</b> households</span>
+          <div class="vact">
+            <button class="iconbtn" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 5l4 4"/></svg></button>
+            <button class="iconbtn danger" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <p class="note">// concept mockup · Vet clinics · palette from AuntieColors.kt · placeholder content</p>
+  </div>
+
+  <script>
+    const mesh=document.querySelector('.mesh');
+    addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
+      mesh.style.transform=`translate3d(${x*-15}px,${y*-15}px,0)`;},{passive:true});
+  </script>
+</body>
+</html>
