@@ -22,9 +22,10 @@ import { FULL_CPU } from '../lib/runtimeOptions';
  * `escapeHtml()`. This is hand-rolled string templating, nothing escapes
  * automatically the way it would in React.
  *
- * Does NOT touch `SHARE_LINK_BASE_URL` (still points at the legacy app —
- * that cutover is a later, deliberate step) or `getShareLink.ts`'s
- * external behavior.
+ * `SHARE_LINK_BASE_URL` now points at this SSR page (both the `mytribe_beta`
+ * and `kinfolk_portal` hosting targets rewrite `/share/**` here) — the
+ * cutover described as a later step elsewhere is done. This file does not
+ * touch `getShareLink.ts`'s external behavior.
  */
 
 // Deployed URL for the existing guest-comment endpoint. Mirrors

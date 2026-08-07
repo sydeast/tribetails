@@ -29,6 +29,7 @@ beforeEach(() => {
   taleGet.mockReset();
   sharedAdd.mockReset();
   taleUpdate.mockReset();
+  auditMock.mockClear();
   process.env.SHARE_LINK_BASE_URL = 'https://kinfolk.tribetails.com/share';
   delete process.env.AUNTIE_OPERATOR_UIDS;
 });
@@ -82,5 +83,57 @@ describe('createShareLinkHandler', () => {
     // operator path must NOT consult the family member gate
     expect(loadMemberMock).not.toHaveBeenCalled();
     expect(requirePrimaryMock).not.toHaveBeenCalled();
+  });
+
+  describe('SHARE_LINK_BASE_URL guard', () => {
+    const call = () => {
+      loadMemberMock.mockResolvedValue({ role: 'PRIMARY', status: 'ACTIVE', permissions: {} });
+      requirePrimaryMock.mockReturnValue(undefined);
+      taleGet.mockResolvedValue({
+        exists: true,
+        data: () => ({ bodyCopy: 'hi', mediaFileIds: [], authorDisplayName: 'P', kinfolkId: 'f1' }),
+      });
+      sharedAdd.mockResolvedValue({ id: 'share-1' });
+      taleUpdate.mockResolvedValue(undefined);
+      return import('../src/share/createShareLink').then(({ createShareLinkHandler }) =>
+        createShareLinkHandler({
+          auth: { uid: 'u-prim' },
+          data: { familyId: 'f1', kinTaleId: 't1', includePhotos: false },
+        } as never),
+      );
+    };
+
+    it('throws failed-precondition, and writes nothing, when unset', async () => {
+      delete process.env.SHARE_LINK_BASE_URL;
+      await expect(call()).rejects.toMatchObject({
+        code: 'failed-precondition',
+        message: expect.stringContaining('SHARE_LINK_BASE_URL'),
+      });
+      expect(sharedAdd).not.toHaveBeenCalled();
+      expect(taleUpdate).not.toHaveBeenCalled();
+      expect(auditMock).not.toHaveBeenCalled();
+    });
+
+    it('throws failed-precondition, and writes nothing, when empty', async () => {
+      process.env.SHARE_LINK_BASE_URL = '';
+      await expect(call()).rejects.toMatchObject({
+        code: 'failed-precondition',
+        message: expect.stringContaining('SHARE_LINK_BASE_URL'),
+      });
+      expect(sharedAdd).not.toHaveBeenCalled();
+      expect(taleUpdate).not.toHaveBeenCalled();
+      expect(auditMock).not.toHaveBeenCalled();
+    });
+
+    it('is not invalid-argument: a misconfigured server is not the caller’s fault', async () => {
+      delete process.env.SHARE_LINK_BASE_URL;
+      await expect(call()).rejects.not.toMatchObject({ code: 'invalid-argument' });
+    });
+
+    it('strips a trailing slash from the base URL instead of doubling it', async () => {
+      process.env.SHARE_LINK_BASE_URL = 'https://kinfolk.tribetails.com/share/';
+      const out = await call();
+      expect(out.shareUrl).toBe('https://kinfolk.tribetails.com/share/share-1');
+    });
   });
 });

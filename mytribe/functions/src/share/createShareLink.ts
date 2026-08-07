@@ -23,6 +23,26 @@ const Args = z.object({
 export async function createShareLinkHandler(req: CallableRequest<unknown>): Promise<{ shareId: string; shareUrl: string }> {
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in required.');
   const args = Args.parse(req.data);
+
+  // Fail loud before any Firestore write. Without this guard the handler
+  // creates the sharedKinTales doc, arrayUnions it onto the kinTale, and
+  // writes a SUCCESS audit entry, then returns the literal string
+  // "undefined/<id>" as the share URL — a broken link backed by a record
+  // and an audit trail both claiming success. There is no safe default
+  // share domain to fall back to: guessing one would mint links pointing
+  // at a host that may not serve them, which is the silent degradation
+  // the repo's fail-loud rule forbids. A misconfigured deploy is not the
+  // caller's fault, hence failed-precondition rather than invalid-argument.
+  const rawBaseUrl = process.env.SHARE_LINK_BASE_URL;
+  if (!rawBaseUrl) {
+    throw new HttpsError('failed-precondition', 'SHARE_LINK_BASE_URL is not configured');
+  }
+  // A trailing slash is an operator typo in an env var, not a caller
+  // input, and stripping it still produces a correct URL — so this
+  // normalizes rather than rejects, per the fail-loud priority order
+  // (works correctly > fails visibly > silent degradation).
+  const shareBaseUrl = rawBaseUrl.replace(/\/+$/, '');
+
   // The AuntieOS operator (auntie) authors KinTales and shares them; she is not a
   // tribe member, so she bypasses the family PRIMARY gate. Family PRIMARY members
   // can still create share links for their own tribe.
@@ -74,7 +94,7 @@ export async function createShareLinkHandler(req: CallableRequest<unknown>): Pro
     familyId: args.familyId,
     payload: { shareId: ref.id, kinTaleId: args.kinTaleId, includePhotos: args.includePhotos, hasPasscode: !!args.passcode },
   });
-  const shareUrl = `${process.env.SHARE_LINK_BASE_URL}/${ref.id}`;
+  const shareUrl = `${shareBaseUrl}/${ref.id}`;
   return { shareId: ref.id, shareUrl };
 }
 
