@@ -107,9 +107,19 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // a PaymentIntent event IS the PaymentIntent, so its own `id` is the id.
   //
   // Both the fee hop and the payment-level claim below key off this ONE value,
-  // and they must agree. Deliberately NOT `referenceNumber`: that falls back to
-  // the Session id and then the event id, so the two events describing a single
-  // payment would claim two DIFFERENT keys and both apply.
+  // and they must agree. Deliberately NOT `referenceNumber`, though NOT because
+  // the two would disagree today: trace it and they do not. On a Session it
+  // reads `payment_intent`, and on a PaymentIntent event it falls through to
+  // `eventObject.id`, which IS the PaymentIntent id, so both land on the same
+  // `pi_...` in every reachable case.
+  //
+  // The reason is what the two values are FOR. `referenceNumber` is a display
+  // label with a fallback chain, and a chain that always ends in something
+  // non-empty is the wrong shape for an identity: when its preferred source is
+  // missing it degrades to a plausible-looking different key rather than to
+  // nothing. A claim key has to be a strict identity or explicitly absent, so
+  // that a failure to establish identity is visible instead of being papered
+  // over with the event id.
   const paymentIntentId =
     (typeof eventObject.payment_intent === 'string' && eventObject.payment_intent) ||
     (event.type.startsWith('payment_intent') && typeof eventObject.id === 'string' && eventObject.id) ||
@@ -131,6 +141,20 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // to be able to apply.
   const paymentClaimRef =
     isPaidEvent && paymentIntentId ? db().doc(`stripePayments/${paymentIntentId}`) : null;
+  if (isPaidEvent && !paymentIntentId) {
+    // Unreachable today: a paid card Session always carries `payment_intent` as
+    // a string, and a PaymentIntent event always has its own id. Said out loud
+    // anyway, because this is the ONE way the claim above degrades, and it
+    // degrades to no protection at all. Without this the only trace would be
+    // `stripe.fee.unresolved` below, which names a different problem and would
+    // send whoever reads it looking in the wrong place.
+    logEvent({
+      severity: 'error',
+      function: 'stripeWebhook',
+      event: 'stripe.paymentIntentId.unresolved',
+      extra: { eventId: event.id, eventType: event.type },
+    });
+  }
 
   // U6: the Stripe processor fee. The event carries no fee — it lives on the
   // charge's balance transaction, one hop past what the webhook payload ever
