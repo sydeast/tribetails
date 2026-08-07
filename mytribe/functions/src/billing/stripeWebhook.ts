@@ -2,7 +2,8 @@ import { onRequest, Request } from 'firebase-functions/v2/https';
 import type { Response } from 'express';
 import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
-import { verifyStripeWebhook } from '../lib/stripe';
+import { verifyStripeWebhook, getStripe } from '../lib/stripe';
+import { dollarsToCents } from '../lib/paymentMoney';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { logEvent } from '../lib/logger';
@@ -69,6 +70,52 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   if (!isPaidEvent && !isFailedEvent) {
     res.status(202).json({ ok: true, ignored: true });
     return;
+  }
+
+  // U6: the Stripe processor fee. The event carries no fee — it lives on the
+  // charge's balance transaction, one hop past what the webhook payload ever
+  // includes — so this takes one Stripe retrieve: the PaymentIntent, with a
+  // nested expand straight to the balance transaction. Deliberately OUTSIDE
+  // the transaction below: a Firestore transaction re-runs its callback on
+  // contention, and a call this expensive must not be repeated per attempt or
+  // hold the transaction open across network latency. A replay costs one
+  // wasted read-only Stripe call, which is cheap next to that.
+  //
+  // Never let this fail the webhook (fail-loud, not fail-closed): the payment
+  // is real whether or not the fee resolves. An unresolved fee is recorded as
+  // unresolved and warned about (below, after the txn commits) — never faked.
+  // A `feeCents: 0` would be a claim that Stripe charged nothing.
+  let feeCents: number | null = null;
+  let feeResolved = false;
+  if (isPaidEvent) {
+    // Same id `referenceNumber` already prefers: the invoice event's own
+    // `payment_intent` field, or — for a payment_intent.succeeded event,
+    // which has no such field on itself — the event object's own id.
+    const paymentIntentId =
+      (typeof eventObject.payment_intent === 'string' && eventObject.payment_intent) ||
+      (event.type.startsWith('payment_intent') && typeof eventObject.id === 'string' && eventObject.id) ||
+      null;
+    if (paymentIntentId) {
+      try {
+        const stripe = await getStripe();
+        const pi = await stripe.paymentIntents.retrieve(paymentIntentId, {
+          expand: ['latest_charge.balance_transaction'],
+        });
+        const charge = pi.latest_charge;
+        const balanceTransaction = charge && typeof charge === 'object' ? charge.balance_transaction : null;
+        const fee =
+          balanceTransaction && typeof balanceTransaction === 'object' && typeof balanceTransaction.fee === 'number'
+            ? balanceTransaction.fee
+            : null;
+        if (fee !== null) {
+          feeCents = fee;
+          feeResolved = true;
+        }
+      } catch {
+        // Network hiccup, bad id, Stripe outage — any of it. feeResolved
+        // stays false; the payment write below proceeds regardless.
+      }
+    }
   }
 
   // Set inside the transaction when a paid event resolved no real amount, so we
@@ -161,17 +208,30 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       if (!amountResolved) {
         unresolvedAmount = true;
       }
+      // The event amount (`amount_paid` / `amount_received`) is already
+      // integer cents, the currency's native unit — it passes through
+      // unchanged. The local-invoice fallback is the flat doc's legacy dollar
+      // float and is converted once, here, same as `recordPayment` does.
+      const amountCents =
+        eventAmount !== null ? eventAmount : localAmount !== null ? dollarsToCents(localAmount) : null;
       const paymentRef = db().collection('payments').doc(event.id);
       tx.set(paymentRef, {
         kinfolkId: familyId,
         invoiceId,
         amount,
+        amountCents,
         amountResolved,
         amountSource: eventAmount !== null ? 'stripe-event' : localAmount !== null ? 'local-invoice' : 'unresolved',
         paymentMethod: 'stripe',
         referenceNumber,
         date: FieldValue.serverTimestamp(),
         stripeEventId: event.id,
+        // `feeCents` is the field `recordPayment` already writes and
+        // `getInvoiceLedger` already renders — no new field there. Present
+        // ONLY when resolved: the Admin SDK rejects a literal `undefined`,
+        // and an absent field reads correctly as "unknown", never as zero.
+        ...(feeResolved ? { feeCents } : {}),
+        feeResolved,
       });
     }
     return { proceed: true, reason: 'applied' as const };
@@ -184,6 +244,18 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       severity: 'warn',
       function: 'stripeWebhook',
       event: 'stripe.amount.unresolved',
+      extra: { invoiceId, familyId, eventId: event.id, type: event.type },
+    });
+  }
+
+  // Gated on `decision.proceed`: a replay or out-of-order skip wrote nothing,
+  // so an unresolved fee on THAT attempt is not news — only warn when a
+  // payment doc actually landed without one.
+  if (isPaidEvent && decision.proceed && !feeResolved) {
+    logEvent({
+      severity: 'warn',
+      function: 'stripeWebhook',
+      event: 'stripe.fee.unresolved',
       extra: { invoiceId, familyId, eventId: event.id, type: event.type },
     });
   }

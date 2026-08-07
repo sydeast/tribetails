@@ -1,8 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// The Stripe client's `paymentIntents.retrieve` — the ONE call the fee
+// resolution makes, mocked per-test via `.mockResolvedValue` /
+// `.mockRejectedValue`. `vi.hoisted` so the factory below (itself hoisted by
+// vi.mock) can close over it.
+const stripeMock = vi.hoisted(() => ({ paymentIntentsRetrieve: vi.fn() }));
+
 // Stripe verifier stub. `good` → a paid event carrying familyId metadata;
 // `good-kinfolk` → paid event carrying only the legacy kinfolkId metadata.
 vi.mock('../src/lib/stripe', () => ({
+  getStripe: async () => ({ paymentIntents: { retrieve: stripeMock.paymentIntentsRetrieve } }),
   verifyStripeWebhook: (_body: Buffer, sig: string) => {
     if (sig === 'good') {
       return {
@@ -37,6 +44,36 @@ vi.mock('../src/lib/stripe', () => ({
         type: 'payment_intent.succeeded',
         created: 1000,
         data: { object: { id: 'pi_4', metadata: { familyId: 'f4', invoiceId: 'i4' } } },
+      };
+    }
+    // U6: fee capture. Both carry a resolvable payment_intent id (pi_5 / pi_6)
+    // so the fee lookup has something to retrieve.
+    if (sig === 'fee-ok') {
+      return {
+        id: 'evt_5',
+        type: 'invoice.paid',
+        created: 1000,
+        data: { object: { id: 'in_5', payment_intent: 'pi_5', amount_paid: 13750, metadata: { familyId: 'f5', invoiceId: 'i5' } } },
+      };
+    }
+    if (sig === 'fee-fail') {
+      return {
+        id: 'evt_6',
+        type: 'invoice.paid',
+        created: 1000,
+        data: { object: { id: 'in_6', payment_intent: 'pi_6', amount_paid: 13750, metadata: { familyId: 'f6', invoiceId: 'i6' } } },
+      };
+    }
+    // U6, production shape: `payInvoice` creates Checkout in 'payment' mode,
+    // so the event that actually fires is `payment_intent.succeeded`, which
+    // carries no `payment_intent` field on itself — the id to retrieve is the
+    // event object's OWN id (pi_7), the `referenceNumber`-style fallback.
+    if (sig === 'fee-ok-pi') {
+      return {
+        id: 'evt_7',
+        type: 'payment_intent.succeeded',
+        created: 1000,
+        data: { object: { id: 'pi_7', amount_received: 13750, metadata: { familyId: 'f7', invoiceId: 'i7' } } },
       };
     }
     throw new Error('bad-sig');
@@ -94,6 +131,7 @@ beforeEach(() => {
   for (const k of Object.keys(docState)) delete docState[k];
   for (const k of Object.keys(subDocs)) delete subDocs[k];
   logMock.logEvent.mockClear();
+  stripeMock.paymentIntentsRetrieve.mockReset();
 });
 
 describe('stripeWebhook', () => {
@@ -238,5 +276,82 @@ describe('stripeWebhook', () => {
     expect(writes.some((w) => w.path === 'invoices/i1')).toBe(false);
     expect(writes.some((w) => w.path === 'payments/evt_1')).toBe(false);
     expect(status).toHaveBeenCalledWith(200);
+  });
+
+  // U6: capture the Stripe processor fee. The fee lives on the charge's
+  // balance transaction, not the event, so it takes one retrieve — a
+  // PaymentIntent fetch with a nested expand, since the webhook payload never
+  // carries `balance_transaction` itself.
+  it('stores the processor fee from the balance transaction', async () => {
+    docState['invoices/i5'] = { exists: true, data: { kinfolkId: 'f5' } };
+    stripeMock.paymentIntentsRetrieve.mockResolvedValue({
+      latest_charge: { balance_transaction: { fee: 271 } },
+    });
+    const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
+    const status = vi.fn().mockReturnThis();
+    await (stripeWebhookHandler as any)(
+      { method: 'POST', headers: { 'stripe-signature': 'fee-ok' }, rawBody: Buffer.from('{}') },
+      { status, json: vi.fn(), end: vi.fn() },
+    );
+    expect(status).toHaveBeenCalledWith(200);
+    expect(stripeMock.paymentIntentsRetrieve).toHaveBeenCalledWith('pi_5', {
+      expand: ['latest_charge.balance_transaction'],
+    });
+    const paymentWrite = writes.find((w) => w.path === 'payments/evt_5');
+    expect(paymentWrite).toBeDefined();
+    expect(paymentWrite!.data).toMatchObject({
+      amount: 13750,
+      amountCents: 13750,
+      feeCents: 271,
+      feeResolved: true,
+    });
+    expect(
+      logMock.logEvent.mock.calls.some((c) => c[0]?.event === 'stripe.fee.unresolved'),
+    ).toBe(false);
+  });
+
+  it('records the payment with the fee unset when Stripe does not return one, and says so', async () => {
+    docState['invoices/i6'] = { exists: true, data: { kinfolkId: 'f6' } };
+    stripeMock.paymentIntentsRetrieve.mockRejectedValue(new Error('not available'));
+    const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
+    const status = vi.fn().mockReturnThis();
+    await (stripeWebhookHandler as any)(
+      { method: 'POST', headers: { 'stripe-signature': 'fee-fail' }, rawBody: Buffer.from('{}') },
+      { status, json: vi.fn(), end: vi.fn() },
+    );
+    expect(status).toHaveBeenCalledWith(200);
+    const paymentWrite = writes.find((w) => w.path === 'payments/evt_6');
+    expect(paymentWrite).toBeDefined();
+    // The payment itself is real and unaffected: the amount still lands.
+    expect(paymentWrite!.data.amountCents).toBe(13750);
+    // A `feeCents: 0` would claim Stripe charged nothing. The field is absent,
+    // not zero, and the doc says so via `feeResolved`.
+    expect(paymentWrite!.data.feeCents).toBeUndefined();
+    expect(paymentWrite!.data.feeResolved).toBe(false);
+    const warn = logMock.logEvent.mock.calls.find((c) => c[0]?.event === 'stripe.fee.unresolved');
+    expect(warn).toBeDefined();
+    expect(warn?.[0]?.severity).toBe('warn');
+  });
+
+  it('resolves the fee on a payment_intent.succeeded event (the shape payInvoice actually produces)', async () => {
+    docState['invoices/i7'] = { exists: true, data: { kinfolkId: 'f7' } };
+    stripeMock.paymentIntentsRetrieve.mockResolvedValue({
+      latest_charge: { balance_transaction: { fee: 271 } },
+    });
+    const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
+    const status = vi.fn().mockReturnThis();
+    await (stripeWebhookHandler as any)(
+      { method: 'POST', headers: { 'stripe-signature': 'fee-ok-pi' }, rawBody: Buffer.from('{}') },
+      { status, json: vi.fn(), end: vi.fn() },
+    );
+    expect(status).toHaveBeenCalledWith(200);
+    // No `payment_intent` field on the event object itself — the retrieve
+    // must fall back to the event object's own id, not skip the lookup.
+    expect(stripeMock.paymentIntentsRetrieve).toHaveBeenCalledWith('pi_7', {
+      expand: ['latest_charge.balance_transaction'],
+    });
+    const paymentWrite = writes.find((w) => w.path === 'payments/evt_7');
+    expect(paymentWrite).toBeDefined();
+    expect(paymentWrite!.data).toMatchObject({ feeCents: 271, feeResolved: true });
   });
 });
