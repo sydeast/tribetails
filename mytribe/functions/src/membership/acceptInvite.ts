@@ -103,14 +103,21 @@ async function sendInviteVerificationEmail(
  * rate limit, unconfigured claim base URL) rather than three. The invitee can do
  * nothing different about any of them, the operator has the `error` log above to
  * tell them apart, and naming a cause here would leak our configuration into a
- * stranger's error message. It points at the mailbox because the commonest cause
- * is the rate limiter, which only fires after five sends in an hour: an earlier
- * link really is sitting in that inbox, still good.
+ * stranger's error message.
+ *
+ * It promises nothing about WHETHER an earlier link exists or HOW LONG to wait,
+ * because neither is knowable from here and an earlier draft got both wrong.
+ * Only the rate-limit cause implies a previous send, and that limiter is five per
+ * HOUR (`enforceRateLimit` above), so "try again in a minute" was false for the
+ * one cause it was written for. A dead SMTP key or an unset base URL fires on a
+ * first accept, where there is no earlier mail to hunt for, and neither
+ * self-heals. Sending a stranger to search an inbox for something that was never
+ * sent is the same defect this variant exists to remove, one step quieter.
  */
 function verificationRefusal(invitedEmail: string, sent: boolean): string {
   return sent
     ? `Verify ${invitedEmail} before joining. We just emailed a verification link to that address. Open it, then come back to this invite link.`
-    : `Verify ${invitedEmail} before joining. We could not send the verification email just now. Look for an earlier one in that inbox, or try again in a minute.`;
+    : `Verify ${invitedEmail} before joining. We could not send the verification email just now. If a link is already in that inbox it still works. Otherwise try again later.`;
 }
 
 export async function acceptInviteHandler(req: CallableRequest<unknown>): Promise<{ familyId: string }> {

@@ -85,7 +85,7 @@ describe('isEmailUnverified', () => {
       isEmailUnverified({
         code: 'functions/failed-precondition',
         message:
-          'Verify jane@example.com before joining. We could not send the verification email just now. Look for an earlier one in that inbox, or try again in a minute.',
+          'Verify jane@example.com before joining. We could not send the verification email just now. If a link is already in that inbox it still works. Otherwise try again later.',
       }),
     ).toBe(true);
   });
