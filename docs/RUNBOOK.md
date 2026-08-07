@@ -899,6 +899,127 @@ Access is controlled by Firestore rules and App Check.
 
 ---
 
+## Connecting Stripe
+
+Deploying the code is not connecting Stripe. Three of the five steps below happen
+in the Stripe dashboard and none of them can be done, or verified, from this
+repo. Stripe was wired but not connected for a long time, and the failure was
+**silent in every direction**, so this section exists to make "connected" a thing
+you can check rather than assume.
+
+### Why a half-connection looks exactly like a working one
+
+The webhook answers **202** to any event it cannot use: unrecognised type
+(`stripeWebhook.ts`, the unhandled-type branch) or unresolvable metadata. Stripe
+treats 202 as a successful delivery. So:
+
+- The Stripe dashboard's delivery log reads **100% success**.
+- `getIntegrationsHealth` reports Stripe as configured, because it checks that
+  secrets are present and deliberately does not probe.
+- Nothing is red anywhere.
+
+Meanwhile the household is charged, gets Stripe's receipt, and lands on an
+invoice that still says outstanding, and the reminder cron keeps chasing them.
+**Do not take a green dashboard as evidence.** Use step 5.
+
+### 1. The secrets, and which mode they are in
+
+Both live in Secret Manager, never in `.env` (see the Secrets section above for
+why, and for the redeploy trap). Set them from `mytribe/`:
+
+```bash
+firebase functions:secrets:set STRIPE_SECRET_KEY --project auntieos-ttpc
+firebase functions:secrets:set STRIPE_WEBHOOK_SECRET --project auntieos-ttpc
+```
+
+Check which mode you are actually in, because test-mode keys fail in a way that
+looks like nothing happening:
+
+```bash
+firebase functions:secrets:access STRIPE_SECRET_KEY --project auntieos-ttpc
+```
+
+`sk_live_` is production, `sk_test_` is test mode. `STRIPE_WEBHOOK_SECRET` starts
+`whsec_` and is **per endpoint**: a secret copied from a different endpoint fails
+signature verification on every delivery, which surfaces as 400s in the dashboard
+rather than as silence.
+
+### 2. Redeploy, or the secret is not live
+
+gcfv2 pins the secret *version* resolved at deploy time. Setting a value and not
+redeploying leaves the function reading the old version, or nothing at all on a
+first set. This has bitten before.
+
+```bash
+firebase deploy --only functions:mytribe --project auntieos-ttpc
+```
+
+### 3. Register the endpoint
+
+There is no hosting rewrite for the webhook, so it is the bare Cloud Functions
+URL:
+
+```
+https://us-central1-auntieos-ttpc.cloudfunctions.net/stripeWebhook
+```
+
+Stripe Dashboard → Developers → Webhooks → Add endpoint.
+
+### 4. Subscribe the events the code actually handles
+
+This is the step that makes the difference between correct-but-dormant and
+working. The handler recognises exactly these:
+
+| Event | Why |
+|---|---|
+| `checkout.session.completed` | **The canonical one.** `payInvoice` creates a `mode: 'payment'` Checkout Session, and this is what a completed one emits. |
+| `payment_intent.succeeded` | The same payment seen from the PaymentIntent. Both are handled, and a per-PaymentIntent claim at `stripePayments/{id}` makes sure one payment applies **once**. |
+| `payment_intent.payment_failed` | Writes the critical audit entry and the `invoice.charge.failed` notification. Without it a declined card is silent. |
+
+`invoice.paid` and `invoice.payment_failed` are also recognised but **unreachable**:
+they need a Stripe Invoice object, and `mode: 'payment'` creates none. Do not
+subscribe them expecting anything.
+
+Anything else you subscribe is answered 202 and ignored. That is deliberate, but
+it means an over-broad subscription buys nothing and hides nothing.
+
+### 5. Prove it is connected
+
+**Do not skip this.** Every prior signal in this section can be green on a broken
+connection. Two collections are written *only* by the webhook and *only* after it
+has resolved a real payment:
+
+- `stripeEvents/{eventId}` — one doc per event that got past the metadata gate.
+- root `payments/{eventId}` — carries a `stripeEventId` field.
+
+Make one real payment through the portal, then check in the Firebase console for
+`auntieos-ttpc`:
+
+1. `stripeEvents` has a new document. **If it is empty, nothing has ever gotten
+   through**, whatever the Stripe dashboard says.
+2. A root `payments` doc exists with `stripeEventId` set, an `amountCents` in
+   integer cents, and a `feeCents`.
+3. The invoice reads paid, and the household got the `invoice.payment.applied`
+   notification.
+
+If 1 fails, the endpoint is not subscribed to the right events or the signing
+secret is wrong. If 1 passes and 3 fails, the problem is downstream of delivery
+and the logs will name it.
+
+### Recovering payments taken while disconnected
+
+`payInvoice` has always stamped the Checkout Session with `familyId` and
+`invoiceId`, and the metadata gate returns *before* the event id is reserved. So
+a payment swallowed while disconnected is recoverable: **resend the historical
+`checkout.session.completed` event from the Stripe dashboard** (Developers →
+Events → the event → Resend). It applies with amount, fee, audit entry and
+notification, exactly as if it had arrived on time.
+
+This is why the fix is not just forward-looking, and it is a better answer than
+hand-entering the payments.
+
+---
+
 ## Firestore query traps
 
 All of these fail SILENTLY. No error, just wrong or empty results.
