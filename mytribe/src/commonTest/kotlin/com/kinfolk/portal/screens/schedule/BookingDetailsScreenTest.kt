@@ -135,6 +135,28 @@ class BookingDetailsScreenTest {
     }
 
     @Test
+    fun enRouteBooking_showsAuntieEnRouteDistinctFromInProgress() = runComposeUiTest {
+        // Pins BookingStatus.EnRoute to its own label ("Auntie en route") so a
+        // future edit can't quietly collapse it back onto Active's "In
+        // progress" the way the web timeline once did (PR22).
+        val fake = FakeFunctionsClient()
+        stubBooking(fake, "b1", fixedNow + tenHoursMs, status = "enRoute")
+
+        setThemedContent {
+            KinCareDetailScreen(
+                kinCareId = "b1",
+                kinfolkId = "3",
+                portalApi = PortalApi(fake),
+                onBack = {},
+                nowMs = { fixedNow },
+            )
+        }
+        waitForIdle()
+
+        onNodeWithText("Auntie en route").assertIsDisplayed()
+    }
+
+    @Test
     fun bookingNotFound_rendersError() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.stub("getMyBookings", buildJsonObject {

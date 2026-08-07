@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BookingDetail } from './BookingDetail';
@@ -260,5 +260,41 @@ describe('BookingDetail: request cancellation', () => {
     renderScreen();
     await screen.findByRole('heading', { name: 'Drop-in Visit' });
     expect(screen.queryByRole('button', { name: /Request cancellation/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('BookingDetail: status timeline', () => {
+  // The "This booking" card also renders the status as plain text (e.g. "In
+  // progress"), so timeline-step assertions are scoped to the timeline
+  // section itself rather than matching against the whole screen.
+  async function findTimeline() {
+    const heading = await screen.findByText('Status timeline');
+    return within(heading.closest('section') as HTMLElement);
+  }
+
+  it('shows En route as its own step, ahead of In progress, for an enRoute booking', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking({ status: 'enRoute' })] }));
+    renderScreen();
+    const timeline = await findTimeline();
+    expect(timeline.getByText('En route')).toBeInTheDocument();
+    expect(timeline.getByText('In progress')).toBeInTheDocument();
+  });
+
+  it('marks En route done and In progress current once the visit is active', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking({ status: 'active' })] }));
+    renderScreen();
+    const timeline = await findTimeline();
+    const enRouteStep = timeline.getByText('En route').closest('.tl-step');
+    const inProgressStep = timeline.getByText('In progress').closest('.tl-step');
+    expect(enRouteStep).toHaveClass('done');
+    expect(inProgressStep).toHaveClass('now');
+  });
+
+  it('still renders no timeline for a cancelled booking', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking({ status: 'cancelled' })] }));
+    renderScreen();
+    expect(await screen.findByText('CANCELLED')).toBeInTheDocument();
+    expect(screen.queryByText('Status timeline')).not.toBeInTheDocument();
+    expect(screen.queryByText('En route')).not.toBeInTheDocument();
   });
 });

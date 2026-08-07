@@ -24,7 +24,7 @@
 
 /* ===== status timeline ===== */
 .timeline { padding: 26px 24px 22px; margin-bottom: 24px; }
-.tl-track { display: grid; grid-template-columns: repeat(4, 1fr); position: relative; }
+.tl-track { display: grid; grid-template-columns: repeat(5, 1fr); position: relative; }
 .tl-line { position: absolute; left: 8%; right: 8%; top: 15px; height: 3px; border-radius: 99px; background: var(--hairline); z-index: 0; }
 /* `width` is set inline per booking (progress so far) — see BookingDetail.tsx. */
 .tl-line i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; background: var(--tribe-grad); }
@@ -71,5 +71,10 @@
 
 @media (max-width: 880px) {
   .bk-fields { grid-template-columns: 1fr; }
-  .tl-step .lbl { font-size: 9.5px; }
+  /* 5 columns of mono uppercase labels need more room than 4 did: shrink
+     the dot, tighten tracking, and let a two-word label ("En route") wrap
+     onto its own line without colliding into its neighbors. */
+  .tl-dot { width: 26px; height: 26px; font-size: 11px; }
+  .tl-line { top: 12px; }
+  .tl-step .lbl { font-size: 8.5px; letter-spacing: .02em; line-height: 1.3; overflow-wrap: break-word; }
 }

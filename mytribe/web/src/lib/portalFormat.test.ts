@@ -247,12 +247,21 @@ describe('bookingTimelineIndex', () => {
   it('maps requested/confirmed/completed to their own step', () => {
     expect(bookingTimelineIndex('requested')).toBe(0);
     expect(bookingTimelineIndex('confirmed')).toBe(1);
-    expect(bookingTimelineIndex('completed')).toBe(3);
+    expect(bookingTimelineIndex('completed')).toBe(4);
   });
 
-  it('collapses enRoute and active onto the same "in progress" step', () => {
+  it('gives enRoute and active their own timeline steps', () => {
     expect(bookingTimelineIndex('enRoute')).toBe(2);
-    expect(bookingTimelineIndex('active')).toBe(2);
+    expect(bookingTimelineIndex('active')).toBe(3);
+    expect(BOOKING_TIMELINE_STEPS[2]).toEqual({ id: 'enRoute', label: 'En route' });
+    expect(BOOKING_TIMELINE_STEPS[3]).toEqual({ id: 'active', label: 'In progress' });
+  });
+
+  it('walks the five real non-cancelled statuses in backend order', () => {
+    expect(bookingTimelineIndex('requested')).toBe(0);
+    expect(bookingTimelineIndex('confirmed')).toBe(1);
+    expect(bookingTimelineIndex('completed')).toBe(4);
+    expect(BOOKING_TIMELINE_STEPS).toHaveLength(5);
   });
 
   it('cancelled has no timeline position', () => {
