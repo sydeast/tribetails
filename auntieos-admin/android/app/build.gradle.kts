@@ -196,7 +196,7 @@ tasks.register("verifyGrpcVersionPins") {
         val config = configurations.getByName("debugRuntimeClasspath")
         val resolved = config.resolvedConfiguration.resolvedArtifacts
         val grpcModules = mapOf(
-            "grpc-api" to "1.83.0",
+            "grpc-api" to "1.83.1",
             "grpc-core" to "1.62.2",
             "grpc-context" to "1.62.2"
         )
@@ -212,7 +212,7 @@ tasks.register("verifyGrpcVersionPins") {
             }
         }
         check(!failed) { "gRPC version pins violated — see errors above" }
-        logger.lifecycle("gRPC version pins OK (grpc-api/core/context all at 1.83.0)")
+        logger.lifecycle("gRPC version pins OK (grpc-api/core/context all at 1.83.1)")
     }
 }
 
@@ -228,9 +228,9 @@ sentry {
 
 configurations.all {
     resolutionStrategy {
-        force("io.grpc:grpc-api:1.83.0")
-        force("io.grpc:grpc-context:1.83.0")
-        force("io.grpc:grpc-core:1.83.0")
+        force("io.grpc:grpc-api:1.83.1")
+        force("io.grpc:grpc-context:1.83.1")
+        force("io.grpc:grpc-core:1.83.1")
     }
 }
 
