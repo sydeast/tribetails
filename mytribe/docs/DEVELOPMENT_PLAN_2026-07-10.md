@@ -765,8 +765,10 @@ actual gap this item closes) + progressively-enhanced guest-comment form
 in the legacy app — see Open Items). Extracted `functions/src/lib/
 resolveShareLink.ts` shared by both `getShareLink` (unchanged external
 behavior, re-verified against its existing test) and the new page. 10 new
-tests. Does NOT touch `SHARE_LINK_BASE_URL` (still legacy domain — cutover
-is S7's job) or the `kinfolk_portal` hosting target. Live-verified:
+tests. At the time of this entry, did NOT touch `SHARE_LINK_BASE_URL` (still
+legacy domain — cutover was S7's job) or the `kinfolk_portal` hosting
+target; both have since been completed — `SHARE_LINK_BASE_URL` and both
+hosting targets' `/share/**` rewrite now point at this page. Live-verified:
 not-found state renders correctly with correct HTTP status + OG tags on
 the beta domain; Ready state verified via a temporary Firestore doc
 (created + deleted cleanly, see Blocked below re: how that write was made).
