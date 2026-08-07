@@ -72,6 +72,11 @@ function ledgerResult(over: Partial<GetInvoiceLedgerResult> = {}): GetInvoiceLed
     totalCents: 4000,
     amountDueCents: 4000,
     ledgerPayments: [],
+    // Same-household money naming no invoice. The callable carries it so the
+    // staff Android invoice screen can stop reading the root `payments`
+    // collection directly and inherit the server's units resolution; this
+    // React panel does not render it.
+    unlinkedKinfolkPayments: [],
     sessions: [],
     missingSessionIds: [],
     orphanSessionIds: [],

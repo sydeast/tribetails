@@ -597,6 +597,135 @@ describe('getInvoiceLedger sessions', () => {
   });
 });
 
+describe('getInvoiceLedger unlinkedKinfolkPayments (the household fallback)', () => {
+  // WHY THIS LIST EXISTS. The staff Android invoice screen has always offered a
+  // disclosed fallback — same-household root `payments` rows carrying no
+  // invoiceId — under a visible "NOT INVOICE-LINKED" warning, for the case where
+  // a payment was taken but never joined to a bill. It built that list by
+  // reading the ROOT `payments` collection straight out of Firestore, which is
+  // exactly the bypass that kept the 100x defect alive on that screen. Serving
+  // it from here is what lets the client stop reading the collection at all, so
+  // `resolveLedgerAmountCents` stays the one place the units rule lives.
+
+  it('returns same-household rows that name no invoice, in the units they were stored in', async () => {
+    mocks.dbFn.mockReturnValue(
+      seed({
+        rootPayments: [
+          { id: 'u1', data: { kinfolkId: 'fam1', amount: 13750, amountSource: 'stripe-event' } },
+        ],
+      }).db,
+    );
+    const res = await run();
+    expect(res.unlinkedKinfolkPayments.map((r) => r.paymentId)).toEqual(['u1']);
+    expect(res.unlinkedKinfolkPayments[0]!.amountCents).toBe(13750);
+  });
+
+  it('reads every storage convention this collection holds, same rule as the linked list', async () => {
+    // All four shapes are in production right now, and this list runs them
+    // through the SAME `ledgerRowOf` the linked list does — which is the point
+    // of extracting it. Pinned here anyway: a future refactor that gives this
+    // list its own reader would reintroduce the 100x defect on exactly the rows
+    // nobody is looking at.
+    mocks.dbFn.mockReturnValue(
+      seed({
+        rootPayments: [
+          { id: 'a-stripe', data: { kinfolkId: 'fam1', amount: 13750, amountSource: 'stripe-event' } },
+          { id: 'b-local', data: { kinfolkId: 'fam1', amount: 30, amountSource: 'local-invoice' } },
+          { id: 'c-nomarker', data: { kinfolkId: 'fam1', amount: 45.5 } },
+          {
+            id: 'd-backfilled',
+            data: { kinfolkId: 'fam1', amount: 1, amountCents: 13750, amountSource: 'stripe-event' },
+          },
+        ],
+      }).db,
+    );
+    const byId = new Map(
+      (await run()).unlinkedKinfolkPayments.map((r) => [r.paymentId, r.amountCents]),
+    );
+    expect(byId.get('a-stripe')).toBe(13750);
+    expect(byId.get('b-local')).toBe(3000);
+    expect(byId.get('c-nomarker')).toBe(4550);
+    expect(byId.get('d-backfilled')).toBe(13750);
+  });
+
+  it('includes a row MISSING the invoiceId field entirely, not just one holding an empty string', async () => {
+    // The trap this file already documents for `listUninvoicedSessions`:
+    // `where('invoiceId','==','')` skips docs that lack the field, and a legacy
+    // import row lacks it. The query is by household and the blank test is done
+    // in memory precisely so both shapes land here.
+    mocks.dbFn.mockReturnValue(
+      seed({
+        rootPayments: [
+          { id: 'u-absent', data: { kinfolkId: 'fam1', amount: 30 } },
+          { id: 'u-blank', data: { kinfolkId: 'fam1', invoiceId: '', amount: 30 } },
+        ],
+      }).db,
+    );
+    const res = await run();
+    expect(res.unlinkedKinfolkPayments.map((r) => r.paymentId).sort()).toEqual([
+      'u-absent',
+      'u-blank',
+    ]);
+  });
+
+  it('excludes any row already linked to an invoice, this one included', async () => {
+    // A linked row belongs in `ledgerPayments` (if it names this invoice) or to
+    // some other bill. Either way it is not an unattributed payment, and showing
+    // it under "NOT INVOICE-LINKED" would say something untrue about it.
+    mocks.dbFn.mockReturnValue(
+      seed({
+        rootPayments: [
+          { id: 'linked-here', data: { kinfolkId: 'fam1', invoiceId: 'inv1', amount: 30 } },
+          { id: 'linked-elsewhere', data: { kinfolkId: 'fam1', invoiceId: 'inv9', amount: 30 } },
+          { id: 'unlinked', data: { kinfolkId: 'fam1', amount: 30 } },
+        ],
+      }).db,
+    );
+    const res = await run();
+    expect(res.unlinkedKinfolkPayments.map((r) => r.paymentId)).toEqual(['unlinked']);
+    expect(res.ledgerPayments.map((r) => r.paymentId)).toEqual(['linked-here']);
+  });
+
+  it('does not reach into another household', async () => {
+    mocks.dbFn.mockReturnValue(
+      seed({ rootPayments: [{ id: 'other', data: { kinfolkId: 'fam2', amount: 30 } }] }).db,
+    );
+    expect((await run()).unlinkedKinfolkPayments).toEqual([]);
+  });
+
+  it('is empty, not a whole-collection scan, when the invoice names no household', async () => {
+    // A `kinfolkId`-less invoice must not degenerate into "every unlinked
+    // payment in the system attributed to this bill".
+    mocks.dbFn.mockReturnValue(
+      seed({
+        invoice: { total: 40 },
+        rootPayments: [{ id: 'u1', data: { kinfolkId: 'fam1', amount: 30 } }],
+      }).db,
+    );
+    expect((await run()).unlinkedKinfolkPayments).toEqual([]);
+  });
+
+  it('counts an unresolved row in this list toward the same fail-loud warn log', async () => {
+    mocks.dbFn.mockReturnValue(
+      seed({
+        rootPayments: [
+          { id: 'u1', data: { kinfolkId: 'fam1', amount: null, amountSource: 'unresolved' } },
+        ],
+      }).db,
+    );
+    const res = await run();
+    expect(res.unlinkedKinfolkPayments[0]!.amountCents).toBe(0);
+    const warnCalls = mocks.logEventFn.mock.calls.filter(
+      ([entry]) => entry.event === 'ledger.amount.unresolved',
+    );
+    expect(warnCalls).toHaveLength(1);
+    expect(warnCalls[0]![0]).toMatchObject({
+      severity: 'warn',
+      extra: { invoiceId: 'inv1', unresolvedLedgerAmounts: 1 },
+    });
+  });
+});
+
 describe('getInvoiceLedger gate and refusals', () => {
   it('refuses an unknown invoice rather than answering an empty ledger', async () => {
     mocks.dbFn.mockReturnValue(seed({ invoice: null }).db);

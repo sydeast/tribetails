@@ -1,6 +1,8 @@
 package com.tribetails.auntieos.visual
 
 import com.tribetails.auntieos.data.admin.ActivityLogEntry
+import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResult
+import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResultLedgerPayment
 import com.tribetails.auntieos.data.admin.NotificationDetail
 import com.tribetails.auntieos.data.admin.NotificationEntry
 import com.tribetails.auntieos.data.model.BaseService
@@ -88,6 +90,50 @@ object AndroidDemoFixtures {
     val invoice: Invoice = Invoice(id = "demo-inv-1", kinfolkId = "demo-kf-1", kinfolkName = "Wanda Thorne",
         invoiceNumber = "INV-1001", client = "Wanda Thorne", address = "The Thornes, Riverside",
         date = "2026-05-20", terms = "Net 15", dueDate = "2026-06-04")
+
+    /**
+     * The invoice detail screen's payments panel, as `getInvoiceLedger` answers
+     * it — every figure in INTEGER CENTS, resolved server-side.
+     *
+     * THE ROW IS DELIBERATELY THE $137.50 STRIPE ONE. Its stored `amount` is
+     * `13750`, Stripe's own cents in a field the Kotlin `Payment` model reads as
+     * dollars, and this screen printed $13750.00 for it until the read moved
+     * onto this callable. The golden is where a person looking at the picture
+     * would have caught that, so the golden now contains it.
+     */
+    val invoiceLedger: GetInvoiceLedgerResult = GetInvoiceLedgerResult(
+        invoiceId = "demo-inv-1",
+        payments = emptyList(),
+        paidCents = 0L,
+        totalCents = 0L,
+        amountDueCents = 0L,
+        ledgerPayments = listOf(
+            GetInvoiceLedgerResultLedgerPayment(
+                paymentId = "demo-pay-stripe",
+                amountCents = 13750L,
+                tipCents = 0L,
+                feeCents = 0L,
+                tipBasis = "unknown",
+                reconciles = true,
+                appliedCents = 0L,
+                unappliedCents = 13750L,
+                proceedsCents = 13750L,
+                autoApply = false,
+                appliedInvoiceId = "",
+                appliedInvoiceNumber = "",
+                method = "stripe",
+                reference = "pi_3Ov1029",
+                date = "2026-05-28",
+                notes = "",
+                recordedBy = null,
+            ),
+        ),
+        unlinkedKinfolkPayments = emptyList(),
+        sessions = emptyList(),
+        missingSessionIds = emptyList(),
+        orphanSessionIds = emptyList(),
+        truncated = false,
+    )
 
     // === Date-anchored helpers ===
     // Several screens filter to "today" (LocalDate.now()) before rendering a day's

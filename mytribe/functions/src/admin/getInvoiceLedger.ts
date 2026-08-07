@@ -252,6 +252,22 @@ export const Result = z
     amountDueCents: CentsSchema,
     /** ROOT `payments` rows naming this invoice. Counted in NOTHING above. */
     ledgerPayments: z.array(LedgerPaymentSchema),
+    /**
+     * ROOT `payments` rows for the same HOUSEHOLD that name NO invoice at all.
+     * Counted in NOTHING, and they are NOT this invoice's payments: they are
+     * money from this household that no bill claims. The staff Android invoice
+     * screen shows them under a "NOT INVOICE-LINKED" warning when the invoice
+     * has no ledger row of its own, so an operator can see a payment that
+     * arrived and was never attributed.
+     *
+     * THIS LIST IS WHY THE CLIENT CAN STOP READING THE ROOT COLLECTION. Android
+     * built the same list itself, with a direct Firestore read, and that read is
+     * what kept the 100x units defect alive on that screen long after the web
+     * ledger was fixed: the rule for reading a legacy row's `amount` lives in
+     * `resolveLedgerAmountCents`, and a client that never calls it cannot
+     * apply it. Served from here, both lists come back already in cents.
+     */
+    unlinkedKinfolkPayments: z.array(LedgerPaymentSchema),
     /** The visits the invoice claims, newest first. */
     sessions: z.array(InvoiceSessionSchema),
     /** Ids on the invoice with no `kin_care_sessions` doc behind them. */
@@ -373,47 +389,79 @@ export async function getInvoiceLedgerHandler(
   // an `amount` for (see `resolveLedgerAmountCents`). Counted across the
   // whole page so ONE warn log reports the invoice, not one log line per row.
   let unresolvedLedgerAmounts = 0;
+  /**
+   * One ROOT `payments` document, read as money. Shared by both root-collection
+   * lists below so they cannot come to different conclusions about the same
+   * field, and so the unresolved count covers every row this callable read.
+   */
+  const ledgerRowOf = (
+    d: FirebaseFirestore.QueryDocumentSnapshot,
+  ): z.infer<typeof LedgerPaymentSchema> => {
+    const raw = d.data() as Record<string, unknown>;
+    // CENTS WIN OVER DOLLARS, same precedence `paidCentsFromPayments` uses
+    // on the subcollection — but `amount`'s DOLLARS-VS-CENTS reading also
+    // depends on `amountSource` (the 100x defect: a `stripe-event` row's
+    // `amount` is already cents, not dollars). `resolveLedgerAmountCents`
+    // is the one place that rule lives; the backfill script uses the same
+    // function so the two cannot disagree.
+    const amountResult = resolveLedgerAmountCents({
+      amount: raw['amount'],
+      amountCents: raw['amountCents'],
+      amountSource: raw['amountSource'],
+    });
+    if (!amountResult.resolved) unresolvedLedgerAmounts += 1;
+    const amountCents = amountResult.amountCents;
+    const tipCents = centsOr(raw['tipCents'], raw['tip']);
+    const feeCents = centsOr(raw['feeCents'], raw['fee']);
+    const tipBasis = readTipBasis(raw[TIP_BASIS_KEY]);
+    const appliedCents = centsOr(raw['appliedCents'], raw['applied']);
+    const money = paymentMoneyOf({ amountCents, tipCents, feeCents, appliedCents, tipBasis });
+    return {
+      paymentId: d.id,
+      amountCents: money.amountCents,
+      tipCents: money.tipCents,
+      feeCents: money.feeCents,
+      tipBasis,
+      reconciles: paymentReconciles({ tipCents, tipBasis }),
+      appliedCents: money.appliedCents,
+      unappliedCents: money.unappliedCents,
+      proceedsCents: money.proceedsCents,
+      autoApply: raw['autoApply'] === true,
+      appliedInvoiceId: str(raw['appliedInvoiceId']),
+      appliedInvoiceNumber: str(raw['appliedInvoiceNumber']),
+      method: str(raw['paymentMethod']),
+      reference: str(raw['referenceNumber']),
+      date: str(raw['date']),
+      notes: str(raw['notes']),
+      recordedBy: strOrNull(raw['recordedBy']),
+    };
+  };
   const ledgerPayments = ledgerSnap.docs
-    .map((d) => {
-      const raw = d.data() as Record<string, unknown>;
-      // CENTS WIN OVER DOLLARS, same precedence `paidCentsFromPayments` uses
-      // on the subcollection — but `amount`'s DOLLARS-VS-CENTS reading also
-      // depends on `amountSource` (the 100x defect: a `stripe-event` row's
-      // `amount` is already cents, not dollars). `resolveLedgerAmountCents`
-      // is the one place that rule lives; the backfill script uses the same
-      // function so the two cannot disagree.
-      const amountResult = resolveLedgerAmountCents({
-        amount: raw['amount'],
-        amountCents: raw['amountCents'],
-        amountSource: raw['amountSource'],
-      });
-      if (!amountResult.resolved) unresolvedLedgerAmounts += 1;
-      const amountCents = amountResult.amountCents;
-      const tipCents = centsOr(raw['tipCents'], raw['tip']);
-      const feeCents = centsOr(raw['feeCents'], raw['fee']);
-      const tipBasis = readTipBasis(raw[TIP_BASIS_KEY]);
-      const appliedCents = centsOr(raw['appliedCents'], raw['applied']);
-      const money = paymentMoneyOf({ amountCents, tipCents, feeCents, appliedCents, tipBasis });
-      return {
-        paymentId: d.id,
-        amountCents: money.amountCents,
-        tipCents: money.tipCents,
-        feeCents: money.feeCents,
-        tipBasis,
-        reconciles: paymentReconciles({ tipCents, tipBasis }),
-        appliedCents: money.appliedCents,
-        unappliedCents: money.unappliedCents,
-        proceedsCents: money.proceedsCents,
-        autoApply: raw['autoApply'] === true,
-        appliedInvoiceId: str(raw['appliedInvoiceId']),
-        appliedInvoiceNumber: str(raw['appliedInvoiceNumber']),
-        method: str(raw['paymentMethod']),
-        reference: str(raw['referenceNumber']),
-        date: str(raw['date']),
-        notes: str(raw['notes']),
-        recordedBy: strOrNull(raw['recordedBy']),
-      };
-    })
+    .map(ledgerRowOf)
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  // THE HOUSEHOLD FALLBACK: money from this household that names no bill.
+  //
+  // QUERIED BY HOUSEHOLD AND FILTERED IN MEMORY, deliberately. The obvious
+  // `where('invoiceId','==','')` is the trap this file already warns about in
+  // the other direction: Firestore equality SKIPS documents missing the field,
+  // and a legacy import row does not carry `invoiceId` at all — so the query
+  // that reads most naturally would return exactly the rows that are NOT the
+  // unattributed ones. The blank-or-absent test is done here, on data.
+  //
+  // A household-less invoice gets an EMPTY list rather than an unfiltered scan:
+  // "every unlinked payment in the system" is not a fact about this invoice.
+  const invoiceKinfolkId = str(invoice['kinfolkId']);
+  const unlinkedSnap = invoiceKinfolkId
+    ? await db()
+        .collection('payments')
+        .where('kinfolkId', '==', invoiceKinfolkId)
+        .limit(MAX_LEDGER_ROWS)
+        .get()
+    : null;
+  const unlinkedKinfolkPayments = (unlinkedSnap?.docs ?? [])
+    .filter((d) => str((d.data() as Record<string, unknown>)['invoiceId']) === '')
+    .map(ledgerRowOf)
     .sort((a, b) => b.date.localeCompare(a.date));
 
   // Fail-loud (money code standing rule): a row this reader could not
@@ -491,6 +539,7 @@ export async function getInvoiceLedgerHandler(
       invoiceId: args.invoiceId,
       paymentCount: payments.length,
       ledgerCount: ledgerPayments.length,
+      unlinkedKinfolkCount: unlinkedKinfolkPayments.length,
       sessionCount: sessions.length,
       missingCount: missingSessionIds.length,
       orphanCount: orphanSessionIds.length,
@@ -505,6 +554,7 @@ export async function getInvoiceLedgerHandler(
     totalCents: settlement.totalCents,
     amountDueCents: settlement.amountDueCents,
     ledgerPayments,
+    unlinkedKinfolkPayments,
     sessions,
     missingSessionIds,
     orphanSessionIds,

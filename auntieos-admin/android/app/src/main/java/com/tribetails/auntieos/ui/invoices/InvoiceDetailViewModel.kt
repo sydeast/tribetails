@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.invoices
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
+import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResultLedgerPayment
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidResult
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareSession
@@ -33,12 +34,28 @@ data class InvoiceDetailUiState(
     val toastMessage: String = "",
     val toastVisible: Boolean = false,
     val toastIsError: Boolean = false,
-    // Payments (spec 17 items 5/6): real per-invoice join via Payment.invoiceId.
-    val linkedPayments: List<Payment> = emptyList(),
-    // Stage 2 Step 2: disclosed client-side fallback. Same-kinfolk payments with no
-    // invoiceId link, shown under a visible "matched by client only" warning when
-    // there is no confident per-invoice payment yet.
-    val clientPayments: List<Payment> = emptyList(),
+    /**
+     * The invoice's DISPLAY ledger (spec 17 items 5/6): root `payments` rows
+     * naming this invoice, as `getInvoiceLedger` returns them — every figure
+     * already in INTEGER CENTS, resolved server-side.
+     *
+     * The type change away from `List<Payment>` IS the fix, not incidental to
+     * it. `Payment.amount` is a `Double` whose unit depends on an `amountSource`
+     * field the Kotlin model does not carry, so a Stripe-sourced row rendered
+     * 100x too large. Nothing ambiguous reaches a formatter on this path now.
+     */
+    val linkedPayments: List<GetInvoiceLedgerResultLedgerPayment> = emptyList(),
+    /**
+     * Stage 2 Step 2, now served by the callable: same-household money that
+     * names NO invoice, shown under a visible "NOT INVOICE-LINKED" warning when
+     * there is no confident per-invoice payment yet. Never counted toward
+     * anything, never implied to belong to this bill.
+     *
+     * This list used to be filtered client-side out of a raw read of the WHOLE
+     * root `payments` collection, and that read is what kept the 100x defect
+     * alive on this screen.
+     */
+    val clientPayments: List<GetInvoiceLedgerResultLedgerPayment> = emptyList(),
     val showRecordPayment: Boolean = false,
     val recordingPayment: Boolean = false,
     // Stage 2 tail: header receipt / reminder + draft review-and-send actions.
@@ -88,7 +105,7 @@ class InvoiceDetailViewModel(
                         error     = null,
                     )
                     loadSessionsForKinfolk(invoice.kinfolkId)
-                    loadPaymentsForInvoice(invoice.id, invoice.kinfolkId)
+                    loadPaymentsForInvoice(invoice.id)
                     loadBusinessSettings()
                 }
                 .onFailure { err ->
@@ -100,12 +117,6 @@ class InvoiceDetailViewModel(
         }
     }
 
-    /**
-     * Load payments confidently linked to this invoice via the populated
-     * Payment.invoiceId, plus the disclosed client-side fallback (same-kinfolk
-     * payments with no invoiceId link) so the UI can offer it under a visible
-     * "matched by client only" warning. Fail-loud: a load failure surfaces in the toast.
-     */
     /** A8 Payments: fetch the operator's payment handles for the "How to pay" section.
      *  Fail-soft: if it can't load, the section simply doesn't render (no fake handles). */
     private fun loadBusinessSettings() {
@@ -116,14 +127,35 @@ class InvoiceDetailViewModel(
         }
     }
 
-    private fun loadPaymentsForInvoice(invoiceId: String, kinfolkId: String) {
+    /**
+     * BOTH PAYMENT LISTS, FROM THE CALLABLE, IN CENTS.
+     *
+     * This used to read the ROOT `payments` collection directly and do the
+     * per-invoice join and the household fallback here, in Kotlin, on
+     * `Payment.amount` — a `Double` whose unit depends on an `amountSource`
+     * field the model does not carry. A Stripe-sourced row's `amount` is
+     * already integer cents, so the screen rendered $13,750.00 for a $137.50
+     * card payment. The rule that reads such a row honestly lives once, in the
+     * server's `resolveLedgerAmountCents`; asking the callable is how this
+     * screen gets it instead of keeping a second copy that can drift.
+     *
+     * NO kinfolkId ARGUMENT ANY MORE: the server derives the household from the
+     * invoice it just read, so the two can no longer disagree about which
+     * household's unattributed payments are being offered.
+     *
+     * Fail-loud: a failure surfaces in the toast and BOTH lists are left as they
+     * were. There is deliberately no fall back to the raw Firestore read — that
+     * would restore the 100x defect on exactly the days the callable is
+     * unhealthy, which is the worst possible time to start guessing at money.
+     */
+    private fun loadPaymentsForInvoice(invoiceId: String) {
         if (invoiceId.isBlank()) return
         viewModelScope.launch {
-            invoiceRepository.getPayments()
-                .onSuccess { all ->
+            invoiceRepository.getInvoiceLedger(invoiceId)
+                .onSuccess { ledger ->
                     _uiState.value = _uiState.value.copy(
-                        linkedPayments = paymentsForInvoice(all, invoiceId),
-                        clientPayments = unlinkedPaymentsForKinfolk(all, kinfolkId),
+                        linkedPayments = ledger.ledgerPayments,
+                        clientPayments = ledger.unlinkedKinfolkPayments,
                     )
                 }
                 .onFailure { err ->
@@ -202,7 +234,7 @@ class InvoiceDetailViewModel(
                 targetCollection = "invoices",
             )
 
-            loadPaymentsForInvoice(invoiceId, _uiState.value.invoice?.kinfolkId.orEmpty())
+            loadPaymentsForInvoice(invoiceId)
             // Re-read the invoice so the balance and the chip show what the
             // server actually decided, not what the dialog assumed.
             reloadInvoiceQuietly(invoiceId)
@@ -579,6 +611,23 @@ class InvoiceDetailViewModel(
 internal fun isDraftInvoice(invoice: Invoice): Boolean =
     invoiceStateOrNull(invoice) == InvoiceState.DRAFT
 
+/*
+ * ORPHANED, REPORTED, NOT DELETED.
+ *
+ * The two filters below were how this screen built its payment lists out of a
+ * raw read of the whole root `payments` collection. That path is gone: the
+ * server's `getInvoiceLedger` now does both joins, on rows whose units it has
+ * resolved, and the equivalent server code is the AUTHORITY.
+ *
+ * They are left in place because payment code in this repo is reported rather
+ * than cleaned up on a call-graph argument, and their tests
+ * (`InvoicePaymentsTest`) still pin the behaviour they describe. Nothing in
+ * `main` calls them any more. If they are ever wired back up they will hand a
+ * `Payment.amount` to a formatter again, which is the defect this change
+ * removed — so the answer to "we need this list on another screen" is another
+ * callable field, not these.
+ */
+
 /** Payments confidently linked to an invoice via the populated Payment.invoiceId. Pure; tested. */
 internal fun paymentsForInvoice(payments: List<Payment>, invoiceId: String): List<Payment> {
     if (invoiceId.isBlank()) return emptyList()
@@ -591,7 +640,8 @@ internal fun paymentsForInvoice(payments: List<Payment>, invoiceId: String): Lis
  * [Payment.invoiceId] link. This returns same-kinfolk payments that are NOT already
  * linked to a specific invoice, so the UI can surface them under a visible
  * "matched by client only" warning (never implying they belong to THIS invoice).
- * Pure; tested. Mirrors the web paymentsForKinfolk, scoped to the unlinked subset.
+ * Pure; tested. The server's `unlinkedKinfolkPayments` is now the authority for
+ * this list; see the note above.
  */
 internal fun unlinkedPaymentsForKinfolk(payments: List<Payment>, kinfolkId: String): List<Payment> {
     if (kinfolkId.isBlank()) return emptyList()

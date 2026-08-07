@@ -7,6 +7,8 @@ import com.tribetails.auntieos.data.contracts.CreateInvoiceArgs
 import com.tribetails.auntieos.data.contracts.CreateQuoteArgs
 import com.tribetails.auntieos.data.contracts.GenerateInvoicePdfArgs
 import com.tribetails.auntieos.data.contracts.GenerateReceiptArgs
+import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerArgs
+import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResult
 import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsArgs
 import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsResult
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidArgs
@@ -18,6 +20,7 @@ import com.tribetails.auntieos.data.contracts.UnarchiveInvoiceArgs
 import com.tribetails.auntieos.data.contracts.decodeCreateInvoiceResult
 import com.tribetails.auntieos.data.contracts.decodeCreateQuoteResult
 import com.tribetails.auntieos.data.contracts.decodeGenerateInvoicePdfResult
+import com.tribetails.auntieos.data.contracts.decodeGetInvoiceLedgerResult
 import com.tribetails.auntieos.data.contracts.decodeLinkInvoiceSessionsResult
 import com.tribetails.auntieos.data.contracts.decodeMarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult
@@ -325,6 +328,62 @@ class InvoiceRepository(
 
     // --- Payments ---
 
+    /**
+     * THE INVOICE'S MONEY, READ IN THE UNITS IT WAS ACTUALLY STORED IN.
+     *
+     * `stripeWebhook.ts` writes the ROOT `payments` row's `amount` in CENTS when
+     * the figure came off the Stripe event and in DOLLARS when it fell back to
+     * the local invoice, distinguishable only by a sibling `amountSource` field.
+     * A $137.50 card payment is stored as `amount: 13750`. [getPayments] below
+     * reads that field raw, and the [Payment] model has no `amountCents` or
+     * `amountSource` to tell the two apart even in principle — which is why the
+     * invoice screen printed $13,750.00 for months after the web ledger was
+     * fixed.
+     *
+     * The rule that resolves it is `resolveLedgerAmountCents`, server-side, and
+     * it stays there. A Kotlin copy of a money rule that already exists in
+     * TypeScript is how the two drift, and this repo has been bitten by that
+     * twice. So the invoice screen asks the SAME callable the web ledger asks,
+     * and everything comes back in integer cents already resolved.
+     *
+     * THREE LISTS, NOT INTERCHANGEABLE (the callable's own header is the
+     * authority): `payments` is the `invoices/{id}/payments` subcollection and
+     * the settlement authority; `ledgerPayments` is the root-collection display
+     * ledger naming this invoice; `unlinkedKinfolkPayments` is same-household
+     * money no bill claims, which this screen shows under an explicit
+     * "NOT INVOICE-LINKED" warning and never counts toward anything.
+     *
+     * Fail-loud: a failure surfaces; it does not fall back to the raw read.
+     * Falling back would silently restore the 100x defect on exactly the days
+     * the callable is unhealthy.
+     */
+    suspend fun getInvoiceLedger(invoiceId: String): Result<GetInvoiceLedgerResult> = runCatching {
+        authGate.ensureAuthenticated()
+        require(invoiceId.isNotBlank()) { "getInvoiceLedger requires an invoice id" }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("getInvoiceLedger")
+            .call(GetInvoiceLedgerArgs(invoiceId = invoiceId).toPayload())
+            .await().data as? Map<String, Any?>
+        decodeGetInvoiceLedgerResult(raw)
+    }.onFailure { AuntieLog.e("getInvoiceLedger failed for $invoiceId", it) }
+
+    /**
+     * The RAW root `payments` read. Still here, still called by
+     * `AdminDataViewModel.loadPayments`.
+     *
+     * IT RETURNS AMBIGUOUS UNITS and always has: see [getInvoiceLedger] above.
+     * `Payment.amount` is a dollar Double on a `local-invoice` or legacy row and
+     * an already-cents integer on a `stripe-event` one, and this model carries
+     * neither `amountCents` nor `amountSource` to tell them apart. Anything that
+     * renders money out of this list is wrong by 100x on Stripe-paid rows.
+     *
+     * NOT DELETED, deliberately: payment code in this repo is reported, never
+     * cleaned up on a call-graph argument. Its one caller populates a
+     * `StateFlow` no composable currently collects, so nothing renders the bad
+     * figure today — but "nothing renders it today" is a fact about the UI, not
+     * a property of this function, and the next screen to collect that flow
+     * inherits the defect. Route new work through [getInvoiceLedger].
+     */
     suspend fun getPayments(): Result<List<Payment>> = runCatching {
         authGate.ensureAuthenticated()
         scoped.scopedQuery("payments").toObjects(Payment::class.java)
