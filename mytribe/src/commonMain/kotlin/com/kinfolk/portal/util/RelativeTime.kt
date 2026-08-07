@@ -28,3 +28,33 @@ fun relativeTime(epochMillis: Long?, nowMillis: Long = Clock.System.now().toEpoc
     val month = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[ldt.month.ordinal]
     return "$month ${ldt.day}"
 }
+
+/**
+ * "2:02 PM" in the CALLER's own local time zone, from a stored ISO-8601
+ * instant string. Null on a missing or unparseable instant — never a
+ * fabricated time (task-25, P4's fail-loud rule).
+ *
+ * Mirrors the web client's `weekdayTime`/`isoTime`
+ * (mytribe/web/src/lib/portalFormat.ts) so the same visit-time concept reads
+ * the same on both clients. This is the FIRST clock-time formatter on this
+ * platform — `ScheduleScreen.kt`'s own visit-replay line renders the raw ISO
+ * string with no formatting at all; that is a pre-existing rough edge in a
+ * secondary panel, not a convention to extend into a new feature that the
+ * brief requires to show local time.
+ */
+fun clockTime(iso: String?): String? {
+    if (iso.isNullOrBlank()) return null
+    val instant = try {
+        Instant.parse(iso)
+    } catch (_: Exception) {
+        return null
+    }
+    val local = instant.toLocalDateTime(TimeZone.currentSystemDefault())
+    val hour12 = when (val h = local.hour % 12) {
+        0 -> 12
+        else -> h
+    }
+    val minute = local.minute.toString().padStart(2, '0')
+    val amPm = if (local.hour >= 12) "PM" else "AM"
+    return "$hour12:$minute $amPm"
+}

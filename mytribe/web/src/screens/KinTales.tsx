@@ -23,6 +23,7 @@ import {
 } from '../api/kinTalesApi';
 import { useAuth, useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
+import { isoTime } from '../lib/portalFormat';
 import { PortalNav } from '../components/PortalNav';
 import { ShareKinTaleDialog } from '../components/ShareKinTaleDialog';
 import { LaunchError } from './LaunchError';
@@ -263,6 +264,40 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
     </div>
   );
 
+  // Visit facts (task-25, P4): when the Auntie arrived / departed, in the
+  // kinfolk's own local time (isoTime — the same helper Schedule.tsx already
+  // uses for a visit's arrival). Either half can be missing (a departure
+  // that was never stamped is common); a missing half is simply omitted,
+  // never a fabricated "12:00 AM" or the current clock. Neither recorded
+  // means no line at all, matching gpsBlock's "renders nothing" convention.
+  const arrivedLabel = isoTime(tale.arrivedAtIso);
+  const departedLabel = isoTime(tale.departedAtIso);
+  const visitFactsParts = [
+    arrivedLabel ? `Arrived ${arrivedLabel}` : null,
+    departedLabel ? `Departed ${departedLabel}` : null,
+  ].filter((p): p is string => p !== null);
+  const visitFactsBlock = visitFactsParts.length > 0 && (
+    <div className="visitfacts">{visitFactsParts.join(' · ')}</div>
+  );
+
+  // Task checklist (task-25, P4): checked items only. `tale.checklist`
+  // already carries only what the Auntie's app recorded as done — this
+  // component does not, and cannot, infer what was left undone (see
+  // getMyKinTales.ts's own doc comment); it just renders what's there.
+  const checklist = tale.checklist ?? [];
+  const checklistBlock = checklist.length > 0 && (
+    <div className="tasksblock">
+      <div className="taskslabel">Care tasks done this visit</div>
+      <div className="taskschips">
+        {checklist.map((item) => (
+          <span className="badge done" key={item.key}>
+            {item.text}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+
   if (featured) {
     // Photo-first treatment for the banner's byline avatar: the first
     // *image* thumbnail (a video can't stand in for a poster we don't
@@ -292,6 +327,8 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
           <div className="narrative">
             {paragraphs.length > 0 ? paragraphs.map((p, i) => <p key={i}>{p}</p>) : <p>{tale.body}</p>}
           </div>
+          {visitFactsBlock}
+          {checklistBlock}
           {galleryBlock}
           {gpsBlock}
         </div>
@@ -319,6 +356,8 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
         </div>
       </div>
       <div className="tcbody">{tale.body}</div>
+      {visitFactsBlock}
+      {checklistBlock}
       {stripBlock}
       {galleryBlock}
       {gpsBlock}

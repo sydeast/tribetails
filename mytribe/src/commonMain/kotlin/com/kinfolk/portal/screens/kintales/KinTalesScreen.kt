@@ -56,6 +56,7 @@ import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.nav.isWideShell
 import com.kinfolk.portal.portal.CommentAuthorRole
 import com.kinfolk.portal.portal.KinTale
+import com.kinfolk.portal.portal.KinTaleChecklistItem
 import com.kinfolk.portal.portal.KinTaleComment
 import com.kinfolk.portal.portal.KinTaleReaction
 import com.kinfolk.portal.portal.KinTaleMedia
@@ -67,6 +68,7 @@ import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import com.kinfolk.portal.util.clockTime
 import com.kinfolk.portal.util.relativeTime
 import kotlinx.coroutines.launch
 
@@ -322,6 +324,10 @@ private fun KinTaleCard(
                     }
                 }
             }
+            KinTaleVisitFacts(tale)
+            if (tale.checklist.isNotEmpty()) {
+                KinTaleChecklistChips(tale.checklist)
+            }
             if (tale.gpsRoute.isNotEmpty()) {
                 com.kinfolk.portal.components.RouteMap(
                     route = tale.gpsRoute,
@@ -341,6 +347,55 @@ private fun KinTaleCard(
             portalApi = portalApi,
             onDismiss = { showShareModal = false },
         )
+    }
+}
+
+/**
+ * Visit facts (task-25, P4): when the Auntie arrived / departed, in the
+ * kinfolk's own local time zone (`clockTime`, `util/RelativeTime.kt` — the
+ * first clock-time formatter on this platform; ScheduleScreen.kt's own raw-
+ * ISO render for the same underlying fields is a pre-existing rough edge in
+ * a secondary panel, not a convention this task extends). Either half can be
+ * absent (a departure that was never stamped is common) or unparseable
+ * (never crashes, never a fabricated time); an absent half is simply
+ * omitted. Neither recorded means no row at all.
+ */
+@Composable
+private fun KinTaleVisitFacts(tale: KinTale) {
+    val type = LocalKinfolkTypography.current
+    val parts = listOfNotNull(
+        clockTime(tale.arrivedAtIso)?.let { "Arrived $it" },
+        clockTime(tale.departedAtIso)?.let { "Departed $it" },
+    )
+    if (parts.isEmpty()) return
+    Text(text = parts.joinToString(" · "), style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted))
+}
+
+/**
+ * Task checklist (task-25, P4): checked items only. `tale.checklist` already
+ * carries only what the Auntie's app recorded as done — this composable does
+ * not, and cannot, infer what was left undone (see getMyKinTales.ts's own
+ * doc comment); it just renders what's there.
+ */
+@Composable
+private fun KinTaleChecklistChips(items: List<KinTaleChecklistItem>) {
+    val type = LocalKinfolkTypography.current
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(text = "CARE TASKS DONE THIS VISIT", style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted))
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items.forEach { item ->
+                GlassCard(
+                    modifier = Modifier.testTag("kinTaleChecklistChip"),
+                    shape = KinfolkShapes.pill,
+                    contentPadding = PaddingValues(horizontal = KinfolkSpacing.s, vertical = 4.dp),
+                ) {
+                    Text(text = item.text, style = type.sansMeta.copy(color = KinfolkBrand.KinTeal))
+                }
+            }
+        }
     }
 }
 

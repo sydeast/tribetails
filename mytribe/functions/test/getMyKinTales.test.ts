@@ -556,3 +556,322 @@ describe('getMyKinTalesHandler query semantics', () => {
     expect(page3.hasMore).toBe(false);
   });
 });
+
+/**
+ * task-25 (P4): visit facts. Arrival/departure live on the `kin_care_sessions`
+ * row the report's `sessionId` points at, NOT on the report's own (possibly
+ * stale, possibly absent) copy — see task-25-report.md Step 0. A missing time
+ * is absent, never zero and never "now" (fail-loud rule).
+ */
+describe('getMyKinTalesHandler visit times', () => {
+  const taleWithSession = (id: string, sessionId: string | undefined) => ({
+    id,
+    data: {
+      kinfolkId: 'fam3',
+      bodyCopy: 'x',
+      mediaFileIds: [],
+      sentAt: SENT_AT_ISO,
+      sharedAsIds: [],
+      ...(sessionId !== undefined ? { sessionId } : {}),
+    },
+  });
+
+  it('resolves arrivedAtIso/departedAtIso from the session, not the report', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['fam3'] },
+        'kin_care_sessions/sess-1': {
+          arrivedAt: '2026-08-06T14:02:00.000Z',
+          departedAt: '2026-08-06T14:41:00.000Z',
+        },
+      },
+      queryDocs: { kin_care_reports: [taleWithSession('r1', 'sess-1')] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.arrivedAtIso).toBe('2026-08-06T14:02:00.000Z');
+    expect(res.tales[0]!.departedAtIso).toBe('2026-08-06T14:41:00.000Z');
+  });
+
+  it('a visit with no recorded departure shows departedAtIso: null, never a fabricated time', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['fam3'] },
+        'kin_care_sessions/sess-2': { arrivedAt: '2026-08-06T09:00:00.000Z' },
+      },
+      queryDocs: { kin_care_reports: [taleWithSession('r2', 'sess-2')] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.arrivedAtIso).toBe('2026-08-06T09:00:00.000Z');
+    expect(res.tales[0]!.departedAtIso).toBeNull();
+  });
+
+  it('a garbage stored time (e.g. "6pm", a known legacy value) degrades to absent, not a parsed-wrong instant', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['fam3'] },
+        'kin_care_sessions/sess-3': { arrivedAt: '2026-08-06T09:00:00.000Z', departedAt: '6pm' },
+      },
+      queryDocs: { kin_care_reports: [taleWithSession('r3', 'sess-3')] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.departedAtIso).toBeNull();
+  });
+
+  it('no sessionId on the report: both times absent, and no session lookup is made', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
+      queryDocs: { kin_care_reports: [taleWithSession('r4', undefined)] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.arrivedAtIso).toBeNull();
+    expect(res.tales[0]!.departedAtIso).toBeNull();
+    expect(ctx.db.getAll).not.toHaveBeenCalled();
+  });
+
+  it('sessionId points at a session doc that no longer exists: both times absent, not a throw', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
+      queryDocs: { kin_care_reports: [taleWithSession('r5', 'sess-gone')] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.arrivedAtIso).toBeNull();
+    expect(res.tales[0]!.departedAtIso).toBeNull();
+  });
+
+  it('two tales sharing one session batch into a single getAll, not one lookup per tale', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['fam3'] },
+        'kin_care_sessions/sess-shared': { arrivedAt: '2026-08-06T09:00:00.000Z' },
+      },
+      queryDocs: {
+        kin_care_reports: [taleWithSession('r6', 'sess-shared'), taleWithSession('r7', 'sess-shared')],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3', limit: 50 }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales.every((t) => t.arrivedAtIso === '2026-08-06T09:00:00.000Z')).toBe(true);
+    expect(ctx.db.getAll).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * task-25 (P4): the task checklist. The live operator Android app
+ * (`auntieos-admin/android`, `KinTaleReportScreen.kt` + `setChecklistResponse`)
+ * writes checked items onto `kin_care_reports.fieldResponses`, keyed
+ * "kinId|fieldKey", `{ fieldKey, kinId, boolValue }`. Only `boolValue === true`
+ * responses render — see task-25-report.md for why an explicit `false` is NOT
+ * rendered as "not done" (it's indistinguishable from never-tapped in the
+ * capture UI, so it is not a real claim). Labels/order/scope are resolved from
+ * the report's `templateId` (or the built-in default template when blank),
+ * never invented client-side.
+ */
+describe('getMyKinTalesHandler checklist', () => {
+  const taleWithResponses = (
+    id: string,
+    fieldResponses: Record<string, unknown> | undefined,
+    templateId?: string,
+  ) => ({
+    id,
+    data: {
+      kinfolkId: 'fam3',
+      bodyCopy: 'x',
+      mediaFileIds: [],
+      sentAt: SENT_AT_ISO,
+      sharedAsIds: [],
+      ...(fieldResponses !== undefined ? { fieldResponses } : {}),
+      ...(templateId !== undefined ? { templateId } : {}),
+    },
+  });
+
+  it('a checked item against the built-in default template (blank templateId) resolves its label, in template order', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
+      queryDocs: {
+        kin_care_reports: [
+          taleWithResponses('r1', {
+            '|fed': { fieldKey: 'fed', kinId: '', boolValue: true },
+            '|peed': { fieldKey: 'peed', kinId: '', boolValue: true },
+          }),
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    // 'peed' (order 0) sorts before 'fed' (order 2), regardless of map iteration order.
+    expect(res.tales[0]!.checklist).toEqual([
+      { key: 'peed', text: 'Peed' },
+      { key: 'fed', text: 'Fed' },
+    ]);
+  });
+
+  it('an item explicitly toggled false is NOT rendered as "not done" — omitted, not a false claim', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
+      queryDocs: {
+        kin_care_reports: [
+          taleWithResponses('r2', {
+            '|fed': { fieldKey: 'fed', kinId: '', boolValue: true },
+            '|pooed': { fieldKey: 'pooed', kinId: '', boolValue: false },
+          }),
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.checklist).toEqual([{ key: 'fed', text: 'Fed' }]);
+  });
+
+  it('no fieldResponses at all: checklist is omitted (undefined), never an empty array standing in for "all done"', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
+      queryDocs: { kin_care_reports: [taleWithResponses('r3', undefined)] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.checklist).toBeUndefined();
+  });
+
+  it('every response false, or none matching a known item: checklist is omitted, not []', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
+      queryDocs: {
+        kin_care_reports: [
+          taleWithResponses('r4', {
+            '|pooed': { fieldKey: 'pooed', kinId: '', boolValue: false },
+            '|not_a_real_item': { fieldKey: 'not_a_real_item', kinId: '', boolValue: true },
+          }),
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.checklist).toBeUndefined();
+  });
+
+  it('a non-blank templateId resolves labels from that kintale_templates doc, not the built-in default', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['fam3'] },
+        'kintale_templates/tmpl-1': {
+          checklistItems: [
+            { key: 'custom_key', text: 'Custom task from a real template', scope: 'PER_VISIT', order: 0 },
+          ],
+        },
+      },
+      queryDocs: {
+        kin_care_reports: [
+          taleWithResponses(
+            'r5',
+            { '|custom_key': { fieldKey: 'custom_key', kinId: '', boolValue: true } },
+            'tmpl-1',
+          ),
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.checklist).toEqual([{ key: 'custom_key', text: 'Custom task from a real template' }]);
+  });
+
+  it('a checked key that only exists in the DEFAULT template does not leak in when a real template is set', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['fam3'] },
+        'kintale_templates/tmpl-2': {
+          checklistItems: [{ key: 'only_here', text: 'Only in tmpl-2', scope: 'PER_VISIT', order: 0 }],
+        },
+      },
+      queryDocs: {
+        kin_care_reports: [
+          // 'fed' is a default-template key, but this report uses tmpl-2, which doesn't have it.
+          taleWithResponses('r6', { '|fed': { fieldKey: 'fed', kinId: '', boolValue: true } }, 'tmpl-2'),
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.checklist).toBeUndefined();
+  });
+
+  it('duplicate checked keys (e.g. one per kin) collapse to one entry in the flat list', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
+      queryDocs: {
+        kin_care_reports: [
+          taleWithResponses('r7', {
+            'kinA|fed': { fieldKey: 'fed', kinId: 'kinA', boolValue: true },
+            'kinB|fed': { fieldKey: 'fed', kinId: 'kinB', boolValue: true },
+          }),
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.checklist).toEqual([{ key: 'fed', text: 'Fed' }]);
+  });
+
+  it('a malformed fieldResponses value (not an object) is skipped, not a crash', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
+      queryDocs: {
+        kin_care_reports: [
+          taleWithResponses('r8', {
+            '|fed': { fieldKey: 'fed', kinId: '', boolValue: true },
+            '|bogus': 'not-an-object',
+          }),
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.checklist).toEqual([{ key: 'fed', text: 'Fed' }]);
+  });
+});

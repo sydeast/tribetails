@@ -11,6 +11,7 @@ import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.screens.setThemedContent
+import com.kinfolk.portal.util.clockTime
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -203,5 +204,103 @@ class KinTalesScreenTest {
         waitForIdle()
         onNodeWithText("Just a story, no photos.").assertIsDisplayed()
         onAllNodesWithTag("kinTaleThumbTile").assertCountEquals(0)
+    }
+
+    // task-25 (P4): visit facts — arrival/departure times and the checked-only
+    // task checklist. A missing time renders nothing for that half (fail-loud:
+    // never a fabricated time); the checklist renders checked items only.
+
+    @Test
+    fun visitFacts_bothTimesPresent_rendersBoth() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t1")
+                    put("body", "A fine walk.")
+                    put("authorDisplayName", "Auntie Avery")
+                    put("mediaIds", buildJsonArray {})
+                    put("shared", false)
+                    put("arrivedAtIso", "2026-08-06T14:02:00.000Z")
+                    put("departedAtIso", "2026-08-06T14:41:00.000Z")
+                })
+            })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        // Computed via the same `clockTime` the component calls, not hardcoded —
+        // the rendered hour depends on the test runner's own time zone.
+        onNodeWithText(
+            "Arrived ${clockTime("2026-08-06T14:02:00.000Z")} · Departed ${clockTime("2026-08-06T14:41:00.000Z")}",
+        ).assertIsDisplayed()
+    }
+
+    @Test
+    fun visitFacts_departureAbsent_showsOnlyArrival() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t1")
+                    put("body", "A fine walk.")
+                    put("authorDisplayName", "Auntie Avery")
+                    put("mediaIds", buildJsonArray {})
+                    put("shared", false)
+                    put("arrivedAtIso", "2026-08-06T14:02:00.000Z")
+                })
+            })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Arrived ${clockTime("2026-08-06T14:02:00.000Z")}").assertIsDisplayed()
+    }
+
+    @Test
+    fun checklist_checkedItemsRenderAsChips() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t1")
+                    put("body", "A fine walk.")
+                    put("authorDisplayName", "Auntie Avery")
+                    put("mediaIds", buildJsonArray {})
+                    put("shared", false)
+                    put("checklist", buildJsonArray {
+                        add(buildJsonObject { put("key", "peed"); put("text", "Peed") })
+                        add(buildJsonObject { put("key", "fed"); put("text", "Fed") })
+                    })
+                })
+            })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onAllNodesWithTag("kinTaleChecklistChip").assertCountEquals(2)
+        onNodeWithText("Peed").assertIsDisplayed()
+        onNodeWithText("Fed").assertIsDisplayed()
+    }
+
+    @Test
+    fun checklist_absent_rendersNoChipsAndNoLabel() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t1")
+                    put("body", "A fine walk, no checklist.")
+                    put("authorDisplayName", "Auntie Avery")
+                    put("mediaIds", buildJsonArray {})
+                    put("shared", false)
+                })
+            })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("A fine walk, no checklist.").assertIsDisplayed()
+        onAllNodesWithTag("kinTaleChecklistChip").assertCountEquals(0)
     }
 }

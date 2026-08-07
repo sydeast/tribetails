@@ -9,6 +9,12 @@ data class KinTaleThumb(
     val contentType: String?,
 )
 
+/** One care task the Auntie's checklist recorded as DONE for this visit (task-25, P4). */
+data class KinTaleChecklistItem(
+    val key: String,
+    val text: String,
+)
+
 data class KinTale(
     val id: String,
     val body: String,
@@ -29,6 +35,21 @@ data class KinTale(
      * need to (no row is the correct render for both).
      */
     val thumbs: List<KinTaleThumb> = emptyList(),
+    /**
+     * When the Auntie arrived / departed, resolved server-side from the
+     * visit's session (task-25, P4). Null means not recorded — never zero,
+     * never "now". `departedAtIso` can be null while `arrivedAtIso` is set (a
+     * departure that was never stamped).
+     */
+    val arrivedAtIso: String? = null,
+    val departedAtIso: String? = null,
+    /**
+     * Care tasks checked done on this visit. CHECKED ITEMS ONLY — an item
+     * that wasn't checked has no entry here and must never be shown as "not
+     * done" (the source data can't tell "left undone" apart from "not
+     * applicable to this visit"). Empty when nothing was recorded.
+     */
+    val checklist: List<KinTaleChecklistItem> = emptyList(),
 )
 
 data class KinTalesResult(
