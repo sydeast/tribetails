@@ -2507,11 +2507,16 @@ class AuntieRepository(
 
     suspend fun saveMyAdminNotificationPrefs(prefs: AdminNotificationPrefs): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
-        val prefsMap = buildMap<String, Any> {
-            if (prefs.byKey.isNotEmpty()) put("byKey", prefs.byKey)
-            if (prefs.byCategory.isNotEmpty()) put("byCategory", prefs.byCategory)
-            if (prefs.marketingOptIn.isNotEmpty()) put("marketingOptIn", prefs.marketingOptIn)
-        }
+        // All three maps, always, empty ones as {}. The handler writes this subtree
+        // with mergeFields (functions/src/notifications/prefsSchema.ts), so a top-level
+        // map left OUT here is DELETED on the server rather than left alone the way it
+        // was under merge. Omitting an empty byCategory would wipe whatever another
+        // device had put there.
+        val prefsMap = mapOf<String, Any>(
+            "byKey" to prefs.byKey,
+            "byCategory" to prefs.byCategory,
+            "marketingOptIn" to prefs.marketingOptIn,
+        )
         functions.getHttpsCallable("saveMyAdminNotificationPrefs").call(mapOf("prefs" to prefsMap)).await()
         Unit
     }.onFailure { AuntieLog.e("Failed to save admin notification prefs", it) }

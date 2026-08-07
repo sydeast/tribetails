@@ -53,12 +53,24 @@ export const SaveArgs = z.object({ prefs: PrefsShape });
  * would not, and the serverTimestamp transform is stripped from the mask by
  * `documentMask.removeFields(transform.fields)` exactly as it is under merge.
  *
- * Safe only because every client does a full read-modify-write of the whole
- * prefs object: the portal web screen seeds its edit state from
- * `prefs.data.prefs`, the portal Compose screen seeds all three maps from
- * `getMyNotificationPrefs()`, and all three admin clients hold the decoded
- * prefs and save them back whole. A client that ever sends a PARTIAL prefs
- * object would turn this from a lost revert into lost preferences.
+ * Safe only while every client sends all three TOP-LEVEL maps on every save,
+ * empty ones as `{}`. What a client omits is not left alone, it is deleted, so a
+ * save that drops an empty `byCategory` erases whatever another device had put
+ * there. All five senders now send the three unconditionally: portal web
+ * (`NotificationSettings.tsx`), portal Compose (`PortalApi.kt`), admin React
+ * (`api/myNotificationsWrite.ts`), admin Android
+ * (`AuntieRepository.saveMyAdminNotificationPrefs`) and admin Compose-web
+ * (`AdminNotificationPrefsRepository.encodePrefs`) — the last two were still
+ * dropping empty maps when this was written and were changed to match. The maps
+ * NESTED inside stay partial on purpose: an unset channel means "inherit the
+ * default".
+ *
+ * Nothing enforces that. All three fields of `PrefsShape` are `.optional()`
+ * (above), because a partial object is a legitimate first save, so the server
+ * accepts one and writes it as the COMPLETE subtree. Server-side normalization
+ * would not rescue a partial sender either: filling in `byKey: {}` for a client
+ * that omitted it produces the identical delete. The invariant lives in the five
+ * clients and in nothing else, so re-check the senders before trusting it.
  */
 export function prefsSetOptions(): { mergeFields: string[] } {
   // A fresh array per call: the SDK's SetOptions takes a mutable string[], and
