@@ -94,7 +94,29 @@ export interface DisputeEvent {
 
 export const DISPUTE_EVENT_TYPES = ['charge.dispute.created', 'charge.dispute.closed'] as const;
 
+/**
+ * The WHOLE `charge.dispute.` family routes here, not just the two acted on.
+ *
+ * Every dispute event carries a Dispute object whose `metadata` is its own and
+ * is empty here, because Stripe does not copy the PaymentIntent's onto it. A
+ * sibling left to fall through would therefore reach the metadata gate and log
+ * `stripe.metadata.missing`: a warning naming a defect that is not there, on a
+ * chargeback. That is the exact signal this file exists to stop producing, so
+ * the promise is kept for the events not handled yet, not only for the two that
+ * are.
+ *
+ * Worth knowing about the three ignored: `funds_withdrawn` is the event saying
+ * the money actually left the balance and `funds_reinstated` says it came back,
+ * so `disputeStatus` alone does not tell an operator whether the balance has
+ * been debited. Acting on those is a follow-up; today they are logged by name
+ * rather than mislabelled.
+ */
 export function isDisputeEvent(type: string): boolean {
+  return type.startsWith('charge.dispute.');
+}
+
+/** The two acted on. The rest of the family is logged and ignored. */
+export function isHandledDisputeEvent(type: string): boolean {
   return (DISPUTE_EVENT_TYPES as readonly string[]).includes(type);
 }
 
@@ -166,6 +188,20 @@ async function resolveDisputeSubject(paymentIntentId: string | null): Promise<Di
  * dedupe independently, which is what lets both apply.
  */
 export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<number> {
+  if (!isHandledDisputeEvent(event.type)) {
+    // A sibling in the family: `updated` (evidence churn), `funds_withdrawn` or
+    // `funds_reinstated` (the accounting mirrors of created/closed). Routed here
+    // only so it does not reach the metadata gate and get labelled a missing-
+    // metadata defect. Named in the log so an operator who subscribes one of
+    // them sees it arriving and ignored, rather than seeing nothing.
+    logEvent({
+      severity: 'info',
+      function: 'stripeWebhook',
+      event: 'stripe.dispute.unhandledType',
+      extra: { eventId: event.id, eventType: event.type },
+    });
+    return 202;
+  }
   const dispute = event.data.object as DisputeObject;
   const disputeId = idOf(dispute.id);
   if (!disputeId) {

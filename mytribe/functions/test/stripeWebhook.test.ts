@@ -184,6 +184,16 @@ vi.mock('../src/lib/stripe', () => ({
         },
       };
     }
+    // A sibling in the family that is routed but NOT acted on. Same absent
+    // metadata as the two above, which is the whole reason it is routed.
+    if (sig === 'dispute-funds-withdrawn') {
+      return {
+        id: 'evt_26',
+        type: 'charge.dispute.funds_withdrawn',
+        created: 2600,
+        data: { object: { id: 'dp_26', amount: 13750, currency: 'usd', charge: 'ch_26', payment_intent: 'pi_26' } },
+      };
+    }
     // Same dispute, closed in the operator's favour.
     if (sig === 'dispute-won') {
       return {
@@ -917,6 +927,25 @@ describe('stripeWebhook', () => {
     expect(ignored?.[0]?.severity).toBe('info');
   });
 
+  it('202-ignores an unhandled dispute sibling by name, not as missing metadata', async () => {
+    expect(await deliver('dispute-funds-withdrawn')).toEqual([202]);
+    expect(writes).toHaveLength(0);
+    expect(auditMock.writeAuditEntry).not.toHaveBeenCalled();
+    // The reason the WHOLE `charge.dispute.` prefix routes to the dispute
+    // handler rather than only the two types it acts on. A sibling left to fall
+    // through reaches the metadata gate, and a Dispute carries none, so it would
+    // warn `stripe.metadata.missing` on a chargeback: a defect that is not there.
+    // This branch is what keeps that promise for the events not handled yet.
+    expect(
+      logMock.logEvent.mock.calls.some((c) => c[0]?.event === 'stripe.metadata.missing'),
+    ).toBe(false);
+    const ignored = logMock.logEvent.mock.calls.find(
+      (c) => c[0]?.event === 'stripe.dispute.unhandledType',
+    );
+    expect(ignored?.[0]?.severity).toBe('info');
+    // Named, so an operator who subscribes it sees it arriving and ignored.
+    expect(ignored?.[0]?.extra?.eventType).toBe('charge.dispute.funds_withdrawn');
+  });
   // ── abandoned checkout ───────────────────────────────────────────────────
 
   it('clears the pending checkout fields when the session expires', async () => {

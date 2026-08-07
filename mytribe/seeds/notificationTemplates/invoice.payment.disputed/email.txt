@@ -2,7 +2,7 @@ Subject: Card dispute update: {{disputeStatus}}
 
 {{disputeAmount}} on invoice {{invoiceNumber}} is being disputed through the cardholder's bank. Reason given: {{disputeReason}}. Status now: {{disputeStatus}}.
 
-Stripe has already held that money back out of the balance while the bank decides, and charged its dispute fee on top.
+When a dispute opens, Stripe holds that money back out of the balance while the bank decides, and charges its dispute fee on top. A dispute that closes as won reinstates the funds. Check the status line above for where this one stands.
 
 The invoice still reads paid in AuntieOS. That is on purpose, and nothing has gone to the household about it. What happens to the money is your call once the bank rules.
 

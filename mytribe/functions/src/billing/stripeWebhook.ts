@@ -40,9 +40,18 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // ── Branches that must sit AHEAD of the metadata gate ────────────────────
   // The gate below resolves the household from `event.data.object.metadata`,
   // which `payInvoice` stamps on the Checkout Session and the PaymentIntent.
-  // The two event families here carry a DIFFERENT object whose `metadata` is
-  // its own and is always empty, so behind the gate they would 202 with a
-  // `stripe.metadata.missing` warn — a signal naming the wrong problem.
+  // Disputes carry a DIFFERENT object whose `metadata` is the dispute's own and
+  // is always empty, so behind the gate every chargeback would 202 with a
+  // `stripe.metadata.missing` warn: a signal naming the wrong problem.
+  //
+  // Refunds are ahead of the gate for a different reason, and the distinction
+  // matters because the obvious one is wrong. `refund.created`/`refund.updated`
+  // do carry the Refund's own empty metadata, but Stripe copies a PaymentIntent's
+  // metadata onto its Charge at creation, and since the card-rail fix
+  // `payInvoice` sets `payment_intent_data.metadata` — so a real
+  // `charge.refunded` WOULD pass the gate, and would then hit the unhandled-type
+  // 202 with no log at all. Refunds sit here to be ignored VISIBLY, not because
+  // the gate would mislabel them.
 
   if (isDisputeEvent(event.type)) {
     // A chargeback. Not a refund, and not covered by the no-refunds ruling:
