@@ -7,6 +7,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { requireKinfolkPerm } from '../lib/memberGate';
+import { resolveNonStaffKinfolkId } from '../lib/resolveNonStaffKinfolkId';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import {
   signCloudinaryFolderUpload,
@@ -24,22 +25,6 @@ const SignArgs = z.object({
   kinfolkId: z.string().optional(),
   kinId: KIN_ID_SCHEMA,
 });
-
-/**
- * uploadKinPhoto.ts's local helper, duplicated here (and in addBookingNote.ts /
- * kinTaleEngagement.ts / submitRating.ts) rather than shared — this codebase's
- * established convention for write-path kinfolkId resolution (see
- * resolveKinfolkAccess.ts's own doc comment: writes keep per-callable
- * allowlist semantics, no operator override).
- */
-async function resolveKinfolkId(uid: string, requested: string | undefined): Promise<string> {
-  const clientSnap = await db().collection('clients').doc(uid).get();
-  const allowed: string[] = (clientSnap.data()?.kinfolkIds ?? []) as string[];
-  if (allowed.length === 0) throw new HttpsError('failed-precondition', 'No tribes linked.');
-  const kinfolkId = requested ?? allowed[0];
-  if (!allowed.includes(kinfolkId)) throw new HttpsError('permission-denied', 'No access.');
-  return kinfolkId;
-}
 
 function kinPhotoFolder(kinfolkId: string, kinId: string): string {
   return `tribetails/kinfolks/${kinfolkId}/kin/${kinId}`;
@@ -61,7 +46,7 @@ export async function signKinPhotoUploadHandler(
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = SignArgs.parse(req.data);
 
-  const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId);
+  const kinfolkId = await resolveNonStaffKinfolkId(uid, args.kinfolkId);
   // CRITICAL-4: same gate uploadKinPhoto used — signing a folder a caller
   // can write into is itself the sensitive operation, not just the confirm.
   await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', req.auth?.token?.admin === true, 'signKinPhotoUpload');
@@ -130,7 +115,7 @@ export async function confirmKinPhotoUploadHandler(
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = ConfirmArgs.parse(req.data);
 
-  const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId);
+  const kinfolkId = await resolveNonStaffKinfolkId(uid, args.kinfolkId);
   await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', req.auth?.token?.admin === true, 'confirmKinPhotoUpload');
 
   const kinRef = db().doc(`families/${kinfolkId}/kin/${args.kinId}`);

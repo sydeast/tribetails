@@ -92,4 +92,31 @@ describe('requestBookingHandler', () => {
       }),
     );
   });
+
+  it('legacy single-visit: MULTIPLE linked households, kinfolkId omitted -> refuses to guess and writes NO booking (PR28b)', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3', '5'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const t = Date.now() + 60_000;
+    await expect(
+      requestBookingHandler({ data: { serviceType: 'walk', startTimeMs: t }, auth: { uid: 'u1' } } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ctx.writes).toHaveLength(0);
+    expect(ctx.adds).toHaveLength(0);
+    expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
+  });
+
+  it("legacy single-visit: MULTIPLE linked households, kinfolkId '' -> refuses to guess and writes nothing ('' pinned as omitted)", async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3', '5'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const t = Date.now() + 60_000;
+    await expect(
+      requestBookingHandler(
+        { data: { serviceType: 'walk', startTimeMs: t, kinfolkId: '' }, auth: { uid: 'u1' } } as any,
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ctx.writes).toHaveLength(0);
+    expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
+  });
 });

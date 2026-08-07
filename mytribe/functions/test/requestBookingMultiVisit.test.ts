@@ -411,3 +411,54 @@ describe('requestBookingHandler wizard fields', () => {
     expect(visit?.data).not.toHaveProperty('location');
   });
 });
+
+describe('requestBookingHandler — multi-visit, ambiguous household (PR28b)', () => {
+  function multiHouseholdDb() {
+    return buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3', '5'] },
+        'base_services/s1': { name: "Auntie's In", priceCents: 1500 },
+      },
+    });
+  }
+
+  it('MULTIPLE linked households, kinfolkId omitted -> refuses to guess and writes NO booking', async () => {
+    const ctx = multiHouseholdDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    await expect(
+      requestBookingHandler({
+        data: {
+          kinIds: ['k1'],
+          pattern: 'individual',
+          visits: [{ startTimeMs: future, endTimeMs: future + 30 * 60_000, serviceId: 's1', serviceName: "Auntie's In" }],
+        },
+        auth: { uid: 'u1' },
+      } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ctx.writes).toHaveLength(0);
+    expect(ctx.adds).toHaveLength(0);
+    expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
+  });
+
+  it("MULTIPLE linked households, kinfolkId '' -> refuses to guess and writes nothing ('' pinned as omitted)", async () => {
+    const ctx = multiHouseholdDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const future = Date.now() + 86400_000;
+    await expect(
+      requestBookingHandler({
+        data: {
+          kinfolkId: '',
+          kinIds: ['k1'],
+          pattern: 'individual',
+          visits: [{ startTimeMs: future, endTimeMs: future + 30 * 60_000, serviceId: 's1', serviceName: "Auntie's In" }],
+        },
+        auth: { uid: 'u1' },
+      } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ctx.writes).toHaveLength(0);
+    expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
+  });
+});

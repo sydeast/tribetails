@@ -6,6 +6,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
+import { resolveNonStaffKinfolkId } from '../lib/resolveNonStaffKinfolkId';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { approveBookingSeriesCore } from '../admin/approveBookingSeriesCore';
@@ -433,17 +434,18 @@ export async function requestBookingHandler(
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
   const firestore = db();
-  const clientSnap = await firestore.collection('clients').doc(uid).get();
-  const allowedIds: string[] = (clientSnap.data()?.kinfolkIds ?? []) as string[];
-  if (allowedIds.length === 0) throw new HttpsError('failed-precondition', 'No tribes linked.');
 
   const data = (req.data ?? {}) as Record<string, unknown>;
   const isMulti = Array.isArray((data as { visits?: unknown }).visits);
 
   if (isMulti) {
     const args = MultiArgs.parse(req.data);
-    const kinfolkId = args.kinfolkId ?? allowedIds[0];
-    if (!allowedIds.includes(kinfolkId)) throw new HttpsError('permission-denied', 'No access.');
+    // PR28b: household resolution happens AFTER schema parsing (was before, on
+    // the raw request) so a malformed payload from a defect account still
+    // fails schema validation first, same as it always has, rather than
+    // surfacing a household error ahead of the argument error that used to
+    // fire first.
+    const kinfolkId = await resolveNonStaffKinfolkId(uid, args.kinfolkId);
 
     const now = Date.now();
     args.visits.forEach((v) => {
@@ -519,8 +521,7 @@ export async function requestBookingHandler(
 
   // Legacy single-visit path, stored as a 1-visit envelope.
   const args = LegacyArgs.parse(req.data);
-  const kinfolkId = args.kinfolkId ?? allowedIds[0];
-  if (!allowedIds.includes(kinfolkId)) throw new HttpsError('permission-denied', 'No access.');
+  const kinfolkId = await resolveNonStaffKinfolkId(uid, args.kinfolkId);
 
   if (args.endTimeMs && args.endTimeMs <= args.startTimeMs) {
     throw new HttpsError('invalid-argument', 'endTime must be after startTime.');

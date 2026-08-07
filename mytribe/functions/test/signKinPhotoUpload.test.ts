@@ -109,6 +109,34 @@ describe('signKinPhotoUploadHandler', () => {
     expect(res.folder).toBe('tribetails/kinfolks/3/kin/k1');
     expect(res.signature).toMatch(/^[a-f0-9]{40}$/);
   });
+
+  it('MULTIPLE linked households, kinfolkId omitted -> refuses to guess (PR28b)', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3', '5'] },
+        'families/3/kin/k1': { name: 'Buddy' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { signKinPhotoUploadHandler } = await import('../src/portal/signKinPhotoUpload');
+    await expect(
+      signKinPhotoUploadHandler({ data: { kinId: 'k1' }, auth: { uid: 'u1' } } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+  });
+
+  it("MULTIPLE linked households, kinfolkId '' -> refuses to guess ('' pinned as omitted)", async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3', '5'] },
+        'families/3/kin/k1': { name: 'Buddy' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { signKinPhotoUploadHandler } = await import('../src/portal/signKinPhotoUpload');
+    await expect(
+      signKinPhotoUploadHandler({ data: { kinfolkId: '', kinId: 'k1' }, auth: { uid: 'u1' } } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+  });
 });
 
 describe('confirmKinPhotoUploadHandler', () => {
@@ -213,5 +241,41 @@ describe('confirmKinPhotoUploadHandler', () => {
     expect(w!.merge).toBe(true);
     expect(w!.data.photoUrl).toBe(goodUrl);
     expect(w!.data.updatedByUid).toBe('u1');
+  });
+
+  it('MULTIPLE linked households, kinfolkId omitted -> refuses to guess and writes nothing (PR28b)', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3', '5'] },
+        'families/3/kin/k1': { name: 'Buddy' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { confirmKinPhotoUploadHandler } = await import('../src/portal/signKinPhotoUpload');
+    await expect(
+      confirmKinPhotoUploadHandler({
+        data: { kinId: 'k1', secureUrl: goodUrl },
+        auth: { uid: 'u1' },
+      } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it("MULTIPLE linked households, kinfolkId '' -> refuses to guess and writes nothing ('' pinned as omitted)", async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3', '5'] },
+        'families/3/kin/k1': { name: 'Buddy' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { confirmKinPhotoUploadHandler } = await import('../src/portal/signKinPhotoUpload');
+    await expect(
+      confirmKinPhotoUploadHandler({
+        data: { kinfolkId: '', kinId: 'k1', secureUrl: goodUrl },
+        auth: { uid: 'u1' },
+      } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ctx.writes).toHaveLength(0);
   });
 });

@@ -6,6 +6,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { resolveKinCareRef } from '../lib/resolveKinCareRef';
+import { resolveNonStaffKinfolkId } from '../lib/resolveNonStaffKinfolkId';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { sanitizeRichText } from '../lib/richText';
 
@@ -23,15 +24,6 @@ const Args = z
     message: 'Provide batchId+visitId (preferred) or a legacy bookingId.',
   });
 
-async function resolveKinfolkId(uid: string, requested: string | undefined): Promise<string> {
-  const clientSnap = await db().collection('clients').doc(uid).get();
-  const allowed: string[] = (clientSnap.data()?.kinfolkIds ?? []) as string[];
-  if (allowed.length === 0) throw new HttpsError('failed-precondition', 'No tribes linked.');
-  const kinfolkId = requested ?? allowed[0];
-  if (!allowed.includes(kinfolkId)) throw new HttpsError('permission-denied', 'No access.');
-  return kinfolkId;
-}
-
 export async function submitRatingHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ ratingId: string }> {
@@ -39,7 +31,7 @@ export async function submitRatingHandler(
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = Args.parse(req.data);
-  const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId);
+  const kinfolkId = await resolveNonStaffKinfolkId(uid, args.kinfolkId);
 
   const resolved = await resolveKinCareRef({
     familyId: kinfolkId,
