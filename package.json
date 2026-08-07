@@ -1,9 +1,13 @@
 {
   "name": "tribetails",
   "private": true,
-  "description": "Monorepo entry point. Holds no dependencies; every project keeps its own toolchain and lockfile. These scripts exist so a task has ONE name from the repo root instead of a path to memorise.",
+  "description": "Monorepo entry point. mytribe/web, auntieos-admin, and packages/* are real npm workspaces, sharing one install and one root package-lock.json — that's how packages/geo's route geometry reaches both web apps. mytribe/functions and auntieos-admin/web/functions are deliberately NOT workspace members: Cloud Functions deploy as self-contained artifacts with their own package.json and lockfile, and hoisting their deps into the root tree would ship a broken deploy. These scripts exist so a task has ONE name from the repo root instead of a path to memorise.",
   "engines": {
     "node": ">=22"
+  },
+  "workspaces": ["packages/*", "auntieos-admin", "mytribe/web"],
+  "overrides": {
+    "@babel/plugin-transform-runtime": "^7.29.0"
   },
   "scripts": {
     "preflight": "bash scripts/preflight.sh",
@@ -12,15 +16,17 @@
     "dev:admin": "npm --prefix auntieos-admin run dev",
     "dev:portal": "npm --prefix mytribe/web run dev",
 
-    "test": "npm run test:functions && npm run test:admin && npm run test:portal",
+    "test": "npm run test:functions && npm run test:geo && npm run test:admin && npm run test:portal",
     "test:functions": "npm --prefix mytribe/functions test",
+    "test:geo": "npm --prefix packages/geo test",
     "test:admin": "npm --prefix auntieos-admin test",
     "test:portal": "npm --prefix mytribe/web test",
     "test:android": "cd auntieos-admin/android && ./gradlew testDebugUnitTest",
     "test:rules": "npm --prefix mytribe/functions run test:rules",
 
-    "typecheck": "npm run typecheck:functions && npm run typecheck:admin && npm run typecheck:portal",
+    "typecheck": "npm run typecheck:functions && npm run typecheck:geo && npm run typecheck:admin && npm run typecheck:portal",
     "typecheck:functions": "npm --prefix mytribe/functions run typecheck",
+    "typecheck:geo": "npm --prefix packages/geo run typecheck",
     "typecheck:admin": "npm --prefix auntieos-admin run typecheck",
     "typecheck:portal": "npm --prefix mytribe/web run typecheck",
 

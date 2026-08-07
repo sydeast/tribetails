@@ -1,7 +1,7 @@
 import { collection, onSnapshot } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { firestore } from './firebase';
-import type { RoutePoint } from './routeMap';
+import type { RoutePoint } from '@tribetails/geo';
 
 /**
  * Realtime GPS pings for one in-progress visit, ported from

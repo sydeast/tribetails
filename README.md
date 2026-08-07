@@ -88,16 +88,22 @@ running it.
 
 ## Layout notes
 
-Each folder keeps its own toolchain, lockfile and tests, and is built
-independently. The root `package.json` holds no dependencies; it exists so every
-task has one name from the root rather than a path to remember.
+`mytribe/web`, `auntieos-admin`, and `packages/*` are real npm workspaces: one
+install, one root `package-lock.json`. That's how `packages/geo` (route
+geometry) reaches both web apps' module graphs.
+
+`mytribe/functions` and `auntieos-admin/web/functions` are deliberately NOT
+workspace members. Cloud Functions deploy as self-contained artifacts with
+their own `package.json` and lockfile; hoisting their deps into the root tree
+would ship a broken deploy. Each keeps its own toolchain, lockfile and
+install, built independently of everything else here.
 
     npm run setup       one-time: hooks, Android SDK path, all installs
     npm test            every JS suite
     npm run check       typecheck, lint, test, build
 
-Suffix `test`, `typecheck` or `build` with `:functions`, `:admin` or `:portal`
-to run one project. `docs/RUNBOOK.md` has the full table.
+Suffix `test`, `typecheck` or `build` with `:functions`, `:geo`, `:admin` or
+`:portal` to run one project. `docs/RUNBOOK.md` has the full table.
 
 ## Secrets
 

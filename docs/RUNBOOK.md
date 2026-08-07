@@ -123,11 +123,11 @@ From the repo root. Each fans out to the project that owns it.
 |---|---|
 | `npm run dev:admin` | Operator admin, `:5174` |
 | `npm run dev:portal` | Kinfolk portal, `:5173` |
-| `npm test` | Every JS suite (functions, admin, portal) |
+| `npm test` | Every JS suite (functions, geo, admin, portal) |
 | `npm run test:android` | Gradle unit tests |
 | `npm run test:rules` | Firestore rules, against the emulator |
-| `npm run typecheck` | All three projects |
-| `npm run build` | All three projects |
+| `npm run typecheck` | All four projects |
+| `npm run build` | Functions, admin, portal. `packages/geo` has no build step — both apps consume its TypeScript source directly. |
 | `npm run build:android` | `compileDebugKotlin` |
 | `npm run lint` | Functions eslint |
 | `npm run contracts:generate` | Rewrite the generated Contracts module from the server zod schemas |

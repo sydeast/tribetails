@@ -42,26 +42,41 @@ jobs:
         uses: dorny/paths-filter@v4
         with:
           filters: |
+            # auntieos-admin and mytribe/web are npm workspace members as of
+            # PR25a: they resolve against the ROOT package.json/package-lock.json,
+            # not one of their own, and packages/geo is a workspace dependency
+            # both apps import from. A change under any of the three must
+            # trigger both this filter and `portal` below, or a break in
+            # shared code, or a resolution change from a root-only dependency
+            # bump, ships green.
             admin:
               - 'auntieos-admin/src/**'
               - 'auntieos-admin/package.json'
-              - 'auntieos-admin/package-lock.json'
               - 'auntieos-admin/tsconfig.json'
               - 'auntieos-admin/vite.config.ts'
               - 'auntieos-admin/vitest.config.ts'
+              - 'packages/**'
+              - 'package.json'
+              - 'package-lock.json'
               - '.github/workflows/ci.yml'
             # Its own filter rather than a step inside `admin`, because this job
             # downloads Chromium and boots two emulators and so costs minutes
             # where the unit suite costs seconds. It still watches src/** and
             # the styles, since catching what a change there does in a REAL
             # browser is the entire reason the specs exist.
+            #
+            # Deliberately NOT watching packages/**: nothing under
+            # auntieos-admin/src imports @tribetails/geo yet (that lands in
+            # PR18), so a geo-only change has nothing here to exercise. Once
+            # PR18 adds that import, add packages/** here too.
             adminE2e:
               - 'auntieos-admin/e2e/**'
               - 'auntieos-admin/e2e.firebase.json'
               - 'auntieos-admin/src/**'
               - 'auntieos-admin/web/firestore.rules'
               - 'auntieos-admin/package.json'
-              - 'auntieos-admin/package-lock.json'
+              - 'package.json'
+              - 'package-lock.json'
               - '.github/workflows/ci.yml'
             functions:
               - 'auntieos-admin/web/functions/**'
@@ -91,6 +106,12 @@ jobs:
               - 'auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/contracts/**'
             portal:
               - 'mytribe/web/**'
+              # See the comment on `admin` above: mytribe/web is a workspace
+              # member too, resolving against the root lockfile and importing
+              # packages/geo.
+              - 'packages/**'
+              - 'package.json'
+              - 'package-lock.json'
               - '.github/workflows/ci.yml'
             mytribeGradle:
               - 'mytribe/build.gradle.kts'
@@ -116,8 +137,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: auntieos-admin/package-lock.json
+          # Root lockfile: auntieos-admin is an npm workspace member as of
+          # PR25a (see package.json's "workspaces"), so its deps resolve at
+          # the repo root, not from a lockfile of its own.
+          cache-dependency-path: package-lock.json
+      # Overrides the job default so the install runs where the workspace
+      # root (and its lockfile) actually is. Every later step keeps the job
+      # default of auntieos-admin.
       - run: npm ci
+        working-directory: .
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Tests
@@ -139,7 +167,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: auntieos-admin/package-lock.json
+          # Root lockfile: see the `admin` job above.
+          cache-dependency-path: package-lock.json
       # The Firestore emulator is a JAR. Without a JDK it fails at startup with
       # a message about `java`, several steps away from anything that looks
       # like a test.
@@ -148,6 +177,7 @@ jobs:
           distribution: temurin
           java-version: 21
       - run: npm ci
+        working-directory: .
       # Pinned. firebase-tools ships emulator behaviour changes in minor
       # releases, and an unpinned global install turns an upstream release into
       # a red build on a PR that touched nothing.
@@ -236,8 +266,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: mytribe/web/package-lock.json
+          # Root lockfile: mytribe/web is an npm workspace member as of
+          # PR25a (see package.json's "workspaces"), so its deps resolve at
+          # the repo root, not from a lockfile of its own.
+          cache-dependency-path: package-lock.json
+      # Overrides the job default so the install runs where the workspace
+      # root (and its lockfile) actually is. Every later step keeps the job
+      # default of mytribe/web.
       - run: npm ci
+        working-directory: .
       - name: Tests
         run: npm test
       - name: Production build
