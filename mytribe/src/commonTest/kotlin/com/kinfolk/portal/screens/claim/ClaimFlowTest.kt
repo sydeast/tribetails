@@ -72,6 +72,17 @@ class ClaimFlowTest {
                     "We just emailed a verification link to that address.",
             ),
         )
+        // FOLLOWUPS #16: the refusal has two wordings now, because a suppressed
+        // send is reported back to the handler and the message stopped claiming
+        // a mail that never left. This screen prints the server message
+        // verbatim, so both wordings have to route to the confirm-your-email
+        // heading rather than "Invite couldn't be accepted".
+        assertTrue(
+            isEmailUnverified(
+                "functions/failed-precondition Verify jane@example.com before joining. " +
+                    "We could not send the verification email just now.",
+            ),
+        )
         assertFalse(isEmailUnverified("functions/failed-precondition invite no longer valid"))
         assertFalse(isEmailUnverified("functions/failed-precondition invite expired"))
         assertFalse(isEmailUnverified("functions/permission-denied invite email mismatch"))

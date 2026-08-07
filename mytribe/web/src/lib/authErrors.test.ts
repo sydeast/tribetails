@@ -76,6 +76,19 @@ describe('isEmailUnverified', () => {
       }),
     ).toBe(true);
   });
+  it('detects the refusal that could NOT send the mail', () => {
+    // FOLLOWUPS #16: the refusal has two wordings now, because a suppressed send
+    // is reported back to the handler and the message stopped claiming a mail
+    // that never left. Both have to reach the verify card, or a failed send
+    // drops the invitee into the generic "didn't finish. Try again." retry loop.
+    expect(
+      isEmailUnverified({
+        code: 'functions/failed-precondition',
+        message:
+          'Verify jane@example.com before joining. We could not send the verification email just now. Look for an earlier one in that inbox, or try again in a minute.',
+      }),
+    ).toBe(true);
+  });
   it('does NOT swallow the dead-invite failed-precondition', () => {
     expect(isEmailUnverified({ code: 'functions/failed-precondition', message: 'invite no longer valid' })).toBe(false);
     expect(isEmailUnverified({ code: 'functions/failed-precondition', message: 'invite expired' })).toBe(false);

@@ -28,17 +28,22 @@ const Args = z.object({ inviteId: z.string().min(1) });
  * `internal`, and the invite stays live either way. A caller who gets the
  * message but no mail can still verify through any normal Firebase route.
  *
+ * Returns whether the mail actually went out, so the refusal can say so
+ * truthfully (FOLLOWUPS #16). Reporting the outcome rather than throwing it is
+ * what keeps the never-throw contract above intact: the caller learns what
+ * happened without the accept path gaining a new way to fail.
+ *
  * Rate-limited per uid AND per address: this is the one place an unauthenticated
  * -adjacent caller can make us send mail on demand, and a retry loop on the
  * claim screen must not become a mail bomb aimed at the invited mailbox. Hitting
- * the limit suppresses the send silently. The refusal is unchanged, and the
+ * the limit suppresses the send. The refusal is still the same refusal, and the
  * earlier mail is already in that inbox.
  */
 async function sendInviteVerificationEmail(
   uid: string,
   invitedEmail: string,
   inviteId: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     // Guarded first, ahead of the rate limiting and the mail send: a
     // misconfigured CLAIM_LINK_BASE_URL must not spend the caller's rate
@@ -64,13 +69,14 @@ async function sendInviteVerificationEmail(
       uid,
       extra: { inviteId },
     });
+    return true;
   } catch (err) {
-    // 'error', not 'warn': acceptInviteHandler still tells the caller "We
-    // just emailed a verification link to that address" regardless of what
-    // happens in here (the never-throw contract above). A dead SMTP key or a
-    // rate limit is a transient version of that lie; an unset
-    // CLAIM_LINK_BASE_URL is a standing one that fires on every unverified
-    // accept until someone notices — 'warn' is too easy to let sit unread.
+    // 'error', not 'warn'. The caller is no longer told a mail went out when it
+    // did not (that was FOLLOWUPS #16, fixed by the return value above), so this
+    // no longer covers for a lie. It stays at 'error' because the causes worth
+    // paging on are still in here: a dead SMTP key or an unset
+    // CLAIM_LINK_BASE_URL fires on every unverified accept until someone acts,
+    // and the invitee's honest fallback message cannot say which it was.
     logEvent({
       severity: 'error',
       function: 'acceptInvite',
@@ -78,7 +84,33 @@ async function sendInviteVerificationEmail(
       uid,
       extra: { inviteId, err: (err as Error)?.message },
     });
+    return false;
   }
+}
+
+/**
+ * The refusal an unverified invitee reads, in the two shapes it can honestly
+ * take (FOLLOWUPS #16).
+ *
+ * Both variants keep the contract the claim screens route on: a
+ * `failed-precondition` whose message names the invited address and contains
+ * "verif". `isEmailUnverified` (mytribe/web/src/lib/authErrors.ts and its Kotlin
+ * mirror in screens/claim/ClaimFlow.kt) matches on exactly that, because
+ * `failed-precondition` is also how this callable reports a dead invite, and the
+ * two want different screens. Reword either variant only alongside those two.
+ *
+ * The failed-send variant is one message for every suppressed cause (dead SMTP,
+ * rate limit, unconfigured claim base URL) rather than three. The invitee can do
+ * nothing different about any of them, the operator has the `error` log above to
+ * tell them apart, and naming a cause here would leak our configuration into a
+ * stranger's error message. It points at the mailbox because the commonest cause
+ * is the rate limiter, which only fires after five sends in an hour: an earlier
+ * link really is sitting in that inbox, still good.
+ */
+function verificationRefusal(invitedEmail: string, sent: boolean): string {
+  return sent
+    ? `Verify ${invitedEmail} before joining. We just emailed a verification link to that address. Open it, then come back to this invite link.`
+    : `Verify ${invitedEmail} before joining. We could not send the verification email just now. Look for an earlier one in that inbox, or try again in a minute.`;
 }
 
 export async function acceptInviteHandler(req: CallableRequest<unknown>): Promise<{ familyId: string }> {
@@ -126,11 +158,8 @@ export async function acceptInviteHandler(req: CallableRequest<unknown>): Promis
   //     what to do. The invite is untouched and still live for its full TTL, so
   //     the same claim link works the moment they come back verified.
   if (req.auth.token.email_verified !== true) {
-    await sendInviteVerificationEmail(req.auth.uid, invite.invitedEmail, inviteId);
-    throw new HttpsError(
-      'failed-precondition',
-      `Verify ${invite.invitedEmail} before joining. We just emailed a verification link to that address. Open it, then come back to this invite link.`,
-    );
+    const sent = await sendInviteVerificationEmail(req.auth.uid, invite.invitedEmail, inviteId);
+    throw new HttpsError('failed-precondition', verificationRefusal(invite.invitedEmail, sent));
   }
   const memberRef = db().doc(`families/${invite.tribeId}/members/${req.auth.uid}`);
   const clientRef = db().doc(`clients/${req.auth.uid}`);
