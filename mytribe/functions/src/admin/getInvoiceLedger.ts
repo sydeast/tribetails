@@ -14,7 +14,13 @@ import {
 } from '../lib/invoiceMath';
 import { validateResponse } from '../lib/callableResponse';
 import { CentsSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
-import { TIP_BASES, paymentMoneyOf, paymentReconciles, readTipBasis } from '../lib/paymentMoney';
+import {
+  TIP_BASES,
+  paymentMoneyOf,
+  paymentReconciles,
+  readTipBasis,
+  resolveLedgerAmountCents,
+} from '../lib/paymentMoney';
 
 /**
  * The two halves of an invoice nothing outside the server can currently see:
@@ -284,6 +290,13 @@ const TIP_BASIS_KEY = 'tipBasis';
  * `paidCentsFromPayments` prefers `amountCents` over `amount` on the
  * subcollection. Every root payment row written before today carries only the
  * float, and rounding it once here is the same treatment those rows already got.
+ *
+ * FOR `tipCents`/`feeCents`/`appliedCents` ONLY. `stripeWebhook.ts` never
+ * wrote a tip, fee or applied amount, on either branch of `amountSource`, so
+ * those three fields are dollars-or-absent on every row that reaches this
+ * function and carry none of the unit ambiguity `amount` does. `amount`
+ * itself is resolved by `resolveLedgerAmountCents` below, NOT by this
+ * function — see that function's doc for why.
  */
 function centsOr(cents: unknown, dollars: unknown): number {
   if (typeof cents === 'number' && Number.isInteger(cents) && cents >= 0) return cents;
@@ -356,14 +369,26 @@ export async function getInvoiceLedgerHandler(
     .where('invoiceId', '==', args.invoiceId)
     .limit(MAX_LEDGER_ROWS)
     .get();
+  // How many rows this invoice's display ledger could not honestly resolve
+  // an `amount` for (see `resolveLedgerAmountCents`). Counted across the
+  // whole page so ONE warn log reports the invoice, not one log line per row.
+  let unresolvedLedgerAmounts = 0;
   const ledgerPayments = ledgerSnap.docs
     .map((d) => {
       const raw = d.data() as Record<string, unknown>;
-      // CENTS WIN OVER DOLLARS, per field, the same precedence
-      // `paidCentsFromPayments` uses on the subcollection. A row written since
-      // the fee landed carries both; a row written before it carries only the
-      // float, which is rounded once here.
-      const amountCents = centsOr(raw['amountCents'], raw['amount']);
+      // CENTS WIN OVER DOLLARS, same precedence `paidCentsFromPayments` uses
+      // on the subcollection — but `amount`'s DOLLARS-VS-CENTS reading also
+      // depends on `amountSource` (the 100x defect: a `stripe-event` row's
+      // `amount` is already cents, not dollars). `resolveLedgerAmountCents`
+      // is the one place that rule lives; the backfill script uses the same
+      // function so the two cannot disagree.
+      const amountResult = resolveLedgerAmountCents({
+        amount: raw['amount'],
+        amountCents: raw['amountCents'],
+        amountSource: raw['amountSource'],
+      });
+      if (!amountResult.resolved) unresolvedLedgerAmounts += 1;
+      const amountCents = amountResult.amountCents;
       const tipCents = centsOr(raw['tipCents'], raw['tip']);
       const feeCents = centsOr(raw['feeCents'], raw['fee']);
       const tipBasis = readTipBasis(raw[TIP_BASIS_KEY]);
@@ -390,6 +415,21 @@ export async function getInvoiceLedgerHandler(
       };
     })
     .sort((a, b) => b.date.localeCompare(a.date));
+
+  // Fail-loud (money code standing rule): a row this reader could not
+  // honestly interpret rendered as $0.00 and nothing said why. That is no
+  // longer silent — an operator or on-call reading logs for this invoice can
+  // find it, even though the response itself has nowhere non-breaking to
+  // carry a per-row flag (see the report for why a schema field was ruled out).
+  if (unresolvedLedgerAmounts > 0) {
+    logEvent({
+      severity: 'warn',
+      function: 'getInvoiceLedger',
+      event: 'ledger.amount.unresolved',
+      uid: actor.uid,
+      extra: { invoiceId: args.invoiceId, unresolvedLedgerAmounts },
+    });
+  }
 
   const storedIds = Array.isArray(invoice['sessionIds'])
     ? (invoice['sessionIds'] as unknown[]).filter((s): s is string => typeof s === 'string' && s !== '')
