@@ -166,3 +166,57 @@ export function marketingMasterChecked(cat: CategoryDto, marketingOptIn: Partial
   if (mcs.length === 0) return false;
   return mcs.every((mc) => marketingOptIn?.[mc] === true);
 }
+
+// ── per-key channel logic (P7: per-key notification toggles) ────────────
+//
+// Everything above projects the catalog's per-key data into a per-category
+// row (the mockup's original control surface). The mockup's own filename,
+// "justNeedsExpansionForEachSectionForGranularModification", is the spec
+// for what's below: each category's expanded card also lists its keys, each
+// with its own channel toggles that write byKey and inherit byCategory when
+// untouched. See prefs.ts:132-146 (explicitUserChoice) for the server-side
+// precedence these helpers mirror client-side: byKey wins, byCategory is the
+// fallback, catalog default (email-on) is the last resort.
+
+/**
+ * Channels this key alone pins read-only. lockedChannels already folds in
+ * catalog.required server-side (see NotificationKeyDto's doc comment above),
+ * so no separate `required` union is needed here: this is deliberately a
+ * per-key read, not categoryToggleableChannels' cross-key aggregate, because
+ * the server locks/unlocks per notification key, not per category.
+ */
+export function keyLockedChannels(key: NotificationKeyDto): Channel[] {
+  return key.allowedChannels.filter((ch) => key.lockedChannels.includes(ch));
+}
+
+/**
+ * Effective checked state for one key's channel row. Locked channels always
+ * read true. Otherwise this key's own byKey entry wins when present,
+ * falling back to the category's byCategory value, falling back to
+ * email-on/others-off: the same three-step fallback explicitUserChoice
+ * documents server-side (byKey.{ch} -> byCategory.{ch} -> allowedChannels).
+ */
+export function keyChannelChecked(
+  key: NotificationKeyDto,
+  ch: Channel,
+  byKeyForKey: Partial<Record<Channel, boolean>> | undefined,
+  byCategoryForCat: Partial<Record<Channel, boolean>> | undefined,
+): boolean {
+  if (keyLockedChannels(key).includes(ch)) return true;
+  const own = byKeyForKey?.[ch];
+  if (own !== undefined) return own;
+  const fromCategory = byCategoryForCat?.[ch];
+  if (fromCategory !== undefined) return fromCategory;
+  return ch === 'email';
+}
+
+/**
+ * True when the kinfolk has explicitly set this channel for this key;
+ * false means the row is still following the category default. Drives the
+ * "Following category" / "Overridden" indicator; a key with no byKey entry
+ * at all is `false` for every channel, which is exactly the state a freshly
+ * loaded, never-touched key should be in.
+ */
+export function keyChannelOverridden(byKeyForKey: Partial<Record<Channel, boolean>> | undefined, ch: Channel): boolean {
+  return byKeyForKey?.[ch] !== undefined;
+}

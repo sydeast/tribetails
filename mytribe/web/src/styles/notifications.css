@@ -55,6 +55,25 @@
 .crow .cinfo small { display: block; color: var(--navy-muted); font-size: 12.5px; margin-top: 2px; }
 .crow.off .cinfo b, .crow.off .cinfo small { opacity: .5; }
 
+/* per-key expansion (P7: per-key notification toggles). Nests inside .chans
+   .inner below the category's own channel rows, so it expands/collapses
+   with the rest of the card. */
+.nf-keys { margin-top: 6px; padding-top: 10px; border-top: 1px dashed var(--hairline); }
+.nf-key { padding: 12px 4px; border-bottom: 1px solid var(--hairline); }
+.nf-key:last-child { border-bottom: none; }
+.nf-key-head { display: flex; flex-direction: column; gap: 2px; }
+.nf-key-head b { font-size: 14px; font-weight: 600; }
+.nf-key-head small { color: var(--navy-muted); font-size: 12px; }
+.nf-key-chans { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.nf-key-crow { display: flex; align-items: center; gap: 12px; padding-left: 4px; }
+.nf-key-chinfo { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.nf-key-chinfo b { font-size: 13px; font-weight: 600; }
+.nf-key-chinfo small { color: var(--navy-muted); font-size: 11.5px; line-height: 1.4; flex-basis: 100%; }
+.nf-key-badge { font-family: var(--mono); font-size: 9px; letter-spacing: .06em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 20px; }
+.nf-key-badge.following { background: var(--glass-dim); color: var(--navy-muted); }
+.nf-key-badge.overridden { background: rgba(213, 92, 135, .14); color: var(--pink); }
+
 /* marketing helper + disabled note (renamed from mockup's .helper, see file comment) */
 .nf-helper { font-size: 13px; color: var(--navy-soft); line-height: 1.5; margin-top: 14px; }
 .nf-helper + .nf-helper { margin-top: 6px; }
