@@ -66,6 +66,29 @@ class AdminNotificationPrefsRepositoryTest {
         assertTrue(sentPayload.contains("\"marketingOptIn\""))
     }
 
+    /**
+     * The three TOP-LEVEL maps go out on every save, empty ones as `{}`.
+     *
+     * The server writes this payload with `mergeFields: ['notificationPrefs']`,
+     * which replaces the WHOLE subtree, so a key this encoder omits is not left
+     * alone on the server, it is DELETED. `encodePrefs` used to guard each map
+     * with `isNotEmpty()`, which was harmless under the old `merge: true` and
+     * erases whatever another device had put there under `mergeFields`.
+     *
+     * An all-empty prefs object is the ONLY input that catches this. Every
+     * other save test here builds all three maps non-empty, so they pass
+     * identically with the guards in or out.
+     */
+    @Test
+    fun saveAlwaysEmitsAllThreeTopLevelMaps() = runTest {
+        var sentPayload = ""
+        val r = repo { _, payload -> sentPayload = payload; WriteResult.Ok("{}") }
+        assertTrue(r.save(AdminNotificationPrefs()) is WriteResult.Ok)
+        assertTrue(sentPayload.contains("\"byKey\":{}"), sentPayload)
+        assertTrue(sentPayload.contains("\"byCategory\":{}"), sentPayload)
+        assertTrue(sentPayload.contains("\"marketingOptIn\":{}"), sentPayload)
+    }
+
     @Test
     fun getAndSaveForwardErrorsLoudly() = runTest {
         val errRepo = repo { _, _ -> WriteResult.Err("boom") }

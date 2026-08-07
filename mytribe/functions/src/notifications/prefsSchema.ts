@@ -67,12 +67,19 @@ export const SaveArgs = z.object({ prefs: PrefsShape });
  *
  * Nothing enforces that. All three fields of `PrefsShape` are `.optional()`
  * (above), so the server accepts a partial object and writes it as the COMPLETE
- * subtree. They cannot be tightened to close this: APKs and wasm bundles already
- * in the field still send partial payloads, and a required field would reject
- * those saves outright. Server-side normalization would not rescue a partial
- * sender either, since filling in `byKey: {}` for a client that omitted it
- * produces the identical delete. The invariant lives in the five clients and in
- * nothing else, so re-check the senders before trusting it.
+ * subtree. They cannot be tightened until the clients already in the field age
+ * out: APKs and wasm bundles still running the pre-fix encoders send partial
+ * payloads, and a required field would reject those saves outright. Note what
+ * that costs in the meantime, because it is the uncomfortable half: a stale
+ * client does not merely get accepted, it DELETES the maps it omits. Keeping
+ * these optional buys compatibility by letting old clients destroy data quietly
+ * where a required field would have failed loud. Fixing the senders closed the
+ * hole for updated clients only.
+ *
+ * Server-side normalization would not rescue a partial sender either, since
+ * filling in `byKey: {}` for a client that omitted it produces the identical
+ * delete. The invariant lives in the five clients and in nothing else, so
+ * re-check the senders before trusting it.
  */
 export function prefsSetOptions(): { mergeFields: string[] } {
   // A fresh array per call: the SDK's SetOptions takes a mutable string[], and
