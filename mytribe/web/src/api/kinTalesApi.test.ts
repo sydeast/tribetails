@@ -32,6 +32,8 @@ function tale(overrides: Partial<KinTaleDto>): KinTaleDto {
     mediaIds: [],
     sentAtMs: null,
     shared: false,
+    arrivedAtIso: null,
+    departedAtIso: null,
     ...overrides,
   };
 }

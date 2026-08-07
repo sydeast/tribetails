@@ -41,3 +41,45 @@ class RelativeTimeTest {
         assertTrue(!s.endsWith("ago"))
     }
 }
+
+/**
+ * task-25 (P4): `clockTime`, the first clock-time formatter on this platform
+ * (see RelativeTime.kt's doc comment for why it lives here rather than
+ * extending ScheduleScreen.kt's pre-existing raw-ISO render).
+ */
+class ClockTimeTest {
+
+    private val hourMinuteAmPm = Regex("""^\d{1,2}:\d{2} (AM|PM)$""")
+
+    @Test
+    fun `null input returns null`() {
+        assertEquals(null, clockTime(null))
+    }
+
+    @Test
+    fun `blank input returns null`() {
+        assertEquals(null, clockTime(""))
+        assertEquals(null, clockTime("   "))
+    }
+
+    @Test
+    fun `unparseable input returns null, never a crash`() {
+        assertEquals(null, clockTime("6pm"))
+        assertEquals(null, clockTime("not-a-date"))
+    }
+
+    @Test
+    fun `a valid instant renders h mm AM PM in the runner's own local zone`() {
+        val s = clockTime("2026-08-06T14:02:00.000Z")
+        assertTrue(s != null && hourMinuteAmPm.matches(s), "expected 'H:MM AM/PM' style, got '$s'")
+    }
+
+    @Test
+    fun `midnight local renders as 12 not 0`() {
+        // Find an instant that's local midnight for whatever zone the test runs
+        // in isn't possible without a fixed zone; instead assert the general
+        // invariant on a UTC midnight instant — hour12 is never "0:xx".
+        val s = clockTime("2026-08-06T00:00:00.000Z")
+        assertTrue(s != null && !s.startsWith("0:"), "hour should never render as 0, got '$s'")
+    }
+}

@@ -246,6 +246,100 @@ class PortalApiTest {
         assertEquals(false, res.hasMore)
     }
 
+    // task-25 (P4): visit facts — arrival/departure times and the checked-only
+    // task checklist.
+
+    @Test
+    fun `getMyKinTales decodes arrivedAtIso and departedAtIso when present`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t1")
+                    put("body", "A fine walk.")
+                    put("shared", false)
+                    put("arrivedAtIso", "2026-08-06T14:02:00.000Z")
+                    put("departedAtIso", "2026-08-06T14:41:00.000Z")
+                })
+            })
+        })
+        val api = PortalApi(fake)
+        val res = api.getMyKinTales()
+        assertEquals("2026-08-06T14:02:00.000Z", res.tales.single().arrivedAtIso)
+        assertEquals("2026-08-06T14:41:00.000Z", res.tales.single().departedAtIso)
+    }
+
+    @Test
+    fun `getMyKinTales decodes null arrivedAtIso departedAtIso as null, not a crash`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t1")
+                    put("body", "A fine walk.")
+                    put("shared", false)
+                    put("arrivedAtIso", JsonNull)
+                    put("departedAtIso", JsonNull)
+                })
+            })
+        })
+        val api = PortalApi(fake)
+        val res = api.getMyKinTales()
+        assertNull(res.tales.single().arrivedAtIso)
+        assertNull(res.tales.single().departedAtIso)
+    }
+
+    @Test
+    fun `getMyKinTales omits arrivedAtIso departedAtIso entirely decodes as null`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t1")
+                    put("body", "A fine walk.")
+                    put("shared", false)
+                })
+            })
+        })
+        val api = PortalApi(fake)
+        val res = api.getMyKinTales()
+        assertNull(res.tales.single().arrivedAtIso)
+        assertNull(res.tales.single().departedAtIso)
+    }
+
+    @Test
+    fun `getMyKinTales decodes checklist items, defaulting to empty when absent`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t-checked")
+                    put("body", "x")
+                    put("shared", false)
+                    put("checklist", buildJsonArray {
+                        add(buildJsonObject { put("key", "peed"); put("text", "Peed") })
+                        add(buildJsonObject { put("key", "fed"); put("text", "Fed") })
+                    })
+                })
+                add(buildJsonObject {
+                    put("id", "t-none")
+                    put("body", "y")
+                    put("shared", false)
+                })
+            })
+        })
+        val api = PortalApi(fake)
+        val res = api.getMyKinTales()
+        val checked = res.tales.first { it.id == "t-checked" }
+        assertEquals(listOf("peed", "fed"), checked.checklist.map { it.key })
+        assertEquals(listOf("Peed", "Fed"), checked.checklist.map { it.text })
+        assertTrue(res.tales.first { it.id == "t-none" }.checklist.isEmpty())
+    }
+
     @Test
     fun `addSecondaryContact sends kin_edit and home_access true when the PRIMARY opts in`() = runTest {
         val fake = FakeFunctionsClient()

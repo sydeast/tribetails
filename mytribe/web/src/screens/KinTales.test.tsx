@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { KinTales } from './KinTales';
 import type { GetMyKinTalesResult, KinTaleDto, TaleThumbDto } from '../api/types';
 import type { GetKinTaleCommentsResult, KinTaleReactionResult } from '../api/kinTalesApi';
+import { isoTime } from '../lib/portalFormat';
 
 const mocks = vi.hoisted(() => ({
   getMyKinTales: vi.fn<() => Promise<GetMyKinTalesResult>>(),
@@ -52,6 +53,8 @@ function tale(overrides: Partial<KinTaleDto> = {}): KinTaleDto {
     mediaIds: [],
     sentAtMs: 1_700_000_000_000,
     shared: false,
+    arrivedAtIso: null,
+    departedAtIso: null,
     ...overrides,
   };
 }
@@ -293,5 +296,115 @@ describe('KinTales: photo-first cards', () => {
 
     await screen.findByText('Old function, no thumbs field.');
     expect(container.querySelectorAll('.tcstrip')).toHaveLength(0);
+  });
+});
+
+/**
+ * task-25 (P4): visit facts — arrival/departure times and the task checklist.
+ * Times are formatted with `isoTime`, the same helper Schedule.tsx already
+ * uses for a visit's arrival time, not a second one. A missing time renders
+ * nothing for that half (fail-loud rule: never a fabricated "12:00 AM" or the
+ * current clock). The checklist renders checked items only; the component
+ * does not decide what "not done" means, since the DTO never says.
+ */
+describe('KinTales: visit facts', () => {
+  const ARRIVED_ISO = new Date(2026, 7, 6, 14, 2).toISOString();
+  const DEPARTED_ISO = new Date(2026, 7, 6, 14, 41).toISOString();
+
+  it('shows both arrival and departure, formatted with the existing isoTime helper', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [tale({ title: 'Both times', arrivedAtIso: ARRIVED_ISO, departedAtIso: DEPARTED_ISO })],
+      hasMore: false,
+    });
+    renderScreen();
+
+    await screen.findByText('A fine walk in the park.');
+    expect(screen.getByText(new RegExp(`Arrived ${isoTime(ARRIVED_ISO)}`))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`Departed ${isoTime(DEPARTED_ISO)}`))).toBeInTheDocument();
+  });
+
+  it('a visit with an arrival but no recorded departure shows only the arrival, not a fabricated departure', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [tale({ title: 'Arrival only', arrivedAtIso: ARRIVED_ISO, departedAtIso: null })],
+      hasMore: false,
+    });
+    renderScreen();
+
+    await screen.findByText('A fine walk in the park.');
+    expect(screen.getByText(new RegExp(`Arrived ${isoTime(ARRIVED_ISO)}`))).toBeInTheDocument();
+    expect(screen.queryByText(/Departed/)).not.toBeInTheDocument();
+  });
+
+  it('a visit with neither time recorded renders no visit-facts line at all', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [tale({ title: 'No times', arrivedAtIso: null, departedAtIso: null })],
+      hasMore: false,
+    });
+    const { container } = renderScreen();
+
+    await screen.findByText('A fine walk in the park.');
+    expect(container.querySelectorAll('.visitfacts')).toHaveLength(0);
+    expect(screen.queryByText(/Arrived/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Departed/)).not.toBeInTheDocument();
+  });
+
+  it('shows the checklist as done tasks, in the order the server returned', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [
+        tale({
+          title: 'Checklist shown',
+          checklist: [
+            { key: 'peed', text: 'Peed' },
+            { key: 'fed', text: 'Fed' },
+          ],
+        }),
+      ],
+      hasMore: false,
+    });
+    const { container } = renderScreen();
+
+    await screen.findByText('A fine walk in the park.');
+    const chips = container.querySelectorAll('.taskschips .badge');
+    expect(Array.from(chips).map((c) => c.textContent)).toEqual(['Peed', 'Fed']);
+  });
+
+  it('renders no checklist section when the tale carries none', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [tale({ title: 'No checklist' })],
+      hasMore: false,
+    });
+    const { container } = renderScreen();
+
+    await screen.findByText('A fine walk in the park.');
+    expect(container.querySelectorAll('.taskschips')).toHaveLength(0);
+  });
+
+  // The tests above all exercise a single tale, which always renders as the
+  // `.feature` banner card. A real feed is mostly non-featured `.talecard`s
+  // (see the "photo-first cards" describe block above for that same
+  // two-tale convention) — these confirm the same blocks render there too.
+  it('on a non-featured talecard, both blocks render inside .talecard, inset with the card padding', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [
+        tale({ id: 'featured', title: 'Featured, no facts' }),
+        tale({
+          id: 't2',
+          title: 'Second card with facts',
+          arrivedAtIso: ARRIVED_ISO,
+          departedAtIso: DEPARTED_ISO,
+          checklist: [{ key: 'fed', text: 'Fed' }],
+        }),
+      ],
+      hasMore: false,
+    });
+    renderScreen();
+
+    await screen.findByText('Second card with facts');
+    const talecard = screen.getByText('Second card with facts').closest('.talecard')!;
+    expect(within(talecard as HTMLElement).getByText(new RegExp(`Arrived ${isoTime(ARRIVED_ISO)}`))).toBeInTheDocument();
+    expect(within(talecard as HTMLElement).getByText('Fed')).toBeInTheDocument();
+    // Featured card must stay unaffected (no facts were given to it).
+    const featured = screen.getByText('Featured, no facts').closest('.feature')!;
+    expect(within(featured as HTMLElement).queryByText(/Arrived/)).not.toBeInTheDocument();
   });
 });

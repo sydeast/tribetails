@@ -550,6 +550,15 @@ class PortalApi(private val fns: FunctionsClient) {
                 val url = to["url"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
                 KinTaleThumb(id = id, url = url, contentType = to["contentType"]?.jsonPrimitive?.contentOrNull)
             }.orEmpty()
+            // task-25 (P4): checked-only task checklist. Absent/malformed entries
+            // are skipped, never surfaced as a placeholder — same tolerance as
+            // `thumbs` above for a field an older deployed function might omit.
+            val checklist = (o["checklist"] as? JsonArray)?.mapNotNull { ci ->
+                val co = ci.jsonObject
+                val key = co["key"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                val text = co["text"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                KinTaleChecklistItem(key = key, text = text)
+            }.orEmpty()
             KinTale(
                 id = o["id"]?.jsonPrimitive?.contentOrNull ?: error("kinTale: missing id"),
                 body = o["body"]?.jsonPrimitive?.contentOrNull.orEmpty(),
@@ -561,6 +570,9 @@ class PortalApi(private val fns: FunctionsClient) {
                 gpsDistanceMeters  = summary?.get("distanceMeters")?.jsonPrimitive?.doubleOrNull,
                 gpsDurationSeconds = summary?.get("durationSeconds")?.jsonPrimitive?.longOrNull,
                 thumbs = thumbs,
+                arrivedAtIso = o["arrivedAtIso"]?.jsonPrimitive?.contentOrNull,
+                departedAtIso = o["departedAtIso"]?.jsonPrimitive?.contentOrNull,
+                checklist = checklist,
             )
         }.orEmpty()
         return KinTalesResult(

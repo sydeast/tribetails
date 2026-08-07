@@ -219,6 +219,12 @@ export interface TaleThumbDto {
   contentType: string | null;
 }
 
+/** One care task the Auntie's checklist recorded as DONE for this visit. */
+export interface ChecklistItemDto {
+  key: string;
+  text: string;
+}
+
 export interface KinTaleDto {
   id: string;
   title: string;
@@ -236,6 +242,22 @@ export interface KinTaleDto {
    * it renders as "no thumbnails" instead of crashing.
    */
   thumbs?: TaleThumbDto[];
+  /**
+   * When the Auntie arrived / departed, resolved server-side from the visit's
+   * session (task-25, P4). `null` means not recorded — never zero, never
+   * "now". `departedAtIso` can be `null` while `arrivedAtIso` is set (a
+   * departure that was never stamped).
+   */
+  arrivedAtIso: string | null;
+  departedAtIso: string | null;
+  /**
+   * Care tasks checked done on this visit. CHECKED ITEMS ONLY — an item that
+   * wasn't checked has no entry here and must never be shown as "not done"
+   * (the source data can't tell "left undone" apart from "not applicable to
+   * this visit"). Omitted (not `[]`) when nothing was recorded, so an absent
+   * checklist and a recorded-but-empty one never render the same way.
+   */
+  checklist?: ChecklistItemDto[];
 }
 
 export interface GetMyKinTalesResult {
