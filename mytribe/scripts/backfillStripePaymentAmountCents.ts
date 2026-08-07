@@ -77,6 +77,18 @@
  * it: cloud commands run from an operator's own environment, not from here,
  * so the real row counts (how many Stripe rows are actually affected) are
  * UNKNOWN until the operator runs the dry run and reads its output.
+ *
+ * EXPECT `planned` TO BE LARGER THAN "THE STRIPE 100X ROWS." This scans the
+ * whole `payments` collection, so every legacy row with only a float
+ * `amount` and no `amountCents` at all — every `recordPayment.ts` row
+ * written before it started writing `amountCents` alongside `amount`, and
+ * any `local-invoice`-sourced Stripe row — also gets stamped, at the exact
+ * dollars-to-cents value `getInvoiceLedger.ts` already renders for it today.
+ * That is correct and harmless (same rule, same number, just made permanent),
+ * but it means most of the planned stamps are ordinary legacy-dollar rows,
+ * not 100x fixes. The `stripe-event` lines in the printed plan are the ones
+ * that were actually wrong on screen; a large total `planned` count by
+ * itself is not evidence of anything unusual.
  */
 
 // The MODULAR admin API, matching every other script in this directory: the

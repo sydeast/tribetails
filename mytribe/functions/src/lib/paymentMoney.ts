@@ -139,11 +139,15 @@ export function readTipBasis(raw: unknown): TipBasis {
  *                    `null`; there is no unit because there is no value. The
  *                    row already carries `amountResolved: false`.
  *
- * A row written before `amountSource` existed (every `recordPayment.ts` row,
- * and every Stripe row from before 2026-08-06) carries no marker at all —
- * `readAmountSource` returns `null` for it, and `resolveLedgerAmountCents`
- * treats that the same as `local-invoice`: dollars, the only convention
- * that ever existed before this field did.
+ * `stripeWebhook.ts` has stamped `amountSource` (and `amountResolved`) on
+ * EVERY row it has ever written — that pair is not new. What PR29
+ * (2026-08-06) added was `amountCents` alongside them. So a Stripe row
+ * missing `amountCents` still reliably carries `amountSource`; only a row
+ * this webhook never wrote at all — every `recordPayment.ts` row, which has
+ * always written its own correct `amountCents` directly and never sets this
+ * marker — carries no `amountSource`. `readAmountSource` returns `null` for
+ * that case, and `resolveLedgerAmountCents` treats it the same as
+ * `local-invoice`: dollars, the only convention a marker-less row can mean.
  */
 export type AmountSource = 'stripe-event' | 'local-invoice' | 'unresolved';
 
@@ -179,9 +183,9 @@ export interface ResolvedLedgerAmount {
  * operator sees today" and "what gets permanently stamped onto the row."
  *
  * `amountCents` wins whenever it is present and a valid non-negative
- * integer: it is the number the writer actually computed (either PR29's
- * webhook or `recordPayment.ts`, which has always written both), not a
- * re-derivation that could disagree with it.
+ * integer: it is the number the writer actually computed — `recordPayment.ts`
+ * has always written it, and `stripeWebhook.ts` has written it since PR29
+ * (2026-08-06) — not a re-derivation that could disagree with it.
  *
  * Failing that, `amountSource` says the unit `amount` is in (see the type
  * doc above). THE 100X DEFECT this function exists to fix: treating a
@@ -218,8 +222,9 @@ export function resolveLedgerAmountCents(raw: {
     return { amountCents: 0, resolved: false };
   }
 
-  // 'local-invoice', or no marker at all (every recordPayment.ts row, every
-  // Stripe row written before 2026-08-06): dollars, the legacy convention.
+  // 'local-invoice', or no marker at all (every recordPayment.ts row — the
+  // only writer of this collection that has never set amountSource):
+  // dollars, the legacy convention.
   if (typeof amount === 'number' && Number.isFinite(amount)) {
     return { amountCents: dollarsToCents(amount), resolved: true };
   }

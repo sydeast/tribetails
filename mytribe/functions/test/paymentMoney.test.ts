@@ -294,7 +294,7 @@ describe('resolveLedgerAmountCents: the 100x defect, fixed in one place', () => 
     expect(r).toEqual({ amountCents: 3000, resolved: true });
   });
 
-  it('reads a row with NO amountSource as dollars too — every recordPayment.ts row, and every Stripe row before PR29', () => {
+  it('reads a row with NO amountSource as dollars too — every recordPayment.ts row, the only writer that never sets this marker', () => {
     const r = resolveLedgerAmountCents({ amount: 45.5 });
     expect(r).toEqual({ amountCents: 4550, resolved: true });
   });
