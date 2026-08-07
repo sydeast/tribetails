@@ -572,7 +572,16 @@ class AdminDataViewModel(
         viewModelScope.launch {
             _isLoading.value = true
             invoiceRepository.createPayment(payment).onSuccess {
-                loadPayments() // Refresh the list
+                // Refreshes page 1, which is NOT a recency query and may not
+                // contain the row just written. listPayments orders by document
+                // id because the collection has no field that can order it
+                // honestly: `date` is mixed Timestamp/free-text so it sorts by
+                // writer, and `createdAt` exists only on recordPayment rows so
+                // ordering by it would silently drop every Stripe row. Once the
+                // collection exceeds one page this refresh is an arbitrary
+                // sample. A staff browser that needs "most recent" needs a
+                // normalized date field on the collection first.
+                loadPayments()
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to create payment"
                 _isLoading.value = false

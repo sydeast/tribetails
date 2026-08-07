@@ -25,7 +25,7 @@ precondition ADR-0003 named was met):** `getMyBookings`, `requestBooking`,
 an `Args`), validate outbound the same way, and are generated into the
 Contracts module through `scripts/contracts/registry.ts`'s
 `BOOKING_CONTRACT_REGISTRY`, exactly as the 21 invoice callables are through
-`INVOICE_CONTRACT_REGISTRY`. For those 29, this doc is documentation and the
+`INVOICE_CONTRACT_REGISTRY`. For those 30, this doc is documentation and the
 schema is the authority. Every OTHER callable's response is still doc-only
 and this file remains its review anchor; closing that gap is a later PR.
 

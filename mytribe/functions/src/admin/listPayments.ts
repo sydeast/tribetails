@@ -124,7 +124,13 @@ export const Args = z
      * `.min(1)`: a blank string is a caller bug, and silently restarting from
      * the top of the collection is how a paging loop turns into an infinite one.
      */
-    startAfterId: z.string().min(1).max(200).optional(),
+    // No slash. The cursor is a document ID, and ordering by documentId() makes
+    // the Admin SDK throw a PLAIN Error on a path-shaped cursor
+    // (@google-cloud/firestore reference/query.js validateReference), which
+    // wrapCallable maps to `internal` and reports to Sentry. A malformed cursor
+    // from an admin client is a caller fault, so say so here and keep it out of
+    // the server-fault alerts, matching how the blank case is already handled.
+    startAfterId: z.string().min(1).max(200).regex(/^[^/]+$/, 'startAfterId must be a document id, not a path').optional(),
   })
   .strict();
 
