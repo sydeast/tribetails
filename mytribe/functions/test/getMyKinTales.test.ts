@@ -370,6 +370,110 @@ describe('getMyKinTalesHandler thumbs', () => {
 });
 
 /**
+ * Task-24a: `getMyKinTales` now reads `thumbs` straight off the
+ * `kin_care_reports` doc it already loaded — the triggers keep it in sync —
+ * instead of resolving up to 8 `media_files` docs per tale on every read
+ * (worst case 181 reads for a default 20-tale page). A tale written before
+ * this shipped has no `thumbs` field yet: exactly ONE tale, per-tale, still
+ * falls back to the old per-read resolution so it isn't silently
+ * photo-less; a tale that already carries `thumbs` (including a stored
+ * empty array, which means "resolved, nothing renderable") never touches
+ * `media_files` at all. That skip is the entire point of this task.
+ */
+describe('getMyKinTalesHandler thumbs — task-24a read-cost fix', () => {
+  const taleWith = (id: string, extra: Record<string, unknown>) => ({
+    id,
+    data: { kinfolkId: 'fam3', bodyCopy: 'x', sentAt: SENT_AT_ISO, sharedAsIds: [], mediaFileIds: [], ...extra },
+  });
+
+  it('a stored thumbs field is served as-is, with ZERO media_files reads', async () => {
+    const storedThumbs = [{ id: 'm1', url: 'https://cdn/m1.jpg', contentType: 'image/jpeg' }];
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
+      queryDocs: {
+        kin_care_reports: [taleWith('r-stamped', { mediaFileIds: ['m1'], thumbs: storedThumbs })],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.thumbs).toEqual(storedThumbs);
+    expect(ctx.db.getAll).not.toHaveBeenCalled();
+  });
+
+  it('a stored thumbs: [] (resolved, nothing renderable) is served as [] with ZERO media_files reads', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['fam3'] },
+        // Present in the fixture to prove it's never read.
+        'media_files/dead1': { storageUrl: 'https://cdn/dead1.jpg', mimeType: 'image/jpeg' },
+      },
+      queryDocs: {
+        kin_care_reports: [taleWith('r-empty-resolved', { mediaFileIds: ['dead1'], thumbs: [] })],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.thumbs).toEqual([]);
+    expect(ctx.db.getAll).not.toHaveBeenCalled();
+  });
+
+  it('a tale with no thumbs field (pre-task-24a data) falls back to resolving media the old way', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['fam3'] },
+        'media_files/legacy1': { storageUrl: 'https://cdn/legacy1.jpg', mimeType: 'image/jpeg' },
+      },
+      queryDocs: {
+        kin_care_reports: [taleWith('r-legacy', { mediaFileIds: ['legacy1'] })],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.thumbs).toEqual([
+      { id: 'legacy1', url: 'https://cdn/legacy1.jpg', contentType: 'image/jpeg' },
+    ]);
+    expect(ctx.db.getAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('a mixed page only resolves media for the legacy tale, in one batched read', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['fam3'] },
+        'media_files/legacy1': { storageUrl: 'https://cdn/legacy1.jpg', mimeType: 'image/jpeg' },
+      },
+      queryDocs: {
+        kin_care_reports: [
+          taleWith('r-new', {
+            mediaFileIds: ['new1'],
+            thumbs: [{ id: 'new1', url: 'https://cdn/new1.jpg', contentType: 'image/jpeg' }],
+          }),
+          taleWith('r-legacy', { mediaFileIds: ['legacy1'] }),
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3', limit: 50 }, auth: { uid: 'u1' } } as any);
+
+    const byId = Object.fromEntries(res.tales.map((t) => [t.id, t.thumbs]));
+    expect(byId['r-new']).toEqual([{ id: 'new1', url: 'https://cdn/new1.jpg', contentType: 'image/jpeg' }]);
+    expect(byId['r-legacy']).toEqual([{ id: 'legacy1', url: 'https://cdn/legacy1.jpg', contentType: 'image/jpeg' }]);
+    // One batched getAll for the whole page's fallback candidates, not one per tale.
+    expect(ctx.db.getAll).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
  * `kin_care_reports` is a FLAT collection, so the tenant predicate, the draft
  * exclusion (`sentAt > ''`) and the `before` cursor are the whole contract of
  * this read. None of them were verifiable while the double answered every query

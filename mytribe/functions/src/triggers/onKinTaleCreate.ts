@@ -1,10 +1,12 @@
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapTrigger } from '../lib/wrapTrigger';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { claimKinTalePublish, clientAlreadyAnnouncedSend } from '../lib/kinTalePublishClaim';
 import { seedReconcileStatus } from '../lib/reconcileStatus';
+import { maintainThumbs, TaleThumb } from '../lib/kinTaleThumbs';
 
 type KinCareReportDoc = {
   kinfolkId?: string;
@@ -12,6 +14,8 @@ type KinCareReportDoc = {
   bodyCopy?: string;
   status?: string;
   sentVia?: string;
+  mediaFileIds?: string[];
+  thumbs?: TaleThumb[];
 };
 
 /**
@@ -29,6 +33,25 @@ type KinCareReportDoc = {
 export async function onKinTaleCreateHandler(event: any): Promise<void> {
   const reportId = event.params.reportId as string;
   const report = event.data?.data() as KinCareReportDoc | undefined;
+
+  // Denormalized feed thumbnails (task-24a): stamp `thumbs` from
+  // `mediaFileIds` at create time so `getMyKinTales` never resolves media
+  // docs on the hot path. Runs before the SENT gate below — both admin
+  // clients create a DRAFT first, and its photos need thumbs just as much as
+  // a straight-to-SENT create's do. Best-effort like the reconcile enrolment
+  // below: a stamping failure is worth a log, not a blocked announcement.
+  if (report) {
+    try {
+      await maintainThumbs(db(), db().doc(`kin_care_reports/${reportId}`), undefined, report);
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'onKinTaleCreate',
+        event: 'trigger.thumbs.stamp_failed',
+        extra: { reportId, err: (err as Error)?.message },
+      });
+    }
+  }
 
   // Enrol the report in the reconcile pipeline. Runs BEFORE the draft return
   // below, because a draft is the normal create and still has to reconcile;

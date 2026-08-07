@@ -6,6 +6,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
+import { TaleThumb, MAX_THUMBS_PER_TALE, mediaDocToThumb } from '../lib/kinTaleThumbs';
 
 interface GetMyKinTalesRequest {
   kinfolkId?: string;
@@ -25,13 +26,6 @@ interface RoutePointDto {
 interface GpsSummaryDto {
   distanceMeters?: number;
   durationSeconds?: number;
-}
-
-/** Same shape getMyKinTaleMedia's MediaItem already returns. */
-interface TaleThumb {
-  id: string;
-  url: string;
-  contentType: string | null;
 }
 
 interface KinTaleDto {
@@ -101,8 +95,17 @@ export async function getMyKinTalesHandler(
   const docs = snap.docs.slice(0, limit);
   const hasMore = snap.docs.length > limit;
 
-  const tales: KinTaleDto[] = docs.map((d) => {
+  // Tales that predate task-24a's `thumbs` write-back have no stored field
+  // yet; those (and only those) still need the old per-read media
+  // resolution below. `Array.isArray` (not truthiness) is the "resolved"
+  // test: a stored `thumbs: []` means "resolved, nothing renderable" and
+  // must cost zero media reads, same as a fully-populated one.
+  const fallbackIndices: number[] = [];
+
+  const tales: KinTaleDto[] = docs.map((d, taleIndex) => {
     const data = d.data() as Record<string, unknown>;
+    const storedThumbs = data['thumbs'];
+    if (!Array.isArray(storedThumbs)) fallbackIndices.push(taleIndex);
 
     const sentAtRaw = data['sentAt'];
     let sentAtMs: number | null = null;
@@ -124,7 +127,8 @@ export async function getMyKinTalesHandler(
       mediaIds: Array.isArray(data['mediaFileIds']) ? (data['mediaFileIds'] as string[]) : [],
       sentAtMs,
       shared: Array.isArray(sharedIds) && sharedIds.length > 0,
-      thumbs: [], // filled in below, after every tale's candidate ids are known.
+      // Resolved fallback tales get [] here, filled in below.
+      thumbs: Array.isArray(storedThumbs) ? (storedThumbs as TaleThumb[]) : [],
     };
 
     // Pet mood: only surface a string->string map. Omit when absent or malformed,
@@ -161,38 +165,50 @@ export async function getMyKinTalesHandler(
     return dto;
   });
 
-  await resolveThumbs(firestore, tales);
+  await resolveFallbackThumbs(firestore, tales, fallbackIndices);
 
   logEvent({
     severity: 'info',
     function: 'getMyKinTales',
     event: 'portal.kintales.resolved',
     uid,
-    extra: { kinfolkId, count: tales.length, hasMore },
+    extra: { kinfolkId, count: tales.length, hasMore, fallbackCount: fallbackIndices.length },
   });
 
   return { tales, hasMore };
 }
 
-const MAX_THUMBS_PER_TALE = 8;
-
 /**
- * Fills each tale's `thumbs` in place from its first `MAX_THUMBS_PER_TALE`
- * `mediaIds`, resolved in one batched `getAll` across the whole page instead
- * of a `getMyKinTaleMedia` round trip per card. A media doc that doesn't
- * exist, or has no `storageUrl`, is dropped — never a placeholder — so a
- * tale's `thumbs` can end up shorter than its candidate slice.
+ * Task-24a: resolves `thumbs` the OLD way — up to `MAX_THUMBS_PER_TALE`
+ * `media_files` docs per tale, one batched `getAll` across the whole page —
+ * but ONLY for tales in `fallbackIndices`: the ones with no stored `thumbs`
+ * field, i.e. written before the create/update triggers started denormalizing
+ * it. A tale that already carries `thumbs` (including a stored `[]`) never
+ * reaches this function; that's the entire read-cost fix, so a later
+ * refactor that widens `fallbackIndices` back to "every tale" would silently
+ * undo it — see `getMyKinTalesHandler thumbs` tests for the read-count guard.
  *
- * Read cost: this is `min(mediaIds.length, 8)` extra `media_files` reads per
- * tale, on top of the page's own `kin_care_reports` reads. Worst case (every
- * tale has >= 8 media) on a full default page is 20 tales x 8 = 160 extra
- * reads; on the max page size (50) it's 400. See task-24-report.md for the
- * call this makes given that number.
+ * Self-healing: the next `onKinTaleUpdate` for a fallback tale stamps
+ * `thumbs` for good (`maintainThumbs`, `../lib/kinTaleThumbs.ts`), so this
+ * path only ever runs for the shrinking set of tales nothing has touched
+ * since this shipped. There's no Firestore query for "how many still lack
+ * `thumbs`" (Firestore can't index field-absence), but every fallback read
+ * logs `portal.kintales.resolved` with `fallbackCount` on it, which is how an
+ * operator can watch that population converge toward zero, and a one-off
+ * admin script (paginated scan filtering `thumbs === undefined` client-side,
+ * same page-and-cursor shape as `aiBackfillTaleTitles`) gives an exact count
+ * on demand.
  */
-async function resolveThumbs(firestore: FirebaseFirestore.Firestore, tales: KinTaleDto[]): Promise<void> {
+async function resolveFallbackThumbs(
+  firestore: FirebaseFirestore.Firestore,
+  tales: KinTaleDto[],
+  fallbackIndices: number[],
+): Promise<void> {
+  if (fallbackIndices.length === 0) return;
+
   const refs: { taleIndex: number; ref: FirebaseFirestore.DocumentReference }[] = [];
-  tales.forEach((t, taleIndex) => {
-    t.mediaIds.slice(0, MAX_THUMBS_PER_TALE).forEach((id) => {
+  fallbackIndices.forEach((taleIndex) => {
+    tales[taleIndex]!.mediaIds.slice(0, MAX_THUMBS_PER_TALE).forEach((id) => {
       refs.push({ taleIndex, ref: firestore.doc(`media_files/${id}`) });
     });
   });
@@ -200,15 +216,8 @@ async function resolveThumbs(firestore: FirebaseFirestore.Firestore, tales: KinT
 
   const snaps = await firestore.getAll(...refs.map((r) => r.ref));
   snaps.forEach((snap, i) => {
-    if (!snap.exists) return;
-    const d = snap.data() as Record<string, unknown>;
-    const url = typeof d['storageUrl'] === 'string' ? (d['storageUrl'] as string) : '';
-    if (!url) return;
-    tales[refs[i]!.taleIndex]!.thumbs.push({
-      id: snap.id,
-      url,
-      contentType: typeof d['mimeType'] === 'string' ? (d['mimeType'] as string) : null,
-    });
+    const thumb = mediaDocToThumb(snap.id, snap.exists ? (snap.data() as Record<string, unknown>) : undefined);
+    if (thumb) tales[refs[i]!.taleIndex]!.thumbs.push(thumb);
   });
 }
 
