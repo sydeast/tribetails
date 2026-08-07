@@ -438,13 +438,17 @@ export async function requestBookingHandler(
   const data = (req.data ?? {}) as Record<string, unknown>;
   const isMulti = Array.isArray((data as { visits?: unknown }).visits);
 
+  // PR28b: both branches below resolve the household AFTER parsing their args.
+  // This used to be split: the clients/{uid} lookup and the zero-households
+  // check ran here, above the dispatch and before either parse, while the
+  // actual id matching already ran after it. Now the whole resolution is one
+  // call, after parsing. The reorder has one narrow deliberate consequence: a
+  // caller with zero linked households who also sends a malformed payload now
+  // gets the zod 'invalid-argument' where they used to get
+  // 'failed-precondition'. Both refuse the request; every other ordering is
+  // unchanged.
   if (isMulti) {
     const args = MultiArgs.parse(req.data);
-    // PR28b: household resolution happens AFTER schema parsing (was before, on
-    // the raw request) so a malformed payload from a defect account still
-    // fails schema validation first, same as it always has, rather than
-    // surfacing a household error ahead of the argument error that used to
-    // fire first.
     const kinfolkId = await resolveNonStaffKinfolkId(uid, args.kinfolkId);
 
     const now = Date.now();
@@ -521,6 +525,7 @@ export async function requestBookingHandler(
 
   // Legacy single-visit path, stored as a 1-visit envelope.
   const args = LegacyArgs.parse(req.data);
+  // Household resolution: see the PR28b note above the isMulti dispatch.
   const kinfolkId = await resolveNonStaffKinfolkId(uid, args.kinfolkId);
 
   if (args.endTimeMs && args.endTimeMs <= args.startTimeMs) {
