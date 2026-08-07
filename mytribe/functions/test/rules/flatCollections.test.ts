@@ -331,12 +331,17 @@ describe('rules: flat top-level collections', () => {
       await db.doc('ipRateLimits/k1').set({ hits: 1 });
       await db.doc('securityRateLimits/k1').set({ hits: 1 });
       await db.doc('stripeEvents/evt_1').set({ seen: true });
+      await db.doc('stripePayments/pi_1').set({ appliedEventId: 'evt_1' });
     });
     const fs = asAuntie(env).firestore();
     await assertSucceeds(fs.doc('ipRateLimits/k1').get());
     await assertSucceeds(fs.doc('securityRateLimits/k1').get());
     await assertSucceeds(fs.doc('stripeEvents/evt_1').get());
+    await assertSucceeds(fs.doc('stripePayments/pi_1').get());
     await assertFails(fs.doc('ipRateLimits/k1').set({ hits: 0 }));
+    // The per-PaymentIntent claim is server-written like its siblings: a client
+    // that could forge one would suppress a real payment's ledger write.
+    await assertFails(fs.doc('stripePayments/pi_2').set({ appliedEventId: 'x' }));
   });
 
   // ── notifications: dead third branch dropped from both read gates ─────────

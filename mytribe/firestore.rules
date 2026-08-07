@@ -904,6 +904,10 @@ service cloud.firestore {
     match /failedLoginEmailRateLimits/{key}     { allow read: if isAuntie(); allow write: if false; }
     match /passwordResetEmailRateLimits/{key}   { allow read: if isAuntie(); allow write: if false; }
     match /stripeEvents/{eventId}               { allow read: if isAuntie(); allow write: if false; }
+ // `stripeEvents` is keyed per EVENT; this one is keyed per PAYMENTINTENT, so
+ // the two events a single card payment delivers apply exactly once between
+ // them. See `billing/stripeWebhook.ts`.
+    match /stripePayments/{paymentIntentId}     { allow read: if isAuntie(); allow write: if false; }
  // `n8nIpRateLimits` had a rule here. Deleted 2026-07-23 with the n8n
  // retirement: its only writer is the Admin SDK inside
  // auntieos-admin/web/functions/index.js (which bypasses these rules either

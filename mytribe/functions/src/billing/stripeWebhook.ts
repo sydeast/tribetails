@@ -31,10 +31,14 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     payment_intent?: string;
     metadata?: Record<string, string>;
     // Stripe carries the authoritative paid amount on the event object itself:
-    // invoices use `amount_paid`, PaymentIntents use `amount_received`. Prefer
-    // these over re-deriving from our local invoice doc (NOTE-57).
+    // invoices use `amount_paid`, PaymentIntents use `amount_received`, and a
+    // Checkout Session uses `amount_total` (all three integer minor units).
+    // Prefer these over re-deriving from our local invoice doc (NOTE-57).
     amount_paid?: number;
     amount_received?: number;
+    amount_total?: number | null;
+    // Checkout Session only. 'paid' | 'unpaid' | 'no_payment_required'.
+    payment_status?: string;
   };
   const metadata = eventObject.metadata;
   // AuntieOS bookkeeping keys the family by `familyId`; the MyTribe portal's
@@ -65,12 +69,68 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // is newer than the last-applied event of the opposite outcome. Skips any
   // event that is a replay or an out-of-order older event.
   const eventCreatedMs = ((event.created ?? 0) as number) * 1000;
-  const isPaidEvent = event.type === 'invoice.paid' || event.type === 'payment_intent.succeeded';
+  // `checkout.session.completed` is the canonical event for a `mode: 'payment'`
+  // Checkout integration, which is what `payInvoice` creates. It was missing
+  // here, so it fell through to the unhandled-type 202 below.
+  const isPaidEvent =
+    event.type === 'invoice.paid' ||
+    event.type === 'payment_intent.succeeded' ||
+    event.type === 'checkout.session.completed';
   const isFailedEvent = event.type === 'invoice.payment_failed' || event.type === 'payment_intent.payment_failed';
   if (!isPaidEvent && !isFailedEvent) {
     res.status(202).json({ ok: true, ignored: true });
     return;
   }
+
+  // A Checkout Session can complete WITHOUT the money having been collected —
+  // `payment_status: 'unpaid'` is how a delayed/async method reports "session
+  // finished, funds pending". Unreachable while `payInvoice` hardcodes
+  // `payment_method_types: ['card']`, and this is the guard that keeps it
+  // unreachable rather than trusting that line never changes. Marking an
+  // invoice paid for money that has not arrived is the one failure worse than
+  // the one being fixed here. Scoped to the Session event: no other event type
+  // carries this field, and an unscoped check would 202 every PaymentIntent.
+  if (event.type === 'checkout.session.completed' && eventObject.payment_status !== 'paid') {
+    logEvent({
+      severity: 'warn',
+      function: 'stripeWebhook',
+      event: 'stripe.session.unpaid',
+      extra: { invoiceId, familyId, eventId: event.id, paymentStatus: eventObject.payment_status ?? null },
+    });
+    res.status(202).json({ ok: true, ignored: true });
+    return;
+  }
+
+  // The PaymentIntent id, resolved identically from either paid event shape: a
+  // Checkout Session carries it in `payment_intent` (SDK type
+  // `string | PaymentIntent | null` — unexpanded, as here, it is the string);
+  // a PaymentIntent event IS the PaymentIntent, so its own `id` is the id.
+  //
+  // Both the fee hop and the payment-level claim below key off this ONE value,
+  // and they must agree. Deliberately NOT `referenceNumber`: that falls back to
+  // the Session id and then the event id, so the two events describing a single
+  // payment would claim two DIFFERENT keys and both apply.
+  const paymentIntentId =
+    (typeof eventObject.payment_intent === 'string' && eventObject.payment_intent) ||
+    (event.type.startsWith('payment_intent') && typeof eventObject.id === 'string' && eventObject.id) ||
+    null;
+
+  // Exactly-once per PAYMENT, where the ledger above is exactly-once per EVENT.
+  // One successful card payment now delivers TWO events that both mean paid —
+  // `checkout.session.completed` and `payment_intent.succeeded` — carrying two
+  // different `event.id`s, so `stripeEvents/{event.id}` cannot dedupe them
+  // against each other, and their `created` stamps are seconds-granular and
+  // usually equal, so the out-of-order guard (a strict `<`) lets the second
+  // through too. Unguarded, the second event writes a SECOND
+  // `payments/{eventId}` mirror doc — double-counting real money in the root
+  // ledger — plus a second BILLING_INVOICE_PAID audit entry and a second
+  // `invoice.payment.applied` notification to the household.
+  //
+  // Paid events only, deliberately. A `payment_intent.payment_failed` must not
+  // claim the id: a declined card the household then retries successfully has
+  // to be able to apply.
+  const paymentClaimRef =
+    isPaidEvent && paymentIntentId ? db().doc(`stripePayments/${paymentIntentId}`) : null;
 
   // U6: the Stripe processor fee. The event carries no fee — it lives on the
   // charge's balance transaction, one hop past what the webhook payload ever
@@ -88,13 +148,6 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   let feeCents: number | null = null;
   let feeResolved = false;
   if (isPaidEvent) {
-    // Same id `referenceNumber` already prefers: the invoice event's own
-    // `payment_intent` field, or — for a payment_intent.succeeded event,
-    // which has no such field on itself — the event object's own id.
-    const paymentIntentId =
-      (typeof eventObject.payment_intent === 'string' && eventObject.payment_intent) ||
-      (event.type.startsWith('payment_intent') && typeof eventObject.id === 'string' && eventObject.id) ||
-      null;
     if (paymentIntentId) {
       try {
         const stripe = await getStripe();
@@ -128,6 +181,9 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     if (dedupeSnap.exists) {
       return { proceed: false, reason: 'replay' as const };
     }
+    // Every read before the first write: a Firestore transaction refuses reads
+    // after writes, so this sits with the other gets, not with its branch.
+    const claimSnap = paymentClaimRef ? await tx.get(paymentClaimRef) : null;
     const invoiceSnap = await tx.get(ref);
     const invoice = invoiceSnap.data() as { lastStripeEventAtMs?: number } | undefined;
     // The state stamp's payment standing reads the `payments` SUBCOLLECTION
@@ -137,6 +193,20 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     // first write: a Firestore transaction refuses reads after writes.
     const subPaymentsSnap = isPaidEvent ? await tx.get(ref.collection('payments')) : null;
     const lastEventMs = invoice?.lastStripeEventAtMs ?? 0;
+    if (claimSnap?.exists) {
+      // The other event describing this same PaymentIntent already applied.
+      // Reserve THIS event id so its own Stripe retries short-circuit at the
+      // replay branch above, and mutate nothing else.
+      tx.create(dedupeRef, {
+        type: event.type,
+        receivedAt: FieldValue.serverTimestamp(),
+        eventCreatedMs,
+        familyId,
+        invoiceId,
+        appliedOutcome: 'SKIPPED_DUPLICATE_PAYMENT',
+      });
+      return { proceed: false, reason: 'duplicate-payment' as const };
+    }
     if (eventCreatedMs > 0 && eventCreatedMs < lastEventMs) {
       // Out-of-order retry arriving after a newer event has already been
       // applied. Reserve the id to prevent future replays but don't mutate.
@@ -158,6 +228,17 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       invoiceId,
       appliedOutcome: isPaidEvent ? 'PAID' : 'FAILED',
     });
+    if (paymentClaimRef) {
+      // Claim the PaymentIntent in the same atomic write as the money it
+      // describes, so the sibling event finds it on its way in.
+      tx.create(paymentClaimRef, {
+        appliedEventId: event.id,
+        appliedEventType: event.type,
+        receivedAt: FieldValue.serverTimestamp(),
+        familyId,
+        invoiceId,
+      });
+    }
     // Match the flat-doc shape AuntieOS writes: free-text `status` + numeric
     // `amountDue`. The portal renders the stored `status` stamp (ADR-0002;
     // its money heuristic is retired) and the reminders cron still reads
@@ -191,12 +272,19 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       // amount do we fall back to recording null — and then we flag the doc
       // `amountResolved: false` and warn loudly (fail-loud), never silently.
       const invoiceForAmount = invoiceSnap.data() as { amountDue?: number; total?: number } | undefined;
+      // `amount_total` is the Checkout Session's leg of the same ladder — the
+      // authoritative figure on the event that now marks the invoice paid when
+      // it wins the race. Without it a Session-first delivery would fall back
+      // to the local invoice doc, which is the weaker source NOTE-57 exists to
+      // avoid. Integer minor units, exactly like its two siblings.
       const eventAmount =
         typeof eventObject.amount_paid === 'number' && eventObject.amount_paid > 0
           ? eventObject.amount_paid
           : typeof eventObject.amount_received === 'number' && eventObject.amount_received > 0
             ? eventObject.amount_received
-            : null;
+            : typeof eventObject.amount_total === 'number' && eventObject.amount_total > 0
+              ? eventObject.amount_total
+              : null;
       const localAmount =
         typeof invoiceForAmount?.amountDue === 'number' && invoiceForAmount.amountDue > 0
           ? invoiceForAmount.amountDue
