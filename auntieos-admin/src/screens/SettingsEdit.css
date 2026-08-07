@@ -45,6 +45,15 @@
   gap: 0.3rem;
 }
 
+/* PR30: wraps one <label> + its optional hint (e.g. a payment processor's fee
+   schedule). The hint sits OUTSIDE <label> — see TextFieldsSection's comment —
+   so this group is what keeps the two visually together in the field list. */
+.settingsEdit__fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
 .settingsEdit__fieldLabel {
   font-size: var(--type-label-md-size);
   color: var(--color-text-dim);

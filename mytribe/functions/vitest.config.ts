@@ -5,9 +5,13 @@ export default defineConfig({
     environment: 'node',
     // Includes:
     //   - functions/test/**/*.test.ts           — backend callable + dispatcher tests
+    //   - functions/src/**/*.test.ts            — colocated unit tests for pure lib
+    //                                            modules (PR30: paymentMethods.ts),
+    //                                            kept beside the code they cover
+    //                                            rather than mirrored under test/
     //   - ../scripts/test/**/*.test.ts          — operator seed-script unit tests
     //                                            (no Firestore deps; pure payload validators)
-    include: ['test/**/*.test.ts', '../scripts/test/**/*.test.ts'],
+    include: ['test/**/*.test.ts', 'src/**/*.test.ts', '../scripts/test/**/*.test.ts'],
     exclude: ['node_modules/**', 'test/rules/**'],
     // firebase-admin must be required by Node, not processed by Vite.
     //

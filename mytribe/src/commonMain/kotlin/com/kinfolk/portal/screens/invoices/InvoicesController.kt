@@ -9,10 +9,22 @@ import androidx.compose.runtime.setValue
 import com.kinfolk.portal.portal.CreditTarget
 import com.kinfolk.portal.portal.Invoice
 import com.kinfolk.portal.portal.InvoicesResult
+import com.kinfolk.portal.portal.PayMethod
+import com.kinfolk.portal.portal.PayMethodKind
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.util.formatUsd
 import com.kinfolk.portal.util.openExternalUrl
 import kotlinx.coroutines.launch
+
+/**
+ * PR30 deploy-skew fallback (Android and the Cloud Function don't ship
+ * atomically): if `getMyHome` fails, or an old server sends no `payMethods`
+ * at all, a household must still be able to pay. Stripe alone, same fallback
+ * the web portal uses (`InvoiceDetail.tsx`'s `STRIPE_ONLY_FALLBACK`).
+ */
+private val STRIPE_ONLY_FALLBACK = listOf(
+    PayMethod(id = "stripe", label = "Pay with Credit Card", kind = PayMethodKind.Checkout, url = null),
+)
 
 /**
  * Shared invoices state holder. Both the list screen and the lifted
@@ -38,6 +50,12 @@ class InvoicesController internal constructor(
     // 16.2: invoiceId currently being rendered to PDF (null = none in flight).
     var downloadingPdf by mutableStateOf<String?>(null)
         private set
+    // PR30: business-level, resolved off getMyHome (never a specific
+    // invoice's amountDue — same reasoning as the getMyHome.ts handler).
+    // Starts as the Stripe-only fallback so the detail screen always has a
+    // way to pay, even before the first reload() completes.
+    var payMethods by mutableStateOf<List<PayMethod>>(STRIPE_ONLY_FALLBACK)
+        private set
 
     fun find(invoiceId: String): Invoice? {
         val d = data ?: return null
@@ -50,6 +68,17 @@ class InvoicesController internal constructor(
             error = null
         } catch (t: Throwable) {
             error = t.message ?: "Could not load invoices"
+        }
+        // Independent of the invoices fetch above and never lets a payMethods
+        // failure block the invoice list: a failed or empty result just
+        // leaves payMethods at STRIPE_ONLY_FALLBACK.
+        try {
+            val home = portalApi.getMyHome(kinfolkId)
+            if (home.payMethods.isNotEmpty()) payMethods = home.payMethods
+        } catch (_: Throwable) {
+            // Fallback already in place; nothing to surface here. The
+            // Stripe-only list IS the shipped behavior on this path, not a
+            // degraded one, so there is no error worth showing the household.
         }
     }
 
@@ -86,6 +115,20 @@ class InvoicesController internal constructor(
             } finally {
                 paying = null
             }
+        }
+    }
+
+    /**
+     * PR30: dispatches on [PayMethod.kind]. Checkout (Stripe) reuses
+     * [startPay] unchanged; Link (Venmo/PayPal/Cash App) is a plain external
+     * navigation, same as [startDownloadPdf]'s `openExternalUrl` — no
+     * callable round-trip, because the resolved URL already came back with
+     * the invoice/home payload.
+     */
+    fun startPayMethod(invoice: Invoice, method: PayMethod) {
+        when (method.kind) {
+            PayMethodKind.Checkout -> startPay(invoice)
+            PayMethodKind.Link -> method.url?.takeIf { it.isNotBlank() }?.let { openExternalUrl(it) }
         }
     }
 

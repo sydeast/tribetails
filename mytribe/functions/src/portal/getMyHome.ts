@@ -6,6 +6,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
+import { resolvePayMethods, type PayMethod } from '../lib/paymentMethods';
 
 interface GetMyHomeRequest {
   kinfolkId?: string;
@@ -63,6 +64,23 @@ interface GetMyHomeResult {
    * banner id to match against.
    */
   bannerDismissedByUser: boolean;
+  /**
+   * PR30: every payment processor the operator has configured — resolved
+   * (URL + label), never raw handles: the portal needs somewhere to send a
+   * household, not the operator's account identifiers, and keeping the
+   * parsing in `resolvePayMethods` means it's tested in one place.
+   *
+   * This is BUSINESS-LEVEL, not invoice-level: `getMyHome` has no specific
+   * invoice, so it resolves against a nonzero placeholder rather than a real
+   * `amountDue` (`resolvePayMethods` returns [] once nothing is owed, which
+   * has no meaning outside a specific bill). The client still gates on
+   * whether an invoice itself has anything due before rendering `PayOptions`.
+   *
+   * Never carries `feeBps`/`feeFixedCents` — kinfolk never see processor fees
+   * (standing ruling; see `paymentMethods.ts`), and `PayMethod` has no field
+   * for them.
+   */
+  payMethods: PayMethod[];
 }
 
 /**
@@ -199,6 +217,17 @@ export async function getMyHomeHandler(
     : [];
   const bannerDismissedByUser = portal.banner.id.length > 0 && dismissedBanners.includes(portal.banner.id);
 
+  // PR30: resolved against a nonzero placeholder — see `payMethods` on
+  // `GetMyHomeResult` for why `getMyHome` has no real invoice to gate on.
+  const payMethods = resolvePayMethods(
+    {
+      venmoHandle: typeof settings['venmoHandle'] === 'string' ? (settings['venmoHandle'] as string) : undefined,
+      paypalHandle: typeof settings['paypalHandle'] === 'string' ? (settings['paypalHandle'] as string) : undefined,
+      cashappHandle: typeof settings['cashappHandle'] === 'string' ? (settings['cashappHandle'] as string) : undefined,
+    },
+    { amountDue: 1 },
+  );
+
   logEvent({
     severity: 'info',
     function: 'getMyHome',
@@ -214,6 +243,7 @@ export async function getMyHomeHandler(
     businessName,
     portal,
     bannerDismissedByUser,
+    payMethods,
   };
 }
 

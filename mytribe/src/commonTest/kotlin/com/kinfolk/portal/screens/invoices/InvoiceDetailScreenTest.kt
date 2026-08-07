@@ -10,8 +10,11 @@ import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.portal.Invoice
 import com.kinfolk.portal.portal.InvoiceLineItem
 import com.kinfolk.portal.portal.InvoiceStatus
+import com.kinfolk.portal.portal.PayMethod
+import com.kinfolk.portal.portal.PayMethodKind
 import com.kinfolk.portal.screens.setThemedContent
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class InvoiceDetailScreenTest {
@@ -92,5 +95,60 @@ class InvoiceDetailScreenTest {
         onNodeWithText("Download PDF").performClick()
         waitForIdle()
         assertTrue(clicked, "Download PDF should fire onDownloadPdf")
+    }
+
+    /**
+     * PR30: one CTA per configured processor, and a link method (Venmo) states
+     * the amount to send because it cannot enforce it — same contract as the
+     * web `PayOptions` component's own tests.
+     */
+    @Test
+    fun payOptions_rendersOneCtaPerConfiguredMethod() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen(
+                "The Foster",
+                openInvoice(),
+                payMethods = listOf(
+                    PayMethod(id = "stripe", label = "Pay with Credit Card", kind = PayMethodKind.Checkout, url = null),
+                    PayMethod(id = "venmo", label = "Pay with Venmo", kind = PayMethodKind.Link, url = "https://venmo.com/u/auntie"),
+                ),
+                onBack = {},
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Pay with Credit Card").assertIsDisplayed()
+        onNodeWithText("Pay with Venmo").assertIsDisplayed()
+        onNodeWithText("Send \$100.00, then let your Auntie know it’s on its way.").assertIsDisplayed()
+    }
+
+    @Test
+    fun payOptions_clickingAMethodFiresOnPayMethodWithThatMethod() = runComposeUiTest {
+        var clicked: PayMethod? = null
+        val venmo = PayMethod(id = "venmo", label = "Pay with Venmo", kind = PayMethodKind.Link, url = "https://venmo.com/u/auntie")
+        setThemedContent {
+            InvoiceDetailScreen(
+                "The Foster",
+                openInvoice(),
+                payMethods = listOf(
+                    PayMethod(id = "stripe", label = "Pay with Credit Card", kind = PayMethodKind.Checkout, url = null),
+                    venmo,
+                ),
+                onPayMethod = { clicked = it },
+                onBack = {},
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Pay with Venmo").performClick()
+        waitForIdle()
+        assertEquals(venmo, clicked)
+    }
+
+    @Test
+    fun payOptions_rendersNothingWhenNoMethodsConfigured() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", openInvoice(), payMethods = emptyList(), onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Pay with Credit Card").assertDoesNotExist()
     }
 }
