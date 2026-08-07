@@ -66,11 +66,13 @@ export const SaveArgs = z.object({ prefs: PrefsShape });
  * default".
  *
  * Nothing enforces that. All three fields of `PrefsShape` are `.optional()`
- * (above), because a partial object is a legitimate first save, so the server
- * accepts one and writes it as the COMPLETE subtree. Server-side normalization
- * would not rescue a partial sender either: filling in `byKey: {}` for a client
- * that omitted it produces the identical delete. The invariant lives in the five
- * clients and in nothing else, so re-check the senders before trusting it.
+ * (above), so the server accepts a partial object and writes it as the COMPLETE
+ * subtree. They cannot be tightened to close this: APKs and wasm bundles already
+ * in the field still send partial payloads, and a required field would reject
+ * those saves outright. Server-side normalization would not rescue a partial
+ * sender either, since filling in `byKey: {}` for a client that omitted it
+ * produces the identical delete. The invariant lives in the five clients and in
+ * nothing else, so re-check the senders before trusting it.
  */
 export function prefsSetOptions(): { mergeFields: string[] } {
   // A fresh array per call: the SDK's SetOptions takes a mutable string[], and
