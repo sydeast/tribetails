@@ -810,6 +810,43 @@ build. Full list in `.firebaserc`.
 
 ---
 
+## Adding a new employee
+
+**Mint the `admin` custom claim with `setAdminClaim`. Adding the uid to
+`AUNTIE_OPERATOR_UIDS` is not enough, and it is not the same thing.**
+
+RULING O-6 makes the `admin` custom claim the primary staff signal. The env
+allowlist is a **logged transition fallback**, kept only until every real
+operator's claim is confirmed minted, and then decommissioned. `isStaff`
+(`mytribe/functions/src/lib/staffGate.ts`) is the single gate every staff check
+goes through, and when it matches on the allowlist without a claim it warns:
+
+```
+admin.allowlist.fallback.used
+  AUNTIE_OPERATOR_UIDS env-allowlist path matched; admin custom claim missing.
+```
+
+**That log line is the detector.** If it fires for a uid, that employee is
+running on the fallback and someone skipped this step. It is a `warn`, so it
+does not fail anything and will sit there indefinitely.
+
+Why it matters beyond tidiness: **Firestore and Storage rules do not consult the
+env allowlist at all.** `isAuntie()` in `mytribe/firestore.rules` is
+`request.auth.token.admin == true`, the claim. So an allowlist-only employee
+passes every *callable* and is refused by every *rule*, which means the
+callable-backed screens work while direct reads fail. That split is confusing to
+diagnose from the symptom, because most of the app looks fine.
+
+The claim also has to be minted before that employee can hold more than one
+tribe, per the 2026-08-07 ruling that only an admin may be assigned several.
+`kinfolkClaim.ts` refuses to designate a household for a multi-tribe account, and
+recovery is a tribe-picker selection, which is the operator flow.
+
+**On offboarding**, revoke the claim. Removing the uid from the env allowlist
+alone leaves the claim minted, and the claim is the one the rules trust.
+
+---
+
 ## Secrets
 
 Server secrets live in Google Secret Manager, never in the repo, never in
