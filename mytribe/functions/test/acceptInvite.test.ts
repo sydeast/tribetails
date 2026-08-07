@@ -461,6 +461,104 @@ describe('acceptInviteHandler: email verification', () => {
     expect(sendTpl).not.toHaveBeenCalled();
   });
 
+  /**
+   * FOLLOWUPS #16, the remaining half of task 26a's finding.
+   *
+   * `sendInviteVerificationEmail` never throws: a mail failure must not turn an
+   * actionable `failed-precondition` into an opaque `internal`. That contract is
+   * right and stays. What was wrong is that it made every send failure invisible
+   * to the handler, so the refusal claimed "We just emailed a verification link"
+   * whether or not one left the building. A failed save must not render "Saved";
+   * a mail that never sent must not read as one that did.
+   *
+   * These pin the honest half and the un-inverted half together: the caller is
+   * not told a mail went out when none did, AND the refusal keeps the shape both
+   * clients route on (`failed-precondition` + the address + "verif"), AND the
+   * invite is left untouched, still redeemable for its full TTL.
+   */
+  describe('the refusal only claims a send that happened', () => {
+    const SENT_CLAIM = /just emailed|we emailed|we sent|sent you/i;
+
+    it('claims the send when the mail really went out', async () => {
+      inviteGet.mockResolvedValue(liveInvite());
+      const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+      const err = await acceptInviteHandler({
+        auth: { uid: 'u1', token: { email: 'a@b', email_verified: false } },
+        data: { inviteId: 'i1' },
+      } as any).catch((e: { message: string }) => e);
+
+      expect(sendTpl).toHaveBeenCalledTimes(1);
+      // Byte-identical to the string pinned by mytribe/web/src/lib/authErrors.test.ts
+      // and mytribe/src/commonTest/.../ClaimFlowTest.kt. Changing it churns both.
+      expect((err as { message: string }).message).toBe(
+        'Verify a@b before joining. We just emailed a verification link to that address. ' +
+          'Open it, then come back to this invite link.',
+      );
+    });
+
+    it('does NOT claim a send the SMTP failure swallowed', async () => {
+      inviteGet.mockResolvedValue(liveInvite());
+      sendTpl.mockRejectedValue(new Error('smtp down'));
+      const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+      const err = await acceptInviteHandler({
+        auth: { uid: 'u1', token: { email: 'a@b', email_verified: false } },
+        data: { inviteId: 'i1' },
+      } as any).catch((e: { code: string; message: string }) => e);
+
+      const message = (err as { message: string }).message;
+      expect(message).not.toMatch(SENT_CLAIM);
+      // Still routable by both clients, and still names the mailbox to check.
+      expect(err).toMatchObject({ code: 'failed-precondition' });
+      expect(message).toMatch(/verif/i);
+      expect(message).toContain('a@b');
+      // The never-throw contract is intact: the invite is untouched, so it stays
+      // redeemable the moment they come back verified.
+      expect(memberSet).not.toHaveBeenCalled();
+      expect(inviteUpdate).not.toHaveBeenCalled();
+      expect(syncClaim).not.toHaveBeenCalled();
+    });
+
+    it('does NOT claim a send the rate limiter suppressed', async () => {
+      // The limiter only fires after five sends in an hour, so an earlier mail
+      // really is in that inbox. The message says go look for it rather than
+      // claiming this attempt sent a new one.
+      inviteGet.mockResolvedValue(liveInvite());
+      rateLimit.mockRejectedValue(new Error('rate limited'));
+      const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+      const err = await acceptInviteHandler({
+        auth: { uid: 'u1', token: { email: 'a@b', email_verified: false } },
+        data: { inviteId: 'i1' },
+      } as any).catch((e: { code: string; message: string }) => e);
+
+      const message = (err as { message: string }).message;
+      expect(sendTpl).not.toHaveBeenCalled();
+      expect(message).not.toMatch(SENT_CLAIM);
+      expect(err).toMatchObject({ code: 'failed-precondition' });
+      expect(message).toMatch(/verif/i);
+      expect(message).toContain('a@b');
+    });
+
+    it('does NOT claim a send the CLAIM_LINK_BASE_URL guard prevented', async () => {
+      delete process.env.CLAIM_LINK_BASE_URL;
+      inviteGet.mockResolvedValue(liveInvite());
+      const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+      const err = await acceptInviteHandler({
+        auth: { uid: 'u1', token: { email: 'a@b', email_verified: false } },
+        data: { inviteId: 'i1' },
+      } as any).catch((e: { code: string; message: string }) => e);
+
+      const message = (err as { message: string }).message;
+      expect(genVerifyLink).not.toHaveBeenCalled();
+      expect(message).not.toMatch(SENT_CLAIM);
+      // The misconfiguration itself still never reaches the caller: same code,
+      // same shape, no env var name leaked into user-facing copy.
+      expect(err).toMatchObject({ code: 'failed-precondition' });
+      expect(message).not.toContain('CLAIM_LINK_BASE_URL');
+      expect(message).toMatch(/verif/i);
+      expect(message).toContain('a@b');
+    });
+  });
+
   it('rate-limits per uid AND per invited address', async () => {
     inviteGet.mockResolvedValue(liveInvite());
     const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
@@ -510,8 +608,10 @@ describe('acceptInviteHandler: email verification', () => {
         expect(genVerifyLink).not.toHaveBeenCalled();
         expect(sendTpl).not.toHaveBeenCalled();
 
-        // The outer refusal is unchanged: still the "verify your email" failed-precondition,
-        // not a new error shape leaking the misconfiguration to the caller.
+        // The outer refusal keeps its shape: still the "verify your email"
+        // failed-precondition, not a new error shape leaking the misconfiguration
+        // to the caller. Its WORDING now drops the claim that a mail went out
+        // (FOLLOWUPS #16); the describe block below pins that half.
         expect(err).toMatchObject({ code: 'failed-precondition' });
         expect((err as { message: string }).message).toContain('a@b');
         expect((err as { message: string }).message).toMatch(/verif/i);

@@ -282,8 +282,17 @@ function WelcomeCard({ onEnter }: { onEnter: () => void }) {
  * Only invitees who ALREADY had a Firebase account can land here;
  * `claimInviteSignup` mints new accounts already verified. That population is
  * exactly the one PR #203's claim path exists to serve, so this card has to end
- * with them inside, not with an apology. The server has already mailed them a
- * link by the time this renders.
+ * with them inside, not with an apology.
+ *
+ * FOLLOWUPS #16: this card used to say "We just emailed a confirmation link".
+ * It cannot know that. The server suppresses its own send failures by design
+ * (a dead SMTP key must not turn an actionable refusal into an opaque one) and
+ * this screen shows its own copy instead of the server's message, so a failed
+ * send arrived here reading as a successful one and the invitee waited for mail
+ * that was never coming. The copy now points at the inbox and at "Send the email
+ * again", which is true whether or not the server's send landed, and which is
+ * the button that gets them unstuck either way: it goes through Firebase Auth's
+ * own sender, not the SMTP path the server uses.
  *
  * "I've verified" does not just retry: it forces a token refresh first. The ID
  * token in this tab was minted before they clicked the link and still says
@@ -325,7 +334,8 @@ function VerifyEmailCard(props: { invitedEmail: string; onVerified: () => void }
       <h3 className="title">Confirm your email to join</h3>
       <p className="sub" style={{ marginTop: 10 }}>
         You already have an account with {props.invitedEmail || 'this address'}, and it has not been
-        confirmed yet. We just emailed a confirmation link. Open it, then come back here.
+        confirmed yet. Check that inbox for a confirmation link and open it. If nothing arrives, send
+        it again below.
       </p>
       <p className="sub" style={{ marginTop: 10 }}>
         Your invite stays open in the meantime, so there is nothing to re-request.
