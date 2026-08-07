@@ -1,4 +1,10 @@
-import type Stripe from 'stripe';
+// `resolution-mode: import` because the runtime `await import('stripe')` below
+// takes the package's `import` condition under nodenext. Without it the static
+// type import takes the `require` condition, TS holds the CJS and ESM
+// instantiations apart as distinct nominal types, and the mismatch has to be
+// silenced with a cast that throws away checking of the SDK constructor on the
+// payment path. Naming the mode models what actually loads instead.
+import type Stripe from 'stripe' with { 'resolution-mode': 'import' };
 
 let stripe: Stripe | null = null;
 
@@ -27,14 +33,8 @@ async function getStripe(): Promise<Stripe> {
   // esm/stripe.esm.node.js. Verified by construction, not by inspection — that
   // build instantiates and still exposes `webhooks.constructEvent`. The test
   // suite cannot cover this, since `vi.mock('stripe')` means the real SDK is
-  // never loaded in test. The cast is what reconciles the two —
-  // the `import type` above resolves require-mode under nodenext and
-  // import-mode under the bundler config the tests use, and TS treats those two
-  // declarations as distinct nominal types even though the call signature is
-  // identical. Naming the signature is the one spelling that satisfies both.
-  const { default: StripeSdk } = (await import('stripe')) as unknown as {
-    default: new (key: string) => Stripe;
-  };
+  // never loaded in test.
+  const { default: StripeSdk } = await import('stripe');
   // No apiVersion override: the SDK pins the API version it was generated
   // against, and overriding it with an older date now fails the type check.
   stripe = new StripeSdk(key);

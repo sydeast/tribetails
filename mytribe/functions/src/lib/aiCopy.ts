@@ -1,4 +1,7 @@
-import type Anthropic from '@anthropic-ai/sdk';
+// See the note on the same import in lib/stripe.ts: the runtime dynamic import
+// takes the package's `import` condition under nodenext, so the type import has
+// to say so or the two instantiations are distinct nominal types.
+import type Anthropic from '@anthropic-ai/sdk' with { 'resolution-mode': 'import' };
 
 /**
  * O-8: shared Anthropic client + brand-voice system prompt for the `generate`
@@ -41,14 +44,7 @@ export async function anthropicClient(): Promise<Anthropic> {
     // being downlevelled to require, so Node resolves the package's non-require
     // condition and loads index.mjs where it used to load index.js. Verified:
     // that build constructs and still exposes `messages.create`.
-    //
-    // The cast reconciles the `import type` above, which resolves
-    // require-mode under nodenext and import-mode under the tests' bundler
-    // config; TS holds those two declarations apart on the class's `#private`
-    // brand even though they describe the same SDK.
-    const { default: AnthropicSdk } = (await import('@anthropic-ai/sdk')) as unknown as {
-      default: new (opts: { apiKey: string }) => Anthropic;
-    };
+    const { default: AnthropicSdk } = await import('@anthropic-ai/sdk');
     cachedClient = new AnthropicSdk({ apiKey });
   }
   return cachedClient;
