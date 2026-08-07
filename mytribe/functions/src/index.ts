@@ -3,9 +3,10 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 // This call MUST stay the first executable statement in this file, above every
 // `export ... from`. `setGlobalOptions` only reaches functions defined AFTER it
 // runs, and `onCall` / `onSchedule` / `onDocument*` all run at module-import
-// time. This file compiles to CommonJS (tsconfig.json `"module": "commonjs"`),
-// where tsc emits `export ... from` as a `require()` at its own source
-// position, so source order is execution order here. Verified against the
+// time. This file still emits CommonJS: tsconfig.json is `"module": "nodenext"`
+// as of 2026-08-07, and with no `"type": "module"` in package.json that means
+// tsc emits `export ... from` as a `require()` at its own source position, so
+// source order is execution order here. Verified against the
 // emitted `lib/index.js` and against the generated endpoint manifest rather
 // than assumed; see the PR body for the proof.
 //

@@ -47,6 +47,22 @@
  * 147 of the 227), and this codebase's own compiled modules. Adding a
  * file-scope import of a heavy SDK puts it back on all 227.
  *
+ * STRIPE GOT ~8 MiB MORE EXPENSIVE ON 2026-08-07, and the number above is now
+ * stale for it. Moving this codebase off the deprecated node10 module
+ * resolution (TS 6 deprecates it, TS 7 removes it) meant `module: nodenext`,
+ * which stops downlevelling dynamic `import()`. So `await import('stripe')`
+ * became a real ESM import and Node started taking the package's `import`
+ * condition: esm/stripe.esm.node.js instead of cjs/stripe.cjs.node.js.
+ * Measured three times on the built lib/, tightly reproducible:
+ *   require(cjs build): +19.8, +19.8, +20.0 MiB
+ *   import (esm build): +27.6, +27.8, +27.9 MiB
+ * So the two Stripe functions sit around 220MB rather than 212MB against the
+ * 256MiB limit: headroom ~36MB, not ~44MB. Not an OOM, and recorded here
+ * rather than left to be rediscovered because this is the exact axis this
+ * block exists to defend. `@anthropic-ai/sdk` switched builds too
+ * (index.js -> index.mjs) at no measurable cost. The other four SDKs resolve
+ * to the same file either way.
+ *
  * DEFERRING A HEAVY SDK IS NOT THE SAME AS MAKING IT CHEAP. The `googleapis`
  * bundle still cost +97 MiB at first use even from inside the handler, which
  * put the five Calendar functions over 256MiB at the moment an operator pressed

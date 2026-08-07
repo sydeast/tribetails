@@ -145,13 +145,24 @@ export function buildConsentUrl(clientId: string, state: string): string {
  * Google API is ever needed, add its own `@googleapis/<api>` package rather
  * than the bundle.
  *
- * `await import()` rather than an in-function `require()`: tsconfig compiles to
- * CommonJS, so tsc emits this as `Promise.resolve().then(() => require(...))`,
- * the same deferred single load, memoised in the same require cache. The
- * difference shows up in test, where a bare `require()` escapes Vitest's module
- * graph and silently loads the real SDK straight past the
+ * `await import()` rather than an in-function `require()`, and the reason is
+ * test integrity rather than emit shape. Under `module: nodenext` (2026-08-07,
+ * moving off deprecated node10 resolution) tsc no longer downlevels this: it
+ * emits a real `await import('@googleapis/calendar')`. Still a deferred single
+ * load, now memoised in the ESM module registry rather than the require cache,
+ * and this package resolves to the same `build/index.js` either way.
+ *
+ * The load-bearing half is unchanged: a bare in-function `require()` escapes
+ * Vitest's module graph and silently loads the real SDK straight past the
  * `vi.mock('@googleapis/calendar')` in four suites. Measured with a probe, not
- * assumed; see the PR body.
+ * assumed. That is why the six deferred SDKs stay on `await import()` even
+ * where a `require` would match the old runtime build more closely.
+ *
+ * ONE CONSTRAINT THIS ADDS: a dynamic `import()` of a RELATIVE path is now a
+ * real ESM import at runtime, and Node's ESM resolver has no extensionless
+ * lookup, so it throws ERR_MODULE_NOT_FOUND from the compiled `lib/`. Bare
+ * package specifiers like this one are fine. See `admin/getIntegrationsHealth`,
+ * which had to become a deferred `require` for exactly that reason.
  */
 async function oauthClient() {
   const { clientId, clientSecret } = readGoogleOAuthConfig();

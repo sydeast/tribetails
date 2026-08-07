@@ -1,4 +1,10 @@
-import type Stripe from 'stripe';
+// `resolution-mode: import` because the runtime `await import('stripe')` below
+// takes the package's `import` condition under nodenext. Without it the static
+// type import takes the `require` condition, TS holds the CJS and ESM
+// instantiations apart as distinct nominal types, and the mismatch has to be
+// silenced with a cast that throws away checking of the SDK constructor on the
+// payment path. Naming the mode models what actually loads instead.
+import type Stripe from 'stripe' with { 'resolution-mode': 'import' };
 
 let stripe: Stripe | null = null;
 
@@ -16,6 +22,18 @@ async function getStripe(): Promise<Stripe> {
   if (stripe) return stripe;
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) throw new Error('STRIPE_SECRET_KEY environment variable is required');
+  // Stays `await import`, NOT an in-function `require`: a bare require escapes
+  // Vitest's module graph and loads the real SDK straight past the
+  // `vi.mock('stripe')` in test/stripe.test.ts (the same trap documented at
+  // length in src/lib/googleOAuth.ts).
+  //
+  // Under `module: nodenext` tsc no longer downlevels this to
+  // `Promise.resolve().then(() => require(...))`; it emits a real ESM import, so
+  // Node now takes stripe's `import` condition: cjs/stripe.cjs.node.js becomes
+  // esm/stripe.esm.node.js. Verified by construction, not by inspection — that
+  // build instantiates and still exposes `webhooks.constructEvent`. The test
+  // suite cannot cover this, since `vi.mock('stripe')` means the real SDK is
+  // never loaded in test.
   const { default: StripeSdk } = await import('stripe');
   // No apiVersion override: the SDK pins the API version it was generated
   // against, and overriding it with an older date now fails the type check.

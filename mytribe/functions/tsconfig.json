@@ -1,7 +1,9 @@
 {
+  "//": "The deploy build: tsc emits `lib/` and the Functions runtime loads it as CommonJS (no `type` field in package.json). `module` and `moduleResolution` are BOTH 'nodenext' because TS refuses 'nodenext' resolution under 'commonjs' (TS5110), and node10 resolution is deprecated in TS 6 and removed in TS 7 — so the pair moves together or not at all. Static imports emit exactly the CommonJS they did before.",
+  "//dynamic-import": "Dynamic `import()` is the one thing this DOES change, and it is a runtime change, not a typing one. Under 'commonjs' tsc downlevelled `await import('x')` to `Promise.resolve().then(() => require('x'))`; under 'nodenext' it is preserved as a real ESM import, so Node resolves the specifier as ESM. Ten such sites across six packages deliberately stay `await import()`, because rewriting them to a bare `require` would escape Vitest's module graph and walk straight past the `vi.mock` in their suites — the trap measured and documented in src/lib/googleOAuth.ts. Resolution was compared require-vs-import for all six on Node 22. Four load the SAME file through a different loader, because they publish no `exports` map and Node falls back to `main` either way: twilio, @googleapis/calendar, @google-cloud/recaptcha-enterprise, pdf-lib (its `module` field is a bundler convention Node ignores). TWO now load a DIFFERENT build: stripe cjs/stripe.cjs.node.js -> esm/stripe.esm.node.js, and @anthropic-ai/sdk index.js -> index.mjs. Both were constructed under the ESM build and still expose the members these call sites use. The single exception is src/admin/getIntegrationsHealth.ts, whose specifier is RELATIVE and extensionless: Node's ESM resolver rejects that outright with ERR_MODULE_NOT_FOUND, so that one is an explicit `require`. Sharp edge for future work: a NEW extensionless relative `import('./foo')` under src/ now fails at run time, and a new bare `import('pkg')` takes the package's ESM condition.",
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
+    "module": "nodenext",
     "lib": ["ES2022"],
     "outDir": "lib",
     "rootDir": "src",
@@ -15,7 +17,7 @@
     "sourceMap": true,
     "declaration": false,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node"
+    "moduleResolution": "nodenext"
   },
   "include": ["src"],
   "exclude": ["node_modules", "lib", "test"]

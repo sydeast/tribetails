@@ -1,4 +1,7 @@
-import type Anthropic from '@anthropic-ai/sdk';
+// See the note on the same import in lib/stripe.ts: the runtime dynamic import
+// takes the package's `import` condition under nodenext, so the type import has
+// to say so or the two instantiations are distinct nominal types.
+import type Anthropic from '@anthropic-ai/sdk' with { 'resolution-mode': 'import' };
 
 /**
  * O-8: shared Anthropic client + brand-voice system prompt for the `generate`
@@ -32,6 +35,15 @@ export async function anthropicClient(): Promise<Anthropic> {
     if (!apiKey) {
       throw new Error('ANTHROPIC_API_KEY is not bound; add it to this function\'s secrets array.');
     }
+    // Stays `await import`, NOT an in-function `require`: a bare require escapes
+    // Vitest's module graph and loads the real SDK straight past the
+    // `vi.mock('@anthropic-ai/sdk')` in three suites (generate, aiBatchPollCron,
+    // aiBackfillTaleTitles). Same trap documented in src/lib/googleOAuth.ts.
+    //
+    // Under `module: nodenext` this is emitted as a real ESM import instead of
+    // being downlevelled to require, so Node resolves the package's non-require
+    // condition and loads index.mjs where it used to load index.js. Verified:
+    // that build constructs and still exposes `messages.create`.
     const { default: AnthropicSdk } = await import('@anthropic-ai/sdk');
     cachedClient = new AnthropicSdk({ apiKey });
   }
