@@ -166,7 +166,7 @@ export function parseArgs(argv: string[]): Args {
           '  npm run backfill:notif-split -- --allow-prod     # apply',
           '  npm run backfill:notif-split -- --dry-run        # force dry-run, ALWAYS wins',
           '  npm run backfill:notif-split -- --project <id>   # override project',
-          '  npm run backfill:notif-split -- --page-size <n>  # rows read per page (default 300)',
+          '  npm run backfill:notif-split -- --page-size <n>  # rows read per page, 1..1000 (default 300)',
           '',
           '--dry-run overrides --allow-prod regardless of which comes first on the',
           'command line (e.g. "--allow-prod --dry-run" still does not write).',
@@ -329,6 +329,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     typeof process.env.FIRESTORE_EMULATOR_HOST === 'string' &&
     process.env.FIRESTORE_EMULATOR_HOST.length > 0;
 
+  // The `!args.allowProd` clause is UNREACHABLE, and was unreachable before this
+  // script was fixed too: parseArgs only ever sets mode to 'apply' under
+  // --allow-prod. Kept deliberately rather than simplified away. It is the guard
+  // that would catch a future edit introducing some other route to 'apply', and
+  // the cost of an unreachable condition here is nothing next to the cost of
+  // this script running unguarded.
   if (args.mode === 'apply' && !args.allowProd && !usingEmulator) {
     throw new Error('refusing to write: pass --allow-prod, or point at the emulator.');
   }
