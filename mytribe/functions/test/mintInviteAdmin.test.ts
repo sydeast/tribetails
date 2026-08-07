@@ -10,6 +10,7 @@ vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockReso
 beforeEach(() => {
   addMock.mockClear();
   sendFromTemplate.mockClear();
+  process.env.CLAIM_LINK_BASE_URL = 'https://claim.tribetails.com';
 });
 
 /**
@@ -83,5 +84,23 @@ describe('mintInviteHandler (admin)', () => {
     expect(arg.proposedPermissions.billing_full).toBe(true);
     expect(arg.proposedPermissions.home_access).toBe(true);
     expect(arg.secondaryLabel).toBeUndefined();
+  });
+
+  describe('CLAIM_LINK_BASE_URL guard', () => {
+    it('throws failed-precondition, and writes nothing, when unset', async () => {
+      delete process.env.CLAIM_LINK_BASE_URL;
+      const { mintInviteHandler } = await import('../src/admin/mintInvite');
+      await expect(
+        mintInviteHandler({
+          data: { familyId: 'f1', invitedEmail: 'a@b.com' },
+          auth: { uid: 'u-admin' },
+        } as any),
+      ).rejects.toMatchObject({
+        code: 'failed-precondition',
+        message: expect.stringContaining('CLAIM_LINK_BASE_URL'),
+      });
+      expect(addMock).not.toHaveBeenCalled();
+      expect(sendFromTemplate).not.toHaveBeenCalled();
+    });
   });
 });

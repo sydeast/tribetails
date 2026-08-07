@@ -6,6 +6,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { sendFromTemplate } from '../lib/sendFromTemplate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { requireBaseUrl } from '../lib/requireBaseUrl';
 import { FULL_PERMISSIONS, INVITE_TTL_DAYS } from '../lib/schema';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { logEvent } from '../lib/logger';
@@ -76,6 +77,14 @@ export async function inviteKinfolkToPortalHandler(
     return { kinfolkId, status: 'already_active' };
   }
 
+  // Fail loud before any Firestore write — see requireBaseUrl for the full
+  // rationale. Deliberately placed here rather than at the top of the
+  // handler: the 'no_email' and 'already_active' early returns above never
+  // mint a claim link, and this callable backs an "invite all kinfolk"
+  // sweep, so it must not refuse a household that was going to be skipped
+  // anyway just because this var happens to be unset.
+  const claimBaseUrl = requireBaseUrl('CLAIM_LINK_BASE_URL');
+
   // Ensure the MyTribe family envelope exists so the claim (acceptInvite) lands.
   const familyRef = db().doc(`families/${kinfolkId}`);
   const familySnap = await familyRef.get();
@@ -105,7 +114,7 @@ export async function inviteKinfolkToPortalHandler(
   await sendFromTemplate('invite.primary', email, {
     primaryDisplayName: householdName,
     tribeName: householdName,
-    claimUrl: `${process.env.CLAIM_LINK_BASE_URL}?invite=${inviteRef.id}`,
+    claimUrl: `${claimBaseUrl}?invite=${inviteRef.id}`,
     expiresInDays: INVITE_TTL_DAYS,
   });
   await inviteRef.update({ status: 'EMAIL_SENT', sentToInviteeAt: FieldValue.serverTimestamp() });
