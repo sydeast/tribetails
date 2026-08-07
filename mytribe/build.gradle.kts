@@ -99,10 +99,10 @@ kotlin {
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
             // Ktor client + JSON for Firebase REST (Auth + Firestore).
-            implementation("io.ktor:ktor-client-core:3.5.1")
-            implementation("io.ktor:ktor-client-cio:3.5.1")
-            implementation("io.ktor:ktor-client-content-negotiation:3.5.1")
-            implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.1")
+            implementation("io.ktor:ktor-client-core:3.5.2")
+            implementation("io.ktor:ktor-client-cio:3.5.2")
+            implementation("io.ktor:ktor-client-content-negotiation:3.5.2")
+            implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.2")
         }
         val jvmTest by getting {
             dependencies {
@@ -120,7 +120,7 @@ kotlin {
             //   Could not find com.google.firebase:firebase-auth:
             // (note the empty version). Pinning the BOM is the supported answer
             // and it also stops the three SDKs drifting apart from each other.
-            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:34.5.0"))
+            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:34.17.0"))
             implementation("com.google.firebase:firebase-analytics-ktx:22.5.0")
             // Native Firebase Functions SDK — used by NativeAndroidFunctionsClient
             // to bypass gitlive 2.x's FirebaseEncoder, which throws
@@ -136,13 +136,13 @@ kotlin {
             implementation("io.coil-kt.coil3:coil-network-okhttp:3.5.0")
             // Sentry — crash reporting. Init gated in KinfolkPortalApplication
             // on a non-blank DSN + non-robolectric fingerprint.
-            implementation("io.sentry:sentry-android:8.50.1")
+            implementation("io.sentry:sentry-android:8.51.0")
         }
         jsMain.dependencies {
             // Coil 3 ktor3 fetcher for the kinfolk web portal. Brought into jsMain only;
             // jvmMain still uses ktor 2.x for the Firebase REST shim and stays untouched.
             implementation("io.coil-kt.coil3:coil-network-ktor3:3.5.0")
-            implementation("io.ktor:ktor-client-js:3.5.1")
+            implementation("io.ktor:ktor-client-js:3.5.2")
         }
     }
 }
