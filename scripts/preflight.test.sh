@@ -389,7 +389,57 @@ else
   bad "reported a python codebase that is not declared; got rc=$RC"
 fi
 
-rm -rf "$D1" "$D2" "$D3" "$D3B" "$D4" "$D4B" "$D4C" "$D5" "$D5B" "$D6" "$D7" "$D8" "$D9"
+# ------------------------------------------------- local.properties, per build
+# The worktree case. local.properties is gitignored, so `git worktree add` never
+# inherits one and Gradle dies with "SDK location not found" on the first
+# Android command. bootstrap.sh writes it and always has; what was missing is
+# anyone running bootstrap in a worktree, so three agents hit this on
+# 2026-08-07 and each exported ANDROID_HOME for a single command, which fixes
+# that command and leaves the next one broken.
+#
+# NOT FATAL, deliberately. Android is one surface of several, and web and
+# functions need no SDK at all. Failing here would block a portal-only change on
+# a missing Android file, so this reports and names the fix instead.
+D10="$(make_repo)"
+install_matching "$D10"
+mkdir -p "$D10/auntieos-admin/android" "$D10/mytribe"
+RC="$(run_preflight "$D10")"
+if [ "$RC" = "0" ]; then
+  ok "a tree with no local.properties still PASSES preflight (Android is optional)"
+else
+  bad "a missing local.properties failed preflight; got rc=$RC"
+  tail -20 "$D10/out"
+fi
+if grep -q "auntieos-admin/android/local.properties" "$D10/out" &&
+   grep -q "mytribe/local.properties" "$D10/out"; then
+  ok "both missing local.properties files are named, not just the first"
+else
+  bad "preflight did not name both missing local.properties files"
+  tail -20 "$D10/out"
+fi
+# The fix has to be in the output, or the report is a riddle.
+if grep -q "bootstrap.sh" "$D10/out"; then
+  ok "the report names bootstrap.sh as the fix"
+else
+  bad "the report did not say how to fix it"
+fi
+
+# A bootstrapped tree must stop nagging, or the warning becomes noise people
+# learn to scroll past.
+D11="$(make_repo)"
+install_matching "$D11"
+mkdir -p "$D11/auntieos-admin/android" "$D11/mytribe"
+echo "sdk.dir=/nonexistent" > "$D11/auntieos-admin/android/local.properties"
+echo "sdk.dir=/nonexistent" > "$D11/mytribe/local.properties"
+RC="$(run_preflight "$D11")"
+if [ "$RC" = "0" ] && ! grep -q "local.properties missing" "$D11/out"; then
+  ok "a bootstrapped tree reports no local.properties warning"
+else
+  bad "warned about local.properties that are present; got rc=$RC"
+  tail -20 "$D11/out"
+fi
+
+rm -rf "$D1" "$D2" "$D3" "$D3B" "$D4" "$D4B" "$D4C" "$D5" "$D5B" "$D6" "$D7" "$D8" "$D9" "$D10" "$D11"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
