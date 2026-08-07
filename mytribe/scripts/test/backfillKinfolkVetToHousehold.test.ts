@@ -20,6 +20,45 @@ describe('parseArgs', () => {
   it('rejects an unknown argument rather than ignoring it', () => {
     expect(() => parseArgs(['--wipe'])).toThrow(/unknown arg/);
   });
+  it('an explicit --dry-run always wins over --allow-prod, in EITHER flag order', () => {
+    // The one flag whose entire purpose is proving a run is safe before it
+    // moves vet records and DELETES the eight retired kinfolk fields.
+    // `--allow-prod --dry-run` must stay a dry run just as surely as
+    // `--dry-run --allow-prod` does.
+    const allowThenDry = parseArgs(['--allow-prod', '--dry-run']);
+    expect(allowThenDry.mode).toBe('dry-run');
+    // allowProd still reports the flag was seen, even though it lost.
+    expect(allowThenDry.allowProd).toBe(true);
+
+    const dryThenAllow = parseArgs(['--dry-run', '--allow-prod']);
+    expect(dryThenAllow.mode).toBe('dry-run');
+    expect(dryThenAllow.allowProd).toBe(true);
+  });
+  it('one --dry-run beats any number of repeated --allow-prod', () => {
+    expect(parseArgs(['--allow-prod', '--dry-run', '--allow-prod']).mode).toBe('dry-run');
+    expect(parseArgs(['--dry-run', '--dry-run']).mode).toBe('dry-run');
+    // Repetition does not weaken the one intended write path either.
+    expect(parseArgs(['--allow-prod', '--allow-prod']).mode).toBe('apply');
+  });
+  it('--dry-run alone is a no-op on the already-default mode', () => {
+    const a = parseArgs(['--dry-run']);
+    expect(a.mode).toBe('dry-run');
+    expect(a.allowProd).toBe(false);
+  });
+  it('a valueless --project cannot swallow the --dry-run that follows it', () => {
+    // The escape hatch out of the guarantee directly above: `--project` used to
+    // take any next token as its value, so one forgotten project id turned
+    // `--allow-prod --project --dry-run` back into an apply run with the safety
+    // flag eaten. Refuse a flag as a value instead.
+    expect(() => parseArgs(['--allow-prod', '--project', '--dry-run'])).toThrow(
+      /--project requires a value/,
+    );
+    expect(() => parseArgs(['--project'])).toThrow(/--project requires a value/);
+    // A real project id still passes through untouched, --dry-run intact.
+    const ok = parseArgs(['--allow-prod', '--project', 'mytribe-test', '--dry-run']);
+    expect(ok.projectId).toBe('mytribe-test');
+    expect(ok.mode).toBe('dry-run');
+  });
 });
 describe('carrying the catalog link across', () => {
   it('moves the clinic id onto the household', () => {
