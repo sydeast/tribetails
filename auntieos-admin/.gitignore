@@ -194,3 +194,5 @@ android/migration/
 *.local
 coverage/
 *-firebase-adminsdk-*.json
+
+visual/desktop/

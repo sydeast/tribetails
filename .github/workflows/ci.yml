@@ -441,7 +441,7 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v6
-      # NOTE: jvmTest rewrites tracked golden PNGs under visual/desktop/. That is
+      # jvmTest still writes visual/desktop/ unconditionally, but those PNGs are
       # harmless on a runner (the checkout is thrown away) but it is the reason
       # this job must never commit or push anything.
       - run: ./gradlew :composeApp:jvmTest --no-daemon
