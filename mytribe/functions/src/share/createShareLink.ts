@@ -8,6 +8,7 @@ import { loadMember, requirePrimary } from '../lib/memberGate';
 import { isStaff } from '../lib/staffGate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { requireBaseUrl } from '../lib/requireBaseUrl';
 import { SHARE_DEFAULT_TTL_DAYS } from '../lib/schema';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
@@ -28,22 +29,10 @@ export async function createShareLinkHandler(req: CallableRequest<unknown>): Pro
   // creates the sharedKinTales doc, arrayUnions it onto the kinTale, and
   // writes a SUCCESS audit entry, then returns the literal string
   // "undefined/<id>" as the share URL — a broken link backed by a record
-  // and an audit trail both claiming success. There is no safe default
-  // share domain to fall back to: guessing one would mint links pointing
-  // at a host that may not serve them, which is the silent degradation
-  // the repo's fail-loud rule forbids. A misconfigured deploy is not the
-  // caller's fault, hence failed-precondition rather than invalid-argument.
-  // A trailing slash is an operator typo in an env var, not a caller
-  // input, and stripping it still produces a correct URL — so this
-  // normalizes rather than rejects, per the fail-loud priority order
-  // (works correctly > fails visibly > silent degradation). Normalize
-  // BEFORE the emptiness check: a value of "/" or "///" is truthy but
-  // strips down to "", and must be treated the same as unset rather than
-  // slipping through to build a broken relative URL.
-  const shareBaseUrl = (process.env.SHARE_LINK_BASE_URL ?? '').replace(/\/+$/, '');
-  if (!shareBaseUrl) {
-    throw new HttpsError('failed-precondition', 'SHARE_LINK_BASE_URL is not configured');
-  }
+  // and an audit trail both claiming success. See requireBaseUrl for the
+  // full rationale (no safe default, failed-precondition not
+  // invalid-argument, normalize before the emptiness check).
+  const shareBaseUrl = requireBaseUrl('SHARE_LINK_BASE_URL');
 
   // The AuntieOS operator (auntie) authors KinTales and shares them; she is not a
   // tribe member, so she bypasses the family PRIMARY gate. Family PRIMARY members

@@ -18,6 +18,7 @@ beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.writeAuditEntryFn.mockReset().mockResolvedValue('audit-id');
   mocks.sendFromTemplateFn.mockReset().mockResolvedValue('tpl-id');
+  process.env.CLAIM_LINK_BASE_URL = 'https://claim.tribetails.com';
 });
 
 const auth = { uid: 'admin-1' };
@@ -79,5 +80,48 @@ describe('inviteKinfolkToPortalHandler (#14)', () => {
     expect(mocks.writeAuditEntryFn).toHaveBeenCalledWith(
       expect.objectContaining({ event: 'MEMBERSHIP_INVITE_SENT', familyId: 'k1' }),
     );
+  });
+
+  describe('CLAIM_LINK_BASE_URL guard', () => {
+    it('throws failed-precondition, and writes nothing, when unset and an invite would be minted', async () => {
+      delete process.env.CLAIM_LINK_BASE_URL;
+      const ctx = buildDbMock({
+        docs: { 'kinfolk/k1': { email: 'Dana@Example.com', firstName: 'Dana', lastName: 'Doe' } },
+        queryDocs: { 'families/k1/members': [] }, // no active primary
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { inviteKinfolkToPortalHandler } = await import('../src/admin/inviteKinfolkToPortal');
+      await expect(
+        inviteKinfolkToPortalHandler({ data: { kinfolkId: 'k1' }, auth } as any),
+      ).rejects.toMatchObject({
+        code: 'failed-precondition',
+        message: expect.stringContaining('CLAIM_LINK_BASE_URL'),
+      });
+      expect(ctx.writes.length).toBe(0);
+      expect(ctx.adds.length).toBe(0);
+      expect(mocks.sendFromTemplateFn).not.toHaveBeenCalled();
+      expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
+    });
+
+    it('does NOT guard the no_email path: a var unset entirely elsewhere must not block a sweep that never mints a link', async () => {
+      delete process.env.CLAIM_LINK_BASE_URL;
+      const ctx = buildDbMock({ docs: { 'kinfolk/k1': { firstName: 'Dana', lastName: 'Doe' } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { inviteKinfolkToPortalHandler } = await import('../src/admin/inviteKinfolkToPortal');
+      const r = await inviteKinfolkToPortalHandler({ data: { kinfolkId: 'k1' }, auth } as any);
+      expect(r.status).toBe('no_email');
+    });
+
+    it('does NOT guard the already_active path, for the same reason', async () => {
+      delete process.env.CLAIM_LINK_BASE_URL;
+      const ctx = buildDbMock({
+        docs: { 'kinfolk/k1': { email: 'dana@example.com', firstName: 'Dana', lastName: 'Doe' } },
+        queryDocs: { 'families/k1/members': [{ id: 'm1', data: { role: 'PRIMARY', status: 'ACTIVE' } }] },
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { inviteKinfolkToPortalHandler } = await import('../src/admin/inviteKinfolkToPortal');
+      const r = await inviteKinfolkToPortalHandler({ data: { kinfolkId: 'k1' }, auth } as any);
+      expect(r.status).toBe('already_active');
+    });
   });
 });

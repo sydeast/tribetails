@@ -8,6 +8,7 @@ import { sendFromTemplate } from '../lib/sendFromTemplate';
 import { wrapCallable } from '../lib/wrapCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { requireBaseUrl } from '../lib/requireBaseUrl';
 import { logEvent } from '../lib/logger';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { syncKinfolkClaim } from '../lib/kinfolkClaim';
@@ -39,13 +40,22 @@ async function sendInviteVerificationEmail(
   inviteId: string,
 ): Promise<void> {
   try {
+    // Guarded first, ahead of the rate limiting and the mail send: a
+    // misconfigured CLAIM_LINK_BASE_URL must not spend the caller's rate
+    // limit or mail a link reading "undefined?invite=<id>". This function is
+    // deliberately documented to NEVER throw to its caller (see above), so
+    // requireBaseUrl's HttpsError is absorbed by the catch below exactly
+    // like any other send failure (dead SMTP key, rate limited, ...) rather
+    // than propagated — the outer refusal in acceptInviteHandler is
+    // unaffected either way.
+    const claimBaseUrl = requireBaseUrl('CLAIM_LINK_BASE_URL');
     await enforceRateLimit('inviteVerifyEmail', uid, 5, 3600);
     await enforceRateLimit('inviteVerifyEmail', invitedEmail.toLowerCase(), 5, 3600);
     const verifyUrl = await getAuth().generateEmailVerificationLink(invitedEmail);
     await sendFromTemplate('invite.verify-email', invitedEmail, {
       invitedEmail,
       verifyUrl,
-      claimUrl: `${process.env.CLAIM_LINK_BASE_URL}?invite=${inviteId}`,
+      claimUrl: `${claimBaseUrl}?invite=${inviteId}`,
     });
     logEvent({
       severity: 'info',

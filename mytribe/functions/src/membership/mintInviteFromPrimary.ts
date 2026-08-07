@@ -7,6 +7,7 @@ import { loadMember, requirePrimary } from '../lib/memberGate';
 import { sendFromTemplate } from '../lib/sendFromTemplate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { requireBaseUrl } from '../lib/requireBaseUrl';
 import { INVITE_TTL_DAYS, SECONDARY_LABEL_MAX } from '../lib/schema';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
@@ -46,6 +47,17 @@ function sanitizeLabel(s: string): string {
 export async function mintInviteFromPrimaryHandler(req: CallableRequest<unknown>): Promise<{ inviteId: string }> {
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in required.');
   const args = Args.parse(req.data);
+  // Fail loud before any Firestore write, and before the authz check below —
+  // matching createShareLink's guard-before-authz shape. See requireBaseUrl
+  // for the full rationale. AUNTIE_OS_REVIEW_BASE_URL is only guarded when
+  // this run will actually use it (AUNTIE_NOTIFY_EMAIL set): the invite doc,
+  // and the invite.secondary mail, already exist by the point the
+  // auntie-notify template is sent below (it needs the invite id), so this
+  // check has to run up here, ahead of them, rather than at its own point of
+  // use.
+  const claimBaseUrl = requireBaseUrl('CLAIM_LINK_BASE_URL');
+  const auntieNotifyEmail = process.env.AUNTIE_NOTIFY_EMAIL;
+  const auntieReviewBaseUrl = auntieNotifyEmail ? requireBaseUrl('AUNTIE_OS_REVIEW_BASE_URL') : undefined;
   const member = await loadMember(args.familyId, req.auth.uid);
   requirePrimary(member);
   const proposedPermissions = { ...args.permissions, kintales_only: true };
@@ -62,7 +74,7 @@ export async function mintInviteFromPrimaryHandler(req: CallableRequest<unknown>
     expiresAt,
   });
   // Send emails (handled inline; trigger version is alternative)
-  const claimUrl = `${process.env.CLAIM_LINK_BASE_URL}?invite=${ref.id}`;
+  const claimUrl = `${claimBaseUrl}?invite=${ref.id}`;
   await sendFromTemplate('invite.secondary', args.invitedEmail, {
     primaryDisplayName: req.auth.token?.name ?? 'Your Kin Parent',
     secondaryDisplayName: args.invitedEmail,
@@ -71,14 +83,14 @@ export async function mintInviteFromPrimaryHandler(req: CallableRequest<unknown>
     claimUrl,
     expiresInDays: INVITE_TTL_DAYS,
   });
-  if (process.env.AUNTIE_NOTIFY_EMAIL) {
-    await sendFromTemplate('invite.auntie-notify', process.env.AUNTIE_NOTIFY_EMAIL, {
+  if (auntieNotifyEmail) {
+    await sendFromTemplate('invite.auntie-notify', auntieNotifyEmail, {
       primaryDisplayName: req.auth.token?.name ?? 'Kin Parent',
       invitedEmail: args.invitedEmail,
       secondaryLabel: sanitizeLabel(args.secondaryLabel),
       tribeName: args.familyId,
       permissionsCsv: Object.entries(proposedPermissions).filter(([, v]) => v).map(([k]) => k).join(','),
-      auntieReviewUrl: `${process.env.AUNTIE_OS_REVIEW_BASE_URL}/invites/${ref.id}`,
+      auntieReviewUrl: `${auntieReviewBaseUrl}/invites/${ref.id}`,
     });
   }
   if (req.auth.token?.email) {

@@ -6,6 +6,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { sendFromTemplate } from '../lib/sendFromTemplate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { requireBaseUrl } from '../lib/requireBaseUrl';
 import { FULL_PERMISSIONS, INVITE_TTL_DAYS } from '../lib/schema';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
@@ -17,6 +18,11 @@ const Args = z.object({
 
 export async function provisionTribeHandler(req: CallableRequest<unknown>): Promise<{ familyId: string; inviteId: string }> {
   const args = Args.parse(req.data);
+  // Fail loud before any Firestore write — see requireBaseUrl for the full
+  // rationale. Without this the transaction below creates the family, its
+  // themeConfig, and the invite doc, then mails a claim link reading
+  // "undefined?invite=<id>".
+  const claimBaseUrl = requireBaseUrl('CLAIM_LINK_BASE_URL');
   const familyRef = db().collection('families').doc();
   const inviteRef = db().collection('inviteRequests').doc();
   const expiresAt = new Date(Date.now() + INVITE_TTL_DAYS * 86400 * 1000);
@@ -47,7 +53,7 @@ export async function provisionTribeHandler(req: CallableRequest<unknown>): Prom
   await sendFromTemplate('invite.primary', args.primaryEmail, {
     primaryDisplayName: args.primaryEmail,
     tribeName: args.displayName,
-    claimUrl: `${process.env.CLAIM_LINK_BASE_URL}?invite=${inviteRef.id}`,
+    claimUrl: `${claimBaseUrl}?invite=${inviteRef.id}`,
     expiresInDays: INVITE_TTL_DAYS,
   });
   await inviteRef.update({ status: 'EMAIL_SENT', sentToInviteeAt: FieldValue.serverTimestamp() });

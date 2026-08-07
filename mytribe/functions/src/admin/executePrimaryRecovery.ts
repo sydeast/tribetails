@@ -6,6 +6,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { sendFromTemplate } from '../lib/sendFromTemplate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { requireBaseUrl } from '../lib/requireBaseUrl';
 import { FULL_PERMISSIONS, INVITE_TTL_DAYS } from '../lib/schema';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
@@ -18,6 +19,10 @@ const Args = z.object({
 
 export async function executePrimaryRecoveryHandler(req: CallableRequest<unknown>): Promise<{ inviteId: string }> {
   const args = Args.parse(req.data);
+  // Fail loud before any Firestore write — see requireBaseUrl for the full
+  // rationale. This is an account-recovery link: a broken one here locks the
+  // household out and reports success while doing it.
+  const claimBaseUrl = requireBaseUrl('CLAIM_LINK_BASE_URL');
   if (args.oldUid) {
     await db().doc(`families/${args.familyId}/members/${args.oldUid}`).update({
       status: 'SUSPENDED', updatedAt: FieldValue.serverTimestamp(),
@@ -38,7 +43,7 @@ export async function executePrimaryRecoveryHandler(req: CallableRequest<unknown
   });
   await sendFromTemplate('recovery.completed', args.newEmail, {
     tribeName: args.familyId,
-    claimUrl: `${process.env.CLAIM_LINK_BASE_URL}?invite=${inviteRef.id}`,
+    claimUrl: `${claimBaseUrl}?invite=${inviteRef.id}`,
   });
   await writeAuditEntry({
     // This IS the success path (the invite was minted and sent above); 'critical'

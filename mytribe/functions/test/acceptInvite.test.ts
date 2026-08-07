@@ -64,6 +64,7 @@ beforeEach(() => {
   sendTpl.mockResolvedValue('msg-1');
   rateLimit.mockReset();
   rateLimit.mockResolvedValue(undefined);
+  process.env.CLAIM_LINK_BASE_URL = 'https://claim.tribetails.com';
 });
 
 describe('acceptInviteHandler', () => {
@@ -488,5 +489,34 @@ describe('acceptInviteHandler: email verification', () => {
     const written = memberSet.mock.calls[0]?.[1] as { permissions: Record<string, boolean>; role: string };
     expect(written.permissions.billing_full).toBe(true);
     expect(written.role).toBe('SECONDARY');
+  });
+
+  describe('CLAIM_LINK_BASE_URL guard', () => {
+    it(
+      'suppresses the verification mail (never sent with a broken claim link) but still ' +
+        'refuses the accept the same way — sendInviteVerificationEmail is documented to ' +
+        'NEVER throw to its caller, so the guard error is absorbed by its existing catch-all',
+      async () => {
+        delete process.env.CLAIM_LINK_BASE_URL;
+        inviteGet.mockResolvedValue(liveInvite());
+        const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+        const err = await acceptInviteHandler({
+          auth: { uid: 'u1', token: { email: 'a@b', email_verified: false } },
+          data: { inviteId: 'i1' },
+        } as any).catch((e: { code: string; message: string }) => e);
+
+        // Today (pre-guard) this send goes out with claimUrl = "undefined?invite=i1".
+        // Post-guard it must not be attempted at all.
+        expect(genVerifyLink).not.toHaveBeenCalled();
+        expect(sendTpl).not.toHaveBeenCalled();
+
+        // The outer refusal is unchanged: still the "verify your email" failed-precondition,
+        // not a new error shape leaking the misconfiguration to the caller.
+        expect(err).toMatchObject({ code: 'failed-precondition' });
+        expect((err as { message: string }).message).toContain('a@b');
+        expect((err as { message: string }).message).toMatch(/verif/i);
+        expect(memberSet).not.toHaveBeenCalled();
+      },
+    );
   });
 });

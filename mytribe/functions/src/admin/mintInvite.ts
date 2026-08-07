@@ -6,6 +6,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { sendFromTemplate } from '../lib/sendFromTemplate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { requireBaseUrl } from '../lib/requireBaseUrl';
 import { FULL_PERMISSIONS, INVITE_TTL_DAYS } from '../lib/schema';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
@@ -49,6 +50,9 @@ const Args = z.object({
 
 export async function mintInviteHandler(req: CallableRequest<unknown>): Promise<{ inviteId: string }> {
   const args = Args.parse(req.data);
+  // Fail loud before any Firestore write — see requireBaseUrl for the full
+  // rationale.
+  const claimBaseUrl = requireBaseUrl('CLAIM_LINK_BASE_URL');
   const expiresAt = new Date(Date.now() + INVITE_TTL_DAYS * 86400 * 1000);
   const ref = await db().collection('inviteRequests').add({
     tribeId: args.familyId,
@@ -67,7 +71,7 @@ export async function mintInviteHandler(req: CallableRequest<unknown>): Promise<
     // kinfolk by the name of the person mailing them.
     primaryDisplayName: args.invitedEmail,
     tribeName: args.familyId,
-    claimUrl: `${process.env.CLAIM_LINK_BASE_URL}?invite=${ref.id}`,
+    claimUrl: `${claimBaseUrl}?invite=${ref.id}`,
     expiresInDays: INVITE_TTL_DAYS,
   });
   await ref.update({ status: 'EMAIL_SENT', sentToInviteeAt: FieldValue.serverTimestamp() });
