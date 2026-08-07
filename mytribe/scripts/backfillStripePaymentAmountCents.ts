@@ -113,10 +113,20 @@ interface Args {
 
 export function parseArgs(argv: string[]): Args {
   const args: Args = { mode: 'dry-run', allowProd: false, projectId: null, pageSize: 300 };
+  // AN EXPLICIT --dry-run ALWAYS WINS, in either flag order. Tracked
+  // separately from `args.mode` (rather than setting `args.mode = 'dry-run'`
+  // inline the moment `--dry-run` is seen) because the unconditional
+  // `if (args.allowProd) args.mode = 'apply'` below runs once, AFTER the
+  // whole argv has been scanned — so `--allow-prod --dry-run` would silently
+  // re-flip mode to 'apply' if this flag's own presence weren't remembered
+  // past the loop. This is the one flag whose entire purpose is proving a
+  // run is safe before it touches money; getting its precedence backwards
+  // defeats that purpose.
+  let explicitDryRun = false;
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--allow-prod') args.allowProd = true;
-    else if (a === '--dry-run') args.mode = 'dry-run';
+    else if (a === '--dry-run') explicitDryRun = true;
     else if (a === '--project') {
       const v = argv[i + 1];
       if (!v) throw new Error('--project requires a value');
@@ -135,8 +145,12 @@ export function parseArgs(argv: string[]): Args {
           'Usage (from mytribe/functions, which owns the node_modules this resolves against):',
           '  npm run backfill:stripe-payment-cents                     # DRY RUN (default)',
           '  npm run backfill:stripe-payment-cents -- --allow-prod     # apply',
+          '  npm run backfill:stripe-payment-cents -- --dry-run        # force dry-run, ALWAYS wins',
           '  npm run backfill:stripe-payment-cents -- --project <id>   # override project',
           '  npm run backfill:stripe-payment-cents -- --page-size <n>  # rows read per page (default 300)',
+          '',
+          '--dry-run overrides --allow-prod regardless of which comes first on the',
+          'command line (e.g. "--allow-prod --dry-run" still does not write).',
           '',
           '(Direct invocation needs NODE_PATH=node_modules ahead of ts-node: mytribe/scripts',
           ' has no node_modules of its own, and firebase-admin resolves at runtime from the',
@@ -153,7 +167,13 @@ export function parseArgs(argv: string[]): Args {
       throw new Error(`unknown arg: ${a}`);
     }
   }
-  if (args.allowProd) args.mode = 'apply';
+  // `explicitDryRun` wins regardless of flag order — see the comment on its
+  // declaration above. `args.allowProd` itself still reports `true` when
+  // `--allow-prod` was passed, even though `mode` stays 'dry-run': the
+  // startup log line prints both, so an operator who typed
+  // `--allow-prod --dry-run` sees exactly what happened rather than a flag
+  // that silently vanished.
+  if (args.allowProd && !explicitDryRun) args.mode = 'apply';
   return args;
 }
 

@@ -29,6 +29,27 @@ describe('backfillStripePaymentAmountCents parseArgs', () => {
   it('throws on unknown args', () => {
     expect(() => parseArgs(['--nope'])).toThrow(/unknown arg/);
   });
+
+  it('an explicit --dry-run always wins over --allow-prod, in EITHER flag order', () => {
+    // The one flag whose entire purpose is proving a run is safe before it
+    // touches money. `--allow-prod --dry-run` must stay a dry run just as
+    // surely as `--dry-run --allow-prod` does — a bug here inverts the
+    // safety default on the exact script this task exists to make safe.
+    const allowThenDry = parseArgs(['--allow-prod', '--dry-run']);
+    expect(allowThenDry.mode).toBe('dry-run');
+    // allowProd still reports the flag was seen, even though it lost.
+    expect(allowThenDry.allowProd).toBe(true);
+
+    const dryThenAllow = parseArgs(['--dry-run', '--allow-prod']);
+    expect(dryThenAllow.mode).toBe('dry-run');
+    expect(dryThenAllow.allowProd).toBe(true);
+  });
+
+  it('--dry-run alone is a no-op on the already-default mode', () => {
+    const a = parseArgs(['--dry-run']);
+    expect(a.mode).toBe('dry-run');
+    expect(a.allowProd).toBe(false);
+  });
 });
 
 describe('backfillStripePaymentAmountCents planAmountCentsStamp: the 100x defect', () => {
