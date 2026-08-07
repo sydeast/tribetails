@@ -183,14 +183,19 @@ describe('saving byKey', () => {
     expect(saved.byKey?.['kincare.checkin.push_only']).toBeUndefined();
   });
 
-  it('an untouched session omits byKey from the save payload entirely', async () => {
+  // Task 27b: web used to OMIT `byKey` when there was nothing in it, while
+  // Compose sent `{}`. That was the one cell where the two clients put
+  // different bytes on the wire, and it sat on exactly the path this work is
+  // about. Both send an empty map now, so a reader does not have to re-derive
+  // that the two are equivalent under the handler's mergeFields write.
+  it('an untouched session still sends byKey, as an empty map', async () => {
     await renderLoaded();
     mocks.saveMyNotificationPrefs.mockResolvedValue({ ok: true });
     await userEvent.click(screen.getByRole('button', { name: /Save Notification Preferences/ }));
 
     await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
     const saved = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
-    expect(saved.byKey).toBeUndefined();
+    expect(saved.byKey).toEqual({});
   });
 
   it('sends byCategory, byKey and marketingOptIn together in one call', async () => {
@@ -232,7 +237,7 @@ describe('reverting an override', () => {
 
     await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
     const saved = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
-    expect(saved.byKey).toBeUndefined();
+    expect(saved.byKey).toEqual({});
   });
 
   it('leaves other overridden channels on the same key alone when one channel reverts', async () => {

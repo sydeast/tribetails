@@ -158,7 +158,11 @@ type MarketingOptInState = Partial<Record<MarketingCategory, boolean>>;
 
 interface EditedPrefs {
   byCategory: ByCategoryState;
-  byKey: UserNotificationPrefs['byKey'] | undefined;
+  // Always an object, never undefined. In memory an empty map and an absent
+  // one meant the same thing, but on the wire they did not: web omitted
+  // `byKey` where Compose sent `{}`, the one place the two clients disagreed.
+  // The state now carries the shape the payload has.
+  byKey: NonNullable<UserNotificationPrefs['byKey']>;
   marketingOptIn: MarketingOptInState;
 }
 
@@ -184,7 +188,7 @@ export function NotificationSettings() {
     }
     setEdited({
       byCategory,
-      byKey: source.byKey,
+      byKey: { ...(source.byKey ?? {}) },
       marketingOptIn: { ...(source.marketingOptIn ?? {}) },
     });
   }, [edited, prefs.data]);
@@ -192,10 +196,14 @@ export function NotificationSettings() {
   const save = useMutation({
     mutationFn: () => {
       if (!edited) return Promise.reject(new Error('Preferences not loaded yet.'));
+      // All three maps, always, byte-for-byte what Compose sends. The handler
+      // writes this subtree with mergeFields, so what is absent HERE is what
+      // gets removed from the stored document — which is how clearing an
+      // override reaches the database at all.
       const toSave: UserNotificationPrefs = {
         byCategory: edited.byCategory,
+        byKey: edited.byKey,
         marketingOptIn: edited.marketingOptIn,
-        ...(edited.byKey !== undefined ? { byKey: edited.byKey } : {}),
       };
       return saveMyNotificationPrefs(toSave);
     },
@@ -268,11 +276,11 @@ export function NotificationSettings() {
   // gets written, and it only fires from a deliberate click here.
   function toggleKeyChannel(cat: CategoryDto, key: NotificationKeyDto, ch: Channel) {
     if (!edited || keyLockedChannels(key).includes(ch)) return;
-    const current = keyChannelChecked(key, ch, edited.byKey?.[key.key], edited.byCategory[cat.id]);
+    const current = keyChannelChecked(key, ch, edited.byKey[key.key], edited.byCategory[cat.id]);
     const next = !current;
     const inherited = keyChannelChecked(key, ch, undefined, edited.byCategory[cat.id]);
 
-    const nextByKey = { ...(edited.byKey ?? {}) };
+    const nextByKey = { ...edited.byKey };
     if (next === inherited) {
       const forKey = { ...(nextByKey[key.key] ?? {}) };
       delete forKey[ch];
@@ -285,7 +293,7 @@ export function NotificationSettings() {
       nextByKey[key.key] = { ...(nextByKey[key.key] ?? {}), [ch]: next };
     }
 
-    setEdited({ ...edited, byKey: Object.keys(nextByKey).length > 0 ? nextByKey : undefined });
+    setEdited({ ...edited, byKey: nextByKey });
   }
 
   function renderCard(cat: CategoryDto, index: number) {

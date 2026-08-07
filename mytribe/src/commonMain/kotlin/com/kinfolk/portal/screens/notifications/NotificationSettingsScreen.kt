@@ -83,7 +83,16 @@ fun NotificationSettingsScreen(
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
 
+    // `loaded` means the request FINISHED; `prefsLoaded` means it succeeded and
+    // the three maps below hold real server state. They are separate on
+    // purpose. Task 27b/I3: the catch used to set `loaded = true` too, so a
+    // failed load rendered the editor and a live Save button over three empty
+    // maps — and an empty map is not "no change" on the wire, it goes into the
+    // Firestore update mask like any other value, so one click wiped the whole
+    // preference document. Nothing may reach saveMyNotificationPrefs until
+    // prefsLoaded is true.
     var loaded by remember { mutableStateOf(false) }
+    var prefsLoaded by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
@@ -144,10 +153,12 @@ fun NotificationSettingsScreen(
                 marketingOptIn[mc.id] = server.marketingOptIn[mc.id] == true
             }
             loaded = true
+            prefsLoaded = true
             error = null
         } catch (t: Throwable) {
             error = t.message ?: "Could not load preferences"
             loaded = true
+            prefsLoaded = false
         }
     }
 
@@ -172,6 +183,14 @@ fun NotificationSettingsScreen(
                 style = type.sansBody,
                 modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
             )
+        }
+        if (!prefsLoaded) {
+            // The load failed. Show why and stop: no editor, no Save. Rendering
+            // the empty maps as if they were the kinfolk's choices, over a Save
+            // button that would then persist them, is the one outcome worse
+            // than an error message. Web does the same thing by short-circuiting
+            // to <LaunchError> on prefs.isError.
+            return@Column
         }
 
         if (catalogWarning != null) {

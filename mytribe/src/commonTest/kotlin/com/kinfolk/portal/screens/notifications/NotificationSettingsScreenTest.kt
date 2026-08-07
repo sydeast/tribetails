@@ -72,6 +72,32 @@ class NotificationSettingsScreenTest {
         onNodeWithText("prefs unavailable").assertExists()
     }
 
+    // I3: a failed load used to leave the editor and the Save button live with
+    // all three maps EMPTY. Saving from there does not mean "no change" — the
+    // Firestore SDK puts an explicitly sent empty map into the update mask, so
+    // one click wiped the kinfolk's whole preference document. The save path
+    // has to be unreachable until the prefs actually arrived. Web is safe by
+    // construction: prefs.isError short-circuits to <LaunchError>.
+    @Test
+    fun failedLoad_leavesNoWayToSaveOverTheStoredPreferences() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubError("getMyNotificationPrefs", IllegalStateException("prefs unavailable"))
+        fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake)) }
+        waitForIdle()
+
+        onNodeWithText("prefs unavailable").assertExists()
+        onNodeWithText("Save Notification Preferences").assertDoesNotExist()
+        // The editor itself is gone too, so there is nothing to edit into the
+        // empty state either.
+        onNodeWithText("Marketing Opt-Ins").assertDoesNotExist()
+        onNodeWithText("Visit Updates").assertDoesNotExist()
+        assertTrue(
+            fake.calls.none { it.first == "saveMyNotificationPrefs" },
+            "a failed load must never reach the save callable",
+        )
+    }
+
     // D12: the "schedule" category is always relabeled to "Schedule Reminders".
     // Same id/key/prefs.
     @Test
