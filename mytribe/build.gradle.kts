@@ -127,7 +127,7 @@ kotlin {
             //   SerializationException: Serializer for class 'Any' is not found
             // when callers pass Map<String, Any?> payloads. The native call()
             // accepts HashMap and returns HashMap, no serializer layer.
-            implementation("com.google.firebase:firebase-functions:21.1.0")
+            implementation("com.google.firebase:firebase-functions:22.1.1")
             // Task.await() for native Functions call() result.
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.11.0")
             implementation("androidx.activity:activity-compose:1.13.0")
