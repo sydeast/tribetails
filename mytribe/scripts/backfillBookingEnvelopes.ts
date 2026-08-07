@@ -39,8 +39,12 @@
  *                    flat docs after a successful migration
  *
  * Safety:
- *   - Dry-run by default. Refuses to write to prod unless `--allow-prod` is
- *     passed OR FIRESTORE_EMULATOR_HOST is set.
+ *   - Dry-run by default; refuses to write unless `--allow-prod` is passed. An
+ *     explicit `--dry-run` beats `--allow-prod` in either flag order, and
+ *     disarms `--finalize` with it, so `--allow-prod --finalize --dry-run`
+ *     deletes nothing. FIRESTORE_EMULATOR_HOST does NOT relieve that: it only
+ *     stands in for credentials, so an emulator run without --allow-prod is
+ *     still a dry run that writes nothing, to the emulator or anywhere else.
  *   - When writing to prod, requires GOOGLE_APPLICATION_CREDENTIALS (fail-loud).
  *   - Pure exported planner (`planEnvelope`) carries all the migration logic so
  *     determinism, rollup correctness, and the idempotency skip are unit-tested
@@ -61,14 +65,29 @@ interface Args {
 
 export function parseArgs(argv: string[]): Args {
   const args: Args = { mode: 'dry-run', allowProd: false, finalize: false, projectId: null };
+  // AN EXPLICIT --dry-run ALWAYS WINS, in either flag order. Tracked
+  // separately from `args.mode` (rather than setting `args.mode = 'dry-run'`
+  // inline the moment `--dry-run` is seen) because the unconditional
+  // `if (args.allowProd) args.mode = 'apply'` below runs once, AFTER the
+  // whole argv has been scanned — so `--allow-prod --dry-run` would silently
+  // re-flip mode to 'apply' if this flag's own presence weren't remembered
+  // past the loop. Under `--finalize` this script DELETES the legacy flat
+  // booking docs, so a dry run is the only way to read the plan while the
+  // originals still exist; getting this flag's precedence backwards defeats
+  // the entire point of asking for one.
+  let explicitDryRun = false;
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--allow-prod') args.allowProd = true;
     else if (a === '--finalize') args.finalize = true;
-    else if (a === '--dry-run') args.mode = 'dry-run';
+    else if (a === '--dry-run') explicitDryRun = true;
     else if (a === '--project') {
       const v = argv[i + 1];
-      if (!v) throw new Error('--project requires a value');
+      // Reject a flag as the value, not just a missing one: `--project` with no
+      // id would otherwise swallow whatever followed it, and the token most
+      // likely to follow is `--dry-run`, which would take the safety flag off
+      // the table while `--allow-prod --finalize` stayed on.
+      if (!v || v.startsWith('--')) throw new Error('--project requires a value');
       args.projectId = v;
       i += 1;
     } else if (a === '--help' || a === '-h') {
@@ -80,12 +99,17 @@ export function parseArgs(argv: string[]): Args {
           '  ts-node backfillBookingEnvelopes.ts                  # dry-run (default)',
           '  ts-node backfillBookingEnvelopes.ts --allow-prod     # write envelopes + kinCares, stamp old docs',
           '  ts-node backfillBookingEnvelopes.ts --allow-prod --finalize  # also delete old flat docs',
+          '  ts-node backfillBookingEnvelopes.ts --dry-run        # force dry-run, ALWAYS wins',
           '  ts-node backfillBookingEnvelopes.ts --project <id>   # override project',
+          '',
+          '--dry-run overrides --allow-prod regardless of which comes first on the',
+          'command line, and disarms --finalize with it (e.g.',
+          '"--allow-prod --finalize --dry-run" deletes nothing).',
           '',
           'Env:',
           '  GOOGLE_APPLICATION_CREDENTIALS  service account JSON path (or ADC)',
           '  GCLOUD_PROJECT                  Firebase project id',
-          '  FIRESTORE_EMULATOR_HOST         when set, --allow-prod not required',
+          '  FIRESTORE_EMULATOR_HOST         when set, credentials are not required',
         ].join('\n'),
       );
       process.exit(0);
@@ -93,8 +117,12 @@ export function parseArgs(argv: string[]): Args {
       throw new Error(`unknown arg: ${a}`);
     }
   }
-  // --allow-prod implies a real write run.
-  if (args.allowProd) args.mode = 'apply';
+  // --allow-prod implies a real write run, UNLESS --dry-run was also given.
+  // `args.allowProd` itself still reports `true` when `--allow-prod` was
+  // passed, even though `mode` stays 'dry-run': the startup log line prints
+  // both, so an operator who typed `--allow-prod --dry-run` sees exactly what
+  // happened rather than a flag that silently vanished.
+  if (args.allowProd && !explicitDryRun) args.mode = 'apply';
   return args;
 }
 

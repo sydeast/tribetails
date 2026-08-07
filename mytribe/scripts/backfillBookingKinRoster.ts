@@ -52,6 +52,9 @@
  * Modes:
  *   default        DRY RUN. Prints the plan and writes nothing.
  *   --allow-prod   applies, batched under Firestore's 500-op limit.
+ *   --dry-run      forces the dry run, and BEATS --allow-prod in either flag
+ *                  order. FIRESTORE_EMULATOR_HOST does not turn a dry run into
+ *                  a writing one; it stands in for credentials only.
  *
  * Runbook: DRY first, read the plan and the refusals, then re-run with
  * --allow-prod.
@@ -71,13 +74,27 @@ export interface Args {
 
 export function parseArgs(argv: string[]): Args {
   const args: Args = { mode: 'dry-run', allowProd: false, projectId: null };
+  // AN EXPLICIT --dry-run ALWAYS WINS, in either flag order. Tracked
+  // separately from `args.mode` (rather than setting `args.mode = 'dry-run'`
+  // inline the moment `--dry-run` is seen) because the unconditional
+  // `if (args.allowProd) args.mode = 'apply'` below runs once, AFTER the
+  // whole argv has been scanned — so `--allow-prod --dry-run` would silently
+  // re-flip mode to 'apply' if this flag's own presence weren't remembered
+  // past the loop. This is the one flag whose entire purpose is proving a run
+  // is safe before it rewrites the roster on live bookings, visits and
+  // sessions; getting its precedence backwards defeats that purpose.
+  let explicitDryRun = false;
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--allow-prod') args.allowProd = true;
-    else if (a === '--dry-run') args.mode = 'dry-run';
+    else if (a === '--dry-run') explicitDryRun = true;
     else if (a === '--project') {
       const v = argv[i + 1];
-      if (!v) throw new Error('--project requires a value');
+      // Reject a flag as the value, not just a missing one: `--project` with no
+      // id would otherwise swallow whatever followed it, and the token most
+      // likely to follow is `--dry-run`, which would take the safety flag off
+      // the table while `--allow-prod` stayed on.
+      if (!v || v.startsWith('--')) throw new Error('--project requires a value');
       args.projectId = v;
       i += 1;
     } else if (a === '--help' || a === '-h') {
@@ -87,7 +104,11 @@ export function parseArgs(argv: string[]): Args {
           '',
           '  npm run backfill:booking-kin-roster                    # DRY RUN (default)',
           '  npm run backfill:booking-kin-roster -- --allow-prod    # apply',
+          '  npm run backfill:booking-kin-roster -- --dry-run       # force dry-run, ALWAYS wins',
           '  npm run backfill:booking-kin-roster -- --project <id>  # override project',
+          '',
+          '--dry-run overrides --allow-prod regardless of which comes first on the',
+          'command line (e.g. "--allow-prod --dry-run" still does not write).',
         ].join('\n'),
       );
       process.exit(0);
@@ -95,7 +116,12 @@ export function parseArgs(argv: string[]): Args {
       throw new Error(`unknown arg: ${a}`);
     }
   }
-  if (args.allowProd) args.mode = 'apply';
+  // --allow-prod implies a real write run, UNLESS --dry-run was also given.
+  // `args.allowProd` itself still reports `true` when `--allow-prod` was
+  // passed, even though `mode` stays 'dry-run', so an operator who typed
+  // `--allow-prod --dry-run` sees exactly what happened rather than a flag
+  // that silently vanished.
+  if (args.allowProd && !explicitDryRun) args.mode = 'apply';
   return args;
 }
 

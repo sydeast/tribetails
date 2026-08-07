@@ -58,6 +58,41 @@ describe('parseArgs', () => {
   it('refuses an unknown flag rather than ignoring it', () => {
     expect(() => parseArgs(['--apply'])).toThrow(/unknown arg/);
   });
+
+  it('an explicit --dry-run always wins over --allow-prod, in EITHER flag order', () => {
+    // The flag whose whole purpose is proving a run is safe before it rewrites
+    // the recorded creation instant on live KinTales — a field nothing else can
+    // reconstruct once overwritten. `--allow-prod --dry-run` must stay a dry
+    // run just as surely as the other order does.
+    const allowThenDry = parseArgs(['--allow-prod', '--dry-run']);
+    expect(allowThenDry.mode).toBe('dry-run');
+    // allowProd still reports the flag was seen, even though it lost.
+    expect(allowThenDry.allowProd).toBe(true);
+
+    const dryThenAllow = parseArgs(['--dry-run', '--allow-prod']);
+    expect(dryThenAllow.mode).toBe('dry-run');
+    expect(dryThenAllow.allowProd).toBe(true);
+  });
+
+  it('one --dry-run beats any number of repeated --allow-prod', () => {
+    expect(parseArgs(['--allow-prod', '--dry-run', '--allow-prod']).mode).toBe('dry-run');
+    expect(parseArgs(['--dry-run', '--dry-run']).mode).toBe('dry-run');
+    // Repetition does not weaken the one intended write path either.
+    expect(parseArgs(['--allow-prod', '--allow-prod']).mode).toBe('apply');
+  });
+
+  it('a valueless --project cannot swallow the --dry-run that follows it', () => {
+    // `--project` rejected a MISSING value but happily took the next token, so
+    // one forgotten project id turned `--allow-prod --project --dry-run` back
+    // into an apply run with the safety flag eaten.
+    expect(() => parseArgs(['--allow-prod', '--project', '--dry-run'])).toThrow(
+      /--project requires a value/,
+    );
+    // A real project id still passes through untouched, --dry-run intact.
+    const ok = parseArgs(['--allow-prod', '--project', 'auntieos-ttpc', '--dry-run']);
+    expect(ok.projectId).toBe('auntieos-ttpc');
+    expect(ok.mode).toBe('dry-run');
+  });
 });
 
 describe('parseLegacyStamp', () => {
