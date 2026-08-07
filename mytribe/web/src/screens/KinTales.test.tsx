@@ -11,7 +11,9 @@ const mocks = vi.hoisted(() => ({
   getMyKinTales: vi.fn<() => Promise<GetMyKinTalesResult>>(),
   getKinTaleReaction: vi.fn<() => Promise<KinTaleReactionResult>>(),
   getMyKinTaleComments: vi.fn<() => Promise<GetKinTaleCommentsResult>>(),
-  createShareLink: vi.fn<(taleId: string, familyId: string) => Promise<{ shareId: string; shareUrl: string }>>(),
+  createShareLink: vi.fn<(taleId: string, familyId: string, options?: unknown) => Promise<{ shareId: string; shareUrl: string }>>(),
+  revokeShareLink: vi.fn<(shareId: string) => Promise<{ ok: true }>>(),
+  getActiveKinfolkId: vi.fn<() => string | undefined>(),
 }));
 
 vi.mock('../api/portal', () => ({
@@ -27,11 +29,12 @@ vi.mock('../api/kinTalesApi', async () => {
     // convention as Messages.test.tsx's messagesApi mock.
     getKinTaleReaction: () => mocks.getKinTaleReaction(),
     getMyKinTaleComments: () => mocks.getMyKinTaleComments(),
-    createShareLink: (taleId: string, familyId: string) => mocks.createShareLink(taleId, familyId),
+    createShareLink: (taleId: string, familyId: string, options?: unknown) => mocks.createShareLink(taleId, familyId, options),
+    revokeShareLink: (shareId: string) => mocks.revokeShareLink(shareId),
   };
 });
 
-vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'fam1' }));
+vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => mocks.getActiveKinfolkId() }));
 vi.mock('../lib/auth', () => ({
   useAuth: () => ({ status: 'signedIn', user: { uid: 'u1', email: 'k@example.com' } }),
   useSignOut: () => ({ signOut: vi.fn(), signingOut: false }),
@@ -67,49 +70,51 @@ beforeEach(() => {
   mocks.getKinTaleReaction.mockReset();
   mocks.getMyKinTaleComments.mockReset();
   mocks.createShareLink.mockReset();
+  mocks.revokeShareLink.mockReset();
+  mocks.getActiveKinfolkId.mockReset();
 
   mocks.getMyKinTales.mockResolvedValue({ tales: [tale()], hasMore: false });
   mocks.getKinTaleReaction.mockResolvedValue({ loved: false, loveCount: 0 });
   mocks.getMyKinTaleComments.mockResolvedValue({ comments: [] });
   mocks.createShareLink.mockResolvedValue({ shareId: 'share-1', shareUrl: 'https://kinfolk.tribetails.com/share/share-1' });
+  mocks.revokeShareLink.mockResolvedValue({ ok: true });
+  mocks.getActiveKinfolkId.mockReturnValue('fam1');
 });
 
+// Full create/passcode/expiry/revoke behavior is covered by
+// ShareKinTaleDialog.test.tsx against the dialog directly (its own mocked
+// api/kinTalesApi module). These tests only cover the integration seam:
+// TaleShare opens ShareKinTaleDialog wired to the right tale + tribe, and
+// the fail-loud path when kinfolkId can't be resolved at all — the one
+// error case the dialog itself can never reach, since it requires a
+// non-null familyId prop.
 describe('KinTales: Share', () => {
-  it('happy path: creates a link for the right tale + tribe and reveals it in place of the button', async () => {
+  it('opens the share dialog wired to the right tale + tribe, and a successful create shows the URL', async () => {
     const user = userEvent.setup();
     renderScreen();
 
     await user.click(await screen.findByRole('button', { name: SHARE_BUTTON }));
 
-    await waitFor(() => expect(mocks.createShareLink).toHaveBeenCalledWith('t1', 'fam1'));
+    expect(await screen.findByRole('dialog', { name: /Invite the Family/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Generate Link/i }));
+
+    await waitFor(() =>
+      expect(mocks.createShareLink).toHaveBeenCalledWith(
+        't1',
+        'fam1',
+        expect.objectContaining({ includePhotos: true, expiresInDays: 7 }),
+      ),
+    );
     expect(await screen.findByDisplayValue('https://kinfolk.tribetails.com/share/share-1')).toBeInTheDocument();
-    // the Share button itself is gone, replaced by the reveal panel
-    expect(screen.queryByRole('button', { name: SHARE_BUTTON })).not.toBeInTheDocument();
   });
 
-  it('copies the link to the clipboard and shows confirmation', async () => {
-    // user-event's setup() installs its own clipboard stub the first time it's
-    // touched, replacing anything defined earlier — so the spy has to attach
-    // AFTER setup(), not in beforeEach, or it gets clobbered.
-    const user = userEvent.setup();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
-    renderScreen();
-
-    await user.click(await screen.findByRole('button', { name: SHARE_BUTTON }));
-    await screen.findByDisplayValue('https://kinfolk.tribetails.com/share/share-1');
-    await user.click(screen.getByRole('button', { name: /Copy Link/i }));
-
-    expect(writeText).toHaveBeenCalledWith('https://kinfolk.tribetails.com/share/share-1');
-    expect(await screen.findByRole('button', { name: /^Copied$/ })).toBeInTheDocument();
-  });
-
-  it('error path: surfaces a rejection instead of swallowing it (fail loud), and does not reveal a panel', async () => {
+  it('error path: surfaces a rejection instead of swallowing it (fail loud), and does not reveal a link', async () => {
     mocks.createShareLink.mockRejectedValue(new Error('kinTale not found'));
     const user = userEvent.setup();
     renderScreen();
 
     await user.click(await screen.findByRole('button', { name: SHARE_BUTTON }));
+    await user.click(screen.getByRole('button', { name: /Generate Link/i }));
 
     expect(await screen.findByText('kinTale not found')).toBeInTheDocument();
     expect(screen.queryByDisplayValue(/https:\/\//)).not.toBeInTheDocument();
@@ -121,19 +126,20 @@ describe('KinTales: Share', () => {
     renderScreen();
 
     await user.click(await screen.findByRole('button', { name: SHARE_BUTTON }));
+    await user.click(screen.getByRole('button', { name: /Generate Link/i }));
 
     expect(await screen.findByText('permission-denied')).toBeInTheDocument();
   });
 
-  it('can retry after a failed attempt', async () => {
-    mocks.createShareLink.mockRejectedValueOnce(new Error('temporary failure'));
+  it('fails loud instead of opening the dialog when the tribe id cannot be resolved yet', async () => {
+    mocks.getActiveKinfolkId.mockReturnValue(undefined);
     const user = userEvent.setup();
     renderScreen();
 
     await user.click(await screen.findByRole('button', { name: SHARE_BUTTON }));
-    await screen.findByText('temporary failure');
 
-    await user.click(screen.getByRole('button', { name: SHARE_BUTTON }));
-    expect(await screen.findByDisplayValue('https://kinfolk.tribetails.com/share/share-1')).toBeInTheDocument();
+    expect(await screen.findByText('Could not tell which tribe this is. Reload the page and try again.')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(mocks.createShareLink).not.toHaveBeenCalled();
   });
 });

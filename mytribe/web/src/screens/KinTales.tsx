@@ -7,7 +7,6 @@ import {
   commentAuthorLabel,
   commentAvatarVariant,
   commentBadge,
-  createShareLink,
   filterTales,
   getKinTaleReaction,
   getMyKinTaleComments,
@@ -25,6 +24,7 @@ import {
 import { useAuth, useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
+import { ShareKinTaleDialog } from '../components/ShareKinTaleDialog';
 import { LaunchError } from './LaunchError';
 import { RouteMap } from '../components/RouteMap';
 
@@ -53,10 +53,11 @@ const FILTER_TABS: { id: KinTalesFilter; label: string }[] = [
  * live for every tale (not just featured), same eager-load convention as
  * comments — S4 backend delta, see kinTaleEngagement.ts's toggleKinTaleLove.
  *
- * Share (B3, punchlist item) is wired to createShareLink and lives only on
- * the featured card, matching where the mockup put it. "Reply to Auntie"
- * still has no backing callable (messaging land is S5's territory) and
- * stays an inert button, same convention as Home's Invoices quick-start.
+ * Share (B3, punchlist item) opens ShareKinTaleDialog (expiry/passcode/
+ * revoke controls, P2 ruling) and lives only on the featured card, matching
+ * where the mockup put it. "Reply to Auntie" still has no backing callable
+ * (messaging land is S5's territory) and stays an inert button, same
+ * convention as Home's Invoices quick-start.
  */
 export function KinTales() {
   const kinfolkId = getActiveKinfolkId();
@@ -290,76 +291,42 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
 }
 
 /**
- * The mockup's "Share" button (B3, punchlist item), made real: creates a
- * public, time-limited link (createShareLink) for this KinTale and reveals
- * it inline in place of the button, matching the reveal-panel convention
- * used elsewhere in this file (the reply box under a comment) rather than a
- * modal — this codebase has no modal component. `kinfolkId` is required by
- * the server (familyId, the requirePrimary anchor); if it is somehow
- * unresolved yet, the mutation fails loud with a clear message instead of
- * silently no-op'ing.
+ * The mockup's "Share" button (B3, punchlist item), made real: opens
+ * ShareKinTaleDialog (expiry/passcode/revoke controls, P2 ruling) instead of
+ * minting a link with the server defaults on click. The dialog owns the
+ * createShareLink/revokeShareLink mutations and their error rendering now;
+ * this component only owns showing/hiding it and the one error the dialog
+ * can never reach — `kinfolkId` (the server's `familyId`, the requirePrimary
+ * anchor) being unresolved, which must fail loud before a dialog requiring a
+ * non-null familyId prop can even open. That's the same
+ * `share.isError`-style inline message the mutation used to render here,
+ * moved rather than lost.
  */
 function TaleShare(props: { taleId: string; kinfolkId: string | undefined }) {
   const { taleId, kinfolkId } = props;
-  const [revealed, setRevealed] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [tribeIdMissing, setTribeIdMissing] = useState(false);
 
-  const share = useMutation({
-    mutationFn: () => {
-      if (!kinfolkId) throw new Error('Could not tell which tribe this is. Reload the page and try again.');
-      return createShareLink(taleId, kinfolkId);
-    },
-    onSuccess: () => setRevealed(true),
-  });
-
-  async function copyLink(url: string) {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-    } catch {
-      // Clipboard access can be denied (permissions, insecure context). The
-      // link is still visible and selectable in the input, so this is a
-      // degraded convenience, not a failure worth its own error banner.
-      setCopied(false);
+  function handleOpen() {
+    if (!kinfolkId) {
+      setTribeIdMissing(true);
+      return;
     }
-  }
-
-  if (revealed && share.data) {
-    return (
-      <div className="sharepanel">
-        <input
-          className="shareinput"
-          type="text"
-          readOnly
-          value={share.data.shareUrl}
-          onFocus={(e) => e.currentTarget.select()}
-          aria-label="Share link"
-        />
-        <button type="button" className="btn ghost" onClick={() => void copyLink(share.data!.shareUrl)}>
-          {copied ? 'Copied' : 'Copy Link'}
-        </button>
-      </div>
-    );
+    setTribeIdMissing(false);
+    setOpen(true);
   }
 
   return (
     <div>
-      <button
-        type="button"
-        className="btn grad"
-        disabled={share.isPending}
-        onClick={() => {
-          setCopied(false);
-          share.mutate();
-        }}
-      >
-        {'\u{1F517}'} {share.isPending ? 'Creating link…' : 'Share'}
+      <button type="button" className="btn grad" onClick={handleOpen}>
+        {'\u{1F517}'} Share
       </button>
-      {share.isError && (
+      {tribeIdMissing && (
         <div style={{ color: 'var(--coral)', fontSize: 12.5, marginTop: 6 }}>
-          {share.error instanceof Error ? share.error.message : 'Could not create a share link. Try again.'}
+          Could not tell which tribe this is. Reload the page and try again.
         </div>
       )}
+      {open && kinfolkId && <ShareKinTaleDialog taleId={taleId} familyId={kinfolkId} onClose={() => setOpen(false)} />}
     </div>
   );
 }

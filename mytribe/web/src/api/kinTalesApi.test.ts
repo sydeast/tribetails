@@ -9,6 +9,7 @@ import {
   initialOf,
   loveLine,
   nextTalesCursor,
+  revokeShareLink,
   shortTimestamp,
   taleMetaLabel,
   threadComments,
@@ -218,5 +219,73 @@ describe('createShareLink wrapper', () => {
   it('does not swallow a rejection, e.g. a SECONDARY member denied by requirePrimary (fail loud)', async () => {
     vi.mocked(call).mockRejectedValueOnce(new Error('permission-denied'));
     await expect(createShareLink('t1', 'fam1')).rejects.toThrow('permission-denied');
+  });
+});
+
+// These pin what goes on the wire once the dialog can supply expiry/passcode
+// options (P2 ruling, plan line 2214: "send them; do not widen the
+// contract" — the server's zod schema at createShareLink.ts:15-20 is
+// unchanged, only the client payload grows).
+describe('createShareLink wrapper — expiry + passcode options', () => {
+  beforeEach(() => {
+    vi.mocked(call).mockReset();
+    vi.mocked(call).mockResolvedValue({ shareId: 'share-1', shareUrl: 'https://kinfolk.tribetails.com/share/share-1' } as never);
+  });
+
+  it('omits a blank passcode from the payload rather than sending an empty string (the server’s .min(4) would reject it)', async () => {
+    await createShareLink('t1', 'fam1', { includePhotos: true, expiresInDays: 7, passcode: '' });
+    expect(call).toHaveBeenCalledWith('createShareLink', {
+      familyId: 'fam1',
+      kinTaleId: 't1',
+      includePhotos: true,
+      expiresInDays: 7,
+    });
+  });
+
+  it('omits a whitespace-only passcode too', async () => {
+    await createShareLink('t1', 'fam1', { includePhotos: true, expiresInDays: 7, passcode: '   ' });
+    expect(call).toHaveBeenCalledWith('createShareLink', {
+      familyId: 'fam1',
+      kinTaleId: 't1',
+      includePhotos: true,
+      expiresInDays: 7,
+    });
+  });
+
+  it('sends a supplied expiresInDays and passcode through unchanged', async () => {
+    await createShareLink('t1', 'fam1', { includePhotos: false, expiresInDays: 30, passcode: 'sesame1' });
+    expect(call).toHaveBeenCalledWith('createShareLink', {
+      familyId: 'fam1',
+      kinTaleId: 't1',
+      includePhotos: false,
+      expiresInDays: 30,
+      passcode: 'sesame1',
+    });
+  });
+
+  it('the default (no options) call still sends includePhotos: true and nothing else, so any current 2-arg caller keeps compiling and keeps its exact wire shape', async () => {
+    await createShareLink('t1', 'fam1');
+    expect(call).toHaveBeenCalledWith('createShareLink', { familyId: 'fam1', kinTaleId: 't1', includePhotos: true });
+  });
+});
+
+describe('revokeShareLink wrapper', () => {
+  beforeEach(() => {
+    vi.mocked(call).mockReset();
+    vi.mocked(call).mockResolvedValue({ ok: true } as never);
+  });
+
+  it('calls the revokeShareLink callable with { shareId }', async () => {
+    await revokeShareLink('s1');
+    expect(call).toHaveBeenCalledWith('revokeShareLink', { shareId: 's1' });
+  });
+
+  it('returns the callable result', async () => {
+    await expect(revokeShareLink('s1')).resolves.toEqual({ ok: true });
+  });
+
+  it('does not swallow a rejection (fail loud)', async () => {
+    vi.mocked(call).mockRejectedValueOnce(new Error('not-found'));
+    await expect(revokeShareLink('s1')).rejects.toThrow('not-found');
   });
 });

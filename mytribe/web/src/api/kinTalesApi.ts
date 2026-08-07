@@ -159,6 +159,14 @@ export function loveLine(reaction: KinTaleReactionResult): string {
 // (requirePrimary); that denial is meant to surface as a visible error here,
 // not be pre-filtered client-side, since this screen has no membership-role
 // signal to pre-filter on.
+//
+// The server's zod schema (createShareLink.ts:15-20) has always accepted
+// `expiresInDays` (1-90) and `passcode` (4-8 chars) — this wrapper just
+// finally carries them (P2 ruling, plan line 2214: "send them; do not widen
+// the contract"). `options` is additive: the old two-positional-argument
+// call shape (`createShareLink(kinTaleId, familyId)`) still compiles and
+// still sends the exact same `{ familyId, kinTaleId, includePhotos: true }`
+// payload it always has, so no existing caller's wire behavior changes.
 
 export interface CreateShareLinkRequest {
   familyId: string;
@@ -173,10 +181,51 @@ export interface CreateShareLinkResult {
   shareUrl: string;
 }
 
-/** Creates a public, time-limited share link for one KinTale. Photos included by default (the whole point of sharing). */
-export function createShareLink(kinTaleId: string, familyId: string): Promise<CreateShareLinkResult> {
-  const payload: CreateShareLinkRequest = { familyId, kinTaleId, includePhotos: true };
+/**
+ * Options for a share link, matching ShareKinTaleModal.kt's form fields.
+ * `passcode` is omitted from the wire payload entirely when blank (including
+ * whitespace-only) rather than sent as `''` — the server's `.min(4)` would
+ * reject an empty string, and that's not the caller's intent when they left
+ * the field blank on purpose.
+ */
+export interface ShareLinkOptions {
+  includePhotos: boolean;
+  /** 1..90, default 7 — matches the Compose modal's default. */
+  expiresInDays: number;
+  /** 4..8 chars; blank/whitespace-only is treated as "no passcode". */
+  passcode?: string;
+}
+
+/** Creates a public, time-limited share link for one KinTale. Photos included by default (the whole point of sharing) when no `options` are given. */
+export function createShareLink(kinTaleId: string, familyId: string, options?: ShareLinkOptions): Promise<CreateShareLinkResult> {
+  const hasPasscode = Boolean(options?.passcode && options.passcode.trim() !== '');
+  const payload: CreateShareLinkRequest = {
+    familyId,
+    kinTaleId,
+    includePhotos: options?.includePhotos ?? true,
+    ...(options?.expiresInDays !== undefined ? { expiresInDays: options.expiresInDays } : {}),
+    ...(hasPasscode ? { passcode: options!.passcode } : {}),
+  };
   return call<CreateShareLinkRequest, CreateShareLinkResult>('createShareLink', payload);
+}
+
+// ── revokeShareLink (functions/src/share/revokeShareLink.ts) ────────────────
+// PRIMARY member OR the original creator (see revokeShareLink.ts's caller
+// check); a SECONDARY non-creator is denied server-side, same fail-loud
+// convention as createShareLink above.
+
+export interface RevokeShareLinkRequest {
+  shareId: string;
+}
+
+export interface RevokeShareLinkResult {
+  ok: true;
+}
+
+/** Revokes an active share link. Irreversible: `resolveShareLink` refuses a revoked link from then on. */
+export function revokeShareLink(shareId: string): Promise<RevokeShareLinkResult> {
+  const payload: RevokeShareLinkRequest = { shareId };
+  return call<RevokeShareLinkRequest, RevokeShareLinkResult>('revokeShareLink', payload);
 }
 
 // ── pure helpers (pagination / filtering / comment threading / labels) ──────
