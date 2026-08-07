@@ -76,16 +76,29 @@ describe('resolveLaunchDestination', () => {
     expect(resolveLaunchDestination('signedIn', access({ kinfolkIds: ['k1'], isOperator: true }))).toBe('pick');
   });
 
+  it('pick for an operator with 5 kinfolkIds', () => {
+    expect(
+      resolveLaunchDestination('signedIn', access({ kinfolkIds: ['k1', 'k2', 'k3', 'k4', 'k5'], isOperator: true })),
+    ).toBe('pick');
+  });
+
   it('home for exactly one kinfolkId, non-operator', () => {
     expect(resolveLaunchDestination('signedIn', access({ kinfolkIds: ['k1'] }))).toBe('home');
   });
 
-  it('pick for 2+ kinfolkIds, non-operator, with none picked yet', () => {
-    expect(resolveLaunchDestination('signedIn', access({ kinfolkIds: ['k1', 'k2'] }))).toBe('pick');
+  // Operator ruling 2026-08-06, "one kinfolk, one tribe": a non-operator with
+  // 2+ ids can no longer happen legitimately. It's a data defect, and the
+  // fail-loud rule says a defect is surfaced, not absorbed: not the picker
+  // (its existence for non-operators is what the ruling withdrew) and not an
+  // auto-pick into 'home' (that would show a random household's data).
+  it('error for 2+ kinfolkIds, non-operator, with none picked yet', () => {
+    expect(resolveLaunchDestination('signedIn', access({ kinfolkIds: ['k1', 'k2'] }))).toBe('error');
   });
 
-  it('home for 2+ kinfolkIds once one is picked', () => {
-    expect(resolveLaunchDestination('signedIn', access({ kinfolkIds: ['k1', 'k2'], activeKinfolkId: 'k2' }))).toBe('home');
+  it('error for 2+ kinfolkIds, non-operator, even if one was already picked (e.g. restored session)', () => {
+    expect(
+      resolveLaunchDestination('signedIn', access({ kinfolkIds: ['k1', 'k2'], activeKinfolkId: 'k2' })),
+    ).toBe('error');
   });
 });
 
@@ -163,6 +176,43 @@ describe('ensureAccess: token claim reconciliation (O-37)', () => {
 
     expect(state.activeKinfolkId).toBeNull(); // operators pick explicitly
     expect(mocks.setActiveTribe).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Operator ruling 2026-08-06, "one kinfolk, one tribe": a non-operator with
+ * 2+ ids is a data defect the ruling says can't happen. This is the one
+ * place that must refuse to resolve an activeKinfolkId for it: every
+ * kinfolkId-scoped callable falls back server-side to the caller's first
+ * linked id when kinfolkId is omitted, so restoring a session pick or
+ * reconciling a token here would hand a defective account real household
+ * data the moment any screen's query fires. router.tsx's guards route this
+ * state to a dead-end screen that fires no such query — but only because
+ * this function never resolves an id for it to route toward.
+ */
+describe('ensureAccess: non-operator, 2+ tribes (data defect, ruling 2026-08-06)', () => {
+  it('does not restore a previously-picked session tribe, and does not reconcile its token claim', async () => {
+    // A restored id makes the old code path resolve activeKinfolkId (and
+    // spend a claim reconcile on it) — this is the case that must change.
+    sessionStorage.setItem('mytribe.activeKinfolkId.u1', 'k2');
+    mocks.getMyAccess.mockResolvedValue({ kinfolkIds: ['k1', 'k2'], isOperator: false });
+    tokenClaims({});
+
+    const state = await ensureAccess();
+
+    expect(state.activeKinfolkId).toBeNull();
+    expect(mocks.getIdTokenResult).not.toHaveBeenCalled();
+    expect(mocks.setActiveTribe).not.toHaveBeenCalled();
+  });
+
+  it('logs the anomaly, naming the tribe count, so it is not silently absorbed', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mocks.getMyAccess.mockResolvedValue({ kinfolkIds: ['k1', 'k2'], isOperator: false });
+
+    await ensureAccess();
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('2 tribes'));
+    errorSpy.mockRestore();
   });
 });
 

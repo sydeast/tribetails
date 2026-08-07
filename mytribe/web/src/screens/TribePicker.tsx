@@ -8,11 +8,15 @@ import { setActiveKinfolkId, useAccessState } from '../lib/activeTribe';
 const AVATAR_VARIANTS = ['', 't2', 't3'] as const;
 
 /**
- * Multi-tribe chooser, ported from ui-ideas/mytribe-tribe-picker-2026-05-31.html.
- * Shown for operators (always) and non-operator kinfolk who belong to 2+
- * households (Kotlin's LaunchDestination.Pick). Per-tribe subtitle counts in
- * the mockup are flagged there as illustrative only ("SUGGESTION ... not in
- * contract") — TribeSummary only carries id + displayName, so we render that.
+ * Multi-tribe chooser, ported from
+ * ui-ideas/mytribe-tribe-picker-2026-05-31-ADMINONLY.html. Operator ruling
+ * 2026-08-06, "one kinfolk, one tribe": shown for operators only, who
+ * legitimately see every household (Kotlin's LaunchDestination.Pick). A
+ * non-operator can only ever belong to one household, so this screen is no
+ * longer reachable for them — see resolveLaunchDestination in
+ * lib/activeTribe.ts. Per-tribe subtitle counts in the mockup are flagged
+ * there as illustrative only ("SUGGESTION ... not in contract") —
+ * TribeSummary only carries id + displayName, so we render that.
  */
 export function TribePicker() {
   const navigate = useNavigate();

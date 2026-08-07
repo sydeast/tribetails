@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Outlet,
   createRootRoute,
@@ -5,9 +6,10 @@ import {
   createRouter,
   lazyRouteComponent,
   redirect,
+  useNavigate,
 } from '@tanstack/react-router';
-import { waitForAuthReady } from './lib/auth';
-import { ensureAccess } from './lib/activeTribe';
+import { waitForAuthReady, useSignOut } from './lib/auth';
+import { clearAccess, ensureAccess, type AccessState } from './lib/activeTribe';
 // O-26: every screen below is code-split via lazyRouteComponent (each
 // resolves to its own chunk at build time) instead of a static import here —
 // the single main bundle had grown to 348KB gz (from 204KB at S3) once
@@ -15,8 +17,10 @@ import { ensureAccess } from './lib/activeTribe';
 // paid on first load regardless of which screen a kinfolk actually opened.
 // SignIn stays static: it's the very first thing an unauthenticated visitor
 // needs, splitting it would just add a network round-trip before anyone can
-// even see the sign-in form.
+// even see the sign-in form. AccountError below is also static — it's a tiny
+// wrapper, not worth its own chunk.
 import { SignIn } from './screens/SignIn';
+import { LaunchError } from './screens/LaunchError';
 
 /** Shared chrome: the two drifting orbs behind every screen. */
 function RootLayout() {
@@ -83,23 +87,95 @@ async function requireSignedIn() {
 /**
  * Guard for every screen that needs a resolved active tribe (everything past
  * the picker). Mirrors Kotlin's resolveLaunchDestination: 0 tribes -> NoTribes,
- * operator or 2+ tribes with none picked yet -> Pick, otherwise falls through
- * with activeKinfolkId already set (single-tribe autopick or a prior pick
- * restored from sessionStorage).
+ * an operator with none picked yet -> Pick, otherwise falls through with
+ * activeKinfolkId already set (single-tribe autopick or a prior pick restored
+ * from sessionStorage).
+ *
+ * Operator ruling 2026-08-06, "one kinfolk, one tribe": a non-operator with
+ * 2+ ids is a data defect (the ruling says this can't happen), not a routing
+ * case, and it's routed to the dead-end /error screen rather than falling
+ * through to /home. It CANNOT fall through here the way access.error above
+ * does: unlike a genuine access-fetch failure, the backend is healthy for
+ * this account, and every kinfolkId-scoped callable (getMyHome included)
+ * falls back server-side to the caller's first linked id when kinfolkId is
+ * omitted (resolveKinfolkAccess.ts) — so a screen that fires such a query
+ * with no id resolved would silently render a real, wrong household instead
+ * of failing. Redirecting away is what keeps that query from ever firing.
  */
 async function requireActiveTribe() {
   await requireSignedIn();
   const access = await ensureAccess();
   if (access.error !== null) return; // let the screen's own query surface the error via LaunchError
   if (access.kinfolkIds.length === 0) throw redirect({ to: '/no-tribes' });
+  if (!access.isOperator && access.kinfolkIds.length >= 2) throw redirect({ to: '/error' }); // data defect, see doc comment above
   if (access.activeKinfolkId === null) throw redirect({ to: '/pick' });
+}
+
+/**
+ * Where a non-operator who lands on /pick should go instead of seeing the
+ * screen. Pure so it's testable without a router harness. `null` means "stay"
+ * (operators always stay — they see the directory even with 1 id — and an
+ * access-fetch failure is left alone, unrelated to this gate).
+ *
+ * Operator ruling 2026-08-06, "one kinfolk, one tribe": the 2+ case goes to
+ * '/error', same destination and same reasoning as requireActiveTribe's doc
+ * comment above — not '/home', which would fire the very query this whole
+ * gate exists to prevent.
+ */
+export function pickGuardRedirect(access: AccessState): '/home' | '/no-tribes' | '/error' | null {
+  if (access.error !== null) return null;
+  if (access.isOperator) return null;
+  if (access.kinfolkIds.length === 0) return '/no-tribes';
+  if (access.kinfolkIds.length >= 2) return '/error';
+  return '/home'; // exactly 1
+}
+
+async function requireOperatorForPick() {
+  await requireSignedIn();
+  const access = await ensureAccess();
+  const target = pickGuardRedirect(access);
+  if (target !== null) throw redirect({ to: target });
 }
 
 const pickRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/pick',
-  beforeLoad: requireSignedIn,
+  beforeLoad: requireOperatorForPick,
   component: lazyRouteComponent(() => import('./screens/TribePicker'), 'TribePicker'),
+});
+
+/**
+ * Dead end for account states no screen should ever mount past — currently
+ * only the 2+-tribe non-operator data defect (ruling 2026-08-06, "one
+ * kinfolk, one tribe"; ensureAccess already logged the anomaly and refused
+ * to resolve an activeKinfolkId for it, see lib/activeTribe.ts). Reuses the
+ * existing LaunchError presentation as-is — it's pure/presentational, no
+ * query of its own. Retry clears the cached access and re-navigates to
+ * /home: an account that's since been fixed (e.g. the duplicate link was
+ * removed) lands there via the normal guard; one that's still broken bounces
+ * straight back here.
+ */
+function AccountError() {
+  const navigate = useNavigate();
+  const { signOut, signingOut } = useSignOut();
+  const [retrying, setRetrying] = useState(false);
+
+  async function handleRetry() {
+    setRetrying(true);
+    clearAccess();
+    await ensureAccess();
+    await navigate({ to: '/home' });
+    setRetrying(false);
+  }
+
+  return <LaunchError onRetry={() => void handleRetry()} retrying={retrying} onSignOut={signOut} signingOut={signingOut} />;
+}
+
+const errorRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/error',
+  beforeLoad: requireSignedIn,
+  component: AccountError,
 });
 
 const noTribesRoute = createRoute({
@@ -241,6 +317,7 @@ const routeTree = rootRoute.addChildren([
   claimIdRoute,
   secureResetRoute,
   pickRoute,
+  errorRoute,
   noTribesRoute,
   homeRoute,
   scheduleRoute,

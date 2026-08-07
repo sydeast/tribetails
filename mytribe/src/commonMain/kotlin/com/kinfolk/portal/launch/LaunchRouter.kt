@@ -31,7 +31,14 @@ sealed interface LaunchDestination {
  * - empty kinfolkIds (operator OR not)               → NoTribes
  * - operator                                          → Pick(isOperator=true)
  * - exactly one kinfolk, non-operator                → Home
- * - 2+ kinfolks, non-operator                         → Pick(isOperator=false)
+ * - 2+ kinfolks, non-operator                         → Error (see below)
+ *
+ * Operator ruling 2026-08-06, "one kinfolk, one tribe": a non-operator can
+ * only ever belong to exactly one household, so the 2+/non-operator branch
+ * used to reach Pick(isOperator=false) is withdrawn. Under the ruling that
+ * combination can't happen legitimately — it's a data defect, not a routing
+ * case — so it fails loud as Error rather than auto-picking a household at
+ * random or resurrecting the picker for a non-operator.
  */
 fun resolveLaunchDestination(
     authState: AuthState,
@@ -46,7 +53,9 @@ fun resolveLaunchDestination(
         access.kinfolkIds.isEmpty() -> LaunchDestination.NoTribes
         access.isOperator -> LaunchDestination.Pick(access.kinfolkIds, isOperator = true)
         access.kinfolkIds.size == 1 -> LaunchDestination.Home(access.kinfolkIds[0])
-        else -> LaunchDestination.Pick(access.kinfolkIds, isOperator = false)
+        else -> LaunchDestination.Error(
+            "Account has ${access.kinfolkIds.size} tribes; expected exactly 1. This account needs attention.",
+        )
     }
 }
 
