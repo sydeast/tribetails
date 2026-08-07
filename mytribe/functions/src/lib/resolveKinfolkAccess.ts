@@ -14,10 +14,15 @@ export interface ResolvedKinfolkAccess {
  * Resolves the kinfolkId a portal callable should operate on, given the caller
  * uid and the optional requested kinfolkId.
  *
- * Non-staff: must have `clients/{uid}.kinfolkIds`; defaults to first.
- *   - empty kinfolkIds          -> failed-precondition
- *   - requested in kinfolkIds   -> ok
- *   - requested not in own ids  -> permission-denied
+ * Non-staff: must have `clients/{uid}.kinfolkIds`.
+ *   - empty kinfolkIds               -> failed-precondition
+ *   - omitted, exactly one own id    -> defaults to that id (the normal case:
+ *     RULING is one kinfolk, one tribe)
+ *   - omitted, MORE THAN ONE own id  -> failed-precondition (PR28a: this is a
+ *     defect account, not a caller entitled to a guess — refuses rather than
+ *     silently handing back another household's data)
+ *   - requested in kinfolkIds        -> ok
+ *   - requested not in own ids       -> permission-denied
  *
  * Staff (RULING O-6: `admin` claim, or the AUNTIE_OPERATOR_UIDS transition
  * fallback — see `isStaff`):
@@ -80,9 +85,27 @@ export async function resolveKinfolkAccess(
   if (allowedIds.length === 0) {
     throw new HttpsError('failed-precondition', 'No tribes linked to this account.');
   }
-  const kinfolkId = requested ?? allowedIds[0];
-  if (!allowedIds.includes(kinfolkId)) {
+  // PR28a: a caller who omits kinfolkId gets it defaulted ONLY when there is
+  // exactly one linked id to default to. With two or more, "pick the first"
+  // was silently returning another household's data (pets, schedule,
+  // contacts, invoices) to a caller who never asked for it — the operator
+  // ruling is one kinfolk, one tribe, so an account with more than one is a
+  // defect state, not a multi-household caller to route on faith. Same
+  // failed-precondition family as the two account-state checks already in
+  // this file (no ids above, staff-no-default at line ~74): the argument
+  // itself isn't malformed, the account's state makes the omission unsafe to
+  // guess through.
+  if (!requested) {
+    if (allowedIds.length > 1) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Multiple tribes linked to this account; kinfolkId must be specified.',
+      );
+    }
+    return { kinfolkId: allowedIds[0], isOperator: false };
+  }
+  if (!allowedIds.includes(requested)) {
     throw new HttpsError('permission-denied', 'You do not have access to this tribe.');
   }
-  return { kinfolkId, isOperator: false };
+  return { kinfolkId: requested, isOperator: false };
 }
