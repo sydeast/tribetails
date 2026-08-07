@@ -50,6 +50,21 @@ describe('backfillStripePaymentAmountCents parseArgs', () => {
     expect(a.mode).toBe('dry-run');
     expect(a.allowProd).toBe(false);
   });
+
+  it('a valueless --project cannot swallow the --dry-run that follows it', () => {
+    // The escape hatch out of the guarantee directly above: `--project` used to
+    // take any next token as its value, so one forgotten project id turned
+    // `--allow-prod --project --dry-run` back into an apply run with the safety
+    // flag eaten. Refuse a flag as a value instead.
+    expect(() => parseArgs(['--allow-prod', '--project', '--dry-run'])).toThrow(
+      /--project requires a value/,
+    );
+    expect(() => parseArgs(['--project'])).toThrow(/--project requires a value/);
+    // A real project id still passes through untouched, --dry-run intact.
+    const ok = parseArgs(['--allow-prod', '--project', 'mytribe-test', '--dry-run']);
+    expect(ok.projectId).toBe('mytribe-test');
+    expect(ok.mode).toBe('dry-run');
+  });
 });
 
 describe('backfillStripePaymentAmountCents planAmountCentsStamp: the 100x defect', () => {

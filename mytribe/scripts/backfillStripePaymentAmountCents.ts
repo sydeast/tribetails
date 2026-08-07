@@ -129,7 +129,12 @@ export function parseArgs(argv: string[]): Args {
     else if (a === '--dry-run') explicitDryRun = true;
     else if (a === '--project') {
       const v = argv[i + 1];
-      if (!v) throw new Error('--project requires a value');
+      // Reject a flag as the value, not just a missing one: `--project` with no
+      // id would otherwise swallow whatever followed it, and the token most
+      // likely to follow is `--dry-run`, which would take the safety flag off
+      // the table while `--allow-prod` stayed on. `--page-size` gets this free
+      // via Number()/NaN; this branch has to say it.
+      if (!v || v.startsWith('--')) throw new Error('--project requires a value');
       args.projectId = v;
       i += 1;
     } else if (a === '--page-size') {
@@ -159,7 +164,7 @@ export function parseArgs(argv: string[]): Args {
           'Env:',
           '  GOOGLE_APPLICATION_CREDENTIALS  service account JSON path (or ADC)',
           '  GCLOUD_PROJECT                  Firebase project id',
-          '  FIRESTORE_EMULATOR_HOST         when set, --allow-prod not required',
+          '  FIRESTORE_EMULATOR_HOST         when set, credentials are not required',
         ].join('\n'),
       );
       process.exit(0);
