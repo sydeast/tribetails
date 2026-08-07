@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
@@ -36,11 +37,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.kinfolk.portal.components.EmptyState
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
@@ -55,6 +59,7 @@ import com.kinfolk.portal.portal.KinTale
 import com.kinfolk.portal.portal.KinTaleComment
 import com.kinfolk.portal.portal.KinTaleReaction
 import com.kinfolk.portal.portal.KinTaleMedia
+import com.kinfolk.portal.portal.KinTaleThumb
 import com.kinfolk.portal.portal.KinTalesResult
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.text.richTextToAnnotatedString
@@ -268,6 +273,9 @@ private fun KinTaleCard(
             }
             if (tale.body.isNotBlank()) {
                 Text(text = tale.body, style = type.sansBody.copy(color = KinfolkBrand.NavySoft))
+            }
+            if (tale.thumbs.isNotEmpty()) {
+                KinTaleThumbStrip(thumbs = tale.thumbs)
             }
             if (tale.mediaIds.isNotEmpty()) {
                 MediaBadge(
@@ -629,6 +637,75 @@ private fun ReplyComposer(
     }
 }
 
+/** Mirrors kintales.css's `.sm.s1/.s2/.s3` tile tints, cycled by index. */
+private val ThumbTileTints = listOf(
+    KinfolkBrand.KinfolkOrange.copy(alpha = 0.16f),
+    KinfolkBrand.PackPink.copy(alpha = 0.14f),
+    KinfolkBrand.KinTeal.copy(alpha = 0.14f),
+)
+
+private const val THUMB_STRIP_MAX_TILES = 8
+private val ThumbTileSize = 54.dp
+private val ThumbTileCorner = 13.dp
+
+/**
+ * Photo-first preview strip (task-24, P3): up to 8 tiles from the list
+ * response's `thumbs`, so the card shows media at feed-render time instead
+ * of only after the kinfolk expands the gallery. Horizontally scrollable —
+ * the same convention this screen's own expanded gallery row already uses
+ * (below, in KinTaleCard) — rather than wrapping, so eight 54dp tiles never
+ * need to shrink or clip to fit a phone's width.
+ */
+@Composable
+private fun KinTaleThumbStrip(thumbs: List<KinTaleThumb>) {
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        thumbs.take(THUMB_STRIP_MAX_TILES).forEachIndexed { i, t ->
+            KinTaleThumbTile(thumb = t, tint = ThumbTileTints[i % ThumbTileTints.size])
+        }
+    }
+}
+
+@Composable
+private fun KinTaleThumbTile(thumb: KinTaleThumb, tint: Color) {
+    val isImage = thumb.contentType == null || thumb.contentType.startsWith("image/")
+    Box(
+        modifier = Modifier
+            .testTag("kinTaleThumbTile")
+            .size(ThumbTileSize)
+            .clip(RoundedCornerShape(ThumbTileCorner))
+            .background(tint),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (isImage) {
+            KinfolkRemoteImage(
+                url = thumb.url,
+                contentDescription = null,
+                modifier = Modifier.size(ThumbTileSize),
+                cornerRadius = ThumbTileCorner,
+            )
+        } else {
+            // No poster frame available for a video (fail loud, never fake —
+            // a browser/client can't draw one for free) — the play glyph on
+            // the tile's tint marks it as a video, distinct from the
+            // gallery's camera glyph for a non-image (MediaBadge's icon and
+            // KinTalesScreen.kt's expanded-gallery convention).
+            Text(text = "▶️", fontSize = 20.sp)
+        }
+    }
+}
+
+/**
+ * The one full-gallery control (task-24 follow-up). Was "N photos · view/hide" —
+ * wrong on a tale whose media includes video (the same reason web's equivalent
+ * button reads "View Gallery" instead of "View N photos", KinTales.tsx's
+ * `galleryBlock`). Renamed so neither client calls this "photos" for a
+ * video-carrying tale, and both now name it a gallery; the count stays
+ * (parenthetical) since Compose has no separate footer count line the way
+ * web's `.tcfoot .ct` does.
+ */
 @Composable
 private fun MediaBadge(count: Int, expanded: Boolean, onClick: () -> Unit) {
     val type = LocalKinfolkTypography.current
@@ -645,7 +722,7 @@ private fun MediaBadge(count: Int, expanded: Boolean, onClick: () -> Unit) {
                 modifier = Modifier.height(16.dp),
             )
             Text(
-                text = (if (count == 1) "1 photo" else "$count photos") + (if (expanded) " · hide" else " · view"),
+                text = if (expanded) "Hide" else "View Gallery ($count)",
                 style = type.sansMeta.copy(color = KinfolkBrand.PackPink),
             )
         }

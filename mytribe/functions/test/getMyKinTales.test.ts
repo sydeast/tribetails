@@ -246,6 +246,130 @@ describe('getMyKinTalesHandler', () => {
 });
 
 /**
+ * Preview thumbnails (task-24, P3 "photo-first" cards): getMyKinTales now
+ * resolves at most the first 8 media documents per tale and returns them as
+ * `thumbs`, so the feed card can show photos without a getMyKinTaleMedia
+ * round trip per card. `mediaIds` (the true count) is untouched.
+ */
+describe('getMyKinTalesHandler thumbs', () => {
+  const baseTale = (id: string, mediaFileIds: string[]) => ({
+    id,
+    data: {
+      kinfolkId: 'fam3',
+      bodyCopy: 'x',
+      mediaFileIds,
+      sentAt: SENT_AT_ISO,
+      sharedAsIds: [],
+    },
+  });
+
+  it('a tale with 12 media returns exactly 8 thumbs, in media order', async () => {
+    const ids = Array.from({ length: 12 }, (_, i) => `m${i + 1}`);
+    const mediaDocs: Record<string, Record<string, unknown>> = { 'clients/u1': { kinfolkIds: ['fam3'] } };
+    ids.forEach((id) => {
+      mediaDocs[`media_files/${id}`] = { storageUrl: `https://cdn/${id}.jpg`, mimeType: 'image/jpeg' };
+    });
+    const ctx = buildDbMock({
+      docs: mediaDocs,
+      queryDocs: { kin_care_reports: [baseTale('r-12', ids)] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.thumbs).toEqual(
+      ids.slice(0, 8).map((id) => ({ id, url: `https://cdn/${id}.jpg`, contentType: 'image/jpeg' })),
+    );
+  });
+
+  it('a tale with 3 media returns 3 thumbs', async () => {
+    const ids = ['ma', 'mb', 'mc'];
+    const mediaDocs: Record<string, Record<string, unknown>> = { 'clients/u1': { kinfolkIds: ['fam3'] } };
+    ids.forEach((id) => {
+      mediaDocs[`media_files/${id}`] = { storageUrl: `https://cdn/${id}.jpg`, mimeType: 'image/jpeg' };
+    });
+    const ctx = buildDbMock({
+      docs: mediaDocs,
+      queryDocs: { kin_care_reports: [baseTale('r-3', ids)] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.thumbs).toHaveLength(3);
+    expect(res.tales[0]!.thumbs.map((t) => t.id)).toEqual(ids);
+  });
+
+  it('a tale with no media returns thumbs: []', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
+      queryDocs: { kin_care_reports: [baseTale('r-none', [])] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.thumbs).toEqual([]);
+  });
+
+  it('a video (contentType not image/*) is INCLUDED, with its content type intact', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['fam3'] },
+        'media_files/v1': { storageUrl: 'https://cdn/v1.mp4', mimeType: 'video/mp4' },
+      },
+      queryDocs: { kin_care_reports: [baseTale('r-video', ['v1'])] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.thumbs).toEqual([{ id: 'v1', url: 'https://cdn/v1.mp4', contentType: 'video/mp4' }]);
+  });
+
+  it('a missing media doc, or one with no storageUrl, is simply absent — never a placeholder', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['fam3'] },
+        'media_files/ok1': { storageUrl: 'https://cdn/ok1.jpg', mimeType: 'image/jpeg' },
+        // 'media_files/missing1' intentionally absent from the fixture — simulates a deleted doc.
+        'media_files/nourl1': { mimeType: 'image/jpeg' }, // exists, but no storageUrl
+      },
+      queryDocs: { kin_care_reports: [baseTale('r-gaps', ['ok1', 'missing1', 'nourl1'])] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.thumbs).toEqual([{ id: 'ok1', url: 'https://cdn/ok1.jpg', contentType: 'image/jpeg' }]);
+  });
+
+  it('mediaIds keeps its full count even when thumbs is capped at 8', async () => {
+    const ids = Array.from({ length: 12 }, (_, i) => `m${i + 1}`);
+    const mediaDocs: Record<string, Record<string, unknown>> = { 'clients/u1': { kinfolkIds: ['fam3'] } };
+    ids.forEach((id) => {
+      mediaDocs[`media_files/${id}`] = { storageUrl: `https://cdn/${id}.jpg`, mimeType: 'image/jpeg' };
+    });
+    const ctx = buildDbMock({
+      docs: mediaDocs,
+      queryDocs: { kin_care_reports: [baseTale('r-12b', ids)] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinTalesHandler } = await import('../src/portal/getMyKinTales');
+
+    const res = await getMyKinTalesHandler({ data: { kinfolkId: 'fam3' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.tales[0]!.mediaIds).toHaveLength(12);
+    expect(res.tales[0]!.thumbs).toHaveLength(8);
+  });
+});
+
+/**
  * `kin_care_reports` is a FLAT collection, so the tenant predicate, the draft
  * exclusion (`sentAt > ''`) and the `before` cursor are the whole contract of
  * this read. None of them were verifiable while the double answered every query

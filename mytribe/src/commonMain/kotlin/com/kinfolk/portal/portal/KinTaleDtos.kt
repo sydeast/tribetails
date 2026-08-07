@@ -2,6 +2,13 @@ package com.kinfolk.portal.portal
 
 import com.kinfolk.portal.components.RoutePoint
 
+/** Same shape KinTaleMedia already has (WriteDtos.kt), minus `expiresAtMs` — the list response is a preview, not the gallery's signed-URL contract. */
+data class KinTaleThumb(
+    val id: String,
+    val url: String,
+    val contentType: String?,
+)
+
 data class KinTale(
     val id: String,
     val body: String,
@@ -14,6 +21,14 @@ data class KinTale(
     /** Optional summary metrics. Null when AuntieOS did not include them. */
     val gpsDistanceMeters: Double? = null,
     val gpsDurationSeconds: Long? = null,
+    /**
+     * Preview media for the feed card's thumbnail strip (task-24, P3):
+     * at most the first 8 of `mediaIds`, resolved server-side. Empty on an
+     * older deployed function that doesn't send `thumbs` yet, same as a
+     * tale with no media — the screen can't tell the two apart and doesn't
+     * need to (no row is the correct render for both).
+     */
+    val thumbs: List<KinTaleThumb> = emptyList(),
 )
 
 data class KinTalesResult(

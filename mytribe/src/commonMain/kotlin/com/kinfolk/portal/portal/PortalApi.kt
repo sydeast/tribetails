@@ -542,6 +542,14 @@ class PortalApi(private val fns: FunctionsClient) {
                 )
             }.orEmpty()
             val summary = o["gpsSummary"]?.jsonObject
+            // Optional-tolerant (task-24): an older deployed getMyKinTales that
+            // doesn't send `thumbs` yet parses as an empty list, not a crash.
+            val thumbs = (o["thumbs"] as? JsonArray)?.mapNotNull { th ->
+                val to = th.jsonObject
+                val id = to["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                val url = to["url"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                KinTaleThumb(id = id, url = url, contentType = to["contentType"]?.jsonPrimitive?.contentOrNull)
+            }.orEmpty()
             KinTale(
                 id = o["id"]?.jsonPrimitive?.contentOrNull ?: error("kinTale: missing id"),
                 body = o["body"]?.jsonPrimitive?.contentOrNull.orEmpty(),
@@ -552,6 +560,7 @@ class PortalApi(private val fns: FunctionsClient) {
                 gpsRoute = route,
                 gpsDistanceMeters  = summary?.get("distanceMeters")?.jsonPrimitive?.doubleOrNull,
                 gpsDurationSeconds = summary?.get("durationSeconds")?.jsonPrimitive?.longOrNull,
+                thumbs = thumbs,
             )
         }.orEmpty()
         return KinTalesResult(
