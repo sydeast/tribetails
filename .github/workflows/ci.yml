@@ -33,6 +33,7 @@ jobs:
       functions: ${{ steps.filter.outputs.functions }}
       android: ${{ steps.filter.outputs.android }}
       mytribe: ${{ steps.filter.outputs.mytribe }}
+      mytribeRules: ${{ steps.filter.outputs.mytribeRules }}
       portal: ${{ steps.filter.outputs.portal }}
       mytribeGradle: ${{ steps.filter.outputs.mytribeGradle }}
       scripts: ${{ steps.filter.outputs.scripts }}
@@ -104,6 +105,26 @@ jobs:
               - 'mytribe/web/src/contracts/**'
               - 'auntieos-admin/src/contracts/**'
               - 'auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/contracts/**'
+            # Its own filter for the same reason `adminE2e` has one: the rules
+            # suite boots the Firestore emulator, so it costs minutes where the
+            # `mytribe` unit job costs seconds, and it must not be paid for by
+            # every functions PR.
+            #
+            # The two lines outside functions/ are the point of a separate
+            # filter. test/rules/setup.ts reads
+            # `resolve(__dirname, '../../../firestore.rules')`, i.e.
+            # mytribe/firestore.rules, and `firebase emulators:exec` runs from
+            # mytribe/functions/ (which has no firebase.json of its own) so the
+            # CLI walks up to mytribe/firebase.json for the emulator ports and
+            # the rules path. Neither file is under `mytribe/functions/**`, so
+            # without these lines the ONLY job that reads the rules file would
+            # not run on a change to the rules file. Compare adminE2e above,
+            # which carries auntieos-admin/web/firestore.rules for this reason.
+            mytribeRules:
+              - 'mytribe/functions/**'
+              - 'mytribe/firestore.rules'
+              - 'mytribe/firebase.json'
+              - '.github/workflows/ci.yml'
             portal:
               - 'mytribe/web/**'
               # See the comment on `admin` above: mytribe/web is a workspace
@@ -251,6 +272,65 @@ jobs:
       - run: npm run build
       # test:ci runs the in-project functions suite. Plain `npm test` also globs
       - run: npm run test:ci
+
+  # test/rules/** is excluded from BOTH vitest configs on purpose
+  # (vitest.config.ts:15, vitest.ci.config.ts:31) because it needs a Firestore
+  # emulator the unit suites must not depend on. The consequence, until this
+  # job, was that nothing ran it: not `npm test`, not `npm run test:ci`, not
+  # scripts/preflight.sh (which names test:rules at :103 and :134 only as
+  # message text inside a firebase-CLI-installed check). It ran when a human
+  # remembered to type it, which is how a suite decays into one nobody can run.
+  #
+  # A sibling job rather than three more steps on `mytribe functions`: that job
+  # is currently fast and pure, and this one installs a JDK, installs a global
+  # npm package and boots an emulator. Splitting also makes a red rules run
+  # legible under its own name instead of buried in a job called something else.
+  # Same trade `adminE2e` already makes against `admin`.
+  mytribe-rules:
+    name: MyTribe Firestore rules
+    needs: changes
+    if: needs.changes.outputs.mytribeRules == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mytribe/functions
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          # mytribe/functions is NOT an npm workspace member (the root
+          # package.json lists packages/*, auntieos-admin and mytribe/web only),
+          # so it installs from its own lockfile. Same as `mytribe functions`.
+          cache-dependency-path: mytribe/functions/package-lock.json
+      # The Firestore emulator is a JAR. Without a JDK it fails at startup with
+      # a message about `java`, several steps away from anything that looks
+      # like a test. 21 to match the e2e job above; the emulator's own floor is
+      # lower, so this is "same as its sibling" rather than a minimum.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      # Pinned, and pinned to the SAME version as the e2e job: firebase-tools
+      # ships emulator behaviour changes in minor releases, and an unpinned
+      # global install turns an upstream release into a red build on a PR that
+      # touched nothing.
+      - name: Install firebase-tools
+        run: npm install -g firebase-tools@15.18.0
+      # `test:rules` is `firebase emulators:exec --only firestore --project
+      # mytribe-rules-test "vitest run --config vitest.rules.config.ts"`. The
+      # exec wrapper is what exports FIRESTORE_EMULATOR_HOST into the child,
+      # and notificationPrefsRoundTrip.test.ts is `describe.skipIf(!EMULATOR)`
+      # — so running vitest against this config WITHOUT the wrapper would
+      # report green having run nothing. Always go through the npm script.
+      #
+      # No Firebase credentials in this job, deliberately: the emulator runs
+      # offline against a throwaway project id, so nothing here can touch real
+      # data even if a test is wrong.
+      - name: Firestore rules tests
+        run: npm run test:rules
 
   portal:
     name: Kinfolk portal
