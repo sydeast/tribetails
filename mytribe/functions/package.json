@@ -34,7 +34,7 @@
     "seed:demo-kinfolk": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/seedDemoKinfolk.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.115.0",
+    "@anthropic-ai/sdk": "^0.116.0",
     "@google-cloud/recaptcha-enterprise": "^6.4.2",
     "@googleapis/calendar": "^16.0.0",
     "@sentry/node": "^10.69.0",
@@ -52,11 +52,11 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@firebase/rules-unit-testing": "^5.0.1",
-    "@types/node": "^26.1.2",
+    "@types/node": "^26.2.0",
     "@types/sanitize-html": "^2.16.1",
-    "eslint": "^10.8.0",
+    "eslint": "^10.8.1",
     "eslint-config-prettier": "^10.1.8",
-    "firebase": "^12.17.0",
+    "firebase": "^12.17.1",
     "globals": "^17.9.0",
     "prettier": "^3.9.6",
     "ts-node": "^10.9.2",
