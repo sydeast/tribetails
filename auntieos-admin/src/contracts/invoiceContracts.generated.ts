@@ -277,6 +277,7 @@ export interface GetInvoiceLedgerResult {
   totalCents: number;
   amountDueCents: number;
   ledgerPayments: GetInvoiceLedgerResultLedgerPayment[];
+  unlinkedKinfolkPayments: GetInvoiceLedgerResultLedgerPayment[];
   sessions: GetInvoiceLedgerResultSession[];
   missingSessionIds: string[];
   orphanSessionIds: string[];

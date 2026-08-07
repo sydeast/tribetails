@@ -40,6 +40,11 @@ class InvoiceDetailViewModelExtTest {
         coEvery { mockKinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         // loadInvoice now also loads payments for the per-invoice join (spec 17).
         coEvery { mockInvoiceRepo.getPayments() } returns Result.success(emptyList<com.tribetails.auntieos.data.model.Payment>())
+        // The detail screen loads its payment lists from getInvoiceLedger now,
+        // not from the raw root-collection read. A relaxed mockk cannot stand in:
+        // Result<T> erases, so its default is a bare Object and the first read
+        // throws. These cases are not about payments; an empty ledger is enough.
+        coEvery { mockInvoiceRepo.getInvoiceLedger(any()) } returns Result.success(TestFixtures.emptyInvoiceLedger())
         // A8: loadInvoice also fetches business settings for the "How to pay" section.
         coEvery { mockRepo.getBusinessSettings() } returns Result.success(com.tribetails.auntieos.data.model.BusinessSettings())
     }

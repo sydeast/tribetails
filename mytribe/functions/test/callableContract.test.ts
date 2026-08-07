@@ -1016,6 +1016,28 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'sessions[].status',
       'totalCents',
       'truncated',
+      // Added for the staff Android invoice screen, which built this same list
+      // from a raw read of the root `payments` collection and so never applied
+      // `resolveLedgerAmountCents` — the bypass that kept the 100x units defect
+      // alive there long after the web ledger was fixed. Same row shape as
+      // `ledgerPayments`; the React panel does not render it.
+      'unlinkedKinfolkPayments[].amountCents',
+      'unlinkedKinfolkPayments[].appliedCents',
+      'unlinkedKinfolkPayments[].appliedInvoiceId',
+      'unlinkedKinfolkPayments[].appliedInvoiceNumber',
+      'unlinkedKinfolkPayments[].autoApply',
+      'unlinkedKinfolkPayments[].date',
+      'unlinkedKinfolkPayments[].feeCents',
+      'unlinkedKinfolkPayments[].method',
+      'unlinkedKinfolkPayments[].notes',
+      'unlinkedKinfolkPayments[].paymentId',
+      'unlinkedKinfolkPayments[].proceedsCents',
+      'unlinkedKinfolkPayments[].reconciles',
+      'unlinkedKinfolkPayments[].recordedBy',
+      'unlinkedKinfolkPayments[].reference',
+      'unlinkedKinfolkPayments[].tipBasis',
+      'unlinkedKinfolkPayments[].tipCents',
+      'unlinkedKinfolkPayments[].unappliedCents',
     ],
   },
   // The household-facing three. `payInvoice` is the only response on this

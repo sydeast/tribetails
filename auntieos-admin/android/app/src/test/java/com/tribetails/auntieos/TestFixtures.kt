@@ -1,5 +1,6 @@
 package com.tribetails.auntieos
 
+import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResult
 import com.tribetails.auntieos.data.model.BookingStatus
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.Draft
@@ -126,5 +127,30 @@ object TestFixtures {
         generatedCopy = "What a wonderful visit!",
         status = "pending",
         communicationType = "visit_report"
+    )
+
+    /**
+     * An empty `getInvoiceLedger` answer: an invoice with nothing recorded
+     * against it and no visit linked.
+     *
+     * The invoice detail screen loads its payment lists from that callable now,
+     * so a test that mounts the screen for some OTHER reason still has to stub
+     * it — and a `relaxed` mockk cannot do it for them. `Result<T>` erases, so
+     * the relaxed default hands back a bare `Object` and the first read is a
+     * `ClassCastException`. Tests that are actually ABOUT payments build their
+     * own rows; this exists so the rest do not have to care.
+     */
+    fun emptyInvoiceLedger(invoiceId: String = "inv1") = GetInvoiceLedgerResult(
+        invoiceId = invoiceId,
+        payments = emptyList(),
+        paidCents = 0L,
+        totalCents = 0L,
+        amountDueCents = 0L,
+        ledgerPayments = emptyList(),
+        unlinkedKinfolkPayments = emptyList(),
+        sessions = emptyList(),
+        missingSessionIds = emptyList(),
+        orphanSessionIds = emptyList(),
+        truncated = false,
     )
 }

@@ -141,6 +141,12 @@ const INVOICE_LEDGERS: Readonly<Record<string, GetInvoiceLedgerResult>> = {
     totalCents: 24000,
     amountDueCents: 18000,
     ledgerPayments: [],
+    // Empty for the same reason as `ledgerPayments` above, plus one of its own:
+    // this list is household money NO invoice claims, and the React panel does
+    // not render it at all. It exists so the staff Android screen can stop
+    // reading the root `payments` collection directly, which is what kept the
+    // 100x units defect alive there. A fixture row would photograph nothing.
+    unlinkedKinfolkPayments: [],
     sessions: [
       {
         sessionId: 'e2e-sess-completed',

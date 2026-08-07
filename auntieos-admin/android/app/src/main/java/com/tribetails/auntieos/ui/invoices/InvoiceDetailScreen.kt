@@ -44,6 +44,7 @@ import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.X
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
+import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResultLedgerPayment
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Payment
@@ -298,8 +299,8 @@ private fun invoiceDetailBody(
     invoice: Invoice,
     linkedSessions: List<KinCareSession>,
     sessionsLoading: Boolean,
-    linkedPayments: List<com.tribetails.auntieos.data.model.Payment>,
-    clientPayments: List<com.tribetails.auntieos.data.model.Payment>,
+    linkedPayments: List<GetInvoiceLedgerResultLedgerPayment>,
+    clientPayments: List<GetInvoiceLedgerResultLedgerPayment>,
     generatingReceipt: Boolean,
     sendingReminder: Boolean,
     sendingDraft: Boolean,
@@ -919,11 +920,29 @@ private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
     }
 }
 
+/**
+ * One row of the invoice's display ledger, as `getInvoiceLedger` returned it.
+ *
+ * TWO THINGS CHANGED HERE AND BOTH ARE THE POINT.
+ *
+ * The figure is `amountCents`, an integer the SERVER resolved, rendered by
+ * [formatCentsUsd]. It used to be `payment.amount`, a `Double` read straight out
+ * of the root `payments` collection whose unit depends on an `amountSource`
+ * field the Kotlin `Payment` model does not carry — so a $137.50 Stripe payment,
+ * stored by `stripeWebhook.ts` as Stripe's own `13750` cents, printed as
+ * $13,750.00. There is no ambiguous number left on this path to misread.
+ *
+ * And the tip is no longer ADDED to it. `amount` is documented on both sides as
+ * "the whole sum collected from the client, the GROSS tip included", so
+ * `amount + tip` counted the gratuity twice on every tipped row — a second,
+ * quieter money bug on the same line. The web ledger has always rendered
+ * `amountCents` alone (`InvoiceLedger.tsx`); this row now agrees with it.
+ */
 @Composable
-private fun PaymentRow(payment: Payment, showDivider: Boolean) {
+private fun PaymentRow(payment: GetInvoiceLedgerResultLedgerPayment, showDivider: Boolean) {
     val c = AuntieTheme.colors
     val dateLabel = payment.date.take(10).ifBlank { "-" }
-    val method = payment.paymentMethod.ifBlank { "payment" }
+    val method = payment.method.ifBlank { "payment" }
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -933,7 +952,11 @@ private fun PaymentRow(payment: Payment, showDivider: Boolean) {
             Text(method, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
             Text(dateLabel, style = AuntieTheme.typography.labelSmall, color = c.textDim)
         }
-        Text(formatMoney(payment.amount + payment.tip), style = AuntieTheme.typography.bodyMedium, color = c.success)
+        Text(
+            formatCentsUsd(payment.amountCents),
+            style = AuntieTheme.typography.bodyMedium,
+            color = c.success,
+        )
     }
 }
 

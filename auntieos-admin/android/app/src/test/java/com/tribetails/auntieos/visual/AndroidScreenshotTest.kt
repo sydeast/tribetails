@@ -141,7 +141,12 @@ class AndroidScreenshotTest {
         val invoiceRepo = mockk<InvoiceRepository>(relaxed = true)
         coEvery { invoiceRepo.getInvoiceById("demo-inv-1") } returns Result.success(AndroidDemoFixtures.invoice)
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
-        coEvery { invoiceRepo.getPayments() } returns Result.success(emptyList())
+        // The payments panel is served by getInvoiceLedger now, not by a raw read
+        // of the root `payments` collection. AndroidDemoFixtures.invoiceLedger is
+        // the demo answer, and it carries a Stripe-sourced row so this golden
+        // actually shows the figure this task fixed.
+        coEvery { invoiceRepo.getInvoiceLedger("demo-inv-1") } returns
+            Result.success(AndroidDemoFixtures.invoiceLedger)
         // A8: loadInvoice fetches business settings (How-to-pay). Blank settings keep the
         // panel hidden so this golden is unchanged.
         coEvery { repo.getBusinessSettings() } returns Result.success(com.tribetails.auntieos.data.model.BusinessSettings())

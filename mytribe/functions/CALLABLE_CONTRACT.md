@@ -642,7 +642,7 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### getInvoiceLedger
 - req `{ invoiceId: string /* 1..200 */ }` (`.strict()`)
-- res `{ invoiceId: string, payments: Array<{ paymentId: string, amountCents: number, method: string|null, reference: string|null, paidAt: string|null /* ISO */, recordedBy: string|null, sourcePaymentId: string|null /* the ROOT payments row an apply came in on */ }>, paidCents: number, totalCents: number, amountDueCents: number, ledgerPayments: Array<{ paymentId: string, amountCents: number /* gross tip INCLUDED */, tipCents: number /* GROSS when tipBasis says so */, feeCents: number, tipBasis: 'gross'|'net'|'unknown', reconciles: boolean /* false = a migrated row whose fee was dropped */, appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, autoApply: boolean, appliedInvoiceId: string, appliedInvoiceNumber: string /* the "Applied to #n" column */, method: string, reference: string, date: string /* FREE TEXT */, notes: string /* STAFF ONLY */, recordedBy: string|null }>, sessions: Array<{ sessionId: string, serviceType: string, status: string, startTime: string /* ISO */, completedAt: string|null, durationMinutes: number|null, linkedBack: boolean }>, missingSessionIds: string[], orphanSessionIds: string[], truncated: boolean }`
+- res `{ invoiceId: string, payments: Array<{ paymentId: string, amountCents: number, method: string|null, reference: string|null, paidAt: string|null /* ISO */, recordedBy: string|null, sourcePaymentId: string|null /* the ROOT payments row an apply came in on */ }>, paidCents: number, totalCents: number, amountDueCents: number, ledgerPayments: Array<{ paymentId: string, amountCents: number /* gross tip INCLUDED */, tipCents: number /* GROSS when tipBasis says so */, feeCents: number, tipBasis: 'gross'|'net'|'unknown', reconciles: boolean /* false = a migrated row whose fee was dropped */, appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, autoApply: boolean, appliedInvoiceId: string, appliedInvoiceNumber: string /* the "Applied to #n" column */, method: string, reference: string, date: string /* FREE TEXT */, notes: string /* STAFF ONLY */, recordedBy: string|null }>, unlinkedKinfolkPayments: Array<{ /* same row shape as ledgerPayments */ }>, sessions: Array<{ sessionId: string, serviceType: string, status: string, startTime: string /* ISO */, completedAt: string|null, durationMinutes: number|null, linkedBack: boolean }>, missingSessionIds: string[], orphanSessionIds: string[], truncated: boolean }`
 - Read only. Writes nothing, stamps no classifier state, repairs nothing. No `ok`
   field, same as `listUninvoicedSessions`: a pure read answers with data or
   throws, and has no partial success to report.
@@ -666,10 +666,25 @@ handler until ADR-0001 codegen replaces the hand-mirror).
     and the historical `match_payments_to_invoices.py`. Counted in NOTHING here.
     Summing the two would double-count a payment recorded through the standard
     two-step flow, which writes one row in each.
+  - `unlinkedKinfolkPayments` is ROOT `payments` rows for the same HOUSEHOLD
+    that name NO invoice at all — money that arrived and no bill claims. Same
+    row shape as `ledgerPayments`, counted in NOTHING, and NOT this invoice's
+    payments. Queried by `kinfolkId` with the blank test done IN MEMORY, because
+    `where('invoiceId','==','')` skips docs missing the field and a legacy
+    import row is exactly that shape. Empty when the invoice names no household,
+    rather than degenerating into an unfiltered scan.
+  - It exists so the STAFF ANDROID invoice screen can stop reading the root
+    `payments` collection directly. It built the same list itself, in Kotlin,
+    off a `Payment.amount` whose dollars-or-cents meaning lives in a sibling
+    `amountSource` field the Kotlin model does not carry — so a $137.50 Stripe
+    payment printed as $13,750.00 there for months after `resolveLedgerAmountCents`
+    fixed the web ledger. A client that never calls the resolver cannot apply it.
+    Android shows this list under a visible "NOT INVOICE-LINKED" warning and only
+    when `ledgerPayments` is empty; the React panel does not render it.
   - Both ship because a Stripe card payment lands ONLY in the root ledger. A
     panel rendering the subcollection alone would report a settled invoice as
-    having no payment at all; a panel rendering the ledger alone (what Android
-    does today) presents a display record as the money.
+    having no payment at all; a panel rendering the ledger alone presents a
+    display record as the money.
 - **THE SESSION LINK IS REPORTED IN BOTH DIRECTIONS, AND NEVER REPAIRED.**
   `sessions` resolves the invoice's own `sessionIds`; `linkedBack` is false when
   that session's `invoiceId` does not point here; `missingSessionIds` is an id

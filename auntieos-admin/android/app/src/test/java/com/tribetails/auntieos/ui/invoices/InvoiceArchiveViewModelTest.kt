@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.invoices
 
+import com.tribetails.auntieos.TestFixtures
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.Payment
@@ -42,6 +43,11 @@ class InvoiceArchiveViewModelTest {
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         coEvery { invoiceRepository.getPayments() } returns Result.success(emptyList<Payment>())
+        // The detail screen loads its payment lists from getInvoiceLedger now,
+        // not from the raw root-collection read. A relaxed mockk cannot stand in:
+        // Result<T> erases, so its default is a bare Object and the first read
+        // throws. These cases are not about payments; an empty ledger is enough.
+        coEvery { invoiceRepository.getInvoiceLedger(any()) } returns Result.success(TestFixtures.emptyInvoiceLedger())
         coEvery { repository.getBusinessSettings() } returns Result.success(BusinessSettings())
         viewModel = InvoiceDetailViewModel(repository, invoiceRepository, mockk(relaxed = true))
     }
