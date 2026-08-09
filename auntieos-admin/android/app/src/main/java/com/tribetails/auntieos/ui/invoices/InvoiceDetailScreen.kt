@@ -61,6 +61,10 @@ import com.tribetails.auntieos.domain.InvoiceDisputeFundsState
 import com.tribetails.auntieos.domain.InvoiceDisputeInfo
 import com.tribetails.auntieos.domain.invoiceDisputeOrNull
 import com.tribetails.auntieos.domain.invoiceStateOrNull
+import com.tribetails.auntieos.domain.ledgerCaveats
+import com.tribetails.auntieos.domain.ledgerRowAppliedLabel
+import com.tribetails.auntieos.domain.ledgerRowBalanceCents
+import com.tribetails.auntieos.domain.ledgerRowFeeLabel
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieCheckbox
@@ -212,6 +216,8 @@ fun InvoiceDetailScreen(
                         sessionsLoading   = uiState.sessionsLoading,
                         linkedPayments    = uiState.linkedPayments,
                         clientPayments    = uiState.clientPayments,
+                        paymentsLoading   = uiState.paymentsLoading,
+                        paymentsError     = uiState.paymentsError,
                         generatingReceipt = uiState.generatingReceipt,
                         sendingReminder   = uiState.sendingReminder,
                         sendingDraft      = uiState.sendingDraft,
@@ -220,6 +226,7 @@ fun InvoiceDetailScreen(
                         archiving         = uiState.archiving,
                         onOpenEdit        = { viewModel.openEditMode() },
                         onRecordPayment   = { viewModel.openRecordPayment() },
+                        onRetryPayments   = { viewModel.retryPayments() },
                         onGenerateReceipt = { viewModel.generateReceipt() },
                         onSendReminder    = { viewModel.sendReminder() },
                         onSendDraft       = { viewModel.reviewAndSendDraft() },
@@ -304,6 +311,8 @@ private fun invoiceDetailBody(
     sessionsLoading: Boolean,
     linkedPayments: List<GetInvoiceLedgerResultLedgerPayment>,
     clientPayments: List<GetInvoiceLedgerResultLedgerPayment>,
+    paymentsLoading: Boolean,
+    paymentsError: String?,
     generatingReceipt: Boolean,
     sendingReminder: Boolean,
     sendingDraft: Boolean,
@@ -312,6 +321,7 @@ private fun invoiceDetailBody(
     archiving: Boolean,
     onOpenEdit: () -> Unit,
     onRecordPayment: () -> Unit,
+    onRetryPayments: () -> Unit,
     onGenerateReceipt: () -> Unit,
     onSendReminder: () -> Unit,
     onSendDraft: () -> Unit,
@@ -609,12 +619,49 @@ private fun invoiceDetailBody(
                 }
 
                 when {
+                    // NOTHING READ IS NOT NOTHING THERE, and these two branches
+                    // exist so the panel cannot confuse them. Both lists default
+                    // to empty, so before this the panel announced "no payment
+                    // recorded against this invoice" while the read was still in
+                    // flight, and went on announcing it after the read failed,
+                    // with only a toast, which fades, to say otherwise.
+                    paymentsError != null -> AuntieBanner(
+                        tone  = AuntieBannerTone.Error,
+                        title = "Couldn't load this invoice's payments",
+                        icon  = Lucide.CircleAlert,
+                        body  = {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                // The server's own words, never reworded: they are
+                                // what tells the operator whether to retry or to
+                                // call someone.
+                                Text(
+                                    paymentsError,
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = AuntieTheme.colors.textDim,
+                                )
+                                Text(
+                                    "Nothing is listed here because the read failed, not because " +
+                                        "nothing was collected. The invoice's own figures above are " +
+                                        "unaffected.",
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = AuntieTheme.colors.textDim,
+                                )
+                                GhostButton(label = "Try again", onClick = onRetryPayments)
+                            }
+                        },
+                    )
+
+                    paymentsLoading -> EmptyHint("Loading this invoice's payments…")
+
                     // Confident per-invoice join via the populated Payment.invoiceId.
                     linkedPayments.isNotEmpty() ->
-                        Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                            linkedPayments.forEachIndexed { idx, p ->
-                                PaymentRow(p, showDivider = idx > 0)
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                                linkedPayments.forEachIndexed { idx, p ->
+                                    PaymentRow(p, showDivider = idx > 0)
+                                }
                             }
+                            LedgerCaveatBanner(linkedPayments)
                         }
 
                     // No invoice-linked payment yet. Surface the disclosed client-side
@@ -638,6 +685,8 @@ private fun invoiceDetailBody(
                                 PaymentRow(p, showDivider = idx > 0)
                             }
                         }
+                        // The same caveats, because it is the same kind of record.
+                        LedgerCaveatBanner(clientPayments)
                     }
 
                     invoice.paymentsHistory.isNullOrBlank() ->
@@ -1079,35 +1128,253 @@ private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
  * for money that really arrived. It now says so instead, in the dim colour the
  * screen already uses for what is absent, and the web table's Amount cell says
  * the same words.
+ *
+ * ── A FOURTH THING: THE OTHER FOUR FIGURES ────────────────────────────────
+ *
+ * `getInvoiceLedger` has always answered with `appliedCents`, `tipCents`,
+ * `feeCents` and `unappliedCents`, Android has always decoded them, and this row
+ * threw all four away. So the phone showed one number with nothing to check it
+ * against. That is precisely how invoice #1029 sat at Amount $137.50 with
+ * $2.71 unaccounted for and nobody could see it. The row now reads across:
+ *
+ *     amount = applied + tipGross + balance,   fee taken out of the tip
+ *
+ * ── WHY A STACK AND NOT A TABLE, AN EXPANDER, OR A SHEET ──────────────────
+ *
+ * Web renders eight columns. A phone cannot, and the three obvious ways out are
+ * all worse here:
+ *
+ *  - AN EXPANDER OR A DETAIL SHEET puts the breakdown one tap away, which makes
+ *    the DEFAULT state of the row identical to the broken one this change
+ *    exists to fix. The operator could not see #1029 fail to reconcile because
+ *    the figures were not on screen; hiding them behind a chevron reproduces
+ *    that exactly, for everyone who does not tap. Money that has to be asked for
+ *    does not get checked.
+ *  - A SIDEWAYS TABLE would be a new idea on this screen. Nothing in `ui/`
+ *    scrolls money horizontally.
+ *
+ * So this composes the two patterns the app already uses for dense money, both
+ * of them on THIS screen: the two-tier summary row (`InvoiceLineItemRow`, which
+ * puts "3 x $50.00, less $10.00" under the description) and the label/value
+ * money stack (`InvoiceLineTotalsRows` and the Amounts panel, both
+ * [AuntieKeyValueRow]). The summary stays exactly as it was; the breakdown is
+ * the web table's columns turned ninety degrees underneath it.
+ *
+ * [LedgerFactRow] rather than [AuntieKeyValueRow] itself, for one measured
+ * reason: that component is a 52dp screen-level row, and four of them per
+ * payment is over 200dp, a single payment filling a phone. This keeps its
+ * language (dim uppercase mono label left, mono figure right) at a quarter of
+ * the height.
+ *
+ * ALL FOUR LABELS ALWAYS RENDER. A cell that vanishes when its value is absent
+ * makes "no fee was charged" and "the fee was never recorded" look the same,
+ * and telling those apart is the entire reason the fee exists.
  */
 @Composable
 private fun PaymentRow(payment: GetInvoiceLedgerResultLedgerPayment, showDivider: Boolean) {
     val c = AuntieTheme.colors
     val dateLabel = payment.date.take(10).ifBlank { "-" }
     val method = payment.method.ifBlank { "payment" }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+    val appliedTo = ledgerRowAppliedLabel(payment)
+    val hairline = AuntieTheme.dims.borderHairline
+    val ruleColor = c.borderSoft
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            // The top rule between payments, the same treatment
+            // `LinkedSessionRow` gives its list. `showDivider` has been a
+            // parameter of this row since it shipped and was never drawn, which
+            // did not show when a payment was one line; now that it is five, two
+            // payments run into each other without it.
+            .drawBehind {
+                if (showDivider) {
+                    val h = hairline.toPx()
+                    drawLine(
+                        color = ruleColor,
+                        start = Offset(0f, h / 2f),
+                        end = Offset(size.width, h / 2f),
+                        strokeWidth = h,
+                    )
+                }
+            }
+            .padding(top = if (showDivider) 14.dp else 9.dp, bottom = 9.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(method, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
-            Text(dateLabel, style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(method, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+                Text(dateLabel, style = AuntieTheme.typography.labelSmall, color = c.textDim)
+            }
+            if (payment.amountResolved) {
+                Text(
+                    formatCentsUsd(payment.amountCents),
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = c.success,
+                )
+            } else {
+                Text(
+                    "could not be read",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                )
+            }
         }
-        if (payment.amountResolved) {
-            Text(
-                formatCentsUsd(payment.amountCents),
-                style = AuntieTheme.typography.bodyMedium,
-                color = c.success,
+
+        Column(modifier = Modifier.padding(top = 6.dp)) {
+            LedgerFactRow(
+                label = "Applied to",
+                // Never "$0.00 applied". A payment that touched no balance is a
+                // different fact from one that applied nothing to it.
+                value = if (appliedTo == "") "not applied" else formatCentsUsd(payment.appliedCents),
+                dim = appliedTo == "",
+                // The bill the money went to, beside how much of it went there.
+                note = if (appliedTo == "") null else appliedTo,
             )
-        } else {
-            Text(
-                "could not be read",
-                style = AuntieTheme.typography.bodySmall,
-                color = c.textDim,
+            LedgerFactRow(
+                label = "Tip",
+                value = formatCentsUsd(payment.tipCents),
+                // The tax-relevant fact, said once on every row that has one:
+                // the stored tip is the GROSS. The net is derived and never
+                // stored, so nothing can lose the deductible half again.
+                note = if (payment.tipCents > 0L && payment.tipBasis == "gross") "gross" else null,
+            )
+            LedgerFactRow(
+                label = "Fee",
+                value = ledgerRowFeeLabel(payment),
+                // Dim ONLY for the stand-in. The fee is read from its own stored
+                // field, so it stays a full-strength reading even on a row whose
+                // amount could not be resolved. Muting it there would suggest
+                // the unreadable amount had infected it.
+                dim = payment.feeCents == 0L && !payment.reconciles,
+            )
+            LedgerFactRow(
+                label = "Balance",
+                // THE BALANCE IS NOT SHOWN ON A ROW WHOSE AMOUNT COULD NOT BE
+                // READ. The server works it out as amount - applied - tip, and
+                // on such a row the amount it used was the schema's floor of 0
+                // rather than a reading, so the figure that falls out is
+                // arithmetic on a non-number. "-$127.50" would look like a real
+                // over-application. The caveat below names the row.
+                value = if (payment.amountResolved) {
+                    formatCentsUsd(ledgerRowBalanceCents(payment))
+                } else {
+                    "could not be read"
+                },
+                dim = !payment.amountResolved,
+                // Where the leftover went. Auto-apply moves it into the
+                // household's account credit for a future invoice; without it
+                // the money is simply sitting unapplied.
+                note = if (payment.amountResolved && payment.unappliedCents > 0L && payment.autoApply) {
+                    "held as credit"
+                } else {
+                    null
+                },
+                showDivider = false,
             )
         }
     }
+}
+
+/**
+ * One line of a payment's breakdown: dim uppercase label left, figure right,
+ * with an optional short [note] beside the figure for the thing the number
+ * alone does not say ("gross", "held as credit", which invoice).
+ *
+ * Deliberately the visual language of [AuntieKeyValueRow] at a quarter of its
+ * height. See the note on [PaymentRow] for why it is not that component.
+ * [dim] renders the figure in the muted tone the screen already uses for what is
+ * absent or unverified, so an operator scanning a column can tell a reading from
+ * a stand-in without reading the words.
+ */
+@Composable
+private fun LedgerFactRow(
+    label: String,
+    value: String,
+    dim: Boolean = false,
+    note: String? = null,
+    showDivider: Boolean = true,
+) {
+    val c = AuntieTheme.colors
+    val hairline = AuntieTheme.dims.borderHairline
+    val ruleColor = c.borderSoft
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                if (showDivider) {
+                    val h = hairline.toPx()
+                    val y = size.height - (h / 2f)
+                    drawLine(
+                        color = ruleColor,
+                        start = Offset(0f, y),
+                        end = Offset(size.width, y),
+                        strokeWidth = h,
+                    )
+                }
+            }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            label.uppercase(),
+            style = AuntieTheme.typography.labelSmall,
+            color = c.textDim,
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (note != null) {
+                Text(note, style = AuntieTheme.typography.labelSmall, color = c.textDim)
+            }
+            Text(
+                value,
+                style = AuntieTheme.typography.mono,
+                color = if (dim) c.textDim else c.textPrimary,
+            )
+        }
+    }
+}
+
+/**
+ * The rows that CANNOT be made to add up, named once each rather than left as
+ * arithmetic that silently fails.
+ *
+ * Fed from BOTH lists, never just the linked one. Android shows a household
+ * fallback the web ledger has no equivalent for, and a migrated row in it is
+ * every bit as unreadable as a migrated row in the other.
+ */
+@Composable
+private fun LedgerCaveatBanner(rows: List<GetInvoiceLedgerResultLedgerPayment>) {
+    val caveats = ledgerCaveats(rows)
+    if (caveats.isEmpty()) return
+    AuntieBanner(
+        tone = AuntieBannerTone.Warning,
+        title = "Some of these rows cannot be reconciled",
+        icon = Lucide.CircleAlert,
+        body = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                caveats.forEach { caveat ->
+                    Text(
+                        caveat,
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.textDim,
+                    )
+                }
+                Text(
+                    "Nothing has been guessed to make them balance. Payments recorded from now on " +
+                        "store the gross tip and the processor fee separately, so they reconcile " +
+                        "on their own.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim,
+                )
+            }
+        },
+    )
 }
 
 /**
