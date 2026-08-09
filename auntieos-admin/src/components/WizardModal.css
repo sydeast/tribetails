@@ -1,0 +1,246 @@
+/* WizardModal. The panel shape lives in Dialog.css (`.dialog--wizard`); this
+   file is the rail, the step, and the footer. */
+
+.wiz__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.wiz__notice {
+  margin-bottom: var(--space-3);
+}
+
+/* Always legible, and never scrolled away with the rail: on a narrow screen the
+   rail strip can carry the current pill off the edge, and this line is then the
+   only thing still answering "where am I". */
+.wiz__position {
+  margin: 0 0 var(--space-2);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.wiz__rail {
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border-soft);
+  padding-bottom: var(--space-3);
+}
+
+.wiz__rail-list {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 0 var(--space-1);
+  list-style: none;
+  /* The narrow answer: the rail stays one strip of real controls and scrolls,
+     rather than wrapping into a wall or dropping steps. */
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.wiz__rail-item {
+  flex: 0 0 auto;
+}
+
+.wiz__rail-step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-dim);
+  font: inherit;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.wiz__rail-step:hover {
+  background: var(--color-surface-2);
+}
+.wiz__rail-step:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.wiz__rail-num {
+  display: inline-grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  background: var(--color-surface-2);
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.wiz__rail-step--current {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+.wiz__rail-step--current .wiz__rail-num {
+  background: var(--color-primary);
+  color: var(--color-background);
+}
+
+.wiz__rail-step--flagged {
+  border-color: var(--color-error);
+}
+.wiz__rail-flag {
+  display: inline-grid;
+  place-items: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  background: var(--color-error);
+  color: var(--color-background);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+/* Under 30rem the labels go and the pills become numbers, so a nine-step flow
+   is still one strip rather than nine lines of text. The label stays in the
+   accessible name, so nothing is lost to a screen reader. */
+@media (max-width: 30rem) {
+  .wiz__rail-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .wiz__rail-step {
+    padding: var(--space-2);
+  }
+}
+
+/* The step body, and the persistent `aside` beside it. One plain column when
+   there is no aside, so a wizard without one is not paying for a grid. */
+.wiz__cols {
+  min-width: 0;
+}
+.wiz__cols--aside {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+.wiz__step {
+  min-width: 0;
+}
+/* Sticky, so the aside stays put while a long step is scrolled: the whole point
+   of a preview is that it tracks what is being typed without being chased. */
+.wiz__aside {
+  position: sticky;
+  top: 0;
+  min-width: 0;
+}
+@media (max-width: 64rem) {
+  .wiz__cols--aside {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* Stacked, it sits under the fields it previews. Pinned there it would only
+     be in the way, which is the rule the pane already had before the editor
+     became a wizard. */
+  .wiz__aside {
+    position: static;
+  }
+}
+
+.wiz__step-heading {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-fraunces);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+/* The heading takes focus on every step change; it is a landing spot, not a
+   control, so it gets a ring and no other affordance. */
+.wiz__step-heading:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 4px;
+  border-radius: var(--radius-card);
+}
+
+.wiz__step-blurb {
+  margin: 0 0 var(--space-3);
+  font-size: 0.9rem;
+  color: var(--color-text-dim);
+}
+
+.wiz__step-errors {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.wiz__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  flex-wrap: wrap;
+}
+.wiz__foot-move {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+/* A link-weight control, not a button: it is a shortcut to the first problem,
+   and dressing it as an action would compete with Next and the finish. */
+.wiz__remaining {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--color-error);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.wiz__remaining:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.wiz__discard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  flex-wrap: wrap;
+}
+.wiz__discard-text {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--color-text-primary);
+}
+.wiz__discard-actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+.wiz__discard-go {
+  background: var(--color-error);
+  border-color: var(--color-error);
+}

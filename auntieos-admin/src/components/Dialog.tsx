@@ -15,8 +15,13 @@ interface DialogProps {
    * component, because the parts that are easy to get wrong (Escape, the Tab
    * focus trap, focus restore, backdrop dismissal, the labelled
    * `role="dialog"`) are identical and must not be re-implemented per shape.
+   *
+   * `'wizard'` is the wide, tall variant `WizardModal` needs: a step's worth of
+   * form does not fit a 30rem confirm box, and a rail plus a body plus a
+   * navigation footer needs the body — not the whole panel — to be the part
+   * that scrolls, so the rail stays reachable at any scroll position.
    */
-  variant?: 'center' | 'sheet';
+  variant?: 'center' | 'sheet' | 'wizard';
   /**
    * `'standard'` (default) is the 30rem column every confirm/edit modal has
    * always been. `'wide'` is for a modal that carries a second COLUMN rather
@@ -25,7 +30,8 @@ interface DialogProps {
    * override of `.dialog`, because a screen stylesheet reaching into another
    * component's class is how two rules end up fighting over the same width.
    * Ignored by `variant="sheet"`, which is pinned to the trailing edge and
-   * takes its width from that.
+   * takes its width from that, and by `variant="wizard"`, whose width and
+   * height are the shape of the step flow rather than a caller's choice.
    */
   size?: 'standard' | 'wide';
 }
@@ -89,9 +95,11 @@ export function Dialog({
         className={
           variant === 'sheet'
             ? 'dialog dialog--sheet'
-            : size === 'wide'
-              ? 'dialog dialog--wide'
-              : 'dialog'
+            : variant === 'wizard'
+              ? 'dialog dialog--wizard'
+              : size === 'wide'
+                ? 'dialog dialog--wide'
+                : 'dialog'
         }
         role="dialog"
         aria-modal="true"

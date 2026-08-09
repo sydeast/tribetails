@@ -56,6 +56,41 @@
   }
 }
 
+/* The wizard panel (Dialog variant="wizard"). Wider and taller than the confirm
+   box, because one step of a real form does not fit 30rem, and wider still than
+   `--wide` because a wizard may carry a persistent `aside` (the schema editor's
+   live preview) beside the step. The BODY is what scrolls, not the whole panel,
+   so the step rail at the top of the body stays reachable and the navigation
+   footer stays put while a long step is scrolled. */
+.dialog--wizard {
+  width: min(100%, 66rem);
+  height: min(100%, 46rem);
+  max-height: 100%;
+}
+.dialog--wizard .dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* On a phone it is the screen, not a card floating on one. */
+@media (max-width: 40rem) {
+  .dialog__backdrop:has(.dialog--wizard) {
+    padding: 0;
+  }
+  .dialog--wizard {
+    height: 100%;
+    border: none;
+    border-radius: 0;
+  }
+  .dialog--wizard .dialog__body {
+    padding: var(--space-4);
+  }
+  .dialog--wizard .dialog__head,
+  .dialog--wizard .dialog__foot {
+    padding: var(--space-3) var(--space-4);
+  }
+}
+
 .dialog:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;

@@ -280,3 +280,32 @@ async function assertOverlayFits(p: Page, what: string): Promise<void> {
   expect(m.dialog, `${what} is wider than the phone`).toBeLessThanOrEqual(390);
   expect(m.over, `${what} puts content past the right edge`).toEqual([]);
 }
+/**
+ * The form-schema editor as a workflow modal at phone width.
+ *
+ * A step rail that only fits a desktop would make the whole wizard a
+ * desktop-only feature, so this is the claim that it is not: the rail is still
+ * one strip of real controls, every pill is on screen, and the "Step 1 of 3"
+ * line that answers "where am I" is visible without scrolling the rail.
+ *
+ * `assertOverlayFits` is deliberately strict about the rail: the strip may
+ * scroll, but three steps at this width must not need it. A future editor with
+ * enough steps to overflow will fail here, and that failure is the honest
+ * signal that the count line has become the only wayfinding left.
+ */
+test('the form-schema wizard, its rail and its footer fit at 390px', async ({ page }) => {
+  await openScreen(page, 'form-schemas', 'The Den · Admin');
+  await page.getByRole('button', { name: 'New schema', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  const rail = page.getByRole('navigation', { name: 'New Form Schema steps' });
+  await expect(rail, 'the rail did not survive the phone breakpoint').toBeVisible();
+  await expect(page.getByText('Step 1 of 3')).toBeVisible();
+  await expect(rail.getByRole('button')).toHaveCount(3);
+  await assertOverlayFits(page, 'form-schema wizard step 1');
+  // The Fields step is the tall one: a field card carries eight controls, and
+  // it is the step the length complaint was actually about.
+  await page.getByRole('button', { name: /^2 Fields/ }).click();
+  await page.getByRole('button', { name: 'Add field' }).click();
+  await expect(page.getByLabel('Helper text')).toBeVisible();
+  await assertOverlayFits(page, 'form-schema wizard step 2 with a field card');
+});
