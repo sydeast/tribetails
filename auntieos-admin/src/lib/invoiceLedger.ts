@@ -140,10 +140,23 @@ export function ledgerRowAppliedLabel(
  * NO BACK-COMPUTED GROSS. The gross tip cannot be recovered from a net tip
  * whose deduction is unknown, and a plausible guess here would put a number
  * that was never collected onto a tax return.
+ *
+ * THE UNREADABLE AMOUNT IS TESTED FIRST, and it has to be. A row the server
+ * could not read carries `reconciles: true` and a zero balance perfectly often,
+ * so it fell through both branches below and produced no caveat at all. Order
+ * also decides which sentence such a row gets, and "the fee was dropped" is the
+ * wrong one: it invites the operator to trust the amount beside it, which is
+ * the single figure on that row nobody can vouch for.
  */
 export function ledgerRowCaveat(
-  row: Pick<GetInvoiceLedgerResultLedgerPayment, 'reconciles' | 'tipCents' | 'unappliedCents'>,
+  row: Pick<
+    GetInvoiceLedgerResultLedgerPayment,
+    'amountResolved' | 'reconciles' | 'tipCents' | 'unappliedCents'
+  >,
 ): string {
+  if (!row.amountResolved) {
+    return 'The amount on this row could not be read: either no figure was ever resolved for the payment, or what was stored is not a usable number. Nothing is shown in its place, and the $0.00 that used to appear here was never a reading.';
+  }
   if (!row.reconciles) {
     return 'This row was migrated without its processor fee, so whether the tip shown is before or after that fee was never recorded. It cannot be reconciled, and no gross tip has been guessed for it.';
   }

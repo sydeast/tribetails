@@ -86,9 +86,11 @@ class InvoiceDetailPaymentUnitsTest {
         tipCents: Long = 0L,
         method: String = "stripe",
         date: String = "2026-07-20",
+        amountResolved: Boolean = true,
     ) = GetInvoiceLedgerResultLedgerPayment(
         paymentId = paymentId,
         amountCents = amountCents,
+        amountResolved = amountResolved,
         tipCents = tipCents,
         feeCents = 0L,
         tipBasis = "unknown",
@@ -116,6 +118,7 @@ class InvoiceDetailPaymentUnitsTest {
         amountDueCents = 6250L,
         ledgerPayments = ledgerPayments,
         unlinkedKinfolkPayments = unlinked,
+        unresolvedAmountCount = (ledgerPayments + unlinked).count { !it.amountResolved }.toLong(),
         sessions = emptyList(),
         missingSessionIds = emptyList(),
         orphanSessionIds = emptyList(),
@@ -177,6 +180,49 @@ class InvoiceDetailPaymentUnitsTest {
         rule.onNodeWithText("$137.50").assertExists()
         rule.onNodeWithText("$13750.00").assertDoesNotExist()
     }
+    /**
+     * THE UNREADABLE ROW, which is a different fact from a payment of nothing.
+     *
+     * `resolveLedgerAmountCents` answers `{ amountCents: 0, resolved: false }`
+     * for a Stripe event the webhook itself gave up on and for an `amount` that
+     * is not a usable number. The 0 is the floor `CentsSchema` allows, not a
+     * figure, and this row rendered it as a confident "$0.00" in the same green
+     * it uses for money that really arrived.
+     */
+    @Test
+    fun `an amount the server could not read does NOT render as $0_00`() {
+        mount(
+            Result.success(
+                ledger(ledgerPayments = listOf(ledgerRow(amountCents = 0L, amountResolved = false))),
+            ),
+        )
+        rule.onNodeWithText("could not be read").assertExists()
+        // The row carries method and date and nothing else, so no legitimate
+        // zero on this screen can absorb the assertion.
+        rule.onNodeWithText("$0.00").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a real zero still renders as a figure, because that one IS a reading`() {
+        // The twin of the case above. Suppressing both would trade one lie for
+        // another: a payment genuinely recorded at zero is a fact the operator
+        // is entitled to see.
+        mount(Result.success(ledger(ledgerPayments = listOf(ledgerRow(amountCents = 0L)))))
+        rule.onNodeWithText("$0.00").assertExists()
+        rule.onNodeWithText("could not be read").assertDoesNotExist()
+    }
+
+    @Test
+    fun `the household fallback flags an unreadable amount too, under its own warning`() {
+        // "NOT INVOICE-LINKED" says the row is not this invoice's. It says
+        // nothing about whether the figure on it was ever readable, and these
+        // rows come off the same reader, so they can carry the same defect.
+        mount(Result.success(ledger(unlinked = listOf(ledgerRow(amountCents = 0L, amountResolved = false)))))
+        rule.onNodeWithText("NOT INVOICE-LINKED").assertExists()
+        rule.onNodeWithText("could not be read").assertExists()
+        rule.onNodeWithText("$0.00").assertDoesNotExist()
+    }
+
     @Test
     fun `a failed ledger read shows nothing rather than a figure from somewhere else`() {
         // Fail-loud. There is deliberately no fallback to the old raw Firestore

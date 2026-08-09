@@ -44,3 +44,24 @@ export async function replyToConversation(kinfolkId: string, body: string): Prom
   );
   return res.messageId;
 }
+
+/**
+ * markAllThreadsRead (admin) -> clears the admin-side unread flag on EVERY
+ * thread waiting on a reply, and stamps `readAt` on their kinfolk messages the
+ * same way opening a thread does. Returns the number of threads it ACTUALLY
+ * cleared, which is the only number the screen may report.
+ *
+ * Takes no arguments: the server rejects any payload rather than quietly
+ * ignoring one, so a caller cannot think it scoped the clear to one household.
+ *
+ * `cleared` can be smaller than the badge if the backlog exceeds the server's
+ * per-call bound (200 threads). The caller reloads afterwards, so the badge
+ * still shows what is genuinely left rather than an assumed zero.
+ */
+export async function markAllThreadsRead(): Promise<{ cleared: number }> {
+  const res = await call<Record<string, never>, { ok: true; cleared: number }>(
+    'markAllThreadsRead',
+    {},
+  );
+  return { cleared: res.cleared };
+}

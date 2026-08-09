@@ -203,6 +203,7 @@ object TestFixtures {
         amountDueCents = 0L,
         ledgerPayments = emptyList(),
         unlinkedKinfolkPayments = emptyList(),
+        unresolvedAmountCount = 0L,
         sessions = emptyList(),
         missingSessionIds = emptyList(),
         orphanSessionIds = emptyList(),

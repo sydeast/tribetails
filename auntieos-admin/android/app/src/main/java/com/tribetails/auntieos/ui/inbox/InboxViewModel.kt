@@ -69,6 +69,15 @@ class InboxViewModel(private val repository: AuntieRepository) : ViewModel() {
     private val _isReplying = MutableStateFlow(false)
     val isReplying: StateFlow<Boolean> = _isReplying.asStateFlow()
 
+    // Bulk "Mark all read". `bulkReadResult` holds the sentence the operator is
+    // shown after a SUCCESSFUL clear; a failure goes to `conversationError` like
+    // every other conversation failure, so the two can never be on screen at once.
+    private val _bulkReadResult = MutableStateFlow<String?>(null)
+    val bulkReadResult: StateFlow<String?> = _bulkReadResult.asStateFlow()
+
+    private val _bulkReadInFlight = MutableStateFlow(false)
+    val bulkReadInFlight: StateFlow<Boolean> = _bulkReadInFlight.asStateFlow()
+
     init {
         viewModelScope.launch {
             _isLoading.value = true
@@ -155,6 +164,43 @@ class InboxViewModel(private val repository: AuntieRepository) : ViewModel() {
             loadConversations()
         }
     }
+
+    /**
+     * Clears every thread waiting on a reply, server-side, then RE-READS the
+     * list.
+     *
+     * There is no optimistic branch on purpose. The per-row unread dot and the
+     * screen's unread count both read `unreadForAdmin` off `_conversations`, so
+     * clearing them locally before the server agreed would show an empty inbox
+     * for a write that failed. The count in the message is the server's own,
+     * which also means a backlog larger than one call's bound reports what
+     * really happened rather than "all of them".
+     */
+    fun markAllThreadsRead() {
+        if (_bulkReadInFlight.value) return
+        _bulkReadInFlight.value = true
+        _bulkReadResult.value = null
+        _conversationError.value = null
+        viewModelScope.launch {
+            repository.markAllThreadsRead()
+                .onSuccess { cleared ->
+                    _bulkReadInFlight.value = false
+                    _bulkReadResult.value = bulkReadMessage(cleared)
+                    loadConversations()
+                }
+                .onFailure {
+                    _bulkReadInFlight.value = false
+                    _conversationError.value =
+                        "Could not mark all read: ${it.message ?: "Mark all read failed"}"
+                }
+        }
+    }
+
+    /** "1 thread marked read" / "N threads marked read". Pure. */
+    internal fun bulkReadMessage(cleared: Int): String =
+        if (cleared == 1) "1 thread marked read" else "$cleared threads marked read"
+
+    fun clearBulkReadResult() { _bulkReadResult.value = null }
 
     fun clearConversationError() { _conversationError.value = null }
 

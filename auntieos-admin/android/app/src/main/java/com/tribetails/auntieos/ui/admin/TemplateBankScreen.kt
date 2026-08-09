@@ -47,7 +47,9 @@ import com.tribetails.auntieos.ui.components.AuntieChip
 import com.tribetails.auntieos.ui.components.AuntieDialog
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
-import com.tribetails.auntieos.ui.components.AuntieEmailPreviewCard
+import com.tribetails.auntieos.ui.components.ENRICHABLE_SAMPLE
+import com.tribetails.auntieos.ui.components.MergeFieldWarning
+import com.tribetails.auntieos.ui.components.MergePreview
 import com.tribetails.auntieos.ui.components.AuntieEmptyState
 import com.tribetails.auntieos.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.ui.components.AuntieField
@@ -510,12 +512,18 @@ private fun TemplateViewOverlay(
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             AuntieFieldLabel(text = "Inbox preview")
-            AuntieEmailPreviewCard(
+            // MergePreview, not the bare card: it fills the twelve tokens
+            // `enrichTemplateData.ts` hydrates with sample values, so what is on
+            // screen is the copy a kinfolk receives rather than the source, and
+            // it names the merge fields nothing binds. `account.welcome.business`
+            // is the reason: it has shipped for months ending "See their account
+            // here: []" and no admin surface had ever rendered it.
+            MergePreview(
                 subject = template.subject,
                 body = template.body,
+                sample = ENRICHABLE_SAMPLE,
                 html = template.html?.takeIf { it.isNotBlank() },
-                highlightTokens = true,
-                footer = "merge fields resolve at send",
+                footnote = "sample values, filled in at send",
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -727,6 +735,15 @@ private fun TemplateEditorOverlay(
             }
             // Renders the SAME parsed blocks the save path emits to HTML; {{vars}} literal.
             MarkdownPreview(bodyValue.text, modifier = Modifier.fillMaxWidth())
+            // The markdown preview stays, because it is a true picture of the
+            // save path. The warning is the other half: which of those literal
+            // {{vars}} the dispatch pipeline will NOT fill, named while the
+            // author is still in a position to do something about it.
+            MergeFieldWarning(
+                subject = subject,
+                body = bodyValue.text,
+                sample = ENRICHABLE_SAMPLE,
+            )
         }
     }
 }

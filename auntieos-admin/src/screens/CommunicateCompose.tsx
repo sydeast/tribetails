@@ -16,6 +16,7 @@ import {
 import { segmentSaveBlocker, broadcastBlocker, broadcastAudienceArgs } from '../lib/audienceSegmentEdit';
 import { channelLabel } from '../lib/communicateFormat';
 import { DenPanel } from '../components/DenScreenKit';
+import { MergePreview } from '../components/MergePreview';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
 import { Dialog } from '../components/Dialog';
@@ -240,6 +241,7 @@ export function CommunicateCompose() {
   return (
     <>
       <DenPanel title="Compose" subtitle="Every field below is validated the same way the send itself will be.">
+        <div className="compose__layout">
         <div className="compose__form">
           {sendError !== null && (
             <Banner tone="error" title="Broadcast failed">
@@ -483,6 +485,25 @@ export function CommunicateCompose() {
           <div className="compose__actions">
             <PrimaryButton label="Review broadcast" onClick={openConfirm} disabled={!formValid || sending} />
           </div>
+        </div>
+
+        {/*
+          The preview column. `sample={{}}` is not a placeholder waiting to be
+          filled in later, it is the accurate one: `broadcastMessage` calls
+          `sendTemplatedEmail` with `data: {}` and hands Twilio / FCM / the
+          in-app write the string verbatim, so nothing on this path can resolve
+          a merge field. Every `{{token}}` an author types here IS unresolved,
+          and the footnote says what each channel does with it rather than
+          leaving the operator to find out from a customer.
+        */}
+        <div className="compose__preview">
+          <MergePreview
+            subject={subject}
+            body={body}
+            sample={{}}
+            footnote="A broadcast carries no merge data. Email sends these blank; in-app, SMS and push send the braces as typed."
+          />
+        </div>
         </div>
       </DenPanel>
 

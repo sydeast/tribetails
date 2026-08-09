@@ -131,3 +131,34 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+/* ── the live preview column ───────────────────────────────────────────────── */
+/* Two columns on a wide dialog (Dialog size="wide"), stacked below that. The
+   form keeps a readable measure and the preview takes what is left; `auto-fit`
+   is not used because the two columns are not interchangeable, the preview is
+   the narrower one on purpose. */
+.template-editor__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+@media (max-width: 48rem) {
+  .template-editor__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* `position: sticky` as the mocks draw it, so the preview stays in view while
+   the author scrolls a long form. The scroll container is `.dialog` (it carries
+   `overflow-y: auto`), which is what this sticks against. On the stacked
+   layout above it is NOT sticky: a preview pinned above the fields it previews
+   would cover them. */
+.template-editor__preview {
+  position: sticky;
+  top: var(--space-4);
+  min-width: 0;
+}
+@media (max-width: 48rem) {
+  .template-editor__preview {
+    position: static;
+  }
+}

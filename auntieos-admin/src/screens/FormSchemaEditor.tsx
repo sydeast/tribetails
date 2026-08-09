@@ -10,6 +10,7 @@ import {
   type FormSchemaDetail,
 } from '../api/formSchemasWrite';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+import { SchemaPreview } from '../components/SchemaPreview';
 import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
 import './FormSchemaEditor.css';
@@ -330,6 +331,8 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
         </p>
       ) : (
         <>
+          <div className="fse__layout">
+          <div className="fse__main">
           <DenPanel title="Schema" subtitle="Identity + where this schema applies.">
             <div className="fse__grid">
               <div className="fse__field">
@@ -582,6 +585,22 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
               </ul>
             )}
           </DenPanel>
+          </div>
+
+          {/*
+            The preview column, from the mock's right-hand `.suggest-wrap` pane.
+            It reads the SAME `sectionMeta` / `fields` state the editor writes,
+            so it cannot drift from what Save would persist; there is no second
+            copy of the schema to keep in step.
+          */}
+          <div className="fse__preview">
+            <SchemaPreview
+              sectionTitle={sectionMeta.title}
+              sectionDescription={sectionMeta.description}
+              fields={fields}
+            />
+          </div>
+          </div>
 
           {errors.length > 0 && (
             <Banner tone="warning" title="Fix before saving">

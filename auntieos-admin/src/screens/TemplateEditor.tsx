@@ -10,6 +10,8 @@ import {
   type TemplateFormFields,
 } from '../lib/templateFormat';
 import { Dialog } from '../components/Dialog';
+import { MergePreview } from '../components/MergePreview';
+import { ENRICHABLE_SAMPLE } from '../lib/mergeFields';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
 import './TemplateEditor.css';
@@ -227,6 +229,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     <Dialog
       title={isCreate ? 'New template' : 'Edit template'}
       onClose={requestClose}
+      size="wide"
       footer={
         <>
           <GhostButton label="Cancel" onClick={requestClose} disabled={saving} />
@@ -248,6 +251,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
         </Banner>
       ) : null}
 
+      <div className="template-editor__grid">
       <fieldset className="template-editor__fields" disabled={saving}>
         <legend className="template-editor__sr-legend">Template details</legend>
 
@@ -446,6 +450,25 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
           <GhostButton label="Add section" onClick={addSection} />
         </div>
       </fieldset>
+
+        {/*
+          The live preview column. `ENRICHABLE_SAMPLE` is the right sample here
+          and only here: this editor authors NOTIFICATION templates, which are
+          dispatched through `enrichTemplateData.ts`, so the twelve tokens that
+          module hydrates really will be filled in and everything else is a
+          promise the emitting function has to keep. The preview names the
+          second group; the footnote does not pretend they are the first.
+        */}
+        <div className="template-editor__preview">
+          <MergePreview
+            subject={fields.subject}
+            body={fields.body}
+            html={fields.html}
+            sample={ENRICHABLE_SAMPLE}
+            footnote="Sample values. Dispatch fills these in at send"
+          />
+        </div>
+      </div>
     </Dialog>
   );
 }

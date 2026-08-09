@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import {
   KINFOLK_QUERY,
   KIN_QUERY,
@@ -230,10 +231,10 @@ function KinCard({ kin, onClick }: KinCardProps) {
 
 interface DirectoryProps {
   /**
-   * Card-open override. Propless (the router default), a kinfolk card now opens
-   * the in-screen `KinfolkProfile` detail view. A caller can pass its own handler
-   * (a test, or a future route) to take over selection; then the in-screen
-   * profile never opens.
+   * Card-open override. Propless (the router default), a kinfolk card NAVIGATES
+   * to `/directory/{kinfolkId}`; the profile is then mounted by that route, not
+   * by local state, so the URL is what says which household is open. A caller
+   * can pass its own handler to take over selection instead.
    */
   onSelectKinfolk?: (id: string) => void;
   /**
@@ -242,9 +243,9 @@ interface DirectoryProps {
    */
   onSelectKin?: (id: string) => void;
   /**
-   * Open straight onto one household's profile, for the `/directory/{id}`
-   * deep link. The list is still mounted underneath, so closing the profile
-   * lands on it exactly as it would after a card click.
+   * The household whose profile is open, supplied by the `/directory/{id}`
+   * route. This is the ONLY thing that opens the profile: there is no local
+   * "which household is open" state to disagree with the address bar.
    */
   initialKinfolkId?: string;
   /**
@@ -277,14 +278,16 @@ export function Directory({
 }: DirectoryProps) {
   const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
   const kinState = useCollection<Kin>(KIN_QUERY);
+  const navigate = useNavigate();
 
   const [tab, setTab] = useState<DirectoryTab>('kinfolk');
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortOption>(SORT_OPTION_DEFAULT);
-  // The household profile detail view: a sibling VIEW of this list (the Inbox /
-  // Communicate pattern), opened when a card is activated and no external
-  // onSelectKinfolk overrides. Holds the id; the profile reads the full doc.
-  const [openKinfolkId, setOpenKinfolkId] = useState<string | null>(initialKinfolkId ?? null);
+  // The household profile detail view. It is opened by the ROUTE, never by
+  // local state: a card click navigates to `/directory/{kinfolkId}` and this
+  // screen re-mounts under that route with the id as a prop. That is what makes
+  // a household linkable, reloadable, and reachable with browser Back.
+  const openKinfolkId = initialKinfolkId ?? null;
   // Kin (pet) detail: same sibling-view pattern as the household profile.
   const [openKinId, setOpenKinId] = useState<{ id: string; name: string } | null>(null);
 
@@ -349,8 +352,12 @@ export function Directory({
         kinfolkName={kf ? kinfolkDisplayName(kf) : ''}
         kin={kinByKinfolk.get(openKinfolkId) ?? []}
         onBack={() => {
-          setOpenKinfolkId(null);
-          onProfileClose?.();
+          // Closing is a navigation too. `onProfileClose` is what the route
+          // passes; propless (never reached today, the profile only mounts
+          // under the route) fall back to the list URL rather than to a
+          // silently unchanged screen.
+          if (onProfileClose) onProfileClose();
+          else void navigate({ to: '/directory' });
         }}
       />
     );
@@ -480,7 +487,11 @@ export function Directory({
                     kf={kf}
                     kin={kinByKinfolk.get(kf._id) ?? []}
                     kinPending={kinPending}
-                    onClick={() => (onSelectKinfolk ? onSelectKinfolk(kf._id) : setOpenKinfolkId(kf._id))}
+                    onClick={() =>
+                      onSelectKinfolk
+                        ? onSelectKinfolk(kf._id)
+                        : void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId: kf._id } })
+                    }
                   />
                 ))}
               </ul>

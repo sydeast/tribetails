@@ -106,6 +106,16 @@ export const AUDIT_EVENTS = {
   // separate: the trail is queried by `event`, so "which disputes have closed,
   // and how" must be answerable without reading every payload.
   BILLING_PAYMENT_DISPUTE_CLOSED: 'BILLING_PAYMENT_DISPUTE_CLOSED',
+  // The money itself moving (`charge.dispute.funds_withdrawn` /
+  // `charge.dispute.funds_reinstated`), which is a DIFFERENT fact from where the
+  // contest stands: a dispute sits at `needs_response` for weeks with the
+  // balance already debited. Separate keys for the same reason the close is
+  // separate. "Which disputes have actually taken money out of the balance"
+  // has to be answerable by querying `event`, not by reading every payload.
+  // Withdrawal is `critical` (money gone, and nobody here decided it should be);
+  // the reinstatement is the good half and is audited at `info`.
+  BILLING_PAYMENT_DISPUTE_FUNDS_WITHDRAWN: 'BILLING_PAYMENT_DISPUTE_FUNDS_WITHDRAWN',
+  BILLING_PAYMENT_DISPUTE_FUNDS_REINSTATED: 'BILLING_PAYMENT_DISPUTE_FUNDS_REINSTATED',
 
   THEME_BRAND_TOKENS_UPDATED: 'THEME_BRAND_TOKENS_UPDATED',
   THEME_KINFOLK_OVERRIDES_UPDATED: 'THEME_KINFOLK_OVERRIDES_UPDATED',
@@ -247,6 +257,10 @@ export const AUDIT_EVENTS = {
   // only the kinfolkId + message id.
   CONVERSATION_MESSAGE_SENT: 'CONVERSATION_MESSAGE_SENT',
   CONVERSATION_REPLIED: 'CONVERSATION_REPLIED',
+  // markAllThreadsRead: ONE row for the whole bulk clear, carrying the count and
+  // the thread ids it touched. A state change over other people's messages
+  // should be attributable, the same reason the notifications bulk read is.
+  CONVERSATIONS_BULK_READ: 'CONVERSATIONS_BULK_READ',
 
   // RULING O-6 (docs/RULING_O-6_OPERATOR_TRUST_2026-07-13.md) hardening 2:
   // staff cross-tenant power is total (any kinfolkId, any household), so the

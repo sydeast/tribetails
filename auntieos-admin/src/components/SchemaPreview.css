@@ -1,0 +1,99 @@
+/**
+ * SchemaPreview styling, imported by SchemaPreview.tsx (the Banner.css /
+ * Buttons.css convention). Values come from styles/tokens.css.
+ *
+ * Unlike MergePreview, this card stays on the THEMED surface rather than the
+ * brand-light one. It previews the Kinfolk portal, which follows the viewer's
+ * scheme; pinning it light would be a picture of a portal nobody has.
+ *
+ * The dashed accent border is the mock's own framing for this pane
+ * (ui-ideas/auntieos-formschema-editor-2026-05-27.html, `.suggest-wrap`).
+ */
+
+.schema-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.schema-preview__label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-dim);
+}
+
+.schema-preview__card {
+  border: var(--border-hairline) dashed color-mix(in srgb, var(--color-primary) 45%, transparent);
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--color-primary) 4%, transparent);
+  padding: var(--space-4);
+}
+
+.schema-preview__section-title {
+  margin: 0;
+  font-family: var(--font-fraunces);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.schema-preview__section-description {
+  margin: var(--space-1) 0 0;
+  font-size: 0.75rem;
+  color: var(--color-text-faint);
+}
+
+.schema-preview__empty {
+  margin: var(--space-3) 0 0;
+  font-size: 0.8rem;
+  color: var(--color-text-faint);
+}
+
+.schema-preview__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.schema-preview__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.schema-preview__field-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-dim);
+}
+
+.schema-preview__control {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--color-text-faint);
+  background: var(--color-background);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  /* Disabled controls default to a washed-out grey that reads as "broken"
+     rather than "not for typing in". This pane is entirely disabled by design,
+     so it opts out of that and relies on the dashed frame to say what it is. */
+  opacity: 1;
+}
+
+.schema-preview__checkbox {
+  /* Left-aligned rather than stretched: a full-width checkbox is a hit area
+     nobody drew. */
+  align-self: flex-start;
+  opacity: 1;
+}
+
+.schema-preview__hint {
+  font-size: 0.7rem;
+  color: var(--color-text-faint);
+}

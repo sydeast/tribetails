@@ -446,6 +446,7 @@ internal fun decodeGetInvoiceLedgerResultPayment(raw: Map<String, Any?>?): GetIn
 data class GetInvoiceLedgerResultLedgerPayment(
     val paymentId: String,
     val amountCents: Long,
+    val amountResolved: Boolean,
     val tipCents: Long,
     val feeCents: Long,
     /** One of `gross`, `net`, `unknown`. `""` when the payload omits it. */
@@ -473,6 +474,7 @@ internal fun decodeGetInvoiceLedgerResultLedgerPayment(raw: Map<String, Any?>?):
     GetInvoiceLedgerResultLedgerPayment(
         paymentId = (raw?.get("paymentId") as? String).orEmpty(),
         amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+        amountResolved = raw?.get("amountResolved") as? Boolean ?: false,
         tipCents = (raw?.get("tipCents") as? Number)?.toLong() ?: 0L,
         feeCents = (raw?.get("feeCents") as? Number)?.toLong() ?: 0L,
         tipBasis = (raw?.get("tipBasis") as? String).orEmpty(),
@@ -526,6 +528,7 @@ data class GetInvoiceLedgerResult(
     val amountDueCents: Long,
     val ledgerPayments: List<GetInvoiceLedgerResultLedgerPayment>,
     val unlinkedKinfolkPayments: List<GetInvoiceLedgerResultLedgerPayment>,
+    val unresolvedAmountCount: Long,
     val sessions: List<GetInvoiceLedgerResultSession>,
     val missingSessionIds: List<String>,
     val orphanSessionIds: List<String>,
@@ -546,6 +549,7 @@ internal fun decodeGetInvoiceLedgerResult(raw: Map<String, Any?>?): GetInvoiceLe
         amountDueCents = (raw?.get("amountDueCents") as? Number)?.toLong() ?: 0L,
         ledgerPayments = (raw?.get("ledgerPayments") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetInvoiceLedgerResultLedgerPayment(nested) } },
         unlinkedKinfolkPayments = (raw?.get("unlinkedKinfolkPayments") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetInvoiceLedgerResultLedgerPayment(nested) } },
+        unresolvedAmountCount = (raw?.get("unresolvedAmountCount") as? Number)?.toLong() ?: 0L,
         sessions = (raw?.get("sessions") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetInvoiceLedgerResultSession(nested) } },
         missingSessionIds = (raw?.get("missingSessionIds") as? List<*>).orEmpty().mapNotNull { it as? String },
         orphanSessionIds = (raw?.get("orphanSessionIds") as? List<*>).orEmpty().mapNotNull { it as? String },

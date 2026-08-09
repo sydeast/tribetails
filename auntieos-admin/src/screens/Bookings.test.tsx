@@ -78,7 +78,7 @@ vi.mock('../components/BookingDetailModal', () => ({
   ),
 }));
 
-import { Bookings } from './Bookings';
+import { Bookings, groupBookingsByStatus } from './Bookings';
 
 function fakeTs(iso: string): Timestamp {
   return { toDate: () => new Date(iso) } as unknown as Timestamp;
@@ -114,6 +114,16 @@ beforeEach(() => {
     .mockResolvedValue({ ok: true, action: 'APPROVE', updated: 0, failed: [] });
 });
 
+/**
+ * Reveal the History section. Completed and cancelled rows start behind its
+ * count button (see `Bookings status sections` below), so a test about one of
+ * them has to open it first or it is asserting against rows that are not in the
+ * DOM at all.
+ */
+async function openHistory() {
+  await userEvent.click(screen.getByRole('button', { name: /^Show \d+ finished$/ }));
+}
+
 /** Turn Select on, then tick the checkbox for each named household. */
 async function pick(...names: string[]) {
   await userEvent.click(screen.getByRole('button', { name: 'Select' }));
@@ -148,7 +158,7 @@ describe('Bookings screen', () => {
     expect(screen.getByText(/Visit ·/)).toBeInTheDocument();
   });
 
-  it('folds CANCELLED / CANCELED / REJECTED into one CANCELLED chip', () => {
+  it('folds CANCELLED / CANCELED / REJECTED into one CANCELLED chip', async () => {
     useCollection.mockReturnValue({
       status: 'ready',
       data: [
@@ -158,12 +168,14 @@ describe('Bookings screen', () => {
       ],
     });
     render(<Bookings />);
+    await openHistory();
     expect(screen.getAllByText('CANCELLED')).toHaveLength(3);
   });
 
-  it('an unrecognized status renders its own honest UNKNOWN chip, never a fabricated known state', () => {
+  it('an unrecognized status renders its own honest UNKNOWN chip, never a fabricated known state', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({ status: 'WEIRD_STATUS' })] });
     render(<Bookings />);
+    await openHistory();
     expect(screen.getByText('UNKNOWN')).toBeInTheDocument();
   });
 
@@ -510,6 +522,8 @@ describe('Bookings bulk actions', () => {
       ],
     });
     render(<Bookings />);
+    // The completed row lives in History, which is collapsed until asked for.
+    await openHistory();
     await pick('Household One', 'Done Household');
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
@@ -566,5 +580,130 @@ describe('Bookings bulk actions', () => {
     await pick('Household One');
     await userEvent.click(screen.getByRole('button', { name: /Household Two/i }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+});
+/**
+ * The mock's three status sections (`Pending approval` / `Scheduled` /
+ * `History`, each with a live count), which the flat newest-first list did not
+ * have: 94 of the 100 rows on the real screen are finished, so the six live
+ * ones sat under them.
+ *
+ * The grouping is asserted as a pure function first, because "which bucket does
+ * this status land in" is the part that must never disagree with the stat cards
+ * or the filter chips above it.
+ */
+describe('groupBookingsByStatus', () => {
+  it('orders sections pending, scheduled, history regardless of input order', () => {
+    const sections = groupBookingsByStatus([
+      entry({ _id: 'c', status: 'COMPLETED' }),
+      entry({ _id: 'p', status: 'PENDING' }),
+      entry({ _id: 's', status: 'SCHEDULED' }),
+      entry({ _id: 'd', status: 'DRAFT' }),
+    ]);
+    expect(sections.map((s) => s.key)).toEqual(['pending', 'scheduled', 'history']);
+    // Draft joins pending, mirroring the "Pending" stat this screen already shows.
+    expect(sections[0]?.rows.map((r) => r._id)).toEqual(['p', 'd']);
+    expect(sections[1]?.rows.map((r) => r._id)).toEqual(['s']);
+    expect(sections[2]?.rows.map((r) => r._id)).toEqual(['c']);
+  });
+  it('keeps an empty section so the screen can say nothing is waiting', () => {
+    const sections = groupBookingsByStatus([entry({ _id: 'c', status: 'COMPLETED' })]);
+    expect(sections[0]).toEqual({ key: 'pending', label: 'Pending approval', rows: [] });
+  });
+  it('files an unrecognized status under History rather than letting it vanish', () => {
+    // The AO-12 rule this tree keeps: a row that matches no section is a row
+    // nobody can see. `historyCount` already counts `unknown`, so the section
+    // that carries the same badge has to hold it.
+    const sections = groupBookingsByStatus([entry({ _id: 'u', status: 'WAT' })]);
+    expect(sections[2]?.rows.map((r) => r._id)).toEqual(['u']);
+  });
+  it('preserves the query order inside a section, never re-sorting it', () => {
+    const sections = groupBookingsByStatus([
+      entry({ _id: 'newer', status: 'SCHEDULED' }),
+      entry({ _id: 'older', status: 'SCHEDULED' }),
+    ]);
+    expect(sections[1]?.rows.map((r) => r._id)).toEqual(['newer', 'older']);
+  });
+  it('cancelled and completed share the one History section', () => {
+    const sections = groupBookingsByStatus([
+      entry({ _id: 'x', status: 'CANCELLED' }),
+      entry({ _id: 'y', status: 'completed' }),
+    ]);
+    expect(sections[2]?.rows.map((r) => r._id)).toEqual(['x', 'y']);
+  });
+});
+describe('Bookings status sections', () => {
+  const mixed = [
+    entry({ _id: 'a', kinfolkName: 'Waiting Wren', status: 'PENDING' }),
+    entry({ _id: 'b', kinfolkName: 'Booked Devlin', status: 'SCHEDULED' }),
+    entry({ _id: 'c', kinfolkName: 'Finished Sparrow', status: 'completed' }),
+    entry({ _id: 'd', kinfolkName: 'Called Off Mercer', status: 'CANCELLED' }),
+  ];
+  function sectionNamed(label: string): HTMLElement {
+    return screen.getByRole('group', { name: new RegExp(`^${label}`) });
+  }
+  it('heads each section with its own live count', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: mixed });
+    render(<Bookings />);
+    expect(within(sectionNamed('Pending approval')).getByText('1')).toBeInTheDocument();
+    expect(within(sectionNamed('Scheduled')).getByText('1')).toBeInTheDocument();
+    expect(within(sectionNamed('History')).getByText('2')).toBeInTheDocument();
+  });
+  it('puts each row under its own status section, not one flat list', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: mixed });
+    render(<Bookings />);
+    expect(within(sectionNamed('Pending approval')).getByText('Waiting Wren')).toBeInTheDocument();
+    expect(within(sectionNamed('Scheduled')).getByText('Booked Devlin')).toBeInTheDocument();
+  });
+  it('keeps History behind its count until asked, so the live rows are not buried', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: mixed });
+    render(<Bookings />);
+    expect(screen.queryByText('Finished Sparrow')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Show 2 finished' }));
+    expect(screen.getByText('Finished Sparrow')).toBeInTheDocument();
+    expect(screen.getByText('Called Off Mercer')).toBeInTheDocument();
+  });
+  it('says what an empty section is waiting for instead of leaving a bare heading', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [mixed[1] as BookingEntry] });
+    render(<Bookings />);
+    expect(
+      within(sectionNamed('Pending approval')).getByText(/nothing is waiting on a reply/i),
+    ).toBeInTheDocument();
+  });
+  it('collapses to the one section a status chip names', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: mixed });
+    render(<Bookings />);
+    await userEvent.click(screen.getByRole('tab', { name: 'Scheduled' }));
+    expect(screen.getByRole('group', { name: /^Scheduled/ })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: /^Pending approval/ })).toBeNull();
+    expect(screen.queryByRole('group', { name: /^History/ })).toBeNull();
+  });
+  it('opens History outright when a chip asks for it, never behind a second press', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: mixed });
+    render(<Bookings />);
+    await userEvent.click(screen.getByRole('tab', { name: 'Completed' }));
+    expect(screen.getByText('Finished Sparrow')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Show \d+ finished$/ })).toBeNull();
+  });
+  it('still says "Nothing matches this filter" when a chip excludes every row', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: mixed });
+    render(<Bookings />);
+    await userEvent.click(screen.getByRole('tab', { name: 'Draft' }));
+    expect(screen.getByText(/nothing matches this filter/i)).toBeInTheDocument();
+  });
+  it('the section counts and the stat cards read from the same grouping', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: mixed });
+    render(<Bookings />);
+    const historyStat = screen
+      .getByText('History', { selector: '.den-stat-label' })
+      .closest('.den-stat, button.den-stat--button');
+    expect(within(historyStat as HTMLElement).getByText('2')).toBeInTheDocument();
+    expect(within(sectionNamed('History')).getByText('2')).toBeInTheDocument();
+  });
+  it('can still bulk-pick a row that now sits inside a section', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: mixed });
+    render(<Bookings />);
+    await pick('Waiting Wren');
+    expect(screen.getByRole('group', { name: 'Bulk actions' })).toBeInTheDocument();
   });
 });

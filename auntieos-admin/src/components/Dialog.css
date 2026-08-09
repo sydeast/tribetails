@@ -25,6 +25,15 @@
   border-radius: var(--radius-panel);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
 }
+
+/* Dialog size="wide". For a modal that carries a second COLUMN rather than more
+   rows, which so far means an editor with a live preview beside it. 56rem fits a
+   form column and a preview column with the gap between them; `min(100%, ...)`
+   leaves the phone case exactly as it was, where the columns stack anyway. */
+.dialog--wide {
+  width: min(100%, 56rem);
+}
+
 /* The right-side detail sheet (Dialog variant="sheet"). Full height, pinned to
    the trailing edge, 480px like the archive's BookingDetailModal. Below the
    phone breakpoint it becomes a full-bleed panel rather than a 480px column
