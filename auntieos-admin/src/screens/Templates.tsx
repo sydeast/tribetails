@@ -5,6 +5,7 @@ import {
   categoryMatchesFilter,
   filterTemplates,
   isUntagged,
+  templateEmptyMessage,
   previewTags,
   templateCategoryDisplay,
   templateRowTitle,
@@ -360,7 +361,18 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
 
                 {visible.length === 0 ? (
                   <EmptyHint>
-                    {rows.length === 0 ? 'No templates yet.' : 'Nothing matches this filter.'}
+                    {/*
+                      Three facts, three sentences: an empty bank, an empty
+                      category, and a search that matched nothing. The last one
+                      also names the bound, because this list is paged and the
+                      search only ever sees `rows` (see templateEmptyMessage).
+                    */}
+                    {templateEmptyMessage({
+                      loaded: rows.length,
+                      category: filter,
+                      query,
+                      hasMore: nextCursor !== null,
+                    })}
                   </EmptyHint>
                 ) : (
                   <ul className="templates__list">

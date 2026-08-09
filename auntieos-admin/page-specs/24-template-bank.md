@@ -1,5 +1,48 @@
 # Template Bank — current → desired delta
 
+## STATUS 2026-08-09: all four mock SUGGESTIONs are SHIPPED, and this spec's item 6 is stale
+
+Operator ruling today was "as mocked, and all open items". Verified against source first,
+and there was almost nothing open. The mock (`auntieos-template-bank-2026-05-27.html`, ll.25-32)
+tags six suggestions; every one of them is live on BOTH consoles:
+
+| Mock SUGGESTION | React `src/screens/Templates.tsx` | Android `ui/admin/TemplateBankScreen.kt` |
+| --- | --- | --- |
+| "＋ New template" button | `PrimaryButton label="New template"` in the heading's `trailing` | `PrimaryButton(label = "New template", …)`, opens the editor in create mode |
+| Search box | `<input type="search" … aria-label="Search templates by title or key">` | `AuntieSearchField` + `templateBankSearchFilter` |
+| Per-card category pill + key | `templates__chip--category` + `<code className="templates__row-id">{tpl.templateId}</code>` | two `AuntieStatusPill`s, the key one `mono = true` |
+| Count chips on filter pills | `templates__tab-count` | the `($count)` suffix on each `AuntieChip` |
+| Live preview in the editor | `MergePreview` in `TemplateEditor.tsx` (PR #302) | `MergePreview` / `MergeFieldWarning` + `MarkdownPreview` |
+| Cmd/Ctrl-K hint on search | not built, and not drawn in the mock body either (comment only) | same |
+
+**The "Click New" dead end the mock names is NOT real.** It was, when the mock was drawn
+against the wasm build. Both shipped consoles wire a New action today.
+
+**The key on the card is the real one.** It is the `emailTemplates` document id
+(`listTemplatesHandler`: `templateId: d.id`), which is exactly what the send path loads:
+`sendFromTemplate.ts` does `db().doc('emailTemplates/${templateId}')` after
+`resolveTemplateId(catalogKey)`. Not a display name that resembles a key.
+
+**Item 6 below is stale.** `FF_TEMPLATE_SEARCH` no longer exists anywhere in the repo except
+in that paragraph; search ships ungated on both consoles. Item 2's "backlog 13.5 already done"
+line is still true and now has a named primitive (`MergePreview`).
+
+**Paths:** items below cite `web/composeApp/.../TemplateBankScreen.kt`. That tree still exists
+at `auntieos-admin/web/composeApp/`, but it is the SUPERSEDED Compose wasm build. The live
+admin is `auntieos-admin/src` (React, auntie.tribetails.com) plus `auntieos-admin/android`.
+Read the deltas below as applying to those two.
+
+**What this ruling actually changed (client-side only, no callable):** the two quality bars the
+shipped suggestions were failing. React's bank pages at 50 with an open cursor, so its search
+only ever sees loaded rows; "Nothing matches this filter" therefore read as "no such template".
+It now names the bound (`templateEmptyMessage`). Android's chips reported "All (0)" after a
+failed `listTemplates()`, and its empty state blamed the category even when the search box was
+the thing excluding rows (`templateBankChipLabel`, `templateBankEmptyMessage`).
+
+**Still deferred:** the Android stat strip renders `templates.size` = "0" after a failed read.
+Same defect class, but the stat strip is not in this mock, and PR #314 deferred its exact
+analog on KinTales for the same reason ("an Android error surface the mock does not draw").
+
 **Desired (source of truth):** `ui-ideas/auntieos-template-bank-2026-05-27.html`
 **Current code (web):** `web/composeApp/src/commonMain/kotlin/com/tribetails/auntieos/web/screens/admin/TemplateBankScreen.kt`
 **Service:** `TemplateService` in `…/web/data/TemplateService.kt` — `listTemplates` / `saveTemplate` (callables `listTemplates`, `saveTemplate`); `EmailTemplate(templateId, subject, body, html?, title, description?, tags[], category?)` (ll.28-37)

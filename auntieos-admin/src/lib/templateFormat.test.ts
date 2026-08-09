@@ -6,6 +6,7 @@ import {
   previewTags,
   isUntagged,
   filterTemplates,
+  templateEmptyMessage,
   templateCategoryState,
   templateCategoryDisplay,
   categoryMatchesFilter,
@@ -378,5 +379,50 @@ describe('buildSaveTemplatePayload', () => {
     const payload = buildSaveTemplatePayload(fields({ sections: [] }));
     expect(payload).toHaveProperty('sectionDefinitions');
     expect(payload.sectionDefinitions).toEqual([]);
+  });
+});
+describe('templateEmptyMessage: what the bank searched over', () => {
+  it('says the bank is empty when nothing has loaded at all', () => {
+    expect(templateEmptyMessage({ loaded: 0, category: null, query: '', hasMore: false })).toBe(
+      'No templates yet.',
+    );
+  });
+  it('a category with no templates is not a failed search', () => {
+    expect(
+      templateEmptyMessage({ loaded: 12, category: 'Bookings', query: '', hasMore: false }),
+    ).toBe('No templates in Bookings.');
+  });
+  it('names the loaded page when a category looks empty but the cursor is still open', () => {
+    expect(templateEmptyMessage({ loaded: 50, category: 'Bookings', query: '', hasMore: true })).toBe(
+      'No templates in Bookings among the 50 loaded so far. Load more to check the rest.',
+    );
+  });
+  it('a search that matched nothing says so, and says what it searched', () => {
+    expect(templateEmptyMessage({ loaded: 12, category: null, query: 'refund', hasMore: false })).toBe(
+      'Nothing matches "refund". Searched all 12 templates, by title and key.',
+    );
+  });
+  it('a search over a page that has more behind it says the search is bounded', () => {
+    expect(templateEmptyMessage({ loaded: 50, category: null, query: 'refund', hasMore: true })).toBe(
+      'Nothing matches "refund". Searched the 50 templates loaded so far, by title and key. Load more to search further.',
+    );
+  });
+  it('carries the active category into the search message', () => {
+    expect(
+      templateEmptyMessage({ loaded: 12, category: 'Bookings', query: 'refund', hasMore: false }),
+    ).toBe('Nothing in Bookings matches "refund". Searched all 12 templates, by title and key.');
+  });
+  it('reports the typed query trimmed, never the raw padding', () => {
+    expect(
+      templateEmptyMessage({ loaded: 12, category: null, query: '  refund  ', hasMore: false }),
+    ).toBe('Nothing matches "refund". Searched all 12 templates, by title and key.');
+  });
+  it('counts one template in the singular', () => {
+    expect(templateEmptyMessage({ loaded: 1, category: null, query: 'refund', hasMore: false })).toBe(
+      'Nothing matches "refund". Searched all 1 template, by title and key.',
+    );
+    expect(templateEmptyMessage({ loaded: 1, category: null, query: 'refund', hasMore: true })).toBe(
+      'Nothing matches "refund". Searched the 1 template loaded so far, by title and key. Load more to search further.',
+    );
   });
 });

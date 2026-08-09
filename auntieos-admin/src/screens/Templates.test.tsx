@@ -338,3 +338,61 @@ describe('Templates screen: I9 New binding', () => {
     expect(screen.getByRole('dialog', { name: /new binding/i })).toBeInTheDocument();
   });
 });
+describe('Templates screen: an empty list that says which fact it means', () => {
+  beforeEach(() => {
+    listTemplates.mockReset();
+    listTemplateCategories.mockReset();
+    listTemplateCategories.mockResolvedValue([]);
+  });
+  it('a search that matched nothing over an OPEN cursor admits it only searched the loaded page', async () => {
+    listTemplates.mockResolvedValue({
+      templates: [tpl({ templateId: 'a', title: 'Alpha' }), tpl({ templateId: 'b', title: 'Beta' })],
+      nextCursor: 'b',
+    });
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    await userEvent.type(screen.getByLabelText(/search templates by title or key/i), 'refund');
+    expect(
+      await screen.findByText(
+        'Nothing matches "refund". Searched the 2 templates loaded so far, by title and key. Load more to search further.',
+      ),
+    ).toBeInTheDocument();
+    // The control that lifts the bound the message just named is on screen.
+    expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument();
+  });
+  it('a search that matched nothing over an EXHAUSTED list says it searched all of them', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    await userEvent.type(screen.getByLabelText(/search templates by title or key/i), 'refund');
+    expect(
+      await screen.findByText('Nothing matches "refund". Searched all 1 template, by title and key.'),
+    ).toBeInTheDocument();
+  });
+  it('an empty CATEGORY is reported as an empty category, not as a failed search', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha', category: 'Onboarding' })]);
+    listTemplateCategories.mockResolvedValue(['Onboarding', 'Bookings']);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    await userEvent.click(screen.getByRole('tab', { name: /^Bookings/ }));
+    expect(await screen.findByText('No templates in Bookings.')).toBeInTheDocument();
+  });
+  it('names the active category in the no-match message, so the two exclusions are told apart', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha', category: 'Onboarding' })]);
+    listTemplateCategories.mockResolvedValue(['Onboarding']);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    await userEvent.click(screen.getByRole('tab', { name: /^Onboarding/ }));
+    await userEvent.type(screen.getByLabelText(/search templates by title or key/i), 'refund');
+    expect(
+      await screen.findByText(
+        'Nothing in Onboarding matches "refund". Searched all 1 template, by title and key.',
+      ),
+    ).toBeInTheDocument();
+  });
+  it('a bank with no templates at all still says exactly that', async () => {
+    listTemplates.mockResolvedValue([]);
+    render(<Templates />);
+    expect(await screen.findByText('No templates yet.')).toBeInTheDocument();
+  });
+});
