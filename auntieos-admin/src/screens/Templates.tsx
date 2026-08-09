@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { listTemplatesPage, listTemplateCategories, type TemplateSummary } from '../api/templates';
 import {
   categoryCount,
   categoryMatchesFilter,
   filterTemplates,
   isUntagged,
+  templateEmptyMessage,
   previewTags,
   templateCategoryDisplay,
   templateRowTitle,
@@ -194,6 +195,32 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   useEffect(() => load(), [load]);
   useEffect(() => loadCategories(), [loadCategories]);
 
+  // The mock draws a "Ctrl K" kbd hint inside the search box (l.228) and lists
+  // the shortcut as its own SUGGESTION (l.31). The hint ships WITH the binding,
+  // never on its own: a key legend that does nothing is the same dead
+  // affordance as the "Click New" the mock's empty state used to promise.
+  //
+  // Ctrl and Cmd both, because this admin is driven from a Mac and a browser
+  // Ctrl-K there is a different key from the one the operator will reach for.
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return;
+      const input = searchRef.current;
+      // No box on screen (first page in flight, or the load failed) means there
+      // is nothing to focus, so the key is left to the browser rather than
+      // swallowed in exchange for nothing.
+      if (input === null) return;
+      event.preventDefault();
+      input.focus();
+      // Select rather than append: the shortcut is how an operator starts a
+      // NEW search, and typing over the old query is what that expects.
+      input.select();
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   // If the active category chip disappears after a reload (deleted server-side),
   // fall back to All so the list never strands on an empty, tab-less filter.
   useEffect(() => {
@@ -349,6 +376,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
 
                 <div className="templates__search">
                   <input
+                    ref={searchRef}
                     type="search"
                     className="templates__search-input"
                     value={query}
@@ -356,11 +384,29 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
                     placeholder="Search templates by title or key…"
                     aria-label="Search templates by title or key"
                   />
+                  {/* The mock's `.kbd` span, and it is honest: the binding is
+                      wired in the effect above. aria-hidden because the label
+                      on the input already names the box for a screen reader,
+                      and this legend is a mouse/keyboard affordance. */}
+                  <kbd className="templates__search-kbd" aria-hidden="true">
+                    Ctrl K
+                  </kbd>
                 </div>
 
                 {visible.length === 0 ? (
                   <EmptyHint>
-                    {rows.length === 0 ? 'No templates yet.' : 'Nothing matches this filter.'}
+                    {/*
+                      Three facts, three sentences: an empty bank, an empty
+                      category, and a search that matched nothing. The last one
+                      also names the bound, because this list is paged and the
+                      search only ever sees `rows` (see templateEmptyMessage).
+                    */}
+                    {templateEmptyMessage({
+                      loaded: rows.length,
+                      category: filter,
+                      query,
+                      hasMore: nextCursor !== null,
+                    })}
                   </EmptyHint>
                 ) : (
                   <ul className="templates__list">

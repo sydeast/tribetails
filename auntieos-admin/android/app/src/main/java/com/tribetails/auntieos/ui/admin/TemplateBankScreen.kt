@@ -87,6 +87,63 @@ internal fun templateBankSearchFilter(
 }
 
 /**
+ * The label for one category filter chip.
+ *
+ * The chips render ABOVE the `loading` branch, so before this they carried a
+ * count in every state, including the two where nothing had been read:
+ * `listTemplates()` leaves `loading` false and the list empty on failure, so a
+ * failed load said "All (0)" about a collection it never managed to read.
+ * That is the confident zero the web console already refuses.
+ *
+ * Rows already on screen settle it either way: a failed REFRESH over twelve
+ * visible rows still leaves twelve, so the chip keeps describing them. The
+ * chip itself always renders (it is also a drop target for the drag-to-
+ * categorize gesture); only the number goes away.
+ */
+internal fun templateBankChipLabel(
+    option: String,
+    count: Int,
+    loaded: Int,
+    loading: Boolean,
+    hasError: Boolean,
+): String = if (loaded == 0 && (loading || hasError)) option else "$option ($count)"
+
+/**
+ * What the empty list says, given WHY it is empty.
+ *
+ * Four facts, and the old copy told two of them wrong. "No templates in this
+ * category." rendered whenever the visible list came back empty, including on
+ * "All" with a search query typed, so it named the category as the reason when
+ * the search box was doing the excluding. And "No templates yet." rendered
+ * over a FAILED read, which claims an empty bank on the strength of a list
+ * nobody managed to load.
+ *
+ * This console says "all N" where the web one has to hedge: the Android
+ * `TemplateRepository.listTemplates()` sends no `limit`, so it holds the whole
+ * collection and its search really did cover everything.
+ */
+internal fun templateBankEmptyMessage(
+    loaded: Int,
+    /** The selected chip: "All", or a real category name. */
+    category: String,
+    query: String,
+    hasError: Boolean,
+): String {
+    if (loaded == 0) {
+        return if (hasError) {
+            "Templates could not be loaded. See the error above."
+        } else {
+            "No templates yet. Use New template to create one."
+        }
+    }
+    val where = if (category == "All") "" else " in $category"
+    val q = query.trim()
+    if (q.isEmpty()) return "No templates$where."
+    val plural = if (loaded == 1) "" else "s"
+    return "Nothing$where matches \"$q\". Searched all $loaded template$plural, by title and key."
+}
+
+/**
  * Den-redesign Template Bank (admin email-template library), ported from the web
  * counterpart at web/.../admin/TemplateBankScreen.kt.
  *
@@ -288,7 +345,13 @@ fun TemplateBankBody(
                             // dragged: record window bounds and light up when hovered.
                             val dropHovered = draggingId != null && opt != "All" && hoveredCategory == opt
                             AuntieChip(
-                                label = "$opt ($count)",
+                                label = templateBankChipLabel(
+                                    option = opt,
+                                    count = count,
+                                    loaded = templates.size,
+                                    loading = loading,
+                                    hasError = error != null,
+                                ),
                                 selected = selectedFilter == opt || dropHovered,
                                 onClick = { selectedFilter = opt },
                                 modifier = if (opt == "All") {
@@ -325,11 +388,14 @@ fun TemplateBankBody(
 
                             if (filtered.isEmpty()) {
                                 AuntieEmptyState(
-                                    title = if (templates.isEmpty()) {
-                                        "No templates yet. Use New template to create one."
-                                    } else {
-                                        "No templates in this category."
-                                    },
+                                    // Which fact this is: empty bank, failed
+                                    // read, empty category, or no search match.
+                                    title = templateBankEmptyMessage(
+                                        loaded = templates.size,
+                                        category = selectedFilter,
+                                        query = query,
+                                        hasError = error != null,
+                                    ),
                                     icon = Lucide.Inbox,
                                     compact = true,
                                 )

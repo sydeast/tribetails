@@ -74,6 +74,58 @@ export function filterTemplates(rows: TemplateSummary[], query: string): Templat
   );
 }
 
+/**
+ * What to say when the bank list has nothing to render, given WHY.
+ *
+ * The screen used to collapse three different facts into two strings ("No
+ * templates yet." / "Nothing matches this filter."), and the second one was
+ * dishonest twice over. It did not say whether the category chip or the
+ * search box did the excluding, and it never admitted that the search only
+ * ever sees the rows already loaded: `listTemplates` is paged
+ * (TEMPLATE_PAGE_SIZE, doc-id cursor), so a template sitting on page two
+ * matches nothing here no matter what the operator types, and "Nothing
+ * matches" reads as "no such template exists".
+ *
+ * Hence the two forms. With the cursor closed (`hasMore: false`) the search
+ * really did cover the whole collection and says "all N". With it open the
+ * message names the bound and points at the Load more control that lifts it.
+ *
+ * `loaded` is the number of templates the screen has read so far (every page
+ * appended), NOT the number the category chip left behind: the denominator
+ * has to describe what was searched, not what survived.
+ */
+export function templateEmptyMessage({
+  loaded,
+  category,
+  query,
+  hasMore,
+}: {
+  loaded: number;
+  /** The active category chip, or `null` for "All". */
+  category: string | null;
+  query: string;
+  /** True while `nextCursor !== null`, i.e. the bank has unread pages. */
+  hasMore: boolean;
+}): string {
+  if (loaded === 0) return 'No templates yet.';
+
+  const where = category === null ? '' : ` in ${category}`;
+  const plural = loaded === 1 ? '' : 's';
+  const q = query.trim();
+
+  if (q === '') {
+    // A category with nothing in it. Bounded-honest only when pages remain.
+    return hasMore
+      ? `No templates${where} among the ${loaded} loaded so far. Load more to check the rest.`
+      : `No templates${where}.`;
+  }
+
+  const scope = hasMore
+    ? `Searched the ${loaded} template${plural} loaded so far, by title and key. Load more to search further.`
+    : `Searched all ${loaded} template${plural}, by title and key.`;
+  return `Nothing${where} matches "${q}". ${scope}`;
+}
+
 // ── category classification (positive enumeration, no negation) ────────────
 
 /**

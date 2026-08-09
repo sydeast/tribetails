@@ -338,3 +338,115 @@ describe('Templates screen: I9 New binding', () => {
     expect(screen.getByRole('dialog', { name: /new binding/i })).toBeInTheDocument();
   });
 });
+describe('Templates screen: an empty list that says which fact it means', () => {
+  beforeEach(() => {
+    listTemplates.mockReset();
+    listTemplateCategories.mockReset();
+    listTemplateCategories.mockResolvedValue([]);
+  });
+  it('a search that matched nothing over an OPEN cursor admits it only searched the loaded page', async () => {
+    listTemplates.mockResolvedValue({
+      templates: [tpl({ templateId: 'a', title: 'Alpha' }), tpl({ templateId: 'b', title: 'Beta' })],
+      nextCursor: 'b',
+    });
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    await userEvent.type(screen.getByLabelText(/search templates by title or key/i), 'refund');
+    expect(
+      await screen.findByText(
+        'Nothing matches "refund". Searched the 2 templates loaded so far, by title and key. Load more to search further.',
+      ),
+    ).toBeInTheDocument();
+    // The control that lifts the bound the message just named is on screen.
+    expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument();
+  });
+  it('a search that matched nothing over an EXHAUSTED list says it searched all of them', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    await userEvent.type(screen.getByLabelText(/search templates by title or key/i), 'refund');
+    expect(
+      await screen.findByText('Nothing matches "refund". Searched all 1 template, by title and key.'),
+    ).toBeInTheDocument();
+  });
+  it('an empty CATEGORY is reported as an empty category, not as a failed search', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha', category: 'Onboarding' })]);
+    listTemplateCategories.mockResolvedValue(['Onboarding', 'Bookings']);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    await userEvent.click(screen.getByRole('tab', { name: /^Bookings/ }));
+    expect(await screen.findByText('No templates in Bookings.')).toBeInTheDocument();
+  });
+  it('names the active category in the no-match message, so the two exclusions are told apart', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha', category: 'Onboarding' })]);
+    listTemplateCategories.mockResolvedValue(['Onboarding']);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    await userEvent.click(screen.getByRole('tab', { name: /^Onboarding/ }));
+    await userEvent.type(screen.getByLabelText(/search templates by title or key/i), 'refund');
+    expect(
+      await screen.findByText(
+        'Nothing in Onboarding matches "refund". Searched all 1 template, by title and key.',
+      ),
+    ).toBeInTheDocument();
+  });
+  it('a bank with no templates at all still says exactly that', async () => {
+    listTemplates.mockResolvedValue([]);
+    render(<Templates />);
+    expect(await screen.findByText('No templates yet.')).toBeInTheDocument();
+  });
+});
+describe('Templates screen: the mock\'s Ctrl-K search shortcut', () => {
+  beforeEach(() => {
+    listTemplates.mockReset();
+    listTemplateCategories.mockReset();
+    listTemplateCategories.mockResolvedValue([]);
+  });
+  it('draws the hint the mock draws, beside the search box', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    const hint = screen.getByText('Ctrl K');
+    expect(hint.tagName).toBe('KBD');
+    expect(hint.closest('.templates__search')).not.toBeNull();
+  });
+  it('Ctrl+K focuses the search box, so the hint is not a dead affordance', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    const input = screen.getByLabelText(/search templates by title or key/i);
+    expect(input).not.toHaveFocus();
+    await userEvent.keyboard('{Control>}k{/Control}');
+    expect(input).toHaveFocus();
+  });
+  it('Cmd+K does the same, because this admin is used on a Mac', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    const input = screen.getByLabelText(/search templates by title or key/i);
+    await userEvent.keyboard('{Meta>}k{/Meta}');
+    expect(input).toHaveFocus();
+  });
+  it('selects what is already typed, so the shortcut restarts a search instead of appending to it', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    const input = screen.getByLabelText(/search templates by title or key/i) as HTMLInputElement;
+    await userEvent.type(input, 'alph');
+    input.blur();
+    await userEvent.keyboard('{Control>}k{/Control}');
+    expect(input).toHaveFocus();
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe('alph'.length);
+  });
+  it('is inert while the list has not loaded: there is no box to focus, so the key is left to the browser', async () => {
+    // The search box lives inside the AsyncRegion ready branch. A failed load
+    // renders no input at all, and swallowing Ctrl-K there would steal the
+    // browser's own shortcut in exchange for nothing.
+    listTemplates.mockRejectedValue(new Error('permission-denied'));
+    render(<Templates />);
+    await screen.findByText(/listTemplates failed: permission-denied/, { selector: '.async-error-detail' });
+    await userEvent.keyboard('{Control>}k{/Control}');
+    expect(screen.queryByLabelText(/search templates by title or key/i)).toBeNull();
+  });
+});
