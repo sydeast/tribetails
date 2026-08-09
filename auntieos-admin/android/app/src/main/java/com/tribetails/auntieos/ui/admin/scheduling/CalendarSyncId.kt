@@ -64,10 +64,17 @@ fun calendarIdProblem(raw: String): String? {
  * business_settings doc after its last run, success or failure.
  *
  * READ-ONLY on this side, and deliberately NOT a field of [
- * com.tribetails.auntieos.data.model.BusinessSettings]: android saves that model
- * back as a whole object under `SetOptions.merge()`, so carrying these fields on
- * it would let a settings screen loaded an hour ago write a stale receipt over a
- * fresher one the server had since stamped. The server is the only writer.
+ * com.tribetails.auntieos.data.model.BusinessSettings]. The server is the only
+ * writer, and carrying these fields on the settings model would put a copy of
+ * them in the hands of every screen that saves it.
+ *
+ * That used to be an acute risk: android wrote the model back as a whole object
+ * under `SetOptions.merge()`, so a settings screen loaded an hour ago would have
+ * written a stale receipt over a fresher one the server had since stamped.
+ * Settings saves now send a DIFF, and only of the fields
+ * `BUSINESS_SETTINGS_DIFF_FIELDS` names, so the arrangement holds twice over: the
+ * receipt is off the model AND unnameable by an android write.
+ * `AuntieRepository.getCalendarSyncRun` still reads it off the raw snapshot.
  */
 data class CalendarSyncRun(
     val ranAt: String,

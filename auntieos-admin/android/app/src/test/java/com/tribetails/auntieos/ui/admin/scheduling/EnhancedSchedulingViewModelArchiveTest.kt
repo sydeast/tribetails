@@ -54,7 +54,7 @@ class EnhancedSchedulingViewModelArchiveTest {
         coEvery { auntieRepo.getBusinessSettings() } returns Result.success(BusinessSettings())
         // Server-stamped calendar-sync receipt; nothing has run in these fixtures.
         coEvery { auntieRepo.getCalendarSyncRun() } returns Result.success(null)
-        coEvery { auntieRepo.saveBusinessSettings(any(), any()) } returns Result.success(Unit)
+        coEvery { auntieRepo.updateBusinessSettingsFields(any(), any()) } returns Result.success(Unit)
         coEvery { auntieRepo.logActivity(any()) } returns Result.success(Unit)
         coEvery { bookingRepo.getBookings(any(), any(), any(), any()) } returns Result.success(emptyList())
         coEvery { bookingRepo.getTimeSlots(any(), any(), any()) } returns Result.success(emptyList())

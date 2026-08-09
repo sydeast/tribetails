@@ -48,9 +48,14 @@ fun brandIdentity(settings: BusinessSettings): BrandIdentity = BrandIdentity(
 )
 
 /**
- * Settings copy carrying the edited branding fields (trimmed), ready for
- * saveBusinessSettings. Only the five branding fields change; every sibling field
- * is preserved so the merge write never clobbers unrelated config.
+ * Settings copy carrying the edited branding fields (trimmed), ready to be
+ * diffed against the loaded document by `AdminSettingsViewModel.saveBranding`.
+ *
+ * Only the five branding fields change here; every sibling is carried through
+ * untouched. That used to be the whole defence and it was not enough - the write
+ * then sent the carried siblings as well, at whatever values the phone had read
+ * minutes earlier. `BusinessSettingsDiff.kt` is what turns "unchanged in memory"
+ * into "absent from the write".
  */
 fun BusinessSettings.withBranding(
     logoUrl: String,

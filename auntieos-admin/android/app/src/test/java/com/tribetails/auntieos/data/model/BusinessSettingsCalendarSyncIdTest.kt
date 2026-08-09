@@ -8,8 +8,10 @@ import org.junit.Test
  * Front-facing Google Calendar id setup. Contract: business_settings doc, field
  * `calendarSyncId` (matches web + the syncGoogleCalendarBusyEvents Cloud Function
  * which reads this field first, secret fallback second). The field must default
- * empty and survive a copy() round-trip so it persists through the AuntieRepository
- * save path (saveBusinessSettings copies on top, then set()s the doc).
+ * empty and survive a copy() round-trip, because the save path edits it with
+ * `copy(calendarSyncId = ...)` and then diffs that copy against the document it
+ * loaded (`BusinessSettingsDiff.kt`) - a value that did not survive the copy
+ * would read as unchanged and never be written at all.
  */
 class BusinessSettingsCalendarSyncIdTest {
 
@@ -34,12 +36,34 @@ class BusinessSettingsCalendarSyncIdTest {
 
     @Test
     fun `save-path copy preserves calendarSyncId alongside audit stamps`() {
-        // Mirrors AuntieRepository.saveBusinessSettings: it copies updatedAt/updatedBy
-        // on top of the caller's settings, so calendarSyncId must survive that copy.
+        // The stamps are written by the repository, never round-tripped from the
+        // model, so a copy carrying them must still leave calendarSyncId alone.
         val saved = BusinessSettings()
             .copy(calendarSyncId = "cal-2@group.calendar.google.com")
             .copy(updatedAt = "2026-06-05T00:00:00Z", updatedBy = "admin")
         assertEquals("cal-2@group.calendar.google.com", saved.calendarSyncId)
         assertEquals("admin", saved.updatedBy)
+    }
+
+    /**
+     * The one that matters for the save: setting the id diffs to that ONE field.
+     * The Scheduling screen's calendar panel and the React admin's Calendar
+     * section write the same document, and the phone used to send all ~46 fields.
+     */
+    @Test
+    fun `setting the calendar id diffs to that field alone`() {
+        val loaded = BusinessSettings(
+            calendarSyncId = "",
+            venmoHandle = "@old-venmo",
+            businessName = "Tribe Tails",
+        )
+        val changes = businessSettingsFieldChanges(
+            loaded,
+            loaded.copy(calendarSyncId = "cal-3@group.calendar.google.com"),
+        )
+        assertEquals(
+            mapOf<String, Any?>("calendarSyncId" to "cal-3@group.calendar.google.com"),
+            changes,
+        )
     }
 }

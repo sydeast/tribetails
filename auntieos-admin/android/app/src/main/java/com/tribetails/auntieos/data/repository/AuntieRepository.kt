@@ -1131,11 +1131,14 @@ class AuntieRepository(
      * business_settings doc. Null when no sync has ever been stamped.
      *
      * Read from the RAW snapshot rather than through [BusinessSettings], on
-     * purpose: [saveBusinessSettings] writes that model back as a whole object,
-     * so a receipt field living on it could be rewritten from stale in-memory
-     * state, silently replacing a newer stamp. Only
-     * `syncGoogleCalendarBusyEvents` writes these four fields. See
-     * `mytribe/functions/CALLABLE_CONTRACT.md`.
+     * purpose: a receipt field living on that model could be rewritten from
+     * stale in-memory state, silently replacing a newer stamp. That used to be
+     * the immediate hazard, because settings saves wrote the model as a whole
+     * object; [updateBusinessSettingsFields] now writes only changed fields, and
+     * only fields `BUSINESS_SETTINGS_DIFF_FIELDS` names. Keeping the receipt off
+     * the model therefore still holds, and now holds by construction rather than
+     * by everyone remembering. Only `syncGoogleCalendarBusyEvents` writes these
+     * four fields. See `mytribe/functions/CALLABLE_CONTRACT.md`.
      */
     suspend fun getCalendarSyncRun(): Result<CalendarSyncRun?> = runCatching {
         authGate.ensureAuthenticated()
@@ -1151,44 +1154,57 @@ class AuntieRepository(
         )
     }.onFailure { AuntieLog.e("Failed to read calendar sync receipt", it) }
 
-    suspend fun saveBusinessSettings(
-        settings: BusinessSettings,
-        updatedBy: String = "admin"
+    /**
+     * Writes ONLY the settings fields that actually changed, plus the stamp.
+     *
+     * THIS REPLACES a whole-model `.set(settings, merge())`, whose own comment
+     * admitted the defect and left the fix for its own change:
+     *
+     *   "KNOWN GAP ... 'Never clobbers the rest of the union' is only true of
+     *   DELETION. Every field of [BusinessSettings] is INSIDE this written map,
+     *   so a screen that loaded the doc an hour ago writes all ~50 of them back
+     *   at the values it read, reverting whatever changed since."
+     *
+     * `SetOptions.merge()` protects fields OUTSIDE the written map and does
+     * nothing about stale fields inside it. This is the one document every
+     * settings editor shares, so that gap was the widest on the app: the React
+     * admin patches it PER SECTION (`auntieos-admin/src/api/settingsWrite.ts`,
+     * which sends only the touched fields for exactly this reason), and the
+     * union holds `calendarSyncId`, the venmo/paypal/cashapp handles and both
+     * tag vocabularies. [businessSettingsFieldChanges] builds the map; each
+     * caller diffs against the copy it loaded and advances that baseline only
+     * after a save the server accepted.
+     *
+     * `updatedAt` / `updatedBy` are STAMPED here, never round-tripped from what
+     * was read, so they cannot freeze and lie about when the doc last changed
+     * (the rule [updateKinfolkFields] and [updateHouseholdFields] follow). ISO
+     * String rather than `serverTimestamp()`, because `BusinessSettings.updatedAt`
+     * is a `String` and the React Settings screen parses it as one.
+     *
+     * An empty [changes] is a caller bug, not a no-op to absorb: such a write
+     * could only move the stamp, claiming a change that never happened. Every
+     * caller skips the call outright when the diff is empty.
+     *
+     * The calendar-sync receipt fields stay unreachable from here, which is what
+     * `CalendarSyncId.kt` relies on when it keeps `CalendarSyncRun` off
+     * [BusinessSettings]. They were merely absent from the model before; now a
+     * write can only name a field `BUSINESS_SETTINGS_DIFF_FIELDS` names, so
+     * [getCalendarSyncRun]'s raw-snapshot read has nothing that can overwrite it.
+     */
+    suspend fun updateBusinessSettingsFields(
+        changes: Map<String, Any?>,
+        updatedBy: String = "admin",
     ): Result<Unit> = runCatching {
-        AuntieLog.i("Saving business settings by $updatedBy")
+        require(changes.isNotEmpty()) { "updateBusinessSettingsFields called with no changed fields" }
+        AuntieLog.i("Updating business settings by $updatedBy: ${changes.keys.joinToString()}")
         authGate.ensureAuthenticated()
-        val timestamp = getCurrentTimestamp()
-        val updatedSettings = settings.copy(
-            updatedAt = timestamp,
-            updatedBy = updatedBy
+        val payload: Map<String, Any?> = changes + mapOf(
+            "updatedAt" to getCurrentTimestamp(),
+            "updatedBy" to updatedBy,
         )
-        // SetOptions.merge() read-modify-write: a save never DELETES a sibling
-        // field it did not touch. Unified settings doc (2026-06-05), so the rest
-        // of the union (booking config, timeBlocks, GPS, profile, ...) survives.
-        // See docs/2026-06-05-settings-unification-design.md.
-        //
-        // KNOWN GAP, and the comment above used to overstate the guarantee.
-        // "Never clobbers the rest of the union" is only true of DELETION. Every
-        // field of [BusinessSettings] is INSIDE this written map, so a screen
-        // that loaded the doc an hour ago writes all ~50 of them back at the
-        // values it read, reverting whatever changed since. That is real here:
-        // React writes this doc as a per-section PARTIAL patch
-        // (`auntieos-admin/src/api/settingsWrite.ts`), five android ViewModels
-        // each edit a different slice of the same union, and the slices include
-        // `calendarSyncId`, the venmo/paypal/cashapp handles and the tag
-        // vocabularies. `kinfolk`, `kin` and `household_data` moved to
-        // field-level diffs for this exact shape; this doc is the biggest
-        // remaining site and is deliberately left for its own change, because
-        // every caller has to start carrying the copy it loaded. Triaged, not
-        // overlooked.
-        //
-        // The calendar-sync receipt fields are unaffected either way: they are
-        // deliberately NOT on this model (see `CalendarSyncId.kt`'s
-        // `CalendarSyncRun`), and [getCalendarSyncRun] reads them off the raw
-        // snapshot, so no stale copy of them exists here to write back.
         firestore.collection("business_settings")
             .document("business_settings")
-            .set(updatedSettings, com.google.firebase.firestore.SetOptions.merge())
+            .set(payload, com.google.firebase.firestore.SetOptions.merge())
             .await()
         AuntieLog.d("Business settings saved successfully")
         Unit
@@ -1223,12 +1239,15 @@ class AuntieRepository(
         // durations + rules are one saveable unit; merge() still guards the stamp
         // fields and any future sibling field on the doc.
         //
-        // Same stale-inside-the-map gap as [saveBusinessSettings], and narrower.
-        // React persists ONLY `{ durations, updatedAt, updatedBy }` here
+        // STILL CARRIES the stale-inside-the-map gap that
+        // [updateBusinessSettingsFields] just closed on `business_settings`, and
+        // is the last android document that does. React persists ONLY
+        // `{ durations, updatedAt, updatedBy }` here
         // (`api/coveragePackageWrite.ts`), so an android save can revert a visit
         // menu edited on the web between this screen's load and its save. One
-        // android caller, one web caller, one operator-only document; queued
-        // behind the settings doc rather than fixed alongside it.
+        // android caller, one web caller, one operator-only document, so it stays
+        // queued behind the settings doc rather than folded into that change.
+        // `BusinessSettingsDiff.kt` is the pattern to copy when it comes up.
         val stamped = config.copy(updatedAt = getCurrentTimestamp(), updatedBy = updatedBy)
         firestore.collection("coverage_package_config")
             .document("config")
