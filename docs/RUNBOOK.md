@@ -999,7 +999,8 @@ it means an over-broad subscription buys nothing and hides nothing.
 `billing/stripeDispute.ts`, and here is the reasoning so nobody "fixes" it.
 The invoice keeps its `paid` status and `amountDue: 0`, and gains
 `disputeStatus` / `disputeId` / `disputeAmountCents` / `disputeReason` /
-`disputeEvidenceDueByMs` alongside them. Flipping it
+`disputeEvidenceDueByMs` / `disputeHasEvidence` / `disputeEvidencePastDue` /
+`disputeEvidenceSubmissionCount` alongside them. Flipping it
 back to outstanding would restart the reminder cron against a household over
 their own bank's action, and writing a reversing payment row would invent a
 repayment nobody made. Where contested money ends up is the operator's call, and
@@ -1039,10 +1040,42 @@ banner can say why. It is passed through **verbatim, with no allowlist**: the
 SDK types it as a plain string, Stripe adds categories, and a reason this build
 has not seen must reach the operator rather than be dropped or relabelled.
 
-Both fields are written on the **lifecycle** events only, exactly like
+**Has the operator already answered? `disputeEvidenceSubmissionCount` says, and
+the deadline cannot.** Two disputes with the same date on them read as the same
+banner, and one of them may have been answered a week ago while the other has had
+nothing sent at all. The first operator is waiting on Stripe and should be left
+alone; the second is days from losing the money by default. Three fields separate
+them, mirrored from `evidence_details` on the same lifecycle write:
+
+- `disputeEvidenceSubmissionCount`, Stripe's `submission_count`: how many times
+  evidence has actually been filed. **A count of `0` is stored as `0`**, the
+  opposite of what `due_by` does with its zero: there the zero is a sentinel for
+  "no deadline exists", here it is a measurement, and it is the fact that drives
+  the most urgent banner on the invoice. This is the field that means "sent".
+- `disputeHasEvidence`, Stripe's `has_evidence`, which says evidence has been
+  **staged**, not that it has been submitted. Staged is a saved draft. A dispute
+  with `disputeHasEvidence: true` and `disputeEvidenceSubmissionCount: 0` has not
+  been answered, and a screen that reads the two as one would stand an operator
+  down days before they lose the money.
+- `disputeEvidencePastDue`, Stripe's `past_due`, meaning the **last submission
+  went in after the due date** and its delivery is not guaranteed. It is not
+  "the deadline has passed": Stripe documents it as defaulting to `false` when
+  nothing has ever been submitted, so it stays `false` forever for the operator
+  who never answered. It does not replace comparing `disputeEvidenceDueByMs`
+  against the clock. It adds one state that comparison cannot produce, and only
+  that one: you did answer, you answered late, do not assume it landed.
+
+`null` on any of the three means **the payload did not say**, and it is not the
+same as `false` or `0`. A screen must not render "no evidence submitted" from a
+null; that sentence is an accusation, and the honest reading of a null is that
+this record cannot answer the question. Only an absent `evidence_details` or a
+wrong-typed value produces one.
+
+All five fields are written on the **lifecycle** events only, exactly like
 `disputeStatus`. A funds event carries the whole Dispute object, but the funds
 lane orders independently of the lifecycle lane, so a late `funds_withdrawn`
-writing them could put a stale deadline back on a dispute that already closed.
+writing them could put a stale deadline back on a dispute that already closed, or
+tell an operator who has sent nothing that they already responded.
 
 The funds events deliberately send **no second notification**. The operator was
 already pinged by `invoice.payment.disputed` when the dispute opened, minutes
