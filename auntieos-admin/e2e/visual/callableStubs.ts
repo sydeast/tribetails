@@ -200,6 +200,169 @@ const CONVERSATIONS = [
 ] as const;
 
 /**
+ * `listAllInvites`, the only read behind the Invites screen.
+ *
+ * SHAPE IS `AdminInviteDTO` FROM THE SERVER, field for field
+ * (`mytribe/functions/src/admin/listAllInvites.ts`, whose rows are
+ * `listInvites.ts#mapInviteDoc` plus one `householdName`). Nothing is trimmed
+ * to what the screen happens to render: `proposedRole` and
+ * `proposedPermissions` appear nowhere on this screen, and they are here
+ * because the callable always sends them.
+ *
+ * THE HOUSEHOLDS ARE THE SEEDED ONES, and that is load-bearing rather than
+ * decorative. Every card's heading is a `Link` to
+ * `/household-members/$kinfolkId`, so a made-up `tribeId` would photograph a
+ * row whose only control leads nowhere. `householdName` is what the server's
+ * `householdNameFor` returns for those two `kinfolk` docs: Wanda Thorne gives
+ * "the Thornes" and Nora Halbrook gives "the Halbrooks", sibilant rule
+ * included.
+ *
+ * `effectiveStatus` AND `redeemable` ARE THE SERVER'S ANSWER, not the
+ * document's. `mapInviteDoc` reconciles a lapsed PENDING/EMAIL_SENT to EXPIRED
+ * at read time and sets `redeemable` only for the two live states, and the
+ * screen files every row by `effectiveStatus` alone. The third row below is
+ * exactly that case, written the way the server writes it: `status:
+ * 'EMAIL_SENT'` with an `expiresAt` behind the frozen clock, so it reads
+ * Expired. A fixture that quietly agreed the two fields would drop the one row
+ * that proves the reconciliation reaches the picture.
+ *
+ * ONE ROW PER SECTION AND PER CHIP. `SECTION_ORDER` is Pending, Expired,
+ * Accepted, Revoked and the four filter chips carry counts, so a fixture of
+ * outstanding rows alone would photograph three empty sections and three
+ * zeroes and prove nothing about any of them.
+ *
+ * NEWEST FIRST, already sorted the way `sortInvitesNewestFirst` sorts on the
+ * server, because the screen renders the order it is handed.
+ */
+const ADMIN_INVITES = [
+  {
+    inviteId: 'vis-invite-pending-01',
+    tribeId: 'e2e-kf-1',
+    householdName: 'the Thornes',
+    invitedEmail: 'rowan.thorne@example.test',
+    secondaryLabel: 'Rowan (son)',
+    proposedRole: 'SECONDARY',
+    proposedPermissions: {
+      billing_full: false,
+      messaging_direct: true,
+      messaging_group: true,
+      kin_edit: false,
+      kintales_only: true,
+      home_access: false,
+    },
+    status: 'EMAIL_SENT',
+    effectiveStatus: 'EMAIL_SENT',
+    redeemable: true,
+    createdAt: isoAt(-2, '10:05:00'),
+    sentToInviteeAt: isoAt(-2, '10:05:00'),
+    expiresAt: isoAt(12, '10:05:00'),
+    revokedAt: null,
+    acceptedUid: null,
+  },
+  {
+    inviteId: 'vis-invite-pending-02',
+    tribeId: 'e2e-kf-2',
+    householdName: 'the Halbrooks',
+    invitedEmail: 'delia.halbrook@example.test',
+    secondaryLabel: null,
+    proposedRole: 'SECONDARY',
+    proposedPermissions: {
+      billing_full: false,
+      messaging_direct: true,
+      messaging_group: false,
+      kin_edit: false,
+      kintales_only: true,
+      home_access: false,
+    },
+    // Minted and not yet emailed, so `sentToInviteeAt` is null and the card
+    // falls back to `createdAt` for its "Sent" line. That fallback is a branch
+    // worth having in a golden.
+    status: 'PENDING',
+    effectiveStatus: 'PENDING',
+    redeemable: true,
+    createdAt: isoAt(-5, '16:30:00'),
+    sentToInviteeAt: null,
+    expiresAt: isoAt(9, '16:30:00'),
+    revokedAt: null,
+    acceptedUid: null,
+  },
+  {
+    inviteId: 'vis-invite-expired-01',
+    tribeId: 'e2e-kf-1',
+    householdName: 'the Thornes',
+    invitedEmail: 'marla.finch@example.test',
+    secondaryLabel: 'Marla (neighbour)',
+    proposedRole: 'SECONDARY',
+    proposedPermissions: {
+      billing_full: false,
+      messaging_direct: false,
+      messaging_group: false,
+      kin_edit: false,
+      kintales_only: true,
+      home_access: true,
+    },
+    status: 'EMAIL_SENT',
+    effectiveStatus: 'EXPIRED',
+    redeemable: false,
+    createdAt: isoAt(-40, '08:15:00'),
+    sentToInviteeAt: isoAt(-40, '08:15:00'),
+    expiresAt: isoAt(-26, '08:15:00'),
+    revokedAt: null,
+    acceptedUid: null,
+  },
+  {
+    inviteId: 'vis-invite-accepted-01',
+    tribeId: 'e2e-kf-2',
+    householdName: 'the Halbrooks',
+    invitedEmail: 'nora@example.test',
+    secondaryLabel: null,
+    proposedRole: 'PRIMARY',
+    proposedPermissions: {
+      billing_full: true,
+      messaging_direct: true,
+      messaging_group: true,
+      kin_edit: true,
+      kintales_only: true,
+      home_access: true,
+    },
+    status: 'ACCEPTED',
+    effectiveStatus: 'ACCEPTED',
+    redeemable: false,
+    createdAt: isoAt(-64, '11:00:00'),
+    sentToInviteeAt: isoAt(-64, '11:00:00'),
+    expiresAt: isoAt(-50, '11:00:00'),
+    revokedAt: null,
+    // The uid the portal recorded on acceptance. Not rendered here; the server
+    // sends it on every accepted invite.
+    acceptedUid: 'vis-uid-halbrook-primary',
+  },
+  {
+    inviteId: 'vis-invite-revoked-01',
+    tribeId: 'e2e-kf-1',
+    householdName: 'the Thornes',
+    invitedEmail: 'old.address@example.test',
+    secondaryLabel: 'Wrong address',
+    proposedRole: 'SECONDARY',
+    proposedPermissions: {
+      billing_full: false,
+      messaging_direct: true,
+      messaging_group: false,
+      kin_edit: false,
+      kintales_only: true,
+      home_access: false,
+    },
+    status: 'REVOKED',
+    effectiveStatus: 'REVOKED',
+    redeemable: false,
+    createdAt: isoAt(-71, '09:45:00'),
+    sentToInviteeAt: isoAt(-71, '09:45:00'),
+    expiresAt: isoAt(-57, '09:45:00'),
+    revokedAt: isoAt(-70, '14:20:00'),
+    acceptedUid: null,
+  },
+] as const;
+
+/**
  * Every callable a captured screen invokes, and the answer it gets.
  *
  * A handler returns the callable's `data`, or `undefined` to decline, which
@@ -217,6 +380,20 @@ const HANDLERS: Readonly<Record<string, (payload: Record<string, unknown>) => un
 
   // ── home + inbox ────────────────────────────────────────────────────────
   listConversations: () => ({ conversations: CONVERSATIONS }),
+
+  // ── invites ─────────────────────────────────────────────────────────────
+  /**
+   * `scanned` and `households` are the server's own two counters and are sent
+   * even though `src/api/members.ts` reads only `invites` today: a stub that
+   * answers less than the callable does is a stub that stops matching it.
+   * `scanned` is the row count before the sort, and `households` the distinct
+   * `tribeId` count, which is 2 for the seeded pair.
+   */
+  listAllInvites: () => ({
+    invites: ADMIN_INVITES,
+    scanned: ADMIN_INVITES.length,
+    households: new Set(ADMIN_INVITES.map((i) => i.tribeId)).size,
+  }),
 
   /**
    * Home's expiration countdown, which keeps anything inside 60 days and sorts

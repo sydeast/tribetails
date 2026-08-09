@@ -102,7 +102,7 @@ That runs `tsc -p e2e`, starts the auth and Firestore emulators on the e2e ports
 | Relative timestamps, day headings, countdowns, and the rolling windows Invoices / KinTales / Sessions filter on | `page.clock.setFixedTime(VISUAL_NOW)` freezes what the page READS without pausing timers, and `E2E_SEED_NOW` dates the seed against the same instant, so the rows and the window move together. |
 | Local-time formatting (`lib/time.ts` reads the browser's zone on purpose) | `timezoneId: 'UTC'`, `locale: 'en-US'`. |
 | Callables reaching **production** `us-central1`, failing fast on one run and after a 20s `CallableTimeoutError` on the next | two things, and the second does not replace the first. `src/lib/firebase.ts` pins the Functions SDK at the unserved `127.0.0.1:5399`, so a deployed URL cannot be produced at all; the capture spec additionally aborts every non-localhost request, so a golden cannot depend on any external service being up. |
-| Callables having **no answer at all**, which photographs a red error panel where the screen should be | `e2e/visual/callableStubs.ts` answers the fifteen callables the captured screens invoke, with fixed, server-shaped data. Registered AFTER the abort above: Playwright checks route handlers in reverse order, so the stub owns the callable port and the abort still owns everything else. A callable it does not name still fails loud. |
+| Callables having **no answer at all**, which photographs a red error panel where the screen should be | `e2e/visual/callableStubs.ts` answers the sixteen callables the captured screens invoke, with fixed, server-shaped data. Registered AFTER the abort above: Playwright checks route handlers in reverse order, so the stub owns the callable port and the abort still owns everything else. A callable it does not name still fails loud. |
 | Shooting a screen mid-load | waits until nothing matching `div[role=status][aria-live=polite], .async-loading, .den-stat-value--pending` is left, then `document.fonts.ready`, then two frames. A load that never clears fails the screen instead of photographing a spinner. |
 | Shooting a screen whose data never arrived | after the wait above, the capture searches the page for `lib/fns.ts`'s "was called in e2e emulator mode" and FAILS the screen if it finds it, naming the callable. Nine goldens were photographs of that sentence before this existed. |
 | The text caret | `caret: 'hide'`. |
@@ -113,7 +113,7 @@ Four consecutive runs, one of them under `TZ=Asia/Tokyo`, produced byte-identica
 
 **Callable-backed screens are stubbed, and this paragraph used to say the opposite.** Until 2026-08-04 it read that screens whose data arrives through a callable "photograph their error state, correctly and stably, because the functions emulator is not running", and named Templates, Form Schemas, five of Home's seven widgets, the Inbox thread panel, ActivityLog's chain-integrity banner and KinTaleDetail's comment and reaction panels. That was accurate and it should never have been acceptable. A golden of `Couldn't load templates` is not a photograph of the Templates screen. Nine of the nineteen captures were pictures of an error panel and seven of the approved goldens already were, all seven recorded on 2026-08-01 with `…failed: internal` where the content belongs. `invoice-detail` and `kintale-logs` were the other two, and worse: their panels landed after the recording, so the drift looked like design work and was one approve away from being frozen. `invoice-detail`'s Payment History was the sentence `Couldn't load this invoice's payments or visits`, and a regression in that table could not have appeared in a picture that had no table in it.
 
-`e2e/visual/callableStubs.ts` answers them instead: fifteen callables, fixed data derived from `VISUAL_NOW`, shaped against the callable's own contract, and agreeing with what the seed writes wherever both describe the same thing. It is not the functions emulator and does not pretend to be one, which is still not started and still for the reasons in `docs/runbooks/e2e.md`. What it fixes is narrower and was the whole problem: the screens now have data, so the goldens are of the screens.
+`e2e/visual/callableStubs.ts` answers them instead: sixteen callables, fixed data derived from `VISUAL_NOW`, shaped against the callable's own contract, and agreeing with what the seed writes wherever both describe the same thing. It is not the functions emulator and does not pretend to be one, which is still not started and still for the reasons in `docs/runbooks/e2e.md`. What it fixes is narrower and was the whole problem: the screens now have data, so the goldens are of the screens.
 
 Adding a callable to a captured screen without adding it there FAILS the capture, by name. That is deliberate, and it is the guard whose absence let nine broken goldens be recorded and approved.
 
@@ -129,11 +129,37 @@ npm run visual:verify              # all surfaces
 node baseline.mjs verify web       # one surface, if you need it
 ```
 
-Exit code 0 means clean, 1 means at least one screen regressed, 2 means no goldens exist at all. A screen regresses when more than `REGRESSION_PCT` (default 0.5) percent of its pixels differ, using a per-pixel tolerance of `PIXEL_THRESHOLD` (default 0.1). Both are env knobs; raise `REGRESSION_PCT` only with a reason, never to make a red run go green.
+Exit code 0 means clean, 1 means at least one screen regressed, 2 means no goldens exist at all. The per-pixel colour tolerance is `PIXEL_THRESHOLD` (default 0.1) on every surface.
+
+**The regression threshold is per surface**, and the numbers live in `SURFACE_REGRESSION_PCT` in `baseline.mjs` with the measurement behind each:
+
+| surface | threshold | why |
+|---|---|---|
+| `web`, `desktop`, `android` | 0.5% | unchanged. Two of them render through Skia under a JVM and Robolectric, where a text baseline can legitimately land a pixel differently between runs, and nobody has measured how much slack they need. Tightening an unmeasured surface turns a gate into noise. |
+| `react` | 0% | measured. Four consecutive runs, one under `TZ=Asia/Tokyo`, produced byte-identical PNGs for all 19 screens; the 2026-08-09 sweep found thirteen screens with zero changed pixels outside the nav rail; a golden recaptured on another day and another machine came back byte-for-byte identical. On this surface a nonzero diff is a real change every time. |
+
+That last row is not theoretical caution. A genuine layout change on `invoice-detail` scored 0.226%, was reported `ok` under the old shared 0.5%, and sat unnoticed for five days.
+
+`REGRESSION_PCT` still overrides every surface, and `REGRESSION_PCT_<SURFACE>` (e.g. `REGRESSION_PCT_REACT`) overrides one and beats it. Prefer the per-surface variable: loosening the shared one to give `desktop` room hands `react` the same room, which is the coupling the table exists to remove. Raise either only with a reason, never to make a red run go green.
 
 Read the results in `visual/report/regression.md` and the per-screen overlays in `visual/report/regress/`. `missing-capture` means a golden has no matching current capture (you did not run the capture step for that surface). `dim-mismatch` means the viewport changed. `unbaselined` means a new screen exists with no golden yet, and it does **not** fail the run.
 
 Verify only ever compares what is on disk. It does not capture. Run the capture step for a surface first, or you are diffing stale PNGs against the goldens and learning nothing.
+
+## CI runs the react gate, and it does not use the goldens
+
+`.github/workflows/ci.yml`'s `React admin visual regression` job runs on every pull request that touches `auntieos-admin/src/**`, `auntieos-admin/e2e/**`, the manifest, `baseline.mjs`, `vite.config.ts` or the root lockfile. Before it existed the gate ran only when somebody remembered, which is how the goldens rotted for weeks and how a real layout change went unreported for five days.
+
+**It photographs the base branch and the pull request on one runner and diffs those two**, rather than verifying against the committed goldens. The reason is the machine-specific paragraph above: the goldens were recorded on macOS and a Linux runner would be red on all 19 screens for font rasterization alone. A gate that is red on arrival teaches people to ignore it. Two captures on one box minutes apart cancel that noise, and what is left is caused by the pull request.
+
+Consequences worth knowing before you read a run:
+
+- **CI cannot bless a golden.** The base capture is copied over the checkout's `visual/baselines/react/` inside the runner's throwaway tree. Nothing is committed. Promoting a golden is still a deliberate local `update` plus a commit.
+- **CI cannot tell you the committed goldens are stale.** Only a local capture-then-verify on the recording machine can. Do that before a release, not only when a screen looks wrong.
+- **A screen the PR adds is `unbaselined`**, reported and not fatal: the base cannot photograph a screen it does not have. A screen the PR removes is `missing-capture` and fails, which is the point.
+- **A PR that bumps `@playwright/test`** shoots the two sides with two different Chromium builds, so expect every screen red at once. That signature (uniform text shimmer across the whole surface, not a moved block) means re-record, not regress.
+
+A failing run puts the verdict table on the run summary page and uploads `visual/report/` as the `react-visual-regression` artifact, 7 day retention, matching the e2e job. `regression.md` links each regressed row to its own diff overlay inside that artifact, so the answer to "what changed" is a picture and not a percentage.
 
 ## Approve a legitimate change
 
