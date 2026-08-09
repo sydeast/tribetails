@@ -42,11 +42,17 @@
     color 160ms ease;
 }
 
-button.auntie-btn {
+/* `a` is listed alongside `button` because a control that NAVIGATES is an
+   anchor, not a button, and still has to behave like the rest of a control row.
+   These rules were element-scoped, so borrowing the classes on a link silently
+   dropped the pointer cursor, the focus ring and (below) the hover feedback. */
+button.auntie-btn,
+a.auntie-btn {
   cursor: pointer;
 }
 
-button.auntie-btn:focus-visible {
+button.auntie-btn:focus-visible,
+a.auntie-btn:focus-visible {
   outline: var(--border-emphasis) solid var(--color-primary);
   outline-offset: 2px;
 }
@@ -85,7 +91,8 @@ button.auntie-btn--primary:active:not(:disabled) {
   color: var(--color-text-primary);
 }
 
-button.auntie-btn--ghost:hover:not(:disabled) {
+button.auntie-btn--ghost:hover:not(:disabled),
+a.auntie-btn--ghost:hover {
   border-color: var(--color-primary);
   color: var(--color-primary);
 }

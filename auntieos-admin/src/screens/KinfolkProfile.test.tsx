@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { ReactNode } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Kin } from '../api/directory';
@@ -36,6 +37,30 @@ vi.mock('./KinfolkEdit', () => ({
 }));
 vi.mock('./HouseholdData', () => ({
   HouseholdData: () => <p>STUB HouseholdData</p>,
+}));
+// "Members and invites" is a real anchor to `/household-members/{id}` rather
+// than a sub-view swap, so this file needs the router's `Link`. The stub
+// substitutes the params into the path the way the real one does, which is what
+// the assertion below is actually about.
+vi.mock('@tanstack/react-router', () => ({
+  Link: ({
+    to,
+    params,
+    className,
+    children,
+  }: {
+    to: string;
+    params?: Record<string, string>;
+    className?: string;
+    children: ReactNode;
+  }) => (
+    <a
+      href={Object.entries(params ?? {}).reduce((path, [k, v]) => path.replace(`$${k}`, v), to)}
+      className={className}
+    >
+      {children}
+    </a>
+  ),
 }));
 import { KinfolkProfile } from './KinfolkProfile';
 import { mergeKinfolkProfile } from '../api/kinfolkProfile';
@@ -227,6 +252,17 @@ describe('KinfolkProfile: sub-view wiring', () => {
     await user.click(await screen.findByRole('button', { name: /household data/i }));
     expect(screen.getByText('STUB HouseholdData')).toBeInTheDocument();
   });
+  // Members is the one sub-view that is NOT a local swap: it has its own route,
+  // so it gets a real anchor. That is what makes it linkable and openable in a
+  // new tab, which a button swapping state can never be.
+  it('links Members and invites at the household-members route', async () => {
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={vi.fn()} />);
+    const link = await screen.findByRole('link', { name: /members and invites/i });
+    expect(link).toHaveAttribute('href', '/household-members/k1');
+    // And it is no longer a state-swapping button.
+    expect(screen.queryByRole('button', { name: /members and invites/i })).toBeNull();
+  });
+
   it('still returns to the Directory from the profile itself', async () => {
     const onBack = vi.fn();
     const user = userEvent.setup();
