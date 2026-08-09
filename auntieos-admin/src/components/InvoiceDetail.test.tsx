@@ -1515,3 +1515,119 @@ describe('payment history columns', () => {
     expect(screen.queryByText('held as credit')).toBeNull();
   });
 });
+/**
+ * THE CHARGEBACK PANEL.
+ *
+ * A dispute does not un-pay the invoice (see functions/src/billing/stripeDispute.ts:
+ * flipping it back to outstanding would restart dunning at a household over
+ * their own bank's action). So the invoice keeps reading PAID with money that
+ * may already be gone, and this panel is the only thing on the screen that says
+ * so. Both facts are separate on the doc on purpose: `disputeStatus` is where
+ * the CONTEST stands, `disputeFundsState` is whether the BALANCE moved.
+ */
+describe('InvoiceDetail dispute panel', () => {
+  const paidDisputed = (over: Partial<InvoiceEntry> = {}) =>
+    entry({ status: 'paid', editScope: 'none', amountDue: 0, paidCents: 4000, ...over });
+  /**
+   * By class, the way the Invoices row cases locate a row. `Banner` is the
+   * shared fail-loud primitive and carries no test id, and the two attributes
+   * these cases turn on (`role`, `data-tone`) sit on its root element.
+   */
+  function disputePanel(): HTMLElement {
+    const el = document.querySelector('.invoice-detail__dispute');
+    expect(el, 'expected the dispute panel to render').not.toBeNull();
+    return el as HTMLElement;
+  }
+  it('says a paid invoice is disputed, and that the paid state was left alone', () => {
+    render(
+      <InvoiceDetail
+        invoice={paidDisputed({ disputeStatus: 'needs_response', disputeId: 'dp_1', disputeAmountCents: 4000 })}
+        onClose={vi.fn()}
+      />,
+    );
+    const panel = disputePanel();
+    expect(panel).toHaveAttribute('data-tone', 'error');
+    expect(panel).toHaveAttribute('role', 'alert');
+    expect(within(panel).getByText(/needs_response/)).toBeInTheDocument();
+    expect(within(panel).getByText(/\$40\.00/)).toBeInTheDocument();
+    expect(panel).toHaveTextContent(/still reads paid/i);
+  });
+  /**
+   * THE ONE THE OPERATOR ASKED FOR. `disputeStatus` is never cleared, so every
+   * invoice that was ever disputed keeps the flag for good. Rendering any
+   * non-empty status as an alarm would leave every previously-disputed invoice
+   * permanently on fire. `won` is a past event.
+   */
+  it('renders a WON dispute as history, not as an open problem', () => {
+    render(
+      <InvoiceDetail
+        invoice={paidDisputed({ disputeStatus: 'won', disputeId: 'dp_1', disputeAmountCents: 4000, disputeFundsState: 'reinstated' })}
+        onClose={vi.fn()}
+      />,
+    );
+    const panel = disputePanel();
+    // Not an alarm: no alert role, no error tone, and nothing telling the
+    // operator to act.
+    expect(panel).not.toHaveAttribute('role', 'alert');
+    expect(panel.getAttribute('data-tone')).not.toBe('error');
+    expect(panel.getAttribute('data-tone')).not.toBe('warning');
+    expect(panel).toHaveTextContent(/was disputed/i);
+    expect(panel).toHaveTextContent(/resolved in your favor/i);
+    expect(panel).not.toHaveTextContent(/respond|deadline|evidence/i);
+  });
+  it('still says the money is out on a won dispute Stripe has not reinstated yet', () => {
+    render(
+      <InvoiceDetail
+        invoice={paidDisputed({ disputeStatus: 'won', disputeFundsState: 'withdrawn' })}
+        onClose={vi.fn()}
+      />,
+    );
+    const panel = disputePanel();
+    expect(panel.getAttribute('data-tone')).not.toBe('error');
+    expect(panel).toHaveTextContent(/not been reported back/i);
+  });
+  /**
+   * The funds lane writes `disputeFundsState` with NO `disputeStatus`, and the
+   * two Stripe lanes have no ordering guarantee, so this doc shape is real.
+   */
+  it('renders a withdrawal that arrived before any status, and says the status is unknown', () => {
+    render(
+      <InvoiceDetail invoice={paidDisputed({ disputeFundsState: 'withdrawn', disputeId: 'dp_1' })} onClose={vi.fn()} />,
+    );
+    const panel = disputePanel();
+    expect(panel).toHaveAttribute('data-tone', 'error');
+    expect(panel).toHaveTextContent(/not said where the dispute stands/i);
+    expect(panel).toHaveTextContent(/pulled/i);
+  });
+  /**
+   * NEVER A FIGURE WE CANNOT SOURCE. Two separate rules meet here: an absent
+   * `disputeAmountCents` must not print as $0.00, and no debit total may be
+   * printed at all, because what leaves the balance is the disputed amount
+   * PLUS Stripe's dispute fee and only the first is on the object.
+   */
+  it('names an unknown disputed amount in words rather than printing $0.00', () => {
+    render(<InvoiceDetail invoice={paidDisputed({ disputeStatus: 'lost' })} onClose={vi.fn()} />);
+    const panel = disputePanel();
+    expect(panel).not.toHaveTextContent(/\$0\.00/);
+    expect(panel).toHaveTextContent(/did not carry|not stated/i);
+  });
+  it('says the withdrawal is larger than the disputed amount without inventing the figure', () => {
+    render(
+      <InvoiceDetail
+        invoice={paidDisputed({ disputeStatus: 'lost', disputeAmountCents: 4000, disputeFundsState: 'withdrawn' })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(disputePanel()).toHaveTextContent(/dispute fee/i);
+  });
+  /** Nothing may clear the flag: the contest happened, and it stays on record. */
+  it('offers no way to dismiss or clear the dispute', () => {
+    render(<InvoiceDetail invoice={paidDisputed({ disputeStatus: 'lost' })} onClose={vi.fn()} />);
+    const panel = disputePanel();
+    expect(within(panel).queryAllByRole('button')).toHaveLength(0);
+  });
+  it('renders nothing at all on an invoice that was never disputed', () => {
+    render(<InvoiceDetail invoice={paidDisputed()} onClose={vi.fn()} />);
+    expect(document.querySelector('.invoice-detail__dispute')).toBeNull();
+  });
+});

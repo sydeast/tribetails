@@ -40,6 +40,7 @@ import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.domain.InvoiceAction
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.invoiceActionsFor
+import com.tribetails.auntieos.domain.invoiceDisputeOrNull
 import com.tribetails.auntieos.domain.invoiceIsArchived
 import com.tribetails.auntieos.domain.invoiceIsOverdue
 import com.tribetails.auntieos.domain.invoiceIsoDatePrefixOrNull
@@ -741,6 +742,25 @@ private fun InvoiceRow(
                 color = amountColor,
             )
             AuntieStatusPill(label = statusLabel, tone = statusTone, mono = true)
+            // A DISPUTED ROW LOOKS EXACTLY LIKE A SETTLED ONE WITHOUT THIS. A
+            // chargeback deliberately leaves `status: paid` and `amountDue: 0`
+            // alone, so the row keeps its green PAID pill while the money is
+            // being pulled back out of the Stripe balance.
+            //
+            // It sits BESIDE the state pill rather than replacing it: a dispute
+            // is not one of the eight stamped invoice states, and re-labelling
+            // the row would be classifying, which no client does.
+            //
+            // OPEN DISPUTES ONLY. Nothing ever clears `disputeStatus` — the
+            // contest happened and stays on record — so marking every invoice
+            // that carries one would put a permanent badge on every invoice ever
+            // disputed and won. A marker that never goes away is one the eye
+            // stops seeing, which would cost exactly the row this exists for.
+            // The won history lives on the detail screen, where it is read on
+            // purpose rather than scanned past.
+            if (invoiceDisputeOrNull(invoice)?.open == true) {
+                AuntieStatusPill(label = "Disputed", tone = AuntieStatusTone.Error, mono = true)
+            }
             Spacer(Modifier.weight(1f))
             RowAction(
                 actions = invoiceActionsFor(state),

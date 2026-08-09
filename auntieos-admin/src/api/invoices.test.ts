@@ -6,6 +6,7 @@ import {
   INVOICES_PAGE_SIZE,
   invoiceMatchesSearch,
   invoicesPageQuery,
+  invoiceDispute,
   invoiceStamp,
   invoiceDayMs,
   invoiceWithinWindow,
@@ -348,5 +349,82 @@ describe('invoiceMatchesSearch', () => {
   it('reads a missing total as $0.00 rather than throwing', () => {
     const missing = { invoiceNumber: '1042' } as unknown as InvoiceEntry;
     expect(invoiceMatchesSearch(missing, '$0.00')).toBe(true);
+  });
+});
+describe('invoiceDispute', () => {
+  const clean: Pick<
+    InvoiceEntry,
+    'disputeStatus' | 'disputeFundsState' | 'disputeAmountCents' | 'disputeId'
+  > = {};
+  it('is null on an invoice that has never been disputed', () => {
+    expect(invoiceDispute(clean)).toBeNull();
+  });
+  it('reads an open chargeback as open, keeping the raw Stripe status', () => {
+    const d = invoiceDispute({ disputeStatus: 'needs_response', disputeId: 'dp_1', disputeAmountCents: 4000 });
+    expect(d).not.toBeNull();
+    expect(d!.open).toBe(true);
+    expect(d!.status).toBe('needs_response');
+    expect(d!.amountCents).toBe(4000);
+  });
+  /**
+   * THE OPERATOR RULE. Nothing ever clears `disputeStatus` (the contest did
+   * happen), so a won dispute stays on the doc forever. It is history, not an
+   * open problem, and the screens key their alarm off THIS flag.
+   */
+  it('reads `won` as closed history, not as an open problem', () => {
+    expect(invoiceDispute({ disputeStatus: 'won', disputeId: 'dp_1' })!.open).toBe(false);
+  });
+  it('reads `lost` and `under_review` as open: both still want the operator', () => {
+    expect(invoiceDispute({ disputeStatus: 'lost' })!.open).toBe(true);
+    expect(invoiceDispute({ disputeStatus: 'under_review' })!.open).toBe(true);
+  });
+  /**
+   * Fail loud, never guess. `won` is the ONLY value proven to be a closed,
+   * good outcome; a status this build does not know about is shown raw and
+   * treated as wanting attention rather than quietly downgraded.
+   */
+  it('treats an unrecognized status as open and keeps it readable', () => {
+    const d = invoiceDispute({ disputeStatus: 'warning_needs_response' })!;
+    expect(d.open).toBe(true);
+    expect(d.status).toBe('warning_needs_response');
+  });
+  /**
+   * The funds lane writes `disputeFundsState` WITHOUT `disputeStatus` (see
+   * stripeDispute.ts: "the balance moving says nothing about where the contest
+   * stands"), and Stripe guarantees no ordering between the lanes. So an
+   * invoice really can hold withdrawn funds and no status at all.
+   */
+  it('shows a dispute whose funds moved before any status landed', () => {
+    const d = invoiceDispute({ disputeFundsState: 'withdrawn', disputeId: 'dp_1' })!;
+    expect(d.status).toBeNull();
+    expect(d.fundsState).toBe('withdrawn');
+    expect(d.open).toBe(true);
+  });
+  it('shows a dispute known only by its id', () => {
+    expect(invoiceDispute({ disputeId: 'dp_1' })!.open).toBe(true);
+  });
+  it('keeps a won dispute closed even while the funds are still out', () => {
+    const d = invoiceDispute({ disputeStatus: 'won', disputeFundsState: 'withdrawn' })!;
+    expect(d.open).toBe(false);
+    expect(d.fundsState).toBe('withdrawn');
+  });
+  /** An unrecognized funds state is not a state. Absent, never invented. */
+  it('drops a funds state outside the two the webhook writes', () => {
+    expect(invoiceDispute({ disputeStatus: 'lost', disputeFundsState: 'pending' as never })!.fundsState).toBeNull();
+  });
+  /**
+   * Money rule: the disputed amount is null when the event did not carry one.
+   * A 0 here would claim the bank pulled nothing back.
+   */
+  it('reports an absent or non-numeric disputed amount as null, never as zero', () => {
+    expect(invoiceDispute({ disputeStatus: 'lost' })!.amountCents).toBeNull();
+    expect(invoiceDispute({ disputeStatus: 'lost', disputeAmountCents: null })!.amountCents).toBeNull();
+    expect(
+      invoiceDispute({ disputeStatus: 'lost', disputeAmountCents: Number.NaN })!.amountCents,
+    ).toBeNull();
+  });
+  it('ignores a blank status string rather than treating it as a dispute', () => {
+    expect(invoiceDispute({ disputeStatus: '' })).toBeNull();
+    expect(invoiceDispute({ disputeStatus: null })).toBeNull();
   });
 });

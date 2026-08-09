@@ -1011,3 +1011,47 @@ describe('Invoices search by amount', () => {
     expect(screen.getByText(/nothing in the loaded invoices matches this filter/i)).toBeInTheDocument();
   });
 });
+/**
+ * THE LIST MARKER.
+ *
+ * The list is where "paid" lies loudest: a disputed invoice sits in the PAID
+ * chip, inside the Billed total, looking exactly like one whose money is still
+ * there. stripeDispute.ts's stated purpose is that "no screen can render 'paid'
+ * without also being able to render 'disputed'", and this is a screen.
+ *
+ * It marks OPEN disputes only. `disputeStatus` is never cleared, so a marker on
+ * every once-disputed invoice would be permanent, and a permanent marker on a
+ * won dispute is the "everything is on fire" failure the operator ruled out.
+ * The won history stays on the detail panel, where it is read on purpose.
+ */
+describe('Invoices row, dispute marker', () => {
+  it('marks a paid row whose money is being clawed back', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'a', invoiceNumber: 'CLEAN', status: 'paid', amountDue: 0 }),
+        entry({ _id: 'b', invoiceNumber: 'FIGHT', status: 'paid', amountDue: 0, disputeStatus: 'needs_response' }),
+      ]),
+    );
+    render(<Invoices />);
+    const fight = screen.getByText('#FIGHT').closest('.invoices__row') as HTMLElement;
+    const clean = screen.getByText('#CLEAN').closest('.invoices__row') as HTMLElement;
+    expect(within(fight).getByText('DISPUTED')).toBeInTheDocument();
+    // The state chip stays: a dispute is not an invoice state, it sits beside one.
+    expect(within(fight).getByText('PAID')).toBeInTheDocument();
+    expect(within(clean).queryByText('DISPUTED')).toBeNull();
+  });
+  it('marks a row whose funds were withdrawn before any status arrived', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'paid', amountDue: 0, disputeFundsState: 'withdrawn' })]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('DISPUTED')).toBeInTheDocument();
+  });
+  it('leaves a WON dispute unmarked: it is history, and the flag is never cleared', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'paid', amountDue: 0, disputeStatus: 'won', disputeId: 'dp_1' })]),
+    );
+    render(<Invoices />);
+    expect(screen.queryByText('DISPUTED')).toBeNull();
+  });
+});

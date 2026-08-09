@@ -154,6 +154,50 @@ export interface InvoiceEntry {
   totalCents?: number;
   /** The exact balance in integer cents. `amountDue` above is its dollar projection. */
   amountDueCents?: number;
+  /**
+   * WHERE THE CHARGEBACK CONTEST STANDS, mirrored from Stripe's own Dispute
+   * `status` by `functions/src/billing/stripeDispute.ts`: `needs_response`,
+   * `under_review`, `won`, `lost`, and whatever else Stripe adds.
+   *
+   * `string`, not a union, on purpose. This is Stripe's vocabulary rather than
+   * ours, it grows without asking, and the webhook writes through whatever
+   * arrived. A union here would turn an unfamiliar status into a compile-time
+   * fiction instead of the runtime fact it is; `invoiceDispute` verifies at
+   * runtime and the screens print the raw text.
+   *
+   * `| null` because the lifecycle write sets it UNCONDITIONALLY, so a dispute
+   * event whose payload carried no status leaves an explicit null on the doc
+   * rather than no key at all.
+   *
+   * NOTHING EVER CLEARS IT — the contest did happen — so a won invoice keeps
+   * the field for good. That is exactly why no screen may read "non-empty" as
+   * "on fire". See `invoiceDispute`.
+   */
+  disputeStatus?: string | null;
+  /**
+   * WHETHER THE MONEY ACTUALLY MOVED. A different fact from the one above, and
+   * it routinely disagrees: a dispute sits at `needs_response` for weeks with
+   * the balance already debited, and a `won` dispute is not reinstated the
+   * instant it closes. Written by the funds lane
+   * (`charge.dispute.funds_withdrawn` / `funds_reinstated`).
+   *
+   * That lane writes this WITHOUT `disputeStatus`, and Stripe promises no
+   * ordering between the two lanes, so a doc really can hold a withdrawal and
+   * no status at all.
+   */
+  disputeFundsState?: 'withdrawn' | 'reinstated' | null;
+  /**
+   * The DISPUTED amount in integer cents, Stripe's `Dispute.amount`. Null when
+   * the event carried no number, never 0: a zero would claim the bank pulled
+   * nothing back.
+   *
+   * IT IS NOT THE DEBIT. What leaves the Stripe balance is this plus Stripe's
+   * dispute fee, and the fee is not on the object, so no screen may add the two
+   * up or present this figure as the sum that left.
+   */
+  disputeAmountCents?: number | null;
+  /** Stripe's `dp_…` id, the key of the `stripeDisputes/{id}` operator record. */
+  disputeId?: string | null;
 }
 
 /**
@@ -248,6 +292,95 @@ export function invoiceStamp(row: Pick<InvoiceEntry, 'status' | 'editScope'>): I
     editScope:
       scope === 'all' || scope === 'metadataOnly' || scope === 'none' ? scope : 'none',
   };
+}
+
+/** The two values the funds lane writes. Anything else is not a funds state. */
+export const INVOICE_DISPUTE_FUNDS_STATES = ['withdrawn', 'reinstated'] as const;
+export type InvoiceDisputeFundsState = (typeof INVOICE_DISPUTE_FUNDS_STATES)[number];
+
+/**
+ * The chargeback as this doc actually carries it: two independent facts, plus
+ * the one verdict every screen needs and none of them may re-derive.
+ */
+export interface InvoiceDispute {
+  /**
+   * `disputeStatus` verbatim, or null when the doc holds none. Not normalized
+   * and not translated: an unfamiliar status is shown as it was written, and a
+   * label invented for it would be a guess about money.
+   */
+  status: string | null;
+  /** Verified against the two the funds lane writes. Unrecognized reads as absent. */
+  fundsState: InvoiceDisputeFundsState | null;
+  /** The disputed amount, integer cents. Null is null; it is never a zero. */
+  amountCents: number | null;
+  disputeId: string | null;
+  /**
+   * DOES THIS STILL WANT THE OPERATOR? The whole point of the type.
+   *
+   * `false` for exactly one status, `won`, and `true` for everything else
+   * including a status this build has never heard of.
+   *
+   *  - It has to be false for `won` because nothing ever clears the flag. The
+   *    contest happened and stays on record, so an invoice disputed once carries
+   *    `disputeStatus` forever. A screen that alarmed on any non-empty value
+   *    would show every previously-disputed invoice as permanently on fire, and
+   *    an alarm that is always on is an alarm nobody reads.
+   *  - It has to be true for everything else, including the unknown, because
+   *    this is money that may have left the balance. `lost` is closed and still
+   *    wants a human: where contested money ends up is the operator's call.
+   *    Downgrading a status we cannot interpret would be the one failure mode
+   *    this whole lane exists to prevent — quiet.
+   *
+   * A won dispute whose funds are still out stays `false`. Reinstatement lags
+   * the ruling as a matter of course; the panel says so in words instead of
+   * raising an alarm about a normal delay.
+   */
+  open: boolean;
+}
+
+/**
+ * The chargeback flags, verified rather than trusted, or null when this invoice
+ * has never been disputed.
+ *
+ * PRESENCE IS ANY OF THE THREE. The lifecycle lane
+ * (`charge.dispute.created`/`closed`) writes `disputeStatus`, and the funds lane
+ * (`funds_withdrawn`/`funds_reinstated`) writes `disputeFundsState` and
+ * deliberately does NOT write a status, "because the balance moving says nothing
+ * about where the contest stands". Stripe guarantees no ordering between the
+ * lanes, so a withdrawal landing first leaves a doc with moved money and no
+ * status — which is the single most urgent shape there is, and a status-only
+ * presence test would render it as no dispute at all.
+ *
+ * Same runtime-verification contract as `invoiceStamp` above: `InvoiceEntry` is
+ * a cast over raw document data, not a validation of it.
+ */
+export function invoiceDispute(
+  row: Pick<
+    InvoiceEntry,
+    'disputeStatus' | 'disputeFundsState' | 'disputeAmountCents' | 'disputeId'
+  >,
+): InvoiceDispute | null {
+  const rawStatus: unknown = row.disputeStatus;
+  const status = typeof rawStatus === 'string' && rawStatus.trim() !== '' ? rawStatus : null;
+
+  const rawFunds: unknown = row.disputeFundsState;
+  const fundsState =
+    typeof rawFunds === 'string' &&
+    (INVOICE_DISPUTE_FUNDS_STATES as readonly string[]).includes(rawFunds)
+      ? (rawFunds as InvoiceDisputeFundsState)
+      : null;
+
+  const rawId: unknown = row.disputeId;
+  const disputeId = typeof rawId === 'string' && rawId.trim() !== '' ? rawId : null;
+
+  if (status === null && fundsState === null && disputeId === null) return null;
+
+  // Absent, null, and NaN all mean "no figure arrived". None of them mean zero.
+  const rawAmount: unknown = row.disputeAmountCents;
+  const amountCents =
+    typeof rawAmount === 'number' && Number.isFinite(rawAmount) ? rawAmount : null;
+
+  return { status, fundsState, amountCents, disputeId, open: status !== 'won' };
 }
 
 /**

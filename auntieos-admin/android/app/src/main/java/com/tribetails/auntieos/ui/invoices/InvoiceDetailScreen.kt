@@ -57,6 +57,9 @@ import com.tribetails.auntieos.domain.dollarsToCents
 import com.tribetails.auntieos.domain.parseOptionalMoney
 import com.tribetails.auntieos.domain.unappliedCents
 import com.tribetails.auntieos.domain.invoicePartPaid
+import com.tribetails.auntieos.domain.InvoiceDisputeFundsState
+import com.tribetails.auntieos.domain.InvoiceDisputeInfo
+import com.tribetails.auntieos.domain.invoiceDisputeOrNull
 import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
@@ -375,6 +378,14 @@ private fun invoiceDetailBody(
                 modifier = Modifier.weight(1f),
             )
         }
+    }
+
+    // ── Chargeback ─────────────────────────────────────────────────────────────
+    // Straight under the two money cards, because it is the fact that decides
+    // whether those two figures still describe money the business has.
+    val dispute = invoiceDisputeOrNull(invoice)
+    if (dispute != null) {
+        item { InvoiceDisputeBanner(dispute = dispute) }
     }
 
     // Header actions, gated by the shared action set. Generate receipt is a PAID-only
@@ -711,6 +722,128 @@ private fun InvoiceHeaderBar(invoice: Invoice, state: InvoiceState?, overdue: Bo
             mono        = true,
             leadingIcon = statusIcon,
         )
+    }
+}
+
+/**
+ * The banner tone, from the one flag that decides it.
+ *
+ * `internal` rather than private, and a function rather than an inline `if`, so
+ * the alarm-versus-history decision is assertable: the rendered colour is not
+ * readable through Compose's semantics tree, so a test can only reach this
+ * choice by calling it.
+ */
+internal fun invoiceDisputeTone(open: Boolean): AuntieBannerTone =
+    if (open) AuntieBannerTone.Error else AuntieBannerTone.Info
+
+/**
+ * THE CHARGEBACK PANEL: the only thing on this screen that can contradict the
+ * green PAID pill in the header bar above it.
+ *
+ * A dispute deliberately does not un-pay the invoice — flipping it back to
+ * outstanding would restart the reminder cron against a household over their own
+ * bank's action, and writing a reversing payment row would invent a repayment
+ * nobody made (functions/src/billing/stripeDispute.ts). The cost of that correct
+ * decision is that a clawed-back invoice looks settled everywhere. This panel is
+ * where that debt is paid back to the operator.
+ *
+ * TONE IS DECIDED BY ONE FLAG AND ONE ONLY, [InvoiceDisputeInfo.open]. Nothing
+ * clears `disputeStatus`, so an invoice disputed once carries it forever; keying
+ * the alarm off "there is a status" would light up every invoice that was ever
+ * contested and won, permanently. A won dispute is history and reads as history.
+ *
+ * NO FIGURE APPEARS HERE THAT STRIPE DID NOT SEND. The disputed amount prints
+ * when the event carried one and is named in words when it did not, never as
+ * $0.00. The actual debit — disputed amount plus Stripe's dispute fee — is
+ * described but never computed, because the fee is not on the object and a sum
+ * we cannot source is a lie with a dollar sign on it.
+ *
+ * There is no dismiss, no clear and no resolve control, by design.
+ *
+ * Mirrors the web `InvoiceDisputeBanner` in `src/components/InvoiceDetail.tsx`.
+ */
+@Composable
+private fun InvoiceDisputeBanner(dispute: InvoiceDisputeInfo) {
+    val c = AuntieTheme.colors
+    val tone = invoiceDisputeTone(dispute.open)
+    val body = AuntieTheme.typography.bodyMedium
+
+    val amountSentence = if (dispute.amountCents != null) {
+        "The bank is disputing ${formatCentsUsd(dispute.amountCents)}."
+    } else {
+        "The dispute event did not carry an amount, so how much is contested is not stated here."
+    }
+    val idSentence = if (dispute.disputeId != null) " Stripe dispute ${dispute.disputeId}." else ""
+
+    AuntieBanner(
+        tone = tone,
+        title = if (dispute.open) "This payment is being taken back" else "Dispute won",
+        icon = if (dispute.open) Lucide.CircleAlert else Lucide.CircleCheckBig,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!dispute.open) {
+                Text(
+                    text = "This payment was disputed and the dispute was resolved in your favor. " +
+                        "Nothing was undone, because nothing needed undoing: the invoice was never " +
+                        "un-paid while the contest ran. $amountSentence",
+                    style = body,
+                    color = c.textPrimary,
+                )
+                Text(
+                    text = when (dispute.fundsState) {
+                        InvoiceDisputeFundsState.WITHDRAWN ->
+                            "The money has not been reported back in the Stripe balance yet. Stripe " +
+                                "reinstates funds after the ruling rather than at the moment of it, so " +
+                                "a gap here is ordinary."
+                        InvoiceDisputeFundsState.REINSTATED ->
+                            "Stripe has reported the money back in the balance."
+                        null -> "Stripe has reported no movement of the balance either way."
+                    } + " This stays on record because the dispute genuinely happened; it is not " +
+                        "something to clear.$idSentence",
+                    style = body,
+                    color = c.textDim,
+                )
+                return@AuntieBanner
+            }
+
+            Text(
+                text = if (dispute.status != null) {
+                    "The cardholder's bank has raised a chargeback and Stripe puts it at " +
+                        "${dispute.status}. $amountSentence$idSentence"
+                } else {
+                    "The cardholder's bank has raised a chargeback. Stripe has not said where the " +
+                        "dispute stands, only that the money moved. $amountSentence$idSentence"
+                },
+                style = body,
+                color = c.textPrimary,
+            )
+            Text(
+                text = when (dispute.fundsState) {
+                    InvoiceDisputeFundsState.WITHDRAWN ->
+                        "The money has already been pulled out of the Stripe balance. What actually " +
+                            "left is the disputed amount plus Stripe's dispute fee, and the fee is not " +
+                            "on the record here, so read the real debit in the Stripe balance report " +
+                            "rather than from this screen."
+                    InvoiceDisputeFundsState.REINSTATED ->
+                        "Stripe has reported the money back in the balance, while the contest itself " +
+                            "is still open."
+                    null ->
+                        "Stripe has not yet reported the balance moving. It usually moves before the " +
+                            "dispute closes, so treat this as not-yet-seen rather than as money that " +
+                            "is safe."
+                },
+                style = body,
+                color = c.textPrimary,
+            )
+            Text(
+                text = "This invoice still reads paid and still shows nothing due, on purpose. " +
+                    "Un-paying it would start sending the household overdue reminders over something " +
+                    "their bank did, and recording a reversal would invent a repayment that never " +
+                    "happened. Where contested money ends up is your call to make, not this screen's.",
+                style = body,
+                color = c.textDim,
+            )
+        }
     }
 }
 
