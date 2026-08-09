@@ -440,6 +440,54 @@ data class Invoice(
     var subtotalCents: Long = 0L,
     var totalCents: Long = 0L,
     var amountDueCents: Long = 0L,
+
+    /**
+     * WHERE THE CHARGEBACK CONTEST STANDS, mirrored from Stripe's own Dispute
+     * `status` by `functions/src/billing/stripeDispute.ts`: `needs_response`,
+     * `under_review`, `won`, `lost`, and whatever else Stripe adds later.
+     *
+     * NULLABLE, and that is the Class B decode rule rather than a style choice.
+     * The lifecycle write sets this field UNCONDITIONALLY, so a dispute event
+     * that carried no status leaves an explicit `null` on the document, and a
+     * non-null Kotlin setter meeting a null under `toObject()` throws — which in
+     * a batched `toObjects()` blanks the WHOLE invoice query, not the one row.
+     * Same trap `paymentsHistory` and `archivedAt` above record.
+     *
+     * `String?` rather than an enum for the same reason the web side types it
+     * `string`: this is Stripe's vocabulary, it grows without asking, and a
+     * value we cannot interpret has to survive to the screen where it is shown
+     * raw. Read it through `domain.invoiceDisputeOrNull`.
+     *
+     * NOTHING EVER CLEARS IT — the contest did happen — so an invoice disputed
+     * once carries this forever. No screen may read "non-empty" as "on fire".
+     */
+    var disputeStatus: String? = null,
+    /**
+     * WHETHER THE MONEY ACTUALLY MOVED (`withdrawn` / `reinstated`), written by
+     * the funds lane. A different fact from [disputeStatus] and one that
+     * routinely disagrees with it: a dispute sits at `needs_response` for weeks
+     * with the balance already debited, and a `won` dispute is not reinstated at
+     * the instant it closes.
+     *
+     * The funds lane writes this WITHOUT a status, and Stripe promises no
+     * ordering between the two lanes, so a document really can hold a withdrawal
+     * and no status at all.
+     */
+    var disputeFundsState: String? = null,
+    /**
+     * The DISPUTED amount in integer cents (Stripe's `Dispute.amount`).
+     *
+     * `Long?`, never `Long = 0L`, twice over: the webhook writes null when the
+     * event carried no number, so a non-null setter would throw on decode, and a
+     * zero here would claim the bank pulled nothing back.
+     *
+     * IT IS NOT THE DEBIT. What leaves the Stripe balance is this plus Stripe's
+     * dispute fee, and the fee is not on the object, so nothing may add the two
+     * together or present this as the sum that left.
+     */
+    var disputeAmountCents: Long? = null,
+    /** Stripe's `dp_…` id, the key of the `stripeDisputes/{id}` operator record. */
+    var disputeId: String? = null,
 )
 
 /**

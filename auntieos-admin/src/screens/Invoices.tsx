@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  invoiceDispute,
   invoiceMatchesSearch,
   invoicesPageQuery,
   invoiceStamp,
@@ -670,6 +671,8 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
 
   const archived = isArchivedInvoice(entry);
   const action = rowActionFor(state);
+  // OPEN disputes only. See the chip below for why a won one is not marked.
+  const disputed = invoiceDispute(entry)?.open === true;
 
   const body = (
     <>
@@ -710,6 +713,25 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
             Outstanding and Billed totals directly above, which makes those totals
             impossible to check by eye. */}
         {archived ? <span className="invoices__chip invoices__chip--archived">ARCHIVED</span> : null}
+        {/* A DISPUTED ROW LOOKS EXACTLY LIKE A SETTLED ONE WITHOUT THIS. A
+            chargeback deliberately leaves `status: paid` and `amountDue: 0`
+            alone, so the row keeps its PAID chip and stays inside the Billed
+            total above while the money is being pulled back out of the Stripe
+            balance. This is the marker that stops the list from asserting
+            something the ledger no longer supports.
+
+            It sits BESIDE the state chip rather than replacing it, like
+            ARCHIVED: a dispute is not one of the eight stamped invoice states
+            and re-labelling the row would be classifying, which no client does.
+
+            OPEN DISPUTES ONLY. Nothing ever clears `disputeStatus` — the
+            contest happened and stays on record — so marking every invoice
+            that carries one would put a permanent badge on every invoice ever
+            disputed and won. A marker that never goes away is one the eye
+            stops seeing, which would cost exactly the invoice this exists for.
+            The won history is on the detail panel, where it is read on
+            purpose rather than scanned past. */}
+        {disputed ? <span className="invoices__chip invoices__chip--disputed">DISPUTED</span> : null}
       </span>
     </>
   );

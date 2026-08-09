@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { invoiceLineItems, invoiceStamp, isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
+import {
+  invoiceDispute,
+  invoiceLineItems,
+  invoiceStamp,
+  isArchivedInvoice,
+  type InvoiceDispute,
+  type InvoiceEntry,
+} from '../api/invoices';
 import {
   formatUsd,
   invoiceActionsFor,
@@ -39,6 +46,96 @@ import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { Banner } from './Banner';
 import './InvoiceDetail.css';
+
+/**
+ * THE CHARGEBACK PANEL: the only thing on this screen that can contradict the
+ * PAID chip six lines above it.
+ *
+ * A dispute deliberately does not un-pay the invoice — flipping it back to
+ * outstanding would restart the reminder cron against a household over their own
+ * bank's action, and writing a reversing payment row would invent a repayment
+ * nobody made (functions/src/billing/stripeDispute.ts). The cost of that correct
+ * decision is that a clawed-back invoice looks settled everywhere. This panel is
+ * where that debt is paid back to the operator.
+ *
+ * TONE IS DECIDED BY ONE FLAG AND ONE ONLY, `dispute.open`. Nothing clears
+ * `disputeStatus`, so an invoice disputed once carries it forever; keying the
+ * alarm off "there is a status" would light up every invoice that was ever
+ * contested and won, permanently. A won dispute is history and reads as history.
+ *
+ * NO FIGURE APPEARS HERE THAT STRIPE DID NOT SEND. The disputed amount is
+ * printed when the event carried one and named in words when it did not, never
+ * as $0.00. The actual debit — disputed amount plus Stripe's dispute fee — is
+ * described but never computed, because the fee is not on the object and a
+ * subtraction we cannot source is a lie with a dollar sign on it.
+ *
+ * There is no dismiss, no clear, no "resolve" button, by design.
+ */
+function InvoiceDisputeBanner({ dispute }: { dispute: InvoiceDispute }) {
+  const amount =
+    dispute.amountCents !== null ? (
+      <>
+        The bank is disputing <strong>{formatCentsUsd(dispute.amountCents)}</strong>.
+      </>
+    ) : (
+      <>The dispute event did not carry an amount, so how much is contested is not stated here.</>
+    );
+
+  if (!dispute.open) {
+    return (
+      <Banner tone="info" title="Dispute won" className="invoice-detail__dispute">
+        <p>
+          This payment was disputed and the dispute was resolved in your favor. Nothing was
+          undone, because nothing needed undoing: the invoice was never un-paid while the contest
+          ran. {amount}
+        </p>
+        <p>
+          {dispute.fundsState === 'withdrawn'
+            ? 'The money has not been reported back in the Stripe balance yet. Stripe reinstates funds after the ruling rather than at the moment of it, so a gap here is ordinary.'
+            : dispute.fundsState === 'reinstated'
+              ? 'Stripe has reported the money back in the balance.'
+              : 'Stripe has reported no movement of the balance either way.'}{' '}
+          This stays on record because the dispute genuinely happened; it is not something to
+          clear.
+          {dispute.disputeId !== null ? ` Stripe dispute ${dispute.disputeId}.` : ''}
+        </p>
+      </Banner>
+    );
+  }
+
+  return (
+    <Banner tone="error" title="This payment is being taken back" className="invoice-detail__dispute">
+      <p>
+        {dispute.status !== null ? (
+          <>
+            The cardholder's bank has raised a chargeback and Stripe puts it at{' '}
+            <strong>{dispute.status}</strong>.
+          </>
+        ) : (
+          <>
+            The cardholder's bank has raised a chargeback. Stripe has not said where the dispute
+            stands, only that the money moved.
+          </>
+        )}{' '}
+        {amount}
+        {dispute.disputeId !== null ? ` Stripe dispute ${dispute.disputeId}.` : ''}
+      </p>
+      <p>
+        {dispute.fundsState === 'withdrawn'
+          ? "The money has already been pulled out of the Stripe balance. What actually left is the disputed amount plus Stripe's dispute fee, and the fee is not on the record here, so read the real debit in the Stripe balance report rather than from this screen."
+          : dispute.fundsState === 'reinstated'
+            ? 'Stripe has reported the money back in the balance, while the contest itself is still open.'
+            : 'Stripe has not yet reported the balance moving. It usually moves before the dispute closes, so treat this as not-yet-seen rather than as money that is safe.'}
+      </p>
+      <p>
+        This invoice still reads paid and still shows nothing due, on purpose. Un-paying it would
+        start sending the household overdue reminders over something their bank did, and recording
+        a reversal would invent a repayment that never happened. Where contested money ends up is
+        your call to make, not this screen's.
+      </p>
+    </Banner>
+  );
+}
 
 /**
  * A money box that may be left empty. Dollars.
@@ -326,6 +423,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // over no rows reads as "nothing was billed".
   const storedLines = invoiceLineItems(invoice);
   const archived = isArchivedInvoice(invoice);
+  const dispute = invoiceDispute(invoice);
 
   // THE DISAGREEMENT CHECK. See lib/invoiceReconcile.ts for why this is a real
   // reachable state and not defensive theatre: firestore.rules grants
@@ -728,6 +826,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             <dd>{invoice.dueDate.trim() === '' ? 'not set' : invoice.dueDate}</dd>
           </div>
         </dl>
+
+        {/* FIRST OF THE BANNERS, above the disagreement one, because money that
+            has left the balance outranks two figures that disagree on screen. */}
+        {dispute !== null && <InvoiceDisputeBanner dispute={dispute} />}
 
         {/* THE LINES-VERSUS-TOTAL DISAGREEMENT BANNER.
             It names BOTH figures and reconciles NEITHER. It does not pick a
