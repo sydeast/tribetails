@@ -15,6 +15,16 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, readdirSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
+// pngjs and pixelmatch are declared in BOTH `web/visual/package.json` and
+// `auntieos-admin/package.json`, and the second one is the one that matters.
+// This directory has its own package.json and its own lockfile, but it is NOT a
+// member of the root workspaces list, so a `npm ci` at the repo root never
+// installs it. `npm run visual:react:verify` is an auntieos-admin script, and
+// auntieos-admin IS a workspace, so node resolves these from the hoisted root
+// `node_modules` instead. Declared only here, the command dies with
+// ERR_MODULE_NOT_FOUND on every clean checkout, which is what it did from the
+// day the react surface landed until 2026-08-09. If you add a dependency to
+// this file, add it to `auntieos-admin/package.json` too.
 import { PNG } from "pngjs";
 import pixelmatch from "pixelmatch";
 

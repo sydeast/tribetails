@@ -196,3 +196,10 @@ coverage/
 *-firebase-adminsdk-*.json
 
 visual/desktop/
+
+# `web/visual/baseline.mjs` writes its verdict here on every verify run:
+# `visual/report/regression.md`, plus a per-screen diff PNG under
+# `visual/report/regress/` for anything over the threshold. It is output, not
+# input. Ignored now rather than earlier because until pngjs and pixelmatch were
+# declared, verify could not run at all, so the directory was never created.
+visual/report/
