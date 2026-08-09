@@ -57,9 +57,14 @@ import com.tribetails.auntieos.domain.dollarsToCents
 import com.tribetails.auntieos.domain.parseOptionalMoney
 import com.tribetails.auntieos.domain.unappliedCents
 import com.tribetails.auntieos.domain.invoicePartPaid
+import com.tribetails.auntieos.domain.InvoiceDisputeDeadline
 import com.tribetails.auntieos.domain.InvoiceDisputeFundsState
 import com.tribetails.auntieos.domain.InvoiceDisputeInfo
+import com.tribetails.auntieos.domain.formatDisputeDeadline
+import com.tribetails.auntieos.domain.invoiceDisputeDeadline
 import com.tribetails.auntieos.domain.invoiceDisputeOrNull
+import com.tribetails.auntieos.domain.invoiceDisputeReasonGloss
+import com.tribetails.auntieos.domain.invoiceDisputeTimeLeft
 import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.domain.ledgerCaveats
 import com.tribetails.auntieos.domain.ledgerRowAppliedLabel
@@ -824,6 +829,50 @@ private fun InvoiceDisputeBanner(dispute: InvoiceDisputeInfo) {
     }
     val idSentence = if (dispute.disputeId != null) " Stripe dispute ${dispute.disputeId}." else ""
 
+    // WHY THE CARDHOLDER IS DISPUTING. The raw Stripe token is always shown and
+    // plain English joins it when this build has a gloss for that category. A
+    // token with no gloss stands alone: it is not relabelled, not called
+    // "Unknown", and it does not take the banner down with it. `reason` is a
+    // plain String in the pinned SDK and Stripe ships new categories on its own
+    // schedule, so an unfamiliar one is the expected case, not the broken one.
+    //
+    // Rendered on the closed-history banner too. Why a dispute happened is
+    // worth keeping once it is over; the clock is not.
+    val reasonSentence = dispute.reason?.let { reason ->
+        val gloss = invoiceDisputeReasonGloss(reason)
+        if (gloss != null) {
+            "The bank filed it as $reason: $gloss."
+        } else {
+            "The bank filed it as $reason. This build has no plain-English description for that " +
+                "category, which means Stripe has added one since it shipped; the Stripe " +
+                "dashboard has Stripe's own wording for it."
+        }
+    }
+
+    // BY WHEN THE OPERATOR MUST ACT — or an honest account of why there is no
+    // clock. Null unless the dispute is answerable, so a settled dispute cannot
+    // show a countdown to a date that has stopped meaning anything. See
+    // `invoiceDisputeDeadline` for the gate and for why a passed deadline is
+    // stated as a closed window rather than as a verdict or a negative number.
+    val deadlineSentence = when (val d = invoiceDisputeDeadline(dispute, System.currentTimeMillis())) {
+        is InvoiceDisputeDeadline.None -> null
+        is InvoiceDisputeDeadline.Unstated ->
+            "Stripe has stated no response deadline for this dispute. That can mean the issuing " +
+                "bank allows no response to it at all, so there is no countdown to show and none " +
+                "is being guessed at. Open the dispute in the Stripe dashboard to see what it " +
+                "will accept."
+        is InvoiceDisputeDeadline.Passed ->
+            "The window to respond closed on ${formatDisputeDeadline(d.dueByMs)}. This screen " +
+                "still shows the dispute as awaiting a response, and that reading comes from " +
+                "Stripe by webhook and can lag behind Stripe itself, so what happened after the " +
+                "window shut is not something this screen knows. Open the dispute in the Stripe " +
+                "dashboard before assuming it is either still answerable or already settled."
+        is InvoiceDisputeDeadline.Due ->
+            "Respond by ${formatDisputeDeadline(d.dueByMs)}: " +
+                "${invoiceDisputeTimeLeft(d.msRemaining)}. A chargeback nobody answers in time " +
+                "is lost by default, so this date decides the money on its own."
+    }
+
     AuntieBanner(
         tone = tone,
         title = if (dispute.open) "This payment is being taken back" else "Dispute won",
@@ -838,6 +887,9 @@ private fun InvoiceDisputeBanner(dispute: InvoiceDisputeInfo) {
                     style = body,
                     color = c.textPrimary,
                 )
+                if (reasonSentence != null) {
+                    Text(text = reasonSentence, style = body, color = c.textPrimary)
+                }
                 Text(
                     text = when (dispute.fundsState) {
                         InvoiceDisputeFundsState.WITHDRAWN ->
@@ -866,6 +918,12 @@ private fun InvoiceDisputeBanner(dispute: InvoiceDisputeInfo) {
                 style = body,
                 color = c.textPrimary,
             )
+            if (reasonSentence != null) {
+                Text(text = reasonSentence, style = body, color = c.textPrimary)
+            }
+            if (deadlineSentence != null) {
+                Text(text = deadlineSentence, style = body, color = c.textPrimary)
+            }
             Text(
                 text = when (dispute.fundsState) {
                     InvoiceDisputeFundsState.WITHDRAWN ->

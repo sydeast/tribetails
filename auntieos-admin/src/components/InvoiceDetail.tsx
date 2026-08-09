@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   invoiceDispute,
+  invoiceDisputeDeadline,
+  invoiceDisputeReasonGloss,
+  invoiceDisputeTimeLeft,
   invoiceLineItems,
   invoiceStamp,
   isArchivedInvoice,
@@ -71,7 +74,109 @@ import './InvoiceDetail.css';
  *
  * There is no dismiss, no clear, no "resolve" button, by design.
  */
-function InvoiceDisputeBanner({ dispute }: { dispute: InvoiceDispute }) {
+/**
+ * The deadline as a date the operator can read, in THEIR timezone.
+ *
+ * No `timeZone` option, deliberately. The webhook stores epoch milliseconds and
+ * formats nothing, "because a date rendered in the backend is a date rendered in
+ * the SERVER'S locale and timezone, and the operator reading it is not there"
+ * (stripeDispute.ts). `timeZoneName` is spelled out because a deadline whose
+ * zone is ambiguous is a deadline with a several-hour error bar on it.
+ *
+ * Explicit component options rather than `dateStyle`/`timeStyle`: `timeZoneName`
+ * cannot legally be combined with those, and the zone is not optional here.
+ */
+function formatDisputeDeadline(ms: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(new Date(ms));
+}
+
+/**
+ * WHY THE CARDHOLDER IS DISPUTING.
+ *
+ * The raw Stripe token is always shown, and plain English joins it when this
+ * build has a gloss for that category. A token with no gloss renders alone: it
+ * is not relabelled `general`, not called "Unknown", and it certainly does not
+ * take the banner down with it. `reason` is a plain `string` in the pinned SDK
+ * and Stripe ships new categories on its own schedule, so an unfamiliar one is
+ * the expected case rather than the broken one.
+ *
+ * Renders on the closed-history banner too. The reason a dispute happened is
+ * worth keeping once it is over; the clock is not.
+ */
+function InvoiceDisputeReason({ reason }: { reason: string }) {
+  const gloss = invoiceDisputeReasonGloss(reason);
+  return (
+    <p className="invoice-detail__dispute-reason" data-dispute-reason={reason}>
+      The bank filed it as <strong>{reason}</strong>
+      {gloss !== null ? <>: {gloss}.</> : <>. This build has no plain-English description for that
+        category, which means Stripe has added one since it shipped; the Stripe dashboard has
+        Stripe's own wording for it.</>}
+    </p>
+  );
+}
+
+/**
+ * BY WHEN THE OPERATOR MUST ACT — or an honest account of why there is no clock.
+ *
+ * Renders nothing at all unless the dispute is answerable (see
+ * `invoiceDisputeDeadline`), so a settled dispute cannot show a countdown to a
+ * date that has stopped meaning anything. The three states it does render are
+ * three different sentences, and two of them are refusals:
+ *
+ *  - `due`: the date and how long is left. The one place urgency is earned.
+ *  - `unstated`: Stripe stated no deadline. That covers a `due_by` of 0, which
+ *    Stripe sends to mean the issuing bank allows NO response at all, and a
+ *    dispute record that carried no deadline. Neither is a date; neither gets a
+ *    countdown; both get pointed at the Stripe dashboard.
+ *  - `passed`: the window shut. NOT a verdict — `disputeStatus` here is a
+ *    webhook mirror and can still read `needs_response` after Stripe has closed
+ *    the dispute, so the screen states the clock, admits the status can lag, and
+ *    leaves the outcome to Stripe. A negative countdown would be arithmetic that
+ *    is right attached to a sentence that is nonsense.
+ */
+function InvoiceDisputeDeadlineLine({ dispute, nowMs }: { dispute: InvoiceDispute; nowMs: number }) {
+  const deadline = invoiceDisputeDeadline(dispute, nowMs);
+  if (deadline.state === 'none') return null;
+
+  if (deadline.state === 'unstated') {
+    return (
+      <p className="invoice-detail__dispute-deadline" data-deadline-state="unstated">
+        Stripe has stated no response deadline for this dispute. That can mean the issuing bank
+        allows no response to it at all, so there is no countdown to show and none is being guessed
+        at. Open the dispute in the Stripe dashboard to see what it will accept.
+      </p>
+    );
+  }
+
+  if (deadline.state === 'passed') {
+    return (
+      <p className="invoice-detail__dispute-deadline" data-deadline-state="passed">
+        The window to respond closed on <strong>{formatDisputeDeadline(deadline.dueByMs)}</strong>.
+        This screen still shows the dispute as awaiting a response, and that reading comes from
+        Stripe by webhook and can lag behind Stripe itself, so what happened after the window shut
+        is not something this screen knows. Open the dispute in the Stripe dashboard before
+        assuming it is either still answerable or already settled.
+      </p>
+    );
+  }
+
+  return (
+    <p className="invoice-detail__dispute-deadline" data-deadline-state="due">
+      Respond by <strong>{formatDisputeDeadline(deadline.dueByMs)}</strong>:{' '}
+      <strong>{invoiceDisputeTimeLeft(deadline.msRemaining)}</strong>. A chargeback nobody answers
+      in time is lost by default, so this date decides the money on its own.
+    </p>
+  );
+}
+
+function InvoiceDisputeBanner({ dispute, nowMs }: { dispute: InvoiceDispute; nowMs: number }) {
   const amount =
     dispute.amountCents !== null ? (
       <>
@@ -89,6 +194,7 @@ function InvoiceDisputeBanner({ dispute }: { dispute: InvoiceDispute }) {
           undone, because nothing needed undoing: the invoice was never un-paid while the contest
           ran. {amount}
         </p>
+        {dispute.reason !== null && <InvoiceDisputeReason reason={dispute.reason} />}
         <p>
           {dispute.fundsState === 'withdrawn'
             ? 'The money has not been reported back in the Stripe balance yet. Stripe reinstates funds after the ruling rather than at the moment of it, so a gap here is ordinary.'
@@ -120,6 +226,8 @@ function InvoiceDisputeBanner({ dispute }: { dispute: InvoiceDispute }) {
         {amount}
         {dispute.disputeId !== null ? ` Stripe dispute ${dispute.disputeId}.` : ''}
       </p>
+      {dispute.reason !== null && <InvoiceDisputeReason reason={dispute.reason} />}
+      <InvoiceDisputeDeadlineLine dispute={dispute} nowMs={nowMs} />
       <p>
         {dispute.fundsState === 'withdrawn'
           ? "The money has already been pulled out of the Stripe balance. What actually left is the disputed amount plus Stripe's dispute fee, and the fee is not on the record here, so read the real debit in the Stripe balance report rather than from this screen."
@@ -424,6 +532,12 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const storedLines = invoiceLineItems(invoice);
   const archived = isArchivedInvoice(invoice);
   const dispute = invoiceDispute(invoice);
+  // The clock, read once per render and passed down rather than reached for
+  // inside the banner. The countdown does NOT tick: a self-updating clock on a
+  // panel measured in days would re-render the whole detail view every second to
+  // move a figure nobody is watching, and a stale "3 days left" is off by at
+  // most a day on a deadline weeks away. Reopening the invoice re-reads it.
+  const nowMs = Date.now();
 
   // THE DISAGREEMENT CHECK. See lib/invoiceReconcile.ts for why this is a real
   // reachable state and not defensive theatre: firestore.rules grants
@@ -829,7 +943,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
 
         {/* FIRST OF THE BANNERS, above the disagreement one, because money that
             has left the balance outranks two figures that disagree on screen. */}
-        {dispute !== null && <InvoiceDisputeBanner dispute={dispute} />}
+        {dispute !== null && <InvoiceDisputeBanner dispute={dispute} nowMs={nowMs} />}
 
         {/* THE LINES-VERSUS-TOTAL DISAGREEMENT BANNER.
             It names BOTH figures and reconciles NEITHER. It does not pick a

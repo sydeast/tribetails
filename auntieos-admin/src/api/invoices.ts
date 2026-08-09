@@ -198,6 +198,37 @@ export interface InvoiceEntry {
   disputeAmountCents?: number | null;
   /** Stripe's `dp_…` id, the key of the `stripeDisputes/{id}` operator record. */
   disputeId?: string | null;
+  /**
+   * WHEN THE EVIDENCE IS DUE, epoch MILLISECONDS, or null for "there is none".
+   *
+   * The time-critical fact of the whole dispute feature: a chargeback you fail
+   * to answer by this moment is lost by default. Written on the lifecycle lane
+   * only, mirrored from `stripeDisputes/{id}.evidenceDueByMs`.
+   *
+   * MILLISECONDS, not seconds. `stripeDispute.ts#evidenceDueByMsOf` multiplies
+   * Stripe's epoch-seconds `due_by` by 1000 before storing, matching
+   * `lastEventCreatedMs`. Nothing on the client divides it back.
+   *
+   * NULL IS NEITHER ZERO NOR AN ERROR. Stripe sends `due_by: 0` deliberately,
+   * meaning "the customer's bank or credit card company doesn't allow a
+   * response for this particular dispute" (pinned SDK, Disputes.d.ts:210), and
+   * the webhook maps that, a null `due_by`, an absent `evidence_details` and
+   * anything non-finite all to null. A screen that fell back to 0 would print a
+   * chargeback fifty-five years overdue.
+   */
+  disputeEvidenceDueByMs?: number | null;
+  /**
+   * WHY THE CARDHOLDER IS DISPUTING, Stripe's raw snake_case token.
+   *
+   * `string` and not a union, exactly like `disputeStatus` and for the same
+   * reason: the SDK types `Dispute.reason` as a plain `string`
+   * (Disputes.d.ts:89) and the docstring's category list — `fraudulent`,
+   * `product_not_received`, `duplicate`, … — is prose rather than a type.
+   * Stripe adds categories on its own schedule and the webhook stores whatever
+   * arrived with no allowlist, so a category this build has never heard of
+   * reaches the screen and is shown as sent. See `invoiceDisputeReasonGloss`.
+   */
+  disputeReason?: string | null;
 }
 
 /**
@@ -315,6 +346,21 @@ export interface InvoiceDispute {
   amountCents: number | null;
   disputeId: string | null;
   /**
+   * The evidence deadline in epoch milliseconds, or null for "no deadline is
+   * stated". A stored 0 comes out null here too: see `disputeEvidenceDueByMs`
+   * above for why Stripe's zero is a real value that is not a date.
+   *
+   * This is the raw fact. What the operator is shown about it is
+   * `invoiceDisputeDeadline`, which is where the urgency gate lives.
+   */
+  evidenceDueByMs: number | null;
+  /**
+   * `disputeReason` verbatim, or null when the doc holds none. Not normalized
+   * and not translated, for the same reason `status` is not: it is Stripe's
+   * vocabulary and it grows without asking.
+   */
+  reason: string | null;
+  /**
    * DOES THIS STILL WANT THE OPERATOR? The whole point of the type.
    *
    * `false` for exactly one status, `won`, and `true` for everything else
@@ -357,7 +403,12 @@ export interface InvoiceDispute {
 export function invoiceDispute(
   row: Pick<
     InvoiceEntry,
-    'disputeStatus' | 'disputeFundsState' | 'disputeAmountCents' | 'disputeId'
+    | 'disputeStatus'
+    | 'disputeFundsState'
+    | 'disputeAmountCents'
+    | 'disputeId'
+    | 'disputeEvidenceDueByMs'
+    | 'disputeReason'
   >,
 ): InvoiceDispute | null {
   const rawStatus: unknown = row.disputeStatus;
@@ -373,6 +424,11 @@ export function invoiceDispute(
   const rawId: unknown = row.disputeId;
   const disputeId = typeof rawId === 'string' && rawId.trim() !== '' ? rawId : null;
 
+  // PRESENCE IS STILL THESE THREE AND ONLY THESE THREE. The reason and the
+  // deadline ride the same lifecycle write as `disputeStatus`, so a document
+  // carrying one of them and none of the three below is a corrupt document
+  // rather than a dispute, and admitting it here would let a stray field
+  // conjure a chargeback banner onto a clean invoice.
   if (status === null && fundsState === null && disputeId === null) return null;
 
   // Absent, null, and NaN all mean "no figure arrived". None of them mean zero.
@@ -380,7 +436,162 @@ export function invoiceDispute(
   const amountCents =
     typeof rawAmount === 'number' && Number.isFinite(rawAmount) ? rawAmount : null;
 
-  return { status, fundsState, amountCents, disputeId, open: status !== 'won' };
+  // THE SECOND LOCK ON STRIPE'S ZERO. `stripeDispute.ts` already refuses to
+  // store a `due_by` of 0, because Stripe sends that to mean the issuing bank
+  // allows no response at all rather than to mean 1 January 1970. This repeats
+  // the refusal on the read side for the same reason `invoiceStamp` verifies
+  // rather than trusts: `InvoiceEntry` is a cast over raw document data, and a
+  // 0 that ever reached this field must not become `new Date(0)`.
+  const rawDueBy: unknown = row.disputeEvidenceDueByMs;
+  const evidenceDueByMs =
+    typeof rawDueBy === 'number' && Number.isFinite(rawDueBy) && rawDueBy > 0 ? rawDueBy : null;
+
+  const rawReason: unknown = row.disputeReason;
+  const reason = typeof rawReason === 'string' && rawReason.trim() !== '' ? rawReason : null;
+
+  return {
+    status,
+    fundsState,
+    amountCents,
+    disputeId,
+    evidenceDueByMs,
+    reason,
+    open: status !== 'won',
+  };
+}
+
+/**
+ * THE ONE STATUS THAT MAKES A DEADLINE ACTIONABLE.
+ *
+ * Stripe's `Dispute.status` docstring (pinned SDK, Disputes.d.ts:93) lists
+ * `warning_needs_response`, `warning_under_review`, `warning_closed`,
+ * `needs_response`, `under_review`, `won`, `lost` and `prevented`. Exactly one
+ * of them is a chargeback awaiting the operator's answer, and the countdown is
+ * gated on an exact match against it.
+ *
+ * Everything else keeps whatever alarm `open` gave it and gets no countdown:
+ *
+ *  - `won` and `lost` are settled and still carry their deadline, because
+ *    nothing ever clears any of these fields. Counting down to it would send
+ *    the operator to fight a contest that is already over.
+ *  - `under_review` means the evidence is already in. There is nothing left to
+ *    submit by the date.
+ *  - a status this build has never heard of gets no countdown for the same
+ *    reason it gets no relabelling: we cannot prove it is answerable.
+ *
+ * `warning_needs_response` is the known candidate for widening this and is
+ * deliberately not here. It is an inquiry rather than a chargeback, it can
+ * carry its own `due_by`, and whether an inquiry deserves the same red clock is
+ * an operator's ruling rather than this file's guess.
+ */
+const INVOICE_DISPUTE_ANSWERABLE_STATUS = 'needs_response';
+
+/**
+ * What the operator is told about the response deadline.
+ *
+ * Four states, because there are genuinely four different things to say and
+ * three of them are refusals:
+ *
+ *  - `due`: an answerable dispute with a deadline still ahead. Count it down.
+ *  - `passed`: an answerable dispute whose deadline is behind us. NOT a
+ *    negative countdown and NOT a verdict — see `invoiceDisputeDeadline`.
+ *  - `unstated`: an answerable dispute with no deadline on the document at all.
+ *  - `none`: nothing to count down to, because the dispute is not answerable.
+ */
+export type InvoiceDisputeDeadline =
+  | { state: 'due'; dueByMs: number; msRemaining: number }
+  | { state: 'passed'; dueByMs: number }
+  | { state: 'unstated' }
+  | { state: 'none' };
+
+/**
+ * The deadline as the screen must present it, from the document and the clock.
+ *
+ * Pure, and `nowMs` is a parameter rather than a `Date.now()` inside, for the
+ * same reason `invoiceDisputeTone` on Android is a function rather than an
+ * inline `if`: the branch that decides whether an operator sees a red clock is
+ * the branch a test has to be able to call.
+ *
+ * A DEADLINE THAT HAS PASSED IS ITS OWN STATE. `disputeStatus` is a webhook
+ * mirror of Stripe's, so it can still read `needs_response` after Stripe has
+ * shut the window — the `charge.dispute.closed` event may not have landed, or
+ * may never land if the dispute was answered elsewhere. So the past-deadline
+ * case says the window closed and points at Stripe, and does not claim the
+ * dispute is lost. Rendering `-2 days left` would be the arithmetic being
+ * correct and the sentence being nonsense.
+ *
+ * The exact instant counts as passed. At `dueByMs` there is no time left to
+ * submit anything, and "0 days left" reads as a day.
+ */
+export function invoiceDisputeDeadline(
+  dispute: Pick<InvoiceDispute, 'status' | 'evidenceDueByMs'>,
+  nowMs: number,
+): InvoiceDisputeDeadline {
+  if (dispute.status !== INVOICE_DISPUTE_ANSWERABLE_STATUS) return { state: 'none' };
+  const dueByMs = dispute.evidenceDueByMs;
+  if (dueByMs === null) return { state: 'unstated' };
+  if (dueByMs <= nowMs) return { state: 'passed', dueByMs };
+  return { state: 'due', dueByMs, msRemaining: dueByMs - nowMs };
+}
+
+/**
+ * How much time is left, in words.
+ *
+ * A DURATION, never a calendar computation. The arithmetic runs on elapsed
+ * milliseconds, so no timezone and no daylight-saving boundary can move the
+ * answer — which matters because the absolute date beside it IS rendered in the
+ * operator's zone, and the two must not be able to disagree.
+ *
+ * Rounds down at every step, toward the operator having less time than they
+ * think. Stops at "less than an hour" rather than counting minutes: a minute
+ * counter would be stale the moment it painted, since nothing here ticks.
+ */
+export function invoiceDisputeTimeLeft(msRemaining: number): string {
+  const hours = Math.floor(msRemaining / 3_600_000);
+  if (hours < 1) return 'less than an hour left';
+  const days = Math.floor(hours / 24);
+  if (days < 1) return `${hours} ${hours === 1 ? 'hour' : 'hours'} left`;
+  return `${days} ${days === 1 ? 'day' : 'days'} left`;
+}
+
+/**
+ * Plain English for a Stripe dispute reason, or null when this build has never
+ * seen the token.
+ *
+ * THE TOKEN IS ALWAYS SHOWN; THIS IS A COURTESY ON TOP OF IT. `reason` is a
+ * plain `string` in the pinned SDK (Disputes.d.ts:89), not a union, and the
+ * docstring's list is prose that Stripe extends on its own schedule. Returning
+ * null rather than "Unknown" is the difference between the screen saying
+ * nothing about a category it does not know and the screen presenting this
+ * build's ignorance as Stripe's answer.
+ *
+ * The wording carries a constraint from `InvoiceDetail.test.tsx`: the reason
+ * renders on the closed-history banner too, and that banner is pinned never to
+ * contain "respond", "deadline" or "evidence". Nothing here may use those
+ * words, and a case in `invoices.test.ts` holds the table to it.
+ */
+const INVOICE_DISPUTE_REASON_GLOSS: Readonly<Record<string, string>> = {
+  bank_cannot_process: 'their bank could not process the payment',
+  check_returned: 'the check was returned unpaid',
+  credit_not_processed: 'they say a refund they were promised never arrived',
+  customer_initiated: 'the cardholder asked their bank to reverse it',
+  debit_not_authorized: 'they say they never authorized the debit',
+  duplicate: 'they say they were charged twice for the same thing',
+  fraudulent: 'they say they did not authorize this charge at all',
+  general: 'the bank filed it without naming a category',
+  incorrect_account_details: 'the account details on the charge were wrong',
+  insufficient_funds: 'the account did not have the funds',
+  noncompliant: 'the charge broke a card network rule',
+  product_not_received: 'they say the care was never delivered',
+  product_unacceptable: 'they say the care was not what was agreed',
+  subscription_canceled: 'they say the arrangement had already been canceled',
+  unrecognized: 'they do not recognize the charge on their statement',
+};
+
+export function invoiceDisputeReasonGloss(reason: string): string | null {
+  return Object.prototype.hasOwnProperty.call(INVOICE_DISPUTE_REASON_GLOSS, reason)
+    ? (INVOICE_DISPUTE_REASON_GLOSS[reason] as string)
+    : null;
 }
 
 /**

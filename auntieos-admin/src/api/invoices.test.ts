@@ -7,6 +7,9 @@ import {
   invoiceMatchesSearch,
   invoicesPageQuery,
   invoiceDispute,
+  invoiceDisputeDeadline,
+  invoiceDisputeReasonGloss,
+  invoiceDisputeTimeLeft,
   invoiceStamp,
   invoiceDayMs,
   invoiceWithinWindow,
@@ -426,5 +429,245 @@ describe('invoiceDispute', () => {
   it('ignores a blank status string rather than treating it as a dispute', () => {
     expect(invoiceDispute({ disputeStatus: '' })).toBeNull();
     expect(invoiceDispute({ disputeStatus: null })).toBeNull();
+  });
+  /**
+   * THE ZERO TRAP, on the client side of the wire.
+   *
+   * `stripeDispute.ts#evidenceDueByMsOf` already maps Stripe's deliberate
+   * `due_by: 0` ("the issuing bank allows no response at all", pinned SDK
+   * Disputes.d.ts:210) to null, so the backend never writes one. This is the
+   * second lock, because `InvoiceEntry` is a cast over raw document data rather
+   * than a validation of it: a 0 that ever reached this doc must come out null,
+   * never as midnight on 1 January 1970 and a chargeback fifty-five years
+   * overdue on a countdown whose only job is to be right about time.
+   */
+  it('reads a stored deadline of 0 as no deadline, never as the epoch', () => {
+    const d = invoiceDispute({ disputeStatus: 'needs_response', disputeEvidenceDueByMs: 0 })!;
+    expect(d.evidenceDueByMs).toBeNull();
+  });
+  it('reads an absent, null or non-finite deadline as no deadline', () => {
+    expect(invoiceDispute({ disputeStatus: 'needs_response' })!.evidenceDueByMs).toBeNull();
+    expect(
+      invoiceDispute({ disputeStatus: 'needs_response', disputeEvidenceDueByMs: null })!.evidenceDueByMs,
+    ).toBeNull();
+    expect(
+      invoiceDispute({ disputeStatus: 'needs_response', disputeEvidenceDueByMs: Number.NaN })!
+        .evidenceDueByMs,
+    ).toBeNull();
+  });
+  it('carries a real deadline through in epoch milliseconds, untouched', () => {
+    const ms = Date.UTC(2026, 7, 20, 17, 0, 0);
+    expect(
+      invoiceDispute({ disputeStatus: 'needs_response', disputeEvidenceDueByMs: ms })!.evidenceDueByMs,
+    ).toBe(ms);
+  });
+  /**
+   * The reason is a raw snake_case Stripe token and it travels verbatim. The
+   * SDK types `reason` as a plain `string` (Disputes.d.ts:89), not a union, and
+   * the docstring's category list is prose; Stripe adds categories on its own
+   * schedule and one this build has never seen must reach the operator as sent.
+   */
+  it('carries the raw Stripe reason token through without normalizing it', () => {
+    expect(
+      invoiceDispute({ disputeStatus: 'needs_response', disputeReason: 'product_not_received' })!.reason,
+    ).toBe('product_not_received');
+    expect(
+      invoiceDispute({ disputeStatus: 'needs_response', disputeReason: 'a_category_from_2027' })!.reason,
+    ).toBe('a_category_from_2027');
+  });
+  it('reads an absent or blank reason as no reason', () => {
+    expect(invoiceDispute({ disputeStatus: 'needs_response' })!.reason).toBeNull();
+    expect(invoiceDispute({ disputeStatus: 'needs_response', disputeReason: '' })!.reason).toBeNull();
+    expect(invoiceDispute({ disputeStatus: 'needs_response', disputeReason: null })!.reason).toBeNull();
+  });
+  /**
+   * PRESENCE IS UNCHANGED, and deliberately so. The webhook writes the reason
+   * and the deadline on the same lifecycle write as `disputeStatus`, so a doc
+   * carrying one of them and none of status, funds state or dispute id is a
+   * corrupt document rather than a dispute. Widening presence here would change
+   * the contract the cases above pin.
+   */
+  it('does not turn a reason or a deadline alone into a dispute', () => {
+    expect(invoiceDispute({ disputeReason: 'fraudulent' })).toBeNull();
+    expect(invoiceDispute({ disputeEvidenceDueByMs: 1_786_000_000_000 })).toBeNull();
+  });
+});
+/**
+ * THE COUNTDOWN, and the three ways it must refuse to count.
+ *
+ * A chargeback you fail to answer by the deadline is lost by default, which is
+ * why the date is on the screen at all. That also makes it the most dangerous
+ * thing on the screen to get wrong, so every branch here is a refusal to state
+ * something the document does not support.
+ */
+describe('invoiceDisputeDeadline', () => {
+  const NOW = Date.UTC(2026, 7, 9, 12, 0, 0);
+  const DAY = 86_400_000;
+  const dispute = (over: Partial<Pick<InvoiceEntry, 'disputeStatus' | 'disputeEvidenceDueByMs'>>) =>
+    invoiceDispute({ disputeId: 'dp_1', ...over })!;
+
+  it('counts down an open deadline the operator can still meet', () => {
+    const d = invoiceDisputeDeadline(
+      dispute({ disputeStatus: 'needs_response', disputeEvidenceDueByMs: NOW + 3 * DAY }),
+      NOW,
+    );
+    expect(d.state).toBe('due');
+    expect(d.state === 'due' && d.dueByMs).toBe(NOW + 3 * DAY);
+    expect(d.state === 'due' && d.msRemaining).toBe(3 * DAY);
+  });
+  /**
+   * A DEADLINE IN THE PAST IS ITS OWN STATE. It is not a negative countdown and
+   * it is not a verdict: `disputeStatus` is a webhook mirror, so it can still
+   * read `needs_response` after Stripe has closed the window. The screen says
+   * the window shut and sends the operator to Stripe rather than guessing which.
+   */
+  it('reports a deadline already gone as passed, never as a negative countdown', () => {
+    const d = invoiceDisputeDeadline(
+      dispute({ disputeStatus: 'needs_response', disputeEvidenceDueByMs: NOW - 2 * DAY }),
+      NOW,
+    );
+    expect(d.state).toBe('passed');
+    expect(d.state === 'passed' && d.dueByMs).toBe(NOW - 2 * DAY);
+    expect(d).not.toHaveProperty('msRemaining');
+  });
+  it('reads the exact instant of the deadline as passed rather than as zero left', () => {
+    expect(
+      invoiceDisputeDeadline(
+        dispute({ disputeStatus: 'needs_response', disputeEvidenceDueByMs: NOW }),
+        NOW,
+      ).state,
+    ).toBe('passed');
+  });
+  /**
+   * NULL IS NEITHER ZERO NOR AN ERROR. Stripe sends `due_by: 0` on purpose to
+   * mean the issuing bank allows NO response at all, and the webhook maps that
+   * and a genuinely absent value both to null. Neither is a date, so there is
+   * nothing to count down to — and the banner still renders.
+   */
+  it('says a needed response has no stated deadline rather than inventing one', () => {
+    expect(invoiceDisputeDeadline(dispute({ disputeStatus: 'needs_response' }), NOW).state).toBe(
+      'unstated',
+    );
+  });
+  /**
+   * THE ONE THE OPERATOR ASKED FOR, at the pure-function level. A won dispute
+   * keeps its deadline on the document forever, because nothing ever clears any
+   * of these fields. Counting down to it would send the operator to fight a
+   * contest that is already over.
+   */
+  it('shows no countdown for a WON dispute, deadline on the document or not', () => {
+    expect(
+      invoiceDisputeDeadline(
+        dispute({ disputeStatus: 'won', disputeEvidenceDueByMs: NOW + 5 * DAY }),
+        NOW,
+      ).state,
+    ).toBe('none');
+  });
+  /**
+   * `lost` is still open per #309 — where contested money ends up is the
+   * operator's call — but it is not answerable, so it gets the alarm without a
+   * countdown. Same for `under_review`, where the evidence is already in.
+   */
+  it('shows no countdown for a settled or in-review dispute that still wants a human', () => {
+    for (const status of ['lost', 'under_review', 'prevented', 'warning_closed']) {
+      expect(
+        invoiceDisputeDeadline(
+          dispute({ disputeStatus: status, disputeEvidenceDueByMs: NOW + 5 * DAY }),
+          NOW,
+        ).state,
+      ).toBe('none');
+    }
+  });
+  /**
+   * The gate is an exact match on the one status Stripe defines as answerable.
+   * `warning_needs_response` is the known candidate for widening it and is
+   * deliberately left out: an inquiry is not a chargeback, and adding it is an
+   * operator ruling rather than this change's to make.
+   */
+  it('does not count down a status it cannot prove is answerable', () => {
+    expect(
+      invoiceDisputeDeadline(
+        dispute({ disputeStatus: 'warning_needs_response', disputeEvidenceDueByMs: NOW + DAY }),
+        NOW,
+      ).state,
+    ).toBe('none');
+    expect(
+      invoiceDisputeDeadline(
+        dispute({ disputeStatus: 'a_status_from_2027', disputeEvidenceDueByMs: NOW + DAY }),
+        NOW,
+      ).state,
+    ).toBe('none');
+  });
+  /** The funds lane can land first, leaving moved money and no status to gate on. */
+  it('shows no countdown when no status has arrived at all', () => {
+    expect(invoiceDisputeDeadline(dispute({ disputeStatus: null }), NOW).state).toBe('none');
+  });
+});
+/**
+ * How long is left, in words. A duration and never a calendar computation: the
+ * arithmetic is on elapsed milliseconds, so no timezone or daylight-saving
+ * boundary can move the answer.
+ */
+describe('invoiceDisputeTimeLeft', () => {
+  const DAY = 86_400_000;
+  const HOUR = 3_600_000;
+  it('counts whole days down, rounding toward the operator having less time', () => {
+    expect(invoiceDisputeTimeLeft(6 * DAY)).toBe('6 days left');
+    expect(invoiceDisputeTimeLeft(2 * DAY - 1)).toBe('1 day left');
+    expect(invoiceDisputeTimeLeft(DAY)).toBe('1 day left');
+  });
+  it('drops to hours inside the last day', () => {
+    expect(invoiceDisputeTimeLeft(DAY - 1)).toBe('23 hours left');
+    expect(invoiceDisputeTimeLeft(HOUR)).toBe('1 hour left');
+  });
+  it('says less than an hour rather than counting minutes at the wire', () => {
+    expect(invoiceDisputeTimeLeft(HOUR - 1)).toBe('less than an hour left');
+    expect(invoiceDisputeTimeLeft(1)).toBe('less than an hour left');
+  });
+});
+/**
+ * PLAIN ENGLISH WHERE WE HAVE IT, THE RAW TOKEN WHERE WE DO NOT.
+ *
+ * `reason` is a plain `string` in the pinned SDK, not a union, and Stripe adds
+ * categories without asking. The gloss is a courtesy over a token that is always
+ * shown; a token with no gloss renders alone rather than as "Unknown", which
+ * would be this build's ignorance dressed up as Stripe's answer.
+ */
+describe('invoiceDisputeReasonGloss', () => {
+  it('glosses every reason the pinned SDK docstring lists', () => {
+    for (const reason of [
+      'bank_cannot_process',
+      'check_returned',
+      'credit_not_processed',
+      'customer_initiated',
+      'debit_not_authorized',
+      'duplicate',
+      'fraudulent',
+      'general',
+      'incorrect_account_details',
+      'insufficient_funds',
+      'noncompliant',
+      'product_not_received',
+      'product_unacceptable',
+      'subscription_canceled',
+      'unrecognized',
+    ]) {
+      expect(invoiceDisputeReasonGloss(reason), reason).toBeTypeOf('string');
+    }
+  });
+  it('returns null for a category Stripe has not shipped to this build', () => {
+    expect(invoiceDisputeReasonGloss('a_category_from_2027')).toBeNull();
+    expect(invoiceDisputeReasonGloss('')).toBeNull();
+  });
+  /**
+   * The won banner is pinned by InvoiceDetail.test.tsx not to contain the words
+   * "respond", "deadline" or "evidence", and the reason renders on that banner
+   * too. This keeps the gloss table honest about that rather than leaving a
+   * future category to break a test three files away.
+   */
+  it('never uses the vocabulary the closed-history banner is forbidden', () => {
+    for (const reason of ['fraudulent', 'product_not_received', 'general', 'unrecognized']) {
+      expect(invoiceDisputeReasonGloss(reason)!).not.toMatch(/respond|deadline|evidence/i);
+    }
   });
 });

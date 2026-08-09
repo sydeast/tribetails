@@ -495,6 +495,38 @@ data class Invoice(
     var disputeAmountCents: Long? = null,
     /** Stripe's `dp_…` id, the key of the `stripeDisputes/{id}` operator record. */
     var disputeId: String? = null,
+    /**
+     * WHEN THE EVIDENCE IS DUE, epoch MILLISECONDS, or null for "there is none".
+     *
+     * The time-critical fact of the whole dispute feature: a chargeback nobody
+     * answers by this moment is lost by default.
+     *
+     * MILLISECONDS, not seconds. `stripeDispute.ts#evidenceDueByMsOf` multiplies
+     * Stripe's epoch-seconds `due_by` by 1000 before storing, matching
+     * `lastEventCreatedMs`. Nothing here divides it back; read it with
+     * `Instant.ofEpochMilli`.
+     *
+     * `Long?`, never `Long = 0L`, and that is the Class B decode rule twice
+     * over. The lifecycle write sets the field unconditionally, so a dispute
+     * with no deadline leaves an explicit null that a non-null setter would
+     * throw on under `toObject()` — blanking the WHOLE invoice query rather
+     * than the one row. And a 0 default would be the exact value Stripe uses to
+     * mean "the issuing bank allows no response at all" (pinned SDK,
+     * Disputes.d.ts:210), rendered as 1 January 1970.
+     */
+    var disputeEvidenceDueByMs: Long? = null,
+    /**
+     * WHY THE CARDHOLDER IS DISPUTING, Stripe's raw snake_case token.
+     *
+     * `String?` rather than an enum for the same reason [disputeStatus] is: the
+     * SDK types `Dispute.reason` as a plain `String` (Disputes.d.ts:89), the
+     * docstring's category list is prose rather than a type, and Stripe adds
+     * categories on its own schedule. The webhook stores whatever arrived with
+     * no allowlist, so a category this build has never heard of has to survive
+     * to the screen and be shown as sent. Read it through
+     * `domain.invoiceDisputeReasonGloss`.
+     */
+    var disputeReason: String? = null,
 )
 
 /**
