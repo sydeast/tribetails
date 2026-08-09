@@ -325,7 +325,10 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
 
       <DenPanel
         title="Templates"
-        subtitle="Click a row to open it. Filter by category, or search by title or key."
+        /* "card", not "row": this list has been an `EntityCardGrid` since the
+           list-shape rule landed, and the instruction has to name the control
+           the operator can actually click. */
+        subtitle="Click a card to open it. Filter by category, or search by title or key."
       >
         <AsyncRegion
           state={templates}

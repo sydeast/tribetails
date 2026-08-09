@@ -194,6 +194,25 @@ describe('Templates screen', () => {
     expect(within(grid).getAllByRole('listitem')).toHaveLength(2);
   });
 
+  /**
+   * The panel's instruction has to name the thing the operator can actually
+   * click. The list stopped being a stacked column of rows when the card grid
+   * landed above, and copy that still says "row" sends the operator looking for
+   * a control this screen no longer draws.
+   *
+   * Asserted on the rendered subtitle rather than on the source string, so a
+   * later re-word that reintroduces the row cannot pass by moving the text.
+   */
+  it('tells the operator to click a card, because rows are not what this screen draws', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed' })]);
+    render(<Templates />);
+    await screen.findByText('Booking Confirmed');
+
+    const subtitle = screen.getByText(/Filter by category, or search by title or key\./);
+    expect(subtitle.textContent).toContain('Click a card to open it.');
+    expect(subtitle.textContent).not.toMatch(/\brow\b/i);
+  });
+
   it('cards are always live buttons: with no onSelect override, activating a card opens the built-in editor', async () => {
     // Unlike the pre-editor placeholder, there is no unwired/dead-control case
     // left: the router mounts <Templates/> propless in production, so this
