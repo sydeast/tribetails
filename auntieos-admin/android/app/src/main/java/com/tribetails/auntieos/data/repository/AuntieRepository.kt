@@ -1230,28 +1230,44 @@ class AuntieRepository(
         }
     }.onFailure { AuntieLog.e("Failed to get coverage package config", it) }
 
-    suspend fun saveCoveragePackageConfig(
-        config: CoveragePackageConfig,
-        updatedBy: String = "admin"
+    /**
+     * Writes ONLY the coverage-config fields that actually changed, plus the stamp.
+     *
+     * This replaced a whole-model `saveCoveragePackageConfig(config)` whose
+     * `.set(config, merge())` carried the whole [CoveragePackageConfig] on every
+     * save — the shape [updateHouseholdFields], [updateKinfolkFields] and
+     * [updateBusinessSettingsFields] each removed from their own collection.
+     * `CoveragePackageConfigDiff.kt` says which fields exist, why the blast radius
+     * on THIS document was small, and which two losses the diff actually closes.
+     *
+     * `updatedAt` is STAMPED here, never round-tripped from the value that was
+     * read. ISO-8601 String rather than `serverTimestamp()`, because
+     * `CoveragePackageConfig.updatedAt` is a `String` and the React admin parses it
+     * as one (`auntieos-admin/src/api/coveragePackage.ts`).
+     *
+     * MERGE STAYS, and now earns its comment. It is what leaves the legacy `rules`
+     * field on an old document alone — neither client models it, so neither can
+     * name it, and only merge preserves a field the client cannot name. It was
+     * never what made a whole-model write safe.
+     *
+     * An empty [changes] is a caller bug, not a no-op to absorb: such a write could
+     * only move the stamp, claiming a change that never happened. The ViewModel
+     * skips the call outright when the diff is empty.
+     */
+    suspend fun updateCoveragePackageConfigFields(
+        changes: Map<String, Any?>,
+        updatedBy: String = "admin",
     ): Result<Unit> = runCatching {
-        AuntieLog.i("Saving coverage package config by $updatedBy")
+        require(changes.isNotEmpty()) { "updateCoveragePackageConfigFields called with no changed fields" }
+        AuntieLog.i("Updating coverage package config by $updatedBy: ${changes.keys.joinToString()}")
         authGate.ensureAuthenticated()
-        // durations + rules are one saveable unit; merge() still guards the stamp
-        // fields and any future sibling field on the doc.
-        //
-        // STILL CARRIES the stale-inside-the-map gap that
-        // [updateBusinessSettingsFields] just closed on `business_settings`, and
-        // is the last android document that does. React persists ONLY
-        // `{ durations, updatedAt, updatedBy }` here
-        // (`api/coveragePackageWrite.ts`), so an android save can revert a visit
-        // menu edited on the web between this screen's load and its save. One
-        // android caller, one web caller, one operator-only document, so it stays
-        // queued behind the settings doc rather than folded into that change.
-        // `BusinessSettingsDiff.kt` is the pattern to copy when it comes up.
-        val stamped = config.copy(updatedAt = getCurrentTimestamp(), updatedBy = updatedBy)
+        val payload: Map<String, Any?> = changes + mapOf(
+            "updatedAt" to getCurrentTimestamp(),
+            "updatedBy" to updatedBy,
+        )
         firestore.collection("coverage_package_config")
             .document("config")
-            .set(stamped, com.google.firebase.firestore.SetOptions.merge())
+            .set(payload, com.google.firebase.firestore.SetOptions.merge())
             .await()
         AuntieLog.d("Coverage package config saved successfully")
         Unit

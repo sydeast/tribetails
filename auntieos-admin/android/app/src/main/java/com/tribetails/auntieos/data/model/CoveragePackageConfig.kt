@@ -14,8 +14,12 @@ import com.tribetails.auntieos.domain.withKind
  * Coverage rules (day window, max gap, pinned visits) are PER-CLIENT and are held
  * as session UI state on the screen, never in this global doc — so switching
  * clients can't inherit stale rules. Any legacy `rules` field on an old doc is
- * ignored on read. Saved with SetOptions.merge(); a never-created doc, or one with
- * an empty menu, resolves to the shipped defaults via [withDefaults].
+ * ignored on read, and `SetOptions.merge()` on write is what leaves it there. A
+ * never-created doc, or one with an empty menu, resolves to the shipped defaults
+ * via [withDefaults].
+ *
+ * SAVED AS A DIFF, never as this model: see `CoveragePackageConfigDiff.kt`, which
+ * also holds the drift guard that must be updated before this class gains a field.
  */
 @Keep
 data class CoveragePackageConfig(
