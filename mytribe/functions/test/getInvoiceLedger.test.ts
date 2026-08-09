@@ -204,6 +204,9 @@ describe('getInvoiceLedger ledgerPayments (the display ledger)', () => {
       {
         paymentId: 'r1',
         amountCents: 3000,
+        // A legacy row whose UNITS are unambiguous even though its tip basis is
+        // not: `amount` with no marker is dollars, and 30 dollars is a reading.
+        amountResolved: true,
         tipCents: 500,
         // NO FEE ON A LEGACY ROW, and `reconciles: false` is the whole point of
         // this case. The row carries a tip whose basis nobody recorded, so
@@ -356,8 +359,14 @@ describe('getInvoiceLedger ledgerPayments (the display ledger)', () => {
           ],
         }).db,
       );
-      const row = (await run()).ledgerPayments[0]!;
+      const res = await run();
+      const row = res.ledgerPayments[0]!;
       expect(row.amountCents).toBe(0);
+      // THE FLAG THE WARN LOG COULD NOT REPLACE. A log line reaches on-call;
+      // it does not reach the operator looking at the row, who saw $0.00 and
+      // had nothing on screen telling her it was not a reading.
+      expect(row.amountResolved).toBe(false);
+      expect(res.unresolvedAmountCount).toBe(1);
       const warnCalls = mocks.logEventFn.mock.calls.filter(
         ([entry]) => entry.event === 'ledger.amount.unresolved',
       );
@@ -372,11 +381,48 @@ describe('getInvoiceLedger ledgerPayments (the display ledger)', () => {
       mocks.dbFn.mockReturnValue(
         seed({ rootPayments: [{ id: 'r1', data: { invoiceId: 'inv1', amount: 30 } }] }).db,
       );
-      await run();
+      const res = await run();
+      expect(res.ledgerPayments[0]!.amountResolved).toBe(true);
+      expect(res.unresolvedAmountCount).toBe(0);
       const warnCalls = mocks.logEventFn.mock.calls.filter(
         ([entry]) => entry.event === 'ledger.amount.unresolved',
       );
       expect(warnCalls).toHaveLength(0);
+    });
+
+    it('flags a stripe-event row whose amount is not a usable number, not only the marker case', async () => {
+      // The second branch `resolveLedgerAmountCents` gives up on: the marker
+      // says the figure is already cents, and the figure is a string. A row
+      // like this never carried an `unresolved` marker, so the marker alone
+      // would have let it through as a $0.00 nobody questioned.
+      mocks.dbFn.mockReturnValue(
+        seed({
+          rootPayments: [
+            { id: 'r1', data: { invoiceId: 'inv1', amount: '13750', amountSource: 'stripe-event' } },
+          ],
+        }).db,
+      );
+      const res = await run();
+      expect(res.ledgerPayments[0]!.amountResolved).toBe(false);
+      expect(res.unresolvedAmountCount).toBe(1);
+    });
+
+    it('counts each unreadable row once, across BOTH lists the callable answers with', async () => {
+      // `unresolvedAmountCount` is the same number the warn log reports, and
+      // the warn log has always spanned both lists because both are read
+      // through `ledgerRowOf`. A caller rendering a banner must not have to
+      // walk two arrays to find out whether to show it.
+      mocks.dbFn.mockReturnValue(
+        seed({
+          rootPayments: [
+            { id: 'r1', data: { invoiceId: 'inv1', kinfolkId: 'fam1', amount: null, amountSource: 'unresolved' } },
+            { id: 'u1', data: { kinfolkId: 'fam1', amount: null, amountSource: 'unresolved' } },
+            { id: 'u2', data: { kinfolkId: 'fam1', amount: 30 } },
+          ],
+        }).db,
+      );
+      const res = await run();
+      expect(res.unresolvedAmountCount).toBe(2);
     });
   });
 
@@ -715,6 +761,11 @@ describe('getInvoiceLedger unlinkedKinfolkPayments (the household fallback)', ()
     );
     const res = await run();
     expect(res.unlinkedKinfolkPayments[0]!.amountCents).toBe(0);
+    // The household fallback is already shown under a "NOT INVOICE-LINKED"
+    // warning on Android. That warning says the row is not this invoice's; it
+    // says nothing about whether the figure on it was ever readable.
+    expect(res.unlinkedKinfolkPayments[0]!.amountResolved).toBe(false);
+    expect(res.unresolvedAmountCount).toBe(1);
     const warnCalls = mocks.logEventFn.mock.calls.filter(
       ([entry]) => entry.event === 'ledger.amount.unresolved',
     );

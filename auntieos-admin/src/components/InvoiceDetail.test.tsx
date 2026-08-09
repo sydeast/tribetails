@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Timestamp } from 'firebase/firestore';
 import { type InvoiceEntry } from '../api/invoices';
@@ -77,6 +77,7 @@ function ledgerResult(over: Partial<GetInvoiceLedgerResult> = {}): GetInvoiceLed
     // collection directly and inherit the server's units resolution; this
     // React panel does not render it.
     unlinkedKinfolkPayments: [],
+    unresolvedAmountCount: 0,
     sessions: [],
     missingSessionIds: [],
     orphanSessionIds: [],
@@ -116,6 +117,7 @@ function ledgerPayment(
   return {
     paymentId: 'r1',
     amountCents: 4000,
+    amountResolved: true,
     tipCents: 0,
     feeCents: 0,
     tipBasis: 'unknown',
@@ -1374,6 +1376,19 @@ describe('payment history columns', () => {
     );
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
   }
+  /**
+   * The AMOUNT cell of the single ledger row, by position.
+   *
+   * Named by column index rather than by its text because the two cases below
+   * turn on telling `$0.00` apart from the honest absence of a figure, and Tip,
+   * Fee and Balance on the same row are legitimately `$0.00` too. A
+   * document-wide search for that string cannot distinguish them.
+   */
+  async function amountCellText(): Promise<string> {
+    const table = await screen.findByRole('table', { name: /Payment history/i });
+    const bodyRow = within(table).getAllByRole('row')[1]!;
+    return within(bodyRow).getAllByRole('cell')[3]!.textContent ?? '';
+  }
   it('renders every column her production screen has, plus the fee', async () => {
     renderWithRow();
     expect(await screen.findByRole('columnheader', { name: /transaction date/i })).toBeInTheDocument();
@@ -1411,6 +1426,42 @@ describe('payment history columns', () => {
   it('marks a gross tip as gross, because that is the tax-relevant fact', async () => {
     renderWithRow({ tipCents: 1000, tipBasis: 'gross', reconciles: true });
     expect(await screen.findByText('gross')).toBeInTheDocument();
+  });
+  it('does NOT print $0.00 for an amount the server could not read', async () => {
+    // THE DEFECT. `resolveLedgerAmountCents` returns `{ amountCents: 0,
+    // resolved: false }` for a Stripe event the webhook gave up on, and the 0
+    // is the floor `CentsSchema` allows, not a figure. This cell used to render
+    // it as "$0.00" with nothing beside it, so a payment nobody could read was
+    // indistinguishable from a payment of nothing.
+    //
+    // Every other money cell on this row is a REAL zero and still renders as
+    // $0.00, which is why the assertion below names the Amount cell instead of
+    // sweeping the document for the string.
+    renderWithRow({
+      amountCents: 0,
+      amountResolved: false,
+      tipCents: 0,
+      feeCents: 0,
+      reconciles: true,
+      appliedCents: 0,
+      unappliedCents: 0,
+      appliedInvoiceId: 'inv1',
+      appliedInvoiceNumber: '1042',
+    });
+    expect(await amountCellText()).toMatch(/could not be read/i);
+    expect(await amountCellText()).not.toContain('$0.00');
+    // And the panel says why, rather than leaving a cell that reads as a
+    // rendering bug.
+    expect(screen.getByText(/Some of these rows cannot be reconciled/i)).toBeInTheDocument();
+    expect(screen.getByText(/never a reading/i)).toBeInTheDocument();
+  });
+  it('still prints a REAL $0.00 amount, which is a reading and not an absence', async () => {
+    // The negative case has a twin: a row whose amount genuinely resolved to
+    // zero must keep showing the figure. Suppressing both would trade one lie
+    // for another.
+    renderWithRow({ amountCents: 0, amountResolved: true, tipCents: 0, feeCents: 0, reconciles: true });
+    expect(await amountCellText()).toBe('$0.00');
+    expect(screen.queryByText(/could not be read/i)).toBeNull();
   });
   it('says a migrated fee is NOT RECORDED, never $0.00, because zero would be a claim', async () => {
     renderWithRow({ tipCents: 729, tipBasis: 'unknown', reconciles: false, feeCents: 0 });

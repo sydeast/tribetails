@@ -182,6 +182,7 @@ function ledgerRow(over: Partial<GetInvoiceLedgerResultLedgerPayment> = {}) {
   return {
     paymentId: 'r1',
     amountCents: 13750,
+    amountResolved: true,
     tipCents: 1000,
     feeCents: 271,
     tipBasis: 'gross' as const,
@@ -251,5 +252,26 @@ describe('ledgerRowCaveat: the rows that cannot be made to add up', () => {
   });
   it('stays silent on a reconcilable row with no tip at all, which is every Stripe row', () => {
     expect(ledgerRowCaveat(ledgerRow({ tipCents: 0, reconciles: true }))).toBe('');
+  });
+  it('names the row whose amount could not be read, which reconciles() knows nothing about', () => {
+    // THE ROW THAT FELL THROUGH EVERY EXISTING BRANCH. `amountResolved: false`
+    // says the server could not interpret the stored figure at all; the row can
+    // still carry `reconciles: true` and a non-negative balance, so before this
+    // branch it produced no caveat and the table printed a confident $0.00.
+    const caveat = ledgerRowCaveat(
+      ledgerRow({ amountCents: 0, amountResolved: false, tipCents: 0, feeCents: 0, reconciles: true, appliedCents: 0, unappliedCents: 0 }),
+    );
+    expect(caveat).toMatch(/could not be read/i);
+    expect(caveat).toMatch(/never a reading/i);
+  });
+  it('puts the unreadable amount FIRST, so an unreadable row is never described as a fee problem', () => {
+    // A row can be both. Which sentence it gets matters: "the fee was dropped"
+    // invites the operator to trust the amount beside it, and on this row the
+    // amount is the part nobody can vouch for.
+    const caveat = ledgerRowCaveat(
+      ledgerRow({ amountCents: 0, amountResolved: false, reconciles: false, tipCents: 729, feeCents: 0 }),
+    );
+    expect(caveat).toMatch(/could not be read/i);
+    expect(caveat).not.toMatch(/migrated without its processor fee/i);
   });
 });

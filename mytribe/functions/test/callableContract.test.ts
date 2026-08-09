@@ -981,6 +981,10 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'amountDueCents',
       'invoiceId',
       'ledgerPayments[].amountCents',
+      // Frozen for the same reason `listPayments[].amountResolved` is: without
+      // it an unreadable row's `amountCents: 0` reads on both staff surfaces as
+      // a payment of nothing, which is a fact nobody checked.
+      'ledgerPayments[].amountResolved',
       'ledgerPayments[].appliedCents',
       'ledgerPayments[].appliedInvoiceId',
       'ledgerPayments[].appliedInvoiceNumber',
@@ -1016,12 +1020,15 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'sessions[].status',
       'totalCents',
       'truncated',
+      // How many rows across BOTH root-collection lists could not be read.
+      'unresolvedAmountCount',
       // Added for the staff Android invoice screen, which built this same list
       // from a raw read of the root `payments` collection and so never applied
       // `resolveLedgerAmountCents` — the bypass that kept the 100x units defect
       // alive there long after the web ledger was fixed. Same row shape as
       // `ledgerPayments`; the React panel does not render it.
       'unlinkedKinfolkPayments[].amountCents',
+      'unlinkedKinfolkPayments[].amountResolved',
       'unlinkedKinfolkPayments[].appliedCents',
       'unlinkedKinfolkPayments[].appliedInvoiceId',
       'unlinkedKinfolkPayments[].appliedInvoiceNumber',
