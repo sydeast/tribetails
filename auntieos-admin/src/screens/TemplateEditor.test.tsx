@@ -444,3 +444,27 @@ describe('TemplateEditor: live preview', () => {
     expect(screen.queryByRole('region', { name: 'Live preview' })).toBeNull();
   });
 });
+describe('TemplateEditor: a template that also carries HTML', () => {
+  it('says the preview is showing plain text only, rather than implying it is the whole email', () => {
+    // account.welcome.business is exactly this shape: an email.txt AND an
+    // email.html, and the html is where `<a href='[]'>` lives.
+    render(
+      <TemplateEditor
+        template={tpl({ body: 'See their account here: []', html: "<a href='[]'>View Account</a>" })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('HTML body provided. Preview shows plain text only.')).toBeInTheDocument();
+  });
+  it('counts a merge field that only appears in the HTML', () => {
+    render(
+      <TemplateEditor
+        template={tpl({ body: 'Plain.', html: '<a href="{{link}}">Account</a>' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('1 merge field has no sample value: link');
+  });
+});

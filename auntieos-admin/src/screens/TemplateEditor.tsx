@@ -463,6 +463,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
           <MergePreview
             subject={fields.subject}
             body={fields.body}
+            html={fields.html}
             sample={ENRICHABLE_SAMPLE}
             footnote="Sample values. Dispatch fills these in at send"
           />

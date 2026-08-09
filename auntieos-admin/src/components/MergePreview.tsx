@@ -13,6 +13,16 @@ export interface MergePreviewProps {
    * empty object is the right value where nothing will (an ad-hoc broadcast).
    */
   sample: Record<string, string>;
+  /**
+   * The template's HTML body, when it has one. NOT rendered here, and that is
+   * the point: `sendTemplatedEmail` compiles `htmlTemplate` whenever it is
+   * present, so the HTML is the version most recipients actually see. A preview
+   * that quietly showed the plain-text body instead would claim to show what a
+   * kinfolk receives while omitting what they receive, so its presence surfaces
+   * as a visible notice. Its merge fields still count towards the warning,
+   * because they arrive blank exactly the same way.
+   */
+  html?: string | null;
   /** One line under the card saying what happens to merge fields at send time. */
   footnote?: string;
   /** Masthead wordmark. The Android twin defaults the same way. */
@@ -46,16 +56,32 @@ export interface MergePreviewProps {
  * consumer supplies the `footnote` that says which of those two it is, so the
  * pane never implies a resolution that will not happen.
  */
-export function MergePreview({ subject, body, sample, footnote, brandName = 'TribeTails' }: MergePreviewProps) {
+export function MergePreview({
+  subject,
+  body,
+  sample,
+  html,
+  footnote,
+  brandName = 'TribeTails',
+}: MergePreviewProps) {
   const subjectSegments = useMemo(() => renderPreview(subject, sample), [subject, sample]);
   const bodySegments = useMemo(() => renderPreview(body, sample), [body, sample]);
+  const hasHtml = (html ?? '').trim() !== '';
 
   // DISTINCT keys, not occurrences. A body that says `{{link}}` three times has
   // one thing wrong with it, and a line reading "3 merge fields ...: link" would
   // list fewer names than it counted.
+  //
+  // The HTML is scanned too, and is not shown. `<a href="{{link}}">` is exactly
+  // where `account.welcome.business` hides its empty account link, so counting
+  // only what is on screen would miss the defect this pane was built for.
+  const htmlSegments = useMemo(
+    () => (hasHtml ? renderPreview(html ?? '', sample) : []),
+    [hasHtml, html, sample],
+  );
   const missing = useMemo(
-    () => unresolvedKeys([...subjectSegments, ...bodySegments]),
-    [subjectSegments, bodySegments],
+    () => unresolvedKeys([...subjectSegments, ...bodySegments, ...htmlSegments]),
+    [subjectSegments, bodySegments, htmlSegments],
   );
 
   const isEmpty = subject.trim() === '' && body.trim() === '';
@@ -85,6 +111,15 @@ export function MergePreview({ subject, body, sample, footnote, brandName = 'Tri
               </p>
             </>
           )}
+
+          {/* Fail visible, never silent. Same sentence the Android twin shows
+              (AuntieEmailPreviewCard.kt), so an operator reading one template on
+              two devices is told the same thing. */}
+          {hasHtml ? (
+            <p className="merge-preview__html-notice">
+              HTML body provided. Preview shows plain text only.
+            </p>
+          ) : null}
         </div>
       </div>
 

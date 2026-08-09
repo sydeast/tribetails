@@ -68,7 +68,11 @@ fun MergePreview(
             highlightTokens = true,
             html = html,
         )
-        MergeFieldWarning(subject = subject, body = body, sample = sample)
+        // `html` is counted but never shown: the card surfaces its own
+        // "HTML BODY PROVIDED" notice, and `<a href="{{link}}">` is exactly where
+        // account.welcome.business hides its empty account link, so counting only
+        // what is on screen would miss the defect this pane was built for.
+        MergeFieldWarning(subject = subject, body = body, sample = sample, html = html)
     }
 }
 
@@ -92,12 +96,20 @@ fun MergeFieldWarning(
     body: String,
     sample: Map<String, String>,
     modifier: Modifier = Modifier,
+    html: String? = null,
 ) {
-    val warning = remember(subject, body, sample) {
-        // Subject and body together: the subject goes through the same
+    val warning = remember(subject, body, sample, html) {
+        // Subject, body and html together: all three go through the same
         // Handlebars compile (email.ts#sendTemplatedEmail compiles
-        // subjectTemplate too), so a blank there is the same defect.
-        unresolvedWarning(unresolvedKeys(renderPreview(subject, sample) + renderPreview(body, sample)))
+        // subjectTemplate, bodyTemplate and htmlTemplate), so a blank in any of
+        // them is the same defect.
+        unresolvedWarning(
+            unresolvedKeys(
+                renderPreview(subject, sample) +
+                    renderPreview(body, sample) +
+                    renderPreview(html.orEmpty(), sample),
+            ),
+        )
     } ?: return
 
     Text(

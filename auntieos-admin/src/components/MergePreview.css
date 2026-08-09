@@ -112,3 +112,17 @@
   color: var(--color-text-faint);
   text-align: center;
 }
+/* The raw-HTML notice. Warning-toned rather than error-toned: carrying an HTML
+   body is normal and correct, it is only the PREVIEW that cannot show it, and an
+   error colour here would read as "this template is broken". */
+.merge-preview__html-notice {
+  margin: var(--space-3) 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a6117;
+  background: rgba(199, 125, 26, 0.14);
+  border-radius: var(--radius-chip);
+  padding: var(--space-2) var(--space-3);
+}

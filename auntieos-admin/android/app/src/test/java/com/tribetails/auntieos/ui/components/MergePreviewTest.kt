@@ -138,4 +138,19 @@ class MergePreviewTest {
         }
         compose.onNodeWithText("merge field", substring = true).assertDoesNotExist()
     }
+
+    @Test
+    fun `counts a merge field that only appears in the html`() {
+        compose.setContent {
+            AuntieOSTheme {
+                MergePreview(
+                    subject = "Hi",
+                    body = "Plain.",
+                    sample = ENRICHABLE_SAMPLE,
+                    html = "<a href=\"{{link}}\">Account</a>",
+                )
+            }
+        }
+        compose.onNodeWithText("1 merge field has no sample value: link").assertIsDisplayed()
+    }
 }

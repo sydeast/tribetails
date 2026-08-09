@@ -83,3 +83,30 @@ describe('MergePreview', () => {
     expect(screen.getByRole('region', { name: 'Live preview' })).toBeInTheDocument();
   });
 });
+/**
+ * The HTML half. `sendTemplatedEmail` compiles `htmlTemplate` when the template
+ * has one, and that is the version most recipients actually see, so a preview
+ * that renders the plain-text body and says nothing about the HTML is claiming
+ * to show what a kinfolk receives while omitting it. Android has surfaced this
+ * notice since AuntieEmailPreviewCard was written; React had not.
+ */
+describe('MergePreview: a template that also carries HTML', () => {
+  it('says so, rather than previewing the text body as if it were the whole email', () => {
+    render(
+      <MergePreview subject="Hi" body="Plain text." sample={{}} html="<p>Rich body</p>" />,
+    );
+    expect(screen.getByText('HTML body provided. Preview shows plain text only.')).toBeInTheDocument();
+  });
+  it('stays quiet when there is no HTML', () => {
+    render(<MergePreview subject="Hi" body="Plain text." sample={{}} />);
+    expect(screen.queryByText(/HTML body provided/)).not.toBeInTheDocument();
+  });
+  it('treats a blank HTML field as no HTML, which is what an untouched textarea gives', () => {
+    render(<MergePreview subject="Hi" body="Plain text." sample={{}} html="   " />);
+    expect(screen.queryByText(/HTML body provided/)).not.toBeInTheDocument();
+  });
+  it('still counts merge fields inside the HTML, which send blank just the same', () => {
+    render(<MergePreview subject="Hi" body="Plain." sample={{}} html='<a href="{{link}}">Account</a>' />);
+    expect(screen.getByRole('status')).toHaveTextContent('1 merge field has no sample value: link');
+  });
+});
