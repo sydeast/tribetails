@@ -124,16 +124,29 @@
   font-weight: var(--type-title-sm-weight);
   color: var(--color-text-primary);
 }
-/* PAYMENT HISTORY is eight columns wide now (transaction date, method,
-   reference, amount, applied to, tip, fee, balance), which is more than a
-   narrow window has room for. It scrolls INSIDE its own box rather than
-   pushing the overlay sideways: a panel whose whole body scrolls horizontally
-   takes the invoice header with it. */
-.invoice-ledger__table {
-  display: block;
+
+/* PAYMENT HISTORY is eight columns wide (transaction date, method, reference,
+   amount, applied to, tip, fee, balance), which is more than a narrow window
+   has room for. It scrolls INSIDE its own box rather than pushing the overlay
+   sideways: a panel whose whole body scrolls horizontally takes the invoice
+   header with it.
+ *
+ * THE SCROLL BOX IS THIS WRAPPER, NOT THE TABLE. `overflow-x` on a `<table>`
+ * only bites once the table is also `display: block`, and a table set to
+ * `display: block` stops generating a table box at all: its rows fall into an
+ * anonymous shrink-to-fit table, so an element told to be `width: 100%`
+ * collapses to the width of its own text. That is what happened to BOTH ledger
+ * tables here between 2026-08-04 and 2026-08-09, unnoticed because the visual
+ * verifier could not execute in that window. The table stays a table; the box
+ * around it does the scrolling.
+ *
+ * ONLY PAYMENT HISTORY GETS ONE. The other two ledger tables are four columns
+ * and fit a 390px phone with room to spare (`e2e/phone-layout.spec.ts` measures
+ * all three), and a scroll container is not free: it clips whatever overhangs
+ * it. Nothing in this table overhangs today (no sticky header, no dropdown, no
+ * focus ring, only text and spans), which is what makes the box safe here, and
+ * putting one round a table that does not need it would be one more of these to
+ * re-check the day one of them grows a control. */
+.invoice-ledger__scroll {
   overflow-x: auto;
-  max-width: 100%;
-}
-.invoice-ledger__table > caption {
-  display: block;
 }
