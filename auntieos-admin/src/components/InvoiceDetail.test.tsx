@@ -1631,3 +1631,208 @@ describe('InvoiceDetail dispute panel', () => {
     expect(document.querySelector('.invoice-detail__dispute')).toBeNull();
   });
 });
+/**
+ * THE DEADLINE AND THE REASON.
+ *
+ * A chargeback you fail to answer in time is lost by default, so the date is the
+ * time-critical half of the panel above. Everything here turns on the panel
+ * refusing to state a time it cannot source.
+ *
+ * These cases assert STATE CARRIERS — `data-deadline-state` on the deadline
+ * line — rather than visibility. jsdom ships no user-agent stylesheet, so
+ * `toBeVisible()` returns true for content a real browser would hide, and a
+ * countdown that "passes" while invisible is exactly the failure mode a
+ * countdown cannot afford.
+ *
+ * Deadlines are expressed relative to `Date.now()` on purpose. The component
+ * reads the clock once at render; pinning fake timers inside this 1600-line file
+ * would reach into cases these have nothing to do with.
+ */
+describe('InvoiceDetail dispute deadline and reason', () => {
+  const DAY = 86_400_000;
+  const HOUR = 3_600_000;
+  const paidDisputed = (over: Partial<InvoiceEntry> = {}) =>
+    entry({ status: 'paid', editScope: 'none', amountDue: 0, paidCents: 4000, ...over });
+  function disputePanel(): HTMLElement {
+    const el = document.querySelector('.invoice-detail__dispute');
+    expect(el, 'expected the dispute panel to render').not.toBeNull();
+    return el as HTMLElement;
+  }
+  /** The one element that carries which of the four deadline states was chosen. */
+  function deadlineLine(): HTMLElement | null {
+    return document.querySelector('.invoice-detail__dispute-deadline');
+  }
+
+  it('counts down an open chargeback the operator can still answer', () => {
+    // Comfortably inside the third day, so the case cannot straddle a boundary
+    // however long the suite takes to reach it.
+    const dueByMs = Date.now() + 3 * DAY + HOUR;
+    render(
+      <InvoiceDetail
+        invoice={paidDisputed({ disputeStatus: 'needs_response', disputeId: 'dp_1', disputeEvidenceDueByMs: dueByMs })}
+        onClose={vi.fn()}
+      />,
+    );
+    const line = deadlineLine();
+    expect(line).not.toBeNull();
+    expect(line).toHaveAttribute('data-deadline-state', 'due');
+    expect(line).toHaveTextContent(/3 days left/);
+    // MILLISECONDS, NOT SECONDS. Dividing by 1000 would date this to 1970, and
+    // the year is the cheapest possible proof it did not happen.
+    expect(line).toHaveTextContent(String(new Date(dueByMs).getFullYear()));
+    expect(line).not.toHaveTextContent(/1970/);
+    expect(line).not.toHaveTextContent(/-\d/);
+  });
+  /**
+   * NULL IS NEITHER ZERO NOR AN ERROR. Stripe sends `due_by: 0` on purpose,
+   * meaning the issuing bank allows no response at all, and the webhook maps it
+   * and a genuinely absent value both to null. The banner still renders, the
+   * countdown is suppressed, and the operator is sent to Stripe.
+   */
+  it('says plainly that no deadline is stated rather than counting down to nothing', () => {
+    render(
+      <InvoiceDetail
+        invoice={paidDisputed({ disputeStatus: 'needs_response', disputeId: 'dp_1' })}
+        onClose={vi.fn()}
+      />,
+    );
+    const panel = disputePanel();
+    expect(panel).toHaveAttribute('data-tone', 'error');
+    const line = deadlineLine();
+    expect(line).toHaveAttribute('data-deadline-state', 'unstated');
+    expect(line).toHaveTextContent(/no response deadline/i);
+    expect(line).toHaveTextContent(/Stripe dashboard/i);
+    expect(line).not.toHaveTextContent(/1970|1 January|Jan 1/i);
+    expect(line).not.toHaveTextContent(/left/);
+  });
+  /** A stored 0 is the same statement as an absent one, and never a date. */
+  it('treats a stored deadline of 0 as no deadline, not as the epoch', () => {
+    render(
+      <InvoiceDetail
+        invoice={paidDisputed({ disputeStatus: 'needs_response', disputeEvidenceDueByMs: 0 })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(deadlineLine()).toHaveAttribute('data-deadline-state', 'unstated');
+    expect(disputePanel()).not.toHaveTextContent(/1970/);
+  });
+  /**
+   * A DEADLINE THAT HAS PASSED IS ITS OWN STATE. `disputeStatus` is a mirror of
+   * Stripe's, updated by webhook, so it can still read `needs_response` after
+   * the window shut. The panel says the window closed, says the status can lag,
+   * and sends the operator to Stripe — it does not declare the dispute lost,
+   * and it does not print a negative countdown.
+   */
+  it('says the response window closed, without claiming the dispute is lost', () => {
+    render(
+      <InvoiceDetail
+        invoice={paidDisputed({
+          disputeStatus: 'needs_response',
+          disputeId: 'dp_1',
+          disputeEvidenceDueByMs: Date.now() - 2 * DAY,
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    const line = deadlineLine();
+    expect(line).toHaveAttribute('data-deadline-state', 'passed');
+    expect(line).toHaveTextContent(/closed/i);
+    expect(line).toHaveTextContent(/Stripe dashboard/i);
+    expect(line).not.toHaveTextContent(/left/);
+    expect(line).not.toHaveTextContent(/-\d/);
+    // Not a verdict. The screen knows the clock, not the outcome.
+    expect(line).not.toHaveTextContent(/you lost|has been lost|is lost/i);
+  });
+  /**
+   * THE ONE THE OPERATOR ASKED FOR, EXTENDED TO THE CLOCK. A won dispute keeps
+   * its deadline on the document forever — nothing ever clears any of these
+   * fields — and counting down to it would send the operator to fight a contest
+   * that is already over.
+   */
+  it('shows a WON dispute no countdown, deadline on the document or not', () => {
+    render(
+      <InvoiceDetail
+        invoice={paidDisputed({
+          disputeStatus: 'won',
+          disputeId: 'dp_1',
+          disputeEvidenceDueByMs: Date.now() + 5 * DAY,
+          disputeReason: 'fraudulent',
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    const panel = disputePanel();
+    expect(panel.getAttribute('data-tone')).not.toBe('error');
+    expect(deadlineLine()).toBeNull();
+    expect(panel).not.toHaveTextContent(/left\b/);
+    expect(panel).not.toHaveTextContent(/deadline/i);
+  });
+  /**
+   * `lost` stays an alarm per #309 — where contested money ends up is the
+   * operator's call — but there is nothing left to answer, so no clock.
+   */
+  it('shows a lost or in-review dispute the alarm and no countdown', () => {
+    for (const disputeStatus of ['lost', 'under_review']) {
+      const { unmount } = render(
+        <InvoiceDetail
+          invoice={paidDisputed({ disputeStatus, disputeEvidenceDueByMs: Date.now() + 5 * DAY })}
+          onClose={vi.fn()}
+        />,
+      );
+      expect(disputePanel(), disputeStatus).toHaveAttribute('data-tone', 'error');
+      expect(deadlineLine(), disputeStatus).toBeNull();
+      unmount();
+    }
+  });
+  /** A reason this build knows gets the token AND plain English beside it. */
+  it('renders a known reason as the raw Stripe token plus plain English', () => {
+    render(
+      <InvoiceDetail
+        invoice={paidDisputed({ disputeStatus: 'needs_response', disputeReason: 'product_not_received' })}
+        onClose={vi.fn()}
+      />,
+    );
+    const reason = document.querySelector('.invoice-detail__dispute-reason');
+    expect(reason).not.toBeNull();
+    expect(reason).toHaveAttribute('data-dispute-reason', 'product_not_received');
+    expect(reason).toHaveTextContent('product_not_received');
+    expect(reason).toHaveTextContent(/never delivered/i);
+  });
+  /**
+   * FALL THROUGH TO THE RAW TOKEN. `reason` is a plain `string` in the pinned
+   * SDK and Stripe adds categories without asking. A category this build has
+   * never seen is shown as sent; it is not relabelled, not called "Unknown",
+   * and it does not take the banner down with it.
+   */
+  it('shows a reason it has never seen as the raw token, never as "Unknown"', () => {
+    render(
+      <InvoiceDetail
+        invoice={paidDisputed({ disputeStatus: 'needs_response', disputeReason: 'a_category_from_2027' })}
+        onClose={vi.fn()}
+      />,
+    );
+    const reason = document.querySelector('.invoice-detail__dispute-reason');
+    expect(reason).not.toBeNull();
+    expect(reason).toHaveTextContent('a_category_from_2027');
+    expect(reason).not.toHaveTextContent(/unknown/i);
+    expect(disputePanel()).toHaveAttribute('data-tone', 'error');
+  });
+  /** No reason on the document is no reason line. Nothing is guessed into it. */
+  it('renders no reason line when the dispute event carried no reason', () => {
+    render(
+      <InvoiceDetail invoice={paidDisputed({ disputeStatus: 'needs_response' })} onClose={vi.fn()} />,
+    );
+    expect(document.querySelector('.invoice-detail__dispute-reason')).toBeNull();
+  });
+  /** The reason is history worth keeping on a settled dispute; the clock is not. */
+  it('keeps the reason on a won dispute while keeping the countdown off it', () => {
+    render(
+      <InvoiceDetail
+        invoice={paidDisputed({ disputeStatus: 'won', disputeReason: 'duplicate' })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(document.querySelector('.invoice-detail__dispute-reason')).toHaveTextContent('duplicate');
+    expect(deadlineLine()).toBeNull();
+  });
+});

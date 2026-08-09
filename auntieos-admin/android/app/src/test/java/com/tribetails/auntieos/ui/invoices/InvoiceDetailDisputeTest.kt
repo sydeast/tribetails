@@ -66,6 +66,8 @@ class InvoiceDetailDisputeTest {
         disputeFundsState: String? = null,
         disputeAmountCents: Long? = null,
         disputeId: String? = null,
+        disputeEvidenceDueByMs: Long? = null,
+        disputeReason: String? = null,
     ) {
         val invoice = Invoice(
             id = "inv1",
@@ -83,6 +85,8 @@ class InvoiceDetailDisputeTest {
             disputeFundsState = disputeFundsState,
             disputeAmountCents = disputeAmountCents,
             disputeId = disputeId,
+            disputeEvidenceDueByMs = disputeEvidenceDueByMs,
+            disputeReason = disputeReason,
         )
         val repo = mockk<AuntieRepository>(relaxed = true)
         val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
@@ -196,5 +200,144 @@ class InvoiceDetailDisputeTest {
         mount()
         rule.onNodeWithText(alarmTitle).assertDoesNotExist()
         rule.onNodeWithText(historyTitle).assertDoesNotExist()
+    }
+
+    // ---- THE DEADLINE AND THE REASON --------------------------------------
+    //
+    // A chargeback nobody answers in time is lost by default, so the date is the
+    // time-critical half of this panel. Deadlines here are expressed relative to
+    // the real clock rather than pinned: the composable reads the clock once,
+    // and the branch arithmetic itself is pinned in InvoiceDisputeDeadlineTest
+    // where `nowMs` is a parameter.
+
+    @Test
+    fun `an answerable chargeback counts down to its deadline`() {
+        // Comfortably inside the third day, so the case cannot straddle a
+        // boundary however long the suite takes to reach it.
+        val dueBy = System.currentTimeMillis() + 3 * 86_400_000L + 3_600_000L
+        mount(disputeStatus = "needs_response", disputeId = "dp_1", disputeEvidenceDueByMs = dueBy)
+        rule.onNodeWithText(alarmTitle).assertIsDisplayed()
+        rule.onNode(hasText("3 days left", substring = true)).assertExists()
+        // MILLISECONDS, NOT SECONDS. Dividing by 1000 would date this to 1970,
+        // and the year is the cheapest possible proof it did not happen.
+        //
+        // Scoped to the deadline sentence itself: the invoice date card on this
+        // same screen also carries a 2026, and a bare year match would pass off
+        // that card while proving nothing about the countdown.
+        val year = java.time.Instant.ofEpochMilli(dueBy)
+            .atZone(java.time.ZoneId.systemDefault()).year.toString()
+        rule.onNode(hasText("Respond by", substring = true) and hasText(year, substring = true))
+            .assertExists()
+        rule.onNode(hasText("1970", substring = true)).assertDoesNotExist()
+    }
+
+    /**
+     * NULL IS NEITHER ZERO NOR AN ERROR. Stripe sends `due_by: 0` on purpose,
+     * meaning the issuing bank allows no response at all, and the webhook maps
+     * that and a genuinely absent value both to null. The banner still renders,
+     * the countdown is suppressed, and the operator is sent to Stripe.
+     */
+    @Test
+    fun `a needed response with no stated deadline says so and sends them to Stripe`() {
+        mount(disputeStatus = "needs_response", disputeId = "dp_1")
+        rule.onNodeWithText(alarmTitle).assertIsDisplayed()
+        rule.onNode(hasText("no response deadline", substring = true)).assertExists()
+        rule.onNode(hasText("Stripe dashboard", substring = true)).assertExists()
+        rule.onNode(hasText("left", substring = true)).assertDoesNotExist()
+        rule.onNode(hasText("1970", substring = true)).assertDoesNotExist()
+    }
+
+    /** A stored 0 is the same statement as an absent one, and never a date. */
+    @Test
+    fun `a stored deadline of zero reads as no deadline, not as the epoch`() {
+        mount(disputeStatus = "needs_response", disputeEvidenceDueByMs = 0L)
+        rule.onNode(hasText("no response deadline", substring = true)).assertExists()
+        rule.onNode(hasText("1970", substring = true)).assertDoesNotExist()
+    }
+
+    /**
+     * A DEADLINE THAT HAS PASSED IS ITS OWN STATE. `disputeStatus` is a webhook
+     * mirror of Stripe's, so it can still read `needs_response` after the
+     * window shut. The panel says the window closed, admits its own reading can
+     * lag, and sends the operator to Stripe — it does not declare the dispute
+     * lost, and it prints no negative countdown.
+     */
+    @Test
+    fun `a passed deadline says the window closed without calling the dispute lost`() {
+        mount(
+            disputeStatus = "needs_response",
+            disputeId = "dp_1",
+            disputeEvidenceDueByMs = System.currentTimeMillis() - 2 * 86_400_000L,
+        )
+        rule.onNodeWithText(alarmTitle).assertIsDisplayed()
+        rule.onNode(hasText("window to respond closed", substring = true)).assertExists()
+        rule.onNode(hasText("Stripe dashboard", substring = true)).assertExists()
+        rule.onNode(hasText("left", substring = true)).assertDoesNotExist()
+        rule.onNode(hasText("is lost", substring = true)).assertDoesNotExist()
+    }
+
+    /**
+     * THE ONE THE OPERATOR ASKED FOR, EXTENDED TO THE CLOCK. Nothing ever
+     * clears any of these fields, so a won dispute keeps its deadline forever.
+     * Counting down to it would send the operator to fight a settled contest.
+     */
+    @Test
+    fun `a won dispute shows no countdown, deadline on the document or not`() {
+        mount(
+            disputeStatus = "won",
+            disputeId = "dp_1",
+            disputeEvidenceDueByMs = System.currentTimeMillis() + 5 * 86_400_000L,
+            disputeReason = "fraudulent",
+        )
+        rule.onNodeWithText(historyTitle).assertIsDisplayed()
+        rule.onNodeWithText(alarmTitle).assertDoesNotExist()
+        rule.onNode(hasText("Respond by", substring = true)).assertDoesNotExist()
+        rule.onNode(hasText("left", substring = true)).assertDoesNotExist()
+        rule.onNode(hasText("deadline", substring = true)).assertDoesNotExist()
+    }
+
+    /**
+     * `lost` keeps the alarm per the #309 rule — where contested money ends up
+     * is the operator's call — but there is nothing left to answer, so no clock.
+     */
+    @Test
+    fun `a lost dispute keeps the alarm and gets no countdown`() {
+        mount(
+            disputeStatus = "lost",
+            disputeEvidenceDueByMs = System.currentTimeMillis() + 5 * 86_400_000L,
+        )
+        rule.onNodeWithText(alarmTitle).assertIsDisplayed()
+        rule.onNode(hasText("Respond by", substring = true)).assertDoesNotExist()
+        rule.onNode(hasText("left", substring = true)).assertDoesNotExist()
+    }
+
+    @Test
+    fun `a known reason shows the raw Stripe token and plain English beside it`() {
+        mount(disputeStatus = "needs_response", disputeReason = "product_not_received")
+        rule.onNode(hasText("product_not_received", substring = true)).assertExists()
+        rule.onNode(hasText("never delivered", substring = true)).assertExists()
+    }
+
+    /**
+     * FALL THROUGH TO THE RAW TOKEN. `reason` is a plain `String` in the pinned
+     * SDK and Stripe adds categories without asking. One this build has never
+     * seen is shown as sent: not relabelled, not "Unknown", and it does not
+     * take the banner down with it.
+     */
+    @Test
+    fun `a reason it has never seen shows as the raw token, never as Unknown`() {
+        mount(disputeStatus = "needs_response", disputeReason = "a_category_from_2027")
+        rule.onNodeWithText(alarmTitle).assertIsDisplayed()
+        rule.onNode(hasText("a_category_from_2027", substring = true)).assertExists()
+        rule.onNode(hasText("Unknown", substring = true, ignoreCase = true)).assertDoesNotExist()
+    }
+
+    /** The reason is history worth keeping on a settled dispute; the clock is not. */
+    @Test
+    fun `a won dispute keeps its reason while keeping the countdown off`() {
+        mount(disputeStatus = "won", disputeReason = "duplicate")
+        rule.onNodeWithText(historyTitle).assertIsDisplayed()
+        rule.onNode(hasText("duplicate", substring = true)).assertExists()
+        rule.onNode(hasText("Respond by", substring = true)).assertDoesNotExist()
     }
 }
