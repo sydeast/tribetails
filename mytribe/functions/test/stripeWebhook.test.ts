@@ -5,12 +5,21 @@ import { FieldValue } from 'firebase-admin/firestore';
 // resolution makes, mocked per-test via `.mockResolvedValue` /
 // `.mockRejectedValue`. `vi.hoisted` so the factory below (itself hoisted by
 // vi.mock) can close over it.
-const stripeMock = vi.hoisted(() => ({ paymentIntentsRetrieve: vi.fn() }));
+//
+// `charges.retrieve` is the dispute path's THIRD attribution route and it is a
+// separate handle on purpose: a suite that mocked only `paymentIntents` would
+// let `charges.retrieve` throw a TypeError inside the resolver's catch and go
+// green with the charge route never working: the same false assurance the
+// hand-injected metadata fixtures below are annotated for.
+const stripeMock = vi.hoisted(() => ({ paymentIntentsRetrieve: vi.fn(), chargesRetrieve: vi.fn() }));
 
 // Stripe verifier stub. `good` → a paid event carrying familyId metadata;
 // `good-kinfolk` → paid event carrying only the legacy kinfolkId metadata.
 vi.mock('../src/lib/stripe', () => ({
-  getStripe: async () => ({ paymentIntents: { retrieve: stripeMock.paymentIntentsRetrieve } }),
+  getStripe: async () => ({
+    paymentIntents: { retrieve: stripeMock.paymentIntentsRetrieve },
+    charges: { retrieve: stripeMock.chargesRetrieve },
+  }),
   verifyStripeWebhook: (_body: Buffer, sig: string) => {
     if (sig === 'good') {
       return {
@@ -184,14 +193,54 @@ vi.mock('../src/lib/stripe', () => ({
         },
       };
     }
-    // A sibling in the family that is routed but NOT acted on. Same absent
-    // metadata as the two above, which is the whole reason it is routed.
+    // The accounting mirrors of created/closed, on the SAME dispute (dp_20).
+    // These say the money actually left the Stripe balance and came back;
+    // `status` on the payload is the lifecycle field and the handler must NOT
+    // write it from here, or a late funds event would rewrite the lifecycle.
     if (sig === 'dispute-funds-withdrawn') {
       return {
         id: 'evt_26',
         type: 'charge.dispute.funds_withdrawn',
         created: 2600,
-        data: { object: { id: 'dp_26', amount: 13750, currency: 'usd', charge: 'ch_26', payment_intent: 'pi_26' } },
+        data: {
+          object: {
+            id: 'dp_20',
+            amount: 13750,
+            currency: 'usd',
+            charge: 'ch_20',
+            payment_intent: 'pi_20',
+            reason: 'fraudulent',
+            status: 'needs_response',
+          },
+        },
+      };
+    }
+    if (sig === 'dispute-funds-reinstated') {
+      return {
+        id: 'evt_27',
+        type: 'charge.dispute.funds_reinstated',
+        created: 3100,
+        data: {
+          object: {
+            id: 'dp_20',
+            amount: 13750,
+            currency: 'usd',
+            charge: 'ch_20',
+            payment_intent: 'pi_20',
+            reason: 'fraudulent',
+            status: 'won',
+          },
+        },
+      };
+    }
+    // The sibling that stays routed-but-ignored: evidence churn, no money move
+    // and no lifecycle transition of its own.
+    if (sig === 'dispute-updated') {
+      return {
+        id: 'evt_28',
+        type: 'charge.dispute.updated',
+        created: 2500,
+        data: { object: { id: 'dp_20', amount: 13750, charge: 'ch_20', payment_intent: 'pi_20' } },
       };
     }
     // Same dispute, closed in the operator's favour.
@@ -234,8 +283,46 @@ vi.mock('../src/lib/stripe', () => ({
         },
       };
     }
-    // `payment_intent` is `string | PaymentIntent | null` in the SDK. Null is
-    // the shape with no route to a household at all.
+    // `payment_intent` is `string | PaymentIntent | null` in the SDK
+    // (Disputes.d.ts), and null is a real delivered shape. The CHARGE id is
+    // always there, so these two carry a null payment_intent and differ only in
+    // what the Charge behind them turns out to hold.
+    if (sig === 'dispute-charge-only') {
+      return {
+        id: 'evt_24',
+        type: 'charge.dispute.created',
+        created: 2000,
+        data: {
+          object: {
+            id: 'dp_24',
+            amount: 2500,
+            currency: 'usd',
+            charge: 'ch_24',
+            payment_intent: null,
+            reason: 'fraudulent',
+            status: 'needs_response',
+          },
+        },
+      };
+    }
+    if (sig === 'dispute-charge-no-metadata') {
+      return {
+        id: 'evt_25',
+        type: 'charge.dispute.created',
+        created: 2000,
+        data: {
+          object: {
+            id: 'dp_25',
+            amount: 3300,
+            currency: 'usd',
+            charge: 'ch_25',
+            payment_intent: null,
+            reason: 'fraudulent',
+            status: 'needs_response',
+          },
+        },
+      };
+    }
     if (sig === 'dispute-orphan') {
       return {
         id: 'evt_23',
@@ -364,6 +451,7 @@ beforeEach(() => {
   auditMock.writeAuditEntry.mockClear();
   notifyMock.enqueueNotification.mockReset().mockResolvedValue([]);
   stripeMock.paymentIntentsRetrieve.mockReset();
+  stripeMock.chargesRetrieve.mockReset();
 });
 
 describe('stripeWebhook', () => {
@@ -885,8 +973,60 @@ describe('stripeWebhook', () => {
     expect(writes.some((w) => w.path === 'invoices/i22')).toBe(true);
   });
 
+  it('attributes a dispute with no payment_intent through the CHARGE it names', async () => {
+    docState['invoices/i24'] = { exists: true, data: { kinfolkId: 'f24', status: 'paid', amountDue: 0 } };
+    // Stripe copies a PaymentIntent's metadata onto its Charge, an assumption
+    // this repo already asserts in `stripeWebhook.ts` and which the pinned
+    // SDK's own type definitions do NOT state anywhere. So it is used as a LAST
+    // resort only, after the charge's `payment_intent` has been tried: see the
+    // next test, which is the one that holds if the copy never happens.
+    stripeMock.chargesRetrieve.mockResolvedValue({
+      id: 'ch_24',
+      payment_intent: null,
+      metadata: { familyId: 'f24', invoiceId: 'i24' },
+    });
+
+    expect(await deliver('dispute-charge-only')).toEqual([200]);
+
+    expect(stripeMock.chargesRetrieve).toHaveBeenCalledWith('ch_24');
+    expect(writes.find((w) => w.path === 'stripeDisputes/dp_24')!.data).toMatchObject({
+      familyId: 'f24',
+      invoiceId: 'i24',
+      subjectSource: 'charge-metadata',
+    });
+    expect(writes.some((w) => w.path === 'invoices/i24')).toBe(true);
+  });
+
+  it('still attributes through the charge when the Charge carries NO metadata at all', async () => {
+    docState['invoices/i25'] = { exists: true, data: { kinfolkId: 'f25', status: 'paid', amountDue: 0 } };
+    // The shape the metadata-copy assumption does NOT cover: an empty
+    // `metadata` on the Charge. The route that carries this one is the Charge's
+    // `payment_intent` field, which the SDK does declare (Charges.d.ts:161), so
+    // attribution lands on the claim doc, the same source that decided which
+    // invoice the money applied to in the first place.
+    docState['stripePayments/pi_25'] = { exists: true, data: { familyId: 'f25', invoiceId: 'i25' } };
+    stripeMock.chargesRetrieve.mockResolvedValue({ id: 'ch_25', payment_intent: 'pi_25', metadata: {} });
+
+    expect(await deliver('dispute-charge-no-metadata')).toEqual([200]);
+
+    expect(stripeMock.chargesRetrieve).toHaveBeenCalledWith('ch_25');
+    const disputeWrite = writes.find((w) => w.path === 'stripeDisputes/dp_25')!;
+    expect(disputeWrite.data).toMatchObject({
+      familyId: 'f25',
+      invoiceId: 'i25',
+      subjectSource: 'payment-claim',
+      // Discovered through the charge, so it is RECORDED: the dispute payload
+      // never carried it and an operator reading this doc should not have to
+      // go back to Stripe to find the PaymentIntent a second time.
+      paymentIntentId: 'pi_25',
+    });
+  });
+
   it('records an unattributable dispute rather than dropping it, and says it is unattributed', async () => {
-    // `payment_intent: null`, so there is no route to a household at all.
+    // `payment_intent: null` AND a Charge that yields nothing: no route to a
+    // household at all. The charge IS retrieved, and asserting that it was is what
+    // stops this test passing on a `charges.retrieve` that throws.
+    stripeMock.chargesRetrieve.mockResolvedValue({ id: 'ch_23', payment_intent: null, metadata: {} });
     expect(await deliver('dispute-orphan')).toEqual([200]);
 
     // The money is still gone, so the record still lands — keyed by dispute id,
@@ -901,8 +1041,10 @@ describe('stripeWebhook', () => {
       subjectSource: 'unresolved',
       amountCents: 900,
     });
-    // No invoice to flag, and no Stripe call to make without an id.
+    // No invoice to flag. The charge route was tried and answered nothing; the
+    // PaymentIntent route had no id to try at all.
     expect(writes.some((w) => w.path.startsWith('invoices/'))).toBe(false);
+    expect(stripeMock.chargesRetrieve).toHaveBeenCalledWith('ch_23');
     expect(stripeMock.paymentIntentsRetrieve).not.toHaveBeenCalled();
     // The operator still hears about it: the audit entry lands with no familyId.
     expect(auditMock.writeAuditEntry).toHaveBeenCalledTimes(1);
@@ -928,11 +1070,11 @@ describe('stripeWebhook', () => {
   });
 
   it('202-ignores an unhandled dispute sibling by name, not as missing metadata', async () => {
-    expect(await deliver('dispute-funds-withdrawn')).toEqual([202]);
+    expect(await deliver('dispute-updated')).toEqual([202]);
     expect(writes).toHaveLength(0);
     expect(auditMock.writeAuditEntry).not.toHaveBeenCalled();
     // The reason the WHOLE `charge.dispute.` prefix routes to the dispute
-    // handler rather than only the two types it acts on. A sibling left to fall
+    // handler rather than only the types it acts on. A sibling left to fall
     // through reaches the metadata gate, and a Dispute carries none, so it would
     // warn `stripe.metadata.missing` on a chargeback: a defect that is not there.
     // This branch is what keeps that promise for the events not handled yet.
@@ -944,7 +1086,145 @@ describe('stripeWebhook', () => {
     );
     expect(ignored?.[0]?.severity).toBe('info');
     // Named, so an operator who subscribes it sees it arriving and ignored.
-    expect(ignored?.[0]?.extra?.eventType).toBe('charge.dispute.funds_withdrawn');
+    expect(ignored?.[0]?.extra?.eventType).toBe('charge.dispute.updated');
+  });
+
+  // ── the balance actually moving: funds_withdrawn / funds_reinstated ──────
+
+  /** The two side effects a dispute record must show for the disputed money. */
+  function disputeFixtures() {
+    docState['invoices/i20'] = {
+      exists: true,
+      data: { kinfolkId: 'f20', status: 'paid', amountDue: 0, total: 137.5 },
+    };
+    docState['stripePayments/pi_20'] = { exists: true, data: { familyId: 'f20', invoiceId: 'i20' } };
+  }
+
+  it('records funds_withdrawn as its OWN fact and does not touch disputeStatus', async () => {
+    disputeFixtures();
+
+    expect(await deliver('dispute-created')).toEqual([200]);
+    expect(await deliver('dispute-funds-withdrawn')).toEqual([200]);
+
+    // The whole point: `status` mirrors Stripe's dispute LIFECYCLE, `fundsState`
+    // says whether the balance has actually been debited. Two different facts,
+    // two different fields: a dispute can sit at `needs_response` with the
+    // money already gone, and that is exactly this state.
+    expect(docState['stripeDisputes/dp_20'].data).toMatchObject({
+      status: 'needs_response',
+      fundsState: 'withdrawn',
+    });
+    expect(docState['invoices/i20'].data).toMatchObject({
+      disputeStatus: 'needs_response',
+      disputeFundsState: 'withdrawn',
+      // Still reading paid. A balance debit is not a decision to un-pay.
+      status: 'paid',
+      amountDue: 0,
+    });
+
+    // Its own audit key, so "which disputes have actually debited the balance"
+    // is answerable by querying `event` and not by reading every payload.
+    expect(auditMock.writeAuditEntry).toHaveBeenCalledTimes(2);
+    expect(auditMock.writeAuditEntry.mock.calls[1][0]).toMatchObject({
+      event: 'BILLING_PAYMENT_DISPUTE_FUNDS_WITHDRAWN',
+      severity: 'critical',
+      status: 'FAILURE',
+      familyId: 'f20',
+    });
+    expect(auditMock.writeAuditEntry.mock.calls[1][0].payload).toMatchObject({
+      fundsState: 'withdrawn',
+      disputeId: 'dp_20',
+    });
+    // No SECOND ping. The operator was already notified when the dispute
+    // opened, minutes earlier, and this event asks nothing new of them.
+    expect(notifyMock.enqueueNotification).toHaveBeenCalledTimes(1);
+    const loud = logMock.logEvent.mock.calls.find((c) => c[0]?.event === 'stripe.dispute.fundsWithdrawn');
+    expect(loud?.[0]?.severity).toBe('error');
+  });
+
+  it('records funds_reinstated as the good-news half', async () => {
+    disputeFixtures();
+
+    expect(await deliver('dispute-created')).toEqual([200]);
+    expect(await deliver('dispute-funds-withdrawn')).toEqual([200]);
+    expect(await deliver('dispute-funds-reinstated')).toEqual([200]);
+
+    expect(docState['stripeDisputes/dp_20'].data!.fundsState).toBe('reinstated');
+    expect(docState['invoices/i20'].data!.disputeFundsState).toBe('reinstated');
+    // The lifecycle never moved: no `closed` event was delivered here, and a
+    // funds event must not invent one.
+    expect(docState['stripeDisputes/dp_20'].data!.status).toBe('needs_response');
+    expect(auditMock.writeAuditEntry).toHaveBeenCalledTimes(3);
+    expect(auditMock.writeAuditEntry.mock.calls[2][0]).toMatchObject({
+      event: 'BILLING_PAYMENT_DISPUTE_FUNDS_REINSTATED',
+      severity: 'info',
+      status: 'SUCCESS',
+    });
+  });
+
+  it('keeps the funds fact even when it arrives after the dispute already closed', async () => {
+    disputeFixtures();
+
+    // Stripe guarantees no ordering. `closed`/won (created: 3000) lands first,
+    // then the withdrawal (created: 2600) shows up late. The lifecycle guard
+    // must NOT swallow it: the money did leave the balance, and a dropped
+    // accounting fact is a hole in the record, not a protected invariant.
+    expect(await deliver('dispute-won')).toEqual([200]);
+    expect(await deliver('dispute-funds-withdrawn')).toEqual([200]);
+
+    expect(docState['stripeDisputes/dp_20'].data).toMatchObject({
+      status: 'won',
+      fundsState: 'withdrawn',
+    });
+    expect(writes.find((w) => w.path === 'stripeEvents/evt_26')!.data.appliedOutcome).toBe(
+      'DISPUTE_FUNDS_WITHDRAWN',
+    );
+  });
+
+  it('refuses an out-of-order funds event within the funds lane', async () => {
+    disputeFixtures();
+
+    // Reinstatement (created: 3100) first, then a late withdrawal (2600).
+    // Applying it would tell the operator the money is gone when it is back.
+    expect(await deliver('dispute-funds-reinstated')).toEqual([200]);
+    expect(await deliver('dispute-funds-withdrawn')).toEqual([200]);
+
+    expect(docState['stripeDisputes/dp_20'].data!.fundsState).toBe('reinstated');
+    expect(writes.find((w) => w.path === 'stripeEvents/evt_26')!.data.appliedOutcome).toBe(
+      'SKIPPED_OUT_OF_ORDER',
+    );
+    expect(auditMock.writeAuditEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it('is idempotent under a redelivered funds event', async () => {
+    disputeFixtures();
+
+    expect(await deliver('dispute-funds-withdrawn')).toEqual([200]);
+    expect(await deliver('dispute-funds-withdrawn')).toEqual([200]);
+
+    expect(writes.filter((w) => w.path === 'stripeDisputes/dp_20')).toHaveLength(1);
+    expect(writes.filter((w) => w.path === 'invoices/i20')).toHaveLength(1);
+    expect(auditMock.writeAuditEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a funds movement for a dispute whose created event never arrived', async () => {
+    // The operator subscribed the funds events and not `charge.dispute.created`,
+    // or the created event was lost. The balance still moved, so the record
+    // still lands, with the lifecycle field honestly absent rather than guessed.
+    disputeFixtures();
+
+    expect(await deliver('dispute-funds-withdrawn')).toEqual([200]);
+
+    expect(docState['stripeDisputes/dp_20'].data).toMatchObject({
+      disputeId: 'dp_20',
+      fundsState: 'withdrawn',
+      familyId: 'f20',
+      invoiceId: 'i20',
+      amountCents: 13750,
+    });
+    expect(docState['stripeDisputes/dp_20'].data!.status).toBeUndefined();
+    expect(docState['invoices/i20'].data!.disputeStatus).toBeUndefined();
+    expect(docState['invoices/i20'].data!.disputeFundsState).toBe('withdrawn');
   });
   // ── abandoned checkout ───────────────────────────────────────────────────
 

@@ -8,7 +8,7 @@ import { enqueueNotification } from '../notifications/dispatcher';
 import type { Severity } from '../lib/schema';
 
 /**
- * Chargebacks: `charge.dispute.created` and `charge.dispute.closed`.
+ * Chargebacks: the `charge.dispute.` family.
  *
  * A DISPUTE IS NOT A REFUND, and the standing no-refunds ruling does not reach
  * it. A refund is granted by the operator; a dispute is imposed by the
@@ -47,6 +47,32 @@ import type { Severity } from '../lib/schema';
  * `critical` audit entry (the same severity the charge-failure branch uses),
  * and a business-stream notification. The operator decides what the money does.
  *
+ * ## Two facts, two fields: `status` is not `fundsState`
+ *
+ * `charge.dispute.funds_withdrawn` and `charge.dispute.funds_reinstated` are not
+ * lifecycle transitions, and folding them into `disputeStatus` would be a lie in
+ * both directions. `status` mirrors STRIPE'S DISPUTE LIFECYCLE, the values
+ * Stripe itself puts on the object (`needs_response`, `under_review`, `won`,
+ * `lost`), which say where the contest stands. Whether the balance has actually
+ * been debited is an ACCOUNTING fact about money, and the two genuinely
+ * disagree: a dispute sits at `needs_response` for weeks with the money already
+ * withdrawn, and a `won` dispute is not reinstated at the instant it closes.
+ *
+ * So the balance movement gets its own field, `fundsState`
+ * (`'withdrawn' | 'reinstated'`), mirrored on the invoice as `disputeFundsState`,
+ * exactly the naming relationship `status` already has with `disputeStatus`.
+ * It carries no cents figure: the sum that actually leaves the balance is the
+ * disputed amount PLUS Stripe's dispute fee, and `amountCents` on this record is
+ * the disputed amount alone. A field named like a debit would be wrong by the
+ * fee, and money code here does not publish a figure it did not read.
+ *
+ * The funds events get NO second operator notification. `invoice.payment.disputed`
+ * already fired when the dispute opened (and fires again when it closes); the
+ * withdrawal follows the opening by minutes, asks nothing new of the operator,
+ * and a second ping for the same money event would train them to ignore the
+ * first. Loudness is kept where it belongs instead: a `critical` audit entry
+ * under its own event key, and an `error`-stream log line.
+ *
  * ## Identity: the dispute object carries its OWN metadata, not the payment's
  *
  * This is the trap that sank the card rail in its first form, in a new place.
@@ -55,8 +81,8 @@ import type { Severity } from '../lib/schema';
  * (node_modules/stripe/cjs/resources/Disputes.d.ts) is the dispute's own,
  * always `{}` here. A dispute handler behind `stripeWebhook`'s metadata gate
  * would therefore 202 every chargeback and warn `stripe.metadata.missing`,
- * which names the wrong problem. Resolution goes through the PaymentIntent
- * instead, in two steps, and records which one answered.
+ * which names the wrong problem. Resolution goes through the PaymentIntent and
+ * then the Charge instead, in three steps, and records which one answered.
  */
 
 /**
@@ -92,41 +118,77 @@ export interface DisputeEvent {
   data: { object: unknown };
 }
 
+/** The dispute LIFECYCLE: what Stripe says about where the contest stands. */
 export const DISPUTE_EVENT_TYPES = ['charge.dispute.created', 'charge.dispute.closed'] as const;
 
+/** The BALANCE: what the money actually did. A separate lane, see the header. */
+export const DISPUTE_FUNDS_EVENT_TYPES = [
+  'charge.dispute.funds_withdrawn',
+  'charge.dispute.funds_reinstated',
+] as const;
+
 /**
- * The WHOLE `charge.dispute.` family routes here, not just the two acted on.
+ * The WHOLE `charge.dispute.` family routes here, not just the ones acted on.
  *
  * Every dispute event carries a Dispute object whose `metadata` is its own and
  * is empty here, because Stripe does not copy the PaymentIntent's onto it. A
  * sibling left to fall through would therefore reach the metadata gate and log
  * `stripe.metadata.missing`: a warning naming a defect that is not there, on a
  * chargeback. That is the exact signal this file exists to stop producing, so
- * the promise is kept for the events not handled yet, not only for the two that
+ * the promise is kept for the events not handled yet, not only for the ones that
  * are.
  *
- * Worth knowing about the three ignored: `funds_withdrawn` is the event saying
- * the money actually left the balance and `funds_reinstated` says it came back,
- * so `disputeStatus` alone does not tell an operator whether the balance has
- * been debited. Acting on those is a follow-up; today they are logged by name
- * rather than mislabelled.
+ * The one still ignored is `charge.dispute.updated`: evidence churn on an open
+ * dispute. It moves no money and settles nothing, so it is logged by name rather
+ * than mislabelled.
  */
 export function isDisputeEvent(type: string): boolean {
   return type.startsWith('charge.dispute.');
 }
 
-/** The two acted on. The rest of the family is logged and ignored. */
+/** The four acted on. The rest of the family is logged and ignored. */
 export function isHandledDisputeEvent(type: string): boolean {
-  return (DISPUTE_EVENT_TYPES as readonly string[]).includes(type);
+  return (
+    (DISPUTE_EVENT_TYPES as readonly string[]).includes(type) ||
+    (DISPUTE_FUNDS_EVENT_TYPES as readonly string[]).includes(type)
+  );
 }
 
-/** Where the household/invoice attribution came from. Stored, never guessed. */
-type SubjectSource = 'payment-claim' | 'payment-intent-metadata' | 'unresolved';
+/**
+ * Which way the balance moved, or `null` for a lifecycle event. Derived from the
+ * EVENT TYPE and never from the Dispute payload: the payload's `status` is the
+ * lifecycle field and says nothing about whether the money has moved.
+ */
+type FundsState = 'withdrawn' | 'reinstated';
+
+function fundsStateOf(type: string): FundsState | null {
+  if (type === 'charge.dispute.funds_withdrawn') return 'withdrawn';
+  if (type === 'charge.dispute.funds_reinstated') return 'reinstated';
+  return null;
+}
+
+/**
+ * Where the household/invoice attribution came from. Stored, never guessed.
+ *
+ * `charge-metadata` is the LAST of the three routes for a reason worth stating:
+ * it rests on Stripe copying a PaymentIntent's metadata onto its Charge, and the
+ * pinned SDK's type definitions do not say anywhere that it does. The routes
+ * ahead of it rest on fields the SDK does declare, so nothing depends on that
+ * assumption holding. If it does not, this route simply answers nothing and the
+ * dispute records as `unresolved`, which is the honest outcome.
+ */
+type SubjectSource = 'payment-claim' | 'payment-intent-metadata' | 'charge-metadata' | 'unresolved';
 
 interface DisputeSubject {
   familyId: string | null;
   invoiceId: string | null;
   source: SubjectSource;
+  /**
+   * The PaymentIntent id in play, INCLUDING one discovered off the Charge when
+   * the Dispute payload carried none. Recorded so an operator reading the
+   * dispute record does not have to go back to Stripe to find it again.
+   */
+  paymentIntentId: string | null;
 }
 
 function idOf(v: unknown): string | null {
@@ -137,8 +199,19 @@ function idOf(v: unknown): string | null {
   return null;
 }
 
+/** Reads `familyId`/`invoiceId` out of a Stripe object's metadata bag. */
+function metadataSubject(
+  source: unknown,
+): { familyId: string; invoiceId: string } | null {
+  const metadata = (source as { metadata?: Record<string, string> | null } | null | undefined)
+    ?.metadata ?? {};
+  const familyId = metadata['familyId'] ?? metadata['kinfolkId'] ?? null;
+  const invoiceId = metadata['invoiceId'] ?? null;
+  return familyId && invoiceId ? { familyId, invoiceId } : null;
+}
+
 /**
- * Household + invoice for a disputed PaymentIntent.
+ * Routes 1 and 2, for one PaymentIntent id. `null` means neither answered.
  *
  * 1. `stripePayments/{paymentIntentId}`, the per-PaymentIntent claim the paid
  *    path writes. It already carries `familyId` and `invoiceId`, it is local,
@@ -148,33 +221,98 @@ function idOf(v: unknown): string | null {
  * 2. The PaymentIntent's own metadata, one Stripe retrieve. This is the route
  *    for a payment taken before the claim existed, and for one whose claim was
  *    written by a code path that predates it.
- * 3. Nothing. Recorded as `unresolved` with the ids that ARE known, never
- *    attributed to a plausible-looking household.
  */
-async function resolveDisputeSubject(paymentIntentId: string | null): Promise<DisputeSubject> {
-  if (!paymentIntentId) return { familyId: null, invoiceId: null, source: 'unresolved' };
-
+async function resolveFromPaymentIntent(paymentIntentId: string): Promise<DisputeSubject | null> {
   const claimSnap = await db().doc(`stripePayments/${paymentIntentId}`).get();
   const claim = claimSnap.data() as { familyId?: unknown; invoiceId?: unknown } | undefined;
   if (typeof claim?.familyId === 'string' && typeof claim?.invoiceId === 'string') {
-    return { familyId: claim.familyId, invoiceId: claim.invoiceId, source: 'payment-claim' };
+    return {
+      familyId: claim.familyId,
+      invoiceId: claim.invoiceId,
+      source: 'payment-claim',
+      paymentIntentId,
+    };
   }
 
   try {
     const stripe = await getStripe();
     const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
-    const metadata = (pi as { metadata?: Record<string, string> | null }).metadata ?? {};
-    const familyId = metadata['familyId'] ?? metadata['kinfolkId'] ?? null;
-    const invoiceId = metadata['invoiceId'] ?? null;
-    if (familyId && invoiceId) {
-      return { familyId, invoiceId, source: 'payment-intent-metadata' };
-    }
+    const found = metadataSubject(pi);
+    if (found) return { ...found, source: 'payment-intent-metadata', paymentIntentId };
   } catch {
-    // Network hiccup, bad id, Stripe outage. Falls through to unresolved,
-    // which is recorded as unresolved — the dispute record still lands.
+    // Network hiccup, bad id, Stripe outage. Falls through, and the caller
+    // records whatever it can. The dispute record still lands.
   }
 
-  return { familyId: null, invoiceId: null, source: 'unresolved' };
+  return null;
+}
+
+/**
+ * Household + invoice for a dispute, in three routes plus an honest failure.
+ *
+ * 1-2. The PaymentIntent the Dispute names: claim doc, then PI metadata.
+ * 3.   The CHARGE. `Dispute.payment_intent` is `string | PaymentIntent | null`
+ *      in the SDK and null is a delivered shape, while the charge id is on every
+ *      Dispute. One `charges.retrieve` then gives two chances: the Charge's
+ *      `payment_intent` field (declared in the SDK at Charges.d.ts:161), which
+ *      feeds routes 1-2 with an id the Dispute did not carry; and failing that,
+ *      the Charge's own metadata. The metadata half rests on Stripe copying a
+ *      PaymentIntent's metadata onto its Charge, behaviour this repo asserts in
+ *      `stripeWebhook.ts` but which the pinned SDK's types nowhere state, so it
+ *      is tried LAST and nothing breaks if it never happens.
+ * 4.   Nothing. Recorded as `unresolved` with the ids that ARE known, never
+ *      attributed to a plausible-looking household.
+ */
+async function resolveDisputeSubject(
+  paymentIntentId: string | null,
+  chargeId: string | null,
+): Promise<DisputeSubject> {
+  if (paymentIntentId) {
+    const viaPaymentIntent = await resolveFromPaymentIntent(paymentIntentId);
+    if (viaPaymentIntent) return viaPaymentIntent;
+  }
+
+  if (chargeId) {
+    try {
+      const stripe = await getStripe();
+      const charge = await stripe.charges.retrieve(chargeId);
+      const chargePaymentIntentId = idOf((charge as { payment_intent?: unknown } | null)?.payment_intent);
+      if (chargePaymentIntentId && chargePaymentIntentId !== paymentIntentId) {
+        const viaCharge = await resolveFromPaymentIntent(chargePaymentIntentId);
+        if (viaCharge) return viaCharge;
+      }
+      const found = metadataSubject(charge);
+      if (found) {
+        return {
+          ...found,
+          source: 'charge-metadata',
+          paymentIntentId: chargePaymentIntentId ?? paymentIntentId,
+        };
+      }
+      if (chargePaymentIntentId) {
+        // The charge named a PaymentIntent that answered nothing. The id is
+        // still worth returning: it is more than the Dispute carried.
+        return {
+          familyId: null,
+          invoiceId: null,
+          source: 'unresolved',
+          paymentIntentId: chargePaymentIntentId,
+        };
+      }
+    } catch (err) {
+      // A lost attribution route, not a lost dispute. Named so an operator
+      // looking at an `unresolved` record can tell "Stripe would not answer"
+      // apart from "Stripe answered and had nothing".
+      logEvent({
+        severity: 'warn',
+        function: 'stripeWebhook',
+        event: 'stripe.dispute.chargeLookupFailed',
+        extra: { chargeId, err: (err as Error)?.message },
+      });
+    }
+  }
+
+  return { familyId: null, invoiceId: null, source: 'unresolved', paymentIntentId };
 }
 
 /**
@@ -189,11 +327,10 @@ async function resolveDisputeSubject(paymentIntentId: string | null): Promise<Di
  */
 export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<number> {
   if (!isHandledDisputeEvent(event.type)) {
-    // A sibling in the family: `updated` (evidence churn), `funds_withdrawn` or
-    // `funds_reinstated` (the accounting mirrors of created/closed). Routed here
-    // only so it does not reach the metadata gate and get labelled a missing-
-    // metadata defect. Named in the log so an operator who subscribes one of
-    // them sees it arriving and ignored, rather than seeing nothing.
+    // A sibling in the family: `updated`, evidence churn on an open dispute.
+    // Routed here only so it does not reach the metadata gate and get labelled a
+    // missing-metadata defect. Named in the log so an operator who subscribes it
+    // sees it arriving and ignored, rather than seeing nothing.
     logEvent({
       severity: 'info',
       function: 'stripeWebhook',
@@ -216,11 +353,17 @@ export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<num
     return 200;
   }
 
+  const fundsState = fundsStateOf(event.type);
   const opened = event.type === 'charge.dispute.created';
-  const paymentIntentId = idOf(dispute.payment_intent);
+  const eventPaymentIntentId = idOf(dispute.payment_intent);
   const chargeId = idOf(dispute.charge);
-  const subject = await resolveDisputeSubject(paymentIntentId);
-  const disputeStatus = typeof dispute.status === 'string' ? dispute.status : null;
+  const subject = await resolveDisputeSubject(eventPaymentIntentId, chargeId);
+  const paymentIntentId = subject.paymentIntentId ?? eventPaymentIntentId;
+  // The LIFECYCLE status, read only on the lifecycle events. A funds event's
+  // payload carries one too and it is deliberately not read: the balance moving
+  // is not a lifecycle transition, and a late funds event writing `status` would
+  // put a settled dispute back into `needs_response`.
+  const disputeStatus = fundsState === null && typeof dispute.status === 'string' ? dispute.status : null;
 
   // The disputed amount, integer minor units, exactly as Stripe sends it. A
   // non-numeric value is recorded as absent and flagged, never as 0: a
@@ -238,7 +381,90 @@ export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<num
     const dedupeSnap = await tx.get(dedupeRef);
     if (dedupeSnap.exists) return false;
     const priorSnap = await tx.get(disputeRef);
-    const prior = priorSnap.data() as { lastEventCreatedMs?: number } | undefined;
+    const prior = priorSnap.data() as
+      | { lastEventCreatedMs?: number; lastFundsEventCreatedMs?: number }
+      | undefined;
+
+    if (fundsState) {
+      // ── the funds lane ────────────────────────────────────────────────────
+      // Its own ordering stamp, `lastFundsEventCreatedMs`, and that separation
+      // is the load-bearing part. Sharing the lifecycle's `lastEventCreatedMs`
+      // would mean a `closed` arriving before the `funds_withdrawn` that
+      // preceded it made the withdrawal look out of order and DROP it: money
+      // leaving the balance, recorded nowhere, which is the exact hole this
+      // handler exists to close. The two lanes order independently because they
+      // describe two different things.
+      const priorFundsMs = prior?.lastFundsEventCreatedMs ?? 0;
+      if (eventCreatedMs > 0 && eventCreatedMs < priorFundsMs) {
+        tx.create(dedupeRef, {
+          type: event.type,
+          receivedAt: FieldValue.serverTimestamp(),
+          eventCreatedMs,
+          disputeId,
+          appliedOutcome: 'SKIPPED_OUT_OF_ORDER',
+        });
+        return false;
+      }
+
+      tx.create(dedupeRef, {
+        type: event.type,
+        receivedAt: FieldValue.serverTimestamp(),
+        eventCreatedMs,
+        disputeId,
+        ...(subject.familyId ? { familyId: subject.familyId } : {}),
+        ...(subject.invoiceId ? { invoiceId: subject.invoiceId } : {}),
+        appliedOutcome: fundsState === 'withdrawn' ? 'DISPUTE_FUNDS_WITHDRAWN' : 'DISPUTE_FUNDS_REINSTATED',
+      });
+
+      tx.set(
+        disputeRef,
+        {
+          disputeId,
+          // Identity and attribution are written only when this event actually
+          // resolved them. A funds event whose lookup came back empty must not
+          // blank a `created` event's good attribution with nulls.
+          ...(paymentIntentId ? { paymentIntentId } : {}),
+          ...(chargeId ? { chargeId } : {}),
+          ...(subject.source !== 'unresolved'
+            ? {
+                familyId: subject.familyId,
+                invoiceId: subject.invoiceId,
+                subjectSource: subject.source,
+              }
+            : {}),
+          ...(amountCents !== null ? { amountCents, amountResolved: true } : {}),
+          ...(typeof dispute.currency === 'string' ? { currency: dispute.currency } : {}),
+          // The accounting fact. NOT `status`. See the header.
+          fundsState,
+          lastFundsEventId: event.id,
+          lastFundsEventType: event.type,
+          lastFundsEventCreatedMs: eventCreatedMs,
+          updatedAt: FieldValue.serverTimestamp(),
+          ...(fundsState === 'withdrawn'
+            ? { fundsWithdrawnAt: FieldValue.serverTimestamp() }
+            : { fundsReinstatedAt: FieldValue.serverTimestamp() }),
+        },
+        { merge: true },
+      );
+
+      if (invoiceRef) {
+        // Same flag-and-nothing-else rule as the lifecycle lane: no `status`,
+        // no `amountDue`, no state stamp. And no `disputeStatus` either: the
+        // balance moving says nothing about where the contest stands.
+        tx.set(
+          invoiceRef,
+          {
+            disputeFundsState: fundsState,
+            disputeId,
+            ...(amountCents !== null ? { disputeAmountCents: amountCents } : {}),
+            disputeFundsUpdatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+      return true;
+    }
+
     const priorMs = prior?.lastEventCreatedMs ?? 0;
 
     // Stripe guarantees no ordering between the two events describing ONE
@@ -325,6 +551,58 @@ export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<num
       event: 'stripe.dedup.skipped',
       extra: { id: event.id, type: event.type, reason: 'dispute-replay-or-out-of-order' },
     });
+    return 200;
+  }
+
+  if (fundsState) {
+    const withdrawn = fundsState === 'withdrawn';
+    // The withdrawal is the moment the money is actually gone, so it goes to the
+    // error stream like the opening does. The reinstatement is the one good
+    // outcome in this file and is logged as such.
+    logEvent({
+      severity: withdrawn ? 'error' : 'info',
+      function: 'stripeWebhook',
+      event: withdrawn ? 'stripe.dispute.fundsWithdrawn' : 'stripe.dispute.fundsReinstated',
+      ...(subject.familyId ? { familyId: subject.familyId } : {}),
+      extra: {
+        disputeId,
+        paymentIntentId,
+        chargeId,
+        invoiceId: subject.invoiceId,
+        subjectSource: subject.source,
+        fundsState,
+        amountCents,
+        eventId: event.id,
+      },
+    });
+
+    await writeAuditEntry({
+      // The balance is down: that is the failure half of the money event. A
+      // reinstatement puts it back, which is the success half.
+      status: withdrawn ? 'FAILURE' : 'SUCCESS',
+      event: withdrawn
+        ? AUDIT_EVENTS.BILLING_PAYMENT_DISPUTE_FUNDS_WITHDRAWN
+        : AUDIT_EVENTS.BILLING_PAYMENT_DISPUTE_FUNDS_REINSTATED,
+      severity: withdrawn ? 'critical' : 'info',
+      actorRole: 'SYSTEM',
+      ...(subject.familyId ? { familyId: subject.familyId } : {}),
+      ...(subject.invoiceId ? { targetId: subject.invoiceId, targetCollection: 'invoices' } : {}),
+      payload: {
+        disputeId,
+        stripeEventId: event.id,
+        paymentIntentId,
+        chargeId,
+        invoiceId: subject.invoiceId,
+        subjectSource: subject.source,
+        fundsState,
+        // The DISPUTED amount, not the debit: Stripe's dispute fee comes out of
+        // the balance on top of this and is not on the Dispute object.
+        amountCents,
+      },
+    });
+
+    // No notification. See the header: the operator was pinged when the dispute
+    // opened and will be again when it closes, and this event asks nothing new.
     return 200;
   }
 
