@@ -62,6 +62,36 @@
   color: var(--color-background);
 }
 
+/* ── status sections ─────────────────────────────────────────────────────── */
+
+/* One block per status, so the live bookings are not read after 94 finished
+   ones. The heading carries its own count, mirroring the mock's `.ct` pill. */
+.bookings__section + .bookings__section {
+  margin-top: var(--space-5);
+}
+
+.bookings__section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.bookings__section-count {
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  padding: 0 var(--space-2);
+  /* Not uppercase: the heading is, and a digit has no case to change. */
+  text-transform: none;
+}
+
 /* ── row list ────────────────────────────────────────────────────────────── */
 
 .bookings__list {
