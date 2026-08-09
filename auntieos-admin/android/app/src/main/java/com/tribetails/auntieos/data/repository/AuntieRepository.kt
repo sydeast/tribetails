@@ -1356,26 +1356,69 @@ class AuntieRepository(
         snapshot.documents.firstOrNull()?.toObject(HouseholdData::class.java)
     }.onFailure { AuntieLog.e("Failed to get household data for $kinfolkId", it) }
 
+    /**
+     * CREATES the household's first record. Whole-document write, which is
+     * correct exactly here: there is no document yet, so there is nothing to
+     * clobber, and a complete one keeps `toObject(HouseholdData::class.java)`
+     * and the React reader happy. Same reasoning as the web port's create branch
+     * (`auntieos-admin/src/api/householdData.ts:141-150`).
+     *
+     * EDITING an existing record goes through [updateHouseholdFields]. This used
+     * to take that path too, `.set(loadedModel.copy(updatedAt = now), merge())`,
+     * and that whole-model write is what silently reverted concurrent web edits.
+     * The non-blank id now fails loud rather than quietly re-opening it.
+     */
     suspend fun saveHouseholdData(data: HouseholdData): Result<Unit> = runCatching {
+        require(data.id.isBlank()) {
+            "saveHouseholdData creates; edit ${data.id} through updateHouseholdFields"
+        }
         authGate.ensureAuthenticated()
         val timestamp = getCurrentTimestamp()
-        if (data.id.isBlank()) {
-            val docRef = firestore.collection("household_data").document()
-            docRef.set(data.copy(
-                id = docRef.id,
-                createdAt = if (data.createdAt.isBlank()) timestamp else data.createdAt,
-                updatedAt = timestamp
-            )).await()
-        } else {
-            // MERGE: update path on an existing record, so it must not delete
-            // fields outside this model. The create branch above is a bare set()
-            // on purpose, since there is nothing yet to clobber.
-            firestore.collection("household_data").document(data.id)
-                .set(data.copy(updatedAt = timestamp), com.google.firebase.firestore.SetOptions.merge())
-                .await()
-        }
+        val docRef = firestore.collection("household_data").document()
+        docRef.set(data.copy(
+            id = docRef.id,
+            createdAt = if (data.createdAt.isBlank()) timestamp else data.createdAt,
+            updatedAt = timestamp
+        )).await()
         Unit
     }.onFailure { AuntieLog.e("Failed to save household data for ${data.kinfolkId}", it) }
+
+    /**
+     * Writes ONLY the household fields that actually changed, plus the stamp.
+     *
+     * `SetOptions.merge()` protects fields OUTSIDE the written map and does
+     * NOTHING about stale fields inside it, so handing it a model read minutes
+     * ago writes every one of those fields back at its old value. That silently
+     * reverted whatever the React admin changed in between - including
+     * `primaryVetClinicId`, the clinic a sitter phones in an emergency. React
+     * reached the same conclusion first and says why
+     * (`auntieos-admin/src/api/householdData.ts:110-127`, citing the 2026-07-20
+     * `familyKinPath` loss). [householdFieldChanges] builds the map.
+     *
+     * `updatedAt` is STAMPED here, never round-tripped from the value that was
+     * read, so it cannot freeze and lie about when the record last changed (the
+     * rule [updateKinfolk] documents). It stays an ISO-8601 String rather than
+     * `serverTimestamp()`: `HouseholdData.updatedAt` is a `String` and the React
+     * port parses it as one, so a Timestamp here would be type drift, not a fix.
+     *
+     * An empty [changes] is a caller bug, not a no-op to absorb: such a write
+     * could only move the stamp, claiming a change that never happened. The
+     * ViewModel skips the call outright when nothing was edited.
+     */
+    suspend fun updateHouseholdFields(
+        documentId: String,
+        changes: Map<String, String>,
+    ): Result<Unit> = runCatching {
+        require(documentId.isNotBlank()) { "updateHouseholdFields needs a household_data document id" }
+        require(changes.isNotEmpty()) { "updateHouseholdFields called with no changed fields" }
+        authGate.ensureAuthenticated()
+        val payload: Map<String, Any> = changes + mapOf("updatedAt" to getCurrentTimestamp())
+        firestore.collection("household_data").document(documentId)
+            .set(payload, com.google.firebase.firestore.SetOptions.merge())
+            .await()
+        AuntieLog.d("Household $documentId updated: ${changes.keys.joinToString()}")
+        Unit
+    }.onFailure { AuntieLog.e("Failed to update household data $documentId", it) }
 
     // --- Media Albums ---
 

@@ -62,9 +62,11 @@ fun HouseholdDataScreen(
                 // EmergencySafetyCard and ServiceProvidersCard. Operator: "I dont need
                 // this Emergency & Safety or Service Provider boxes." This is a UI
                 // removal only: `HouseholdData` (data/model/DynamicFields.kt) still
-                // carries all ten fields, `saveHouseholdData` still whole-document
-                // writes them (nothing here strips them from `state.householdData`
-                // before saving), so no data is dropped, only unrendered. The pending
+                // carries all ten fields and a save cannot touch them, because the
+                // save writes only the fields that CHANGED and no card here can
+                // change these. (It used to whole-document write them back, which
+                // preserved them and reverted concurrent web edits in the same
+                // stroke; see HouseholdDataViewModel.saveHouseholdData.) The pending
                 // household/family-page redesign's "Emergency Must Knows" section is
                 // where the emergency-contact half is headed next; do not delete these
                 // fields off the model when you don't see a card using them here.
