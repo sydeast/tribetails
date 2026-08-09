@@ -78,8 +78,12 @@ export default defineConfig({
       // `bookings` alternative that happens to match it: which project a spec
       // runs in decides whether it has a session, and that should be readable
       // rather than inferred from a substring.
+      //
+      // AND THIS IS AN ALLOWLIST, not a filter over a directory. A new spec file
+      // that is not named here is collected by no project at all, so the run
+      // reports green having never opened it. Add the file, add it here.
       testMatch:
-        /(bookings|cascade-bookings|no-production-egress|mobile-nav|phone-layout)\.spec\.ts/,
+        /(bookings|cascade-bookings|no-production-egress|mobile-nav|phone-layout|template-preview)\.spec\.ts/,
       dependencies: ['setup'],
       use: { ...devices['Desktop Chrome'], storageState: './e2e/.auth/operator.json' },
     },

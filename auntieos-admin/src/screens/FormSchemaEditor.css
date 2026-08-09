@@ -140,3 +140,36 @@
   gap: var(--space-3);
   margin-top: var(--space-2);
 }
+/* ── the live preview column ───────────────────────────────────────────────── */
+/* The editor's panels on the left, the kinfolk-facing preview on the right, as
+   the mock draws it. Stacked below the two-column breakpoint. */
+.fse__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+.fse__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+@media (max-width: 64rem) {
+  .fse__layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* Sticky, so the preview stays visible while the author scrolls a long field
+   list, which is the whole point of previewing while editing. Static once
+   stacked: pinned over the fields it previews it would only be in the way. */
+.fse__preview {
+  position: sticky;
+  top: var(--space-4);
+  min-width: 0;
+}
+@media (max-width: 64rem) {
+  .fse__preview {
+    position: static;
+  }
+}

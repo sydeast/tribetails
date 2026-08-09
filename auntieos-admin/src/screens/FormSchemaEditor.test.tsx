@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type FormField, type FormSchemaDetail } from '../api/formSchemasWrite';
 
@@ -424,5 +424,54 @@ describe('FormSchemaEditor: edit mode', () => {
 
     resolveSave({ id: 'tribeProfile', version: 4 });
     await waitFor(() => expect(screen.getByRole('button', { name: /save schema/i })).toBeInTheDocument());
+  });
+});
+/**
+ * The live preview column. `page-specs/27-formschema-editor.md` item 3 has had
+ * this pane gated dark behind `FF_FORMSCHEMA_LIVE_PREVIEW` for want of a render
+ * path; these assertions are that path existing and tracking the editor state.
+ */
+describe('FormSchemaEditor: live preview', () => {
+  it('renders the loaded schema as a kinfolk would see it', async () => {
+    getFormSchema.mockResolvedValue(
+      schema({
+        sections: [
+          {
+            title: 'Basics',
+            description: 'About the household.',
+            fields: [field({ key: 'homeType', label: 'Home type', type: 'select', options: ['House', 'Condo'], required: false })],
+          },
+        ],
+      }),
+    );
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    const preview = await screen.findByRole('region', { name: 'Live preview' });
+    expect(preview).toHaveTextContent('Basics');
+    expect(preview).toHaveTextContent('About the household.');
+    expect(within(preview).getByLabelText('Home type').tagName).toBe('SELECT');
+    expect(within(preview).getByRole('option', { name: 'House' })).toBeInTheDocument();
+  });
+  it('follows an edit to a field label without a save', async () => {
+    getFormSchema.mockResolvedValue(
+      schema({ sections: [{ title: 'Basics', description: null, fields: [field({ label: 'First name' })] }] }),
+    );
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    const preview = await screen.findByRole('region', { name: 'Live preview' });
+    expect(within(preview).getByLabelText('First name *')).toBeInTheDocument();
+    const labelInput = screen.getAllByLabelText(/^label$/i)[0]!;
+    await userEvent.clear(labelInput);
+    await userEvent.type(labelInput, 'Given name');
+    expect(within(preview).getByLabelText('Given name *')).toBeInTheDocument();
+  });
+  it('shows the empty prompt on a brand-new schema with no fields', () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    expect(
+      within(screen.getByRole('region', { name: 'Live preview' })).getByText(/No fields yet/),
+    ).toBeInTheDocument();
+  });
+  it('renders no preview at all while the schema is still loading', () => {
+    getFormSchema.mockReturnValue(new Promise(() => {}));
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    expect(screen.queryByRole('region', { name: 'Live preview' })).toBeNull();
   });
 });

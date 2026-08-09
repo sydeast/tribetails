@@ -176,3 +176,31 @@
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }
+/* ── the live preview column ───────────────────────────────────────────────── */
+/* Compose form and preview side by side on a wide viewport, stacked below it.
+   The mocks put the preview in the right-hand column
+   (ui-ideas/auntieos-marketing-blasts-2026-05-27.html, the `.pv` card). */
+.compose__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+@media (max-width: 60rem) {
+  .compose__layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* Sticky against the page scroll, so the preview stays beside the message field
+   while the author scrolls past the audience picker. Static once stacked: a
+   preview pinned over the fields it previews is worse than no preview. */
+.compose__preview {
+  position: sticky;
+  top: var(--space-4);
+  min-width: 0;
+}
+@media (max-width: 60rem) {
+  .compose__preview {
+    position: static;
+  }
+}

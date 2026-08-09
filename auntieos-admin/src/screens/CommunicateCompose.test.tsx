@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { splitList, buildCriteria } from './CommunicateCompose';
 import { type SendBroadcastResult } from '../api/communicateWrite';
@@ -379,5 +379,48 @@ describe('saved segments', () => {
     // Scoped to the exact success sentence: "Saved audience" is the fieldset's
     // own legend and would match a looser /^Saved/ query.
     expect(screen.queryByText('Saved "Actives".')).toBeNull();
+  });
+});
+/**
+ * The live preview beside the broadcast composer.
+ *
+ * A broadcast is NOT a notification template. `broadcastMessage` calls
+ * `sendTemplatedEmail(... data: {})` and hands SMS/push/in-app the raw string,
+ * so no merge field can resolve on this path at all. The preview says so with
+ * an empty sample: every `{{token}}` here is unresolved, and that is the truth,
+ * not a limitation of the preview.
+ */
+describe('CommunicateCompose: live preview', () => {
+  it('shows the message as a recipient will read it, as the author types', async () => {
+    render(<CommunicateCompose />);
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Holiday hours');
+    await userEvent.type(screen.getByLabelText(/message/i), 'We close at noon.');
+    const preview = await screen.findByRole('region', { name: 'Live preview' });
+    expect(preview).toHaveTextContent('Holiday hours');
+    expect(preview).toHaveTextContent('We close at noon.');
+  });
+  it('warns that a merge field typed into a broadcast binds to nothing', async () => {
+    render(<CommunicateCompose />);
+    // fireEvent, not userEvent.type: `{{` is userEvent's escape for a literal
+    // brace, so typing a Handlebars token through it needs doubling up and the
+    // test then reads as being about userEvent rather than about merge fields.
+    fireEvent.change(screen.getByLabelText(/message/i), { target: { value: 'Hi {{kinfolkName}}' } });
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      '1 merge field has no sample value: kinfolkName',
+    );
+  });
+  it('states what each channel actually does with an unresolved token', async () => {
+    render(<CommunicateCompose />);
+    expect(
+      await screen.findByText(
+        /A broadcast carries no merge data\. Email sends these blank; in-app, SMS and push send the braces as typed\./i,
+      ),
+    ).toBeInTheDocument();
+  });
+  it('does not warn about ordinary copy with no merge fields', async () => {
+    render(<CommunicateCompose />);
+    await userEvent.type(screen.getByLabelText(/message/i), 'We close at noon.');
+    await screen.findByRole('region', { name: 'Live preview' });
+    expect(screen.queryByRole('status')).toBeNull();
   });
 });
