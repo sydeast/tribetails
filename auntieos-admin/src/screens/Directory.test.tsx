@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { ReactNode } from 'react';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Timestamp } from 'firebase/firestore';
@@ -8,6 +9,16 @@ import { type Kinfolk, type Kin } from '../api/directory';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+
+// A household card NAVIGATES now, so the router is mocked the way Bookings.test
+// and Schedule.test already mock it. `Link` is here because the profile this
+// screen still renders from its route param has a real anchor to the members
+// route inside it.
+const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => navigate,
+  Link: ({ children }: { children: ReactNode }) => <a href="/household-members">{children}</a>,
+}));
 
 // The in-screen KinfolkProfile (opened by a card when propless) reads the full doc.
 const { getKinfolkProfile } = vi.hoisted(() => ({ getKinfolkProfile: vi.fn() }));
@@ -58,6 +69,8 @@ let kinAsync: Async<Kin[]>;
 beforeEach(() => {
   kinfolkAsync = { status: 'ready', data: [] };
   kinAsync = { status: 'ready', data: [] };
+  navigate.mockReset();
+  getKinfolkProfile.mockReset();
   useCollection.mockReset().mockImplementation((spec: { path: string }) =>
     spec.path === 'kinfolk' ? kinfolkAsync : kinAsync,
   );
@@ -159,18 +172,18 @@ describe('Directory screen, Kinfolk tab', () => {
     expect(onSelectKinfolk).toHaveBeenCalledWith('kf1');
   });
 
-  it('propless, a kinfolk card opens the in-screen KinfolkProfile', async () => {
+  it('navigates to the profile route instead of swapping in-place state', async () => {
     kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
-    getKinfolkProfile.mockResolvedValue(
-      (await import('../api/kinfolkProfile')).mergeKinfolkProfile('kf1', { firstName: 'Jamie', lastName: 'Halbrook' }),
-    );
     render(<Directory />);
-    // The card is now an interactive button (the profile detail view exists).
-    const card = screen.getByRole('button', { name: /Jamie Halbrook/i });
-    await userEvent.click(card);
-    // The profile detail view took over.
-    expect(await screen.findByRole('button', { name: /back to directory/i })).toBeInTheDocument();
-    expect(getKinfolkProfile).toHaveBeenCalledWith('kf1');
+    // The card is an interactive button; activating it changes the URL rather
+    // than swapping a sibling view in behind an unchanged `/directory`.
+    await userEvent.click(screen.getByRole('button', { name: /Jamie Halbrook/i }));
+    expect(navigate).toHaveBeenCalledWith({
+      to: '/directory/$kinfolkId',
+      params: { kinfolkId: 'kf1' },
+    });
+    // And it did NOT open the profile in place: no read was issued for it.
+    expect(getKinfolkProfile).not.toHaveBeenCalled();
   });
 
   // The landing half of the Notifications feed's kinfolk deep link (issue #20):
