@@ -324,12 +324,25 @@ class HouseholdDataViewModel(
 
         // No document yet: the create path writes the whole record, because there
         // is nothing on the server to clobber.
+        //
+        // THE NEW ID GOES STRAIGHT BACK INTO STATE. It used to be discarded, so
+        // the record kept a blank id and a second press of Save took this branch
+        // AGAIN, creating a SECOND `household_data` document for the same
+        // household; `getHouseholdData` then picked between the twins with
+        // `limit(1)`. Adopting the id is what routes the second save through the
+        // edit path, and moves the baseline with it so that save diffs against
+        // what was actually written.
         if (householdData.id.isBlank()) {
             viewModelScope.launch {
                 _uiState.value = _uiState.value.copy(isSaving = true, error = null)
-                repository.saveHouseholdData(householdData).onSuccess {
-                    loadedHouseholdData = householdData
-                    _uiState.value = _uiState.value.copy(isSaving = false, isSuccess = true)
+                repository.saveHouseholdData(householdData).onSuccess { createdId ->
+                    val created = householdData.copy(id = createdId)
+                    loadedHouseholdData = created
+                    _uiState.value = _uiState.value.copy(
+                        householdData = created,
+                        isSaving = false,
+                        isSuccess = true,
+                    )
                 }.onFailure { error ->
                     _uiState.value = _uiState.value.copy(
                         isSaving = false,

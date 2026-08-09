@@ -18,14 +18,21 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
 
 /**
- * Regression guard for the cross-platform photo-wipe bug: saveKinfolkChanges /
- * saveKinChanges rebuild the entity from scratch and persist via .set() (full
- * overwrite). If the rebuild drops profilePictureUrl, an unrelated edit wipes a
- * photo that was uploaded on web/android. These tests pin the field through save.
+ * Regression guard for the cross-platform photo-wipe bug.
+ *
+ * The saves used to rebuild the entity from scratch and persist it via
+ * `.set()`, so a rebuild that dropped `profilePictureUrl` wiped a photo
+ * uploaded on web or android. They write a DIFF against the loaded record now
+ * (see `DirectoryFieldChanges.kt`), which MOVES the guarantee rather than
+ * removing it: an unrelated edit no longer carries the photo at a stale value,
+ * it does not mention the photo AT ALL. That is strictly stronger - a photo
+ * replaced on the web after this screen loaded survives too - so these tests
+ * assert the field is absent from the write.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class DirectoryViewModelPhotoTest {
@@ -76,24 +83,25 @@ class DirectoryViewModelPhotoTest {
     }
 
     @Test
-    fun `saveKinfolkChanges preserves profilePictureUrl`() = runTest(testDispatcher) {
+    fun `saveKinfolkChanges never writes profilePictureUrl it did not change`() = runTest(testDispatcher) {
         advanceUntilIdle()
-        val captured: CapturingSlot<Kinfolk> = slot()
-        coEvery { repository.updateKinfolk(capture(captured)) } returns Result.success(Unit)
+        val captured: CapturingSlot<Map<String, Any>> = slot()
+        coEvery { repository.updateKinfolkFields(any(), capture(captured)) } returns Result.success(Unit)
 
         viewModel.loadKinfolkForEdit("kf1")
         advanceUntilIdle()
+        viewModel.updateEditInternalNotes("gate sticks")
         viewModel.saveKinfolkChanges()
         advanceUntilIdle()
 
-        assertEquals("https://cdn.example.com/kf1.jpg", captured.captured.profilePictureUrl)
+        assertEquals(setOf("internalNotes"), captured.captured.keys)
     }
 
     @Test
-    fun `saveKinChanges preserves profilePictureUrl`() = runTest(testDispatcher) {
+    fun `saveKinChanges never writes profilePictureUrl it did not change`() = runTest(testDispatcher) {
         advanceUntilIdle()
-        val captured: CapturingSlot<Kin> = slot()
-        coEvery { repository.updateKin(capture(captured)) } returns Result.success(Unit)
+        val captured: CapturingSlot<Map<String, Any>> = slot()
+        coEvery { repository.updateKinFields(any(), any(), capture(captured)) } returns Result.success(Unit)
         // loadKinForEdit resolves the household vet from household_data through
         // the clinic catalog now; a relaxed mock cannot answer either usefully.
         coEvery { repository.getHouseholdData(any()) } returns Result.success(null)
@@ -103,9 +111,34 @@ class DirectoryViewModelPhotoTest {
         advanceUntilIdle()
         viewModel.loadKinForEdit("k1")
         advanceUntilIdle()
+        viewModel.updateEditKinBreed("Corgi")
         viewModel.saveKinChanges()
         advanceUntilIdle()
 
-        assertEquals("https://cdn.example.com/k1.jpg", captured.captured.profilePictureUrl)
+        assertEquals(setOf("breed"), captured.captured.keys)
+    }
+
+    /**
+     * A photo the WEB replaced after this screen loaded survives an unrelated
+     * save here. This is the half the old whole-model write could not give: it
+     * carried `profilePictureUrl` at the value the phone had read, so the newer
+     * photo went back to the older one.
+     */
+    @Test
+    fun `a photo replaced on the web after the load survives an unrelated save`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val captured: CapturingSlot<Map<String, Any>> = slot()
+        coEvery { repository.updateKinfolkFields(any(), capture(captured)) } returns Result.success(Unit)
+
+        viewModel.loadKinfolkForEdit("kf1")   // phone holds .../kf1.jpg
+        advanceUntilIdle()
+        viewModel.updateEditInternalNotes("gate sticks")
+        viewModel.saveKinfolkChanges()
+        advanceUntilIdle()
+
+        assertFalse(
+            "the stale photo url must not be written: ${captured.captured}",
+            captured.captured.containsKey("profilePictureUrl"),
+        )
     }
 }

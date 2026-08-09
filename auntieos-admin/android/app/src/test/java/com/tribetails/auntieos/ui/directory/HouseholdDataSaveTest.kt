@@ -49,7 +49,7 @@ class HouseholdDataSaveTest {
         coEvery { repo.getDossier(any()) } returns Result.success(null)
         coEvery { repo.getVetClinicsOnce() } returns Result.success(emptyList())
         coEvery { repo.updateHouseholdFields(any(), any()) } returns Result.success(Unit)
-        coEvery { repo.saveHouseholdData(any()) } returns Result.success(Unit)
+        coEvery { repo.saveHouseholdData(any()) } returns Result.success("hd_new")
     }
 
     @After
@@ -171,7 +171,7 @@ class HouseholdDataSaveTest {
     @Test
     fun `a household with no record yet still writes the whole document`() = runTest(testDispatcher) {
         val written = slot<HouseholdData>()
-        coEvery { repo.saveHouseholdData(capture(written)) } returns Result.success(Unit)
+        coEvery { repo.saveHouseholdData(capture(written)) } returns Result.success("hd_new")
         coEvery { repo.getHouseholdData("kf9") } returns Result.success(null)
 
         val vm = HouseholdDataViewModel(repository = repo)
@@ -184,6 +184,44 @@ class HouseholdDataSaveTest {
         assertEquals("kf9", written.captured.kinfolkId)
         assertEquals("pantry", written.captured.foodLocation)
         coVerify(exactly = 0) { repo.updateHouseholdFields(any(), any()) }
+    }
+
+    /**
+     * SAVING TWICE FROM A BLANK RECORD MUST NOT CREATE TWO DOCUMENTS.
+     *
+     * The create branch minted a document id inside the repository and threw it
+     * away (`saveHouseholdData` returned `Result<Unit>`), so the ViewModel's
+     * record kept a blank id. A second press of Save therefore took the create
+     * branch AGAIN and wrote a SECOND `household_data` document for the same
+     * household. `getHouseholdData` reads `whereEqualTo("kinfolkId").limit(1)`,
+     * so which twin the app shows afterwards is arbitrary, and every later edit
+     * lands on whichever one the screen happened to be holding.
+     *
+     * The second save must be an EDIT, addressed to the id the create returned.
+     */
+    @Test
+    fun `a second save from a blank record edits the created document instead of creating another`() = runTest(testDispatcher) {
+        coEvery { repo.getHouseholdData("kf9") } returns Result.success(null)
+        val editedId = slot<String>()
+        val changes = slot<Map<String, String>>()
+        coEvery { repo.updateHouseholdFields(capture(editedId), capture(changes)) } returns Result.success(Unit)
+
+        val vm = HouseholdDataViewModel(repository = repo)
+        vm.loadHouseholdData("kf9")
+        advanceUntilIdle()
+
+        vm.updateFoodLocation("pantry")
+        vm.saveHouseholdData()
+        advanceUntilIdle()
+
+        vm.updateHouseholdRules("shoes off")
+        vm.saveHouseholdData()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { repo.saveHouseholdData(any()) }
+        assertEquals("hd_new", editedId.captured)
+        assertEquals(setOf("householdRules"), changes.captured.keys)
+        assertEquals("hd_new", vm.uiState.value.householdData.id)
     }
 
     @Test

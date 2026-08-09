@@ -121,7 +121,7 @@ class DirectoryViewModelExtTest {
 
     @Test
     fun `saveKinfolkChanges sets error when repository fails`() = runTest(testDispatcher) {
-        coEvery { mockRepo.updateKinfolk(any()) } returns Result.failure(RuntimeException("Update failed"))
+        coEvery { mockRepo.updateKinfolkFields(any(), any()) } returns Result.failure(RuntimeException("Update failed"))
 
         val vm = buildViewModel()
         advanceUntilIdle()
@@ -129,6 +129,9 @@ class DirectoryViewModelExtTest {
         vm.loadKinfolkForEdit("kf1")
         advanceUntilIdle()
 
+        // A save with nothing edited writes nothing and so cannot fail; the
+        // error path needs a real change to send.
+        vm.updateEditInternalNotes("gate sticks")
         vm.saveKinfolkChanges()
         advanceUntilIdle()
 

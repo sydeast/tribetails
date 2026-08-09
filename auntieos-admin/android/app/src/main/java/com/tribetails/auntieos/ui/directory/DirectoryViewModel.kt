@@ -249,6 +249,21 @@ class DirectoryViewModel(
     private val _editKinState = MutableStateFlow(EditKinUiState())
     val editKinState: StateFlow<EditKinUiState> = _editKinState.asStateFlow()
 
+    /**
+     * The household and pet AS THE SERVER LAST GAVE THEM TO US, and the baseline
+     * every save diffs against. Never re-read to compute a diff: a fresh read
+     * would hand back the very concurrent edit the diff exists to leave alone.
+     *
+     * They are also what the edited model is BUILT FROM, so a field no form
+     * control carries is carried through untouched instead of reverting to its
+     * Kotlin default. See `DirectoryFieldChanges.kt`.
+     *
+     * Advanced only after a save the server accepted, so a failed save keeps the
+     * operator's edit pending instead of swallowing it.
+     */
+    private var loadedKinfolk: Kinfolk? = null
+    private var loadedKin: Kin? = null
+
     // Run-4 #6: seeded dog/cat breed banks for the Kin breed dropdown. Loaded from the
     // screen (LaunchedEffect), not VM init, so strict-mockk unit tests stay isolated.
     // A load failure leaves the banks empty -> the field degrades to free-text, AND
@@ -792,6 +807,7 @@ class DirectoryViewModel(
         // was stored is carried alongside in `joinDateNote` so the editor can say
         // so rather than dropping it silently. See util/JoinDate.kt.
         val opened = joinDateForEdit(kinfolk.joinDate)
+        loadedKinfolk = kinfolk
         _editKinfolkState.value = EditKinfolkUiState(
             kinfolkId = kinfolk.id,
             firstName = kinfolk.firstName,
@@ -850,18 +866,51 @@ class DirectoryViewModel(
             _editKinfolkState.value.copy(formValues = _editKinfolkState.value.formValues + (key to value))
     }
 
+    /**
+     * Saves ONLY what the operator actually changed on the household.
+     *
+     * This used to hand the repository a whole `Kinfolk` rebuilt from form
+     * state, which went to Firestore as `.set(model, merge())`. That was wrong
+     * twice over, and `DirectoryFieldChanges.kt` documents both: merge does
+     * nothing about stale fields INSIDE the written map, so every field the
+     * phone read reverted whatever had changed since; and the from-scratch
+     * rebuild wrote Kotlin defaults over `uid`, `contactOverride` and the
+     * `archived*` trail, which is destruction rather than staleness.
+     *
+     * NOTHING CHANGED MEANS NOTHING IS WRITTEN, not even the stamp. `updatedAt`
+     * says when the record last changed; moving it for a save that changed
+     * nothing makes it lie. The screen still reports success, because "saved"
+     * and "nothing to save" are the same outcome to the operator.
+     */
     fun saveKinfolkChanges() {
         val state = _editKinfolkState.value
         if (state.firstName.isBlank() || state.phoneNumber.isBlank() || state.kinfolkId.isBlank()) return
+
+        val baseline = loadedKinfolk
+        if (baseline == null || baseline.id != state.kinfolkId) {
+            _editKinfolkState.value = state.copy(
+                error = "Reopen this household before saving: its saved copy was never loaded."
+            )
+            return
+        }
+
+        val updatedKinfolk = buildKinfolkFromEditState(state)
+        val changes = kinfolkFieldChanges(baseline, updatedKinfolk)
+        if (changes.isEmpty()) {
+            _editKinfolkState.value = state.copy(isSaving = false, isSuccess = true, error = null)
+            return
+        }
 
         AuntieLog.i("Saving changes for kinfolk: ${state.kinfolkId}")
         viewModelScope.launch {
             _editKinfolkState.value = state.copy(isSaving = true, error = null)
 
-            val updatedKinfolk = buildKinfolkFromEditState(state)
-
-            repository.updateKinfolk(updatedKinfolk).onSuccess {
+            repository.updateKinfolkFields(state.kinfolkId, changes).onSuccess {
                 AuntieLog.i("Kinfolk changes saved")
+                // The baseline moves to what the server now holds. Without this a
+                // second save re-sends the first save's fields, which is the same
+                // clobber one step later.
+                loadedKinfolk = updatedKinfolk
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = repository,
@@ -938,10 +987,22 @@ class DirectoryViewModel(
         _editKinfolkState.value = EditKinfolkUiState()
     }
 
-    // Rebuilds the full Kinfolk from edit-form state. updateKinfolk uses .set()
-    // (full overwrite), so EVERY field the user can carry must be present here or
-    // it gets wiped, profilePictureUrl included.
-    private fun buildKinfolkFromEditState(state: EditKinfolkUiState): Kinfolk = Kinfolk(
+    /**
+     * The loaded household with this form's edits applied ON TOP, never a
+     * `Kinfolk(...)` built from nothing.
+     *
+     * The from-scratch version was a data-loss bug in its own right: `uid` (the
+     * MyTribe login linkage), `contactOverride` (the comms pipeline's time-boxed
+     * channel override) and the three `archived*` audit fields are on the model
+     * but on no form control, so every save wrote their Kotlin defaults - blank,
+     * blank, and null - straight over the stored values. Copying the baseline
+     * carries them through untouched, and the diff then keeps them out of the
+     * write entirely.
+     *
+     * The baseline is absent only before a load, which [saveKinfolkChanges]
+     * refuses outright rather than saving against a blank.
+     */
+    private fun buildKinfolkFromEditState(state: EditKinfolkUiState): Kinfolk = (loadedKinfolk ?: Kinfolk()).copy(
         id = state.kinfolkId,
         firstName = state.firstName,
         lastName = state.lastName,
@@ -992,7 +1053,14 @@ class DirectoryViewModel(
                 entityType = MediaEntityType.KINFOLK,
             ).onSuccess { media ->
                 val withPhoto = _editKinfolkState.value.copy(profilePictureUrl = media.storageUrl)
-                repository.updateKinfolk(buildKinfolkFromEditState(withPhoto)).onSuccess {
+                // The photo is its own write, not an excuse to flush the whole
+                // form: only `profilePictureUrl` has actually changed, so only
+                // that field (plus the stamp) goes.
+                repository.updateKinfolkFields(
+                    state.kinfolkId,
+                    mapOf("profilePictureUrl" to media.storageUrl),
+                ).onSuccess {
+                    loadedKinfolk = loadedKinfolk?.copy(profilePictureUrl = media.storageUrl)
                     _editKinfolkState.value = withPhoto.copy(isUploadingPhoto = false)
                     loadDirectory()
                 }.onFailure { e ->
@@ -1095,6 +1163,7 @@ class DirectoryViewModel(
                     repository.getHouseholdData(kin.kinfolkId).getOrNull(),
                     repository.getVetClinicsOnce().getOrNull().orEmpty(),
                 )
+                loadedKin = kin
                 _editKinState.value = EditKinUiState(
                     kinId = kin.id,
                     kinfolkId = kin.kinfolkId,
@@ -1173,18 +1242,39 @@ class DirectoryViewModel(
         _editKinState.value = _editKinState.value.copy(formValues = _editKinState.value.formValues + (key to value))
     }
 
+    /**
+     * Saves ONLY what the operator actually changed on the pet. Same rule, same
+     * reasons as [saveKinfolkChanges]; `DirectoryFieldChanges.kt` carries the
+     * long form. The React admin patches `kin` field-level for the same reason
+     * (`api/directoryWrite.ts#updateKin`), so a phone save must not send back
+     * the medication note the web corrected while this screen sat open.
+     */
     fun saveKinChanges() {
         val state = _editKinState.value
         if (state.name.isBlank() || state.kinId.isBlank()) return
+
+        val baseline = loadedKin
+        if (baseline == null || baseline.id != state.kinId) {
+            _editKinState.value = state.copy(
+                error = "Reopen this pet before saving: its saved copy was never loaded."
+            )
+            return
+        }
+
+        val updatedKin = buildKinFromEditState(state)
+        val changes = kinFieldChanges(baseline, updatedKin)
+        if (changes.isEmpty()) {
+            _editKinState.value = state.copy(isSaving = false, isSuccess = true, error = null)
+            return
+        }
 
         AuntieLog.i("Saving changes for kin: ${state.kinId}")
         viewModelScope.launch {
             _editKinState.value = state.copy(isSaving = true, error = null)
 
-            val updatedKin = buildKinFromEditState(state)
-
-            repository.updateKin(updatedKin).onSuccess {
+            repository.updateKinFields(state.kinId, updatedKin.kinfolkId, changes).onSuccess {
                 AuntieLog.i("Kin changes saved")
+                loadedKin = updatedKin
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = repository,
@@ -1209,9 +1299,22 @@ class DirectoryViewModel(
         _editKinState.value = EditKinUiState()
     }
 
-    // Rebuilds the full Kin from edit-form state. updateKin uses .set() (full
-    // overwrite), so every carried field must be present, profilePictureUrl included.
-    private fun buildKinFromEditState(state: EditKinUiState): Kin = Kin(
+    /**
+     * The loaded pet with this form's edits applied ON TOP, never a `Kin(...)`
+     * built from nothing.
+     *
+     * The from-scratch version wiped four fields on every save. `tags` is the
+     * pointed one: `Kin.tags` was ADDED to the model expressly so android saves
+     * would stop wiping the pet tags the React admin writes, and declaring it
+     * turned out to be only half the fix, because this builder never populated
+     * it and kept sending null. `photos`, `ownerEmail` and `ownerPhone` went the
+     * same way.
+     *
+     * `status` is no longer hardcoded to "active" either. No control on this
+     * form edits it, and forcing it un-archived an archived pet - the web editor
+     * says the same thing about its own patch ("status stays owned by archive").
+     */
+    private fun buildKinFromEditState(state: EditKinUiState): Kin = (loadedKin ?: Kin()).copy(
         id = state.kinId,
         kinfolkId = state.kinfolkId,
         name = state.name,
@@ -1234,7 +1337,6 @@ class DirectoryViewModel(
         officeNotes = state.officeNotes,
         formValues = state.formValues,
         profilePictureUrl = state.profilePictureUrl,
-        status = "active"
     )
 
     // Uploads a Kin (pet) profile photo and persists it immediately (parity with
@@ -1253,7 +1355,13 @@ class DirectoryViewModel(
                 entityType = MediaEntityType.KIN,
             ).onSuccess { media ->
                 val withPhoto = _editKinState.value.copy(profilePictureUrl = media.storageUrl)
-                repository.updateKin(buildKinFromEditState(withPhoto)).onSuccess {
+                // Only the photo changed; see uploadKinfolkPhoto above.
+                repository.updateKinFields(
+                    state.kinId,
+                    state.kinfolkId,
+                    mapOf("profilePictureUrl" to media.storageUrl),
+                ).onSuccess {
+                    loadedKin = loadedKin?.copy(profilePictureUrl = media.storageUrl)
                     _editKinState.value = withPhoto.copy(isUploadingPhoto = false)
                     loadProfile(state.kinfolkId)
                 }.onFailure { e ->

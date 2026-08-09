@@ -182,6 +182,12 @@ class KinCareRepository(
      * wired. Latent, therefore, but it is a loaded gun: the day something calls
      * it, a bare set() would take the provenance fields with it.
      *
+     * That absent caller is also why this one keeps the whole-model shape while
+     * `kinfolk`, `kin` and `household_data` moved to field-level diffs: with no
+     * screen loading a session and saving it back, there is no window in which a
+     * concurrent edit could be reverted. The day something calls it, it needs a
+     * diff and a loaded baseline first.
+     *
      * MERGE for the same reason as [updateKinCareReport] below. `kin_care_sessions`
      * carries `_backfilledFrom`, `_backfilledAt`, and `_reason` on the stub
      * sessions `cleanup_prod_data_pass2.py:87-89` created for pre-cutover orphan
@@ -572,8 +578,17 @@ class KinCareRepository(
      * the field existed decodes to the Kotlin default `""`, which matches no
      * query at all. It would also cover only the fields we know about TODAY -
      * the next server-side field added is silently deleted again. Merge closes
-     * the class, and is what `AuntieRepository.updateKinfolk`/`updateKin` chose
-     * on 07-21 for the identical bug; `kin_care_reports` was the site missed.
+     * the class, and is what the `kinfolk` / `kin` writers chose on 07-21 for
+     * the identical bug; `kin_care_reports` was the site missed.
+     *
+     * STILL A WHOLE-MODEL WRITE, and knowingly so. Merge closes the DELETION
+     * class above; it does nothing about the stale fields inside the written
+     * map, so a draft loaded an hour ago still writes its whole modelled self
+     * back and reverts a concurrent edit. `kinfolk`, `kin` and `household_data`
+     * moved to field-level diffs for exactly that; `kin_care_reports` is the
+     * next site and is deliberately left for its own change, because the
+     * KinTale editor has two write paths and an autosave to reason about
+     * (`KinTaleReportViewModel:302,397`). Triaged, not overlooked.
      *
      * Merge costs nothing here: the data class serialises every modelled field,
      * including blanked ones, so a deliberate clear still ships. Subcollections
