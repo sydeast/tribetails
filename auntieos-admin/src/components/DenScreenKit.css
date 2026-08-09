@@ -40,6 +40,74 @@
   --den-tone: var(--color-text-faint);
 }
 
+/* ── breadcrumbs ──────────────────────────────────────────────────────────
+   The mocks' `.crumbs`, verbatim in intent: mono, 12px, .04em tracking, dim
+   cream, a slash between entries, the current page in full cream. It sits where
+   the kicker sits and it is the same weight on the page, because it replaces
+   it. The mock's own `animation: rise` is not repeated here: `.d1` in
+   styles/base.css already staggers the heading block this lives inside, and a
+   second entrance on the same element plays twice. */
+
+.den-crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--type-mono-family);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--color-text-dim);
+}
+
+.den-crumbs li {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+/* An in-screen crumb is a <button> because that is what it does, and it has to
+   be indistinguishable from the <a> beside it: a trail where step two looks
+   like a control and step one looks like a link reads as two different things.
+   `font: inherit` is what stops the UA button face from leaking in. */
+.den-crumbs a,
+.den-crumbs-step {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-dim);
+  font: inherit;
+  letter-spacing: inherit;
+  text-decoration: none;
+}
+
+.den-crumbs-step {
+  cursor: pointer;
+}
+
+.den-crumbs a:hover,
+.den-crumbs-step:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.den-crumbs a:focus-visible,
+.den-crumbs-step:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* The mock's `.crumbs b`: the page you are on is the one in full cream. */
+.den-crumbs [aria-current='page'] {
+  color: var(--color-text-primary);
+}
+
+.den-crumbs-sep {
+  color: var(--color-text-faint);
+}
+
 /* ── page heading ─────────────────────────────────────────────────────────── */
 
 .den-heading {

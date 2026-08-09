@@ -83,7 +83,12 @@ export function KinTaleDetail({ kinTaleId, onEdit, onClose }: KinTaleDetailProps
   return (
     <div className="screen kintale-detail">
       <DenScreenHeading
-        kicker="The Den · KinTales"
+        // The last step stays "KinTale detail" rather than the report's title:
+        // the report is resolved inside the AsyncRegion below, so a title-shaped
+        // crumb here would have to render blank, or a placeholder, for as long
+        // as the read takes. `onClose` already drops `?kinTaleId=` on the way
+        // out, which a route link to /kintales would not.
+        crumbs={[{ label: 'KinTales', onSelect: onClose }, { label: 'KinTale detail' }]}
         title="KinTale"
         accentTail="detail."
         subtitle="The recap, the comment thread, and the reaction, all in one place."

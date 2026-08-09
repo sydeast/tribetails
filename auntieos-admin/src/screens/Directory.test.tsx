@@ -17,7 +17,12 @@ vi.mock('../lib/firestore', () => ({ useCollection }));
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigate,
-  Link: ({ children }: { children: ReactNode }) => <a href="/household-members">{children}</a>,
+  // Identity, the AppShell.test.tsx convention. KinfolkProfile builds its
+  // breadcrumb's Directory step with `linkOptions`.
+  linkOptions: (o: unknown) => o,
+  Link: ({ to, children }: { to?: string; children: ReactNode }) => (
+    <a href={to ?? '/household-members'}>{children}</a>
+  ),
 }));
 
 // The in-screen KinfolkProfile (opened by a card when propless) reads the full doc.
@@ -27,6 +32,14 @@ vi.mock('../api/kinfolkProfile', async (orig) => ({
   getKinfolkProfile,
 }));
 
+// Wiring test only: KinView owns its own suite. What Directory owns is
+// RESOLVING which household a kin card belongs to, since the kin doc holds an
+// id and the breadcrumb needs a name.
+vi.mock('./KinView', () => ({
+  KinView: ({ household }: { household?: { id: string; name: string } }) => (
+    <p>STUB KinView household={household ? `${household.id}/${household.name}` : 'unresolved'}</p>
+  ),
+}));
 import { Directory } from './Directory';
 
 function fakeTs(iso: string): Timestamp {
@@ -259,6 +272,34 @@ describe('Directory screen, Kin tab', () => {
     expect(screen.queryByText(/no kin on file/i)).toBeNull();
   });
 
+  /**
+   * Item 7b. The kin detail's trail reads Directory / <household> / <kin>
+   * (`auntieos-kin-detail-2026-05-27.html`), and only this screen holds both
+   * streams needed to turn the kin's `kinfolkId` into a household name.
+   */
+  it('hands the kin detail the household the pet belongs to', async () => {
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({})] };
+    kinAsync = { status: 'ready', data: [kinRow({ _id: 'k9', name: 'Biscuit', kinfolkId: 'kf1' })] };
+    render(<Directory />);
+    await openKinTab();
+    await userEvent.click(screen.getByText('Biscuit'));
+    expect(screen.getByText(/household=kf1\/Jamie Halbrook/)).toBeInTheDocument();
+  });
+  /**
+   * Unresolved, not invented. A kin whose `kinfolkId` names no household this
+   * stream holds gets NO household step: a trail step is a claim about where
+   * you are, and a guessed one points at a home the pet does not live in.
+   */
+  it('leaves the household unresolved rather than guessing at one', async () => {
+    kinAsync = {
+      status: 'ready',
+      data: [kinRow({ _id: 'k9', name: 'Biscuit', kinfolkId: 'kf-gone' })],
+    };
+    render(<Directory />);
+    await openKinTab();
+    await userEvent.click(screen.getByText('Biscuit'));
+    expect(screen.getByText(/household=unresolved/)).toBeInTheDocument();
+  });
   it('does not offer "Recently Created" as a sort, no backing field on the Kin collection', async () => {
     render(<Directory />);
     await openKinTab();

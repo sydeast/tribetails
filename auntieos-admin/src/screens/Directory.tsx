@@ -229,6 +229,13 @@ function KinCard({ kin, onClick }: KinCardProps) {
   );
 }
 
+/** The open kin detail view, plus the household its breadcrumb names. */
+interface OpenKin {
+  id: string;
+  name: string;
+  household?: { id: string; name: string };
+}
+
 interface DirectoryProps {
   /**
    * Card-open override. Propless (the router default), a kinfolk card NAVIGATES
@@ -289,7 +296,11 @@ export function Directory({
   // a household linkable, reloadable, and reachable with browser Back.
   const openKinfolkId = initialKinfolkId ?? null;
   // Kin (pet) detail: same sibling-view pattern as the household profile.
-  const [openKinId, setOpenKinId] = useState<{ id: string; name: string } | null>(null);
+  // `household` is carried alongside because the kin detail's breadcrumb needs
+  // it (the mock's trail is Directory / Lorna Wren / Biscuit) and the kin doc
+  // only holds an id. Resolved here, from streams this screen already has, and
+  // left undefined when it cannot be resolved rather than guessed at.
+  const [openKinId, setOpenKinId] = useState<OpenKin | null>(null);
 
   // Roving-tabindex keyboard nav for the Kinfolk/Kin tablist below
   // (Left/Right, Home/End, roving tabIndex).
@@ -328,6 +339,21 @@ export function Directory({
     return activeKinByKinfolk(kinState.data);
   }, [kinState]);
 
+  /**
+   * The household a kin card belongs to, for the kin detail's breadcrumb.
+   *
+   * Returns undefined when the kin carries no `kinfolkId`, or names a household
+   * this stream does not hold, or the stream has not arrived: a trail step is a
+   * claim about where you are, and an invented one sends the operator to a
+   * household the pet does not live in. The crumb is simply omitted instead.
+   */
+  function householdOf(kin: Kin): { id: string; name: string } | undefined {
+    const id = str(kin.kinfolkId);
+    if (id === '' || kinfolkState.status !== 'ready') return undefined;
+    const owner = kinfolkState.data.find((kf) => kf._id === id);
+    return owner === undefined ? undefined : { id, name: kinfolkDisplayName(owner) };
+  }
+
   // Disclosed to household cards: while the shared Kin stream is still loading,
   // kinByKinfolk is empty for every card, so an empty pet row must read
   // "Loading kin…", never a false "No kin on file".
@@ -364,7 +390,14 @@ export function Directory({
   }
 
   if (openKinId !== null) {
-    return <KinView kinId={openKinId.id} kinName={openKinId.name} onBack={() => setOpenKinId(null)} />;
+    return (
+      <KinView
+        kinId={openKinId.id}
+        kinName={openKinId.name}
+        {...(openKinId.household ? { household: openKinId.household } : {})}
+        onBack={() => setOpenKinId(null)}
+      />
+    );
   }
 
   return (
@@ -517,9 +550,18 @@ export function Directory({
                   <KinCard
                     key={k._id}
                     kin={k}
-                    onClick={() =>
-                      onSelectKin ? onSelectKin(k._id) : setOpenKinId({ id: k._id, name: str(k.name) })
-                    }
+                    onClick={() => {
+                      if (onSelectKin) {
+                        onSelectKin(k._id);
+                        return;
+                      }
+                      const household = householdOf(k);
+                      setOpenKinId({
+                        id: k._id,
+                        name: str(k.name),
+                        ...(household ? { household } : {}),
+                      });
+                    }}
                   />
                 ))}
               </ul>

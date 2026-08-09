@@ -1,8 +1,32 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
 import type { KinDetail } from '../api/kinView';
+
+// The household step is a real route link, and a real `Link` wants a
+// RouterProvider no suite in this tree mounts (AppShell.test.tsx convention).
+vi.mock('@tanstack/react-router', () => ({
+  linkOptions: (o: unknown) => o,
+  Link: ({
+    to,
+    params,
+    children,
+    ...rest
+  }: {
+    to: string;
+    params?: Record<string, string>;
+    children: ReactNode;
+  }) => (
+    <a
+      href={Object.entries(params ?? {}).reduce((p, [k, v]) => p.replace(`$${k}`, v), to)}
+      {...rest}
+    >
+      {children}
+    </a>
+  ),
+}));
 
 const { getKin } = vi.hoisted(() => ({ getKin: vi.fn() }));
 vi.mock('../api/kinView', async (orig) => ({
@@ -93,5 +117,54 @@ describe('KinView', () => {
     expect(await screen.findByText('Reactive')).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText(/add a pet tag/i), 'On meds{Enter}');
     await waitFor(() => expect(updateKinTags).toHaveBeenCalledWith('p1', ['Reactive', 'On meds']));
+  });
+});
+
+/**
+ * Item 7b, against `auntieos-kin-detail-2026-05-27.html`, whose trail reads
+ * `Directory / Lorna Wren / Biscuit`.
+ */
+describe('KinView: breadcrumbs', () => {
+  it('puts the household between the Directory and the pet', async () => {
+    getKin.mockResolvedValue(kin());
+    render(
+      <KinView
+        kinId="p1"
+        kinName="Willow"
+        household={{ id: 'kf-1', name: 'the Wrens' }}
+        onBack={vi.fn()}
+      />,
+    );
+    const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
+    // A real route link, because this view sits on /directory and the household
+    // profile is somewhere else.
+    expect(within(nav).getByRole('link', { name: 'the Wrens' })).toHaveAttribute(
+      'href',
+      '/directory/kf-1',
+    );
+    expect(within(nav).getByText('Willow')).toHaveAttribute('aria-current', 'page');
+  });
+
+  /**
+   * The household step is DROPPED, not filled in, when the Directory could not
+   * resolve which home the pet lives in. A trail step is a claim about where
+   * you are, and a guessed one points at a household the pet does not live in,
+   * which is worse than a shorter trail.
+   */
+  it('omits the household step rather than guessing at one', async () => {
+    getKin.mockResolvedValue(kin());
+    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(nav).queryAllByRole('link')).toHaveLength(0);
+    expect(within(nav).getAllByRole('listitem')).toHaveLength(2);
+  });
+
+  it('walks back to the list from the trail', async () => {
+    getKin.mockResolvedValue(kin());
+    const onBack = vi.fn();
+    render(<KinView kinId="p1" kinName="Willow" onBack={onBack} />);
+    const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
+    await userEvent.click(within(nav).getByRole('button', { name: 'Directory' }));
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 });

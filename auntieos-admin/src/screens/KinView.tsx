@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { linkOptions } from '@tanstack/react-router';
 import { getKin, type KinDetail } from '../api/kinView';
 import { updateKinTags } from '../api/directoryWrite';
 import { initialsOf } from '../api/directory';
@@ -16,6 +17,12 @@ interface KinViewProps {
   kinId: string;
   /** From the Directory row, so the header names the pet before the doc loads. */
   kinName: string;
+  /**
+   * The household this pet lives in, for the middle breadcrumb step. Resolved
+   * by the Directory from the streams it already holds, and OMITTED when it
+   * could not be resolved: the step is dropped rather than filled with a guess.
+   */
+  household?: { id: string; name: string };
   onBack: () => void;
 }
 
@@ -41,7 +48,7 @@ function any(...vals: string[]): boolean {
  * Notes); an all-blank section is omitted. A REACTIVE pet is flagged loudly up
  * top, since that is a handle-with-care safety signal, not just another field.
  */
-export function KinView({ kinId, kinName, onBack }: KinViewProps) {
+export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
   const [kin, setKin] = useState<Async<KinDetail>>({ status: 'loading' });
   // The editor is a sub-view of this detail screen: Edit swaps to KinEdit, and a
   // save/archive returns here + reloads so the fresh doc renders.
@@ -88,7 +95,25 @@ export function KinView({ kinId, kinName, onBack }: KinViewProps) {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Directory"
+        // `auntieos-kin-detail-2026-05-27.html`: Directory / Lorna Wren / Biscuit.
+        // The household step is a real route link (this view sits on
+        // `/directory`, so `/directory/{id}` is somewhere else); the Directory
+        // step is not, because this view opened without changing the URL.
+        crumbs={[
+          { label: 'Directory', onSelect: onBack },
+          ...(household
+            ? [
+                {
+                  label: household.name,
+                  link: linkOptions({
+                    to: '/directory/$kinfolkId',
+                    params: { kinfolkId: household.id },
+                  }),
+                },
+              ]
+            : []),
+          { label: kinName || kinId },
+        ]}
         title={kinName || kinId}
         subtitle="Kin profile."
         trailing={

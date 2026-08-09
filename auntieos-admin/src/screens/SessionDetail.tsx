@@ -86,12 +86,18 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
   // "Today" doesn't change mid-view; computed once (the Sessions.tsx todayIso
   // rationale). Called unconditionally, above the null branch, per Rules of Hooks.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
+  const sessionLabel = entry !== null ? sessionHousehold(str(entry.kinfolkName)) : 'Kin Care session';
 
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Auntie Time"
-        title={entry !== null ? sessionHousehold(str(entry.kinfolkName)) : 'Kin Care session'}
+        // "Auntie Time" is the rail's name for /sessions (lib/nav.ts: "the rail
+        // says Auntie Time; the slug and the code say sessions"), and a crumb
+        // that called it anything else would name a screen the operator cannot
+        // find. `onSelect`: this detail is a sibling view of the list, opened
+        // without a URL change.
+        crumbs={[{ label: 'Auntie Time', onSelect: onBack }, { label: sessionLabel }]}
+        title={sessionLabel}
         subtitle="Kin Care session detail."
         trailing={<GhostButton label="Back to Auntie Time" onClick={onBack} />}
       />

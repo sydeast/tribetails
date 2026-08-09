@@ -216,7 +216,10 @@ describe('Sessions screen', () => {
     // The detail view has taken over the screen (Directory/KinfolkProfile
     // pattern): its Back control is present, and the household is its heading.
     expect(screen.getByRole('button', { name: /back to auntie time/i })).toBeInTheDocument();
-    expect(screen.getByText('The Whitfields')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'The Whitfields' })).toBeInTheDocument();
+    // And the trail, which is how the operator knows the list is still behind
+    // this view rather than replaced by it.
+    expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toBeInTheDocument();
   });
 
   it('the "In flight" stat counts only the three active states', () => {

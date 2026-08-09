@@ -38,6 +38,7 @@ import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.AuntieToggle
 import com.tribetails.auntieos.ui.components.BottomBorderField
 import com.tribetails.auntieos.ui.components.DenPanel
+import com.tribetails.auntieos.ui.components.DenCrumb
 import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
@@ -85,12 +86,24 @@ fun HouseholdMembersScreen(
     kinfolkId: String,
     kinfolkName: String,
     onBack: () -> Unit,
+    /**
+     * All the way out to the Directory list, for the breadcrumb's first step.
+     * [onBack] pops ONE entry, to the household profile this was opened from,
+     * so the trail needs its own way past that. Defaults to [onBack] so a
+     * caller that has no deeper stack still gets a step that does something.
+     */
+    onDirectory: () -> Unit = onBack,
     viewModel: HouseholdMembersViewModel = remember(kinfolkId) {
         HouseholdMembersViewModel(kinfolkId = kinfolkId, householdName = kinfolkName)
     },
 ) {
     AuntieScreenScaffold(title = "Members and invites", onBack = onBack) {
-        HouseholdMembersBody(kinfolkName = kinfolkName, viewModel = viewModel)
+        HouseholdMembersBody(
+            kinfolkName = kinfolkName,
+            viewModel = viewModel,
+            onBack = onBack,
+            onDirectory = onDirectory,
+        )
     }
 }
 
@@ -98,6 +111,8 @@ fun HouseholdMembersScreen(
 fun HouseholdMembersBody(
     kinfolkName: String,
     viewModel: HouseholdMembersViewModel,
+    onBack: () -> Unit = {},
+    onDirectory: () -> Unit = {},
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
@@ -115,7 +130,16 @@ fun HouseholdMembersBody(
     ) {
         item {
             DenScreenHeading(
+                // The kicker read "The Den · Directory", word for word what
+                // DirectoryScreen two levels up says, so it could not tell an
+                // operator which of the two they had open. The trail takes its
+                // place, per `ui-ideas/auntieos-members-2026-05-27.html`.
                 kicker = "The Den · Directory",
+                crumbs = listOf(
+                    DenCrumb("Directory", onDirectory),
+                    DenCrumb(kinfolkName, onBack),
+                    DenCrumb("Members and invites"),
+                ),
                 title = "Members and",
                 accentTail = "invites.",
                 subtitle = "Who can reach $kinfolkName in MyTribe, and what each of them may do.",

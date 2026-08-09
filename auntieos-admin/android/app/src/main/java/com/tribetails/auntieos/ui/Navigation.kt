@@ -920,6 +920,11 @@ private fun AuthenticatedNavHost(
                         kinfolkId = kinfolkId,
                         kinfolkName = kinfolkName,
                         onBack = { navController.popBackStack() },
+                        // The breadcrumb's first step. A bare `popBackStack()`
+                        // lands on the household profile this was opened from,
+                        // which is the trail's SECOND step; the Directory list
+                        // is another entry up and has to be named to be reached.
+                        onDirectory = { navController.popBackStack(Screen.Directory.route, false) },
                     )
                 }
             }
