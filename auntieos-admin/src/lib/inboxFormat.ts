@@ -1,6 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
 import { dayKey, formatWhen, machineWhen, type FsTime } from './time';
 import { sessionDayLabel, localDateIso } from './sessionFormat';
+import { DEFAULTS, KEY_INBOX_WAITING_SECTIONS } from './featureFlagsCatalog';
 
 /**
  * Pure Inbox (message thread list) classification + display helpers, kept out
@@ -269,4 +270,35 @@ export function groupThreadsByWaiting<T extends { unreadForAdmin: boolean }>(
     { key: 'waiting', label: 'Waiting on a reply', threads: waiting },
     { key: 'answered', label: 'Answered', threads: answered },
   ];
+}
+
+// ── arrangement (the A/B flag's one decision) ────────────────────────────
+
+/**
+ * The two shapes the thread list can be drawn in.
+ *
+ * `'waitingSections'` is what PR #301 shipped: `groupThreadsByWaiting` at the
+ * top, `groupThreadsByDay` inside each section. `'flatByDay'` is what preceded
+ * it: `groupThreadsByDay` alone, at the top. Neither arm invents any grouping;
+ * they are the same two pure functions stacked, or one of them on its own.
+ */
+export type InboxArrangement = 'waitingSections' | 'flatByDay';
+
+/**
+ * Reads `auntieos.inbox.waitingSections` out of a resolved flag map.
+ *
+ * ANYTHING THAT IS NOT AN EXPLICIT `false` GIVES THE SHIPPED ARRANGEMENT. A
+ * missing key, a stale function revision handing back a string, a read that
+ * never populated the map: none of those is the operator asking for the older
+ * layout. `false` here is not a safe "off" the way it is for a flag gating a
+ * spend or a write; it is the OTHER arrangement, an equally live branch. So the
+ * fallback is the catalog default rather than the usual `?? false`, and a
+ * degraded read leaves the Inbox looking exactly as it does on main.
+ */
+export function inboxArrangementFromFlags(
+  flags: Readonly<Record<string, boolean>>,
+): InboxArrangement {
+  const raw: unknown = flags[KEY_INBOX_WAITING_SECTIONS];
+  const on = typeof raw === 'boolean' ? raw : DEFAULTS[KEY_INBOX_WAITING_SECTIONS] === true;
+  return on ? 'waitingSections' : 'flatByDay';
 }

@@ -7,6 +7,7 @@ import {
   KEY_COMMUNICATE_BROADCAST,
   KEY_INVOICES_CREATE,
   KEY_COMMUNICATE_COMMS_RECAP,
+  KEY_INBOX_WAITING_SECTIONS,
 } from './featureFlagsCatalog';
 
 describe('featureFlagsCatalog', () => {
@@ -60,4 +61,21 @@ describe('featureFlagsCatalog', () => {
     }
   });
 
+  // The Inbox arrangement A/B flag. Unlike every other gated flag here it
+  // defaults TRUE, and it must stay OUT of ALWAYS_ON: an ALWAYS_ON key gets no
+  // toggle row and ignores remote overrides, which is precisely the two things
+  // this flag exists to have.
+  describe(KEY_INBOX_WAITING_SECTIONS, () => {
+    it('defaults to the waiting/answered sections that shipped in #301', () => {
+      expect(DEFAULTS[KEY_INBOX_WAITING_SECTIONS]).toBe(true);
+    });
+
+    it('is a real key the operator can turn off', () => {
+      expect(KEYS).toContain(KEY_INBOX_WAITING_SECTIONS);
+      expect(ALWAYS_ON.has(KEY_INBOX_WAITING_SECTIONS)).toBe(false);
+      expect(fromOverrides({ [KEY_INBOX_WAITING_SECTIONS]: false })[KEY_INBOX_WAITING_SECTIONS]).toBe(
+        false,
+      );
+    });
+  });
 });

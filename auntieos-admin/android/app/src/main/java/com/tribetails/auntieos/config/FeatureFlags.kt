@@ -43,6 +43,22 @@ data class FeatureFlags(
     // records are never lost. This flag has no web counterpart (the inbound-push
     // persistence path is android-only), so it lives in the android registry only.
     val inboundCommsServerAuthoritative: Boolean = false,
+    // Which of two Inbox arrangements the message-thread list is drawn in. ON
+    // (the default) is the "Waiting on a reply" / "Answered" sectioning PR #301
+    // shipped; OFF is the one flat run of threads that preceded it here. Both
+    // arms are finished code and everything else about the panel is identical,
+    // so this is a layout choice the operator makes, not a feature switch.
+    //
+    // THE ONLY GATED FLAG IN THIS REGISTRY THAT DEFAULTS ON, deliberately: the
+    // sections are what android renders today, and shipping this trial must not
+    // re-lay out anyone's Inbox on its own. NOT in ALWAYS_ON, because an
+    // ALWAYS_ON key gets no toggle row and ignores remote overrides, the two
+    // things an A/B trial cannot do without. The key is shared with the React
+    // admin (web src/lib/featureFlagsCatalog.ts), so the operator's single
+    // choice reaches both clients off one Firestore doc.
+    //
+    // Its exit plan is written out once, at the web catalog's copy of this key.
+    val inboxWaitingSections: Boolean = true,
 ) {
     fun toMap(): Map<String, Boolean> = mapOf(
         KEY_COMMUNICATE_BROADCAST to communicateBroadcast,
@@ -55,6 +71,7 @@ data class FeatureFlags(
         KEY_COMMUNICATE_GENERATE_VIA_FUNCTION to communicateGenerateViaFunction,
         KEY_COMMUNICATE_COMMS_RECAP to communicateCommsRecap,
         KEY_INBOUND_COMMS_SERVER_AUTHORITATIVE to inboundCommsServerAuthoritative,
+        KEY_INBOX_WAITING_SECTIONS to inboxWaitingSections,
     )
 
     companion object {
@@ -68,6 +85,7 @@ data class FeatureFlags(
         const val KEY_COMMUNICATE_GENERATE_VIA_FUNCTION = "auntieos.communicate.generateViaFunction"
         const val KEY_COMMUNICATE_COMMS_RECAP = "auntieos.communicate.commsRecap"
         const val KEY_INBOUND_COMMS_SERVER_AUTHORITATIVE = "auntieos.inboundComms.serverAuthoritative"
+        const val KEY_INBOX_WAITING_SECTIONS = "auntieos.inbox.waitingSections"
 
         /** Compile-time safe baseline. */
         val DEFAULT = FeatureFlags()
@@ -108,6 +126,7 @@ data class FeatureFlags(
                 communicateGenerateViaFunction = v(KEY_COMMUNICATE_GENERATE_VIA_FUNCTION, d.communicateGenerateViaFunction),
                 communicateCommsRecap = v(KEY_COMMUNICATE_COMMS_RECAP, d.communicateCommsRecap),
                 inboundCommsServerAuthoritative = v(KEY_INBOUND_COMMS_SERVER_AUTHORITATIVE, d.inboundCommsServerAuthoritative),
+                inboxWaitingSections = v(KEY_INBOX_WAITING_SECTIONS, d.inboxWaitingSections),
             )
         }
 

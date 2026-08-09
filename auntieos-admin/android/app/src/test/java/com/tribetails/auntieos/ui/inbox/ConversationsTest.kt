@@ -101,6 +101,44 @@ class ConversationsTest {
         assertEquals(unreadConversationCount(list), groupThreadsByWaiting(list)[0].threads.size)
     }
 
+    // ── the arrangement A/B flag (auntieos.inbox.waitingSections) ────────────
+    //
+    // ON is the sectioning above. OFF is the arrangement that preceded it HERE:
+    // one flat run of threads with no headers at all. Android never grouped this
+    // list by day, so the OFF arm restores exactly what android had and does not
+    // borrow the web client's day headers.
+
+    @Test fun arrangeThreadsWithTheFlagOnGivesTheWaitingAnsweredSections() {
+        val list = listOf(
+            ConversationSummary("a", "A", "", 2, "auntie", false, 1),
+            ConversationSummary("b", "B", "", 1, "kinfolk", true, 1),
+        )
+        assertEquals(groupThreadsByWaiting(list), arrangeThreads(list, waitingSections = true))
+    }
+
+    @Test fun arrangeThreadsWithTheFlagOffGivesOneHeaderlessRunInServerOrder() {
+        val list = listOf(
+            ConversationSummary("a", "A", "", 2, "auntie", false, 1),
+            ConversationSummary("b", "B", "", 1, "kinfolk", true, 1),
+        )
+        val sections = arrangeThreads(list, waitingSections = false)
+        assertEquals(1, sections.size)
+        assertEquals(ThreadSectionKey.FLAT, sections[0].key)
+        // The empty label is what tells the screen to draw no header at all. The
+        // order is the server's own (newest first), untouched.
+        assertEquals("", sections[0].label)
+        assertEquals(listOf("a", "b"), sections[0].threads.map { it.kinfolkId })
+    }
+
+    @Test fun arrangeThreadsFlatOverAnEmptyListInventsNoRows() {
+        // The screen prints its own "No messages yet" above this, so a flat arm
+        // that manufactured content over nothing would be a second empty state
+        // disagreeing with the first.
+        val sections = arrangeThreads(emptyList(), waitingSections = false)
+        assertEquals(1, sections.size)
+        assertTrue(sections[0].threads.isEmpty())
+    }
+
     // ── markAllThreadsRead payload decode ────────────────────────────────────
 
     @Test fun decodeClearedCountReadsTheServersOwnNumber() =

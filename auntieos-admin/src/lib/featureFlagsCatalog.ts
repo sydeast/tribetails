@@ -30,6 +30,37 @@ export const KEY_KINTALE_COMMENT_THREAD = 'auntieos.kintale.commentThread';
 export const KEY_TRAINING_DOC_CREATE = 'auntieos.trainingDocs.create';
 export const KEY_COMMUNICATE_GENERATE_VIA_FUNCTION = 'auntieos.communicate.generateViaFunction';
 export const KEY_COMMUNICATE_COMMS_RECAP = 'auntieos.communicate.commsRecap';
+/**
+ * Which of two Inbox arrangements the message-thread list is drawn in. ON (the
+ * default) is the "Waiting on a reply" / "Answered" sectioning PR #301 shipped;
+ * OFF is the arrangement that preceded it, one flat list grouped by local
+ * calendar day. Day grouping lives inside both, so this is a layout choice and
+ * not a feature switch: the filter chips, the unread badge, the row markup and
+ * "Mark all read" are the same product on either side.
+ *
+ * ── THIS FLAG IS AN A/B TRIAL, AND IT IS MEANT TO DIE ─────────────────────
+ * It exists so the operator can live on each arrangement in turn and keep the
+ * one they prefer. When that decision is made, REMOVING THE LOSING ARM is:
+ *
+ *   1. Delete this constant and its KEYS / DEFAULTS entries here, and the same
+ *      three in android `config/FeatureFlags.kt`. The two coverage tests
+ *      (FeatureFlags.coverage.test.ts, FeatureFlagsScreenCoverageTest.kt) then
+ *      FAIL until the toggle rows in FeatureFlags.tsx / FeatureFlagsScreen.kt
+ *      go too, so neither screen can be left listing a key nothing reads.
+ *   2. Delete the losing branch: Inbox.tsx's `arrangement === 'flatByDay'`
+ *      block and android `MessagesSection`'s `ThreadSectionKey.FLAT` handling,
+ *      plus `inboxArrangementFromFlags` / `arrangeThreads` and every test that
+ *      names the losing arm.
+ *   3. If SECTIONS LOSE, `groupThreadsByWaiting` (both clients),
+ *      `SECTION_READ_STATE`, `ThreadSectionKey`, the `.inbox__status-*` CSS and
+ *      the empty-section copy all go with it, and the Inbox golden must be
+ *      re-recorded. If SECTIONS WIN, nothing in `inboxFormat.ts` dies:
+ *      `groupThreadsByDay` still runs inside every section, and the golden
+ *      already photographs that arrangement.
+ *   4. Clear the key out of `business_settings/feature_flags.flags`, so no
+ *      stale doc outlives the code that read it.
+ */
+export const KEY_INBOX_WAITING_SECTIONS = 'auntieos.inbox.waitingSections';
 
 /** Every key this client understands. Unknown remote keys are ignored. */
 export const KEYS: readonly string[] = [
@@ -42,6 +73,7 @@ export const KEYS: readonly string[] = [
   KEY_TRAINING_DOC_CREATE,
   KEY_COMMUNICATE_GENERATE_VIA_FUNCTION,
   KEY_COMMUNICATE_COMMS_RECAP,
+  KEY_INBOX_WAITING_SECTIONS,
 ];
 
 /** Compile-time safe baseline. Mirrors the Kotlin registries' DEFAULT. */
@@ -55,6 +87,15 @@ export const DEFAULTS: Readonly<Record<string, boolean>> = {
   [KEY_TRAINING_DOC_CREATE]: true,
   [KEY_COMMUNICATE_GENERATE_VIA_FUNCTION]: true,
   [KEY_COMMUNICATE_COMMS_RECAP]: false,
+  // Defaults TRUE, unlike every other gated flag here, and deliberately so:
+  // merging this PR must not change what the operator already sees. The
+  // sectioned Inbox is what main renders today and what the committed golden
+  // photographs, so the safe baseline is "keep it", and the flag's job is to
+  // let the operator step BACK to the older arrangement, not forward into an
+  // unproven one. Deliberately NOT in ALWAYS_ON below: an ALWAYS_ON key gets no
+  // toggle row and ignores remote overrides, which are the two things an A/B
+  // trial cannot do without.
+  [KEY_INBOX_WAITING_SECTIONS]: true,
 };
 
 /**

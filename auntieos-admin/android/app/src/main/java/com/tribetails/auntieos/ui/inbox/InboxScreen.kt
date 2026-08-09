@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tribetails.auntieos.AuntieOSApp
+import com.tribetails.auntieos.config.LocalFeatureFlags
 import com.tribetails.auntieos.data.model.CallLog
 import com.tribetails.auntieos.data.model.EmailMessage
 import com.tribetails.auntieos.data.model.SmsMessage
@@ -564,8 +565,17 @@ private fun openExternalUrl(context: android.content.Context, url: String) {
 // finished ones. Both headers always render, empty or not, for the reason
 // spelled out on that function.
 //
+// ...UNLESS the operator has turned `auntieos.inbox.waitingSections` off, in
+// which case `arrangeThreads` hands back the one headerless run this screen
+// showed before #301, and the A/B trial can be judged on android as well as on
+// web. One Firestore doc feeds both clients, so the choice is made once. The
+// flag arrives through `LocalFeatureFlags`, which android resolves at app
+// start, so a flip shows up on the next app load.
+//
 // "Mark all read" clears every waiting thread through the server and re-reads
-// the list; it is offered only when something is genuinely waiting.
+// the list; it is offered only when something is genuinely waiting. It is on
+// BOTH sides of the flag: the flag picks a layout, it does not take a working
+// control away.
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun MessagesSection(
@@ -617,21 +627,29 @@ private fun MessagesSection(
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textDim,
                     )
-                else -> groupThreadsByWaiting(conversations).forEach { section ->
-                  Text(
-                      section.label,
-                      style = AuntieTheme.typography.labelLarge,
-                      color = if (section.key == ThreadSectionKey.WAITING) c.textPrimary else c.textDim,
-                  )
-                  if (section.threads.isEmpty()) {
-                      // The header stays: an absent section reads the same as
-                      // one that has not loaded.
+                else -> arrangeThreads(
+                    conversations,
+                    LocalFeatureFlags.current.inboxWaitingSections,
+                ).forEach { section ->
+                  // FLAT is the whole list under no header, the arrangement
+                  // before #301; the two real sections keep their headers and
+                  // their empty lines.
+                  if (section.key != ThreadSectionKey.FLAT) {
                       Text(
-                          if (section.key == ThreadSectionKey.WAITING) "Nothing is waiting on a reply."
-                          else "No answered threads yet.",
-                          style = AuntieTheme.typography.bodySmall,
-                          color = c.textDim,
+                          section.label,
+                          style = AuntieTheme.typography.labelLarge,
+                          color = if (section.key == ThreadSectionKey.WAITING) c.textPrimary else c.textDim,
                       )
+                      if (section.threads.isEmpty()) {
+                          // The header stays: an absent section reads the same as
+                          // one that has not loaded.
+                          Text(
+                              if (section.key == ThreadSectionKey.WAITING) "Nothing is waiting on a reply."
+                              else "No answered threads yet.",
+                              style = AuntieTheme.typography.bodySmall,
+                              color = c.textDim,
+                          )
+                      }
                   }
                   section.threads.forEach { conv ->
                     val selected = conv.kinfolkId == selectedId
