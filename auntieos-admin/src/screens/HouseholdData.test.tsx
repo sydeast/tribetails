@@ -412,3 +412,113 @@ describe('HouseholdData: the vet is owned here, and catalog-linked', () => {
     expect(await screen.findByText(/catalog didn.t load/i)).toBeInTheDocument();
   });
 });
+
+/**
+ * The vet is CHOSEN, never typed, and choosing it never rewrites the old copy.
+ *
+ * Three places in this codebase already promise that the seven free-text
+ * `primaryVet*` / `emergencyVet*` keys are read for display and never written
+ * again: `lib/householdDataSchema.ts`, the leftovers banner on this screen, and
+ * android `ui/directory/HouseholdDataScreen.kt`. "Edit veterinary" is the one
+ * path that could break that promise, so it is the one path pinned here.
+ */
+describe('HouseholdData: editing the vet', () => {
+  /** The catalog rows the picker searches. `CLINIC` is the household's current vet. */
+  const CATALOG = [
+    CLINIC,
+    { _id: 'clinic_er', name: 'Austin Pet ER', phone: '(512) 555 0300', address: '9 Night Ln', isEmergency: true },
+    { _id: 'clinic_themill', name: 'The Mill Veterinary', phone: '(512) 555 0400', address: '2 Oak Rd' },
+  ];
+
+  async function openVet() {
+    useCollection.mockReturnValue({ status: 'ready', data: CATALOG });
+    getHouseholdData.mockResolvedValue(record({ primaryVetClinicId: 'clinic_riverside' }));
+    saveHouseholdSection.mockImplementation(
+      async (current: HouseholdRecord, patch: Partial<HouseholdRecord>) => ({ ...current, ...patch }),
+    );
+    mount();
+    await screen.findByText('Pantry, second shelf');
+    await user.click(screen.getByRole('button', { name: 'Edit veterinary' }));
+    return screen.getByRole('dialog');
+  }
+
+  /**
+   * THE ONE THAT MATTERS. A save here used to patch every field the veterinary
+   * section lists, which is the two clinic ids AND the seven retired strings, so
+   * an operator who opened this dialog to change the vet wrote the superseded
+   * copy back out with it. That is silent: nothing on screen changes, and the
+   * record now carries a fresh `updatedAt` on data the product says is dead.
+   */
+  it('never writes the seven retired free-text vet keys', async () => {
+    const dialog = await openVet();
+    await user.click(within(dialog).getByRole('button', { name: /^Save/ }));
+
+    await waitFor(() => expect(saveHouseholdSection).toHaveBeenCalled());
+    const patch = saveHouseholdSection.mock.calls[0]?.[1] as Record<string, string>;
+    for (const key of [
+      'primaryVetName',
+      'primaryVetPhone',
+      'primaryVetHours',
+      'primaryVetAddress',
+      'emergencyVetName',
+      'emergencyVetPhone',
+      'emergencyVetAddress',
+    ]) {
+      expect(patch).not.toHaveProperty(key);
+    }
+    // The two catalog links are the whole of what this dialog authors.
+    expect(Object.keys(patch).sort()).toEqual(['emergencyVetClinicId', 'primaryVetClinicId']);
+  });
+
+  it('picks the vet from the catalog by search rather than typing a document id', async () => {
+    const dialog = await openVet();
+
+    // No raw id anywhere: the operator searches, and the value is a catalog row.
+    expect(within(dialog).queryByDisplayValue('clinic_riverside')).not.toBeInTheDocument();
+
+    await user.type(within(dialog).getByLabelText('Primary vet'), 'Mill');
+    await user.click(await within(dialog).findByText('The Mill Veterinary'));
+    await user.click(within(dialog).getByRole('button', { name: /^Save/ }));
+
+    await waitFor(() => expect(saveHouseholdSection).toHaveBeenCalled());
+    const patch = saveHouseholdSection.mock.calls[0]?.[1] as Record<string, string>;
+    expect(patch['primaryVetClinicId']).toBe('clinic_themill');
+  });
+
+  it('shows the vet on file when it opens, so a save is not a blind overwrite', async () => {
+    const dialog = await openVet();
+    expect(within(dialog).getByText('Riverside Animal Hospital')).toBeInTheDocument();
+  });
+
+  it('raises the same toast and closes on a landed save', async () => {
+    const dialog = await openVet();
+    await user.click(within(dialog).getByRole('button', { name: /^Save/ }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(await screen.findByText(/Saved veterinary for Nora Whitfield/)).toBeInTheDocument();
+  });
+
+  it('keeps a rejected save on screen with the reason, never a silent failure', async () => {
+    const dialog = await openVet();
+    saveHouseholdSection.mockRejectedValue(new Error('permission-denied'));
+
+    await user.click(within(dialog).getByRole('button', { name: /^Save/ }));
+    expect(await within(dialog).findByText(/permission-denied/)).toBeInTheDocument();
+    expect(screen.queryByText(/Saved veterinary/)).not.toBeInTheDocument();
+  });
+
+  it('refuses to save against a catalog that has not loaded, rather than clearing the link', async () => {
+    // With no catalog there is nothing to resolve the stored id against, so the
+    // pickers would open blank. Saving from there would blank a real vet.
+    useCollection.mockReturnValue({ status: 'error', message: 'permission-denied' });
+    getHouseholdData.mockResolvedValue(record({ primaryVetClinicId: 'clinic_riverside' }));
+    mount();
+    await screen.findByText('Pantry, second shelf');
+    await user.click(screen.getByRole('button', { name: 'Edit veterinary' }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: /^Save/ })).toBeDisabled();
+    expect(within(dialog).getByText(/catalog didn.t load/i)).toBeInTheDocument();
+    expect(saveHouseholdSection).not.toHaveBeenCalled();
+  });
+});
