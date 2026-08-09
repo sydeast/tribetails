@@ -391,3 +391,80 @@ describe('TemplateEditor: delete (edit mode only)', () => {
     expect(deleteTemplate).not.toHaveBeenCalled();
   });
 });
+/**
+ * The live preview pane (six mockups tag it `SUGGESTION: live preview pane`).
+ * `account.welcome.business` shipped with "See their account here: []" because
+ * nothing in this editor ever rendered a template, so these assertions are
+ * about the editor showing what a kinfolk receives, not about decoration.
+ */
+describe('TemplateEditor: live preview', () => {
+  it('renders the preview beside the form, filled from the sample bindings', () => {
+    render(
+      <TemplateEditor
+        template={tpl({ subject: 'Your visit is confirmed', body: 'Hi {{kinfolkName}}, see you then.' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    const preview = screen.getByRole('region', { name: 'Live preview' });
+    expect(preview).toHaveTextContent('Your visit is confirmed');
+    // The sample value, not the raw token: the point is seeing the sent copy.
+    expect(preview).toHaveTextContent('Sandy Wren');
+  });
+  it('updates as the author types', async () => {
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hello there');
+    expect(screen.getByRole('region', { name: 'Live preview' })).toHaveTextContent('Hello there');
+  });
+  it('names a merge field the notification pipeline will not fill', () => {
+    // `link` is emitter-supplied, not enrichable (enrichTemplateData.ts), so the
+    // author has to know the emitting function must pass it.
+    render(
+      <TemplateEditor
+        template={tpl({ body: 'See their account here: {{link}}' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('1 merge field has no sample value: link');
+  });
+  it('says nothing when every merge field is one the pipeline fills', () => {
+    render(
+      <TemplateEditor
+        template={tpl({ subject: 'Confirmed', body: 'Hi {{kinfolkName}}, {{kinName}} is booked.' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+  it('drops the preview on the confirm-delete view, which previews nothing', async () => {
+    render(<TemplateEditor template={tpl({})} onClose={vi.fn()} onSaved={vi.fn()} onDeleted={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    expect(screen.queryByRole('region', { name: 'Live preview' })).toBeNull();
+  });
+});
+describe('TemplateEditor: a template that also carries HTML', () => {
+  it('says the preview is showing plain text only, rather than implying it is the whole email', () => {
+    // account.welcome.business is exactly this shape: an email.txt AND an
+    // email.html, and the html is where `<a href='[]'>` lives.
+    render(
+      <TemplateEditor
+        template={tpl({ body: 'See their account here: []', html: "<a href='[]'>View Account</a>" })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('HTML body provided. Preview shows plain text only.')).toBeInTheDocument();
+  });
+  it('counts a merge field that only appears in the HTML', () => {
+    render(
+      <TemplateEditor
+        template={tpl({ body: 'Plain.', html: '<a href="{{link}}">Account</a>' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('1 merge field has no sample value: link');
+  });
+});

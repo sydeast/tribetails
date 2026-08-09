@@ -52,3 +52,38 @@ describe('Dialog', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 });
+/**
+ * The `size` modifier. Nothing else pins it: the template editor modal is in no
+ * visual golden, and an e2e would pass just as happily with the two columns
+ * stacked, so without this the class could be dropped and every test stay green.
+ */
+describe('Dialog size', () => {
+  it('is the standard 30rem column by default', () => {
+    render(
+      <Dialog title="Standard" onClose={vi.fn()}>
+        body
+      </Dialog>,
+    );
+    const panel = screen.getByRole('dialog');
+    expect(panel).toHaveClass('dialog');
+    expect(panel).not.toHaveClass('dialog--wide');
+  });
+  it('carries the wide modifier when asked, for a modal with a second column', () => {
+    render(
+      <Dialog title="Wide" onClose={vi.fn()} size="wide">
+        body
+      </Dialog>,
+    );
+    expect(screen.getByRole('dialog')).toHaveClass('dialog--wide');
+  });
+  it('leaves the sheet variant alone: it takes its width from the trailing edge', () => {
+    render(
+      <Dialog title="Sheet" onClose={vi.fn()} variant="sheet" size="wide">
+        body
+      </Dialog>,
+    );
+    const panel = screen.getByRole('dialog');
+    expect(panel).toHaveClass('dialog--sheet');
+    expect(panel).not.toHaveClass('dialog--wide');
+  });
+});

@@ -1,0 +1,128 @@
+/**
+ * MergePreview styling, imported by MergePreview.tsx (the Banner.css /
+ * Buttons.css convention). Values come from styles/tokens.css.
+ *
+ * The one deliberate exception is the email card itself. Its surface, ink and
+ * hairline are the brand LIGHT constants rather than themed tokens, because
+ * this is a picture of what lands in an inbox and an inbox does not follow the
+ * admin's dark mode. `--tt-brand-cream` / `--tt-brand-navy` are the same
+ * brand-fixed constants the Android twin uses (AuntieEmailPreviewCard.kt).
+ */
+
+.merge-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.merge-preview__label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-dim);
+}
+
+.merge-preview__card {
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  border: var(--border-hairline) solid var(--color-border);
+  background: var(--tt-brand-cream);
+}
+
+/* Orange to pink, from the mock's own masthead rule
+   (auntieos-template-bank-2026-05-27.html, `.pv .top`). NOT `--gradient-tribe`,
+   on two counts: that one is reserved for hero and CTA moments (tokens.css, and
+   `styles/tokenUsage.test.ts` enforces it), and it is a three-stop gradient the
+   mock does not draw here. The brand CONSTANTS rather than `--color-primary` /
+   `--color-secondary`, because those shift with the theme and this masthead is
+   part of the brand-fixed email card. */
+.merge-preview__masthead {
+  background: linear-gradient(135deg, var(--tt-kinfolk-orange), var(--tt-pack-pink));
+  padding: var(--space-4) var(--space-4) var(--space-3);
+}
+
+.merge-preview__wordmark {
+  font-family: var(--font-fraunces);
+  font-size: 0.95rem;
+  color: var(--tt-brand-cream);
+}
+
+.merge-preview__paper {
+  padding: var(--space-4);
+  /* Brand-light ink, not --color-text-primary: see the file header. */
+  color: #2a2a33;
+}
+
+.merge-preview__subject {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-fraunces);
+  font-size: 1rem;
+  font-weight: 500;
+  color: #1d1d24;
+}
+
+.merge-preview__body {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: #4a4a55;
+  /* The author writes plain text with real newlines; the sent email keeps them,
+     so the preview has to as well or the paragraphing it shows is a fiction. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.merge-preview__empty {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: #9a98a2;
+}
+
+/* A resolved merge field: tinted so the author can tell substituted text from
+   text they typed, without it shouting. Teal, per the mock's `.mf` rule. */
+.merge-preview__field {
+  border-radius: var(--radius-chip);
+  padding: 0 4px;
+  background: rgba(10, 133, 149, 0.14);
+  color: var(--tt-kin-teal);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+/* An unresolved one keeps its raw token and reads as a problem, not decoration. */
+.merge-preview__field--missing {
+  background: rgba(213, 83, 90, 0.16);
+  color: #a33a41;
+  font-weight: 600;
+}
+
+.merge-preview__warning {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-warning);
+}
+
+.merge-preview__footnote {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+  text-align: center;
+}
+/* The raw-HTML notice. Warning-toned rather than error-toned: carrying an HTML
+   body is normal and correct, it is only the PREVIEW that cannot show it, and an
+   error colour here would read as "this template is broken". */
+.merge-preview__html-notice {
+  margin: var(--space-3) 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a6117;
+  background: rgba(199, 125, 26, 0.14);
+  border-radius: var(--radius-chip);
+  padding: var(--space-2) var(--space-3);
+}

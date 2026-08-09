@@ -17,6 +17,17 @@ interface DialogProps {
    * `role="dialog"`) are identical and must not be re-implemented per shape.
    */
   variant?: 'center' | 'sheet';
+  /**
+   * `'standard'` (default) is the 30rem column every confirm/edit modal has
+   * always been. `'wide'` is for a modal that carries a second COLUMN rather
+   * than more rows, which so far means an editor with a live preview beside it
+   * (TemplateEditor). A size modifier on the shared shell, not a per-screen
+   * override of `.dialog`, because a screen stylesheet reaching into another
+   * component's class is how two rules end up fighting over the same width.
+   * Ignored by `variant="sheet"`, which is pinned to the trailing edge and
+   * takes its width from that.
+   */
+  size?: 'standard' | 'wide';
 }
 
 /**
@@ -27,7 +38,14 @@ interface DialogProps {
  * ~28 screens that need a confirm/edit modal do not each re-implement (and each
  * omit) these.
  */
-export function Dialog({ title, onClose, children, footer, variant = 'center' }: DialogProps) {
+export function Dialog({
+  title,
+  onClose,
+  children,
+  footer,
+  variant = 'center',
+  size = 'standard',
+}: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
@@ -68,7 +86,13 @@ export function Dialog({ title, onClose, children, footer, variant = 'center' }:
     >
       <div
         ref={panelRef}
-        className={variant === 'sheet' ? 'dialog dialog--sheet' : 'dialog'}
+        className={
+          variant === 'sheet'
+            ? 'dialog dialog--sheet'
+            : size === 'wide'
+              ? 'dialog dialog--wide'
+              : 'dialog'
+        }
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

@@ -52,6 +52,7 @@ import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChipGroup
 import com.tribetails.auntieos.ui.components.AuntieEmailPreviewCard
+import com.tribetails.auntieos.ui.components.MergePreview
 import com.tribetails.auntieos.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieFieldLabel
@@ -678,6 +679,22 @@ private fun BroadcastSection(state: CommunicateUiState, viewModel: CommunicateVi
             singleLine = false,
             minLines = 4,
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
+        )
+
+        // The broadcast copy as a recipient reads it, with `emptyMap()` as the
+        // sample. That is not a placeholder waiting to be filled in later, it is
+        // the accurate one: `broadcastMessage` calls `sendTemplatedEmail` with
+        // `data: {}` and hands Twilio / FCM / the in-app write the string
+        // verbatim, so nothing on this path can resolve a merge field. Every
+        // {{token}} typed here IS unresolved, and the footnote says what each
+        // channel does with it rather than leaving the operator to find out from
+        // a customer. Matches CommunicateCompose.tsx word for word.
+        MergePreview(
+            subject = state.bcSubject,
+            body = state.bcBody,
+            sample = emptyMap(),
+            footnote = "A broadcast carries no merge data. Email sends these blank; in-app, SMS and push send the braces as typed.",
+            modifier = Modifier.fillMaxWidth(),
         )
 
         PrimaryButton(
