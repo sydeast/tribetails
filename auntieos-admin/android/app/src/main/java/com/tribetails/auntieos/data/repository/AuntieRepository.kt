@@ -285,32 +285,55 @@ class AuntieRepository(
         }
     }.onFailure { AuntieLog.e("Failed to create complete kinfolk", it) }
 
-    suspend fun updateKinfolk(kinfolk: Kinfolk): Result<Unit> = runCatching {
-        AuntieLog.i("Updating kinfolk id=${kinfolk.id}")
+    /**
+     * Writes ONLY the `kinfolk` fields that actually changed, plus the stamp.
+     *
+     * THIS REPLACED A WHOLE-MODEL `updateKinfolk(kinfolk)`. That one wrote
+     * `kinfolk.copy(updatedAt = serverTimestamp())` under `SetOptions.merge()`,
+     * and merge protects fields OUTSIDE the written map while doing NOTHING
+     * about stale ones inside it. So every field the phone read went back at the
+     * phone's value, reverting whatever had changed in between - including
+     * `preferredContactMethod` and `bestTimeToContact`, which
+     * `firestore.rules#onlyAllowedKinfolkFields` lets the KINFOLK edit from the
+     * MyTribe portal. The React admin reached this conclusion first and names
+     * this very function as the clobbering writer
+     * (`auntieos-admin/src/api/kinfolkProfileWrite.ts:17-60`).
+     *
+     * Worse, the edit screen rebuilt `Kinfolk` from form state, so fields the
+     * form did not carry were written at their Kotlin DEFAULTS: `uid` (the
+     * MyTribe login linkage) blanked, `contactOverride` nulled, the `archived*`
+     * audit trail blanked. [com.tribetails.auntieos.ui.directory.KINFOLK_DIFF_FIELDS]
+     * names what this client may write; everything else is left to its owner.
+     *
+     * MERGE IS STILL RIGHT, for the reason the old function documented and this
+     * one inherits: a bare `set()` would delete every field the backend writes
+     * and no client models - `myTribeLinkedAt` (revokeKinfolkClaim.ts),
+     * `isTestData` (the sandbox marker, familyProvision.ts), `businessName`
+     * (read by getMyHome.ts). A named-field map plus merge cannot touch either
+     * class of field.
+     *
+     * `updatedAt` is STAMPED here, never round-tripped, so it cannot freeze and
+     * lie about when the record last changed. `serverTimestamp()` matches what
+     * the React admin writes (api/directoryWrite.ts) so both clients produce a
+     * Firestore Timestamp; an ISO String here would reintroduce type drift.
+     *
+     * An empty [changes] is a caller bug, not a no-op to absorb: such a write
+     * could only move the stamp, claiming a change that never happened.
+     */
+    suspend fun updateKinfolkFields(
+        documentId: String,
+        changes: Map<String, Any>,
+    ): Result<Unit> = runCatching {
+        require(documentId.isNotBlank()) { "updateKinfolkFields needs a kinfolk document id" }
+        require(changes.isNotEmpty()) { "updateKinfolkFields called with no changed fields" }
+        AuntieLog.i("Updating kinfolk id=$documentId: ${changes.keys.joinToString()}")
         authGate.ensureAuthenticated()
-        // STAMP updatedAt, do not round-trip it. Adding the field to the model
-        // stopped the save from DESTROYING it, but `.set()` would then write back
-        // the value that was read, freezing the timestamp at its old value and
-        // silently lying about when the record last changed. serverTimestamp()
-        // matches what the React admin writes (api/directoryWrite.ts), so both
-        // clients produce a Firestore Timestamp; getCurrentTimestamp() would
-        // write an ISO String and reintroduce type drift on this field.
-        //
-        // MERGE, never a bare set(). A bare set() replaces the whole document, so
-        // every field the backend writes but this model does not declare is
-        // DELETED by an ordinary admin save. Measured against MyTribe: it erases
-        // `myTribeLinkedAt` (portal auth linkage, revokeKinfolkClaim.ts),
-        // `isTestData` (the sandbox marker, familyProvision.ts), and
-        // `businessName` (read by getMyHome.ts). Losing `isTestData` silently
-        // breaks sandbox isolation. The `updatedAt` note above is the same bug
-        // caught once and patched one field at a time; merge closes the class.
-        // Every modelled field still ships, including blanked ones, because the
-        // data class serialises them, so merge costs nothing.
-        firestore.collection("kinfolk").document(kinfolk.id)
-            .set(kinfolk.copy(updatedAt = FieldValue.serverTimestamp()), com.google.firebase.firestore.SetOptions.merge()).await()
-        AuntieLog.d("Update successful for kinfolk id=${kinfolk.id}")
+        val payload: Map<String, Any> = changes + mapOf("updatedAt" to FieldValue.serverTimestamp())
+        firestore.collection("kinfolk").document(documentId)
+            .set(payload, com.google.firebase.firestore.SetOptions.merge()).await()
+        AuntieLog.d("Update successful for kinfolk id=$documentId")
         Unit
-    }.onFailure { AuntieLog.e("Failed to update kinfolk ${kinfolk.id}", it) }
+    }.onFailure { AuntieLog.e("Failed to update kinfolk $documentId", it) }
 
     suspend fun deleteKinfolk(kinfolkId: String): Result<Unit> = runCatching {
         AuntieLog.w("Deleting kinfolk: $kinfolkId")
@@ -430,23 +453,46 @@ class AuntieRepository(
         scoped.scopedQuery("kin").toObjects(Kin::class.java)
     }.onFailure { AuntieLog.e("Failed to get all kin", it) }
 
-    suspend fun updateKin(kin: Kin): Result<Unit> = runCatching {
-        AuntieLog.i("Updating kin: ${kin.id}")
+    /**
+     * Writes ONLY the `kin` fields that actually changed, plus the stamp.
+     *
+     * Same fix, same reasoning, same collection pair as [updateKinfolkFields]:
+     * this replaced a whole-model `updateKin(kin)` whose `SetOptions.merge()`
+     * guarded fields outside the written map and wrote every stale field inside
+     * it straight back over the React admin's edits (`api/directoryWrite.ts`
+     * patches `kin` field-level for exactly this reason).
+     *
+     * The edit screen's from-scratch `Kin(...)` rebuild made it destructive as
+     * well as stale: `tags` went back null - wiping the pet tag assignment the
+     * model comment claims declaring the field had already fixed - `photos` went
+     * back empty, `ownerEmail` / `ownerPhone` blank, and `status` was hardcoded
+     * to "active", quietly un-archiving an archived pet.
+     * [com.tribetails.auntieos.ui.directory.KIN_DIFF_FIELDS] names what may be
+     * written.
+     *
+     * [kinfolkId] is passed separately from [changes] because the mirror FK has
+     * to be stamped on EVERY save, not only the ones that reassigned the pet:
+     * `familyKinPath` is derived, not edited, so it never appears in a diff.
+     */
+    suspend fun updateKinFields(
+        documentId: String,
+        kinfolkId: String,
+        changes: Map<String, Any>,
+    ): Result<Unit> = runCatching {
+        require(documentId.isNotBlank()) { "updateKinFields needs a kin document id" }
+        require(changes.isNotEmpty()) { "updateKinFields called with no changed fields" }
+        AuntieLog.i("Updating kin: $documentId: ${changes.keys.joinToString()}")
         authGate.ensureAuthenticated()
-        // STAMP updatedAt rather than round-tripping the value that was read.
-        // See updateKinfolk for why serverTimestamp() and not getCurrentTimestamp().
-        // MERGE for the same reason as updateKinfolk: a bare set() deletes any
-        // backend-written field this model does not declare. `familyKinPath` was
-        // already destroyed this way once.
-        firestore.collection("kin").document(kin.id)
-            .set(kin.copy(updatedAt = FieldValue.serverTimestamp()), com.google.firebase.firestore.SetOptions.merge()).await()
+        val payload: Map<String, Any> = changes + mapOf("updatedAt" to FieldValue.serverTimestamp())
+        firestore.collection("kin").document(documentId)
+            .set(payload, com.google.firebase.firestore.SetOptions.merge()).await()
         // Additive FK for the MyTribe pet mirror (onFlatKinWrite). Same fields as
         // createKin; re-stamped on edit in case the pet was reassigned to a
-        // kinfolk. Leaves the Kin field writes above untouched.
-        stampFamilyKinPath(kinId = kin.id, kinfolkId = kin.kinfolkId)
-        AuntieLog.d("Update successful for kin: ${kin.id}")
+        // kinfolk. Leaves the field writes above untouched.
+        stampFamilyKinPath(kinId = documentId, kinfolkId = kinfolkId)
+        AuntieLog.d("Update successful for kin: $documentId")
         Unit
-    }.onFailure { AuntieLog.e("Failed to update kin ${kin.id}", it) }
+    }.onFailure { AuntieLog.e("Failed to update kin $documentId", it) }
 
     /**
      * Additively stamps the MyTribe mirror FK (kinfolkId + familyKinPath) onto a
@@ -1116,11 +1162,30 @@ class AuntieRepository(
             updatedAt = timestamp,
             updatedBy = updatedBy
         )
-        // SetOptions.merge() read-modify-write: a save never deletes sibling
-        // fields it did not touch. Unified settings doc (2026-06-05), so a
-        // screen that only edits a subset can never clobber the rest of the
-        // union (booking config, timeBlocks, GPS, profile, etc). See
-        // docs/2026-06-05-settings-unification-design.md.
+        // SetOptions.merge() read-modify-write: a save never DELETES a sibling
+        // field it did not touch. Unified settings doc (2026-06-05), so the rest
+        // of the union (booking config, timeBlocks, GPS, profile, ...) survives.
+        // See docs/2026-06-05-settings-unification-design.md.
+        //
+        // KNOWN GAP, and the comment above used to overstate the guarantee.
+        // "Never clobbers the rest of the union" is only true of DELETION. Every
+        // field of [BusinessSettings] is INSIDE this written map, so a screen
+        // that loaded the doc an hour ago writes all ~50 of them back at the
+        // values it read, reverting whatever changed since. That is real here:
+        // React writes this doc as a per-section PARTIAL patch
+        // (`auntieos-admin/src/api/settingsWrite.ts`), five android ViewModels
+        // each edit a different slice of the same union, and the slices include
+        // `calendarSyncId`, the venmo/paypal/cashapp handles and the tag
+        // vocabularies. `kinfolk`, `kin` and `household_data` moved to
+        // field-level diffs for this exact shape; this doc is the biggest
+        // remaining site and is deliberately left for its own change, because
+        // every caller has to start carrying the copy it loaded. Triaged, not
+        // overlooked.
+        //
+        // The calendar-sync receipt fields are unaffected either way: they are
+        // deliberately NOT on this model (see `CalendarSyncId.kt`'s
+        // `CalendarSyncRun`), and [getCalendarSyncRun] reads them off the raw
+        // snapshot, so no stale copy of them exists here to write back.
         firestore.collection("business_settings")
             .document("business_settings")
             .set(updatedSettings, com.google.firebase.firestore.SetOptions.merge())
@@ -1157,6 +1222,13 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         // durations + rules are one saveable unit; merge() still guards the stamp
         // fields and any future sibling field on the doc.
+        //
+        // Same stale-inside-the-map gap as [saveBusinessSettings], and narrower.
+        // React persists ONLY `{ durations, updatedAt, updatedBy }` here
+        // (`api/coveragePackageWrite.ts`), so an android save can revert a visit
+        // menu edited on the web between this screen's load and its save. One
+        // android caller, one web caller, one operator-only document; queued
+        // behind the settings doc rather than fixed alongside it.
         val stamped = config.copy(updatedAt = getCurrentTimestamp(), updatedBy = updatedBy)
         firestore.collection("coverage_package_config")
             .document("config")
@@ -1384,8 +1456,18 @@ class AuntieRepository(
      * to take that path too, `.set(loadedModel.copy(updatedAt = now), merge())`,
      * and that whole-model write is what silently reverted concurrent web edits.
      * The non-blank id now fails loud rather than quietly re-opening it.
+     *
+     * RETURNS THE NEW DOCUMENT ID, and that return value is load-bearing. It
+     * used to be `Result<Unit>`: the id was minted here and died here, so the
+     * caller's in-memory record kept a blank id and a second press of Save took
+     * this create branch AGAIN, writing a SECOND `household_data` document for
+     * the same household. [getHouseholdData] reads
+     * `whereEqualTo("kinfolkId").limit(1)`, so which of the two duplicates the
+     * app then shows is arbitrary, and every edit after that lands on whichever
+     * one the screen happened to hold. Handing the id back is what lets the
+     * caller switch to the edit path on the second save.
      */
-    suspend fun saveHouseholdData(data: HouseholdData): Result<Unit> = runCatching {
+    suspend fun saveHouseholdData(data: HouseholdData): Result<String> = runCatching {
         require(data.id.isBlank()) {
             "saveHouseholdData creates; edit ${data.id} through updateHouseholdFields"
         }
@@ -1397,7 +1479,7 @@ class AuntieRepository(
             createdAt = if (data.createdAt.isBlank()) timestamp else data.createdAt,
             updatedAt = timestamp
         )).await()
-        Unit
+        docRef.id
     }.onFailure { AuntieLog.e("Failed to save household data for ${data.kinfolkId}", it) }
 
     /**

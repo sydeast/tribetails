@@ -110,10 +110,11 @@ data class Kinfolk(
     var profilePictureUrl: String = "",
     var status: String = "active", // active, inactive, prospect, archived
     var outstandingBalance: String = "0.00",
-    // Round-trip-only: updateKinfolk does `.set(kinfolk)`, so a missing field is
-    // destroyed on save. Live on 8 of 12 kinfolk. Held raw for the same reason as
-    // Kin.updatedAt, even though kinfolk currently stores it as a String and kin
-    // stores it as a Timestamp; read via updatedAtIso().
+    // The last-changed stamp. `updateKinfolkFields` writes it as a
+    // serverTimestamp on every save and never round-trips what was read, so this
+    // is a READ-ONLY view of it. Live on 8 of 12 kinfolk. Held raw for the same
+    // reason as Kin.updatedAt, even though kinfolk currently stores it as a
+    // String and kin stores it as a Timestamp; read via updatedAtIso().
     var updatedAt: Any? = null,
     // Household tag assignments: a flat list of tag NAMES resolved against
     // BusinessSettings.householdTagDefs() at render time. Held raw (Class A
@@ -148,12 +149,13 @@ data class Kinfolk(
     // by clinic id (operator ruling 2026-08-01: "vet info lives on household
     // data, it can be seen on the kin profile"; page-specs 04 item 3).
     //
-    // Removing them from this data class is what closes the WRITE path: every
-    // kinfolk writer here serialises the whole object (createKinfolk,
-    // createKinfolkComplete, updateKinfolk, and uploadKinfolkPhoto through
-    // updateKinfolk), so a field this class does not declare is never written.
+    // Removing them from this data class is what closes the WRITE path: the
+    // CREATE writers here serialise the whole object (createKinfolk,
+    // createKinfolkComplete), so a field this class does not declare is never
+    // written. Edits go through `updateKinfolkFields`, which writes only the
+    // field names `KINFOLK_DIFF_FIELDS` lists, and the vet is not among them.
     //
-    // It does NOT clear what is already stored: `updateKinfolk` uses
+    // It does NOT clear what is already stored: those writes use
     // SetOptions.merge(), so an undeclared field survives on existing docs. The
     // A2 migration deletes them explicitly with FieldValue.delete(); an omission
     // here would leave a populated second copy that still looks authoritative.
@@ -247,8 +249,9 @@ data class Kin(
     var status: String = "active",
     var profilePictureUrl: String = "",   // Kin (pet) photo; parity with web Kin.profilePictureUrl
 
-    // Round-trip-only. updateKin does `.set(kin)`, a whole-document overwrite, so
-    // a field missing from this model is DESTROYED on every android save.
+    // Both are DERIVED, never edited here. `updateKinFields` re-stamps
+    // familyKinPath from the kin and kinfolk ids on every save and writes
+    // updatedAt as a serverTimestamp, so these two are a read-only view.
     // familyKinPath is set on 24 of 24 live kin; updatedAt on 23, as a Firestore
     // Timestamp, so it is held raw and read via updatedAtIso() (same pattern as
     // KinCareSession.updatedAt) rather than typed String.
@@ -276,10 +279,14 @@ data class Kin(
     var formValues: Map<String, String> = emptyMap(),
     // Pet tag assignments: a flat list of tag NAMES resolved against
     // BusinessSettings.petTagDefs() at render time. MANDATORY, not cosmetic:
-    // AuntieRepository.updateKin writes the WHOLE object with .set(kin), so
-    // without this field every android kin save wiped the `tags` the React admin
-    // had written. Held raw for the same reason as Kinfolk.tags above (absent on
-    // legacy docs, and one bad element must not blank the whole kin query).
+    // the android save used to write the WHOLE object with .set(kin), so without
+    // this field every kin save wiped the `tags` the React admin had written.
+    // DECLARING IT WAS ONLY HALF THE FIX - `buildKinFromEditState` rebuilt the
+    // model from form state and never populated this field, so null went on
+    // being written anyway. The edited model is copied from the loaded record
+    // now, and `updateKinFields` writes only what changed. Held raw for the same
+    // reason as Kinfolk.tags above (absent on legacy docs, and one bad element
+    // must not blank the whole kin query).
     // Read via [tagNames]; write via `copy(tags = listOf(...))`.
     var tags: Any? = null,
 ) {

@@ -150,8 +150,18 @@ fun KinfolkProfileScreen(
                         ProfileTagsSection(
                             scope = TagScope.HOUSEHOLD,
                             initialTags = kinfolk.tagNames(),
+                            // TAGS ONLY. This used to write the whole loaded
+                            // `Kinfolk` back under merge(), so adding one chip
+                            // reverted every other field to whatever this
+                            // profile happened to have read - the bug
+                            // `DirectoryFieldChanges.kt` documents. React's
+                            // `updateKinfolkTags` writes exactly this one field
+                            // for exactly this reason.
                             onSaveTags = { next ->
-                                tagRepository.updateKinfolk(kinfolkWithTags(kinfolk, next)).getOrThrow()
+                                tagRepository.updateKinfolkFields(
+                                    kinfolk.id,
+                                    mapOf("tags" to kinfolkWithTags(kinfolk, next).tagNames()),
+                                ).getOrThrow()
                             },
                             loadVocab = { loadTagVocab(tagRepository, TagScope.HOUSEHOLD) },
                             onSaveVocab = { defs ->
