@@ -109,9 +109,20 @@ describe('KinTaleTemplates: create-from-default', () => {
 });
 
 describe('KinTaleTemplates: checklist condition editor (the I7 payload)', () => {
+  /**
+   * The conditions editor lives inside the item's "Advanced" fold, so every
+   * test that drives it opens the fold the way an operator has to. jsdom ships
+   * no UA stylesheet and would happily click through a closed <details>, which
+   * is exactly the false green worth avoiding here.
+   */
+  async function openAdvanced(itemLabel = 'Meds') {
+    await user.click(screen.getByLabelText(`Advanced for ${itemLabel}`));
+  }
+
   it('adds a KINFOLK_ATTRIBUTE / EXISTS condition: attribute dropdown shows, value input hides', async () => {
     render(<KinTaleTemplates />);
     await screen.findByDisplayValue('Walk recap');
+    await openAdvanced();
 
     await user.click(screen.getByRole('button', { name: /add condition/i }));
 
@@ -145,6 +156,7 @@ describe('KinTaleTemplates: checklist condition editor (the I7 payload)', () => 
   it('adds a KINFOLK_TAG / CONTAINS condition: no attribute dropdown, value carries the tag', async () => {
     render(<KinTaleTemplates />);
     await screen.findByDisplayValue('Walk recap');
+    await openAdvanced();
 
     await user.click(screen.getByRole('button', { name: /add condition/i }));
     await user.selectOptions(screen.getByLabelText('When'), 'KINFOLK_TAG');
@@ -168,6 +180,7 @@ describe('KinTaleTemplates: checklist condition editor (the I7 payload)', () => 
   it('removing a condition drops it from the saved payload', async () => {
     render(<KinTaleTemplates />);
     await screen.findByDisplayValue('Walk recap');
+    await openAdvanced();
     await user.click(screen.getByRole('button', { name: /add condition/i }));
     await user.click(screen.getByRole('button', { name: /remove condition/i }));
 
@@ -185,6 +198,9 @@ describe('KinTaleTemplates: editing the sections + items round-trips into the sa
 
     // Toggle a display section off.
     await user.click(screen.getByRole('switch', { name: 'Review booster' }));
+    // Required lives in the item's "Advanced" fold; open it first, while the
+    // item is still named 'Meds' (the fold is addressed by the item's text).
+    await user.click(screen.getByLabelText('Advanced for Meds'));
     // Edit the one checklist item's text + required.
     await user.clear(screen.getByLabelText('Item text'));
     await user.type(screen.getByLabelText('Item text'), 'Medications given');
@@ -320,6 +336,94 @@ describe('KinTaleTemplates: checklist bank quick-add', () => {
     await screen.findByDisplayValue('Walk recap');
     await user.click(screen.getByRole('button', { name: /save "meds" to the bank/i }));
     expect(await screen.findByText(/couldn't save to the bank: unavailable/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * Item 8: a checklist item shows its text and its row actions, and folds the
+ * rest (Required, Show-even-when-unchecked, and the whole conditions editor)
+ * into a native `<details>` "Advanced", the way `FormSchemaEditor` already does
+ * per field. Six items used to mean about thirty always-open controls.
+ *
+ * The rule that makes folding safe is the second test: an item that carries a
+ * condition, or has either toggle off its default, opens on load. Otherwise the
+ * fold would hide the only signal that an item is conditional.
+ *
+ * `<summary>` has no implicit ARIA role, so the disclosure is addressed by its
+ * `aria-label`, not `getByRole('button')`.
+ */
+describe('KinTaleTemplates: checklist items fold behind Advanced', () => {
+  it('keeps the item text visible and folds its advanced controls away', async () => {
+    render(<KinTaleTemplates />);
+    const text = await screen.findByDisplayValue('Meds');
+    expect(text).toBeVisible();
+    // Row actions stay out of the fold: reordering and removing an item must
+    // not cost a click to reveal.
+    expect(screen.getByRole('button', { name: /remove meds/i })).toBeVisible();
+
+    expect(screen.getByRole('switch', { name: 'Required' })).not.toBeVisible();
+    expect(screen.getByRole('switch', { name: 'Show even when unchecked' })).not.toBeVisible();
+    expect(screen.getByRole('button', { name: /add condition/i })).not.toBeVisible();
+
+    await user.click(screen.getByLabelText('Advanced for Meds'));
+    expect(screen.getByRole('switch', { name: 'Required' })).toBeVisible();
+    expect(screen.getByRole('button', { name: /add condition/i })).toBeVisible();
+  });
+
+  it('opens an item automatically when it already carries a condition', async () => {
+    mockStream({
+      status: 'ready',
+      data: [
+        tpl({
+          checklistItems: [
+            makeChecklistItem({
+              key: 'meds',
+              text: 'Medications given',
+              scope: 'PER_PET',
+              order: 0,
+              conditions: [{ source: 'KIN_SPECIES', op: 'EQUALS', value: 'dog', attributeKey: '' }],
+            }),
+          ],
+        }),
+      ],
+    });
+    render(<KinTaleTemplates />);
+    expect(await screen.findByText(/only show when the pet's species is dog/i)).toBeVisible();
+  });
+
+  it('opens an item whose toggles are off their defaults, so nothing configured hides', async () => {
+    mockStream({
+      status: 'ready',
+      data: [
+        tpl({
+          checklistItems: [
+            makeChecklistItem({ key: 'meds', text: 'Meds', scope: 'PER_PET', order: 0, required: true }),
+          ],
+        }),
+      ],
+    });
+    render(<KinTaleTemplates />);
+    await screen.findByDisplayValue('Meds');
+    expect(screen.getByRole('switch', { name: 'Required' })).toBeVisible();
+  });
+
+  it('leaves the fold where the operator put it when they turn a toggle back off', async () => {
+    // The open state is the operator's, not a re-derivation: clearing Required
+    // inside an open item must not slam the panel shut mid-edit.
+    mockStream({
+      status: 'ready',
+      data: [
+        tpl({
+          checklistItems: [
+            makeChecklistItem({ key: 'meds', text: 'Meds', scope: 'PER_PET', order: 0, required: true }),
+          ],
+        }),
+      ],
+    });
+    render(<KinTaleTemplates />);
+    await screen.findByDisplayValue('Meds');
+    await user.click(screen.getByRole('switch', { name: 'Required' }));
+    expect(screen.getByRole('switch', { name: 'Required' })).toBeVisible();
   });
 });
 

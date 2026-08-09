@@ -45,6 +45,23 @@ export function perVisitItems(items: readonly ChecklistItem[]): ChecklistItem[] 
   return items.filter((i) => !isPerPetScope(i.scope)).sort((a, b) => a.order - b.order);
 }
 
+/**
+ * Whether an item's "Advanced" fold starts open. Everything an item can be
+ * configured to do beyond its text (Required, Show-even-when-unchecked, and
+ * any visibility condition) lives inside the fold, so an item that is off the
+ * defaults must open on load: folding may cost a click, never a fact. A plain
+ * item folds away, which is the whole point (a six-item template used to render
+ * about thirty always-open controls).
+ *
+ * Read ONCE per item, when the row mounts, never re-derived per render: an
+ * operator who clears Required inside an open fold must not have it shut under
+ * them mid-edit. Mirrored in Android's `advancedOpenByDefault`
+ * (`ui/kintales/ChecklistEditorScreen.kt`).
+ */
+export function advancedOpenByDefault(item: ChecklistItem): boolean {
+  return item.required || item.showWhenUnchecked || item.conditions.length > 0;
+}
+
 // ── checklist item add / update / remove / reorder ───────────────────────────
 
 /** A fresh, collision-free `item_N` key across ALL items (Compose `freshKey`). */

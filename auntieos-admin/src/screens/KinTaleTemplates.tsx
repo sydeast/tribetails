@@ -24,6 +24,7 @@ import {
   addChecklistItem,
   addCondition,
   addMood,
+  advancedOpenByDefault,
   attributeCatalogForSource,
   changeConditionSource,
   freshChecklistKey,
@@ -590,6 +591,13 @@ interface ChecklistItemCardProps {
 function ChecklistItemCard({ item, items, isFirst, isLast, onItems, onSaveToBank }: ChecklistItemCardProps) {
   const label = item.text.trim() || 'this item';
 
+  // Whether the fold STARTS open, read once when this row mounts (the list is
+  // keyed by scope+key, so a row's identity survives every edit to it). A live
+  // `open={advancedOpenByDefault(item)}` would be React-controlled and would
+  // slam the panel shut the moment the operator cleared the last condition or
+  // switched Required off, i.e. exactly while they are working in it.
+  const [initiallyOpen] = useState(() => advancedOpenByDefault(item));
+
   function update(patch: Partial<ChecklistItem>) {
     onItems(updateChecklistItem(items, item.key, item.scope, patch));
   }
@@ -644,22 +652,31 @@ function ChecklistItemCard({ item, items, isFirst, isLast, onItems, onSaveToBank
         </div>
       </div>
 
-      <div className="ktt__item-toggles">
-        <ToggleRow
-          label="Required"
-          description="Mark this item as one Auntie must fill in."
-          checked={item.required}
-          onChange={(v) => update({ required: v })}
-        />
-        <ToggleRow
-          label="Show even when unchecked"
-          description="Off: unchecked items are hidden from the kinfolk. On: shown with a 'no' marker."
-          checked={item.showWhenUnchecked}
-          onChange={(v) => update({ showWhenUnchecked: v })}
-        />
-      </div>
+      {/* A native <details>, the same affordance FormSchemaEditor gives each
+          field: keyboard operable and findable by the browser's find-in-page,
+          neither of which a div-plus-state reimplementation gets for free.
+          <summary> has no ARIA role of its own, so the per-item name that makes
+          one fold addressable rides on aria-label. */}
+      <details className="ktt__advanced" open={initiallyOpen}>
+        <summary aria-label={`Advanced for ${label}`}>Advanced</summary>
 
-      <ConditionsEditor conditions={item.conditions} onConditions={setConditions} />
+        <div className="ktt__item-toggles">
+          <ToggleRow
+            label="Required"
+            description="Mark this item as one Auntie must fill in."
+            checked={item.required}
+            onChange={(v) => update({ required: v })}
+          />
+          <ToggleRow
+            label="Show even when unchecked"
+            description="Off: unchecked items are hidden from the kinfolk. On: shown with a 'no' marker."
+            checked={item.showWhenUnchecked}
+            onChange={(v) => update({ showWhenUnchecked: v })}
+          />
+        </div>
+
+        <ConditionsEditor conditions={item.conditions} onConditions={setConditions} />
+      </details>
     </li>
   );
 }

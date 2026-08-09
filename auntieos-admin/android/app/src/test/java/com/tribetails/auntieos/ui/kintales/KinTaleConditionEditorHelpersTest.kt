@@ -266,4 +266,32 @@ class KinTaleConditionEditorHelpersTest {
         assertEquals(listOf(perPet), applicablePerPetItems(listOf(perPet), session(), listOf(dog), dog, null))
         assertEquals(listOf(perVisit), visiblePerVisitItems(listOf(perVisit), session(), listOf(dog), null))
     }
+    // ── Item 8: which items open their "Advanced" fold on load ───────────────
+    /**
+     * Everything an item can be configured to do beyond its text lives in the
+     * fold, so an item off the defaults opens on load: folding may cost a click,
+     * never a fact. Same predicate as React's `advancedOpenByDefault`
+     * (lib/kinTaleTemplateEdit.ts), so neither platform folds away something the
+     * other shows.
+     */
+    @Test
+    fun advancedOpenByDefault_foldsAPlainItem() {
+        assertFalse(advancedOpenByDefault(ChecklistItem(key = "a", text = "Meds")))
+    }
+    @Test
+    fun advancedOpenByDefault_opensForShowWhenUnchecked() {
+        assertTrue(advancedOpenByDefault(ChecklistItem(key = "a", showWhenUnchecked = true)))
+    }
+    @Test
+    fun advancedOpenByDefault_opensForRequired() {
+        assertTrue(advancedOpenByDefault(ChecklistItem(key = "a", required = true)))
+    }
+    @Test
+    fun advancedOpenByDefault_opensForAnyCondition() {
+        val item = ChecklistItem(
+            key = "a",
+            conditions = listOf(FieldCondition(source = "KIN_SPECIES", op = "EQUALS", value = "dog")),
+        )
+        assertTrue(advancedOpenByDefault(item))
+    }
 }

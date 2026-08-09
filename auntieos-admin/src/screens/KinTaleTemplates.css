@@ -212,6 +212,21 @@
   flex-direction: column;
 }
 
+/* The per-item "Advanced" fold. Deliberately the same dimmed summary as
+   FormSchemaEditor's `.fse__advanced`, so the two editors read as one pattern
+   rather than two inventions. */
+.ktt__advanced {
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+}
+.ktt__advanced summary {
+  cursor: pointer;
+  color: var(--color-text-dim);
+}
+.ktt__advanced .ktt__item-toggles {
+  margin-top: var(--space-2);
+}
+
 /* ── shared checklist bank quick-add ─────────────────────────────────────── */
 
 .ktt__bank {

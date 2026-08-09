@@ -264,8 +264,23 @@ private fun ChecklistGroup(
     }
 }
 
+/**
+ * Whether an item's "Advanced" fold starts open. Everything an item can be
+ * configured to do beyond its text (Required, Show-unchecked-response, and any
+ * visibility condition) is configuration, so an item off the defaults opens on
+ * load: folding may cost a click, never a fact. Byte-for-byte the same rule as
+ * React's `advancedOpenByDefault` (lib/kinTaleTemplateEdit.ts), so a template
+ * authored on either platform folds the same way on the other.
+ *
+ * `required` counts even though THIS editor renders no Required control (the
+ * field is on the model and React edits it); an item carrying it is configured,
+ * and the two platforms are not allowed to disagree about which items are.
+ */
+internal fun advancedOpenByDefault(item: ChecklistItem): Boolean =
+    item.required || item.showWhenUnchecked || item.conditions.isNotEmpty()
+
 @Composable
-private fun ChecklistItemEditor(
+internal fun ChecklistItemEditor(
     item: ChecklistItem,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onUpdate: (ChecklistItem) -> Unit,
@@ -274,6 +289,11 @@ private fun ChecklistItemEditor(
     onSaveToBank: (ChecklistItem) -> Unit,
     householdTags: List<TagDef>,
 ) {
+    // Seeded once per item (keyed on its stable `key`), never re-derived: an
+    // operator who switches "Show unchecked response" back off inside an open
+    // fold must not have it shut under them mid-edit.
+    var advancedOpen by remember(item.key) { mutableStateOf(advancedOpenByDefault(item)) }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -314,31 +334,47 @@ private fun ChecklistItemEditor(
                     )
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    AuntieToggle(
-                        checked = item.showWhenUnchecked,
-                        onCheckedChange = {
-                            onUpdate(item.copy(showWhenUnchecked = it))
-                            onPersist()
-                        },
+                // Item 8: everything past the text and scope folds away, so a
+                // six-item template is a readable list rather than thirty
+                // always-open controls. The web editor's `<details>` twin.
+                AuntieTextBtn(onClick = { advancedOpen = !advancedOpen }) {
+                    Icon(
+                        if (advancedOpen) Lucide.ChevronDown else Lucide.ChevronRight,
+                        contentDescription = null,
+                        tint = AuntieTheme.colors.textDim,
+                        modifier = Modifier.size(16.dp),
                     )
-                    Spacer(Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Show unchecked response", style = AuntieTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                        Text(
-                            "Unchecked items default to being hidden in the report card. If this is enabled, an unchecked response will be displayed.",
-                            style = AuntieTheme.typography.labelSmall,
-                            color = AuntieTheme.colors.textDim
-                        )
-                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text("Advanced", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
                 }
 
-                ChecklistConditionsEditor(
-                    item = item,
-                    householdTags = householdTags,
-                    onUpdate = onUpdate,
-                    onPersist = onPersist,
-                )
+                if (advancedOpen) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AuntieToggle(
+                            checked = item.showWhenUnchecked,
+                            onCheckedChange = {
+                                onUpdate(item.copy(showWhenUnchecked = it))
+                                onPersist()
+                            },
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Show unchecked response", style = AuntieTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            Text(
+                                "Unchecked items default to being hidden in the report card. If this is enabled, an unchecked response will be displayed.",
+                                style = AuntieTheme.typography.labelSmall,
+                                color = AuntieTheme.colors.textDim
+                            )
+                        }
+                    }
+
+                    ChecklistConditionsEditor(
+                        item = item,
+                        householdTags = householdTags,
+                        onUpdate = onUpdate,
+                        onPersist = onPersist,
+                    )
+                }
             }
 
             Column {

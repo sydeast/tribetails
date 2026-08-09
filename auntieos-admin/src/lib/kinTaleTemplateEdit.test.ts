@@ -4,6 +4,7 @@ import {
   addCondition,
   addMood,
   attributeCatalogForSource,
+  advancedOpenByDefault,
   changeConditionSource,
   freshChecklistKey,
   newTemplateDraft,
@@ -231,5 +232,28 @@ describe('new-template drafts', () => {
     const fresh = newTemplateDraft();
     expect(fresh.checklistItems[0]!.text).not.toBe('MUTATED');
     expect(fresh.moodOptions[0]!.label).not.toBe('MUTATED');
+  });
+});
+
+/**
+ * Item 8: which checklist items open their "Advanced" fold on load. Anything
+ * off the defaults stays visible, so folding never hides configuration the
+ * operator already made.
+ */
+describe('advancedOpenByDefault', () => {
+  it('stays folded for a plain, default item', () => {
+    expect(advancedOpenByDefault(makeChecklistItem({ text: 'Meds' }))).toBe(false);
+  });
+  it('opens for a required item', () => {
+    expect(advancedOpenByDefault(makeChecklistItem({ required: true }))).toBe(true);
+  });
+  it('opens for a show-when-unchecked item', () => {
+    expect(advancedOpenByDefault(makeChecklistItem({ showWhenUnchecked: true }))).toBe(true);
+  });
+  it('opens for an item carrying any condition', () => {
+    const item = makeChecklistItem({
+      conditions: [{ source: 'KIN_SPECIES', op: 'EQUALS', value: 'dog', attributeKey: '' }],
+    });
+    expect(advancedOpenByDefault(item)).toBe(true);
   });
 });
