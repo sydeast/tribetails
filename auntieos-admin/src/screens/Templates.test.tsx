@@ -396,3 +396,57 @@ describe('Templates screen: an empty list that says which fact it means', () => 
     expect(await screen.findByText('No templates yet.')).toBeInTheDocument();
   });
 });
+describe('Templates screen: the mock\'s Ctrl-K search shortcut', () => {
+  beforeEach(() => {
+    listTemplates.mockReset();
+    listTemplateCategories.mockReset();
+    listTemplateCategories.mockResolvedValue([]);
+  });
+  it('draws the hint the mock draws, beside the search box', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    const hint = screen.getByText('Ctrl K');
+    expect(hint.tagName).toBe('KBD');
+    expect(hint.closest('.templates__search')).not.toBeNull();
+  });
+  it('Ctrl+K focuses the search box, so the hint is not a dead affordance', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    const input = screen.getByLabelText(/search templates by title or key/i);
+    expect(input).not.toHaveFocus();
+    await userEvent.keyboard('{Control>}k{/Control}');
+    expect(input).toHaveFocus();
+  });
+  it('Cmd+K does the same, because this admin is used on a Mac', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    const input = screen.getByLabelText(/search templates by title or key/i);
+    await userEvent.keyboard('{Meta>}k{/Meta}');
+    expect(input).toHaveFocus();
+  });
+  it('selects what is already typed, so the shortcut restarts a search instead of appending to it', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    const input = screen.getByLabelText(/search templates by title or key/i) as HTMLInputElement;
+    await userEvent.type(input, 'alph');
+    input.blur();
+    await userEvent.keyboard('{Control>}k{/Control}');
+    expect(input).toHaveFocus();
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe('alph'.length);
+  });
+  it('is inert while the list has not loaded: there is no box to focus, so the key is left to the browser', async () => {
+    // The search box lives inside the AsyncRegion ready branch. A failed load
+    // renders no input at all, and swallowing Ctrl-K there would steal the
+    // browser's own shortcut in exchange for nothing.
+    listTemplates.mockRejectedValue(new Error('permission-denied'));
+    render(<Templates />);
+    await screen.findByText(/listTemplates failed: permission-denied/, { selector: '.async-error-detail' });
+    await userEvent.keyboard('{Control>}k{/Control}');
+    expect(screen.queryByLabelText(/search templates by title or key/i)).toBeNull();
+  });
+});

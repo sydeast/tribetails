@@ -3,8 +3,9 @@
 ## STATUS 2026-08-09: all four mock SUGGESTIONs are SHIPPED, and this spec's item 6 is stale
 
 Operator ruling today was "as mocked, and all open items". Verified against source first,
-and there was almost nothing open. The mock (`auntieos-template-bank-2026-05-27.html`, ll.25-32)
-tags six suggestions; every one of them is live on BOTH consoles:
+and almost nothing was open. The mock (`auntieos-template-bank-2026-05-27.html`, ll.25-32)
+tags six suggestions; five were already live on BOTH consoles, and the sixth (Ctrl-K)
+shipped today on web:
 
 | Mock SUGGESTION | React `src/screens/Templates.tsx` | Android `ui/admin/TemplateBankScreen.kt` |
 | --- | --- | --- |
@@ -13,7 +14,7 @@ tags six suggestions; every one of them is live on BOTH consoles:
 | Per-card category pill + key | `templates__chip--category` + `<code className="templates__row-id">{tpl.templateId}</code>` | two `AuntieStatusPill`s, the key one `mono = true` |
 | Count chips on filter pills | `templates__tab-count` | the `($count)` suffix on each `AuntieChip` |
 | Live preview in the editor | `MergePreview` in `TemplateEditor.tsx` (PR #302) | `MergePreview` / `MergeFieldWarning` + `MarkdownPreview` |
-| Cmd/Ctrl-K hint on search | not built, and not drawn in the mock body either (comment only) | same |
+| Cmd/Ctrl-K hint on search | BUILT TODAY: `<kbd className="templates__search-kbd">Ctrl K</kbd>` plus the keydown binding that focuses and selects the box | n/a, no hardware-key chrome on a phone |
 
 **The "Click New" dead end the mock names is NOT real.** It was, when the mock was drawn
 against the wasm build. Both shipped consoles wire a New action today.
@@ -39,9 +40,20 @@ It now names the bound (`templateEmptyMessage`). Android's chips reported "All (
 failed `listTemplates()`, and its empty state blamed the category even when the search box was
 the thing excluding rows (`templateBankChipLabel`, `templateBankEmptyMessage`).
 
-**Still deferred:** the Android stat strip renders `templates.size` = "0" after a failed read.
-Same defect class, but the stat strip is not in this mock, and PR #314 deferred its exact
-analog on KinTales for the same reason ("an Android error surface the mock does not draw").
+**The sixth suggestion, Ctrl-K, was the one genuinely unbuilt affordance.** It IS drawn in
+the mock body (`<span class="kbd">Ctrl K</span>`, l.228), not merely named in the header
+comment. It ships with its binding, never as a bare legend: a key hint that does nothing is
+the same dead affordance the mock's own "Click New" note was complaining about. Ctrl and Cmd
+both. Web only, because there is no hardware-key chrome to hint at on the phone.
+
+**Still deferred, two:**
+1. The Android stat strip renders `templates.size` = "0" after a failed read. Same defect
+   class as the chips, but the stat strip is not in this mock, and PR #314 deferred its exact
+   analog on KinTales for the same reason ("an Android error surface the mock does not draw").
+2. The Android error banner is dismissible, and dismissing it sets `error = null`. With
+   nothing loaded, that brings "All (0)" and "No templates yet." back. Dismissal is an
+   explicit operator action rather than a state the screen falls into, so it is left alone,
+   but the confident zero is suppressed rather than gone.
 
 **Desired (source of truth):** `ui-ideas/auntieos-template-bank-2026-05-27.html`
 **Current code (web):** `web/composeApp/src/commonMain/kotlin/com/tribetails/auntieos/web/screens/admin/TemplateBankScreen.kt`
