@@ -293,5 +293,5 @@ class ServiceRepository() {
     // getAdminSettings / updateAdminSettings removed 2026-06-05 (settings
     // unification). The admin_settings doc collapsed into the unified
     // business_settings/business_settings doc; read/write via
-    // AuntieRepository.getBusinessSettings / saveBusinessSettings.
+    // AuntieRepository.getBusinessSettings / updateBusinessSettingsFields.
 }

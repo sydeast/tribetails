@@ -8,6 +8,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.BusinessHours
 import com.tribetails.auntieos.data.model.BusinessSettings
+import com.tribetails.auntieos.data.model.businessSettingsFieldChanges
 import com.tribetails.auntieos.data.model.MediaEntityType
 import com.tribetails.auntieos.data.model.UserProfile
 import com.tribetails.auntieos.data.repository.AuntieRepository
@@ -79,12 +80,27 @@ class AdminSettingsViewModel(
     private val _uiState = MutableStateFlow(AdminSettingsUiState())
     val uiState: StateFlow<AdminSettingsUiState> = _uiState.asStateFlow()
 
+    /**
+     * The settings document exactly as Firestore handed it over, and the only
+     * thing a save is allowed to diff against.
+     *
+     * NULL UNTIL A LOAD SUCCEEDS, which is load-bearing rather than tidy:
+     * [AdminSettingsUiState.businessSettings] starts at `BusinessSettings()`, so
+     * a save with no baseline would write ~46 Kotlin defaults over the real
+     * document. [saveSettingsDiff] refuses instead.
+     *
+     * It advances only after a write the server accepted, so a failed save
+     * leaves the edit pending and the retry still carries it.
+     */
+    private var settingsBaseline: BusinessSettings? = null
+
     fun loadBusinessSettings() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
             repository.getBusinessSettings().fold(
                 onSuccess = { settings ->
+                    settingsBaseline = settings
                     _uiState.value = _uiState.value.copy(
                         businessSettings = settings,
                         isLoading = false
@@ -100,26 +116,78 @@ class AdminSettingsViewModel(
         }
     }
 
-    fun updateBusinessSettings(settings: BusinessSettings) {
+    /**
+     * Persist [settings] as the fields it CHANGES against [settingsBaseline].
+     *
+     * Every panel on this screen edits a different slice of one shared document,
+     * and so does the React admin, which patches it per section
+     * (`auntieos-admin/src/api/settingsWrite.ts`). Handing the repository the
+     * whole model - which is what this used to do - wrote all ~46 fields back at
+     * the values the phone read, reverting whatever had changed since. Only the
+     * changed fields go now; `BusinessSettingsDiff.kt` says which fields exist
+     * and why.
+     *
+     * NOTHING CHANGED MEANS NOTHING IS WRITTEN, not even the stamp. `updatedAt`
+     * says when the document last changed, and moving it for a save that changed
+     * nothing makes it lie. The screen still reports success, because "saved" and
+     * "nothing to save" are the same outcome to the operator - and the Business
+     * Operations panel has a Save button that re-submits an untouched object.
+     */
+    private fun saveSettingsDiff(
+        settings: BusinessSettings,
+        failureLabel: String,
+        // Branding stages its logo pick and commits it with the text fields, so
+        // only that save may clear the staging slot. An unrelated panel's save
+        // clearing it would throw away a logo the operator had picked but not
+        // yet committed.
+        clearStagedLogo: Boolean = false,
+    ) {
+        val baseline = settingsBaseline
+        if (baseline == null) {
+            _uiState.value = _uiState.value.copy(
+                saveSuccess = false,
+                error = "Reopen Settings before saving: its saved copy was never loaded.",
+            )
+            return
+        }
+        val changes = businessSettingsFieldChanges(baseline, settings)
+        if (changes.isEmpty()) {
+            _uiState.value = _uiState.value.copy(
+                businessSettings = settings,
+                stagedLogoUrl = if (clearStagedLogo) null else _uiState.value.stagedLogoUrl,
+                saveSuccess = true,
+                error = null,
+            )
+            return
+        }
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(businessSettings = settings, saveSuccess = false)
 
-            repository.saveBusinessSettings(settings, "admin").fold(
+            repository.updateBusinessSettingsFields(changes, "admin").fold(
                 onSuccess = {
+                    // The baseline moves to what the server now holds. Without
+                    // this a second save re-sends the first save's fields, which
+                    // is the same clobber one step later.
+                    settingsBaseline = settings
                     _uiState.value = _uiState.value.copy(
                         businessSettings = settings,
+                        stagedLogoUrl = if (clearStagedLogo) null else _uiState.value.stagedLogoUrl,
                         saveSuccess = true,
                         error = null
                     )
                 },
                 onFailure = { error ->
                     _uiState.value = _uiState.value.copy(
-                        error = "Failed to save settings: ${error.message}",
+                        error = "$failureLabel: ${error.message}",
                         saveSuccess = false
                     )
                 }
             )
         }
+    }
+
+    fun updateBusinessSettings(settings: BusinessSettings) {
+        saveSettingsDiff(settings, failureLabel = "Failed to save settings")
     }
 
     // ---- Business hours ----
@@ -339,48 +407,39 @@ class AdminSettingsViewModel(
     /**
      * 17.2 Branding: commit the staged logo (if any) + the four text fields onto the
      * business_settings doc in a single merge write. The effective logo is the staged
-     * URL when present, else the already-saved one. Only the five branding fields
-     * change (withBranding preserves every sibling); fail-loud on save failure.
+     * URL when present, else the already-saved one. Fail-loud on save failure.
+     *
+     * "Only the five branding fields change" used to be true of the MODEL and
+     * false of the WRITE: `withBranding` preserves every sibling in memory, and
+     * the write then sent all of them anyway. The diff is what makes the sentence
+     * true of the document - a branding save now names the branding fields the
+     * operator actually altered and nothing else.
      */
     fun saveBranding(wordmark: String, tagline: String, greeting: String, accentTail: String) {
-        viewModelScope.launch {
-            val current = _uiState.value.businessSettings
-            val effectiveLogo = _uiState.value.stagedLogoUrl ?: current.logoUrl
-            val merged = current.withBranding(
-                logoUrl = effectiveLogo,
-                wordmark = wordmark,
-                tagline = tagline,
-                greeting = greeting,
-                accentTail = accentTail,
-                // Stamped so a removal made HERE reads as a removal on the web
-                // Settings screen too, rather than as "no logo set yet". Without
-                // it the two surfaces would disagree about what an empty logo
-                // means, which is the whole point of the field.
-                logoRemovedAt = nextLogoRemovedAt(
-                    previousLogoUrl = current.logoUrl,
-                    previousRemovedAt = current.logoRemovedAt,
-                    nextLogoUrl = effectiveLogo,
-                    nowIso = java.time.Instant.now().toString(),
-                ),
-            )
-            _uiState.value = _uiState.value.copy(saveSuccess = false)
-            repository.saveBusinessSettings(merged, "admin").fold(
-                onSuccess = {
-                    _uiState.value = _uiState.value.copy(
-                        businessSettings = merged,
-                        stagedLogoUrl = null,
-                        saveSuccess = true,
-                        error = null,
-                    )
-                },
-                onFailure = { e ->
-                    _uiState.value = _uiState.value.copy(
-                        error = "Failed to save branding: ${e.message}",
-                        saveSuccess = false,
-                    )
-                }
-            )
-        }
+        val current = _uiState.value.businessSettings
+        val effectiveLogo = _uiState.value.stagedLogoUrl ?: current.logoUrl
+        val merged = current.withBranding(
+            logoUrl = effectiveLogo,
+            wordmark = wordmark,
+            tagline = tagline,
+            greeting = greeting,
+            accentTail = accentTail,
+            // Stamped so a removal made HERE reads as a removal on the web
+            // Settings screen too, rather than as "no logo set yet". Without
+            // it the two surfaces would disagree about what an empty logo
+            // means, which is the whole point of the field.
+            logoRemovedAt = nextLogoRemovedAt(
+                previousLogoUrl = current.logoUrl,
+                previousRemovedAt = current.logoRemovedAt,
+                nextLogoUrl = effectiveLogo,
+                nowIso = java.time.Instant.now().toString(),
+            ),
+        )
+        saveSettingsDiff(
+            merged,
+            failureLabel = "Failed to save branding",
+            clearStagedLogo = true,
+        )
     }
 
     // ---- Password reset ----

@@ -36,6 +36,17 @@ class AdminSettingsViewModelTest {
 
     private fun buildViewModel() = AdminSettingsViewModel(repository = mockRepo)
 
+    /**
+     * A save diffs against the copy the screen LOADED, so every save case below
+     * loads first. A ViewModel that never loaded refuses to save at all rather
+     * than writing ~46 Kotlin defaults over the document; `BusinessSettingsSaveTest`
+     * covers that refusal, and the concurrent-edit cases, on its own.
+     */
+    private fun loadedViewModel(stored: BusinessSettings = BusinessSettings()): AdminSettingsViewModel {
+        coEvery { mockRepo.getBusinessSettings() } returns Result.success(stored)
+        return buildViewModel().also { it.loadBusinessSettings() }
+    }
+
     // ─── loadBusinessSettings ─────────────────────────────────────────────────
 
     @Test
@@ -75,14 +86,17 @@ class AdminSettingsViewModelTest {
 
     @Test
     fun `updateBusinessSettings sets saveSuccess true on success`() = runTest(testDispatcher) {
-        val updated = BusinessSettings(defaultEtaMinutes = 30)
-        coEvery { mockRepo.saveBusinessSettings(any(), any()) } returns Result.success(Unit)
+        coEvery { mockRepo.updateBusinessSettingsFields(any(), any()) } returns Result.success(Unit)
 
-        val vm = buildViewModel()
-        vm.updateBusinessSettings(updated)
+        val vm = loadedViewModel()
+        vm.updateBusinessSettings(vm.uiState.value.businessSettings.copy(defaultEtaMinutes = 30))
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { mockRepo.saveBusinessSettings(updated, "admin") }
+        // The DIFF reaches the repository, not the model: naming a field the
+        // operator did not touch is what reverted concurrent web edits.
+        coVerify(exactly = 1) {
+            mockRepo.updateBusinessSettingsFields(mapOf<String, Any?>("defaultEtaMinutes" to 30), "admin")
+        }
         val state = vm.uiState.value
         assertTrue("saveSuccess must be true on success", state.saveSuccess)
         assertNull("error must be null on success", state.error)
@@ -90,11 +104,11 @@ class AdminSettingsViewModelTest {
 
     @Test
     fun `updateBusinessSettings sets error and clears saveSuccess when repository fails`() = runTest(testDispatcher) {
-        val updated = BusinessSettings(defaultEtaMinutes = 30)
-        coEvery { mockRepo.saveBusinessSettings(any(), any()) } returns Result.failure(RuntimeException("Write denied"))
+        coEvery { mockRepo.updateBusinessSettingsFields(any(), any()) } returns
+            Result.failure(RuntimeException("Write denied"))
 
-        val vm = buildViewModel()
-        vm.updateBusinessSettings(updated)
+        val vm = loadedViewModel()
+        vm.updateBusinessSettings(vm.uiState.value.businessSettings.copy(defaultEtaMinutes = 30))
         advanceUntilIdle()
 
         val state = vm.uiState.value
@@ -107,9 +121,9 @@ class AdminSettingsViewModelTest {
 
     @Test
     fun `clearSaveSuccess resets saveSuccess to false`() = runTest(testDispatcher) {
-        coEvery { mockRepo.saveBusinessSettings(any(), any()) } returns Result.success(Unit)
-        val vm = buildViewModel()
-        vm.updateBusinessSettings(BusinessSettings())
+        coEvery { mockRepo.updateBusinessSettingsFields(any(), any()) } returns Result.success(Unit)
+        val vm = loadedViewModel()
+        vm.updateBusinessSettings(vm.uiState.value.businessSettings.copy(defaultEtaMinutes = 30))
         advanceUntilIdle()
         assertTrue("precondition: saveSuccess should be true", vm.uiState.value.saveSuccess)
 
@@ -121,10 +135,10 @@ class AdminSettingsViewModelTest {
     @Test
     fun `two rapid updateBusinessSettings calls both complete without state corruption`() =
         runTest(testDispatcher) {
-            coEvery { mockRepo.saveBusinessSettings(any(), any()) } returns Result.success(Unit)
+            coEvery { mockRepo.updateBusinessSettingsFields(any(), any()) } returns Result.success(Unit)
 
-            val vm = buildViewModel()
-            val settings = BusinessSettings(defaultEtaMinutes = 10)
+            val vm = loadedViewModel()
+            val settings = vm.uiState.value.businessSettings.copy(defaultEtaMinutes = 10)
             vm.updateBusinessSettings(settings)
             vm.updateBusinessSettings(settings.copy(defaultEtaMinutes = 20))
             advanceUntilIdle()

@@ -38,6 +38,15 @@ class ServiceManagementViewModel(
     private val _state = MutableStateFlow(ServiceManagementState())
     val state: StateFlow<ServiceManagementState> = _state.asStateFlow()
 
+    /**
+     * The settings document as Firestore handed it over, and the only thing
+     * [updateBusinessSettings] may diff against. Null until a load SUCCEEDS: the
+     * state below falls back to `BusinessSettings()` so the panels can render, and
+     * saving that fallback would put ~46 Kotlin defaults over the real document.
+     * Advances only after a write the server accepted.
+     */
+    private var settingsBaseline: BusinessSettings? = null
+
     init {
         loadAllData()
     }
@@ -55,6 +64,7 @@ class ServiceManagementViewModel(
                 val promoCodesResult = serviceRepository.getPromoCodes(includeInactive = true)
                 val businessHoursResult = serviceRepository.getBusinessHours()
                 val businessSettingsResult = auntieRepository.getBusinessSettings()
+                businessSettingsResult.onSuccess { settingsBaseline = it }
 
                 _state.value = _state.value.copy(
                     baseServices = baseServicesResult.getOrNull() ?: emptyList(),
@@ -359,13 +369,42 @@ class ServiceManagementViewModel(
         }
     }
 
+    /**
+     * Persist ONLY the settings fields this screen changed.
+     *
+     * `business_settings` is one document shared with the Settings screen, the
+     * Scheduling screen and the React admin, which patches it per section
+     * (`auntieos-admin/src/api/settingsWrite.ts`). This used to write the whole
+     * model under `SetOptions.merge()`, which protects fields outside the written
+     * map and does nothing about stale ones inside it, so every field the phone
+     * had read reverted whatever changed since. See `BusinessSettingsDiff.kt`.
+     *
+     * An empty diff writes nothing, not even the stamp: moving `updatedAt` for a
+     * save that changed nothing makes it lie about when the doc last changed.
+     */
     fun updateBusinessSettings(settings: BusinessSettings) {
+        val baseline = settingsBaseline
+        if (baseline == null) {
+            _state.value = _state.value.copy(
+                isLoading = false,
+                errorMessage = "Reopen Services before saving: the settings doc was never loaded.",
+            )
+            return
+        }
+        val changes = businessSettingsFieldChanges(baseline, settings)
+        if (changes.isEmpty()) {
+            _state.value = _state.value.copy(businessSettings = settings, isLoading = false)
+            return
+        }
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true)
 
-            val result = auntieRepository.saveBusinessSettings(settings)
+            val result = auntieRepository.updateBusinessSettingsFields(changes)
 
             if (result.isSuccess) {
+                // The baseline moves to what the server now holds; without it a
+                // second save re-sends the first save's fields.
+                settingsBaseline = settings
                 _state.value = _state.value.copy(
                     businessSettings = settings,
                     isLoading = false

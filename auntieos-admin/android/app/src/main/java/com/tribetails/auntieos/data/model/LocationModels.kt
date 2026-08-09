@@ -145,9 +145,17 @@ data class KinCareSessionWithLocation(
 // settings doc `business_settings/business_settings`. It absorbs the former
 // `admin_settings/admin_settings` doc (booking config + timeBlocks + business
 // profile) so web + android share a single union. Field names below are the
-// Firestore wire names. Saves go through AuntieRepository.saveBusinessSettings
-// with SetOptions.merge() read-modify-write so no sibling field is ever
-// clobbered.
+// Firestore wire names.
+//
+// SAVES GO THROUGH AuntieRepository.updateBusinessSettingsFields, which writes
+// only the fields that CHANGED against the copy the screen loaded (the map is
+// built by BusinessSettingsDiff.kt). It used to be a whole-object
+// SetOptions.merge write, described here as "so no sibling field is ever
+// clobbered" - true of deletion and false of everything else, since every field
+// below sat inside the written map and went back at whatever the phone had read.
+// A field added below must be added to BUSINESS_SETTINGS_DIFF_FIELDS or it will
+// silently stop saving; the drift guard in BusinessSettingsDiffTest fails if it
+// is not.
 @Keep
 data class BusinessSettings(
     @DocumentId val id: String = "business_settings", // Single document

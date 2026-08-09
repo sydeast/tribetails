@@ -143,7 +143,7 @@ class ServiceManagementViewModelTest {
 
     @Test
     fun `updateBusinessSettings sets errorMessage on failure`() = runTest(testDispatcher) {
-        coEvery { auntieRepo.saveBusinessSettings(any(), any()) } returns Result.failure(RuntimeException("Settings fail"))
+        coEvery { auntieRepo.updateBusinessSettingsFields(any(), any()) } returns Result.failure(RuntimeException("Settings fail"))
 
         val vm = buildViewModel()
         advanceUntilIdle()
@@ -156,7 +156,7 @@ class ServiceManagementViewModelTest {
 
     @Test
     fun `updateBusinessSettings updates local state on success`() = runTest(testDispatcher) {
-        coEvery { auntieRepo.saveBusinessSettings(any(), any()) } returns Result.success(Unit)
+        coEvery { auntieRepo.updateBusinessSettingsFields(any(), any()) } returns Result.success(Unit)
 
         val vm = buildViewModel()
         advanceUntilIdle()

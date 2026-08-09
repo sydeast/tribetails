@@ -19,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.tribetails.auntieos.data.model.businessSettingsFieldChanges
 import com.tribetails.auntieos.data.model.ContactOverride
 import com.tribetails.auntieos.data.model.HouseholdData
 import com.tribetails.auntieos.data.model.Kin
@@ -834,10 +835,20 @@ internal suspend fun loadTagVocab(
 /**
  * Persist a vocabulary grown by an inline promotion on a profile.
  *
- * React patches the single key it changed. Android saves settings as an object,
- * so this re-reads first and writes the merged result: the repository's write is
- * a SetOptions.merge, and re-reading keeps a household promotion from carrying a
- * stale copy of the pet list (or the reverse) back over a concurrent edit.
+ * React patches the single key it changed, and now so does this: the re-read is
+ * the baseline, and only the fields that differ from it go out. The re-read used
+ * to be the whole defence - android sent the entire settings object, so a
+ * household promotion carried a stale copy of the pet list, the calendar id and
+ * the payment handles along with it, and a fresh read only narrowed that window.
+ * With the diff one vocabulary key is written and the window closes: no tag
+ * promotion can revert anything else on the document, whatever landed between
+ * the read and the write.
+ *
+ * An unchanged vocabulary writes nothing rather than moving the stamp.
+ *
+ * Fail-loud is unchanged: `ProfileTagsSection` turns a throw into a reverted chip
+ * plus a visible banner, so a swallowed failure would tell the operator a tag
+ * saved when it never left the device.
  */
 internal suspend fun saveTagVocab(
     repository: AuntieRepository,
@@ -845,7 +856,9 @@ internal suspend fun saveTagVocab(
     defs: List<TagDef>,
 ) {
     val current = repository.getBusinessSettings().getOrThrow()
-    repository.saveBusinessSettings(settingsWithTagVocab(current, scope, defs)).getOrThrow()
+    val changes = businessSettingsFieldChanges(current, settingsWithTagVocab(current, scope, defs))
+    if (changes.isEmpty()) return
+    repository.updateBusinessSettingsFields(changes).getOrThrow()
 }
 
 /**

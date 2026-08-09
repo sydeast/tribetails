@@ -214,11 +214,61 @@ class EnhancedSchedulingViewModel(
     private val _state = MutableStateFlow(SchedulingState())
     val state: StateFlow<SchedulingState> = _state.asStateFlow()
 
+    /**
+     * The settings document as Firestore handed it over, and the only thing the
+     * three settings writes on this screen may diff against.
+     *
+     * NULL UNTIL A LOAD SUCCEEDS, and that is the sharper half here:
+     * [loadInitialData] falls back to `BusinessSettings()` when the read fails so
+     * the grid still renders, and the old whole-model save then wrote that
+     * near-DEFAULT document over the real one - business name, payment handles
+     * and calendar id blanked in a single `set()`. [saveSettingsDiff] refuses
+     * instead. Advances only after a write the server accepted.
+     */
+    private var settingsBaseline: BusinessSettings? = null
+
     init {
         loadInitialData()
         observeBusyTimeSlots()
         observeIncomingSeries()
         loadGoogleCalendarState()
+    }
+
+    /**
+     * Persist ONLY the settings fields [updated] changes, and report the outcome.
+     *
+     * The three writes on this screen (the booking-mode default, the Google
+     * Calendar id, and the in-place settings updater) each edit ONE field of a
+     * ~46-field union that the Settings screen, Service Management and the React
+     * admin all also write. `SetOptions.merge()` guards fields outside the
+     * written map and does nothing about stale ones inside it, so a whole-model
+     * save from here reverted every one of those editors. The React side patches
+     * per section for exactly this reason
+     * (`auntieos-admin/src/api/settingsWrite.ts`); `BusinessSettingsDiff.kt`
+     * carries the android half of the argument.
+     *
+     * An empty diff succeeds without writing: moving `updatedAt` for a save that
+     * changed nothing makes the stamp lie.
+     *
+     * RETURNS WHETHER A WRITE ACTUALLY HAPPENED, and that Boolean is load-bearing
+     * for [saveCalendarSyncId]. Success and "there was nothing to send" are the
+     * same outcome to the operator but not to the audit log: an entry reading
+     * "Set Google Calendar sync id" against a save that sent no bytes is the same
+     * lie as a moved `updatedAt`, one collection over.
+     */
+    private suspend fun saveSettingsDiff(updated: BusinessSettings): Result<Boolean> {
+        val baseline = settingsBaseline
+            ?: return Result.failure(
+                IllegalStateException("Reopen Scheduling before saving: its settings were never loaded.")
+            )
+        val changes = businessSettingsFieldChanges(baseline, updated)
+        if (changes.isEmpty()) return Result.success(false)
+        return auntieRepository.updateBusinessSettingsFields(changes).map {
+            // The baseline moves to what the server now holds; without it a
+            // second save re-sends the first save's fields.
+            settingsBaseline = updated
+            true
+        }
     }
 
     /**
@@ -334,6 +384,7 @@ class EnhancedSchedulingViewModel(
                 // Unified settings (2026-06-05): booking config + timeBlocks now
                 // live on business_settings, read via AuntieRepository.
                 val businessSettingsResult = auntieRepository.getBusinessSettings()
+                businessSettingsResult.onSuccess { settingsBaseline = it }
                 val businessSettings = businessSettingsResult.getOrNull() ?: BusinessSettings()
                 // Server-written calendar-sync receipt, read separately from the
                 // settings model so a settings save can never write a stale one
@@ -414,11 +465,19 @@ class EnhancedSchedulingViewModel(
     fun changeBookingMode(mode: BookingMode) {
         _state.value = _state.value.copy(bookingMode = mode)
 
-        // Persist the default booking mode onto the unified settings doc (merge).
+        // Persist the default booking mode onto the unified settings doc. ONE
+        // field goes out, so switching the calendar's mode can no longer rewrite
+        // the calendar-sync id, the payment handles or the tag vocabularies that
+        // share this document.
         viewModelScope.launch {
             val updatedSettings = _state.value.businessSettings.withBookingMode(mode)
-            auntieRepository.saveBusinessSettings(updatedSettings)
-            _state.value = _state.value.copy(businessSettings = updatedSettings)
+            saveSettingsDiff(updatedSettings)
+                .onSuccess { _state.value = _state.value.copy(businessSettings = updatedSettings) }
+                .onFailure { e ->
+                    _state.value = _state.value.copy(
+                        errorMessage = "Failed to save the booking mode: ${e.message}"
+                    )
+                }
         }
     }
 
@@ -1033,16 +1092,22 @@ class EnhancedSchedulingViewModel(
             }
             _state.value = _state.value.copy(isLoading = true, errorMessage = null, calendarSyncIdSaved = false)
             val updated = _state.value.businessSettings.copy(calendarSyncId = calendarSyncId.trim())
-            val result = auntieRepository.saveBusinessSettings(updated)
+            val result = saveSettingsDiff(updated)
             if (result.isSuccess) {
-                com.tribetails.auntieos.data.admin.AuditLog.fire(
-                    scope            = viewModelScope,
-                    repository       = auntieRepository,
-                    actionType       = "UPDATE_BUSINESS_SETTINGS",
-                    description      = "Set Google Calendar sync id",
-                    targetId         = "business_settings",
-                    targetCollection = "business_settings",
-                )
+                // ONLY when a write actually went out. Re-saving the id the doc
+                // already holds diffs to nothing and sends nothing, and an audit
+                // entry for it would claim a change that never happened - the
+                // same lie a moved `updatedAt` tells, one collection over.
+                if (result.getOrDefault(false)) {
+                    com.tribetails.auntieos.data.admin.AuditLog.fire(
+                        scope            = viewModelScope,
+                        repository       = auntieRepository,
+                        actionType       = "UPDATE_BUSINESS_SETTINGS",
+                        description      = "Set Google Calendar sync id",
+                        targetId         = "business_settings",
+                        targetCollection = "business_settings",
+                    )
+                }
                 _state.value = _state.value.copy(
                     isLoading = false,
                     businessSettings = updated,
@@ -1533,15 +1598,24 @@ class EnhancedSchedulingViewModel(
     }
 
     /**
-     * Apply an in-place edit to the unified [BusinessSettings] and persist it
-     * (merge write). Replaces the former AdminSettings updater; booking config
-     * now lives on the single business_settings doc.
+     * Apply an in-place edit to the unified [BusinessSettings] and persist the
+     * fields [update] actually changed. Replaces the former AdminSettings
+     * updater; booking config now lives on the single business_settings doc,
+     * shared with the Settings screen, Service Management and the React admin,
+     * which is why only the diff goes out (see [saveSettingsDiff]).
+     *
+     * Fail-loud: this used to discard the write result entirely, so a rejected
+     * settings write left the screen showing an edit the server never took.
      */
     fun updateBusinessSettings(update: (BusinessSettings) -> BusinessSettings) {
         val newSettings = update(_state.value.businessSettings)
         _state.value = _state.value.copy(businessSettings = newSettings)
         viewModelScope.launch {
-            auntieRepository.saveBusinessSettings(newSettings)
+            saveSettingsDiff(newSettings).onFailure { e ->
+                _state.value = _state.value.copy(
+                    errorMessage = "Failed to save settings: ${e.message}"
+                )
+            }
         }
     }
 
