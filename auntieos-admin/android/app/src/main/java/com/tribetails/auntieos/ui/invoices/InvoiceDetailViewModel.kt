@@ -56,6 +56,24 @@ data class InvoiceDetailUiState(
      * alive on this screen.
      */
     val clientPayments: List<GetInvoiceLedgerResultLedgerPayment> = emptyList(),
+    /**
+     * Is the ledger read still in flight?
+     *
+     * IT STARTS TRUE, and that is the point. Both lists above default to empty,
+     * and an empty list rendered while the answer is still on the wire is the
+     * panel telling the operator this invoice has no payments, a claim it has
+     * no evidence for yet.
+     */
+    val paymentsLoading: Boolean = true,
+    /**
+     * The verbatim failure from `getInvoiceLedger`, or null.
+     *
+     * A TOAST WAS NOT ENOUGH. It was the only report of this failure, and it
+     * disappears; the empty payments panel it leaves behind does not, and reads
+     * as a fact about the invoice rather than about the network. Held in state
+     * so the panel can say which one it is for as long as it is true.
+     */
+    val paymentsError: String? = null,
     val showRecordPayment: Boolean = false,
     val recordingPayment: Boolean = false,
     // Stage 2 tail: header receipt / reminder + draft review-and-send actions.
@@ -147,26 +165,51 @@ class InvoiceDetailViewModel(
      * were. There is deliberately no fall back to the raw Firestore read — that
      * would restore the 100x defect on exactly the days the callable is
      * unhealthy, which is the worst possible time to start guessing at money.
+     *
+     * AND IT NOW SURVIVES THE TOAST. The failure is also written to
+     * [InvoiceDetailUiState.paymentsError] so the panel keeps saying it. A toast
+     * fades; the empty list it leaves behind does not, and an empty payments
+     * panel is a statement about the invoice, not about the read that failed.
      */
-    private fun loadPaymentsForInvoice(invoiceId: String) {
-        if (invoiceId.isBlank()) return
+    fun loadPaymentsForInvoice(invoiceId: String) {
+        if (invoiceId.isBlank()) {
+            // Nothing to ask about, so stop claiming a read is in flight. The
+            // panel would otherwise spin for the life of the screen.
+            _uiState.value = _uiState.value.copy(
+                paymentsLoading = false,
+                paymentsError = "This invoice has no id, so its payments cannot be looked up.",
+            )
+            return
+        }
+        _uiState.value = _uiState.value.copy(paymentsLoading = true, paymentsError = null)
         viewModelScope.launch {
             invoiceRepository.getInvoiceLedger(invoiceId)
                 .onSuccess { ledger ->
                     _uiState.value = _uiState.value.copy(
                         linkedPayments = ledger.ledgerPayments,
                         clientPayments = ledger.unlinkedKinfolkPayments,
+                        paymentsLoading = false,
+                        paymentsError = null,
                     )
                 }
                 .onFailure { err ->
                     AuntieLog.e("Failed to load payments for invoice $invoiceId", err)
                     _uiState.value = _uiState.value.copy(
+                        paymentsLoading = false,
+                        // Verbatim, never reworded: the server's own words are
+                        // what tells the operator whether to retry or call someone.
+                        paymentsError = err.message ?: "The payment ledger could not be read.",
                         toastMessage = "Couldn't load payments: ${err.message}",
                         toastVisible = true,
                         toastIsError = true,
                     )
                 }
         }
+    }
+
+    /** Retry for the panel's own failure notice. Same read, nothing else reset. */
+    fun retryPayments() {
+        loadPaymentsForInvoice(_uiState.value.invoice?.id.orEmpty())
     }
 
     fun openRecordPayment() { _uiState.value = _uiState.value.copy(showRecordPayment = true) }

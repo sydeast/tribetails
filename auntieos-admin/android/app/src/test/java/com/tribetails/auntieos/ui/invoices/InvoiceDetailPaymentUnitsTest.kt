@@ -1,6 +1,8 @@
 package com.tribetails.auntieos.ui.invoices
 
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -196,10 +198,15 @@ class InvoiceDetailPaymentUnitsTest {
                 ledger(ledgerPayments = listOf(ledgerRow(amountCents = 0L, amountResolved = false))),
             ),
         )
-        rule.onNodeWithText("could not be read").assertExists()
-        // The row carries method and date and nothing else, so no legitimate
-        // zero on this screen can absorb the assertion.
-        rule.onNodeWithText("$0.00").assertDoesNotExist()
+        // TWICE, since the row grew its breakdown: once where the amount goes,
+        // and once where the balance does. The server works the balance out as
+        // amount - applied - tip, so on this row it is arithmetic on the
+        // schema's floor rather than on a reading, and it is suppressed for the
+        // same reason the amount is.
+        rule.onAllNodesWithText("could not be read").assertCountEquals(2)
+        // The two zeros left are the TIP and the FEE, both read from their own
+        // stored fields and both genuine. Neither is the amount.
+        rule.onAllNodesWithText("$0.00").assertCountEquals(2)
     }
 
     @Test
@@ -208,7 +215,9 @@ class InvoiceDetailPaymentUnitsTest {
         // another: a payment genuinely recorded at zero is a fact the operator
         // is entitled to see.
         mount(Result.success(ledger(ledgerPayments = listOf(ledgerRow(amountCents = 0L)))))
-        rule.onNodeWithText("$0.00").assertExists()
+        // Amount, tip, fee and balance: four cells, four zeros, every one of
+        // them a reading of a field that really says zero.
+        rule.onAllNodesWithText("$0.00").assertCountEquals(4)
         rule.onNodeWithText("could not be read").assertDoesNotExist()
     }
 
@@ -219,8 +228,10 @@ class InvoiceDetailPaymentUnitsTest {
         // rows come off the same reader, so they can carry the same defect.
         mount(Result.success(ledger(unlinked = listOf(ledgerRow(amountCents = 0L, amountResolved = false)))))
         rule.onNodeWithText("NOT INVOICE-LINKED").assertExists()
-        rule.onNodeWithText("could not be read").assertExists()
-        rule.onNodeWithText("$0.00").assertDoesNotExist()
+        // Amount and balance, same as the linked list: this row gets the same
+        // reading wherever it is shown.
+        rule.onAllNodesWithText("could not be read").assertCountEquals(2)
+        rule.onAllNodesWithText("$0.00").assertCountEquals(2)
     }
 
     @Test
