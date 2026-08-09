@@ -21,6 +21,8 @@ import {
   buildSections,
   validateField,
   validateSchema,
+  schemaMetaErrors,
+  fieldListErrors,
   moveUp,
   moveDown,
   emptyField,
@@ -164,6 +166,42 @@ describe('validateSchema (pure)', () => {
   });
 });
 
+/**
+ * The split exists so the wizard can put each problem on the STEP THAT OWNS THE
+ * FIELD rather than in one flat banner at the bottom of a very long form.
+ * `validateSchema` stays the concatenation of the two, so the whole-schema
+ * contract above is unchanged.
+ */
+describe('schemaMetaErrors / fieldListErrors (pure)', () => {
+  it('keeps id and name problems on the schema step', () => {
+    expect(schemaMetaErrors({ id: '', name: '' })).toEqual([
+      'Schema id is required.',
+      'Schema name is required.',
+    ]);
+  });
+
+  it('leaves field problems out of the schema step', () => {
+    expect(schemaMetaErrors({ id: 'ok', name: 'X' })).toEqual([]);
+  });
+
+  it('keeps the empty-list and per-field problems on the fields step', () => {
+    expect(fieldListErrors([])).toEqual(['At least one field is required.']);
+    expect(fieldListErrors([field({ label: '' })])).toEqual(['Field 1: Label is required.']);
+  });
+
+  it('leaves id and name problems out of the fields step', () => {
+    expect(fieldListErrors([field()])).toEqual([]);
+  });
+
+  it('composes back into validateSchema, in the same order', () => {
+    const input = { id: '', name: '', fields: [field({ key: '' })] };
+    expect(validateSchema(input)).toEqual([
+      ...schemaMetaErrors(input),
+      ...fieldListErrors(input.fields),
+    ]);
+  });
+});
+
 describe('moveUp / moveDown (pure)', () => {
   it('swaps with the previous element', () => {
     expect(moveUp(['a', 'b', 'c'], 1)).toEqual(['b', 'a', 'c']);
@@ -214,6 +252,105 @@ describe('emptyField (pure)', () => {
   });
 });
 
+/**
+ * The editor is a workflow modal with one section per step, so a test that
+ * wants a field has to be standing on the step that owns it. These walk the
+ * RAIL, which is the operator's own free-jump navigation, rather than pressing
+ * Next repeatedly.
+ *
+ * A step that is not current is asserted by ABSENCE FROM THE DOM, never by
+ * `toBeVisible`: jsdom ships no user-agent stylesheet, so `toBeVisible` passes
+ * on content a browser hides.
+ */
+async function goToStep(label: 'Schema' | 'Fields' | 'Review') {
+  await userEvent.click(screen.getByRole('button', { name: new RegExp(`^\\d ${label}`) }));
+}
+
+/** Fills in a complete, valid one-field schema, ending on the Review step. */
+async function fillValidSchema() {
+  await userEvent.type(screen.getByLabelText(/schema id/i), 'newSchema');
+  await userEvent.type(screen.getByLabelText(/^name$/i), 'New Schema');
+  await goToStep('Fields');
+  await userEvent.click(screen.getByRole('button', { name: /add field/i }));
+  await userEvent.type(screen.getByLabelText(/^key$/i), 'firstName');
+  await userEvent.type(screen.getByLabelText(/^label$/i), 'First name');
+  await goToStep('Review');
+}
+
+describe('FormSchemaEditor: the workflow modal', () => {
+  it('is a labelled modal, opening on the first step', () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('New Form Schema');
+    expect(screen.getByRole('navigation', { name: 'New Form Schema steps' })).toBeInTheDocument();
+    expect(screen.getByText('Step 1 of 3')).toBeInTheDocument();
+  });
+
+  it('keeps each section on its own step, so the other steps are not in the DOM', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    expect(screen.getByLabelText(/schema id/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add field/i })).toBeNull();
+
+    await goToStep('Fields');
+    expect(screen.getByRole('button', { name: /add field/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/schema id/i)).toBeNull();
+  });
+
+  it('keeps what was typed when the operator leaves the step and comes back', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/^name$/i), 'Tribe Profile');
+    await goToStep('Fields');
+    await goToStep('Schema');
+    expect(screen.getByLabelText(/^name$/i)).toHaveValue('Tribe Profile');
+  });
+
+  it('flags the step that owns a problem, from the rail', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    // Blank id + blank name on step 1; no fields at all on step 2.
+    expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName(
+      '1 Schema 2 things to fix',
+    );
+    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName(
+      '2 Fields 1 thing to fix',
+    );
+
+    await userEvent.type(screen.getByLabelText(/schema id/i), 'newSchema');
+    await userEvent.type(screen.getByLabelText(/^name$/i), 'New Schema');
+    expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName('1 Schema');
+  });
+
+  it('draws helper text, placeholder, default and group in full, never behind a disclosure', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await goToStep('Fields');
+    await userEvent.click(screen.getByRole('button', { name: /add field/i }));
+    expect(screen.getByLabelText(/helper text/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/placeholder/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/default value/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^group$/i)).toBeInTheDocument();
+    expect(document.querySelector('details')).toBeNull();
+  });
+
+  it('warns before discarding typed work, and closes only when the operator says so', async () => {
+    const onCancel = vi.fn();
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={onCancel} />);
+    await userEvent.type(screen.getByLabelText(/^name$/i), 'Half a schema');
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(onCancel).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: /discard changes/i }));
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it('summarises what will be written on the review step', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await fillValidSchema();
+    expect(screen.getByText('1 field')).toBeInTheDocument();
+    // Scoped to the summary list: the live preview beside this step renders the
+    // same label as a real control, so an unscoped query matches both.
+    const summary = within(screen.getByRole('list', { name: 'Fields in this schema' }));
+    expect(summary.getByText('First name')).toBeInTheDocument();
+    expect(summary.getByText(/firstName · text/)).toBeInTheDocument();
+  });
+});
+
 describe('FormSchemaEditor: create mode', () => {
   it('seeds a blank schema and does not call getFormSchema', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
@@ -223,22 +360,30 @@ describe('FormSchemaEditor: create mode', () => {
 
   it('disables Save until id, name, and at least one valid field are present', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await goToStep('Review');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeDisabled();
 
+    await goToStep('Schema');
     await userEvent.type(screen.getByLabelText(/schema id/i), 'newSchema');
     await userEvent.type(screen.getByLabelText(/^name$/i), 'New Schema');
+    await goToStep('Review');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeDisabled(); // no fields yet
 
+    await goToStep('Fields');
     await userEvent.click(screen.getByRole('button', { name: /add field/i }));
+    await goToStep('Review');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeDisabled(); // key/label blank
 
+    await goToStep('Fields');
     await userEvent.type(screen.getByLabelText(/^key$/i), 'firstName');
     await userEvent.type(screen.getByLabelText(/^label$/i), 'First name');
+    await goToStep('Review');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeEnabled();
   });
 
   it('auto-derives a blank field key from the label on blur (AO-49), never overwriting a typed key', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await goToStep('Fields');
     await userEvent.click(screen.getByRole('button', { name: /add field/i }));
 
     // Type a label, blur, the empty key is filled from it.
@@ -262,12 +407,7 @@ describe('FormSchemaEditor: create mode', () => {
     const onSaved = vi.fn();
     render(<FormSchemaEditor onSaved={onSaved} onCancel={vi.fn()} />);
 
-    await userEvent.type(screen.getByLabelText(/schema id/i), 'newSchema');
-    await userEvent.type(screen.getByLabelText(/^name$/i), 'New Schema');
-    await userEvent.click(screen.getByRole('button', { name: /add field/i }));
-    await userEvent.type(screen.getByLabelText(/^key$/i), 'firstName');
-    await userEvent.type(screen.getByLabelText(/^label$/i), 'First name');
-
+    await fillValidSchema();
     await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
 
     await waitFor(() => expect(saveFormSchema).toHaveBeenCalledTimes(1));
@@ -301,18 +441,25 @@ describe('FormSchemaEditor: create mode', () => {
     const onSaved = vi.fn();
     render(<FormSchemaEditor onSaved={onSaved} onCancel={vi.fn()} />);
 
-    await userEvent.type(screen.getByLabelText(/schema id/i), 'newSchema');
-    await userEvent.type(screen.getByLabelText(/^name$/i), 'New Schema');
-    await userEvent.click(screen.getByRole('button', { name: /add field/i }));
-    await userEvent.type(screen.getByLabelText(/^key$/i), 'firstName');
-    await userEvent.type(screen.getByLabelText(/^label$/i), 'First name');
+    await fillValidSchema();
     await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
 
     expect(await screen.findByText(/saveFormSchema failed:.*validation failed/i)).toBeInTheDocument();
     expect(onSaved).not.toHaveBeenCalled();
   });
 
-  it('calls onCancel and never calls saveFormSchema when Cancel is clicked', async () => {
+  it('keeps a refusal on screen from every step, because it is the flow that failed', async () => {
+    saveFormSchema.mockRejectedValue(new Error('formSchema validation failed'));
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await fillValidSchema();
+    await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
+    await screen.findByText(/saveFormSchema failed/i);
+
+    await goToStep('Schema');
+    expect(screen.getByText(/saveFormSchema failed/i)).toBeInTheDocument();
+  });
+
+  it('calls onCancel and never calls saveFormSchema when Cancel is clicked on a clean form', async () => {
     const onCancel = vi.fn();
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={onCancel} />);
     await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
@@ -329,6 +476,7 @@ describe('FormSchemaEditor: edit mode', () => {
     expect(await screen.findByDisplayValue('Tribe Profile')).toBeInTheDocument();
     expect(getFormSchema).toHaveBeenCalledWith('tribeProfile');
     expect(screen.getByLabelText(/schema id/i)).toBeDisabled();
+    await goToStep('Fields');
     expect(screen.getByDisplayValue('firstName')).toBeInTheDocument();
   });
 
@@ -349,8 +497,11 @@ describe('FormSchemaEditor: edit mode', () => {
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
     expect(await screen.findByText(/sections merged/i)).toBeInTheDocument();
+    await goToStep('Fields');
     expect(screen.getByDisplayValue('a')).toBeInTheDocument();
     expect(screen.getByDisplayValue('b')).toBeInTheDocument();
+    // The warning is about the whole record, so it follows the operator across steps.
+    expect(screen.getByText(/sections merged/i)).toBeInTheDocument();
   });
 
   it('removes a field via its remove button', async () => {
@@ -366,7 +517,8 @@ describe('FormSchemaEditor: edit mode', () => {
       }),
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByDisplayValue('a');
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Fields');
     await userEvent.click(screen.getByRole('button', { name: /remove field a/i }));
     expect(screen.queryByDisplayValue('a')).toBeNull();
     expect(screen.getByDisplayValue('b')).toBeInTheDocument();
@@ -385,7 +537,8 @@ describe('FormSchemaEditor: edit mode', () => {
       }),
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByDisplayValue('a');
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Fields');
     const keyInputsBefore = screen.getAllByLabelText(/^key$/i) as HTMLInputElement[];
     expect(keyInputsBefore.map((i) => i.value)).toEqual(['a', 'b']);
 
@@ -398,14 +551,22 @@ describe('FormSchemaEditor: edit mode', () => {
   it('shows an options input only for select/multiselect, required by validation', async () => {
     getFormSchema.mockResolvedValue(schema());
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByDisplayValue('firstName');
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Fields');
     expect(screen.queryByLabelText(/options/i)).toBeNull();
 
     await userEvent.selectOptions(screen.getByLabelText(/^type$/i), 'select');
     expect(await screen.findByLabelText(/options/i)).toBeInTheDocument();
+    // The problem belongs to the Fields step, and the rail says so from anywhere.
+    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName(
+      '2 Fields 1 thing to fix',
+    );
+    await goToStep('Review');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeDisabled();
 
+    await goToStep('Fields');
     await userEvent.type(screen.getByLabelText(/options/i), 'Dog, Cat');
+    await goToStep('Review');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeEnabled();
   });
 
@@ -416,7 +577,8 @@ describe('FormSchemaEditor: edit mode', () => {
       () => new Promise((resolve) => { resolveSave = resolve; }),
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByDisplayValue('firstName');
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Review');
 
     await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
     expect(screen.getByRole('button', { name: /saving/i })).toBeDisabled();
@@ -458,6 +620,10 @@ describe('FormSchemaEditor: live preview', () => {
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
     const preview = await screen.findByRole('region', { name: 'Live preview' });
     expect(within(preview).getByLabelText('First name *')).toBeInTheDocument();
+    // The preview is the wizard's `aside`, so it sits BESIDE the Fields step
+    // rather than being replaced by it. That is the whole claim: typing into a
+    // field updates a pane the operator can still see while typing.
+    await goToStep('Fields');
     const labelInput = screen.getAllByLabelText(/^label$/i)[0]!;
     await userEvent.clear(labelInput);
     await userEvent.type(labelInput, 'Given name');
