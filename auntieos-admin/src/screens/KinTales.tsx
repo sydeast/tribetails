@@ -225,6 +225,25 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
     data.filter((e) => kinTaleState(e.status ?? '') === 'failed').length,
   );
 
+  // Non-null: FILTERS lists all four FilterKey members above, and `filter` only
+  // ever holds a key set via setFilter(f.key) from that same array (Sessions.tsx's
+  // identical .find()! comment).
+  const activeFilter = FILTERS.find((f) => f.key === filter)!;
+
+  // The rows the list is actually showing, computed ONCE here rather than inside
+  // the AsyncRegion render prop, because the count chip on the panel header and
+  // the <ul> below have to be two views of one number. Null, never zero, while
+  // the first page is in flight or has failed.
+  const visible = useMemo(
+    () =>
+      rows.status === 'ready'
+        ? rows.data
+            .filter((e) => activeFilter.test(kinTaleState(e.status ?? '')))
+            .filter((e) => kinTaleMatchesSearch(e, search))
+        : null,
+    [rows, activeFilter, search],
+  );
+
   const windowLabel = rangeLabel(range);
   const loaded = rows.status === 'ready' ? rows.data.length : null;
   const plural = loaded === 1 ? '' : 's';
@@ -238,6 +257,29 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
       ? `Search covers household and title, within ${windowLabel}.`
       : `Searching the ${String(loaded)} KinTale${plural} loaded from ${windowLabel}, by household and title.` +
         (hasMore ? ' Load more to reach further back.' : '');
+
+  // THE RESULT-COUNT CHIP (the mock's third SUGGESTION, approved 2026-08-09).
+  //
+  // Both forms end in "loaded", and that word is the whole point: this screen
+  // pages a date window, so a bare "12" beside a list whose cursor is still open
+  // would describe a page and read as an archive. The toolbar note directly
+  // beneath names the window those rows came from.
+  //
+  // Null while the first page is in flight or has failed, because a chip reading
+  // "0 loaded" over a collection nobody has managed to read yet is the confident
+  // zero this app refuses. "0 of 2 loaded" after a search is a different claim
+  // and an honest one: the denominator is known.
+  //
+  // The two forms are chosen by whether anything was actually excluded, not by
+  // whether a control is set, so a search that happens to match every loaded row
+  // reads as the plain count rather than as the noise "2 of 2". Android's
+  // `resultCountLabel` decides it the same way, off the same rule.
+  const countLabel =
+    loaded === null || visible === null
+      ? null
+      : visible.length === loaded
+        ? `${String(loaded)} loaded`
+        : `${String(visible.length)} of ${String(loaded)} loaded`;
 
   // WHAT THE DRAFT HALF OF EVERY NUMBER ABOVE IS WORTH. The drafts stream is a
   // capped listener rather than a pager, so three different things can be true
@@ -318,6 +360,15 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
         title="KinTales"
         subtitle="Newest first. Sent recaps arrive a page at a time; drafts sit alongside them."
         className="d3"
+        {...(countLabel !== null
+          ? {
+              trailing: (
+                <span className="kintales__count" role="status">
+                  {countLabel}
+                </span>
+              ),
+            }
+          : {})}
       >
         <ListToolbar
           label="Filter KinTales"
@@ -359,13 +410,12 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
           empty={<EmptyHint>{`No KinTales in ${windowLabel}.`}</EmptyHint>}
         >
           {(data) => {
-            // Non-null: FILTERS lists all four FilterKey members above, and
-            // `filter` only ever holds a key set via setFilter(f.key) from
-            // that same array (Sessions.tsx's identical .find()! comment).
-            const activeFilter = FILTERS.find((f) => f.key === filter)!;
-            const visible = data
-              .filter((e) => activeFilter.test(kinTaleState(e.status ?? '')))
-              .filter((e) => kinTaleMatchesSearch(e, search));
+            // Computed at the top of the screen, off this same `rows` state, so
+            // the header chip and this list are one number. This branch only
+            // runs while that state is ready, which is exactly when it is
+            // non-null; the fallback keeps that a type fact rather than a
+            // belief.
+            const shown = visible ?? [];
 
             return (
               <>
@@ -385,7 +435,7 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
                   ))}
                 </div>
 
-                {visible.length === 0 ? (
+                {shown.length === 0 ? (
                   <EmptyHint>
                     {`Nothing in the loaded KinTales matches this filter.${
                       hasMore ? ' Load more to reach further back.' : ''
@@ -393,7 +443,7 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
                   </EmptyHint>
                 ) : (
                   <ul className="kintales__list">
-                    {visible.map((entry) => (
+                    {shown.map((entry) => (
                       <KinTaleRow key={entry._id} entry={entry} onSelect={onSelect} />
                     ))}
                   </ul>

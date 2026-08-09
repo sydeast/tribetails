@@ -499,6 +499,97 @@ describe('KinTales screen: search, and what it admits to searching', () => {
   });
 });
 
+/**
+ * The mock's third SUGGESTION ("Result-count chip next to the heading"), which
+ * the operator approved on 2026-08-09. It sits on the list panel rather than the
+ * screen heading because it is a fact about THAT panel's rows: the joined
+ * reports+drafts list after the tab and the search, never the orphan triage
+ * queue above it, which carries its own count.
+ */
+describe('KinTales screen: the result-count chip', () => {
+  const two = [
+    entry({ _id: 'a', kinfolkName: 'Household A', title: 'Park day' }),
+    entry({ _id: 'b', kinfolkName: 'Household B', title: 'Vet visit' }),
+  ];
+
+  it('counts the loaded rows when nothing is narrowing them', () => {
+    usePagedCollection.mockReturnValue(paged(two));
+    render(<KinTales />);
+    expect(screen.getByText('2 loaded')).toBeInTheDocument();
+  });
+
+  it('says the count is of LOADED rows, never of the collection', () => {
+    usePagedCollection.mockReturnValue(paged(two, { hasMore: true }));
+    render(<KinTales />);
+    // The word that keeps the number honest while a cursor is still open.
+    expect(screen.getByText('2 loaded')).toBeInTheDocument();
+  });
+
+  it('reports matches against the loaded total once a search narrows them', async () => {
+    usePagedCollection.mockReturnValue(paged(two));
+    render(<KinTales />);
+    await user.type(screen.getByRole('searchbox'), 'household b');
+    expect(screen.getByText('1 of 2 loaded')).toBeInTheDocument();
+  });
+
+  it('reads as the plain count when a search excluded nothing after all', async () => {
+    usePagedCollection.mockReturnValue(paged(two));
+    render(<KinTales />);
+    await user.type(screen.getByRole('searchbox'), 'household');
+    expect(screen.getByText('2 loaded')).toBeInTheDocument();
+  });
+
+  it('counts a tab filter too, not only the search box', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'a', kinfolkName: 'Household A', status: 'SENT' }),
+        entry({ _id: 'b', kinfolkName: 'Household B', status: 'DRAFT' }),
+      ]),
+    );
+    render(<KinTales />);
+    await user.click(screen.getByRole('tab', { name: 'Sent' }));
+    expect(screen.getByText('1 of 2 loaded')).toBeInTheDocument();
+  });
+
+  it('shows an honest zero against a known loaded total when nothing matched', async () => {
+    usePagedCollection.mockReturnValue(paged(two));
+    render(<KinTales />);
+    await user.type(screen.getByRole('searchbox'), 'zzzz');
+    expect(screen.getByText('0 of 2 loaded')).toBeInTheDocument();
+    // and the list still says WHY it is empty, rather than the chip alone.
+    expect(
+      screen.getByText('Nothing in the loaded KinTales matches this filter.'),
+    ).toBeInTheDocument();
+  });
+
+  it('claims NO count at all while the first page is still in flight', () => {
+    usePagedCollection.mockReturnValue(paged([], { state: { status: 'loading' } }));
+    render(<KinTales />);
+    expect(screen.queryByText(/loaded$/)).toBeNull();
+  });
+
+  it('claims no count when the first page FAILED, rather than a confident 0', () => {
+    usePagedCollection.mockReturnValue(
+      paged([], { state: { status: 'error', message: 'permission-denied' } }),
+    );
+    render(<KinTales />);
+    expect(screen.queryByText(/loaded$/)).toBeNull();
+  });
+
+  it('announces itself, so a count that changes under the operator is heard', () => {
+    usePagedCollection.mockReturnValue(paged(two));
+    render(<KinTales />);
+    expect(screen.getByText('2 loaded')).toHaveAttribute('role', 'status');
+  });
+
+  it('counts the joined drafts alongside the reports, the rows the list shows', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ _id: 'a', kinfolkName: 'Household A' })]));
+    setDrafts([draft({ _id: 'd1' })]);
+    render(<KinTales />);
+    expect(screen.getByText('2 loaded')).toBeInTheDocument();
+  });
+});
+
 describe('KinTales screen: the filter tabs', () => {
   it('narrow the visible rows without hiding the others behind a false empty', async () => {
     usePagedCollection.mockReturnValue(
