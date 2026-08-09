@@ -65,11 +65,209 @@ beforeEach(() => {
   mockStream({ status: 'ready', data: [tpl()] });
 });
 
-describe('KinTaleTemplates: load + picker', () => {
-  it('opens the default template into the editor', async () => {
+/**
+ * The editor is a workflow modal now, so every test that edits has to open it
+ * first, walk to the step that owns the field, and reach Finish from the last
+ * step. These three helpers are that preamble, named once.
+ */
+
+/** Opens a saved template from the picker. The picker stays on screen behind it. */
+async function openEditor(name: RegExp = /walk recap/i): Promise<HTMLElement> {
+  await user.click(await screen.findByRole('button', { name }));
+  return await screen.findByRole('dialog');
+}
+
+/** Opens a blank draft from the picker's "New template" action. */
+async function openNewTemplate(): Promise<HTMLElement> {
+  await user.click(await screen.findByRole('button', { name: /new template/i }));
+  return await screen.findByRole('dialog');
+}
+
+/** Rail navigation, by the step's visible label (the rail numbers it). */
+async function goToStep(label: string): Promise<void> {
+  await user.click(screen.getByRole('button', { name: new RegExp(`^\\d+ ${label}`) }));
+}
+
+/** The rail, whose accessible name is the modal title suffixed with "steps". */
+function rail(): HTMLElement {
+  return screen.getByRole('navigation', { name: /steps$/ });
+}
+
+/**
+ * Finish lives on the LAST step (WizardModal offers "Next" everywhere else), so
+ * a save walks to the end of the rail rather than hunting for a button that is
+ * not rendered yet.
+ */
+async function saveTemplate(): Promise<void> {
+  const pills = within(rail()).getAllByRole('button');
+  await user.click(pills[pills.length - 1]!);
+  await user.click(screen.getByRole('button', { name: /^save template$/i }));
+}
+
+describe('KinTaleTemplates: the workflow modal', () => {
+  it('leaves the picker on screen and opens no editor until a template is picked', async () => {
     render(<KinTaleTemplates />);
-    expect(await screen.findByDisplayValue('Walk recap')).toBeInTheDocument();
-    // Service types round-trip into the CSV field.
+    await screen.findByRole('button', { name: /walk recap/i });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByDisplayValue('Walk recap')).toBeNull();
+
+    await openEditor();
+    // The picker did not go away: backing out returns to the row that was clicked.
+    expect(screen.getByRole('button', { name: /new template/i })).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Walk recap')).toBeInTheDocument();
+  });
+
+  it('is a labelled modal with a named rail, opening on the first step', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Edit KinTale template');
+    expect(screen.getByRole('navigation', { name: 'Edit KinTale template steps' })).toBeInTheDocument();
+    // checklist on, pet mood off in the fixture: basic, sections, per-Kin, per-visit.
+    expect(screen.getByText('Step 1 of 4')).toBeInTheDocument();
+    expect(within(rail()).getAllByRole('button')).toHaveLength(4);
+  });
+
+  it('keeps each section on its own step, so the other steps are not in the DOM', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+
+    // Absence from the DOM plus aria-current, never toBeVisible: jsdom ships no
+    // user-agent stylesheet, so a visibility assertion passes on hidden content.
+    expect(screen.getByLabelText('Template name')).toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: 'Photo & video showcase' })).toBeNull();
+    expect(screen.getByRole('button', { name: /^1 Basic settings/ })).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByRole('button', { name: /^2 Display sections/ })).not.toHaveAttribute('aria-current');
+
+    await goToStep('Display sections');
+    expect(screen.getByRole('switch', { name: 'Photo & video showcase' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Template name')).toBeNull();
+    expect(screen.getByRole('button', { name: /^2 Display sections/ })).toHaveAttribute('aria-current', 'step');
+
+    await goToStep('Per-Kin items');
+    expect(screen.getByLabelText('Item text')).toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: 'Photo & video showcase' })).toBeNull();
+  });
+
+  it('keeps what was typed when the operator leaves the step and comes back', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await user.clear(screen.getByLabelText('Template name'));
+    await user.type(screen.getByLabelText('Template name'), 'Evening walk');
+    await goToStep('Display sections');
+    await goToStep('Basic settings');
+    expect(screen.getByLabelText('Template name')).toHaveValue('Evening walk');
+  });
+
+  it('flags the step that owns the blank name, from the rail', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    expect(screen.getByRole('button', { name: /^1 Basic settings/ })).toHaveAccessibleName('1 Basic settings');
+
+    await user.clear(screen.getByLabelText('Template name'));
+    // Readable from the rail, on every step, without walking to find it.
+    await goToStep('Per-visit items');
+    expect(screen.getByRole('button', { name: /^1 Basic settings/ })).toHaveAccessibleName(
+      '1 Basic settings 1 thing to fix',
+    );
+    expect(screen.getByRole('button', { name: /^save template$/i })).toBeDisabled();
+  });
+
+  it('drops the checklist steps when the toggle goes off, and keeps the items anyway', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await goToStep('Display sections');
+    await user.click(screen.getByRole('switch', { name: 'Checklist' }));
+
+    expect(within(rail()).queryByRole('button', { name: /Per-Kin items/ })).toBeNull();
+    expect(within(rail()).queryByRole('button', { name: /Per-visit items/ })).toBeNull();
+    expect(screen.getByText('Step 2 of 2')).toBeInTheDocument();
+
+    // Turning the section off hides the STEP, it does not delete the work.
+    await saveTemplate();
+    await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
+    const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
+    expect(arg.checklistEnabled).toBe(false);
+    expect(arg.checklistItems).toHaveLength(1);
+  });
+
+  it('adds the mood step when Kin mood goes on, and hands over positionally when it goes off', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await goToStep('Display sections');
+    await user.click(screen.getByRole('switch', { name: 'Kin mood' }));
+    expect(within(rail()).getByRole('button', { name: /^5 Mood options/ })).toBeInTheDocument();
+
+    // Standing on the mood step when it disappears lands on the step that took
+    // its index, not back at step 1.
+    await goToStep('Mood options');
+    expect(screen.getByRole('button', { name: /^5 Mood options/ })).toHaveAttribute('aria-current', 'step');
+    await goToStep('Display sections');
+    await user.click(screen.getByRole('switch', { name: 'Kin mood' }));
+    expect(within(rail()).queryByRole('button', { name: /Mood options/ })).toBeNull();
+  });
+
+  it('draws every field of a step in full, never behind a disclosure', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    // Basic settings keeps all six of its controls open at once.
+    expect(screen.getByLabelText('Template name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Description')).toBeInTheDocument();
+    expect(screen.getByLabelText('Default message to kinfolk')).toBeInTheDocument();
+    expect(screen.getByLabelText('Service types')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Make default template' })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Active' })).toBeInTheDocument();
+
+    await goToStep('Per-Kin items');
+    expect(screen.getByLabelText('Item text')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Required' })).toBeInTheDocument();
+    expect(screen.getByText('Conditions')).toBeInTheDocument();
+
+    // Splitting across named steps is the approved answer to this screen's
+    // length; folding fields behind a disclosure was ruled out on 2026-08-08.
+    expect(document.querySelector('details')).toBeNull();
+  });
+
+  it('warns before discarding typed work, and closes only when the operator says so', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await user.type(screen.getByLabelText('Template name'), ' v2');
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /keep editing/i }));
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+    await user.click(screen.getByRole('button', { name: /discard changes/i }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    // Discarded for real: reopening shows the stored name, not the edited one.
+    await openEditor();
+    expect(screen.getByLabelText('Template name')).toHaveValue('Walk recap');
+  });
+
+  it('opens a new template clean, so backing straight out asks nothing', async () => {
+    render(<KinTaleTemplates />);
+    await screen.findByRole('button', { name: /walk recap/i });
+    await openNewTemplate();
+    expect(screen.getByLabelText('Template name')).toHaveValue('New template');
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('closes on a successful save and says so on the screen behind', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await saveTemplate();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(await screen.findByText(/template saved/i)).toBeInTheDocument();
+  });
+});
+
+describe('KinTaleTemplates: load + picker', () => {
+  it('opens the picked template into the editor', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    expect(screen.getByDisplayValue('Walk recap')).toBeInTheDocument();
+    // Service types round-trip into the CSV field, on the same first step.
     expect(screen.getByDisplayValue('Dog Walk')).toBeInTheDocument();
   });
 
@@ -79,10 +277,15 @@ describe('KinTaleTemplates: load + picker', () => {
       data: [tpl({ _id: 't1', name: 'Walk recap', isDefault: true }), tpl({ _id: 't2', name: 'Sit recap', isDefault: false })],
     });
     render(<KinTaleTemplates />);
-    // Default is auto-selected.
-    expect(await screen.findByDisplayValue('Walk recap')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /sit recap/i }));
-    expect(await screen.findByDisplayValue('Sit recap')).toBeInTheDocument();
+    await openEditor();
+    expect(screen.getByDisplayValue('Walk recap')).toBeInTheDocument();
+
+    // Nothing typed, so backing out is immediate; the picker was behind the
+    // modal the whole time, and the other row is still there to pick.
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await openEditor(/sit recap/i);
+    expect(screen.getByDisplayValue('Sit recap')).toBeInTheDocument();
   });
 
   it('surfaces a listener error, never a false empty', async () => {
@@ -96,22 +299,26 @@ describe('KinTaleTemplates: create-from-default', () => {
   it('seeds the built-in default when no templates exist yet', async () => {
     mockStream({ status: 'ready', data: [] });
     render(<KinTaleTemplates />);
-    expect(await screen.findByDisplayValue('Default KinTale')).toBeInTheDocument();
-    expect(screen.getByText(/no templates saved yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no templates saved yet/i)).toBeInTheDocument();
+    // The create-from-default path the always-visible editor used to pre-seed.
+    await openNewTemplate();
+    expect(screen.getByDisplayValue('Default KinTale')).toBeInTheDocument();
   });
 
   it('New template starts a fresh, non-default draft', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
-    await user.click(screen.getByRole('button', { name: /new template/i }));
-    expect(await screen.findByDisplayValue('New template')).toBeInTheDocument();
+    await screen.findByRole('button', { name: /walk recap/i });
+    await openNewTemplate();
+    expect(screen.getByDisplayValue('New template')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Make default template' })).not.toBeChecked();
   });
 });
 
 describe('KinTaleTemplates: checklist condition editor (the I7 payload)', () => {
   it('adds a KINFOLK_ATTRIBUTE / EXISTS condition: attribute dropdown shows, value input hides', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
+    await openEditor();
+    await goToStep('Per-Kin items');
 
     await user.click(screen.getByRole('button', { name: /add condition/i }));
 
@@ -131,7 +338,7 @@ describe('KinTaleTemplates: checklist condition editor (the I7 payload)', () => 
     // The live summary reflects the household attribute.
     expect(screen.getByText(/only show when the household's/i)).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /save template/i }));
+    await saveTemplate();
     await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
     const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
     expect(arg.checklistItems[0]!.conditions[0]).toEqual<FieldCondition>({
@@ -144,7 +351,8 @@ describe('KinTaleTemplates: checklist condition editor (the I7 payload)', () => 
 
   it('adds a KINFOLK_TAG / CONTAINS condition: no attribute dropdown, value carries the tag', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
+    await openEditor();
+    await goToStep('Per-Kin items');
 
     await user.click(screen.getByRole('button', { name: /add condition/i }));
     await user.selectOptions(screen.getByLabelText('When'), 'KINFOLK_TAG');
@@ -154,7 +362,7 @@ describe('KinTaleTemplates: checklist condition editor (the I7 payload)', () => 
     await user.selectOptions(screen.getByLabelText('Is'), 'CONTAINS');
     await user.type(screen.getByLabelText('Value'), 'VIP');
 
-    await user.click(screen.getByRole('button', { name: /save template/i }));
+    await saveTemplate();
     await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
     const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
     expect(arg.checklistItems[0]!.conditions[0]).toEqual<FieldCondition>({
@@ -167,11 +375,12 @@ describe('KinTaleTemplates: checklist condition editor (the I7 payload)', () => 
 
   it('removing a condition drops it from the saved payload', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
+    await openEditor();
+    await goToStep('Per-Kin items');
     await user.click(screen.getByRole('button', { name: /add condition/i }));
     await user.click(screen.getByRole('button', { name: /remove condition/i }));
 
-    await user.click(screen.getByRole('button', { name: /save template/i }));
+    await saveTemplate();
     await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
     const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
     expect(arg.checklistItems[0]!.conditions).toEqual([]);
@@ -181,16 +390,18 @@ describe('KinTaleTemplates: checklist condition editor (the I7 payload)', () => 
 describe('KinTaleTemplates: editing the sections + items round-trips into the save', () => {
   it('save carries the section toggles, item edits, and the service types', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
+    await openEditor();
 
-    // Toggle a display section off.
+    // Toggle a display section on, on the step that owns the toggles.
+    await goToStep('Display sections');
     await user.click(screen.getByRole('switch', { name: 'Review booster' }));
-    // Edit the one checklist item's text + required.
+    // Edit the one checklist item's text + required, on the step that owns it.
+    await goToStep('Per-Kin items');
     await user.clear(screen.getByLabelText('Item text'));
     await user.type(screen.getByLabelText('Item text'), 'Medications given');
     await user.click(screen.getByRole('switch', { name: 'Required' }));
 
-    await user.click(screen.getByRole('button', { name: /save template/i }));
+    await saveTemplate();
     await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
     const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
     expect(arg.reviewBoosterEnabled).toBe(true);
@@ -200,11 +411,13 @@ describe('KinTaleTemplates: editing the sections + items round-trips into the sa
 
   it('adding a per-visit item appends it in the per-visit scope', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
-    const perVisit = screen.getByText('Per-visit items').closest('.den-panel') as HTMLElement;
-    await user.click(within(perVisit).getByRole('button', { name: /add per-visit item/i }));
+    await openEditor();
+    // No scoping needed any more: only the step being edited is in the DOM, so
+    // "Add per-visit item" cannot collide with the per-Kin section's action.
+    await goToStep('Per-visit items');
+    await user.click(screen.getByRole('button', { name: /add per-visit item/i }));
 
-    await user.click(screen.getByRole('button', { name: /save template/i }));
+    await saveTemplate();
     await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
     const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
     expect(arg.checklistItems.filter((i) => i.scope === 'PER_VISIT')).toHaveLength(1);
@@ -221,10 +434,11 @@ describe('KinTaleTemplates: editing the sections + items round-trips into the sa
       ],
     });
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
+    await openEditor();
+    await goToStep('Mood options');
     await user.click(screen.getByRole('button', { name: /add mood/i }));
 
-    await user.click(screen.getByRole('button', { name: /save template/i }));
+    await saveTemplate();
     await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
     const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
     expect(arg.moodOptions).toHaveLength(2);
@@ -239,39 +453,40 @@ describe('KinTaleTemplates: editing the sections + items round-trips into the sa
  */
 describe('KinTaleTemplates: checklist bank quick-add', () => {
   /**
-   * The quick-add row of one checklist section. Scoped deliberately: once an
-   * item is added, its own row actions ("Move X up", "Remove X") also match a
-   * name query for that text, so an unscoped query would find the row it was
-   * meant to prove had disappeared.
+   * The quick-add row of the checklist step currently on screen. One step is
+   * rendered at a time now, so this needs no panel scoping — but it still has to
+   * be a container query rather than a name query: once an item is added, its own
+   * row actions ("Move X up", "Remove X") also match a name query for that text,
+   * so an unscoped query would find the row it was meant to prove had gone.
    */
-  function bankRow(sectionTitle: string): HTMLElement {
-    const panel = screen.getByText(sectionTitle).closest('.den-panel') as HTMLElement;
-    return panel.querySelector('.ktt__bank') as HTMLElement;
+  function bankRow(): HTMLElement | null {
+    return document.querySelector('.ktt__bank');
   }
 
   it('offers the bank items for a scope, and only that scope', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
-    await waitFor(() => expect(bankRow('Per-Kin items')).not.toBeNull());
+    await openEditor();
+    await goToStep('Per-Kin items');
+    await waitFor(() => expect(bankRow()).not.toBeNull());
 
-    const perPet = bankRow('Per-Kin items');
-    expect(within(perPet).getByRole('button', { name: /fresh water provided/i })).toBeInTheDocument();
-    expect(within(perPet).queryByRole('button', { name: /home secured/i })).toBeNull();
+    expect(within(bankRow()!).getByRole('button', { name: /fresh water provided/i })).toBeInTheDocument();
+    expect(within(bankRow()!).queryByRole('button', { name: /home secured/i })).toBeNull();
 
-    const perVisit = bankRow('Per-visit items');
-    expect(within(perVisit).getByRole('button', { name: /home secured/i })).toBeInTheDocument();
+    await goToStep('Per-visit items');
+    expect(within(bankRow()!).getByRole('button', { name: /home secured/i })).toBeInTheDocument();
   });
 
   it('clicking a bank item inserts it as a real checklist row that survives the save', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
-    await waitFor(() => expect(bankRow('Per-Kin items')).not.toBeNull());
+    await openEditor();
+    await goToStep('Per-Kin items');
+    await waitFor(() => expect(bankRow()).not.toBeNull());
 
-    await user.click(within(bankRow('Per-Kin items')).getByRole('button', { name: /fresh water provided/i }));
+    await user.click(within(bankRow()!).getByRole('button', { name: /fresh water provided/i }));
 
     expect(screen.getByDisplayValue('Fresh water provided')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /save template/i }));
+    await saveTemplate();
     await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
     const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
     const added = arg.checklistItems.find((i) => i.text === 'Fresh water provided');
@@ -285,17 +500,20 @@ describe('KinTaleTemplates: checklist bank quick-add', () => {
     // leaves nothing to offer and the whole row goes away rather than sitting
     // there as an empty "Add from bank" heading (the archive's rule).
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
-    await waitFor(() => expect(bankRow('Per-Kin items')).not.toBeNull());
-    await user.click(within(bankRow('Per-Kin items')).getByRole('button', { name: /fresh water provided/i }));
-    expect(bankRow('Per-Kin items')).toBeNull();
-    // The per-visit row is untouched: exhausting one scope never hides another.
-    expect(within(bankRow('Per-visit items')).getByRole('button', { name: /home secured/i })).toBeInTheDocument();
+    await openEditor();
+    await goToStep('Per-Kin items');
+    await waitFor(() => expect(bankRow()).not.toBeNull());
+    await user.click(within(bankRow()!).getByRole('button', { name: /fresh water provided/i }));
+    expect(bankRow()).toBeNull();
+    // The per-visit scope is untouched: exhausting one scope never hides another.
+    await goToStep('Per-visit items');
+    expect(within(bankRow()!).getByRole('button', { name: /home secured/i })).toBeInTheDocument();
   });
 
-  it('saves a hand-written item to the shared bank and offers it back', async () => {
+  it('saves a hand-written item to the shared bank and reports it inside the wizard', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
+    await openEditor();
+    await goToStep('Per-Kin items');
 
     listChecklistBank.mockResolvedValue([
       { id: 'fresh-water', text: 'Fresh water provided', scope: 'PER_PET' },
@@ -304,22 +522,27 @@ describe('KinTaleTemplates: checklist bank quick-add', () => {
     await user.click(screen.getByRole('button', { name: /save "meds" to the bank/i }));
 
     await waitFor(() => expect(saveChecklistBankItem).toHaveBeenCalledWith('Meds', 'PER_PET'));
-    expect(await screen.findByText(/saved to the bank/i)).toBeInTheDocument();
+    // Inside the dialog: a banner painted on the screen behind an open modal is
+    // one the operator never sees.
+    const notice = await screen.findByText(/saved to the bank/i);
+    expect(screen.getByRole('dialog')).toContainElement(notice);
   });
 
   it('names the reason when the bank fails to load, never a silently empty picker', async () => {
     listChecklistBank.mockRejectedValue(new Error('permission-denied'));
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
+    // Screen-level on purpose: this fires on mount, before any modal is open.
     expect(await screen.findByText(/couldn't load the checklist bank: permission-denied/i)).toBeInTheDocument();
   });
 
   it('names the reason when saving to the bank rejects', async () => {
     saveChecklistBankItem.mockRejectedValue(new Error('unavailable'));
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
+    await openEditor();
+    await goToStep('Per-Kin items');
     await user.click(screen.getByRole('button', { name: /save "meds" to the bank/i }));
-    expect(await screen.findByText(/couldn't save to the bank: unavailable/i)).toBeInTheDocument();
+    const notice = await screen.findByText(/couldn't save to the bank: unavailable/i);
+    expect(screen.getByRole('dialog')).toContainElement(notice);
   });
 });
 
@@ -330,12 +553,11 @@ describe('KinTaleTemplates: default exclusivity', () => {
       data: [tpl({ _id: 't1', name: 'Walk recap', isDefault: true }), tpl({ _id: 't2', name: 'Sit recap', isDefault: false })],
     });
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
-    await user.click(screen.getByRole('button', { name: /sit recap/i }));
-    await screen.findByDisplayValue('Sit recap');
+    await openEditor(/sit recap/i);
+    expect(screen.getByDisplayValue('Sit recap')).toBeInTheDocument();
     await user.click(screen.getByRole('switch', { name: 'Make default template' }));
 
-    await user.click(screen.getByRole('button', { name: /save template/i }));
+    await saveTemplate();
     await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
     const [saved, siblings] = saveKinTaleTemplate.mock.calls[0] as [
       KinTaleTemplate,
@@ -354,9 +576,8 @@ describe('KinTaleTemplates: default exclusivity', () => {
       data: [tpl({ _id: 't1', name: 'Walk recap', isDefault: true }), tpl({ _id: 't2', name: 'Sit recap', isDefault: false })],
     });
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
-    await user.click(screen.getByRole('button', { name: /sit recap/i }));
-    await screen.findByDisplayValue('Sit recap');
+    await openEditor(/sit recap/i);
+    expect(screen.getByDisplayValue('Sit recap')).toBeInTheDocument();
     await user.click(screen.getByRole('switch', { name: 'Make default template' }));
     expect(screen.getByText(/only one template can be the default/i)).toBeInTheDocument();
   });
@@ -365,25 +586,34 @@ describe('KinTaleTemplates: default exclusivity', () => {
 describe('KinTaleTemplates: save, fail-loud', () => {
   it('shows a success banner after a save', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
-    await user.click(screen.getByRole('button', { name: /save template/i }));
+    await openEditor();
+    await saveTemplate();
     expect(await screen.findByText(/template saved/i)).toBeInTheDocument();
   });
 
   it('names the reason when the save rejects, never a fake success', async () => {
     saveKinTaleTemplate.mockRejectedValue(new Error('offline'));
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
-    await user.click(screen.getByRole('button', { name: /save template/i }));
-    expect(await screen.findByText(/couldn't save the template: offline/i)).toBeInTheDocument();
+    await openEditor();
+    await saveTemplate();
+    // The wizard stays open on the refusal, carrying the reason, rather than
+    // closing and leaving the operator to wonder whether the write landed.
+    const notice = await screen.findByText(/couldn't save the template: offline/i);
+    expect(screen.getByRole('dialog')).toContainElement(notice);
   });
 
   it('refuses to save a blank-named template, fail-loud', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByDisplayValue('Walk recap');
+    await openEditor();
     await user.clear(screen.getByLabelText('Template name'));
-    await user.click(screen.getByRole('button', { name: /save template/i }));
+    // Named on the step that owns the field, not saved and then rejected.
     expect(await screen.findByText(/give the template a name/i)).toBeInTheDocument();
+
+    const pills = within(rail()).getAllByRole('button');
+    await user.click(pills[pills.length - 1]!);
+    const finish = screen.getByRole('button', { name: /^save template$/i });
+    expect(finish).toBeDisabled();
+    await user.click(finish);
     expect(saveKinTaleTemplate).not.toHaveBeenCalled();
   });
 });

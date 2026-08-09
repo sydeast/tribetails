@@ -309,3 +309,52 @@ test('the form-schema wizard, its rail and its footer fit at 390px', async ({ pa
   await expect(page.getByLabel('Helper text')).toBeVisible();
   await assertOverlayFits(page, 'form-schema wizard step 2 with a field card');
 });
+
+/**
+ * The KinTale template editor as a workflow modal at phone width, and the wider
+ * of the two claims: this rail carries FIVE steps, not three, because the
+ * built-in default a new template starts from has both the checklist and the Kin
+ * mood section switched on.
+ *
+ * Five numbered pills is where the strip stops being comfortable, which is
+ * exactly why it is worth measuring. `assertOverlayFits` checks every descendant
+ * of the dialog against the right edge, so an overflowing pill, a checklist item
+ * card's action row, or a condition row's two side-by-side selects each fail
+ * here rather than in an operator's hand.
+ *
+ * The Per-Kin step is the tall one, and the reason the 2026-08-06 review named
+ * this screen the tallest in the set: the built-in default carries six items,
+ * each an item card with its own two toggles and a conditions editor.
+ */
+test('the KinTale template wizard, its five-step rail and its item cards fit at 390px', async ({
+  page,
+}) => {
+  await openScreen(page, 'kintale-templates', 'The Den · KinTales');
+  await page.getByRole('button', { name: 'New template', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+
+  const rail = page.getByRole('navigation', { name: 'New KinTale template steps' });
+  await expect(rail, 'the rail did not survive the phone breakpoint').toBeVisible();
+  await expect(page.getByText('Step 1 of 5')).toBeVisible();
+  await expect(rail.getByRole('button')).toHaveCount(5);
+  await assertOverlayFits(page, 'KinTale wizard step 1 (basic settings)');
+
+  await rail.getByRole('button', { name: /^2 Display sections/ }).click();
+  await assertOverlayFits(page, 'KinTale wizard step 2 (display sections)');
+
+  await rail.getByRole('button', { name: /^3 Per-Kin items/ }).click();
+  // Six items, drawn in full: this is the step the length complaint was about,
+  // so a step that rendered fewer would make the rest of the check meaningless.
+  await expect(page.locator('.ktt__item')).toHaveCount(6);
+  await assertOverlayFits(page, 'KinTale wizard step 3 (six per-Kin item cards)');
+
+  // A condition row puts two selects side by side, the densest thing this editor
+  // draws, and it is drawn in full rather than behind any disclosure.
+  await page.getByRole('button', { name: 'Add condition' }).first().click();
+  await assertOverlayFits(page, 'KinTale wizard step 3 with a condition row');
+
+  await rail.getByRole('button', { name: /^5 Mood options/ }).click();
+  // An emoji field, a label field and three icon buttons per row, eight rows.
+  await expect(page.locator('.ktt__mood')).toHaveCount(8);
+  await assertOverlayFits(page, 'KinTale wizard step 5 (eight mood rows)');
+});
