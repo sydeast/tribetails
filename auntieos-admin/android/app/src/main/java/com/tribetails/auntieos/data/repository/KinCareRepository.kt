@@ -183,10 +183,11 @@ class KinCareRepository(
      * it, a bare set() would take the provenance fields with it.
      *
      * That absent caller is also why this one keeps the whole-model shape while
-     * `kinfolk`, `kin` and `household_data` moved to field-level diffs: with no
-     * screen loading a session and saving it back, there is no window in which a
-     * concurrent edit could be reverted. The day something calls it, it needs a
-     * diff and a loaded baseline first.
+     * `kinfolk`, `kin`, `household_data`, `business_settings` and
+     * `coverage_package_config` moved to field-level diffs: with no screen loading
+     * a session and saving it back, there is no window in which a concurrent edit
+     * could be reverted. The day something calls it, it needs a diff and a loaded
+     * baseline first.
      *
      * MERGE for the same reason as [updateKinCareReport] below. `kin_care_sessions`
      * carries `_backfilledFrom`, `_backfilledAt`, and `_reason` on the stub
@@ -584,11 +585,13 @@ class KinCareRepository(
      * STILL A WHOLE-MODEL WRITE, and knowingly so. Merge closes the DELETION
      * class above; it does nothing about the stale fields inside the written
      * map, so a draft loaded an hour ago still writes its whole modelled self
-     * back and reverts a concurrent edit. `kinfolk`, `kin` and `household_data`
-     * moved to field-level diffs for exactly that; `kin_care_reports` is the
-     * next site and is deliberately left for its own change, because the
-     * KinTale editor has two write paths and an autosave to reason about
-     * (`KinTaleReportViewModel:302,397`). Triaged, not overlooked.
+     * back and reverts a concurrent edit. `kinfolk`, `kin`, `household_data`,
+     * `business_settings` and `coverage_package_config` moved to field-level diffs
+     * for exactly that, which leaves THIS the last
+     * android write of a whole model that a live screen still issues. It is
+     * deliberately left for its own change, because the KinTale editor has two
+     * write paths and an autosave to reason about (`KinTaleReportViewModel:302,397`).
+     * Triaged, not overlooked.
      *
      * Merge costs nothing here: the data class serialises every modelled field,
      * including blanked ones, so a deliberate clear still ships. Subcollections

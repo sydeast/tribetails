@@ -76,18 +76,30 @@ class CoveragePackageViewModelTest {
         assertTrue(state.error!!.contains("permission-denied"))
     }
 
+    /**
+     * Every save below LOADS FIRST, and that is a requirement of the code under
+     * test rather than test hygiene: the save diffs against the copy Firestore
+     * handed over, and a save with no such copy is refused. `CoveragePackageConfigSaveTest`
+     * owns the write-shape cases, including both refusals.
+     */
+    private fun loadedViewModel(stored: CoveragePackageConfig = CoveragePackageConfig(durations = DEFAULT_DURATIONS)) =
+        buildViewModel().also {
+            coEvery { mockRepo.getCoveragePackageConfig() } returns Result.success(stored)
+            it.loadConfig()
+        }
+
     @Test
     fun `saveConfig writes the edited visit menu and sets saveSuccess`() = runTest(testDispatcher) {
-        coEvery { mockRepo.saveCoveragePackageConfig(any(), any()) } returns Result.success(Unit)
+        coEvery { mockRepo.updateCoveragePackageConfigFields(any(), any()) } returns Result.success(Unit)
 
-        val vm = buildViewModel()
+        val vm = loadedViewModel()
         val durations = listOf(Duration("d1", "15-min", 15.0, 15.0, "visit"))
         vm.saveConfig(durations)
         advanceUntilIdle()
 
         coVerify(exactly = 1) {
-            mockRepo.saveCoveragePackageConfig(
-                match { it.durations == durations },
+            mockRepo.updateCoveragePackageConfigFields(
+                match { it == mapOf<String, Any?>("durations" to durations) },
                 any(),
             )
         }
@@ -99,10 +111,10 @@ class CoveragePackageViewModelTest {
 
     @Test
     fun `saveConfig sets error and clears saveSuccess when repository fails`() = runTest(testDispatcher) {
-        coEvery { mockRepo.saveCoveragePackageConfig(any(), any()) } returns Result.failure(RuntimeException("Write denied"))
+        coEvery { mockRepo.updateCoveragePackageConfigFields(any(), any()) } returns Result.failure(RuntimeException("Write denied"))
 
-        val vm = buildViewModel()
-        vm.saveConfig(DEFAULT_DURATIONS)
+        val vm = loadedViewModel()
+        vm.saveConfig(emptyList())
         advanceUntilIdle()
 
         val state = vm.uiState.value
@@ -113,9 +125,9 @@ class CoveragePackageViewModelTest {
 
     @Test
     fun `clearError and clearSaveSuccess reset their flags`() = runTest(testDispatcher) {
-        coEvery { mockRepo.saveCoveragePackageConfig(any(), any()) } returns Result.success(Unit)
-        val vm = buildViewModel()
-        vm.saveConfig(DEFAULT_DURATIONS)
+        coEvery { mockRepo.updateCoveragePackageConfigFields(any(), any()) } returns Result.success(Unit)
+        val vm = loadedViewModel()
+        vm.saveConfig(emptyList())
         advanceUntilIdle()
         assertTrue(vm.uiState.value.saveSuccess)
 
