@@ -309,26 +309,58 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
    * operator's work, not clever about it.
    */
   const [dirty, setDirty] = useState(false);
+  /**
+   * The steps the operator has edited. A step's problems are quoted back to them
+   * once they have worked on that step (or asked to save, which `WizardModal`
+   * handles): a schema they have only just opened has not been got wrong yet,
+   * and greeting a blank form with "Schema id is required." is the defect the
+   * 2026-08-09 screenshot review caught.
+   *
+   * A step, not a field, is the unit here because a step is the unit this wizard
+   * already reports in: the rail flags steps, and the errors are sentences owned
+   * by a step rather than values hung off one input. So typing in Name reveals
+   * the schema step's problems including the id, which reads as "here is what is
+   * left on the step you are filling in" rather than an accusation.
+   */
+  const [touchedSteps, setTouchedSteps] = useState<ReadonlySet<string>>(() => new Set<string>());
+
+  /**
+   * One edit: it dirties the record and marks the step being edited. Only the
+   * ACTIVE step's body is mounted (`WizardModal` renders one step, never all of
+   * them behind CSS), so the step under `step` is always the one the operator
+   * just typed into.
+   */
+  function touch() {
+    setDirty(true);
+    setTouchedSteps((prev) => (prev.has(step) ? prev : new Set(prev).add(step)));
+  }
 
   const metaErrors = schemaMetaErrors({ id, name });
   const fieldErrors = fieldListErrors(fields);
   const canSave = metaErrors.length === 0 && fieldErrors.length === 0 && !saving && !loading;
+  /**
+   * Only a schema being CREATED starts quiet. A loaded one that is already
+   * invalid was broken before this modal opened, so its errors describe the
+   * record rather than the operator, and hiding them would hide the reason the
+   * save is about to be refused.
+   */
+  const untouched = (key: string) => creating && !touchedSteps.has(key);
 
   function updateField(idx: number, transform: (f: FormField) => FormField) {
-    setDirty(true);
+    touch();
     setFields((prev) => prev.map((f, i) => (i === idx ? transform(f) : f)));
   }
 
   function addField() {
-    setDirty(true);
+    touch();
     setFields((prev) => [...prev, emptyField()]);
   }
   function removeField(idx: number) {
-    setDirty(true);
+    touch();
     setFields((prev) => prev.filter((_, i) => i !== idx));
   }
   function reorderFields(next: (prev: FormField[]) => FormField[]) {
-    setDirty(true);
+    touch();
     setFields(next);
   }
 
@@ -393,6 +425,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       heading: 'Schema',
       blurb: 'What this schema is called, and where it applies.',
       errors: metaErrors,
+      pristine: untouched('schema'),
       body: (
         <div className="fse__grid">
           <div className="fse__field">
@@ -404,7 +437,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
                 value={id}
                 disabled={!creating}
                 onChange={(e) => {
-                  setDirty(true);
+                  touch();
                   setId(e.target.value);
                 }}
                 placeholder="e.g. tribeProfile"
@@ -423,7 +456,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
               className="fse__input"
               value={name}
               onChange={(e) => {
-                setDirty(true);
+                touch();
                 setName(e.target.value);
               }}
               placeholder="e.g. Tribe Profile"
@@ -437,7 +470,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
               className="fse__input"
               value={description}
               onChange={(e) => {
-                setDirty(true);
+                touch();
                 setDescription(e.target.value);
               }}
               placeholder="Optional"
@@ -450,7 +483,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
               className="fse__input"
               value={appliesTo}
               onChange={(e) => {
-                setDirty(true);
+                touch();
                 setAppliesTo(e.target.value);
               }}
             >
@@ -477,6 +510,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       heading: 'Fields',
       blurb: 'One card per input. Order here is the order kinfolk see them.',
       errors: fieldErrors,
+      pristine: untouched('fields'),
       body: (
         <>
           <div className="fse__step-actions">

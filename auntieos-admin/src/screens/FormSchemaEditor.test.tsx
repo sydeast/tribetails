@@ -305,14 +305,15 @@ describe('FormSchemaEditor: the workflow modal', () => {
 
   it('flags the step that owns a problem, from the rail', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
-    // Blank id + blank name on step 1; no fields at all on step 2.
+    // Nothing is claimed about a form nobody has typed in yet (see the pristine
+    // describe below); one keystroke on the schema step is what puts its own
+    // problems on the rail.
+    await userEvent.type(screen.getByLabelText(/schema id/i), 'x');
     expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName(
-      '1 Schema 2 things to fix',
-    );
-    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName(
-      '2 Fields 1 thing to fix',
+      '1 Schema 1 thing to fix',
     );
 
+    await userEvent.clear(screen.getByLabelText(/schema id/i));
     await userEvent.type(screen.getByLabelText(/schema id/i), 'newSchema');
     await userEvent.type(screen.getByLabelText(/^name$/i), 'New Schema');
     expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName('1 Schema');
@@ -360,6 +361,13 @@ describe('FormSchemaEditor: create mode', () => {
 
   it('disables Save until id, name, and at least one valid field are present', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await goToStep('Review');
+    // On an untouched form Save is offered rather than greyed out, and pressing
+    // it is what surfaces the problems (asserted in the pristine describe below).
+    // From here on every problem is on screen, so the button goes back to being
+    // the plain "nothing left to fix" gate.
+    await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
+    expect(saveFormSchema).not.toHaveBeenCalled();
     await goToStep('Review');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeDisabled();
 
@@ -465,6 +473,74 @@ describe('FormSchemaEditor: create mode', () => {
     await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
     expect(onCancel).toHaveBeenCalledOnce();
     expect(saveFormSchema).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Screenshot review, 2026-08-09: opening a new schema greeted the operator with
+ * "Fix on this step: Schema id is required. Schema name is required." and "3
+ * things left to fix" before a single keystroke. Nothing had gone wrong; they
+ * had opened a form.
+ *
+ * The rule these pin down: a step's problems appear once the operator has EDITED
+ * that step, once they have ASKED TO SAVE, or straight away on a record that was
+ * loaded rather than created. Never on the blank form itself.
+ */
+describe('FormSchemaEditor: a new schema is not accused of being empty', () => {
+  it('opens quiet: no banner on the step, no flag on the rail, no counter beside Next', () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    expect(screen.queryByText('Fix on this step')).toBeNull();
+    expect(screen.queryByText('Schema id is required.')).toBeNull();
+    expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName('1 Schema');
+    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName('2 Fields');
+    expect(screen.queryByRole('button', { name: /left to fix/ })).toBeNull();
+  });
+
+  it('reports the schema step once it is typed in, and still says nothing about untouched fields', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/^name$/i), 'Tribe Profile');
+
+    expect(screen.getByText('Schema id is required.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName('1 Schema 1 thing to fix');
+    // The field list is still untouched, so "At least one field is required."
+    // would be describing nothing the operator has done.
+    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName('2 Fields');
+    expect(screen.getByRole('button', { name: /left to fix/ })).toHaveTextContent('1 thing left to fix');
+  });
+
+  it('reports the fields step from the first field added, not before', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await goToStep('Fields');
+    expect(screen.queryByText('Fix on this step')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: /add field/i }));
+    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName('2 Fields 2 things to fix');
+  });
+
+  it('a Save attempt on the untouched form shows every problem, lands on the first, and saves nothing', async () => {
+    const onSaved = vi.fn();
+    render(<FormSchemaEditor onSaved={onSaved} onCancel={vi.fn()} />);
+    await goToStep('Review');
+    await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
+
+    expect(saveFormSchema).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+    // Landed on the earliest problem in reading order, with it named.
+    expect(screen.getByRole('heading', { name: 'Schema', level: 3 })).toBeInTheDocument();
+    expect(screen.getByText('Schema id is required.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName('2 Fields 1 thing to fix');
+    expect(screen.getByRole('button', { name: /left to fix/ })).toHaveTextContent('3 things left to fix');
+  });
+
+  it('an existing schema that is already broken says so on open, because that describes the record', async () => {
+    // Not the operator's doing: a stored schema whose name is blank is a fact
+    // about the record they just opened, so hiding it would hide the reason
+    // their save is about to be refused.
+    getFormSchema.mockResolvedValue(schema({ name: '' }));
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+
+    expect(await screen.findByText('Schema name is required.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName('1 Schema 1 thing to fix');
   });
 });
 

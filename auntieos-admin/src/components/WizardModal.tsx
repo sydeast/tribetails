@@ -79,8 +79,35 @@ export interface WizardStep {
   /**
    * Everything the operator must fix on THIS step. Listed on the step and
    * counted onto its rail button. Empty (the default) means clean.
+   *
+   * Always the TRUTH, even while `pristine` keeps it quiet: the finish gate and
+   * the jump to the first problem both read this list, so a caller that
+   * censored it here would be disarming the guard rather than delaying a
+   * sentence.
    */
   errors?: readonly string[];
+  /**
+   * "Nothing has happened on this step yet." While true, this step's `errors`
+   * are not spoken: no banner on the step, no flag on the rail, and nothing in
+   * the count beside the finish button.
+   *
+   * WHY. An error tells the operator that something they did needs undoing, and
+   * a form they have only just opened is not that. The screenshot review of
+   * 2026-08-09 caught this wizard greeting a brand new form schema with "Fix on
+   * this step: Schema id is required. Schema name is required." and "3 things
+   * left to fix" before a single keystroke. Pre-emptive telling-off misreads the
+   * situation and trains the operator to ignore the banner that will matter.
+   *
+   * It delays the sentence, never the guard. Every problem is still counted
+   * against the finish button, and the FIRST finish attempt reveals all of them
+   * and lands the operator on the earliest one, so the only route to a save is
+   * still to have nothing left to fix.
+   *
+   * Default false, which is a caller saying "these errors describe the record,
+   * not the typing": what an editor holding a document it LOADED wants, since
+   * that record was already broken when it arrived.
+   */
+  pristine?: boolean;
   /** The step's fields, drawn in full. Never fold any of them away. */
   body: ReactNode;
 }
@@ -139,10 +166,28 @@ export function WizardModal({
   notice,
   aside,
 }: WizardModalProps) {
+  /**
+   * Set by a finish attempt that had something hidden left to fix. Once the
+   * operator has asked to save, every step's problems are theirs to see, and
+   * they stay on screen: a reveal that expired would put the modal back to
+   * refusing a save it will not explain.
+   */
+  const [finishAttempted, setFinishAttempted] = useState(false);
+
+  /** Every problem there is: the finish gate and the jump both run on this. */
   const states: WizardStepState[] = steps.map((s) => ({
     key: s.key,
     label: s.label,
     errors: s.errors ?? [],
+  }));
+
+  /** The problems the operator has been TOLD about. See `WizardStep.pristine`. */
+  const shownErrors = (s: WizardStep): readonly string[] =>
+    finishAttempted || !s.pristine ? (s.errors ?? []) : [];
+  const shown: WizardStepState[] = steps.map((s) => ({
+    key: s.key,
+    label: s.label,
+    errors: shownErrors(s),
   }));
 
   // The index the operator was standing on last commit, so a step that
@@ -156,7 +201,7 @@ export function WizardModal({
   });
 
   const active = steps.find((s) => s.key === activeKey) ?? null;
-  const activeErrors = active?.errors ?? [];
+  const activeErrors = active === null ? [] : shownErrors(active);
 
   const headingRef = useRef<HTMLHeadingElement>(null);
   const railRef = useRef<HTMLOListElement>(null);
@@ -188,14 +233,38 @@ export function WizardModal({
     onClose();
   }
 
-  const remaining = errorTotal(states);
+  const outstanding = errorTotal(states);
+  /** What the counter beside the finish button may claim: only what has been said. */
+  const remaining = errorTotal(shown);
+  /** Problems the operator has not been told about yet. Zero once revealed. */
+  const unspoken = outstanding - remaining;
   const back = activeKey === null ? null : prevStepKey(states, activeKey);
   const forward = activeKey === null ? null : nextStepKey(states, activeKey);
   const onLastStep = forward === null;
 
+  /** The counter's jump. Targets a problem the operator can actually READ. */
   function jumpToFirstProblem() {
-    const target = firstStepWithErrors(states);
+    const target = firstStepWithErrors(shown);
     if (target !== null) onStepChange(target);
+  }
+
+  /**
+   * The finish attempt. While something is still unspoken the button is live,
+   * because a disabled control with no stated reason is the other way to strand
+   * an operator: pressing it is what earns the explanation. The press then
+   * reveals every step's problems and lands on the earliest, and never commits.
+   *
+   * Once everything is on screen this is the plain gate it always was, and
+   * `disabled` below stops the click before it arrives.
+   */
+  function handleFinish() {
+    if (unspoken > 0) {
+      setFinishAttempted(true);
+      const target = firstStepWithErrors(states);
+      if (target !== null) onStepChange(target);
+      return;
+    }
+    onFinish();
   }
 
   return (
@@ -233,8 +302,8 @@ export function WizardModal({
             {onLastStep && (
               <PrimaryButton
                 label={finishLabel}
-                onClick={onFinish}
-                disabled={remaining > 0 || finishDisabled || finishBusy}
+                onClick={handleFinish}
+                disabled={(outstanding > 0 && unspoken === 0) || finishDisabled || finishBusy}
                 busy={finishBusy}
               />
             )}
@@ -249,8 +318,10 @@ export function WizardModal({
       </p>
 
       <nav className="wiz__rail" aria-label={`${title} steps`}>
+        {/* `shown`, not `states`: a flag on a step nobody has been to yet is the
+            pre-emptive telling-off `pristine` exists to stop. */}
         <ol className="wiz__rail-list" ref={railRef}>
-          {states.map((s, i) => {
+          {shown.map((s, i) => {
             const isCurrent = s.key === activeKey;
             const count = s.errors.length;
             return (
