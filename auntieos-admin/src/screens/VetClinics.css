@@ -30,13 +30,14 @@
   outline-offset: 2px;
 }
 
-/* Auto-fitting, so the bank reads as cards on a wide screen and a single
-   readable column on a phone without a breakpoint ladder. */
-.vetbank-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
-  gap: var(--space-4);
-}
+/* The three grids on this screen (pending, catalog, retired) are all
+   `EntityCardGrid` now, the one definition behind the list-shape rule. The
+   19rem this screen passes is the width the copy that used to live here used,
+   kept as-is so the consolidation changes no rendering; the mock draws 300px
+   (`ui-ideas/auntieos-vet-clinics-2026-05-27.html` l.75), a 4px difference
+   nothing photographs, so correcting it is a separate, verifiable change.
+   Cards still read as a single readable column on a phone without a breakpoint
+   ladder, which is what auto-fill buys. */
 
 .vetcard {
   display: flex;

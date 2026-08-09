@@ -69,12 +69,12 @@ describe('Templates screen', () => {
     listTemplateCategories.mockResolvedValue(['Booking']);
     render(<Templates />);
     expect(await screen.findByText('Booking Confirmed')).toBeInTheDocument();
-    const row = screen.getByText('Booking Confirmed').closest('.templates__row') as HTMLElement;
-    expect(within(row).getByText('booking.confirmed')).toBeInTheDocument();
-    expect(within(row).getByText('Your booking is confirmed')).toBeInTheDocument();
-    expect(within(row).getByText('Booking', { selector: '.templates__chip--category' })).toBeInTheDocument();
-    expect(within(row).getByText('booking', { selector: '.templates__chip--tag' })).toBeInTheDocument();
-    expect(within(row).getByText('confirmation', { selector: '.templates__chip--tag' })).toBeInTheDocument();
+    const card = screen.getByText('Booking Confirmed').closest('.templates__card') as HTMLElement;
+    expect(within(card).getByText('booking.confirmed')).toBeInTheDocument();
+    expect(within(card).getByText('Your booking is confirmed')).toBeInTheDocument();
+    expect(within(card).getByText('Booking', { selector: '.templates__chip--category' })).toBeInTheDocument();
+    expect(within(card).getByText('booking', { selector: '.templates__chip--tag' })).toBeInTheDocument();
+    expect(within(card).getByText('confirmation', { selector: '.templates__chip--tag' })).toBeInTheDocument();
   });
 
   it('surfaces a load failure naming the callable, never a false empty list', async () => {
@@ -169,7 +169,32 @@ describe('Templates screen', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('rows are always live buttons: with no onSelect override, activating a row opens the built-in editor', async () => {
+  /**
+   * The list-shape rule (operator ruling 2026-08-06 "04 CARDS", written out in
+   * `docs/2026-05-31-den-redesign-design.md`): the Template Bank browses peer
+   * entities, so it is a card grid, not a stacked column. Its own mock has said
+   * so since 2026-05-27 (`ui-ideas/auntieos-template-bank-2026-05-27.html`
+   * l.108, `repeat(auto-fill, minmax(310px, 1fr))`); the React port shipped the
+   * column anyway, which is the drift this closes.
+   *
+   * jsdom has no layout, so this asserts the carriers: the shared grid is
+   * present and named, and it is carrying THIS screen's mock width rather than
+   * the shared default.
+   */
+  it('browses templates as a named card grid at the width its mock draws', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed' }),
+      tpl({ templateId: 'welcome.kinfolk', title: 'Welcome' }),
+    ]);
+    render(<Templates />);
+
+    const grid = await screen.findByRole('list', { name: 'Templates' });
+    expect(grid).toHaveClass('entity-grid');
+    expect(grid.style.getPropertyValue('--entity-card-min')).toBe('310px');
+    expect(within(grid).getAllByRole('listitem')).toHaveLength(2);
+  });
+
+  it('cards are always live buttons: with no onSelect override, activating a card opens the built-in editor', async () => {
     // Unlike the pre-editor placeholder, there is no unwired/dead-control case
     // left: the router mounts <Templates/> propless in production, so this
     // default (opening the overlay) is what every operator actually gets.
@@ -178,7 +203,7 @@ describe('Templates screen', () => {
     ]);
     render(<Templates />);
     const row = await screen.findByText('Booking Confirmed');
-    expect(row.closest('.templates__row-main')?.tagName).toBe('BUTTON');
+    expect(row.closest('.templates__card-main')?.tagName).toBe('BUTTON');
     await userEvent.click(row);
     expect(screen.getByRole('dialog', { name: /edit template/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');

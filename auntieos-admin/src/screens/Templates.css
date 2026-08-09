@@ -121,18 +121,15 @@
   color: var(--color-text-faint);
 }
 
-/* ── row list ────────────────────────────────────────────────────────────── */
+/* ── card grid ───────────────────────────────────────────────────────────── */
 
-.templates__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* The grid is `EntityCardGrid` (components/EntityCardGrid.css); this screen
+   passes its mock's 310px. What lives here is the CARD, ported from the mock's
+   `.tcard` (auntieos-template-bank-2026-05-27.html ll.110-131). It replaced a
+   stacked full-width row that the mock never drew. */
+
+.templates__card {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.templates__row {
   border: var(--border-hairline) solid var(--color-border);
   border-radius: var(--radius-card-lg);
   background: var(--color-surface-glass);
@@ -140,14 +137,16 @@
     background var(--dur-base) var(--ease-standard),
     border-color var(--dur-base) var(--ease-standard);
 }
-.templates__row:hover,
-.templates__row:focus-within {
+.templates__card:hover,
+.templates__card:focus-within {
   background: var(--color-surface-2);
   border-color: var(--color-primary);
 }
 
-.templates__row-main {
-  width: 100%;
+/* Fills the card so the whole card is the target, not just the text block. */
+.templates__card-main {
+  flex: 1 1 auto;
+  min-width: 0;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -157,53 +156,67 @@
   background: none;
   border: none;
   cursor: pointer;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-4);
   font: inherit;
   color: inherit;
 }
-.templates__row-main:focus-visible {
+.templates__card-main:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
   border-radius: var(--radius-card);
 }
-/* Unwired (no editor route yet): a plain, non-interactive row: no hand
-   cursor, no hover, so it never reads as a clickable control that no-ops. */
-.templates__row-main--static {
-  cursor: default;
-}
 
-.templates__row-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.templates__row-name {
+.templates__card-name {
   font-family: var(--font-fraunces);
   font-size: var(--type-title-md-size);
   font-weight: var(--type-title-md-weight);
   color: var(--color-text-primary);
+  /* A card is narrower than the old full-width row, so a long title has to be
+     allowed to wrap rather than push the grid track wider. */
+  overflow-wrap: anywhere;
 }
 
-.templates__row-id {
+/* The mock's `.tmeta`: category pill and key share one wrapping line. */
+.templates__card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.templates__card-id {
   font-family: var(--font-mono);
   font-size: 0.72rem;
   color: var(--color-text-faint);
   word-break: break-all;
 }
 
-.templates__row-subject {
+/* Mock l.125: one line, ellipsis. The full subject is in the `title`
+   attribute and in the editor, so nothing here is unreachable. */
+.templates__card-subject {
+  max-width: 100%;
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.templates__row-description {
+/* Mock l.127: up to two lines, ellipsis. Same reachability note as above. */
+.templates__card-description {
+  max-width: 100%;
   font-size: var(--type-body-sm-size);
   color: var(--color-text-faint);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.templates__row-tags {
+.templates__card-tags {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);

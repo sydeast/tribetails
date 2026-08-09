@@ -1,0 +1,42 @@
+/**
+ * The one card grid. Lifted from Directory.css and VetClinics.css, which held
+ * two copies of it, and Templates.css, which held a stacked-row list where its
+ * mock draws a grid. See EntityCardGrid.tsx for the rule and
+ * docs/2026-05-31-den-redesign-design.md for when a screen gets one at all.
+ *
+ * Every value comes from styles/tokens.css except --entity-card-min, which is a
+ * per-screen mock measurement rather than a design token: the mocks draw 290px,
+ * 300px and 310px, and rounding them together would be a decision none of them
+ * made.
+ */
+
+.entity-grid {
+  /* Directory's width, the oldest and most-copied of the three, is the default. */
+  --entity-card-min: 290px;
+
+  list-style: none;
+  margin: 0;
+  padding: 0;
+
+  display: grid;
+  /* auto-fill, never auto-fit: a lone card keeps a card's width instead of
+     stretching the full panel width and reading as a banner. */
+  grid-template-columns: repeat(auto-fill, minmax(var(--entity-card-min), 1fr));
+  /* 16px, which is the gap all three mocks draw. */
+  gap: var(--space-4);
+}
+
+/* Cards hang from the top of their row rather than stretching to the tallest
+   sibling. Opt-in, because it is right for a card whose body varies in length
+   (Directory's kin list) and wrong for one with a footer pinned to the bottom. */
+.entity-grid--start {
+  align-items: start;
+}
+
+/* A grid item is `min-width: auto` by default, which lets a long unbroken
+   string (a template key, a clinic address) push a column wider than its
+   track. Every card in this grid is a direct child, so this belongs here
+   rather than being re-stated per screen. */
+.entity-grid > * {
+  min-width: 0;
+}

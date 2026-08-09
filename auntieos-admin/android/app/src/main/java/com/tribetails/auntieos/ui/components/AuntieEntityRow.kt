@@ -10,6 +10,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -44,6 +45,12 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  *     optional [subtitle] in dim body text,
  *   - the optional [trailing] slot (chevron, status pill, chip, ghost button).
  *
+ * Below that row, the optional [supporting] slot holds card body content that
+ * is too tall or too structured for [subtitle]: a wrapped description, a row of
+ * tag chips. It is laid out full width under the whole row rather than inside
+ * the title column, because chips that reflow under a trailing pill read as
+ * belonging to it. Omitting it renders exactly what this row always rendered.
+ *
  * When [onClick] is non-null the whole row is tappable. Hover lifts the
  * background to a faint glass wash via [MutableInteractionSource] +
  * [collectIsHoveredAsState] + [animateColorAsState], matching the other Den
@@ -62,6 +69,7 @@ fun AuntieEntityRow(
     subtitle: String? = null,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    supporting: (@Composable ColumnScope.() -> Unit)? = null,
     leadingDotTone: AuntieStatusTone? = null,
     selected: Boolean = false,
     showDivider: Boolean = false,
@@ -136,55 +144,67 @@ fun AuntieEntityRow(
             }
             .padding(horizontal = dims.space3, vertical = dims.space3),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(dims.space3),
+        // `spacedBy` only spaces BETWEEN children, so with no [supporting] slot
+        // this Column has exactly one child and lays out identically to the
+        // bare Row it replaced. Every existing caller renders unchanged.
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(dims.space2),
         ) {
-            if (leading != null) {
-                leading()
-            }
-
             Row(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(dims.space2),
+                horizontalArrangement = Arrangement.spacedBy(dims.space3),
             ) {
-                if (dotColor != null) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(dotColor),
-                    )
+                if (leading != null) {
+                    leading()
                 }
 
-                Column(
+                Row(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(dims.space2),
                 ) {
-                    Text(
-                        text  = title,
-                        style = AuntieTheme.typography.titleMedium,
-                        color = if (selected) c.primary else c.textPrimary,
-                    )
-                    if (subtitle != null) {
-                        Text(
-                            text  = subtitle,
-                            style = AuntieTheme.typography.bodySmall,
-                            color = c.textDim,
+                    if (dotColor != null) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(dotColor),
                         )
+                    }
+
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(
+                            text  = title,
+                            style = AuntieTheme.typography.titleMedium,
+                            color = if (selected) c.primary else c.textPrimary,
+                        )
+                        if (subtitle != null) {
+                            Text(
+                                text  = subtitle,
+                                style = AuntieTheme.typography.bodySmall,
+                                color = c.textDim,
+                            )
+                        }
+                    }
+                }
+
+                if (trailing != null) {
+                    Box(
+                        modifier = Modifier.widthIn(min = 0.dp),
+                        contentAlignment = Alignment.CenterEnd,
+                    ) {
+                        trailing()
                     }
                 }
             }
 
-            if (trailing != null) {
-                Box(
-                    modifier = Modifier.widthIn(min = 0.dp),
-                    contentAlignment = Alignment.CenterEnd,
-                ) {
-                    trailing()
-                }
+            if (supporting != null) {
+                supporting()
             }
         }
     }
