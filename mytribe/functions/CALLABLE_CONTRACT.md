@@ -643,7 +643,7 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### getInvoiceLedger
 - req `{ invoiceId: string /* 1..200 */ }` (`.strict()`)
-- res `{ invoiceId: string, payments: Array<{ paymentId: string, amountCents: number, method: string|null, reference: string|null, paidAt: string|null /* ISO */, recordedBy: string|null, sourcePaymentId: string|null /* the ROOT payments row an apply came in on */ }>, paidCents: number, totalCents: number, amountDueCents: number, ledgerPayments: Array<{ paymentId: string, amountCents: number /* gross tip INCLUDED */, tipCents: number /* GROSS when tipBasis says so */, feeCents: number, tipBasis: 'gross'|'net'|'unknown', reconciles: boolean /* false = a migrated row whose fee was dropped */, appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, autoApply: boolean, appliedInvoiceId: string, appliedInvoiceNumber: string /* the "Applied to #n" column */, method: string, reference: string, date: string /* FREE TEXT */, notes: string /* STAFF ONLY */, recordedBy: string|null }>, unlinkedKinfolkPayments: Array<{ /* same row shape as ledgerPayments */ }>, sessions: Array<{ sessionId: string, serviceType: string, status: string, startTime: string /* ISO */, completedAt: string|null, durationMinutes: number|null, linkedBack: boolean }>, missingSessionIds: string[], orphanSessionIds: string[], truncated: boolean }`
+- res `{ invoiceId: string, payments: Array<{ paymentId: string, amountCents: number, method: string|null, reference: string|null, paidAt: string|null /* ISO */, recordedBy: string|null, sourcePaymentId: string|null /* the ROOT payments row an apply came in on */ }>, paidCents: number, totalCents: number, amountDueCents: number, ledgerPayments: Array<{ paymentId: string, amountCents: number /* gross tip INCLUDED */, amountResolved: boolean /* false = the units could not be read; the 0 is a floor, not a figure */, tipCents: number /* GROSS when tipBasis says so */, feeCents: number, tipBasis: 'gross'|'net'|'unknown', reconciles: boolean /* false = a migrated row whose fee was dropped */, appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, autoApply: boolean, appliedInvoiceId: string, appliedInvoiceNumber: string /* the "Applied to #n" column */, method: string, reference: string, date: string /* FREE TEXT */, notes: string /* STAFF ONLY */, recordedBy: string|null }>, unlinkedKinfolkPayments: Array<{ /* same row shape as ledgerPayments */ }>, unresolvedAmountCount: number /* rows with amountResolved: false, across BOTH root lists */, sessions: Array<{ sessionId: string, serviceType: string, status: string, startTime: string /* ISO */, completedAt: string|null, durationMinutes: number|null, linkedBack: boolean }>, missingSessionIds: string[], orphanSessionIds: string[], truncated: boolean }`
 - Read only. Writes nothing, stamps no classifier state, repairs nothing. No `ok`
   field, same as `listUninvoicedSessions`: a pure read answers with data or
   throws, and has no partial success to report.
@@ -686,6 +686,18 @@ handler until ADR-0001 codegen replaces the hand-mirror).
     panel rendering the subcollection alone would report a settled invoice as
     having no payment at all; a panel rendering the ledger alone presents a
     display record as the money.
+- **AN UNREADABLE ROW IS FLAGGED, NEVER GUESSED**, the same rule `listPayments`
+  ships against the same reader. `resolveLedgerAmountCents` returns
+  `{ amountCents: 0, resolved: false }` for an `unresolved` Stripe event or an
+  `amount` that is not a usable number; the row now ships `amountResolved:
+  false`, the response ships `unresolvedAmountCount` across BOTH root lists, and
+  the handler still emits one `ledger.amount.unresolved` warn per invoice. The
+  warn shipped alone at first, on the claim that there was nowhere non-breaking
+  in this response to put a per-row flag — `listPayments` disproved that, and
+  meanwhile both staff surfaces printed `$0.00` on rows nobody could read.
+  Neither does now: the React table's Amount cell and Android's payment row say
+  the figure could not be read, and the React panel's caveat banner names the
+  rows.
 - **THE SESSION LINK IS REPORTED IN BOTH DIRECTIONS, AND NEVER REPAIRED.**
   `sessions` resolves the invoice's own `sessionIds`; `linkedBack` is false when
   that session's `invoiceId` does not point here; `missingSessionIds` is an id

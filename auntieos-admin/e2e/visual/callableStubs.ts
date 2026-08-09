@@ -161,6 +161,11 @@ const INVOICE_LEDGERS: Readonly<Record<string, GetInvoiceLedgerResult>> = {
     missingSessionIds: [],
     orphanSessionIds: [],
     truncated: false,
+    // Zero, because every fixture amount above is a real reading. A non-zero
+    // count would photograph the could-not-be-read caveat as the ordinary
+    // appearance of the ledger, which is the same mistake as photographing an
+    // error panel.
+    unresolvedAmountCount: 0,
   },
 };
 

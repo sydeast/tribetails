@@ -111,6 +111,10 @@ object AndroidDemoFixtures {
             GetInvoiceLedgerResultLedgerPayment(
                 paymentId = "demo-pay-stripe",
                 amountCents = 13750L,
+                // A row the server read cleanly, which is what a demo should
+                // show: the unreadable case has its own dedicated test rather
+                // than being smuggled into the screenshot baseline.
+                amountResolved = true,
                 tipCents = 0L,
                 feeCents = 0L,
                 tipBasis = "unknown",
@@ -129,6 +133,7 @@ object AndroidDemoFixtures {
             ),
         ),
         unlinkedKinfolkPayments = emptyList(),
+        unresolvedAmountCount = 0L,
         sessions = emptyList(),
         missingSessionIds = emptyList(),
         orphanSessionIds = emptyList(),

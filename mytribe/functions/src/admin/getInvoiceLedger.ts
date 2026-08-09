@@ -142,6 +142,22 @@ const LedgerPaymentSchema = z
     paymentId: z.string().min(1),
     /** The whole sum collected from the client, the GROSS tip included. */
     amountCents: CentsSchema,
+    /**
+     * FALSE when the row's units could not be honestly determined — a Stripe
+     * event the webhook itself gave up on, or an `amount` that is not a usable
+     * number. `amountCents` is 0 on such a row, and 0 IS NOT A CLAIM THAT
+     * NOTHING WAS COLLECTED: it is the floor `CentsSchema` allows. A client
+     * that renders `$0.00` without reading this flag is stating a fact nobody
+     * checked, which is exactly what both staff surfaces did.
+     *
+     * `resolveLedgerAmountCents` has always returned this decision (its own
+     * doc says the caller is expected to say so out loud). It reached the warn
+     * log below and stopped there — an earlier note in this file claimed the
+     * response had "nowhere non-breaking to carry a per-row flag", which
+     * `listPayments`' identically-named field disproves: a client reads the
+     * fields it knows and both mirrors are generated from this schema.
+     */
+    amountResolved: z.boolean(),
     /** Gratuity, recorded separately by the legacy shape. Integer cents here. */
     tipCents: CentsSchema,
     /**
@@ -268,6 +284,17 @@ export const Result = z
      * apply it. Served from here, both lists come back already in cents.
      */
     unlinkedKinfolkPayments: z.array(LedgerPaymentSchema),
+    /**
+     * How many rows carry `amountResolved: false`, across BOTH root-collection
+     * lists above — the same number the `ledger.amount.unresolved` warn log
+     * reports, because both lists are read through the same row reader.
+     *
+     * Redundant with the per-row flags and deliberately so, matching
+     * `listPayments`: a caller that renders a banner or a total needs the count
+     * without walking two arrays, and a caller that reads neither is at least
+     * visible in the logs.
+     */
+    unresolvedAmountCount: z.number().int().min(0),
     /** The visits the invoice claims, newest first. */
     sessions: z.array(InvoiceSessionSchema),
     /** Ids on the invoice with no `kin_care_sessions` doc behind them. */
@@ -419,6 +446,7 @@ export async function getInvoiceLedgerHandler(
     return {
       paymentId: d.id,
       amountCents: money.amountCents,
+      amountResolved: amountResult.resolved,
       tipCents: money.tipCents,
       feeCents: money.feeCents,
       tipBasis,
@@ -464,11 +492,21 @@ export async function getInvoiceLedgerHandler(
     .map(ledgerRowOf)
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  // Fail-loud (money code standing rule): a row this reader could not
-  // honestly interpret rendered as $0.00 and nothing said why. That is no
-  // longer silent — an operator or on-call reading logs for this invoice can
-  // find it, even though the response itself has nowhere non-breaking to
-  // carry a per-row flag (see the report for why a schema field was ruled out).
+  // Fail-loud (money code standing rule), and the log is now the SECOND place
+  // this is said rather than the only one.
+  //
+  // An earlier note here claimed the response had "nowhere non-breaking to
+  // carry a per-row flag". That was wrong, and the sibling callable is the
+  // proof: `listPayments` ships `payments[].amountResolved` plus a page-level
+  // `unresolvedAmountCount` against the same reader. Both clients are
+  // generated from this schema, so an added field is read by the surfaces that
+  // want it and ignored by the ones that do not. `LedgerPaymentSchema` now
+  // carries the flag and `Result` the count; while the claim stood, an
+  // operator saw `$0.00` on an unreadable row and only on-call, reading logs,
+  // ever learned it was not a reading.
+  //
+  // The log stays regardless: it is what makes an unreadable row findable
+  // across invoices, which no per-row flag on one response can do.
   if (unresolvedLedgerAmounts > 0) {
     logEvent({
       severity: 'warn',
@@ -555,6 +593,7 @@ export async function getInvoiceLedgerHandler(
     amountDueCents: settlement.amountDueCents,
     ledgerPayments,
     unlinkedKinfolkPayments,
+    unresolvedAmountCount: unresolvedLedgerAmounts,
     sessions,
     missingSessionIds,
     orphanSessionIds,

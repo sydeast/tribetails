@@ -237,6 +237,7 @@ export interface GetInvoiceLedgerResultPayment {
 export interface GetInvoiceLedgerResultLedgerPayment {
   paymentId: string;
   amountCents: number;
+  amountResolved: boolean;
   tipCents: number;
   feeCents: number;
   tipBasis: 'gross' | 'net' | 'unknown';
@@ -278,6 +279,7 @@ export interface GetInvoiceLedgerResult {
   amountDueCents: number;
   ledgerPayments: GetInvoiceLedgerResultLedgerPayment[];
   unlinkedKinfolkPayments: GetInvoiceLedgerResultLedgerPayment[];
+  unresolvedAmountCount: number;
   sessions: GetInvoiceLedgerResultSession[];
   missingSessionIds: string[];
   orphanSessionIds: string[];

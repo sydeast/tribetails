@@ -218,8 +218,21 @@ function PaymentsPanel({
                   </td>
                   {/* THE WHOLE SUM COLLECTED, tip included. Not amount + tip:
                       on the operator's real data the tip is already inside this
-                      figure, and adding them counts the gratuity twice. */}
-                  <td className="invoice-ledger__num">{formatCentsUsd(row.amountCents)}</td>
+                      figure, and adding them counts the gratuity twice.
+
+                      A row the server could not read gets no dollar figure at
+                      all. Its `amountCents` is 0 because that is the floor the
+                      schema allows, not because nothing was collected, and
+                      printing it made an unreadable row look like a payment of
+                      nothing. Same treatment the Fee cell already gives an
+                      unrecorded fee. */}
+                  <td className="invoice-ledger__num">
+                    {row.amountResolved ? (
+                      formatCentsUsd(row.amountCents)
+                    ) : (
+                      <span className="invoice-ledger__missing">could not be read</span>
+                    )}
+                  </td>
                   <td>
                     {appliedTo === '' ? (
                       // Never "$0.00 applied". A payment that touched no balance

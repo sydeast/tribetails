@@ -937,6 +937,15 @@ private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
  * `amount + tip` counted the gratuity twice on every tipped row — a second,
  * quieter money bug on the same line. The web ledger has always rendered
  * `amountCents` alone (`InvoiceLedger.tsx`); this row now agrees with it.
+ *
+ * A THIRD THING, AND IT IS THE SAME KIND OF LIE. `amountResolved: false` means
+ * the server could not interpret the stored figure at all: an `unresolved`
+ * Stripe event, or an `amount` that is not a usable number. `amountCents` is 0
+ * on such a row because 0 is the floor the schema allows, NOT because nothing
+ * was collected — and this row printed it as "$0.00" in the same green it uses
+ * for money that really arrived. It now says so instead, in the dim colour the
+ * screen already uses for what is absent, and the web table's Amount cell says
+ * the same words.
  */
 @Composable
 private fun PaymentRow(payment: GetInvoiceLedgerResultLedgerPayment, showDivider: Boolean) {
@@ -952,11 +961,19 @@ private fun PaymentRow(payment: GetInvoiceLedgerResultLedgerPayment, showDivider
             Text(method, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
             Text(dateLabel, style = AuntieTheme.typography.labelSmall, color = c.textDim)
         }
-        Text(
-            formatCentsUsd(payment.amountCents),
-            style = AuntieTheme.typography.bodyMedium,
-            color = c.success,
-        )
+        if (payment.amountResolved) {
+            Text(
+                formatCentsUsd(payment.amountCents),
+                style = AuntieTheme.typography.bodyMedium,
+                color = c.success,
+            )
+        } else {
+            Text(
+                "could not be read",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+        }
     }
 }
 
