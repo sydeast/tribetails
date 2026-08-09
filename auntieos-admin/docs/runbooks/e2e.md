@@ -192,10 +192,22 @@ equality filter look correct here and drop real visits in production.
 
 ## Adding a spec
 
-Put it in `e2e/`, then add its filename to a project's `testMatch` in
-`e2e/playwright.config.ts`. `signed-out` for anything reachable without a
-session; `operator` for anything behind the gate, which brings the saved session
-with it.
+Put it in `e2e/`. That is the whole procedure for anything behind the auth gate:
+`operator` is the default project and collects every `*.spec.ts` under `e2e/`,
+so the file runs with the saved session and no config edit.
+
+Only the exceptions are named. A spec that must run WITHOUT a session goes in
+`SIGNED_OUT_SPECS` at the top of `e2e/playwright.config.ts`; that one constant
+is both what `signed-out` matches and what `operator` ignores, so the two halves
+cannot drift.
+
+This used to be an allowlist per project, and a spec nobody added to it was
+collected by NO project: it ran zero times and the suite still reported green.
+`npm run e2e` now runs `e2e/spec-coverage.mjs` first, which asks Playwright
+itself (`--list`, twice, once under `VISUAL_CAPTURE=1`) which project claims
+each file and fails if any spec file is claimed by none or by two. A spec file
+that declares no tests fails it too, for the same reason: it is a file that
+executes nothing and passes.
 
 If the screen calls a callable, stub it before the first `goto`, per "Callables
 never leave the machine". A spec that skips this fails on
