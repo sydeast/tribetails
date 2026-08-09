@@ -52,10 +52,37 @@ beforeEach(() => {
   });
 });
 
+/**
+ * A tile now carries its caption/meta TWICE: once in the always-visible
+ * `.media__tile-body` block (the accessible carrier, and the only copy a touch
+ * device or Android ever sees) and once in the `aria-hidden` hover strip drawn
+ * over the thumbnail (the mock's `.cap`). So the harness matches on the first
+ * occurrence rather than asserting there is exactly one.
+ */
 function tileFor(text: string): HTMLElement {
-  const el = screen.getByText(text).closest('.media__cell');
+  const first = screen.getAllByText(text)[0];
+  const el = first?.closest('.media__cell');
   if (!(el instanceof HTMLElement)) throw new Error(`tile container not found for "${text}"`);
   return el;
+}
+
+/** How many tiles render `text` in their always-visible body block. */
+function captionedTiles(text: string): number {
+  return screen
+    .queryAllByText(text)
+    .filter((el) => el.closest('.media__tile-body') !== null).length;
+}
+
+/** The heading count chip, or null when the screen refuses to claim a number. */
+function countChip(): HTMLElement | null {
+  return document.querySelector('.media__count-chip');
+}
+
+/** Every type-filter pill's text, in render order (e.g. `['All 3', 'Image 2', 'Video 1']`). */
+function chipLabels(): string[] {
+  return Array.from(document.querySelectorAll('.media__chip')).map((c) =>
+    (c.textContent ?? '').trim(),
+  );
 }
 
 describe('Media screen, no target selected', () => {
@@ -120,9 +147,12 @@ describe('Media screen, grid rendering', () => {
     };
     render(<Media targetType="kin" targetId="kf1" />);
 
-    const tile = tileFor('Rufus at the park');
-    expect(within(tile).getByText(/2026-07-16/)).toBeInTheDocument();
-    expect(within(tile).getByText(/Jamie/)).toBeInTheDocument();
+    // Scoped to the always-visible body block: the tile also carries an
+    // aria-hidden copy in its hover strip, so an unscoped match finds both.
+    const body = tileFor('Rufus at the park').querySelector('.media__tile-body');
+    if (!(body instanceof HTMLElement)) throw new Error('tile body not found');
+    expect(within(body).getByText(/2026-07-16/)).toBeInTheDocument();
+    expect(within(body).getByText(/Jamie/)).toBeInTheDocument();
   });
 
   it('falls back to originalFileName when description is blank', () => {
@@ -131,7 +161,7 @@ describe('Media screen, grid rendering', () => {
       data: [media({ _id: 'm1', description: '', originalFileName: 'IMG_9999.jpg' })],
     };
     render(<Media targetType="kin" targetId="kf1" />);
-    expect(screen.getByText('IMG_9999.jpg')).toBeInTheDocument();
+    expect(captionedTiles('IMG_9999.jpg')).toBe(1);
   });
 
   it('shows the Profile badge only for the profile photo', () => {
@@ -218,14 +248,156 @@ describe('Media screen, type filter', () => {
     };
     render(<Media targetType="kin" targetId="kf1" />);
 
-    expect(screen.getByText('A photo')).toBeInTheDocument();
-    expect(screen.getByText('A clip')).toBeInTheDocument();
+    expect(captionedTiles('A photo')).toBe(1);
+    expect(captionedTiles('A clip')).toBe(1);
 
-    await userEvent.click(screen.getByRole('button', { name: 'Video' }));
-    expect(screen.queryByText('A photo')).not.toBeInTheDocument();
-    expect(screen.getByText('A clip')).toBeInTheDocument();
+    // The pill is named "Video 1" now that it carries its real count, so match
+    // on the leading label rather than the whole accessible name.
+    await userEvent.click(screen.getByRole('button', { name: /^Video/ }));
+    expect(captionedTiles('A photo')).toBe(0);
+    expect(captionedTiles('A clip')).toBe(1);
 
-    await userEvent.click(screen.getByRole('button', { name: 'Video' }));
-    expect(screen.getByText('A photo')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^Video/ }));
+    expect(captionedTiles('A photo')).toBe(1);
+  });
+
+  it('labels every type pill with its real per-type count, like the mock and the Compose/Android pills', () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [
+        media({ _id: 'm1', fileType: 'IMAGE' }),
+        media({ _id: 'm2', fileType: 'IMAGE' }),
+        media({ _id: 'm3', fileType: 'VIDEO' }),
+      ],
+    };
+    render(<Media targetType="kin" targetId="kf1" />);
+    expect(chipLabels()).toEqual(['All 3', 'Image 2', 'Video 1']);
+  });
+
+  it('keeps the pill counts on the whole stream, not on the current slice', async () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [
+        media({ _id: 'm1', fileType: 'IMAGE' }),
+        media({ _id: 'm2', fileType: 'VIDEO' }),
+      ],
+    };
+    render(<Media targetType="kin" targetId="kf1" />);
+
+    await userEvent.click(screen.getByRole('button', { name: /^Video/ }));
+    // Narrowing to Video must not restate Image as 0: the counts describe the
+    // stream, and a filter is a view over it.
+    expect(chipLabels()).toEqual(['All 2', 'Image 1', 'Video 1']);
+  });
+});
+
+describe('Media screen, count chip', () => {
+  it('claims no number while the stream is still loading', () => {
+    mediaAsync = { status: 'loading' };
+    render(<Media targetType="kin" targetId="kf1" />);
+    expect(countChip()).toBeNull();
+  });
+
+  it('claims no number when the read failed: unknown is not zero', () => {
+    mediaAsync = { status: 'error', message: 'permission-denied' };
+    render(<Media targetType="kin" targetId="kf1" />);
+    expect(countChip()).toBeNull();
+  });
+
+  it('claims no number before a target is even selected', () => {
+    mediaAsync = { status: 'ready', data: [media({ _id: 'm1' })] };
+    render(<Media targetType="kin" targetId="" />);
+    expect(countChip()).toBeNull();
+  });
+
+  it('shows the real streamed total once the read resolves', () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [media({ _id: 'm1' }), media({ _id: 'm2' }), media({ _id: 'm3' })],
+    };
+    render(<Media targetType="kin" targetId="kf1" />);
+    expect(countChip()).toHaveTextContent('3 files');
+  });
+
+  it('singularises a one-file gallery', () => {
+    mediaAsync = { status: 'ready', data: [media({ _id: 'm1' })] };
+    render(<Media targetType="kin" targetId="kf1" />);
+    expect(countChip()).toHaveTextContent('1 file');
+  });
+
+  it('counts the whole stream, not the filtered slice', async () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [
+        media({ _id: 'm1', fileType: 'IMAGE' }),
+        media({ _id: 'm2', fileType: 'IMAGE' }),
+        media({ _id: 'm3', fileType: 'VIDEO' }),
+      ],
+    };
+    render(<Media targetType="kin" targetId="kf1" />);
+
+    await userEvent.click(screen.getByRole('button', { name: /^Video/ }));
+    expect(countChip()).toHaveTextContent('3 files');
+  });
+});
+
+describe('Media screen, hover caption strip', () => {
+  function strip(tile: HTMLElement): HTMLElement | null {
+    return tile.querySelector('.media__tile-caption-strip');
+  }
+
+  it('draws the mock caption strip over the tile, carrying the same real description and meta', () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [media({ _id: 'm1', description: 'Rufus at the park', uploadedBy: 'Jamie' })],
+    };
+    render(<Media targetType="kin" targetId="kf1" />);
+
+    const s = strip(tileFor('Rufus at the park'));
+    expect(s).not.toBeNull();
+    expect(s).toHaveTextContent('Rufus at the park');
+    expect(s).toHaveTextContent('2026-07-16');
+    expect(s).toHaveTextContent('Jamie');
+  });
+
+  it('hides the strip from assistive tech: the always-visible body block is the accessible carrier', () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [media({ _id: 'm1', description: 'Rufus at the park' })],
+    };
+    render(<Media targetType="kin" targetId="kf1" />);
+
+    // jsdom has no user-agent stylesheet, so `toBeVisible()` would pass on the
+    // hover-hidden strip regardless. Assert the state carrier instead.
+    expect(strip(tileFor('Rufus at the park'))).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('keeps the same three values always visible below the tile, so nothing is hover-gated', () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [media({ _id: 'm1', description: 'Rufus at the park', uploadedBy: 'Jamie' })],
+    };
+    render(<Media targetType="kin" targetId="kf1" />);
+
+    const body = tileFor('Rufus at the park').querySelector('.media__tile-body');
+    expect(body).toHaveTextContent('Rufus at the park');
+    expect(body).toHaveTextContent('2026-07-16 · Jamie');
+  });
+
+  it('renders no orphan strip when there is neither a caption nor a meta line', () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [
+        {
+          _id: 'bare-1',
+          storageUrl: 'https://example.test/bare.jpg',
+        } as unknown as MediaFile,
+      ],
+    };
+    render(<Media targetType="kin" targetId="kf1" />);
+
+    const cell = document.querySelector('.media__cell');
+    expect(cell).not.toBeNull();
+    expect(cell?.querySelector('.media__tile-caption-strip')).toBeNull();
   });
 });

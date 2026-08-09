@@ -82,6 +82,16 @@ export function Media({ targetType, targetId }: MediaProps) {
   const mediaState = useCollection<MediaFile>(spec);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
 
+  /**
+   * The mock's top-bar count chip. Rendered ONLY from a resolved read: while the
+   * stream is loading, after it failed, or before a target is chosen there is no
+   * number anyone has actually read, and the chip stays away rather than
+   * printing a confident 0 (the same refusal `DenScreenKit`'s StatCard encodes
+   * after the 2026-07-15 "Open bookings: 0" incident). It counts the whole
+   * stream, never the filtered slice: the filter is a view over the total.
+   */
+  const total = hasTarget && mediaState.status === 'ready' ? mediaState.data.length : null;
+
   const headingProps = {
     kicker: 'The Den · Media',
     title: label,
@@ -89,6 +99,7 @@ export function Media({ targetType, targetId }: MediaProps) {
     ...(hasTarget
       ? { subtitle: `Photos, videos, and files uploaded for this ${label.toLowerCase()}.` }
       : {}),
+    ...(total !== null && total > 0 ? { trailing: <MediaCountChip total={total} /> } : {}),
   };
 
   return (
@@ -117,6 +128,21 @@ export function Media({ targetType, targetId }: MediaProps) {
   );
 }
 
+/**
+ * The mono count chip beside the title (the mock's `.count`). Purely a
+ * presentation of a number the caller already proved it read: this component
+ * has no fallback of its own, because the only safe fallback is not rendering.
+ */
+function MediaCountChip({ total }: { total: number }) {
+  return (
+    <span className="media__count-chip">
+      {/* A <span>, not the mock's <em>: the number is accent-coloured, but it is
+          not emphasis, and a screen reader should not stress it. */}
+      <span className="media__count-chip-n">{total}</span> {total === 1 ? 'file' : 'files'}
+    </span>
+  );
+}
+
 interface MediaGridProps {
   rows: MediaFile[];
   typeFilter: string | null;
@@ -134,15 +160,42 @@ function MediaGrid({ rows, typeFilter, onTypeFilterChange }: MediaGridProps) {
     [safeRows, typeFilter],
   );
 
+  /**
+   * Per-type counts for the pills, the way the mock draws them ("Images 5") and
+   * the way the Compose (`MediaTypeFilters`) and Android (`MediaTypeFilter`)
+   * pills already carry them. Derived from the FULL streamed set, never from
+   * `visible`: narrowing to Videos must not restate Images as 0. Keyed on the
+   * same trimmed `fileType` string `galleryFileTypes` returns, so a count can
+   * never drift from the pill it sits on.
+   */
+  const countByType = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const m of safeRows) {
+      const t = (m.fileType ?? '').trim();
+      if (t !== '') counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    return counts;
+  }, [safeRows]);
+
   return (
     <>
       {types.length > 0 && (
         <div className="media__filter-row" role="group" aria-label="Filter by type">
-          <Chip label="All" active={typeFilter === null} onClick={() => onTypeFilterChange(null)} />
+          <Chip
+            label="All"
+            count={safeRows.length}
+            active={typeFilter === null}
+            onClick={() => onTypeFilterChange(null)}
+          />
           {types.map((t) => (
             <Chip
               key={t}
               label={titleCase(t)}
+              // `?? 0` would be a fabricated count anywhere else. Here `t` comes
+              // from `galleryFileTypes(safeRows)`, i.e. it is present in the very
+              // rows `countByType` was built from, so the branch is unreachable
+              // rather than a silent zero: types and counts share one source.
+              count={countByType.get(t) ?? 0}
               active={typeFilter === t}
               onClick={() => onTypeFilterChange(typeFilter === t ? null : t)}
             />
@@ -173,10 +226,20 @@ function titleCase(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
 
-function Chip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function Chip({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+}) {
   return (
     <button type="button" className="media__chip" data-active={active} aria-pressed={active} onClick={onClick}>
-      {label}
+      {label} <span className="media__chip-count">{count}</span>
     </button>
   );
 }
@@ -234,6 +297,30 @@ function MediaTile({ media }: MediaTileProps) {
           )}
           {duration !== undefined && <span className="media__tile-duration">{duration}</span>}
           {media.isProfilePhoto && <span className="media__tile-profile-badge">Profile</span>}
+
+          {/*
+            The mock's `.cap` strip: a gradient-to-dark caption over the bottom
+            of the thumbnail carrying the description and the "{date} · {uploader}"
+            meta. It is a pointer-hover convenience ONLY, and deliberately not the
+            only way to reach any of it: the same three values stay always visible
+            in `.media__tile-body` below, which is what a touch device, a keyboard
+            user, and the Android gallery all see. The CSS gates it behind
+            `@media (hover: hover)` so a touch browser never has an invisible
+            strip it cannot summon.
+
+            `aria-hidden`: this is a duplicate of the body block below, and a
+            screen reader should read each caption once, not twice.
+
+            Rendered only when there is something real to put in it, so a row with
+            neither a description nor a readable uploadedAt/uploadedBy gets no
+            orphan gradient.
+          */}
+          {(caption !== '' || meta !== '') && (
+            <span className="media__tile-caption-strip" aria-hidden="true">
+              {caption !== '' && <span className="media__tile-strip-caption">{caption}</span>}
+              {meta !== '' && <span className="media__tile-strip-meta">{meta}</span>}
+            </span>
+          )}
         </div>
 
         <div className="media__tile-body">

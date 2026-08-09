@@ -56,6 +56,17 @@ fun MediaGalleryScreen(
         title = "$entityName Media",
         onBack = onBack,
         actions = {
+            // Top-bar count chip (mock `.count`). The mock draws it inline after
+            // the title; AuntieScreenScaffold's title is a plain String with no
+            // composable slot, so the chip rides in the top bar's actions row
+            // instead, ahead of the upload action. That keeps it in the bar the
+            // mock puts it in without reworking the shared scaffold's signature.
+            mediaCountChipLabel(
+                isLoading = state.isLoading,
+                error = state.error,
+                count = state.mediaFiles.size,
+            )?.let { MediaCountChip(label = it) }
+
             AuntieIconBtn(onClick = { showUploadDialog = true }) {
                 Icon(Lucide.Plus, contentDescription = "Add Media")
             }
@@ -615,6 +626,53 @@ internal fun mediaMetaLine(uploadedAt: String, uploadedBy: String): String {
         .takeIf { it.isNotBlank() && !it.equals("auntie", ignoreCase = true) }
         .orEmpty()
     return listOf(date, author).filter { it.isNotBlank() }.joinToString(" · ")
+}
+
+/**
+ * Label for the top-bar count chip, or `null` when the screen has no real number
+ * to show.
+ *
+ * The gate is the point. A count chip drawn while [isLoading] is true, or after
+ * the read failed ([error] non-null), would be stating "0 files" about a
+ * collection nobody has successfully read yet, the same fabricated claim the
+ * web StatCard was rewritten to make impossible. A stale [count] carried
+ * alongside either of those states is not rescued by being non-zero, so both
+ * gates run before the count is looked at.
+ *
+ * A proven-empty gallery also gets no chip: the empty state already says "No
+ * media files found", and "0 files" beside it is noise, not information. Pure;
+ * unit-tested.
+ */
+internal fun mediaCountChipLabel(isLoading: Boolean, error: String?, count: Int): String? {
+    if (isLoading || error != null) return null
+    if (count <= 0) return null
+    return if (count == 1) "1 file" else "$count files"
+}
+
+/**
+ * The mock's mono count pill for the top bar. Renders only the label it is
+ * handed: the decision about whether a number is knowable lives in
+ * [mediaCountChipLabel], so this composable has no fallback to get wrong.
+ */
+@Composable
+internal fun MediaCountChip(label: String) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(AuntieTheme.colors.surface2)
+            .border(
+                AuntieTheme.dims.borderHairline,
+                AuntieTheme.colors.border,
+                RoundedCornerShape(50),
+            )
+            .padding(horizontal = 10.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = label,
+            style = AuntieTheme.typography.mono,
+            color = AuntieTheme.colors.textDim,
+        )
+    }
 }
 
 /** Small teal "Profile" pill marking the household's profile photo (spec 28 item 2). */
