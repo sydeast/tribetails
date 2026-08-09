@@ -12,6 +12,7 @@ import {
   threadPreviewText,
   threadMessageCount,
   groupThreadsByDay,
+  groupThreadsByWaiting,
   localDateIso,
   replyBlocker,
 } from './inboxFormat';
@@ -184,6 +185,65 @@ describe('groupThreadsByDay', () => {
 
   it('an empty input produces no groups, never a fabricated placeholder', () => {
     expect(groupThreadsByDay([])).toEqual([]);
+  });
+});
+
+describe('groupThreadsByWaiting', () => {
+  interface Row {
+    _id: string;
+    unreadForAdmin: boolean;
+    lastMessageAtMs: number;
+  }
+
+  it('puts threads waiting on a reply above answered ones', () => {
+    const sections = groupThreadsByWaiting<Row>([
+      { _id: 'a', unreadForAdmin: false, lastMessageAtMs: 2 },
+      { _id: 'b', unreadForAdmin: true, lastMessageAtMs: 1 },
+    ]);
+    expect(sections.map((s) => s.key)).toEqual(['waiting', 'answered']);
+    expect(sections[0]?.threads.map((t) => t._id)).toEqual(['b']);
+    expect(sections[1]?.threads.map((t) => t._id)).toEqual(['a']);
+  });
+
+  it('keeps both sections when one is empty so the screen can say so', () => {
+    const sections = groupThreadsByWaiting<Row>([
+      { _id: 'a', unreadForAdmin: false, lastMessageAtMs: 1 },
+    ]);
+    expect(sections[0]).toEqual({ key: 'waiting', label: 'Waiting on a reply', threads: [] });
+    expect(sections[1]?.key).toBe('answered');
+  });
+
+  it('splits on the same threadReadState the badge and the filter chips use', () => {
+    // `unreadForAdmin` is a STORED BOOLEAN (api/inbox.ts:44), never a count, so
+    // there is no arithmetic here at all. Routing the split through
+    // `threadReadState` rather than re-reading the raw field is what keeps this
+    // section, the "N unread" badge (`unreadThreadCount`) and the Unread filter
+    // chip from ever disagreeing about one row.
+    const rows = [
+      { _id: 'read', unreadForAdmin: false, lastMessageAtMs: 2 },
+      { _id: 'unread', unreadForAdmin: true, lastMessageAtMs: 1 },
+    ];
+    const sections = groupThreadsByWaiting(rows);
+    const waitingIds = sections[0]?.threads.map((t) => t._id) ?? [];
+    expect(waitingIds).toEqual(
+      rows.filter((r) => threadReadState(r.unreadForAdmin) === 'unread').map((r) => r._id),
+    );
+    expect(unreadThreadCount(rows)).toBe(waitingIds.length);
+  });
+
+  it('returns both sections, both empty, for no input at all', () => {
+    const sections = groupThreadsByWaiting<Row>([]);
+    expect(sections.map((s) => s.key)).toEqual(['waiting', 'answered']);
+    expect(sections.every((s) => s.threads.length === 0)).toBe(true);
+  });
+
+  it('does not mutate or re-order the caller array; day order stays groupThreadsByDay’s job', () => {
+    const rows: Row[] = [
+      { _id: 'a', unreadForAdmin: false, lastMessageAtMs: 1 },
+      { _id: 'b', unreadForAdmin: true, lastMessageAtMs: 2 },
+    ];
+    groupThreadsByWaiting(rows);
+    expect(rows.map((r) => r._id)).toEqual(['a', 'b']);
   });
 });
 

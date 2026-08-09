@@ -226,3 +226,47 @@ export function groupThreadsByDay<T extends { lastMessageAtMs: number }>(
   });
   return groups;
 }
+
+// ── status grouping (who is waiting) ─────────────────────────────────────
+
+/** One waiting/answered section of the thread list. */
+export interface ThreadSection<T> {
+  key: 'waiting' | 'answered';
+  label: string;
+  threads: T[];
+}
+
+/**
+ * The two sections in the order they are worked: threads WAITING on a reply
+ * first, then the ones already answered.
+ *
+ * WHY BOTH SECTIONS ALWAYS COME BACK, empty or not. An operator opening the
+ * Inbox is asking "is anyone waiting on me". A missing "Waiting on a reply"
+ * header answers nothing: it looks the same as a list that has not finished
+ * grouping. An empty one, with the screen's "Nothing is waiting on a reply"
+ * line under it, answers the question outright.
+ *
+ * This WRAPS `groupThreadsByDay`, it does not replace it: the screen runs the
+ * day grouping inside each section, so the AO-18 local-day fix still decides
+ * every date header. Nothing here reads a timestamp at all, which is why the
+ * ordering within a section is left entirely to that function.
+ *
+ * The split delegates to `threadReadState`, the same enumerated classifier the
+ * "N unread" badge (`unreadThreadCount`) and the Unread filter chip use, so the
+ * three surfaces can never disagree about one row. `unreadForAdmin` is a
+ * STORED BOOLEAN (`api/inbox.ts`), never a count.
+ */
+export function groupThreadsByWaiting<T extends { unreadForAdmin: boolean }>(
+  threads: readonly T[],
+): ThreadSection<T>[] {
+  const waiting: T[] = [];
+  const answered: T[] = [];
+  for (const t of threads) {
+    if (threadReadState(t.unreadForAdmin) === 'unread') waiting.push(t);
+    else answered.push(t);
+  }
+  return [
+    { key: 'waiting', label: 'Waiting on a reply', threads: waiting },
+    { key: 'answered', label: 'Answered', threads: answered },
+  ];
+}

@@ -76,3 +76,46 @@ fun replyBlocker(body: String): String? {
 
 /** Count of threads with an unread kinfolk message. Pure. */
 fun unreadConversationCount(list: List<ConversationSummary>): Int = list.count { it.unreadForAdmin }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Waiting/answered grouping. Android parity with `groupThreadsByWaiting` in
+// the React admin's src/lib/inboxFormat.ts, including the rule that BOTH
+// sections always come back: a missing "Waiting on a reply" header looks the
+// same as a list that has not loaded, while an empty one answers the
+// operator's actual question ("is anyone waiting on me") outright.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum class ThreadSectionKey { WAITING, ANSWERED }
+
+data class ThreadSection(
+    val key: ThreadSectionKey,
+    val label: String,
+    val threads: List<ConversationSummary>,
+)
+
+/**
+ * Splits threads into waiting-first, answered-second. Pure, and deliberately
+ * order-preserving within a section: the server already returns the list newest
+ * first, and re-sorting here would put this function in disagreement with it.
+ *
+ * `unreadForAdmin` is a stored BOOLEAN (decoded as `== true` above), never a
+ * count, so the split is a plain partition with no arithmetic in it.
+ */
+fun groupThreadsByWaiting(list: List<ConversationSummary>): List<ThreadSection> {
+    val (waiting, answered) = list.partition { it.unreadForAdmin }
+    return listOf(
+        ThreadSection(ThreadSectionKey.WAITING, "Waiting on a reply", waiting),
+        ThreadSection(ThreadSectionKey.ANSWERED, "Answered", answered),
+    )
+}
+
+/**
+ * The number of threads `markAllThreadsRead` actually cleared, or null when the
+ * response carries no count.
+ *
+ * Null rather than 0: a missing field means the response is not what this
+ * client expects, and "0 threads marked read" would report a successful no-op
+ * for a write that may well have cleared the whole inbox.
+ */
+internal fun decodeClearedCount(raw: Map<String, Any?>?): Int? =
+    (raw?.get("cleared") as? Number)?.toInt()
