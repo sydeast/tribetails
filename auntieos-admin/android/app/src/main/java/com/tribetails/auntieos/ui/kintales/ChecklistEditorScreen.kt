@@ -16,6 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -265,7 +267,7 @@ private fun ChecklistGroup(
 }
 
 @Composable
-private fun ChecklistItemEditor(
+internal fun ChecklistItemEditor(
     item: ChecklistItem,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onUpdate: (ChecklistItem) -> Unit,
@@ -312,6 +314,30 @@ private fun ChecklistItemEditor(
                         label = "Show",
                         modifier = Modifier.weight(1f)
                     )
+                }
+
+                // `required` is written by both web editors and rides along on every
+                // android save, so without this row the phone silently edits a flag it
+                // never shows. Named for accessibility to match React's switch, whose
+                // accessible name is "Required".
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AuntieToggle(
+                        checked = item.required,
+                        onCheckedChange = {
+                            onUpdate(item.copy(required = it))
+                            onPersist()
+                        },
+                        modifier = Modifier.semantics { contentDescription = "Required" },
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Required", style = AuntieTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text(
+                            "Mark this item as one Auntie must fill in.",
+                            style = AuntieTheme.typography.labelSmall,
+                            color = AuntieTheme.colors.textDim
+                        )
+                    }
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
