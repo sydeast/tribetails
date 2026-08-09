@@ -10,8 +10,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "npm run e2e:tsc && firebase emulators:exec --project auntieos-ttpc --only auth,firestore --config e2e.firebase.json \"npx playwright test --config e2e/playwright.config.ts\"",
+    "e2e": "npm run e2e:tsc && npm run e2e:coverage && firebase emulators:exec --project auntieos-ttpc --only auth,firestore --config e2e.firebase.json \"npx playwright test --config e2e/playwright.config.ts\"",
     "e2e:tsc": "tsc -p e2e",
+    "e2e:coverage": "node e2e/spec-coverage.mjs",
     "e2e:install": "playwright install --with-deps chromium",
     "visual:react": "npm run e2e:tsc && VISUAL_CAPTURE=1 firebase emulators:exec --project auntieos-ttpc --only auth,firestore --config e2e.firebase.json \"npx playwright test --config e2e/playwright.config.ts --project visual\"",
     "visual:react:verify": "node web/visual/baseline.mjs verify react"

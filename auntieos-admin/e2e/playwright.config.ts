@@ -39,6 +39,49 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
  */
 const CAPTURING_VISUALS = process.env.VISUAL_CAPTURE === '1';
 
+/**
+ * Spec selection is a default plus two named exceptions, not an allowlist.
+ *
+ * It used to be an allowlist: every project named its files in one regex, so a
+ * spec nobody remembered to add was collected by NO project and the suite
+ * reported green having never opened it. That is the failure this repo keeps
+ * paying for, a test that executes nothing and passes. It also made one line
+ * the merge-conflict surface for every pull request that adds a spec.
+ *
+ * So `operator` is the DEFAULT: it collects every `*.spec.ts` under `e2e/` that
+ * is not claimed below. Adding a spec runs it, with no config edit and no line
+ * to collide over. `auth.setup.ts` is not a `.spec.ts`, so the default cannot
+ * swallow it.
+ *
+ * The exceptions are enumerated here and nowhere else, because being in the
+ * wrong project is worse than the problem this fixes: a signed-out spec that
+ * inherits an operator session, or an operator spec that runs without one,
+ * fails or passes for reasons that have nothing to do with what it asserts.
+ * `e2e/spec-coverage.mjs` checks the arithmetic on every `npm run e2e`.
+ */
+
+/**
+ * Specs that must run with NO session. Every one of them asserts something
+ * about the signed-out state or about the bundle itself, so an operator
+ * storageState would change what they see.
+ */
+const SIGNED_OUT_SPECS = ['typography', 'cascade', 'signin'];
+
+/**
+ * The one spec deliberately outside the ordinary run, excluded here in writing
+ * rather than by nobody having named it. Capture rewrites 20 tracked PNGs, so
+ * it runs only in the `visual` project under `VISUAL_CAPTURE=1`. Without this
+ * entry the default above would pull it into `npm run e2e`.
+ */
+const CAPTURE_ONLY_SPECS = ['visual.capture'];
+
+/** Anchored: `signin` must not also claim a future `admin-signin.spec.ts`. */
+const specsNamed = (names: string[]) =>
+  new RegExp(`(^|/)(${names.map((n) => n.replace(/\./g, '\\.')).join('|')})\\.spec\\.ts$`);
+
+const SIGNED_OUT_MATCH = specsNamed(SIGNED_OUT_SPECS);
+const CAPTURE_ONLY_MATCH = specsNamed(CAPTURE_ONLY_SPECS);
+
 export default defineConfig({
   testDir: '.',
   // Relative to this file, so artifacts land in e2e/.artifacts (gitignored
@@ -69,21 +112,17 @@ export default defineConfig({
     { name: 'setup', testMatch: /auth\.setup\.ts/, use: { ...devices['Desktop Chrome'] } },
     {
       name: 'signed-out',
-      testMatch: /(typography|cascade|signin)\.spec\.ts/,
+      testMatch: SIGNED_OUT_MATCH,
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'operator',
-      // `cascade-bookings` is named here rather than left to the unanchored
-      // `bookings` alternative that happens to match it: which project a spec
-      // runs in decides whether it has a session, and that should be readable
-      // rather than inferred from a substring.
-      //
-      // AND THIS IS AN ALLOWLIST, not a filter over a directory. A new spec file
-      // that is not named here is collected by no project at all, so the run
-      // reports green having never opened it. Add the file, add it here.
-      testMatch:
-        /(bookings|breadcrumbs|cascade-bookings|invites|no-production-egress|mobile-nav|phone-layout|directory-deeplink|template-preview)\.spec\.ts/,
+      // The default. Everything under `e2e/` that is not one of the two named
+      // exceptions above runs here, with a session.
+      testMatch: /\.spec\.ts$/,
+      // Both exclusions are the SAME constants the other projects match on, so
+      // the two halves cannot drift into a spec that runs twice or not at all.
+      testIgnore: [SIGNED_OUT_MATCH, CAPTURE_ONLY_MATCH],
       dependencies: ['setup'],
       use: { ...devices['Desktop Chrome'], storageState: './e2e/.auth/operator.json' },
     },
@@ -94,7 +133,7 @@ export default defineConfig({
       ? [
           {
             name: 'visual',
-            testMatch: /visual\.capture\.spec\.ts/,
+            testMatch: CAPTURE_ONLY_MATCH,
             dependencies: ['setup'],
             use: { ...devices['Desktop Chrome'], storageState: './e2e/.auth/operator.json' },
           },
