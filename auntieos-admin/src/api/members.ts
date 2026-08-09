@@ -217,6 +217,41 @@ export async function listHouseholdMembers(kinfolkId: string): Promise<Household
     }));
 }
 
+/**
+ * One invite row from either read. Shared, not copied: `listInvites` and
+ * `listAllInvites` return the identical projection (the callable literally
+ * imports `mapInviteDoc` from its sibling), and two hand-kept mappers would be
+ * two places for `redeemable`'s default to drift.
+ */
+function mapInviteRow(row: Record<string, unknown>): HouseholdInvite {
+  return {
+    inviteId: row['inviteId'] as string,
+    tribeId: typeof row['tribeId'] === 'string' ? (row['tribeId'] as string) : '',
+    invitedEmail: typeof row['invitedEmail'] === 'string' ? (row['invitedEmail'] as string) : '',
+    secondaryLabel: str(row['secondaryLabel']),
+    proposedRole: asRole(row['proposedRole']),
+    proposedPermissions: asPermissions(row['proposedPermissions']),
+    status: asInviteStatus(row['status']),
+    effectiveStatus: asInviteStatus(row['effectiveStatus'] ?? row['status']),
+    // Absent `redeemable` must NOT default true: offering Revoke on an invite
+    // the server considers dead is a control that fails when clicked.
+    redeemable: bool(row['redeemable']),
+    createdAt: str(row['createdAt']),
+    sentToInviteeAt: str(row['sentToInviteeAt']),
+    expiresAt: str(row['expiresAt']),
+    revokedAt: str(row['revokedAt']),
+    acceptedUid: str(row['acceptedUid']),
+  };
+}
+
+/** Rows carrying an id, which is the only thing a caller can act on. */
+function inviteRows(payload: unknown): Record<string, unknown>[] {
+  const rows = Array.isArray(payload) ? payload : [];
+  return rows
+    .map((row) => (row ?? {}) as Record<string, unknown>)
+    .filter((row) => typeof row['inviteId'] === 'string' && row['inviteId'] !== '');
+}
+
 /** Every invite ever minted for one household, newest first. */
 export async function listHouseholdInvites(familyId: string): Promise<HouseholdInvite[]> {
   const id = familyId.trim();
@@ -225,28 +260,47 @@ export async function listHouseholdInvites(familyId: string): Promise<HouseholdI
   const res = await call<{ familyId: string }, { invites?: unknown }>('listInvites', {
     familyId: id,
   });
-  const rows = Array.isArray(res?.invites) ? res.invites : [];
-  return rows
-    .map((row) => (row ?? {}) as Record<string, unknown>)
-    .filter((row) => typeof row['inviteId'] === 'string' && row['inviteId'] !== '')
-    .map((row) => ({
-      inviteId: row['inviteId'] as string,
-      tribeId: typeof row['tribeId'] === 'string' ? (row['tribeId'] as string) : '',
-      invitedEmail: typeof row['invitedEmail'] === 'string' ? (row['invitedEmail'] as string) : '',
-      secondaryLabel: str(row['secondaryLabel']),
-      proposedRole: asRole(row['proposedRole']),
-      proposedPermissions: asPermissions(row['proposedPermissions']),
-      status: asInviteStatus(row['status']),
-      effectiveStatus: asInviteStatus(row['effectiveStatus'] ?? row['status']),
-      // Absent `redeemable` must NOT default true: offering Revoke on an invite
-      // the server considers dead is a control that fails when clicked.
-      redeemable: bool(row['redeemable']),
-      createdAt: str(row['createdAt']),
-      sentToInviteeAt: str(row['sentToInviteeAt']),
-      expiresAt: str(row['expiresAt']),
-      revokedAt: str(row['revokedAt']),
-      acceptedUid: str(row['acceptedUid']),
-    }));
+  return inviteRows(res?.invites).map(mapInviteRow);
+}
+
+/**
+ * A household invite, carrying the name of the household it belongs to.
+ *
+ * The one added field, and it exists because the admin-wide list is the only
+ * place a row is read outside its own household's screen, where `tribeId`
+ * alone is an opaque id.
+ */
+export interface AdminInvite extends HouseholdInvite {
+  /** Never blank. An unnameable household says so in words; see below. */
+  householdName: string;
+}
+
+/**
+ * Every invite across every household, newest first.
+ *
+ * WHY IT EXISTS. `listInvites` is scoped to one household, so "who never
+ * accepted" meant opening all 13 households by hand and comparing four lists.
+ *
+ * READ ONLY, and permanently so. Per the invite ruling the admin's only invite
+ * is inviting a PRIMARY to the portal, which is household-scoped
+ * (`mintInvite` / `inviteKinfolkToPortal`); the PRIMARY invites the secondary
+ * from MyTribe. An admin-WIDE surface has no household to mint into, so there
+ * is deliberately no write beside this read.
+ *
+ * Nothing catches: a failed read propagates so the screen can say so.
+ */
+export async function listAllInvites(): Promise<AdminInvite[]> {
+  const res = await call<Record<string, never>, { invites?: unknown }>('listAllInvites', {});
+  return inviteRows(res?.invites).map((row) => ({
+    ...mapInviteRow(row),
+    // The server always sends one, including its own loud markers for a missing
+    // or unnamed household, and those are passed through verbatim. This branch
+    // covers an older server that sends none: it names the id rather than
+    // rendering a card with a blank heading, which would read as "no household".
+    householdName:
+      str(row['householdName']) ??
+      `(household name missing: ${typeof row['tribeId'] === 'string' ? row['tribeId'] : '?'})`,
+  }));
 }
 
 /** Display name for a member row. Never blank: falls back to the uid. */

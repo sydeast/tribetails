@@ -194,6 +194,12 @@ export { revokeInvite } from './admin/revokeInvite';
 // does not exist) and why it reconciles expiry at read time (the sweep is
 // nightly, so a lapsed invite reads live for up to a day).
 export { listInvites } from './admin/listInvites';
+// The admin-WIDE half of the same read. `listInvites` is scoped to one
+// household, so "who never accepted" meant opening every household by hand and
+// comparing four lists. Same projection and the same expiry reconciliation (it
+// imports both), plus the household name a row needs to be readable out of its
+// household's context.
+export { listAllInvites } from './admin/listAllInvites';
 export { setMemberPermissions } from './admin/setMemberPermissions';
 export { removeMember } from './admin/removeMember';
 export { setTribePin } from './admin/setTribePin';

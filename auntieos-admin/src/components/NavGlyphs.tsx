@@ -168,6 +168,15 @@ const GLYPH_PATHS: Record<Destination, ReactNode> = {
       <path d="M9 12l2 2 4-4" />
     </>
   ),
+  // An envelope with its flap open: an invite sent and still out there. The
+  // household-scoped `householdMembers` below is a person, because that screen
+  // is about who is in a home; this one is about the letters.
+  invites: (
+    <>
+      <rect x="3" y="6" width="18" height="13" rx="2" />
+      <path d="M3 8l9 6 9-6" />
+    </>
+  ),
   householdMembers: (
     <>
       <circle cx="9" cy="8" r="3.5" />

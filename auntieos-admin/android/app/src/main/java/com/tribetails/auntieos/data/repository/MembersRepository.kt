@@ -106,6 +106,27 @@ class MembersRepository(
     )
 
     /**
+     * One [Invite] plus the household it belongs to, as `listAllInvites`
+     * returns it.
+     *
+     * COMPOSITION, not a parallel data class: the wire row IS `listInvites`'s
+     * row (the callable imports the projection from its sibling), and copying
+     * fourteen fields into a second shape is how two mirrors drift. Kotlin data
+     * classes cannot inherit, so this says what it means — the same invite,
+     * seen from outside its household.
+     *
+     * `householdName` is computed SERVER-side and is never blank. An unnameable
+     * household arrives as `(household not found: <id>)` rather than as an
+     * empty string, because that row is the one an operator most needs to see.
+     */
+    data class AdminInvite(
+        val invite: Invite,
+        /** The kinfolk / family doc id. One value, three names in this codebase. */
+        val tribeId: String,
+        val householdName: String,
+    )
+
+    /**
      * The five permission keys `setMemberPermissions` accepts. `kintales_only`
      * is deliberately absent: the server's argument schema does not carry it,
      * so no caller on any path can turn it off.
@@ -139,6 +160,28 @@ class MembersRepository(
             ?: error("listInvites: non-map payload")
         decodeInvites(raw)
     }.onFailure { AuntieLog.e("MembersRepository.listInvites failed", it) }
+
+    /**
+     * Every invite across every household, newest first.
+     *
+     * `listInvites` above is scoped to one household, so "who never accepted"
+     * meant opening every household by hand. This is that question in one call.
+     * It takes no argument: the every-household read is what it IS, and an
+     * optional filter would only be a slower way to ask the other one.
+     *
+     * READ ONLY, permanently. Per the invite ruling the admin's only invite is
+     * inviting a PRIMARY to the portal, and both callables that do it are
+     * household-scoped; the PRIMARY invites the secondary from MyTribe. There
+     * is no admin-wide write to pair with this and there must never be one.
+     */
+    suspend fun listAllInvites(): Result<List<AdminInvite>> = runCatching {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listAllInvites")
+            .call(emptyMap<String, Any?>()).await().data as? Map<String, Any?>
+            ?: error("listAllInvites: non-map payload")
+        decodeAllInvites(raw)
+    }.onFailure { AuntieLog.e("MembersRepository.listAllInvites failed", it) }
 
     // ── writes ──────────────────────────────────────────────────────────────
 
@@ -268,29 +311,64 @@ internal fun decodeMembers(raw: Map<*, *>?): List<MembersRepository.Member> {
     }
 }
 
+/**
+ * One invite row, or null when it carries no id and so nothing could act on it.
+ *
+ * Shared by both invite reads. `listAllInvites` returns the SAME row shape
+ * (its callable imports `mapInviteDoc` from `listInvites`), so a second
+ * hand-kept decoder would be a second place for `redeemable`'s default to drift.
+ */
+internal fun decodeInviteRow(m: Map<*, *>): MembersRepository.Invite? {
+    val id = (m["inviteId"] as? String)?.ifBlank { null } ?: return null
+    val status = decodeInviteStatus(m["status"])
+    return MembersRepository.Invite(
+        inviteId = id,
+        invitedEmail = (m["invitedEmail"] as? String).orEmpty(),
+        secondaryLabel = (m["secondaryLabel"] as? String)?.ifBlank { null },
+        proposedRole = decodeRole(m["proposedRole"]),
+        status = status,
+        // Falls back to the raw status only when the server sent none;
+        // it never re-derives expiry on the device.
+        effectiveStatus = m["effectiveStatus"]?.let { decodeInviteStatus(it) } ?: status,
+        // Absent reads NOT redeemable: see the class kdoc.
+        redeemable = m["redeemable"] as? Boolean ?: false,
+        createdAt = (m["createdAt"] as? String)?.ifBlank { null },
+        sentToInviteeAt = (m["sentToInviteeAt"] as? String)?.ifBlank { null },
+        expiresAt = (m["expiresAt"] as? String)?.ifBlank { null },
+        revokedAt = (m["revokedAt"] as? String)?.ifBlank { null },
+    )
+}
+
 internal fun decodeInvites(raw: Map<*, *>?): List<MembersRepository.Invite> {
     val rows = (raw?.get("invites") as? List<*>)
         ?: error("listInvites: response carried no invites")
+    return rows.mapNotNull { item -> (item as? Map<*, *>)?.let(::decodeInviteRow) }
+}
+
+/**
+ * `listAllInvites`'s rows: the same invite plus the household it belongs to.
+ *
+ * A missing top-level array is an ERROR, not an empty list, matching
+ * [decodeInvites]: rendering "nobody has been invited" off a payload we could
+ * not read is the one claim this screen must never make.
+ */
+internal fun decodeAllInvites(raw: Map<*, *>?): List<MembersRepository.AdminInvite> {
+    val rows = (raw?.get("invites") as? List<*>)
+        ?: error("listAllInvites: response carried no invites")
     return rows.mapNotNull { item ->
         val m = item as? Map<*, *> ?: return@mapNotNull null
-        // No id means nothing that could be revoked, so the row is dropped.
-        val id = (m["inviteId"] as? String)?.ifBlank { null } ?: return@mapNotNull null
-        val status = decodeInviteStatus(m["status"])
-        MembersRepository.Invite(
-            inviteId = id,
-            invitedEmail = (m["invitedEmail"] as? String).orEmpty(),
-            secondaryLabel = (m["secondaryLabel"] as? String)?.ifBlank { null },
-            proposedRole = decodeRole(m["proposedRole"]),
-            status = status,
-            // Falls back to the raw status only when the server sent none;
-            // it never re-derives expiry on the device.
-            effectiveStatus = m["effectiveStatus"]?.let { decodeInviteStatus(it) } ?: status,
-            // Absent reads NOT redeemable: see the class kdoc.
-            redeemable = m["redeemable"] as? Boolean ?: false,
-            createdAt = (m["createdAt"] as? String)?.ifBlank { null },
-            sentToInviteeAt = (m["sentToInviteeAt"] as? String)?.ifBlank { null },
-            expiresAt = (m["expiresAt"] as? String)?.ifBlank { null },
-            revokedAt = (m["revokedAt"] as? String)?.ifBlank { null },
+        val invite = decodeInviteRow(m) ?: return@mapNotNull null
+        val tribeId = (m["tribeId"] as? String).orEmpty()
+        MembersRepository.AdminInvite(
+            invite = invite,
+            tribeId = tribeId,
+            // The server always sends one, its own loud markers included, and
+            // those pass through verbatim. This branch covers an older APK
+            // meeting a payload without the field: it names what is missing,
+            // rather than drawing a card with a blank heading that would read
+            // as "no household".
+            householdName = (m["householdName"] as? String)?.ifBlank { null }
+                ?: "(household name missing: ${tribeId.ifBlank { "?" }})",
         )
     }
 }

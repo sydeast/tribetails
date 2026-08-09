@@ -167,6 +167,15 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
             "household_members/$kinfolkId/${java.net.URLEncoder.encode(kinfolkName, "UTF-8")}"
     }
 
+    /**
+     * Every household's invites in one list. Distinct from [HouseholdMembers]
+     * above, which is the same data for ONE household plus the controls that
+     * act on it. It takes no argument for the same reason it is reached from
+     * the Admin dashboard rather than from a profile: it IS the
+     * every-household read, and "who never accepted" is asked cold.
+     */
+    object Invites : Screen("invites", "Invites", Lucide.Mail)
+
     // KinTale report (visit recap to kinfolk). reportId is optional ("new" = blank draft).
     object KinTaleReport : Screen("kintale/{sessionId}?reportId={reportId}", "KinTale", Lucide.Pencil) {
         fun createRoute(sessionId: String, reportId: String? = null): String =
@@ -579,6 +588,7 @@ private fun AuthenticatedNavHost(
                         onNavigateToTemplates = { navController.navigate(Screen.Templates.route) },
                         onNavigateToFeatureFlags = { navController.navigate(Screen.AdminFeatureFlags.route) },
                         onNavigateToCoveragePackages = { navController.navigate(Screen.CoveragePackage.route) },
+                        onNavigateToInvites = { navController.navigate(Screen.Invites.route) },
                     )
                 }
             }
@@ -910,6 +920,25 @@ private fun AuthenticatedNavHost(
                         kinfolkId = kinfolkId,
                         kinfolkName = kinfolkName,
                         onBack = { navController.popBackStack() },
+                    )
+                }
+            }
+            // The admin-WIDE invite list. Same AdminGate reasoning as the
+            // household-scoped screen above: `listAllInvites` is admin-gated
+            // server-side, so a non-admin is turned back at the door rather
+            // than shown a screen whose only read returns permission-denied.
+            composable(Screen.Invites.route) {
+                com.tribetails.auntieos.ui.admin.AdminGate(
+                    repository = app.repository,
+                    onDenied = { navController.popBackStack() },
+                ) {
+                    com.tribetails.auntieos.ui.members.InvitesScreen(
+                        onBack = { navController.popBackStack() },
+                        onOpenHousehold = { kinfolkId, householdName ->
+                            navController.navigate(
+                                Screen.HouseholdMembers.createRoute(kinfolkId, householdName),
+                            )
+                        },
                     )
                 }
             }

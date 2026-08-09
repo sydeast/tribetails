@@ -38,6 +38,7 @@ export type Destination =
   | 'myNotifications'
   | 'notificationGate'
   | 'householdMembers'
+  | 'invites'
   | 'vetClinics';
 
 export type NavGroup = 'den' | 'careOps' | 'more';
@@ -63,6 +64,13 @@ export interface NavEntry {
 export const NAV: readonly NavEntry[] = [
   { dest: 'home', title: 'Home', group: 'den', slug: 'home' },
   { dest: 'directory', title: 'Directory', group: 'den', slug: 'directory' },
+  // The admin-WIDE invite list. Pinned, unlike `householdMembers` below, which
+  // is the same data for ONE household and is reached from that household's
+  // profile. This one has no household to be reached from — it is the every-
+  // household view, and "who never accepted" is a question asked cold — so a
+  // rail entry is the only way it gets found. Beside Directory because it is
+  // about the households Directory lists.
+  { dest: 'invites', title: 'Invites', group: 'den', slug: 'invites' },
   { dest: 'kintales', title: 'KinTales', group: 'den', slug: 'kintales' },
   { dest: 'gallery', title: 'Gallery', group: 'den', slug: 'gallery' },
 

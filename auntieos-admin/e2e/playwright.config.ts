@@ -83,7 +83,7 @@ export default defineConfig({
       // that is not named here is collected by no project at all, so the run
       // reports green having never opened it. Add the file, add it here.
       testMatch:
-        /(bookings|cascade-bookings|no-production-egress|mobile-nav|phone-layout|directory-deeplink|template-preview)\.spec\.ts/,
+        /(bookings|cascade-bookings|invites|no-production-egress|mobile-nav|phone-layout|directory-deeplink|template-preview)\.spec\.ts/,
       dependencies: ['setup'],
       use: { ...devices['Desktop Chrome'], storageState: './e2e/.auth/operator.json' },
     },

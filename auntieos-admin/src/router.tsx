@@ -151,6 +151,16 @@ const directoryRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/Directory'), 'Directory'),
 });
 
+// Every household's invites in one list. Distinct from
+// `/household-members/$kinfolkId` below, which is the same data for ONE
+// household plus the controls that act on it. This one is read-only and
+// admin-wide, and each of its cards links into that household-scoped screen.
+const invitesRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'invites',
+  component: lazyRouteComponent(() => import('./screens/Invites'), 'Invites'),
+});
+
 const directoryProfileRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'directory/$kinfolkId',
@@ -291,7 +301,7 @@ const mediaRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute]),
 ]);
 
 export const router = createRouter({
